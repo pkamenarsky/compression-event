@@ -103,34 +103,36 @@ export function blurred(): Op<void> {
 }
 
 /**
- * Every pointer position, in client coordinates, for as long as it runs. It
- * never finishes on its own — whoever runs it decides when the gesture is over
- * by racing it against something else.
+ * Every pointer move, for as long as it runs. It never finishes on its own —
+ * whoever runs it decides when the gesture is over by racing it against
+ * something else.
+ *
+ * The event goes through whole, the way `keyPressed` passes its own on: it
+ * carries which modifiers were down at the time, and the browser already keeps
+ * that better than a bus repeating keydowns and keyups could.
  */
-export function pointerMoved(onMove: (at: Point) => void): Op<never> {
+export function pointerMoved(onMove: (e: PointerEvent) => void): Op<never> {
   return perform(() => {
-    const onPointerMove = (e: PointerEvent) => onMove({ x: e.clientX, y: e.clientY });
+    window.addEventListener('pointermove', onMove);
 
-    window.addEventListener('pointermove', onPointerMove);
-
-    return () => window.removeEventListener('pointermove', onPointerMove);
+    return () => window.removeEventListener('pointermove', onMove);
   });
 }
 
 /** The primary button going down, and only that one. */
-export function pointerPressed(): Op<Point> {
+export function pointerPressed(): Op<PointerEvent> {
   return pointerButton('pointerdown');
 }
 
-export function pointerReleased(): Op<Point> {
+export function pointerReleased(): Op<PointerEvent> {
   return pointerButton('pointerup');
 }
 
-function pointerButton(type: 'pointerdown' | 'pointerup'): Op<Point> {
+function pointerButton(type: 'pointerdown' | 'pointerup'): Op<PointerEvent> {
   return perform(resume => {
     const onPointerButton = (e: PointerEvent) => {
       if (e.button === 0) {
-        resume({ x: e.clientX, y: e.clientY });
+        resume(e);
       }
     };
 
@@ -149,7 +151,8 @@ function pointerButton(type: 'pointerdown' | 'pointerup'): Op<Point> {
 export function pan(update: Update): Op<never> {
   let last: Point | null = null;
 
-  return pointerMoved(at => {
+  return pointerMoved(e => {
+    const at = { x: e.clientX, y: e.clientY };
     const previous = last;
 
     last = at;

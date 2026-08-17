@@ -179,33 +179,49 @@ export function selectionCanvas(view: Value<View>, input: Input): VNode {
       while (true) {
         yield* keyPressed(input, ...SHIFT);
 
-        const armed = yield* select({
-          pressed: pointerPressed(),
-          disarmed: keyReleased(input, ...SHIFT),
-          lost: blurred(),
-        });
+        // Shift stays down until it is let go, and every press until then is a
+        // selection of its own — a modifier does not repeat, so coming back up
+        // here between drags would wait for a keypress that never arrives.
+        let armed = true;
 
-        if (armed.tag !== 'pressed') {
-          continue;
+        while (armed) {
+          const start = yield* select({
+            pressed: pointerPressed(),
+            disarmed: keyReleased(input, ...SHIFT),
+            lost: blurred(),
+          });
+
+          if (start.tag !== 'pressed') {
+            break;
+          }
+
+          // The canvas cannot move mid-drag, so one measurement covers it
+          const bounds = el?.getBoundingClientRect();
+          const left = bounds?.left ?? 0;
+          const top = bounds?.top ?? 0;
+
+          const x0 = start.value.clientX - left;
+          const y0 = start.value.clientY - top;
+
+          setMarquee({ x0, y0, x1: x0, y1: y0 });
+
+          const end = yield* select({
+            dragging: pointerMoved(e => setMarquee({
+              x0,
+              y0,
+              x1: e.clientX - left,
+              y1: e.clientY - top,
+            })),
+            done: pointerReleased(),
+            lost: blurred(),
+          });
+
+          setMarquee(null);
+
+          // Letting shift go mid-drag does not cancel the drag, but it does end
+          // the arming — and the event knows, so nothing here has to remember
+          armed = end.tag === 'done' && end.value.shiftKey;
         }
-
-        // The canvas cannot move mid-drag, so one measurement covers it
-        const bounds = el?.getBoundingClientRect();
-        const left = bounds?.left ?? 0;
-        const top = bounds?.top ?? 0;
-
-        const x0 = armed.value.x - left;
-        const y0 = armed.value.y - top;
-
-        setMarquee({ x0, y0, x1: x0, y1: y0 });
-
-        yield* select({
-          dragging: pointerMoved(at => setMarquee({ x0, y0, x1: at.x - left, y1: at.y - top })),
-          done: pointerReleased(),
-          lost: blurred(),
-        });
-
-        setMarquee(null);
       }
     },
   }));
