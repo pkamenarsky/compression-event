@@ -1,0 +1,15 @@
+{
+  "name": "@ce/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ce/game": "workspace:*",
+    "@incpt/kontinuum": "link:../../../signalui/packages/kontinuum",
+    "@incpt/kontinuum-dom": "link:../../../signalui/packages/kontinuum-dom",
+    "@incpt/kontinuum-interaction": "link:../../../signalui/packages/kontinuum-interaction"
+  }
+}
