@@ -1,4 +1,4 @@
-import { Point, World } from '@ce/game/world';
+import { Point, PolygonType } from '@ce/game/world';
 
 /** The world is the game's; the editor only ever holds one. */
 export * from '@ce/game/world';
@@ -107,6 +107,24 @@ export function resized(view: View, width: number, height: number, dpr: number):
 // The store
 // -----------------------------------------------------------------------------
 
+export interface Polygon {
+  type: PolygonType
+  points: Point
+}
+
+export interface Group {
+  children: (Polygon | Group)[]
+}
+
+export interface Version {
+  groups: Group[]
+  expanded: Polygon[]
+}
+
+export interface World {
+  versions: Version[]
+}
+
 /**
  * Everything the editor is. Immutable throughout: a field that did not change
  * keeps its identity, which is what lets `object` wake only the parts that
@@ -114,6 +132,8 @@ export function resized(view: View, width: number, height: number, dpr: number):
  */
 export interface EditorState {
   world: World
+  currentVersion: number
+
   settings: Settings
   view: View
   tool: Tool
@@ -125,6 +145,7 @@ export type Update = (fn: (s: EditorState) => EditorState) => void;
 export function initialState(world: World): EditorState {
   return {
     world,
+    currentVersion: 0,
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
