@@ -29,6 +29,15 @@ else {
 }
 ```
 
+**An endless loop is `while (true)`**, never `for (;;)`.
+
+```ts
+while (true) {
+  const e = yield* input.keyDown;
+  ...
+}
+```
+
 Otherwise: 2-space indent, single quotes, semicolons on statements, trailing
 commas in multi-line literals, and calls left on one line where they fit.
 

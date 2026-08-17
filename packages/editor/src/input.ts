@@ -1,10 +1,16 @@
 import { VNode, effect } from '@incpt/kontinuum-dom';
 import { Op, Signal, perform, signal } from '@incpt/kontinuum-interaction';
 
+import { Update, panBy } from './types';
+
+// -----------------------------------------------------------------------------
+// The keyboard, as signals
+// -----------------------------------------------------------------------------
+
 /**
- * The keyboard, as signals. One pair of window listeners for the whole editor
- * rather than one per thing that wants a key: `emit` wakes every waiter, so any
- * number of loops can watch the same key without knowing about each other.
+ * One pair of window listeners for the whole editor rather than one per thing
+ * that wants a key: `emit` wakes every waiter, so any number of loops can watch
+ * the same key without knowing about each other.
  *
  * The events are passed on as they come, undecided — what a key means is the
  * business of whoever waits for it.
@@ -55,7 +61,7 @@ export function inputListener(input: Input): VNode {
  * point and waiting on something else.
  */
 export function* keyPressed(input: Input, code: string): Op<KeyboardEvent> {
-  for (;;) {
+  while (true) {
     const e = yield* input.keyDown;
 
     if (e.code === code) {
@@ -65,7 +71,7 @@ export function* keyPressed(input: Input, code: string): Op<KeyboardEvent> {
 }
 
 export function* keyReleased(input: Input, code: string): Op<KeyboardEvent> {
-  for (;;) {
+  while (true) {
     const e = yield* input.keyUp;
 
     if (e.code === code) {
@@ -74,9 +80,15 @@ export function* keyReleased(input: Input, code: string): Op<KeyboardEvent> {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Gestures
+//
+// Each one holds its own listener for exactly as long as its branch is alive,
+// so cancelling is the whole of the cleanup.
+// -----------------------------------------------------------------------------
+
 /**
- * The window lost focus, so whatever was being held is no longer held. Its own
- * listener, for as long as the branch waiting on it is alive.
+ * The window lost focus, so whatever was being held is no longer held.
  */
 export function blurred(): Op<void> {
   return perform(resume => {
@@ -85,5 +97,37 @@ export function blurred(): Op<void> {
     window.addEventListener('blur', onBlur);
 
     return () => window.removeEventListener('blur', onBlur);
+  });
+}
+
+/**
+ * Panning, for as long as it is running: the mouse drags the world along.
+ *
+ * It never finishes on its own — whoever runs it decides when panning is over
+ * by racing it against something else. Nothing here knows what started it, so
+ * it serves a held space bar, a middle mouse button or a hand tool equally
+ * well. The first move only marks where the pan began; the world moves from
+ * there.
+ */
+export function pan(update: Update): Op<never> {
+  return perform(() => {
+    let last: { x: number, y: number } | null = null;
+
+    function onPointerMove(e: PointerEvent) {
+      const at = { x: e.clientX, y: e.clientY };
+
+      if (last !== null) {
+        const dx = at.x - last.x;
+        const dy = at.y - last.y;
+
+        update(s => ({ ...s, view: panBy(s.view, dx, dy) }));
+      }
+
+      last = at;
+    }
+
+    window.addEventListener('pointermove', onPointerMove);
+
+    return () => window.removeEventListener('pointermove', onPointerMove);
   });
 }
