@@ -4,7 +4,17 @@ import { canvas } from '@incpt/kontinuum-dom/html';
 import { select } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
-import { Input, blurred, keyPressed, keyReleased, pan } from './input';
+import {
+  Input,
+  SHIFT,
+  blurred,
+  keyPressed,
+  keyReleased,
+  pan,
+  pointerMoved,
+  pointerPressed,
+  pointerReleased,
+} from './input';
 import { theme } from './theme';
 import { Settings, Update, View, World, resized } from './types';
 
@@ -110,6 +120,98 @@ function observeSize(el: HTMLCanvasElement, update: Update): () => void {
 }
 
 // -----------------------------------------------------------------------------
+// The selection overlay
+// -----------------------------------------------------------------------------
+
+/** In CSS pixels from the canvas' top-left corner, and not yet normalised. */
+interface Marquee {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+/**
+ * A second, transparent canvas over the first, holding nothing but the
+ * selection rectangle being dragged. It is the whole of this canvas' state and
+ * nobody else's business, so it lives in the `interactive` rather than in the
+ * store, and leaves when the drag does.
+ *
+ * Shift arms it, the primary button starts it, and it lasts until the button
+ * comes back up: letting shift go mid-drag does not cancel, the way a marquee
+ * behaves everywhere else. Sizing is the world canvas' job — both fill the same
+ * box, so this one takes the measurement it already made.
+ */
+export function selectionCanvas(view: Value<View>, input: Input): VNode {
+  let el: HTMLCanvasElement | undefined;
+  let ctx: CanvasRenderingContext2D | null = null;
+
+  return interactive<Marquee | null>(null, (marquee, setMarquee) => ({
+    view: canvas(
+      {
+        style: {
+          display: 'block',
+          position: 'absolute',
+          inset: '0',
+          width: '100%',
+          height: '100%',
+
+          // So the world canvas underneath keeps saying what the cursor is
+          pointerEvents: 'none',
+        },
+
+        ref: (node: HTMLCanvasElement) => {
+          el = node;
+          ctx = node.getContext('2d');
+        },
+      },
+      effect(
+        () => [view(), marquee()] as const,
+        ([v, m]) => {
+          if (el && ctx) {
+            drawMarquee(el, ctx, v, m);
+          }
+        },
+      ),
+    ),
+
+    run: function* () {
+      while (true) {
+        yield* keyPressed(input, ...SHIFT);
+
+        const armed = yield* select({
+          pressed: pointerPressed(),
+          disarmed: keyReleased(input, ...SHIFT),
+          lost: blurred(),
+        });
+
+        if (armed.tag !== 'pressed') {
+          continue;
+        }
+
+        // The canvas cannot move mid-drag, so one measurement covers it
+        const bounds = el?.getBoundingClientRect();
+        const left = bounds?.left ?? 0;
+        const top = bounds?.top ?? 0;
+
+        const x0 = armed.value.x - left;
+        const y0 = armed.value.y - top;
+
+        setMarquee({ x0, y0, x1: x0, y1: y0 });
+
+        yield* select({
+          dragging: pointerMoved(at => setMarquee({ x0, y0, x1: at.x - left, y1: at.y - top })),
+          done: pointerReleased(),
+          lost: blurred(),
+        });
+
+        setMarquee(null);
+      }
+    },
+  }));
+}
+
+// -----------------------------------------------------------------------------
 // Drawing
 //
 // Everything below works in CSS pixels; the transform takes care of the rest.
@@ -118,13 +220,8 @@ function observeSize(el: HTMLCanvasElement, update: Update): () => void {
 /** Below this many CSS pixels between dots the grid stops being a grid. */
 const MIN_DOT_SPACING = 8;
 
-function draw(
-  el: HTMLCanvasElement,
-  ctx: CanvasRenderingContext2D,
-  world: World,
-  settings: Settings,
-  view: View,
-): void {
+/** Sizes the backing store to the view and puts the context into CSS pixels. */
+function prepare(el: HTMLCanvasElement, ctx: CanvasRenderingContext2D, view: View): void {
   const width = Math.max(1, Math.round(view.width * view.dpr));
   const height = Math.max(1, Math.round(view.height * view.dpr));
 
@@ -135,6 +232,16 @@ function draw(
   }
 
   ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+}
+
+function draw(
+  el: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  settings: Settings,
+  view: View,
+): void {
+  prepare(el, ctx, view);
 
   ctx.fillStyle = theme.canvas;
   ctx.fillRect(0, 0, view.width, view.height);
@@ -180,6 +287,33 @@ function drawGrid(ctx: CanvasRenderingContext2D, settings: Settings, view: View)
 
   ctx.fillStyle = theme.grid;
   ctx.fill();
+}
+
+/** The rubber band, over an otherwise empty canvas. */
+function drawMarquee(
+  el: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  marquee: Marquee | null,
+): void {
+  prepare(el, ctx, view);
+  ctx.clearRect(0, 0, view.width, view.height);
+
+  if (marquee === null) {
+    return;
+  }
+
+  const x = Math.round(Math.min(marquee.x0, marquee.x1));
+  const y = Math.round(Math.min(marquee.y0, marquee.y1));
+  const width = Math.round(Math.abs(marquee.x1 - marquee.x0));
+  const height = Math.round(Math.abs(marquee.y1 - marquee.y0));
+
+  ctx.fillStyle = theme.selectionFill;
+  ctx.fillRect(x, y, width, height);
+
+  ctx.strokeStyle = theme.selection;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, width, height);
 }
 
 /** The world's two axes, so that a pan has something to be relative to. */

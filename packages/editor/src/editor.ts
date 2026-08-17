@@ -3,7 +3,7 @@ import { VNode, object, stateful } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 import { circle, g, path, rect, svg } from '@incpt/kontinuum-dom/svg';
 
-import { worldCanvas } from './canvas';
+import { selectionCanvas, worldCanvas } from './canvas';
 import { createInput, inputListener } from './input';
 import { theme } from './theme';
 import { Tool, Update, World, initialState } from './types';
@@ -35,6 +35,7 @@ export function editor(initial: World): VNode {
           inputListener(input),
 
           worldCanvas(s.world, s.settings, s.view, input, update),
+          selectionCanvas(s.view, input),
           toolbar(s.tool),
         ],
       ),

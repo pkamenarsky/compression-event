@@ -1,7 +1,10 @@
 import { VNode, effect } from '@incpt/kontinuum-dom';
 import { Op, Signal, perform, signal } from '@incpt/kontinuum-interaction';
 
-import { Update, panBy } from './types';
+import { Point, Update, panBy } from './types';
+
+/** A keyboard has two of each modifier, and nobody means one of them. */
+export const SHIFT = ['ShiftLeft', 'ShiftRight'];
 
 // -----------------------------------------------------------------------------
 // The keyboard, as signals
@@ -56,25 +59,25 @@ export function inputListener(input: Input): VNode {
 }
 
 /**
- * Waits for one key, letting the rest through to whoever else is waiting. Key
- * repeats count as presses; a loop that does not want them is already past this
- * point and waiting on something else.
+ * Waits for one of `codes`, letting the rest through to whoever else is
+ * waiting. Key repeats count as presses; a loop that does not want them is
+ * already past this point and waiting on something else.
  */
-export function* keyPressed(input: Input, code: string): Op<KeyboardEvent> {
+export function* keyPressed(input: Input, ...codes: string[]): Op<KeyboardEvent> {
   while (true) {
     const e = yield* input.keyDown;
 
-    if (e.code === code) {
+    if (codes.includes(e.code)) {
       return e;
     }
   }
 }
 
-export function* keyReleased(input: Input, code: string): Op<KeyboardEvent> {
+export function* keyReleased(input: Input, ...codes: string[]): Op<KeyboardEvent> {
   while (true) {
     const e = yield* input.keyUp;
 
-    if (e.code === code) {
+    if (codes.includes(e.code)) {
       return e;
     }
   }
@@ -83,13 +86,12 @@ export function* keyReleased(input: Input, code: string): Op<KeyboardEvent> {
 // -----------------------------------------------------------------------------
 // Gestures
 //
-// Each one holds its own listener for exactly as long as its branch is alive,
-// so cancelling is the whole of the cleanup.
+// Each one holds its own listener for exactly as long as its branch is alive:
+// the runtime runs what a task gives back once it is done with, whether that
+// came of resuming or of being cancelled, so undoing it is written the once.
 // -----------------------------------------------------------------------------
 
-/**
- * The window lost focus, so whatever was being held is no longer held.
- */
+/** The window lost focus, so whatever was being held is no longer held. */
 export function blurred(): Op<void> {
   return perform(resume => {
     const onBlur = () => resume();
@@ -101,33 +103,59 @@ export function blurred(): Op<void> {
 }
 
 /**
- * Panning, for as long as it is running: the mouse drags the world along.
- *
- * It never finishes on its own — whoever runs it decides when panning is over
- * by racing it against something else. Nothing here knows what started it, so
- * it serves a held space bar, a middle mouse button or a hand tool equally
- * well. The first move only marks where the pan began; the world moves from
- * there.
+ * Every pointer position, in client coordinates, for as long as it runs. It
+ * never finishes on its own — whoever runs it decides when the gesture is over
+ * by racing it against something else.
  */
-export function pan(update: Update): Op<never> {
+export function pointerMoved(onMove: (at: Point) => void): Op<never> {
   return perform(() => {
-    let last: { x: number, y: number } | null = null;
-
-    function onPointerMove(e: PointerEvent) {
-      const at = { x: e.clientX, y: e.clientY };
-
-      if (last !== null) {
-        const dx = at.x - last.x;
-        const dy = at.y - last.y;
-
-        update(s => ({ ...s, view: panBy(s.view, dx, dy) }));
-      }
-
-      last = at;
-    }
+    const onPointerMove = (e: PointerEvent) => onMove({ x: e.clientX, y: e.clientY });
 
     window.addEventListener('pointermove', onPointerMove);
 
     return () => window.removeEventListener('pointermove', onPointerMove);
+  });
+}
+
+/** The primary button going down, and only that one. */
+export function pointerPressed(): Op<Point> {
+  return pointerButton('pointerdown');
+}
+
+export function pointerReleased(): Op<Point> {
+  return pointerButton('pointerup');
+}
+
+function pointerButton(type: 'pointerdown' | 'pointerup'): Op<Point> {
+  return perform(resume => {
+    const onPointerButton = (e: PointerEvent) => {
+      if (e.button === 0) {
+        resume({ x: e.clientX, y: e.clientY });
+      }
+    };
+
+    window.addEventListener(type, onPointerButton);
+
+    return () => window.removeEventListener(type, onPointerButton);
+  });
+}
+
+/**
+ * Panning: the mouse drags the world along, for as long as this runs. Nothing
+ * here knows what started it, so it serves a held space bar, a middle mouse
+ * button or a hand tool equally well. The first move only marks where the pan
+ * began; the world moves from there.
+ */
+export function pan(update: Update): Op<never> {
+  let last: Point | null = null;
+
+  return pointerMoved(at => {
+    const previous = last;
+
+    last = at;
+
+    if (previous !== null) {
+      update(s => ({ ...s, view: panBy(s.view, at.x - previous.x, at.y - previous.y) }));
+    }
   });
 }

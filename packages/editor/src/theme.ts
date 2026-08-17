@@ -3,6 +3,8 @@ export const theme = {
   canvas: '#16171b',
   grid: '#34363f',
   axis: '#4a4d59',
+  selection: '#5b8cff',
+  selectionFill: 'rgba(91, 140, 255, 0.14)',
 
   /** The chrome floating above it. */
   panel: '#2a2b31',
