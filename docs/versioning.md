@@ -738,3 +738,5 @@ in, and `Entry.shape` is a simplified copy" after enforcing non-self-intersectio
 - When transforming a selection we can theoretically piggyback on the group transformation logic by creating a virtual temporary group.
 
 - !!! Eroding a selection/group must erode at the CSG result, not the individual polygons.
+
+- Disallow the creation of zero area and self intersecting polygons both when creating a polygon and when editing
