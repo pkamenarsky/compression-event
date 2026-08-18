@@ -21,7 +21,10 @@ import {
   View,
 } from './types';
 
-export const FORMAT = 1;
+/** 2: transforms turn about the world origin rather than a polygon's centroid,
+ * and vertices carry nudges, so a format-1 file would come back the right shape
+ * in the wrong place. */
+export const FORMAT = 2;
 
 export interface Saved {
   format: number

@@ -119,10 +119,18 @@ export const EMPTY_TRANSFORM: Transform = {
  * The points as they were drawn, and what has happened to them since. A
  * transform never rewrites the points — that is what lets it be re-read,
  * composed with the next one, and interpolated between versions.
+ *
+ * `nudges` runs alongside `points`, one for each, and holds where a vertex has
+ * been dragged to relative to where erosion left it. It is separate from the
+ * points because erosion reads the points to work out its bisectors: a drag
+ * that wrote the point instead would swing the two neighbouring bisectors and
+ * take those vertices along with it. The transform is about the world origin,
+ * so both arrays are in one frame that nothing but a redraw depends on.
  */
 export interface Polygon {
   type: PolygonType
   points: Point[]
+  nudges: Point[]
   transform: Transform
 }
 

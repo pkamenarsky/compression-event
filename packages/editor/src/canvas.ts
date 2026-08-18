@@ -22,13 +22,13 @@ import {
   csg,
   hitPolygon,
   hitVertex,
+  placeVertex,
   resolved,
-  toLocal,
+  sourcePolygon,
   withinBox,
 } from './scene';
 import { theme } from './theme';
 import {
-  EMPTY_TRANSFORM,
   Point,
   Polygon,
   PolygonId,
@@ -72,10 +72,6 @@ export function worldCanvas(
 ): VNode {
   let el: HTMLCanvasElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
-
-  /** Where the pointer last was, in world units. Deliberately not state: the
-   * gestures that need it read it when they start, and nothing redraws for it. */
-  let pointer: Point | null = null;
 
   const cursor = (value: string) => {
     if (el) {
@@ -158,7 +154,11 @@ export function worldCanvas(
       }
     }
 
-    /** A vertex follows the cursor, written down in the polygon's own frame. */
+    /**
+     * A vertex follows the cursor. `placeVertex` decides whether that is a move
+     * of the point or a nudge on top of the erosion, and either way the vertex
+     * lands under the cursor and its neighbours do not move.
+     */
     function* draggingVertex(id: PolygonId, index: number): Op<void> {
       yield* select({
         dragging: pointerMoved(e => {
@@ -168,11 +168,8 @@ export function worldCanvas(
             const p = s.world.sourcePolygons.get(id);
             if (p === undefined) return s;
 
-            const points = [...p.points];
-            points[index] = toLocal(p, to);
-
             const sourcePolygons = new Map(s.world.sourcePolygons);
-            sourcePolygons.set(id, { ...p, points });
+            sourcePolygons.set(id, placeVertex(p, index, to));
 
             return { ...s, world: { ...s.world, sourcePolygons } };
           });
@@ -190,15 +187,17 @@ export function worldCanvas(
      */
     function* transforming(code: string, mode: Mode): Op<void> {
       const ids = selection();
-      const from = pointer;
+      const e = input.pointer();
 
-      if (ids.length === 0 || from === null) return;
+      if (ids.length === 0 || e === null) return;
 
-      const anchors = new Map<PolygonId, Anchor>();
+      const from = at(e);
+
+      const anchors = new Map<PolygonId, Transform>();
 
       for (const id of ids) {
         const p = world().sourcePolygons.get(id);
-        if (p !== undefined) anchors.set(id, { transform: p.transform, own: centroid(p.points) });
+        if (p !== undefined) anchors.set(id, p.transform);
       }
 
       // One pivot for the whole selection, so several polygons turn together
@@ -215,11 +214,11 @@ export function worldCanvas(
           update(s => {
             const sourcePolygons = new Map(s.world.sourcePolygons);
 
-            for (const [id, anchor] of anchors) {
+            for (const [id, was] of anchors) {
               const p = sourcePolygons.get(id);
               if (p === undefined) continue;
 
-              sourcePolygons.set(id, { ...p, transform: mode(anchor, pivot, from, to) });
+              sourcePolygons.set(id, { ...p, transform: mode(was, pivot, from, to) });
             }
 
             return { ...s, world: { ...s.world, sourcePolygons } };
@@ -250,7 +249,7 @@ export function worldCanvas(
         const id = s.world.nextId;
         const sourcePolygons = new Map(s.world.sourcePolygons);
 
-        sourcePolygons.set(id, { type: 'level', points, transform: EMPTY_TRANSFORM });
+        sourcePolygons.set(id, sourcePolygon('level', points));
 
         return {
           ...s,
@@ -342,11 +341,10 @@ export function worldCanvas(
             key: input.keyDown,
             press: pointerPressed(),
 
-            // Never resumes. It is here to keep the pointer known and the
-            // rubber band moving for as long as nothing else is going on.
+            // Never resumes. It is here to keep the rubber band moving for as
+            // long as nothing else is going on; where the pointer is, is the
+            // input bus' business and is known whatever is running.
             tracking: pointerMoved(e => {
-              pointer = at(e);
-
               const l = local();
               if (l.draft !== null) setLocal({ ...l, draft: { ...l.draft, at: at(e, true) } });
             }),
@@ -423,40 +421,36 @@ const EMPTY_LOCAL: Local = { marquee: null, draft: null };
 // The modal transforms
 // -----------------------------------------------------------------------------
 
-/** A polygon's transform as it was when the key went down, and its own pivot. */
-interface Anchor {
-  transform: Transform
-  own: Point
-}
-
-type Mode = (anchor: Anchor, pivot: Point, from: Point, to: Point) => Transform;
+/** `was` is the transform as it stood when the key went down, so that every
+ * move recomputes from there rather than from the last frame. */
+type Mode = (was: Transform, pivot: Point, from: Point, to: Point) => Transform;
 
 /**
- * A polygon turns and scales about its own centroid, so moving the selection
- * about a shared pivot means carrying that centroid around the pivot as well —
- * otherwise several polygons would each spin on the spot.
+ * A transform turned by `turn` and scaled by `factor` about `pivot`, which is
+ * to say `pivot + factor·R·(p - pivot)` composed onto it.
+ *
+ * Because a transform is about the world origin this is just the composition
+ * written out, and one pivot serves the whole selection. When transforms were
+ * about each polygon's own centroid this had to carry that centroid around the
+ * pivot by hand to stop several polygons each spinning on the spot.
  */
-function orbit(anchor: Anchor, pivot: Point, turn: number, factor: number): Transform {
-  const { transform: t, own } = anchor;
-
-  const cx = own.x + t.translation.x - pivot.x;
-  const cy = own.y + t.translation.y - pivot.y;
-
+function orbit(t: Transform, pivot: Point, turn: number, factor: number): Transform {
   const c = Math.cos(turn), s = Math.sin(turn);
+  const dx = t.translation.x - pivot.x, dy = t.translation.y - pivot.y;
 
   return {
     ...t,
     rotation: t.rotation + turn,
     scale: t.scale * factor,
     translation: {
-      x: pivot.x + (cx * c - cy * s) * factor - own.x,
-      y: pivot.y + (cx * s + cy * c) * factor - own.y,
+      x: pivot.x + (dx * c - dy * s) * factor,
+      y: pivot.y + (dx * s + dy * c) * factor,
     },
   };
 }
 
 const TRANSFORMS: Record<string, Mode> = {
-  KeyT: ({ transform: t }, _pivot, from, to) => ({
+  KeyT: (t, _pivot, from, to) => ({
     ...t,
     translation: {
       x: t.translation.x + to.x - from.x,
@@ -464,22 +458,22 @@ const TRANSFORMS: Record<string, Mode> = {
     },
   }),
 
-  KeyR: (anchor, pivot, from, to) => orbit(
-    anchor,
+  KeyR: (t, pivot, from, to) => orbit(
+    t,
     pivot,
     Math.atan2(to.y - pivot.y, to.x - pivot.x)
       - Math.atan2(from.y - pivot.y, from.x - pivot.x),
     1,
   ),
 
-  KeyS: (anchor, pivot, from, to) => {
+  KeyS: (t, pivot, from, to) => {
     const was = Math.hypot(from.x - pivot.x, from.y - pivot.y);
     const now = Math.hypot(to.x - pivot.x, to.y - pivot.y);
 
-    return was < 1e-6 ? anchor.transform : orbit(anchor, pivot, 0, now / was);
+    return was < 1e-6 ? t : orbit(t, pivot, 0, now / was);
   },
 
-  KeyE: ({ transform: t }, _pivot, from, to) => ({
+  KeyE: (t, _pivot, from, to) => ({
     ...t,
     erosion: t.erosion + to.y - from.y,
   }),
@@ -605,7 +599,7 @@ function polygons(
       ? theme.picked
       : it.polygon.type === 'solid' ? theme.solid : theme.level;
 
-    ctx.lineWidth = picked ? 2 : 1;
+    ctx.lineWidth = picked ? 2 : 0.5;
     ctx.setLineDash(it.polygon.type === 'solid' ? [5, 3] : []);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -637,7 +631,7 @@ function set(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
   }
 
   ctx.strokeStyle = theme.csg;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
   ctx.stroke();
 }

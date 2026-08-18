@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
+import { sourcePolygon } from './scene';
 import { EMPTY_TRANSFORM, EditorState, initialState } from './types';
 
 function world(): EditorState {
   const s = initialState({
     sourcePolygons: new Map([
       [0, {
-        type: 'level' as const,
-        points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
+        ...sourcePolygon('level', [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]),
         transform: EMPTY_TRANSFORM,
       }],
       [7, {
-        type: 'solid' as const,
-        points: [{ x: 4, y: 4 }, { x: 8, y: 4 }, { x: 8, y: 8 }],
+        ...sourcePolygon('solid', [{ x: 4, y: 4 }, { x: 8, y: 4 }, { x: 8, y: 8 }]),
+        nudges: [{ x: 0, y: 0 }, { x: 1, y: -1 }, { x: 0, y: 0 }],
         transform: { translation: { x: 3, y: -2 }, scale: 1.5, rotation: 0.25, erosion: 2 },
       }],
     ]),

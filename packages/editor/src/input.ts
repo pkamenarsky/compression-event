@@ -21,13 +21,27 @@ export const SHIFT = ['ShiftLeft', 'ShiftRight'];
 export interface Input {
   keyDown: Signal<KeyboardEvent>
   keyUp: Signal<KeyboardEvent>
-  /** Installs the listeners and gives back the way to remove them. */
+  /**
+   * The last pointer event seen anywhere, or nothing before the pointer has
+   * moved at all.
+   *
+   * A gesture started by a key press has to know where the cursor already is,
+   * and it cannot have been the one watching — it did not exist yet. Tracking
+   * this in whichever branch happens to be waiting does not work: that branch
+   * is torn down for as long as a gesture runs, so the position stops being
+   * updated exactly while the cursor is doing the most moving, and the next
+   * gesture starts from wherever the last one began. Hence one listener here,
+   * alive for as long as the editor is.
+   */
+  pointer: () => PointerEvent | null
   listen: () => () => void
 }
 
 export function createInput(): Input {
   const keyDown = signal<KeyboardEvent>();
   const keyUp = signal<KeyboardEvent>();
+
+  let pointer: PointerEvent | null = null;
 
   function onKeyDown(e: KeyboardEvent) {
     keyDown.emit(e);
@@ -37,17 +51,24 @@ export function createInput(): Input {
     keyUp.emit(e);
   }
 
+  function onPointerMove(e: PointerEvent) {
+    pointer = e;
+  }
+
   return {
     keyDown,
     keyUp,
+    pointer: () => pointer,
 
     listen: () => {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
+      window.addEventListener('pointermove', onPointerMove);
 
       return () => {
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
+        window.removeEventListener('pointermove', onPointerMove);
       };
     },
   };
