@@ -727,3 +727,10 @@ is the most likely thing to need revisiting once worlds get long.
 **Strip layout at scale.** Twenty versions across three branches will not fit.
 Scrolling plus collapsing untouched runs, settled against a real strip rather
 than on paper.
+
+## TODOS / Questions
+
+- Undo "`worldset` already keeps both — `Entry.source` is the polygon exactly as it came
+in, and `Entry.shape` is a simplified copy" after enforcing non-self-intersection invariant
+
+- How many false positive keyframes can theoretically be generated during the topology event search?
