@@ -1,9 +1,18 @@
+import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 import {
+  Op,
+  OpIntersect,
+  OpSubtract,
+  OpUnion,
   Point,
   Ring,
   Shape,
+  SourceRef,
+  Tag,
+  TaggedShape,
   area,
+  combineTagged,
   contains,
   decompose,
   intersect,
@@ -425,5 +434,322 @@ describe('degenerate input', () => {
     const far = shapeArea(union(at(100000, 100000), at(100002, 100002)));
 
     expect(far).toBeCloseTo(near, 6);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Provenance
+// -----------------------------------------------------------------------------
+
+/** Where a tag says its point is, computed from the input alone. */
+function reconstruct(a: Shape, b: Shape, tag: Tag): Point {
+  const shape = (r: SourceRef) => (r.shape === 0 ? a : b)[r.ring];
+
+  if (tag.kind === 'vertex') return shape(tag.at)[tag.at.index];
+
+  const edge = (r: SourceRef): [Point, Point] => {
+    const ring = shape(r);
+    return [ring[r.index], ring[(r.index + 1) % ring.length]];
+  };
+
+  const [p, q] = edge(tag.a), [u, v] = edge(tag.b);
+  const rx = q.x - p.x, ry = q.y - p.y;
+  const sx = v.x - u.x, sy = v.y - u.y;
+  const d = rx * sy - ry * sx;
+  const t = ((u.x - p.x) * sy - (u.y - p.y) * sx) / d;
+
+  return { x: p.x + rx * t, y: p.y + ry * t };
+}
+
+function tagKeys(r: TaggedShape): string[][] {
+  const key = (t: Tag) => t.kind === 'vertex'
+    ? `V${t.at.shape}.${t.at.ring}.${t.at.index}`
+    : `X(${t.a.shape}.${t.a.ring}.${t.a.index},${t.b.shape}.${t.b.ring}.${t.b.index})`;
+
+  return r.rings.map((_ring, i) => r.tags[i].map(key));
+}
+
+function rotated(ring: Ring, deg: number, c: Point): Ring {
+  const a = deg * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+
+  return ring.map(p => ({
+    x: c.x + (p.x - c.x) * cs - (p.y - c.y) * sn,
+    y: c.y + (p.x - c.x) * sn + (p.y - c.y) * cs,
+  }));
+}
+
+/** The room and the pillar straddling its top edge, from docs/versioning.md. */
+const room = rect(0, -200, 400, 200);
+const pillar = (deg: number) => rotated(rect(100, -100, 40, 200), deg, { x: 120, y: 0 });
+
+describe('provenance', () => {
+  test('every point has exactly one tag', () => {
+    const r = combineTagged([rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpUnion);
+
+    expect(r.tags.length).toBe(r.rings.length);
+    r.rings.forEach((ring, i) => expect(r.tags[i].length).toBe(ring.length));
+  });
+
+  test('a tag reconstructs its point from the input alone', () => {
+    const cases: [Shape, Shape, Op][] = [
+      [[rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpUnion],
+      [[rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpSubtract],
+      [[rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpIntersect],
+      [[rect(0, 0, 10, 10)], [rect(3, 3, 4, 4)], OpSubtract],
+      [[rect(0, 0, 10, 10), rect(20, 0, 10, 10)], [rect(5, 5, 20, 2)], OpSubtract],
+      [[room], [pillar(0)], OpSubtract],
+      [[room], [pillar(37)], OpSubtract],
+      [[room], [pillar(90)], OpSubtract],
+    ];
+
+    for (const [a, b, op] of cases) {
+      const r = combineTagged(a, b, op);
+
+      r.rings.forEach((ring, i) => ring.forEach((p, k) => {
+        const q = reconstruct(a, b, r.tags[i][k]);
+        expect([round(q.x), round(q.y)]).toEqual([round(p.x), round(p.y)]);
+      }));
+    }
+  });
+
+  test('tags name the input, so they survive the geometry moving', () => {
+    // Sliding the second rect leaves the arrangement's topology alone, so the
+    // same points are the same points however far they have travelled.
+    const at = (dx: number) =>
+      tagKeys(combineTagged([rect(0, 0, 10, 10)], [rect(5 + dx, 5, 10, 10)], OpUnion));
+
+    expect(at(0)).toEqual(at(2));
+    expect(at(0)).toEqual(at(-1.5));
+  });
+
+  test('the same input always gives the same tags', () => {
+    const once = () => tagKeys(combineTagged([room], [pillar(37)], OpSubtract));
+    expect(once()).toEqual(once());
+  });
+
+  test('a crossing is named by the two edges that make it', () => {
+    // Two unit-offset rects: one crossing on each operand's edge pair.
+    const r = combineTagged([rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpUnion);
+
+    expect(tagKeys(r)).toEqual([[
+      'V0.0.0', 'V0.0.1',
+      'X(0.0.1,1.0.0)',
+      'V1.0.1', 'V1.0.2', 'V1.0.3',
+      'X(0.0.2,1.0.3)',
+      'V0.0.3',
+    ]]);
+  });
+
+  test('a pillar turning through a wall hands its crossings from edge to edge', () => {
+    // The wall is cut by exactly two crossings at every angle, but not always
+    // by the same two edges: each corner sweeping through the wall retires one
+    // crossing and starts another.
+    const crossings = (deg: number) =>
+      tagKeys(combineTagged([room], [pillar(deg)], OpSubtract))[0]
+        .filter(k => k.startsWith('X'))
+        .sort();
+
+    const before = ['X(0.0.2,1.0.1)', 'X(0.0.2,1.0.3)'];
+    const during = ['X(0.0.2,1.0.0)', 'X(0.0.2,1.0.2)'];
+
+    expect(crossings(0)).toEqual(before);
+    expect(crossings(45)).toEqual(before);
+    expect(crossings(78)).toEqual(before);
+    expect(crossings(80)).toEqual(during);
+    expect(crossings(90)).toEqual(during);
+    expect(crossings(101)).toEqual(during);
+    expect(crossings(103)).toEqual(before);
+    expect(crossings(180)).toEqual(before);
+  });
+
+  test('the handoff is a real event, and bisection finds it', () => {
+    // A corner of the pillar reaches the wall at atan(100/20).
+    const want = Math.atan2(100, 20) * 180 / Math.PI;
+
+    const moved = (deg: number) =>
+      tagKeys(combineTagged([room], [pillar(deg)], OpSubtract))[0]
+        .includes('X(0.0.2,1.0.0)');
+
+    let lo = 45, hi = 90;
+    while (hi - lo > 1e-9) {
+      const mid = (lo + hi) / 2;
+      if (moved(mid)) hi = mid;
+      else lo = mid;
+    }
+
+    expect(lo).toBeCloseTo(want, 6);
+  });
+
+  test('comparing only the endpoints invents a swap that never happens', () => {
+    // Half a turn leaves the pillar looking identical and the tag set
+    // unchanged, but with the two crossings on opposite sides of the hole — the
+    // ordering conflict docs/versioning.md is built around. The path between
+    // them contains no swap at all: the tags die and are reborn twice.
+    const ring = (deg: number) =>
+      tagKeys(combineTagged([room], [pillar(deg)], OpSubtract))[0]
+        .filter(k => k.startsWith('X'));
+
+    expect(ring(0)).toEqual(['X(0.0.2,1.0.1)', 'X(0.0.2,1.0.3)']);
+    expect(ring(180)).toEqual(['X(0.0.2,1.0.3)', 'X(0.0.2,1.0.1)']);
+
+    const survives = (k: string) =>
+      [0, 45, 78, 90, 101, 135, 180].every(d => ring(d).includes(k));
+
+    expect(survives('X(0.0.2,1.0.1)')).toBe(false);
+    expect(survives('X(0.0.2,1.0.3)')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The morph property
+//
+// What the bake promises the vertex shader: inside a stretch where the
+// arrangement has not changed, the tags taken once at the stretch's start are
+// enough to rebuild the whole result at any moment inside it, from the input
+// alone. That is the shader's entire job, so it is the property worth holding.
+// -----------------------------------------------------------------------------
+
+interface Tr {
+  tx: number
+  ty: number
+  rot: number
+  scale: number
+  erosion: number
+}
+
+/** Every vertex along its bisector, scaled so each edge stays parallel to
+ * where it was. Bisectors come off the base ring and never move: the editor's
+ * erode, per-vertex and linear in depth. */
+function eroded(ring: Ring, d: number): Ring {
+  const n = ring.length;
+
+  const normal = (i: number): Point => {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l = Math.hypot(dx, dy);
+
+    return { x: dy / l, y: -dx / l };
+  };
+
+  return ring.map((p, i) => {
+    const m = normal((i - 1 + n) % n), q = normal(i);
+    const k = 1 + m.x * q.x + m.y * q.y;
+
+    return { x: p.x + d * (m.x + q.x) / k, y: p.y + d * (m.y + q.y) / k };
+  });
+}
+
+/** `p(t) = apply(transform, local + erosion * bisector)`, straight out of the
+ * bake section of docs/versioning.md. */
+function place(base: Ring, tr: Tr): Ring {
+  const a = tr.rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+
+  return eroded(base, tr.erosion).map(p => ({
+    x: tr.tx + tr.scale * (p.x * c - p.y * s),
+    y: tr.ty + tr.scale * (p.x * s + p.y * c),
+  }));
+}
+
+/** Components, not positions: rotation turns rather than cutting the corner. */
+function lerpTr(u: Tr, v: Tr, t: number): Tr {
+  const at = (x: number, y: number) => x + (y - x) * t;
+
+  return {
+    tx: at(u.tx, v.tx),
+    ty: at(u.ty, v.ty),
+    rot: at(u.rot, v.rot),
+    scale: at(u.scale, v.scale),
+    erosion: at(u.erosion, v.erosion),
+  };
+}
+
+const bases: Ring[] = [
+  rect(-45, -30, 90, 60),
+  [{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: -10 }, { x: -10, y: -10 },
+   { x: -10, y: 40 }, { x: -40, y: 40 }],
+  [{ x: -45, y: -40 }, { x: 45, y: -40 }, { x: 45, y: 40 }, { x: 15, y: 40 },
+   { x: 15, y: -10 }, { x: -15, y: -10 }, { x: -15, y: 40 }, { x: -45, y: 40 }],
+  [{ x: -15, y: -45 }, { x: 15, y: -45 }, { x: 15, y: -15 }, { x: 45, y: -15 },
+   { x: 45, y: 15 }, { x: 15, y: 15 }, { x: 15, y: 45 }, { x: -15, y: 45 },
+   { x: -15, y: 15 }, { x: -45, y: 15 }, { x: -45, y: -15 }, { x: -15, y: -15 }],
+];
+
+const arbTr = fc.record({
+  tx: fc.double({ min: -60, max: 60, noNaN: true }),
+  ty: fc.double({ min: -60, max: 60, noNaN: true }),
+  rot: fc.double({ min: -180, max: 180, noNaN: true }),
+  scale: fc.double({ min: 0.6, max: 1.6, noNaN: true }),
+  erosion: fc.double({ min: -6, max: 6, noNaN: true }),
+});
+
+const arbBase = fc.constantFrom(...bases);
+const arbOp = fc.constantFrom(OpUnion, OpSubtract, OpIntersect);
+
+describe('morph', () => {
+  test('tags rebuild the result anywhere inside a stable stretch', () => {
+    let checked = 0;
+
+    fc.assert(
+      fc.property(
+        arbBase,
+        arbBase,
+        arbOp,
+        arbTr,
+        arbTr,
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        (baseA, baseB, op, u, v, t) => {
+          const a: Shape = [baseA];
+          const at = (tr: Tr): Shape => [place(baseB, tr)];
+
+          const start = combineTagged(a, at(u), op);
+          const tr = lerpTr(u, v, t);
+          const now = combineTagged(a, at(tr), op);
+
+          // Anywhere the arrangement changed is an event, and the bake would
+          // have ended the stretch there rather than spanning it.
+          fc.pre(
+            JSON.stringify(tagKeys(start)) === JSON.stringify(tagKeys(now)),
+          );
+
+          const src = at(tr);
+
+          start.tags.forEach((ring, i) => ring.forEach((tag, k) => {
+            const p = reconstruct(a, src, tag);
+            const q = now.rings[i][k];
+
+            expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeLessThan(1e-6);
+          }));
+
+          checked++;
+
+          return true;
+        },
+      ),
+      { numRuns: 600 },
+    );
+
+    // Guard against the precondition quietly eating the whole run.
+    expect(checked).toBeGreaterThan(60);
+  });
+
+  test('tags name combinatorics, so moving the whole scene leaves them alone', () => {
+    fc.assert(
+      fc.property(arbBase, arbBase, arbOp, arbTr, arbTr, (baseA, baseB, op, b, move) => {
+        const rigid: Tr = { ...move, scale: 1, erosion: 0 };
+
+        const plain = combineTagged([baseA], [place(baseB, b)], op);
+
+        const shifted = combineTagged(
+          [place(baseA, rigid)],
+          [place(place(baseB, b), rigid)],
+          op,
+        );
+
+        expect(tagKeys(shifted)).toEqual(tagKeys(plain));
+
+        return true;
+      }),
+      { numRuns: 300 },
+    );
   });
 });

@@ -32,6 +32,32 @@ export type Shape = Ring[];
 /** Which of the two operands a point is in, and what that means for the answer. */
 export type Op = (a: boolean, b: boolean) => boolean;
 
+/**
+ * Where in the input something came from: which operand, which of its rings,
+ * and which vertex or edge of that ring. Vertices and edges share a numbering —
+ * edge `i` runs from vertex `i` to vertex `i + 1`.
+ */
+export interface SourceRef {
+  shape: 0 | 1
+  ring: number
+  index: number
+}
+
+/**
+ * Why an output point is where it is. Every point a boolean operation produces
+ * is one of exactly two things, and both name only the input, so the same point
+ * arrived at from differently placed geometry carries the same tag.
+ */
+export type Tag =
+  | { kind: 'vertex', at: SourceRef }
+  | { kind: 'cross', a: SourceRef, b: SourceRef }
+
+/** Rings, and a tag per point of each — `tags[r][i]` describes `rings[r][i]`. */
+export interface TaggedShape {
+  rings: Ring[]
+  tags: Tag[][]
+}
+
 export const OpUnion: Op = (a, b) => a || b;
 export const OpSubtract: Op = (a, b) => a && !b;
 export const OpIntersect: Op = (a, b) => a && b;
@@ -64,6 +90,11 @@ export function xor(a: Shape, b: Shape): Shape {
  */
 export function simplify(a: Shape): Shape {
   return combine(a, [], (inA) => inA);
+}
+
+/** `simplify`, keeping provenance. Both operand slots of a tag name shape 0. */
+export function simplifyTagged(a: Shape): TaggedShape {
+  return combineTagged(a, [], inA => inA);
 }
 
 /** One self-intersecting loop as a set of loops that are not. */
@@ -136,6 +167,16 @@ function cross(a: Point, b: Point, p: Point): number {
 interface Seg {
   a: Point
   b: Point
+  /** The input edge this is a piece of. */
+  edge: SourceRef
+  ta: Tag
+  tb: Tag
+}
+
+/** A cut parameter along a segment, and what the point there is. */
+interface Param {
+  t: number
+  tag: Tag
 }
 
 /**
@@ -156,17 +197,60 @@ function scaleOf(segs: Seg[]): number {
   return Number.isFinite(d) && d > 0 ? d : 1;
 }
 
-function segments(shape: Shape): Seg[] {
+function segments(shape: Shape, which: 0 | 1): Seg[] {
   const out: Seg[] = [];
 
-  for (const ring of shape) {
+  for (let r = 0; r < shape.length; r++) {
+    const ring = shape[r];
+
     for (let i = 0; i < ring.length; i++) {
-      const a = ring[i], b = ring[(i + 1) % ring.length];
-      if (a.x !== b.x || a.y !== b.y) out.push({ a, b });
+      const j = (i + 1) % ring.length;
+      const a = ring[i], b = ring[j];
+      if (a.x === b.x && a.y === b.y) continue;
+
+      out.push({
+        a,
+        b,
+        edge: { shape: which, ring: r, index: i },
+        ta: { kind: 'vertex', at: { shape: which, ring: r, index: i } },
+        tb: { kind: 'vertex', at: { shape: which, ring: r, index: j } },
+      });
     }
   }
 
   return out;
+}
+
+// -----------------------------------------------------------------------------
+// Tags
+// -----------------------------------------------------------------------------
+
+function cmpRef(p: SourceRef, q: SourceRef): number {
+  return p.shape - q.shape || p.ring - q.ring || p.index - q.index;
+}
+
+/** Ordered, so that the same pair of edges names the same crossing either way
+ * round. */
+function crossTag(e: SourceRef, f: SourceRef): Tag {
+  return cmpRef(e, f) <= 0
+    ? { kind: 'cross', a: e, b: f }
+    : { kind: 'cross', a: f, b: e };
+}
+
+/**
+ * Which of two tags for the same point to keep. A point that is an input vertex
+ * is called that, whatever else happens to pass through it; among equals the
+ * lower reference wins, so the choice does not depend on the order the
+ * arrangement happened to be walked in.
+ */
+function betterTag(x: Tag, y: Tag): Tag {
+  if (x.kind !== y.kind) return x.kind === 'vertex' ? x : y;
+  if (x.kind === 'vertex' && y.kind === 'vertex') return cmpRef(x.at, y.at) <= 0 ? x : y;
+
+  const a = x as { kind: 'cross', a: SourceRef, b: SourceRef };
+  const b = y as { kind: 'cross', a: SourceRef, b: SourceRef };
+
+  return (cmpRef(a.a, b.a) || cmpRef(a.b, b.b)) <= 0 ? x : y;
 }
 
 /**
@@ -175,7 +259,7 @@ function segments(shape: Shape): Seg[] {
  * shared edge ends up split identically on both sides.
  */
 function split(segs: Seg[], eps: number): Seg[] {
-  const ts: number[][] = segs.map(() => [0, 1]);
+  const ts: Param[][] = segs.map(s => [{ t: 0, tag: s.ta }, { t: 1, tag: s.tb }]);
 
   for (let i = 0; i < segs.length; i++) {
     for (let j = i + 1; j < segs.length; j++) {
@@ -191,18 +275,30 @@ function split(segs: Seg[], eps: number): Seg[] {
     const len = Math.hypot(dx, dy);
     const tol = eps / Math.max(len, eps);
 
-    const sorted = ts[i].sort((p, q) => p - q);
-    const kept: number[] = [];
+    const sorted = ts[i].sort((p, q) => p.t - q.t);
+    const kept: Param[] = [];
 
-    for (const t of sorted) {
-      if (kept.length === 0 || t - kept[kept.length - 1] > tol) kept.push(t);
+    // Points that collapse together keep the first one's position and the best
+    // of their tags: three edges meeting is one point, not three.
+    for (const p of sorted) {
+      const last = kept[kept.length - 1];
+
+      if (last === undefined || p.t - last.t > tol) {
+        kept.push(p);
+      }
+      else {
+        last.tag = betterTag(last.tag, p.tag);
+      }
     }
 
     for (let k = 0; k + 1 < kept.length; k++) {
       const t0 = kept[k], t1 = kept[k + 1];
       out.push({
-        a: { x: a.x + dx * t0, y: a.y + dy * t0 },
-        b: { x: a.x + dx * t1, y: a.y + dy * t1 },
+        a: { x: a.x + dx * t0.t, y: a.y + dy * t0.t },
+        b: { x: a.x + dx * t1.t, y: a.y + dy * t1.t },
+        edge: segs[i].edge,
+        ta: t0.tag,
+        tb: t1.tag,
       });
     }
   }
@@ -211,7 +307,7 @@ function split(segs: Seg[], eps: number): Seg[] {
 }
 
 /** Parameters at which `s` and `u` meet, appended to their respective lists. */
-function intersectInto(s: Seg, u: Seg, ts: number[], us: number[], eps: number): void {
+function intersectInto(s: Seg, u: Seg, ts: Param[], us: Param[], eps: number): void {
   const rx = s.b.x - s.a.x, ry = s.b.y - s.a.y;
   const sx = u.b.x - u.a.x, sy = u.b.y - u.a.y;
   const d = rx * sy - ry * sx;
@@ -227,12 +323,14 @@ function intersectInto(s: Seg, u: Seg, ts: number[], us: number[], eps: number):
     const t0 = (qx * rx + qy * ry) / rr;
     const t1 = t0 + (sx * rx + sy * ry) / rr;
 
-    addParam(ts, t0);
-    addParam(ts, t1);
+    // A collinear overlap meets at the other segment's *endpoints*, so these
+    // are input vertices rather than crossings.
+    addParam(ts, t0, u.ta);
+    addParam(ts, t1, u.tb);
 
     const ss = sx * sx + sy * sy;
-    addParam(us, (-qx * sx - qy * sy) / ss);
-    addParam(us, (rx * sx + ry * sy - qx * sx - qy * sy) / ss);
+    addParam(us, (-qx * sx - qy * sy) / ss, s.ta);
+    addParam(us, (rx * sx + ry * sy - qx * sx - qy * sy) / ss, s.tb);
 
     return;
   }
@@ -246,12 +344,14 @@ function intersectInto(s: Seg, u: Seg, ts: number[], us: number[], eps: number):
   const tol = eps / Math.max(rl, sl, eps);
   if (t < -tol || t > 1 + tol || u0 < -tol || u0 > 1 + tol) return;
 
-  addParam(ts, t);
-  addParam(us, u0);
+  const tag = crossTag(s.edge, u.edge);
+
+  addParam(ts, t, tag);
+  addParam(us, u0, tag);
 }
 
-function addParam(ts: number[], t: number): void {
-  if (t > 0 && t < 1) ts.push(t);
+function addParam(ts: Param[], t: number, tag: Tag): void {
+  if (t > 0 && t < 1) ts.push({ t, tag });
 }
 
 // -----------------------------------------------------------------------------
@@ -260,7 +360,17 @@ function addParam(ts: number[], t: number): void {
 
 /** Any of the above, and the only thing that actually does the work. */
 export function combine(a: Shape, b: Shape, op: Op): Shape {
-  const raw = [...segments(a), ...segments(b)];
+  return combineTagged(a, b, op).rings;
+}
+
+/**
+ * `combine`, keeping every output point's provenance. The bake needs to know
+ * which points of one version's result are the same points as in the next, and
+ * position cannot answer that: geometry moves. A tag names only the input, so
+ * matching is exact for as long as the tag set and their ring order hold.
+ */
+export function combineTagged(a: Shape, b: Shape, op: Op): TaggedShape {
+  const raw = [...segments(a, 0), ...segments(b, 1)];
   const scale = scaleOf(raw);
   const snap = scale * 1e-9;
   const segs = split(raw, snap);
@@ -289,7 +399,9 @@ export function combine(a: Shape, b: Shape, op: Op): Shape {
 
     // Orient so the answer's interior is on the left. Coincident edges of the
     // two operands land on the same directed segment and collapse to one.
-    const dir = inLeft ? s : { a: s.b, b: s.a };
+    const dir: Seg = inLeft
+      ? s
+      : { a: s.b, b: s.a, edge: s.edge, ta: s.tb, tb: s.ta };
     const key = keyOf(dir.a, snap) + '|' + keyOf(dir.b, snap);
 
     if (seen.has(key)) continue;
@@ -311,40 +423,49 @@ function keyOf(p: Point, snap: number): string {
  * it traces each face separately instead of driving straight through the
  * crossing and coming back out as one self-intersecting loop.
  */
-function chain(segs: Seg[], snap: number): Shape {
+function chain(segs: Seg[], snap: number): TaggedShape {
   const nodes: Point[] = [];
+  const tags: Tag[] = [];
   const byKey = new Map<string, number>();
 
-  const node = (p: Point): number => {
+  const node = (p: Point, tag: Tag): number => {
     const k = keyOf(p, snap);
     const found = byKey.get(k);
-    if (found !== undefined) return found;
+
+    if (found !== undefined) {
+      tags[found] = betterTag(tags[found], tag);
+      return found;
+    }
 
     const i = nodes.length;
     nodes.push(p);
+    tags.push(tag);
     byKey.set(k, i);
 
     return i;
   };
 
-  const from = segs.map(s => node(s.a));
-  const to = segs.map(s => node(s.b));
+  const from = segs.map(s => node(s.a, s.ta));
+  const to = segs.map(s => node(s.b, s.tb));
 
   const out: number[][] = nodes.map(() => []);
   segs.forEach((_s, i) => out[from[i]].push(i));
 
   const used = segs.map(() => false);
-  const rings: Shape = [];
+  const rings: Ring[] = [];
+  const ringTags: Tag[][] = [];
 
   for (let start = 0; start < segs.length; start++) {
     if (used[start]) continue;
 
     const ring: Ring = [];
+    const ringTag: Tag[] = [];
     let e = start;
 
     while (true) {
       used[e] = true;
       ring.push(nodes[from[e]]);
+      ringTag.push(tags[from[e]]);
 
       const at = to[e];
       if (at === from[start] && ring.length > 1) break;
@@ -355,10 +476,13 @@ function chain(segs: Seg[], snap: number): Shape {
       e = next;
     }
 
-    if (ring.length >= 3 && Math.abs(signedArea2(ring)) > snap * snap) rings.push(ring);
+    if (ring.length >= 3 && Math.abs(signedArea2(ring)) > snap * snap) {
+      rings.push(ring);
+      ringTags.push(ringTag);
+    }
   }
 
-  return rings;
+  return { rings, tags: ringTags };
 }
 
 function successor(
