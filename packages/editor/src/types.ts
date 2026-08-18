@@ -1,15 +1,15 @@
 import { Point, PolygonType } from '@ce/game/world';
+import { AABB } from './aabb';
 
 /** The world is the game's; the editor only ever holds one. */
 export * from '@ce/game/world';
 
-export function emptyWorld(): World {
-  return {
-    paths: [],
-    versions: [],
-    artefacts: [],
-  };
-}
+export const EMPTY_WORLD: World = {
+  sourcePolygons: new Map(),
+  nextId: 0,
+
+  versions: []
+};
 
 // -----------------------------------------------------------------------------
 // Settings — what the editor does, rather than what the world is
@@ -107,21 +107,44 @@ export function resized(view: View, width: number, height: number, dpr: number):
 // The store
 // -----------------------------------------------------------------------------
 
+export interface Transform {
+  translation: { x: number, y: number }
+  scale: { x: number, y: number }
+  erosion: number
+  rotation: number
+}
+
+export const EMPTY_TRANSFORM: Transform = {
+  translation: { x: 0, y: 0 },
+  scale: { x: 0, y: 0 },
+  erosion: 0,
+  rotation: 0
+};
+
 export interface Polygon {
   type: PolygonType
   points: Point
+  origin: Point
+  transform: Transform
 }
 
 export interface Group {
-  children: (Polygon | Group)[]
+  type: 'group'
+  children: (PolygonId | Group)[]
+  transform: Transform
+  aabb: AABB
 }
 
 export interface Version {
-  groups: Group[]
-  expanded: Polygon[]
+  children: (PolygonId | Group)[]
 }
 
+type PolygonId = number;
+
 export interface World {
+  sourcePolygons: Map<PolygonId, Polygon>
+  nextId: PolygonId
+
   versions: Version[]
 }
 

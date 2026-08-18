@@ -7,7 +7,10 @@ import { resolve } from 'path'
 export default defineConfig({
   server: {
     host: true, // Expose to all network interfaces
-    port: 3000,
+
+    // 3000 by day; PORT lets a second server come up beside it rather than
+    // fight it for the port
+    port: Number(process.env.PORT) || 3000,
   },
   build: {
     target: 'esnext',

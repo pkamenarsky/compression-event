@@ -42,19 +42,19 @@ export const OpXor: Op = (a, b) => a !== b;
 // -----------------------------------------------------------------------------
 
 export function union(a: Shape, b: Shape): Shape {
-  return boolean(a, b, OpUnion);
+  return combine(a, b, OpUnion);
 }
 
 export function subtract(a: Shape, b: Shape): Shape {
-  return boolean(a, b, OpSubtract);
+  return combine(a, b, OpSubtract);
 }
 
 export function intersect(a: Shape, b: Shape): Shape {
-  return boolean(a, b, OpIntersect);
+  return combine(a, b, OpIntersect);
 }
 
 export function xor(a: Shape, b: Shape): Shape {
-  return boolean(a, b, OpXor);
+  return combine(a, b, OpXor);
 }
 
 /**
@@ -63,7 +63,7 @@ export function xor(a: Shape, b: Shape): Shape {
  * the nonzero rule gave the input.
  */
 export function simplify(a: Shape): Shape {
-  return boolean(a, [], (inA) => inA);
+  return combine(a, [], (inA) => inA);
 }
 
 /** One self-intersecting loop as a set of loops that are not. */
@@ -258,7 +258,8 @@ function addParam(ts: number[], t: number): void {
 // Classification and chaining
 // -----------------------------------------------------------------------------
 
-function boolean(a: Shape, b: Shape, op: Op): Shape {
+/** Any of the above, and the only thing that actually does the work. */
+export function combine(a: Shape, b: Shape, op: Op): Shape {
   const raw = [...segments(a), ...segments(b)];
   const scale = scaleOf(raw);
   const snap = scale * 1e-9;
