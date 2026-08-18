@@ -1,6 +1,8 @@
 import { Point, PolygonType } from '@ce/game/world';
 import { AABB } from './aabb';
 
+export type { Point, PolygonType };
+
 // -----------------------------------------------------------------------------
 // Settings — what the editor does, rather than what the world is
 // -----------------------------------------------------------------------------
@@ -98,25 +100,30 @@ export function resized(view: View, width: number, height: number, dpr: number):
 // -----------------------------------------------------------------------------
 
 export interface Transform {
-  translation: { x: number, y: number }
-  scale: { x: number, y: number }
-  erosion: number
+  translation: Point
+  /** Uniform: non-uniform scale does not commute with eroding. Identity is 1. */
+  scale: number
   rotation: number
+  /** How far each vertex has walked along its bisector. */
+  erosion: number
 }
 
 export const EMPTY_TRANSFORM: Transform = {
   translation: { x: 0, y: 0 },
-  scale: { x: 1, y: 1 },
+  scale: 1,
+  rotation: 0,
   erosion: 0,
-  rotation: 0
 };
 
+/**
+ * The points as they were drawn, and what has happened to them since. A
+ * transform never rewrites the points — that is what lets it be re-read,
+ * composed with the next one, and interpolated between versions.
+ */
 export interface Polygon {
   type: PolygonType
-  points: Point
-  origin: Point
+  points: Point[]
   transform: Transform
-  aabb: AABB
 }
 
 export interface Group {
@@ -130,7 +137,7 @@ export interface Version {
   children: (PolygonId | Group)[]
 }
 
-type PolygonId = number;
+export type PolygonId = number;
 
 export interface World {
   sourcePolygons: Map<PolygonId, Polygon>
@@ -154,6 +161,8 @@ export const EMPTY_WORLD: World = {
 export interface EditorState {
   world: World
   currentVersion: number
+  /** What the next transform applies to. */
+  selection: PolygonId[]
 
   settings: Settings
   view: View
@@ -167,6 +176,7 @@ export function initialState(world: World): EditorState {
   return {
     world,
     currentVersion: 0,
+    selection: [],
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',

@@ -97,6 +97,46 @@ export function simplifyTagged(a: Shape): TaggedShape {
   return combineTagged(a, [], inA => inA);
 }
 
+/**
+ * Every vertex walked along its bisector, scaled so that each edge ends up
+ * parallel to where it started. Positive depth shrinks the ring, whichever way
+ * it winds.
+ *
+ * The bisectors come off the ring as given and are not recomputed, so eroding
+ * by `a` and then by `b` lands exactly where eroding by `a + b` would. Nothing
+ * is clamped: erode far enough and the ring turns itself inside out, which the
+ * arrangement above copes with and the editor draws honestly.
+ */
+export function erode(ring: Ring, depth: number): Ring {
+  const n = ring.length;
+
+  if (n < 3 || depth === 0) return ring;
+
+  const inward = isCCW(ring) ? 1 : -1;
+
+  const normal = (i: number): Point => {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l = Math.hypot(dx, dy);
+
+    return l === 0 ? { x: 0, y: 0 } : { x: -dy / l * inward, y: dx / l * inward };
+  };
+
+  return ring.map((p, i) => {
+    const m = normal((i - 1 + n) % n), q = normal(i);
+    const k = 1 + m.x * q.x + m.y * q.y;
+
+    // A spike: the two edges double back on each other and the bisector runs
+    // off to infinity. Leave the vertex where it is rather than fling it.
+    if (k < 1e-6) return p;
+
+    return {
+      x: p.x + depth * (m.x + q.x) / k,
+      y: p.y + depth * (m.y + q.y) / k,
+    };
+  });
+}
+
 /** One self-intersecting loop as a set of loops that are not. */
 export function decompose(ring: Ring): Shape {
   return simplify([ring]);

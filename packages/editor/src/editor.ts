@@ -2,11 +2,13 @@ import { Value } from '@incpt/kontinuum';
 import { VNode, object, stateful } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 import { circle, g, path, rect, svg } from '@incpt/kontinuum-dom/svg';
+import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { selectionCanvas, worldCanvas } from './canvas';
-import { createInput, inputListener } from './input';
+import { worldCanvas } from './canvas';
+import { Input, createInput, inputListener, keyPressed } from './input';
+import { download } from './save';
 import { theme } from './theme';
-import { Tool, Update, World, initialState } from './types';
+import { EditorState, Tool, Update, World, initialState } from './types';
 
 /**
  * The editor: a canvas that draws the world, and the chrome floating above it.
@@ -33,13 +35,29 @@ export function editor(initial: World): VNode {
         },
         [
           inputListener(input),
+          saving(state, input),
 
-          worldCanvas(s.world, s.settings, s.view, input, update),
-          selectionCanvas(s.view, input),
-          toolbar(s.tool),
+          worldCanvas(s.world, s.settings, s.view, s.tool, s.selection, input, update),
+          toolbar(s.tool, update),
         ],
       ),
     );
+  });
+}
+
+/**
+ * `o` puts the whole state in a file. It exists so that a world which is doing
+ * something odd can be handed over as it is: the numbers that produced it, not
+ * a picture of the result.
+ */
+function saving(state: Value<EditorState>, input: Input): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(input, 'KeyO');
+
+      // Holding a key repeats it, and one press should be one file
+      if (!e.repeat) download(state());
+    }
   });
 }
 
@@ -91,11 +109,8 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
-/**
- * The tools, stacked the way Illustrator stacks them. Nothing is wired up yet:
- * the buttons show which tool is current and take no clicks.
- */
-function toolbar(tool: Value<Tool>): VNode {
+/** The tools, stacked the way Illustrator stacks them. */
+function toolbar(tool: Value<Tool>, update: Update): VNode {
   const width = BUTTON + 2 * PADDING;
   const height = TOOLS.length * BUTTON + (TOOLS.length - 1) * GAP + 2 * PADDING;
 
@@ -122,33 +137,45 @@ function toolbar(tool: Value<Tool>): VNode {
         stroke: theme.border,
       }),
 
-      ...TOOLS.map((spec, index) => toolButton(spec, index, tool)),
+      ...TOOLS.map((spec, index) => toolButton(spec, index, tool, update)),
     ],
   );
 }
 
-function toolButton(spec: ToolSpec, index: number, tool: Value<Tool>): VNode {
+function toolButton(
+  spec: ToolSpec,
+  index: number,
+  tool: Value<Tool>,
+  update: Update,
+): VNode {
   const active = () => tool() === spec.id;
   const y = PADDING + index * (BUTTON + GAP);
 
-  return g({ transform: `translate(${PADDING}, ${y})`, style: { cursor: 'pointer' } }, [
-    rect({
-      width: BUTTON,
-      height: BUTTON,
-      rx: 6,
-      fill: () => (active() ? theme.accent : 'transparent'),
-    }),
+  return g(
+    {
+      transform: `translate(${PADDING}, ${y})`,
+      style: { cursor: 'pointer' },
+      onclick: () => update(s => ({ ...s, tool: spec.id })),
+    },
+    [
+      rect({
+        width: BUTTON,
+        height: BUTTON,
+        rx: 6,
+        fill: () => (active() ? theme.accent : 'transparent'),
+      }),
 
-    g(
-      {
-        transform: `translate(${(BUTTON - 24) / 2}, ${(BUTTON - 24) / 2})`,
-        fill: 'none',
-        stroke: () => (active() ? theme.onAccent : theme.muted),
-        'stroke-width': 1.4,
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round',
-      },
-      spec.icon,
-    ),
-  ]);
+      g(
+        {
+          transform: `translate(${(BUTTON - 24) / 2}, ${(BUTTON - 24) / 2})`,
+          fill: 'none',
+          stroke: () => (active() ? theme.onAccent : theme.muted),
+          'stroke-width': 1.4,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+        spec.icon,
+      ),
+    ],
+  );
 }

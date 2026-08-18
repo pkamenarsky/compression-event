@@ -6,6 +6,14 @@ export const theme = {
   selection: '#5b8cff',
   selectionFill: 'rgba(91, 140, 255, 0.14)',
 
+  /** The polygons as drawn, and the set the game would see. */
+  level: '#7b8496',
+  solid: '#b0705f',
+  picked: '#5b8cff',
+  vertex: '#c8cad2',
+  draft: '#8fb4ff',
+  csg: '#f2c14e',
+
   /** The chrome floating above it. */
   panel: '#2a2b31',
   panelShadow: 'rgba(0, 0, 0, 0.45)',
