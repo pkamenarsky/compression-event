@@ -1,6 +1,6 @@
 import { root } from '@incpt/kontinuum-dom';
 
 import { editor } from './editor';
-import { emptyWorld } from './types';
+import { EMPTY_WORLD } from './types';
 
-root(document.getElementById('app')!, editor(emptyWorld()));
+root(document.getElementById('app')!, editor(EMPTY_WORLD));

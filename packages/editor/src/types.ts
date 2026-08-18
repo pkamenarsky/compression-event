@@ -1,16 +1,6 @@
 import { Point, PolygonType } from '@ce/game/world';
 import { AABB } from './aabb';
 
-/** The world is the game's; the editor only ever holds one. */
-export * from '@ce/game/world';
-
-export const EMPTY_WORLD: World = {
-  sourcePolygons: new Map(),
-  nextId: 0,
-
-  versions: []
-};
-
 // -----------------------------------------------------------------------------
 // Settings — what the editor does, rather than what the world is
 // -----------------------------------------------------------------------------
@@ -126,6 +116,7 @@ export interface Polygon {
   points: Point
   origin: Point
   transform: Transform
+  aabb: AABB
 }
 
 export interface Group {
@@ -147,6 +138,13 @@ export interface World {
 
   versions: Version[]
 }
+
+export const EMPTY_WORLD: World = {
+  sourcePolygons: new Map(),
+  nextId: 0,
+
+  versions: []
+};
 
 /**
  * Everything the editor is. Immutable throughout: a field that did not change
