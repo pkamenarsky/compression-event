@@ -106,6 +106,10 @@ export function restored(file: Saved): EditorState {
     settings: file.settings,
     view: file.view,
     tool: file.tool,
+
+    // Not in the file, and deliberately: it is derived, it is large, and it is
+    // stamped against a world that this one only resembles.
+    bake: { spans: new Map(), progress: null },
   };
 }
 

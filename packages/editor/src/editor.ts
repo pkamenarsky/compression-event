@@ -4,6 +4,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
+import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { Input, createInput, inputListener, keyPressed } from './input';
 import { download } from './save';
@@ -53,12 +54,14 @@ export function editor(initial: World): VNode {
             s.tool,
             s.selection,
             s.currentVersion,
+            s.bake,
             input,
             update,
           ),
 
           toolbar(s.tool, update),
           versionStrip(s.world, s.currentVersion, update),
+          bakeButton(state, s.world, s.bake, update),
         ],
       ),
     );
@@ -355,4 +358,163 @@ function eye(version: Value<Version>, update: Update, index: VersionId): VNode {
       ),
     ],
   );
+}
+
+// -----------------------------------------------------------------------------
+// The bake
+//
+// Under the version strip, because that is what it is about: one span per gap
+// between two nodes, and the count says how many of them are standing. An edit
+// does not clear anything by hand — a span carries the world it was baked
+// against, so `spanAt` stops answering for it and the count falls on its own.
+// -----------------------------------------------------------------------------
+
+const BAKE_HEIGHT = 52;
+
+function bakeButton(
+  state: Value<EditorState>,
+  world: Value<World>,
+  bake: Value<Bake>,
+  update: Update,
+): VNode {
+  const spans = VERSIONS - 1;
+  const running = () => bake().progress !== null;
+
+  const done = () => {
+    const b = bake(), w = world();
+    let n = 0;
+
+    for (let k = 0; k < spans; k++) {
+      if (spanAt(b, w, k) !== null) n++;
+    }
+
+    return n;
+  };
+
+  const label = () => (running()
+    ? `baking ${Math.round((bake().progress ?? 0) * 100)}%`
+    : `bake  ${done()} / ${spans}`);
+
+  return svg(
+    {
+      width: STRIP_WIDTH,
+      height: BAKE_HEIGHT,
+      viewBox: `0 0 ${STRIP_WIDTH} ${BAKE_HEIGHT}`,
+      style: {
+        position: 'absolute',
+        right: '12px',
+        top: `${12 + VERSIONS * ROW + 2 * PADDING + 8}px`,
+        filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
+      },
+    },
+    [
+      rect({
+        x: 0.5,
+        y: 0.5,
+        width: STRIP_WIDTH - 1,
+        height: BAKE_HEIGHT - 1,
+        rx: 8,
+        fill: theme.panel,
+        stroke: theme.border,
+      }),
+
+      g(
+        {
+          style: { cursor: 'pointer' },
+          onclick: () => {
+            if (!running()) start(state, update);
+          },
+        },
+        [
+          rect({
+            x: PADDING,
+            y: PADDING,
+            width: STRIP_WIDTH - 2 * PADDING,
+            height: 24,
+            rx: 6,
+            fill: () => (running() ? theme.border : theme.accent),
+          }),
+
+          text(
+            {
+              x: STRIP_WIDTH / 2,
+              y: PADDING + 16,
+              'text-anchor': 'middle',
+              fill: () => (running() ? theme.muted : theme.onAccent),
+              'font-family': 'system-ui, sans-serif',
+              'font-size': '12px',
+            },
+            label,
+          ),
+        ],
+      ),
+
+      // The bar reads as the spans it is filling: one tick per gap in the
+      // chain, so a stalled bake says which span it stalled in.
+      rect({
+        x: PADDING,
+        y: BAKE_HEIGHT - PADDING - 10,
+        width: STRIP_WIDTH - 2 * PADDING,
+        height: 6,
+        rx: 3,
+        fill: theme.border,
+      }),
+
+      rect({
+        x: PADDING,
+        y: BAKE_HEIGHT - PADDING - 10,
+        width: () => (STRIP_WIDTH - 2 * PADDING)
+          * (running() ? bake().progress ?? 0 : done() / spans),
+        height: 6,
+        rx: 3,
+        fill: () => (running() ? theme.accent : theme.csg),
+      }),
+
+      ...Array.from({ length: spans - 1 }, (_unused, i) => line({
+        x1: PADDING + (STRIP_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        y1: BAKE_HEIGHT - PADDING - 10,
+        x2: PADDING + (STRIP_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        y2: BAKE_HEIGHT - PADDING - 4,
+        stroke: theme.panel,
+        'stroke-width': 1,
+      })),
+    ],
+  );
+}
+
+/**
+ * The bake, run a slice at a time so the editor goes on drawing.
+ *
+ * A frame's worth of work, then the progress goes into the store and the
+ * browser gets its turn. Nothing guards against the world changing underneath
+ * it, because nothing has to: what comes out is stamped, and a span stamped
+ * against a world that has moved is simply not a span any more.
+ *
+ * The turn is a timeout rather than an animation frame. A frame is the better
+ * pacing and the worse promise: a hidden tab stops being given them, and a bake
+ * left half done because the author looked at something else is not a bake.
+ */
+function start(state: Value<EditorState>, update: Update): void {
+  const job = bakeAll(state().world);
+
+  const pump = () => {
+    const until = performance.now() + 12;
+
+    let step = job.next();
+
+    while (!step.done && performance.now() < until) {
+      step = job.next();
+    }
+
+    if (step.done) {
+      update(s => ({ ...s, bake: { spans: step.value, progress: null } }));
+      return;
+    }
+
+    update(s => ({ ...s, bake: { ...s.bake, progress: step.value } }));
+    setTimeout(pump, 0);
+  };
+
+  update(s => ({ ...s, bake: { ...s.bake, progress: 0 } }));
+  setTimeout(pump, 0);
 }

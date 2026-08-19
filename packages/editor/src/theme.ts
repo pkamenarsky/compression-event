@@ -34,6 +34,9 @@ export const theme = {
   source: '#6f7788',
   draft: '#8fb4ff',
   csg: '#f2c14e',
+  /** The bake played back: the same set, but the one the game would draw, so
+   * it is thinner and brighter than the editor's own answer sitting under it. */
+  replay: '#ffe98c',
 
   /** The chrome floating above it. */
   panel: '#2a2b31',

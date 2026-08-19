@@ -4,6 +4,7 @@ import { canvas } from '@incpt/kontinuum-dom/html';
 import { Op, select } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
+import { Bake, Frame, replayed } from './bake';
 import { Ring } from './geometry';
 import {
   Input,
@@ -75,6 +76,7 @@ export function worldCanvas(
   tool: Value<Tool>,
   selection: Value<PolygonId[]>,
   currentVersion: Value<VersionId>,
+  bake: Value<Bake>,
   input: Input,
   update: Update,
 ): VNode {
@@ -318,6 +320,39 @@ export function worldCanvas(
       setLocal({ ...l, draft: { points: [to], at: to } });
     }
 
+    /**
+     * The version last drawn, so that a switch knows where it came from. It is
+     * the effect's own memory rather than state: what is on screen is already
+     * at the new version, and this is only about the way there.
+     */
+    let shown: VersionId | null = null;
+
+    /**
+     * A version switch, watched rather than jumped. Runs the walk between the
+     * two on a clock and leaves `at` where the draw can find it; the geometry
+     * comes out of the bake, so a span that has not been baked simply plays
+     * nothing.
+     */
+    function playing(v: VersionId): void | (() => void) {
+      const was = shown;
+      shown = v;
+
+      if (was === null || was === v) return;
+
+      const started = performance.now();
+      const ms = REPLAY_MS * Math.abs(v - was);
+
+      let frame = requestAnimationFrame(function tick() {
+        const at = Math.min(1, (performance.now() - started) / ms);
+
+        setLocal({ ...local(), replay: at < 1 ? { from: was, to: v, at } : null });
+
+        if (at < 1) frame = requestAnimationFrame(tick);
+      });
+
+      return () => cancelAnimationFrame(frame);
+    }
+
     function picking(e: PointerEvent): void {
       const id = hitPolygon(resolveAt(world(), currentVersion()), at(e));
 
@@ -354,17 +389,30 @@ export function worldCanvas(
               tool(),
               selection(),
               currentVersion(),
+              bake(),
               local(),
             ] as const,
-            ([w, s, v, t, sel, at, l]) => {
+            ([w, s, v, t, sel, at, b, l]) => {
               if (el && ctx) {
                 const items = resolveAt(w, at);
 
                 set = live(set, items);
-                draw(el, ctx, v, layers(w, s, v, t, sel, at, l, items, runs(set)));
+
+                const played = l.replay === null
+                  ? null
+                  : replayed(b, w, l.replay.from, l.replay.to, l.replay.at);
+
+                draw(
+                  el,
+                  ctx,
+                  v,
+                  layers(w, s, v, t, sel, at, l, items, runs(set), played),
+                );
               }
             },
           ),
+
+          effect(currentVersion, v => playing(v)),
         ],
       ),
 
@@ -457,9 +505,33 @@ interface Local {
    * what makes dropping backward propagation affordable.
    */
   previewing: boolean
+  /** A version switch being watched go by, rather than jumped. */
+  replay: Replay | null
 }
 
-const EMPTY_LOCAL: Local = { marquee: null, draft: null, previewing: false };
+/**
+ * The walk from one version to another, as far along as it has got.
+ *
+ * It is local rather than in the store because it is not a fact about the
+ * document at all — nothing it does survives it, and it does not even change
+ * what is on screen underneath, which is already at `to`.
+ */
+interface Replay {
+  from: VersionId
+  to: VersionId
+  /** 0 to 1 over the whole walk, however many versions it crosses. */
+  at: number
+}
+
+const EMPTY_LOCAL: Local = {
+  marquee: null,
+  draft: null,
+  previewing: false,
+  replay: null,
+};
+
+/** How long one span takes to play. Slow enough to watch a room pinch in two. */
+const REPLAY_MS = 2000;
 
 // -----------------------------------------------------------------------------
 // The modal transforms
@@ -657,6 +729,7 @@ function layers(
   local: Local,
   items: Resolved[],
   outline: Point[][],
+  played: Frame | null,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -672,7 +745,12 @@ function layers(
   }
 
   out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
-  out.push(ctx => outlines(ctx, view, outline));
+  // out.push(ctx => outlines(ctx, view, outline));
+
+  // Over the editor's own answer, so the two can be read against each other:
+  // where they agree the thin line sits inside the thick one, and where the
+  // bake is part way between two versions it is visibly somewhere else.
+  if (played !== null) out.push(ctx => replay(ctx, view, played));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
@@ -806,6 +884,34 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
 
   ctx.strokeStyle = theme.csg;
   ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}
+
+/**
+ * The bake, played back: the same open runs, thinner and brighter, drawn from
+ * the buffers rather than from the world.
+ *
+ * Nothing about this consults the version on screen. That is the entire point —
+ * if it disagrees with the outline underneath it at the moment it arrives, the
+ * bake and the editor disagree, and it is the bake the game will get.
+ */
+function replay(ctx: CanvasRenderingContext2D, view: View, frame: Frame): void {
+  if (frame.length === 0) return;
+
+  ctx.beginPath();
+
+  for (const run of frame) {
+    run.points.forEach((p, i) => {
+      const q = toScreen(view, p);
+
+      if (i === 0) ctx.moveTo(q.x, q.y);
+      else ctx.lineTo(q.x, q.y);
+    });
+  }
+
+  ctx.strokeStyle = theme.replay;
+  ctx.lineWidth = 1.25;
   ctx.lineJoin = 'round';
   ctx.stroke();
 }

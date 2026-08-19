@@ -1,4 +1,5 @@
 import { Point, PolygonType } from '@ce/game/world';
+import type { Bake } from './bake';
 
 export type { Point, PolygonType };
 
@@ -231,6 +232,14 @@ export interface EditorState {
   settings: Settings
   view: View
   tool: Tool
+
+  /**
+   * What the game would be shipped, for the spans that have been baked. It is
+   * derived from the world, but it is expensive enough to be worth keeping and
+   * cheap enough to throw away: a span holds the world it was baked against, so
+   * an edit invalidates it rather than having to update it. See `bake.ts`.
+   */
+  bake: Bake
 }
 
 /** Everything that writes to the store goes through one of these. */
@@ -244,5 +253,6 @@ export function initialState(world: World): EditorState {
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
+    bake: { spans: new Map(), progress: null },
   };
 }
