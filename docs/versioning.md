@@ -128,72 +128,71 @@ stages in the same order as one reached from the root, and lands on the same
 bits. Bit-identity comes from fixed evaluation order, which the recursion gives
 by construction.
 
-### Nudges
+### Vertex edits
 
 `Edit.vertices` holds per-vertex displacements against the geometry the base
-resolved to, and a layer applies them **first** — before its own erosion, before
-its own transform. So eroding after nudging erodes the shape that was actually
-made, and a nudge is an ordinary part of the ring by the time anything else
-looks at it: erosion reads it, the CSG sees it, and it is subject to the same
-simplicity check as any other edit.
-
-They are held in the polygon's local frame, so a nudge turns with its polygon
+resolved to, in the polygon's local frame, so an edit turns with its polygon
 when an upstream version moves it.
 
-#### Dragging a vertex on an eroded polygon bakes the erosion
+They land on the **source** ring, always, and there is nothing else they could
+land on: erosion is a projection, and what it projects to is not editable. That
+is the next section.
 
-Nudging first is right, but it leaves the drag itself to answer for, because a
-displacement applied *after* an erosion makes that edge stop offsetting parallel
-to itself. Without a nudge, `a + d·b_a` and `b + d·b_b` keep the edge between them parallel
-to `ab` at every depth. Add a fixed displacement `n` to one end and the
-direction becomes `(b - a)(1 + dλ) + n`: the first term scales with the depth
-and the second does not, so scrubbing the erosion makes that wall pivot instead
-of retreating.
+### Erosion is a projection, not a stage
 
-So dragging a vertex of a polygon whose erosion is non-zero **resolves it
-first**: write the eroded ring into this version's vertex positions, set the
-layer's erosion to zero, and then drag as an ordinary edit. Everything after
-that is the un-eroded case — the vertex lands exactly under the cursor, nothing
-else moves at all, and there is no constraint on where it may go.
+A layer's erosion does not feed the layer above it. Resolution is
 
-The author's model is the whole reason for doing it this way. Somebody who has
-eroded a room and wants to move one corner has no notion of a pre-image and
-should not acquire one. Solving for the source point that erodes to the cursor
-is possible in closed form — the two adjacent edge lines have to be tangent to
-the circle of radius `d` about the target, which is elementary and exact to
-about 1e-14 — but it is undefined when the target comes within `d` of a
-neighbour, and it moves the two adjacent vertices, because their bisectors
-genuinely depend on the point being dragged. Both are correct geometry and
-neither is explicable to somebody who just wants to move a corner.
+```
+source(k) = transform_k(source(k - 1) + vertexEdits_k)
+shape(k)  = erode(source(k), depth_k)
+```
 
-What is lost by baking is the depth, not accuracy. The bake is one rounding, at
-about 1e-16 relative, and it does not compound. But the layer no longer records
-*how far* it eroded, so that slider cannot be scrubbed back afterwards — the
-version now says what the shape is rather than how it got there. This is the
-same trade as hand-moving the vertices to shrink a room, which is a first-class
-thing to do, and it is not delinking: the polygon still inherits from upstream,
-and the positions are still an edit like any other.
+so `source` is the thing that flows down the chain and `shape` is a read-only
+view taken at each version. Version *k+1* erodes `source(k)`, never `shape(k)`.
 
-It should be visible when it happens. Silently zeroing a parameter the author
-set is the kind of thing that is discovered a week later.
+A grouped polygon projects twice within one version's read — its own depth on its
+own ring, then the group's depth on the union of those — and that is still
+terminal in the sense that matters: nothing is written back, and version *k+1*
+still starts from `source(k)`.
 
-**Only `Original` vertices take nudges.** A crossing has no degree of freedom of
-its own — it is a function of the four endpoints of two edges — so there is
-nothing to write to. Giving it a slot would mean giving it an identity,
-`Cross(a, b)`, that geometry destroys rather than the author: slide a member and
-the crossing stops existing, leaving exactly the inert orphaned edit that
-Lifetime rules out. Cascading it away on a drag is worse than the orphan, because
-every other cascade in the system fires from an explicit removal.
+This is the single decision that most of the rest of the document used to be
+working around, and almost every hard case dissolves into it:
 
-This only arises on the boundary of an eroded group, since a polygon's own ring
-has nothing but its own vertices. Crossings there draw as a different kind of
-handle and are not grabbable. Shaping the outline is done by inserting a vertex
-on a member's edge — a real edit,
-on a real ring, minting a real id — after which the crossing moves as a
-consequence, continuously. This keeps a useful invariant for the bake: the set
-of things that can be dragged and the set of things that carry stable ids are
-the same set, which is what lets crossings appear and disappear at keyframes
-with no edit ever needing to be cleaned up.
+- **Source vertices are immortal.** Nothing an erosion does can delete one,
+  because erosion never writes back. No tombstoned vertices, no arbitrary choice
+  of which of a merged pair survives, no downstream edit left naming an id that
+  stopped arriving, no cascade firing off a slider drag.
+- **Erosion is always reversible.** The depth is a number in a layer and stays
+  one. Scrub it back and the shape comes back, at any point, forever.
+- **Nothing has to be baked**, so the trilemma between placing a vertex exactly,
+  moving only that vertex, and keeping the depth scrubbable never arises — the
+  drag is on the source, where all three are free.
+- **Group erosion is just a depth on the group's transform.** The union is
+  formed and offset at read time. There is nothing to write into the members,
+  which is what the whole rejected per-source-edge encoding was trying to do.
+- **Crossings need no identity.** They only ever appear in a projection, and a
+  projection has no handles.
+- **Depths do not accumulate**, so none of the algebra about whether offsetting
+  by *a* then *b* equals offsetting by *a + b* applies. To shrink progressively
+  the author raises the depth version by version — 2, 5, 9, 14 — which is more
+  direct to author than compounding and exactly reproducible.
+
+Non-uniform scale comes out right for free: the transform chain reshapes
+`source`, and the single offset at the end is a true constant-width offset of
+whatever shape that produced.
+
+### Editing an eroded polygon
+
+Clicking an eroded polygon shows its **source ring as a ghost, with the
+handles on it**. The eroded outline draws solid and carries no handles at all.
+Drag a source vertex and the projection updates live underneath.
+
+The eroded points are not editable and there is no gesture that pretends they
+are. This costs the one thing it looks like it costs — you cannot put an eroded
+corner at an exact position, only the source corner that produces it — and buys
+back everything in the list above. It is also the honest presentation: the
+eroded outline is derived geometry, in the same sense that the CSG result is
+derived geometry, and nobody expects to drag that either.
 
 ## Transforms
 
@@ -208,9 +207,11 @@ interface Transform {
 }
 ```
 
-A layer applies its transform in one order, always: **erode first, in the frame
-it was handed, then scale, rotate and translate**. Erosion has to come first or
-it would be measured in a frame the squash had already distorted.
+A layer applies its transform in one order, always: **scale, rotate and
+translate the source, and erode last**. Erosion is the projection, so it comes
+after everything that reshapes the ring — which is also what makes a squashed
+polygon offset to a true constant width rather than to one that varies with
+direction.
 
 **The frame is the world origin.** A transform reads nothing but its own
 numbers — in particular not a centroid of the points it is transforming. Deriving
@@ -254,10 +255,10 @@ its own collapse depth so that no vertex ever died. Two arguments held it up and
 neither survives.
 
 The first was that deletion destroys vertex correspondence between versions.
-Under sequential resolution there is no correspondence to destroy: each version
-erodes the ring it was handed and passes on the ring it produced. A vertex that
-died upstream is simply not in what arrives, which is the same thing a birth or
-a death already is elsewhere in the model.
+There is no correspondence to destroy. Erosion is a projection, so the vertices
+it deletes are the projection's, and those never had an identity to lose — no
+edit names one, and nothing downstream reads one. The source ring keeps every
+vertex it ever had.
 
 The second was that freezing gives the better geometry. It gives the worse.
 A true offset keeps **every** surviving edge exactly parallel to its original,
@@ -272,54 +273,74 @@ What recomputing does change is a vertex's *trajectory*: it slides along one
 bisector until an event, then along another. That is exactly right, and it stays
 piecewise linear in depth with the breaks at events, which is all the bake needs.
 
-### Erosion stops at a split
+### Splitting is allowed; a polygon resolves to a shape
 
-A reflex vertex whose bisector reaches an opposite edge is a *split* event: past
-that depth the polygon would divide in two, which would leave a polygon id
-naming two rings and every downstream edit on it ambiguous.
+A reflex vertex whose offset reaches an opposite edge is a *split*: past that
+depth the room divides in two. The author often wants exactly that — erode a
+room with a reflex corner until it becomes two rooms, and trap the player in one
+of them — so the erosion goes through it rather than stopping.
 
-So the depth is **capped**. Each polygon has a maximum erosion, found the same
-way every other event is found, and asking for more than that gets the shape at
-the cap. Walls stop when they meet; they never pass through each other.
+**`resolve` returns a `Shape`, not a `Ring`.** That costs less than it sounds
+like. The source polygon is still one ring and still one id; the CSG
+takes shapes already; and *rings merge or split* is on the keyframe list, so the
+bake handles it with the zero-width bridge it uses for every other topology
+event. Vertex identity is untouched, because the split happens in the
+projection, and the source ring never divides.
 
-That is blunt on purpose. A long room with one narrow neck stops eroding
-everywhere once the neck closes, not just at the neck. The alternative is to cap
-locally, which is the clamping fixpoint this replaced — more machinery, and it
-buys back the edge rotation the section above just got rid of. Reshaping past
-the cap is done by moving the reflex vertex, which is a thing the author can see
-and reach.
+**Pieces are never named**, and wanting one of two rooms gone is said by
+editing the source rather than by pointing at the piece. Each lobe of a split is
+generated by a contiguous run of source edges, so deleting that run at version
+*k* leaves both rooms at *k-1* and one at *k*. The discarded lobe's source
+shrinks away across the boundary, with a keyframe and a `lineOpacity` fade,
+rather than a piece blinking out.
 
-There is no fixpoint and no iterative solver. The cap is one number per polygon
-per version, recomputed by the ordinary forward resolve, including during a
-drag.
+It is cruder than pointing at the piece, and it costs one thing honestly:
+closing the source ring after the deletion introduces a new edge that also
+erodes, so the survivor is not exactly the lobe that was on screen and the
+author hand-shapes the difference.
 
-### Polygons are always simple
+What it buys is that no piece ever needs an identity. Every naming scheme for a
+piece is downstream of geometry and therefore fragile — a path in the split tree
+is stable under scrubbing a depth but permutes the moment an upstream reshape
+changes which split happens first — and none of that has to be built, explained
+or debugged.
 
-A self-intersecting polygon breaks collision concretely: `PolygonPoint` bakes
-`enx/eny` per point and collision is edge-normal based, so on a flipped section
-the normals point inward and the player is pulled into the wall. Offsetting
-along bisectors is only meaningful on a simple polygon either.
+An earlier draft stopped the erosion instead, by freezing the edges in contact
+and letting the rest of the ring carry on. The geometry of that is good — a
+frozen edge still lies on a translate of its own original line, so parallelism
+holds everywhere, which pinning a *vertex* can never manage. It is the fallback
+if splitting proves worse in practice. But it means a room with a reflex corner
+can never finish closing, and closing rooms are what this game is.
 
-Enforcement is cheap because only two things can break it — affine transforms
-preserve simplicity, so groups need no check at all:
+### Source polygons may self-intersect
 
-- **Drawing.** The only new edge is last-point-to-cursor. Test it against the
-  existing edges each mouse move; `O(n)`, no sweep line.
-- **Vertex drag.** Moving vertex *i* changes exactly two edges. Test those two
-  against the rest.
-- **Erosion.** Cannot break it: the depth is capped below the first split.
+They are allowed to, and nothing checks otherwise.
 
-Soft during the gesture, hard on commit. The rubber band turns red while it
-crosses, with a dot at the intersection and both offending edges lit, and
-releasing there does not place the point. A vertex drag *is* allowed to cross
-transiently — you often move a vertex across the polygon to a valid spot on the
-far side — but reverts on release if still invalid. Anything invalid that gets in
-anyway carries a hatched outline and a strip badge, and export refuses.
+Once erosion is permitted to split a ring, the machinery for turning a
+self-crossing loop into a set of loops that do not cross is already in the
+resolve path — `simplify` is the CSG run against an empty second operand, and it
+is the same code either way. Having it there for the projection and forbidding
+it on the input would be an invariant enforced for its own sake.
 
-Zero-length edges left by a collapse are fine and stay for the stretch in which
-they vanish. Collision already has to survive corridors narrower than the
-player, and the stray line a degenerate edge would draw is handled by
-`lineOpacity` at bake.
+So the projection is `erode(simplify(source), depth)`: decompose first, then
+offset each resulting ring, with `erode` reading each ring's winding so holes
+move outward as the material shrinks.
+
+The old objection was about collision, and it survives — `PolygonPoint` bakes
+`enx/eny` per point, so on a flipped section the normals point inward and the
+player is pulled into the wall. But that is a constraint on **baked output**,
+not on authored input, and the CSG guarantees it: what reaches the bake has been
+through the arrangement and is simple by construction. Enforcing it a second
+time at the source bought nothing.
+
+What goes with this: no crossing test on the rubber band, no two-edge test on a
+vertex drag, no invalid state, no hatched outline, no strip badge, no export
+refusal. A polygon that crosses itself is a shape with the overlap cancelled
+under the nonzero rule, which is a legitimate thing to draw and occasionally a
+useful one.
+
+Zero-area polygons are equally harmless — they contribute nothing and the
+arrangement drops them.
 
 ## Groups
 
@@ -363,32 +384,10 @@ corners, but each still has two adjacent edges and therefore a bisector — so
 `erode` applies to it unchanged, and the winding it already reads per ring makes
 holes erode outward without a special case.
 
-**What was rejected, and why it is worth recording.** The tempting encoding is
-to push the erosion back onto the members: work out which source edges lie on
-the union boundary, and give those edges an offset of `d`. It fails twice, and
-both failures are the same confusion — between an edge and the piece of boundary
-that edge contributes.
-
-A source edge partly buried in a sibling contributes only part of itself, but
-the encoding offsets the whole line. The buried part moves too, and if it lay
-within `d` of the sibling's far boundary it sweeps past and opens a gap that
-should not exist. Worse, an edge *emerging* from behind a sibling contributes a
-boundary piece whose length starts at zero — so offsetting the whole line moves
-the entire edge the instant that piece exists. Drag a member one unit and
-geometry elsewhere in the group jumps by `d`: a discontinuous, non-local
-response to a continuous input, and unexplainable to the person making it.
-
-Neither artefact is inherent to group erosion. `erode(union, d)` is continuous
-in member positions away from genuine topology events, and those the author
-causes and understands. Both are manufactured by the encoding, which is the
-argument for not having one.
-
-**The split cap is the union's, not each member's.** Once the union is one ring
-being offset normally, a member's edge meeting another's is not a special case
-at all — it is the same reflex-vertex-reaches-an-opposite-edge event as any
-other, on that ring, and the group stops eroding there. Nothing is scoped per
-polygon, which is what keeps the artefacts above from reappearing through the
-back door.
+**The depth lives on the group's transform**, and the offset is taken on the
+union at read time. Nothing is written into the members and nothing is scoped
+per polygon. A member's edge meeting another's is not a special case either —
+it is the same split as any other, on that ring.
 
 ### Transforms distribute over a selection; erosion does not
 
@@ -508,7 +507,7 @@ separately is the main thing to avoid.
    that version's ghost draws. Bulk presets set them in groups: **None**,
    **Previous**, **Subsequent**, **All**. Per-version eyes then cover comparing
    against an arbitrary version, or against a fork, with no extra concept.
-4. **Status.** Badges for invalid polygons and for delinked ranges.
+4. **Status.** Badges for delinked ranges.
 
 There are no span handles. Edits always land in the version on screen.
 
@@ -535,7 +534,6 @@ touches only the dirtied chain.
 - **Inherited** — resolved from upstream, untouched here. Muted outline.
 - **Edited here** — this version's layer holds a delta for it. Accent.
 - **Delinked** — overridden, no longer tracking upstream. Distinct, hatched.
-- **Invalid** — self-intersecting. Red, hatched, badged on the strip.
 
 No dropdown menus anywhere in this flow.
 
@@ -593,9 +591,8 @@ lerp(v + e_k·b, v + e_k1·b, t)  =  v + lerp(e_k, e_k1, t)·b
 ```
 
 Interpolating two precomputed positions is identical to interpolating the depth
-and offsetting. Bisectors are constant within a stretch, and both an edge
-collapsing and the split cap are keyframes, so the piecewise break never lands
-inside one. The old per-vertex
+and offsetting. Bisectors are constant within a stretch, and a collapse or a
+split is a keyframe, so the piecewise break never lands inside one. The old per-vertex
 `bisector` and erosion coefficient were carrying exactly this linear function
 into the shader; the bake now evaluates it at the two ends instead of shipping
 its parameters.
@@ -634,7 +631,8 @@ and their change points are the only keyframes needed:
 - **a vertex is born or dies** — a version boundary
 - **an edge collapses** — its two endpoints meet, one vertex dies, and the
   neighbours' bisectors change, so the trajectory bends
-- **erosion reaches its split cap** — the polygon stops shrinking
+- **an edge collapses in the projection** — its endpoints meet and the
+  offset ring loses a vertex
 - **an eroded group's own arrangement changes** — a member's edge starts or stops
   contributing to the union boundary, or two members touch. The union is an
   input to the final CSG, so an event inside it is an event
@@ -806,8 +804,8 @@ zero-width bridge until the event opens them.
 
 1. Walk `activeBranch` to the root; resolve each version's layer chain,
    sequentially, stage by stage.
-2. Find each polygon's split cap and its edge-collapse depths.
-3. Refuse on any invalid polygon.
+2. Project each version's sources through their depths, recording the
+   collapse and split depths on the way.
 4. Collect the known events — version boundaries, births, deaths, collapses,
    caps.
 5. Search on `t` for the geometric events — crossings appearing or disappearing,
@@ -855,23 +853,22 @@ Four details the prototype settled:
   `rings[r][i]`.
 - **Tags stay inside the bake.** The runtime sees indices.
 
-### The bake reads `source`, not `shape`
+### The bake combines projections, and provenance stays one level deep
 
-`worldset` already keeps both — `Entry.source` is the polygon exactly as it came
-in, and `Entry.shape` is a simplified copy. The bake takes `source` and combines
-it directly, because a tag from a combine over simplified rings would name edges
-of the *simplifier's* output rather than of the author's polygon, and composing
-the two levels of provenance would put a chain behind every reference.
+What the bake combines at a keyframe is each version's **projection** — the
+decomposed, offset `Shape` — not the source rings. Its vertices are entries in
+the vertex table, carrying positions the CPU has already computed.
 
-This is safe because polygons are simple by invariant. Two caveats worth
-holding on to: the editor does not enforce that yet, and the pre-pass also
-normalises winding, which the bake would then be assuming of its input. A
-single simple ring is fine either way — nonzero fill does not care which way it
-winds — so this holds as long as a source polygon is one ring, with holes
+That is what keeps provenance one level deep. The inner step, which decomposes a
+possibly self-crossing source and offsets it, is resolved into numbers before
+the combine ever runs, so only the outer combine emits tags and no reference
+ever carries a chain behind it. An earlier draft combined `Entry.source`
+directly to avoid exactly that chain, and had to assume simple input to do it;
+resolving the inner level into positions gets the same result without the
+assumption.
+
+Winding is normalised at the source, once, so the bake can assume it. Holes are
 modelled as `solid` polygons rather than as reversed rings.
-
-The editor's own path keeps the pre-pass. It is doing real work there until the
-no-self-intersection invariant is enforced on drawing and dragging.
 
 ### What the tests hold
 
@@ -922,14 +919,49 @@ on configurations that cannot occur.
 
 ## Implementation notes
 
-**worldset** — the bake reads `Entry.source`; the editor's live path keeps its
-simplify pre-pass. One instance per version, computed lazily, kept warm only for the
+**worldset** — both paths simplify, since a source ring is allowed to cross
+itself; `Entry.shape` is where that lands. One instance per version, computed lazily, kept warm only for the
 current version and visible ghosts. A single global set cannot work: v0's and
 v3's walls must never union with each other, and AABB clustering will not
 separate them since v3 sits inside v0. An upstream edit fans out as an
 incremental update per version, but the fan-out is far smaller than it looks,
 because a version whose chain does not touch a polygon has identical resolved
 geometry for it and is skipped.
+
+**Composing the chain instead of walking it.** The semantics are sequential and
+should stay that way, but the projection makes the chain collapsible, and that
+is worth exploiting for a long one. Writing a layer as `T_k(x) = M_k x + t_k`
+over `source(k) = T_k(source(k - 1) + e_k)`, affinity gives
+`source(k) = T_k(source(k - 1)) + M_k e_k`, and unrolling gives
+
+```
+source(k) = (T_k ∘ … ∘ T_1)(P)  +  Σ_j (M_k ⋯ M_j) e_j
+```
+
+One composed affine applied to the points once, plus each version's vertex edits
+pushed through the linear parts of every transform after it. Exact rather than
+approximate, so `resolve(9)` needs no intermediate geometry: matrix products
+down the chain, then a single pass over the points.
+
+Erosion is exactly what used to block this. As a stage its output had to exist
+before the next stage could read it; as a projection it reads `source(k)` and
+writes nowhere, so there is nothing to serialise.
+
+No constraint comes back with it. The composed map is a general 2x2 and
+composition of those is closed, so per-axis scale is untouched — components are
+kept separate for *interpolation*, and the bake never interpolates an
+accumulated transform, since every version boundary is a keyframe and the one
+in flight is stored per version in component form.
+
+Two things to hold on to. **This is an equivalence, not the model.** The last
+time this document had an accumulation it was written as the formulation, and
+constraints grew to protect it — uniform scale only, frozen bisectors, the
+per-edge encoding. Kept as an identity that may be exploited, anything later
+needing a stage that does not compose costs a slow path rather than an argument.
+And **the vertex set still wants the chain walk**: adds and removes change which
+vertices exist, so the composed form applies to whatever ring exists at *k*.
+That walk is set operations rather than geometry, so O(1) resolve is really
+O(chain) in sets and one pass in points.
 
 **Serialization** — plain JSON with arrays in place of `Map` and `Set`, rebuilt
 on load, behind a format version number.
@@ -941,10 +973,13 @@ strip can say *what* changed; it cannot say what is now artistically wrong. No
 mechanism is planned for v1 — the visibility eyes are the review tool — and this
 is the most likely thing to need revisiting once worlds get long.
 
-**Exactness when a squash and an erosion share a stretch.** Erosion applied
-after a non-uniform scale is not linear in that scale, so interpolating the two
-stretch endpoints approximates there rather than reproducing. Every other
-combination is exact. The fix is keyframe density — make a squash a version
+**Exactness when a squash and an erosion share a stretch.** The offset direction
+depends on the source's edge directions, so a source that is being reshaped
+non-rigidly while the depth changes moves its projection non-linearly, and
+interpolating the two stretch endpoints approximates there rather than
+reproducing. Pure erosion is exact, and so is erosion under translation,
+rotation or uniform scale, because a rigid motion carries the bisectors with it
+and the transform is factored out anyway. Only a squash is affected. The fix is keyframe density — make a squash a version
 boundary so no stretch carries both — and the bake's posture is already that a
 redundant keyframe is harmless while a missed one tears geometry.
 
@@ -954,27 +989,7 @@ than on paper.
 
 ## TODOS / Questions
 
-- Undo "`worldset` already keeps both — `Entry.source` is the polygon exactly as it came
-in, and `Entry.shape` is a simplified copy" after enforcing non-self-intersection invariant
-
 - How many false positive keyframes can theoretically be generated during the topology event search?
-
-- A vertex dies when an upstream depth is scrubbed up, so a downstream edit can
-  be left naming an id that no longer arrives. The removal cascade covers this
-  mechanically, but it fires from dragging a slider rather than from an explicit
-  removal, and a depth is easy to scrub back. Flagging the edit is probably
-  better than dropping it — undecided.
-
-- How does a vertex nudge work on a polygon inside an *eroded group*? The bake
-  above resolves a polygon's own erosion into its points, but a group's erosion
-  lives on the union boundary and does not map back onto member rings. Either
-  members are not vertex-editable while their group's erosion is non-zero, or
-  something else is needed. Unresolved, and the one place the group story is
-  still open.
-
-- Is the split cap too blunt? It stops a whole polygon because of one neck. The
-  local alternative is the clamping fixpoint that was just removed, so this is
-  worth living with first and revisiting against a real level.
 
 - Where does a selection erode get stored? Groups are global structure, so a
   version cannot mint an anonymous one, and erosion does not distribute onto
@@ -988,4 +1003,4 @@ in, and `Entry.shape` is a simplified copy" after enforcing non-self-intersectio
 - The morph property test in `geometry.test.ts` covers uniform scale only. It
   needs a per-axis case, and one where a group's eroded union is the input.
 
-- Disallow the creation of zero area and self intersecting polygons both when creating a polygon and when editing
+- Show available options during edit in the status bar
