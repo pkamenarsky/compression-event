@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 import { Iv, at, cos, holdsZero, mul, sin, sub } from './interval';
-import { Frame, Moving, events, place, vertexOnEdge } from './events';
+import { Frame, Moving, collinear, events, place, swept, vertexOnEdge } from './events';
 import { Point } from '@ce/game/world';
 
 // -----------------------------------------------------------------------------
@@ -253,5 +253,128 @@ describe('completeness', () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+describe('collinear', () => {
+  const still = (x: number, y: number): Frame => ({
+    translation: { x, y },
+    rotation: 0,
+    scale: 1,
+  });
+
+  const move = (
+    local: Point,
+    frames: [Frame, Frame],
+    erosion: [number, number] = [0, 0],
+    bisector: Point = { x: 0, y: 0 },
+  ): Moving => ({ local, bisector, erosion, frames });
+
+  test('the closed form and the search find the same moments', () => {
+    // A corner sliding across a static edge, driven three ways — by the
+    // translation, by the erosion depth, and by both at once. None of them
+    // turns, so `collinear` takes the closed form while `events` searches.
+    const cases: [string, Moving][] = [
+      [
+        'translating',
+        move({ x: 0, y: 0 }, [still(50, -60), still(50, 140)]),
+      ],
+      [
+        'eroding',
+        move({ x: 0, y: -60 }, [still(50, 0), still(50, 0)], [0, 200], { x: 0, y: 1 }),
+      ],
+      [
+        'both',
+        move({ x: 0, y: -40 }, [still(50, -30), still(50, 90)], [0, 60], { x: 0, y: 1 }),
+      ],
+    ];
+
+    for (const [what, v] of cases) {
+      const a = move({ x: 0, y: 0 }, [still(0, 0), still(0, 0)]);
+      const b = move({ x: 200, y: 0 }, [still(0, 0), still(0, 0)]);
+
+      const exact = collinear(a, b, v);
+      const searched = events(vertexOnEdge(a, b, v), { tol: 1e-9 });
+
+      expect(exact.at.length, what).toBe(searched.at.length);
+      exact.at.forEach((t, i) => expect(t, what).toBeCloseTo(searched.at[i], 7));
+      expect(exact.coarse, what).toBe(false);
+    }
+  });
+
+  test('a turning frame falls back to the search', () => {
+    const a = move({ x: 0, y: -80 }, [still(30, 0), still(30, 0)]);
+    const b = move({ x: 0, y: 80 }, [still(30, 0), still(30, 0)]);
+    const spun = move({ x: 50, y: 0 }, [
+      { translation: { x: 0, y: 0 }, rotation: 0, scale: 1 },
+      { translation: { x: 0, y: 0 }, rotation: Math.PI, scale: 1 },
+    ]);
+
+    const found = collinear(a, b, spun, { tol: 1e-9 });
+
+    expect(found.at.length).toBeGreaterThan(0);
+    expect(found.at).toEqual(events(vertexOnEdge(a, b, spun), { tol: 1e-9 }).at);
+  });
+
+  test('a corner that never reaches the line has no moments', () => {
+    const a = move({ x: 0, y: 0 }, [still(0, 0), still(0, 0)]);
+    const b = move({ x: 200, y: 0 }, [still(0, 0), still(0, 0)]);
+    const clear = move({ x: 50, y: 60 }, [still(0, 0), still(0, 20)]);
+
+    expect(collinear(a, b, clear).at).toEqual([]);
+  });
+});
+
+describe('swept', () => {
+  const at2 = (x: number, y: number, rot = 0): Frame =>
+    ({ translation: { x, y }, rotation: rot, scale: 1 });
+
+  const corner = (lx: number, ly: number, f: Frame, g: Frame): Moving =>
+    ({ local: { x: lx, y: ly }, bisector: { x: 0, y: 0 }, erosion: [0, 0], frames: [f, g] });
+
+  /** Where a vertex actually is, sampled — the truth the box has to contain. */
+  function sample(m: Moving, t: number): { x: number, y: number } {
+    const [f, g] = m.frames;
+    const th = f.rotation + (g.rotation - f.rotation) * t;
+    const k = f.scale + (g.scale - f.scale) * t;
+    const c = Math.cos(th), s = Math.sin(th);
+
+    return {
+      x: f.translation.x + (g.translation.x - f.translation.x) * t + k * (m.local.x * c - m.local.y * s),
+      y: f.translation.y + (g.translation.y - f.translation.y) * t + k * (m.local.x * s + m.local.y * c),
+    };
+  }
+
+  test('the box contains the whole path, translating and turning', () => {
+    const square = [[50, 50], [-50, 50], [-50, -50], [50, -50]];
+
+    for (const [what, g] of [
+      ['translating', at2(300, -120)],
+      ['turning', at2(0, 0, Math.PI * 0.75)],
+      ['both', at2(300, -120, Math.PI * 1.5)],
+    ] as [string, Frame][]) {
+      const vs = square.map(([x, y]) => corner(x, y, at2(0, 0), g));
+      const b = swept(vs);
+
+      for (const m of vs) {
+        for (let i = 0; i <= 200; i++) {
+          const p = sample(m, i / 200);
+
+          expect(p.x >= b.minX && p.x <= b.maxX, what).toBe(true);
+          expect(p.y >= b.minY && p.y <= b.maxY, what).toBe(true);
+        }
+      }
+    }
+  });
+
+  test('a polygon that stays put is bounded tightly', () => {
+    const still = [[10, 10], [-10, 10], [-10, -10], [10, -10]]
+      .map(([x, y]) => corner(x, y, at2(0, 0), at2(0, 0)));
+    const b = swept(still);
+
+    expect(b.minX).toBeCloseTo(-10, 9);
+    expect(b.maxX).toBeCloseTo(10, 9);
+    expect(b.minY).toBeCloseTo(-10, 9);
+    expect(b.maxY).toBeCloseTo(10, 9);
   });
 });
