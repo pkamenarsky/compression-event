@@ -15,6 +15,7 @@ import {
   combineTagged,
   contains,
   decompose,
+  erode,
   intersect,
   isCCW,
   shapeArea,
@@ -597,6 +598,89 @@ describe('provenance', () => {
 
     expect(survives('X(0.0.2,1.0.1)')).toBe(false);
     expect(survives('X(0.0.2,1.0.3)')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Erosion
+// -----------------------------------------------------------------------------
+
+describe('erode', () => {
+  test('every edge stays exactly parallel to where it started', () => {
+    // The one thing a true offset promises, and the thing freezing bisectors at
+    // a clamp could never keep: a 100 square eroded by 10 is an 80 square, not
+    // an 80-ish one.
+    expect(shapeArea(erode([rect(0, 0, 100, 100)], 10))).toBeCloseTo(6400, 9);
+  });
+
+  test('a room eroded past its own middle is gone', () => {
+    // Both axes collapse at once, which under the old per-vertex walk turned
+    // the winding over twice and left a smaller square of ground standing.
+    expect(erode([rect(0, 0, 100, 100)], 60)).toEqual([]);
+  });
+
+  test('a strip closes from its short side', () => {
+    expect(erode([rect(0, 0, 300, 100)], 60)).toEqual([]);
+  });
+
+  test('a room with a neck splits in two', () => {
+    // The author wants exactly this — erode a room until it becomes two rooms
+    // and trap the player in one — so the erosion goes through the split rather
+    // than stopping at it. Nothing needs a name on the far side: the pieces are
+    // in the projection, and a projection has no handles.
+    const dumbbell: Ring = [
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }, { x: 200, y: 80 },
+      { x: 200, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 200 }, { x: 200, y: 200 },
+      { x: 200, y: 120 }, { x: 100, y: 120 }, { x: 100, y: 200 }, { x: 0, y: 200 },
+    ];
+
+    expect(erode([dumbbell], 10).length).toBe(1);
+    expect(erode([dumbbell], 25).length).toBe(2);
+  });
+
+  test('a hole opens up as the material around it shrinks', () => {
+    // The hole is wound against its container, and left is the material side
+    // for both, so the same offset moves one in and the other out with no
+    // special case for it.
+    const withHole: Shape = [
+      rect(0, 0, 200, 200),
+      [...rect(50, 50, 100, 100)].reverse(),
+    ];
+
+    expect(shapeArea(erode(withHole, 10))).toBeCloseTo(180 * 180 - 120 * 120, 6);
+  });
+
+  test('a negative depth grows the shape instead', () => {
+    expect(shapeArea(erode([rect(0, 0, 100, 100)], -10))).toBeCloseTo(120 * 120, 6);
+  });
+
+  test('depths do not accumulate', () => {
+    // Eroding by 3 and then by 4 is not eroding by 7 — an event may fall between
+    // them — which is why a version states its own depth rather than adding one.
+    const once = shapeArea(erode([rect(0, 0, 100, 100)], 7));
+    const twice = shapeArea(erode(erode([rect(0, 0, 100, 100)], 3), 4));
+
+    expect(once).toBeCloseTo(86 * 86, 6);
+    expect(twice).toBeCloseTo(86 * 86, 6);
+  });
+
+  test('a reflex corner keeps its mitre', () => {
+    // An L eroded by 10: every edge in by 10, and the inner corner goes where
+    // its two moved lines meet rather than being rounded off or cut square.
+    const ell: Ring = [
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 },
+      { x: 40, y: 40 }, { x: 40, y: 100 }, { x: 0, y: 100 },
+    ];
+
+    const shape = erode([ell], 10);
+
+    expect(shape.length).toBe(1);
+    expect(shape[0].some(p => Math.abs(p.x - 30) < 1e-6 && Math.abs(p.y - 30) < 1e-6))
+      .toBe(true);
+
+    // The two arms, each in by 10 on every side: 80x20 and 20x60, meeting at
+    // that corner. The mitre is what makes the sum exact rather than close.
+    expect(shapeArea(shape)).toBeCloseTo(80 * 20 + 20 * 60, 6);
   });
 });
 
