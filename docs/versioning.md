@@ -775,6 +775,27 @@ Since `f` is twice a signed area, `flat` scales as the square of the world units
 in play, and a genuine root has `f` steep enough around it to reach that band
 only well inside `tol`.
 
+**Choosing `tol`.** It is a width in `t`, not in world units, so it never needs
+retuning per world. The one constraint that matters is
+
+```
+4 · tol  <<  the smallest event separation worth resolving
+```
+
+because `4 · tol` is also the distance below which two surviving intervals are
+merged as one root seen from both sides. Two genuine events closer than that
+collapse into a single keyframe, which leaves one of the two topology changes
+*inside* a stretch — the tearing this whole search exists to prevent. Nothing
+else about the number is load-bearing: the sensitivity is entirely one-sided,
+since too large silently merges events while too small only spends work and
+degrades to `coarse`, which is safe.
+
+There is a floor, well below anything worth choosing. `f` is twice a signed
+area, so its absolute noise is around `L²·ε` and enclosures stop narrowing
+underneath that. Cost in between is logarithmic — roughly forty extra
+evaluations per factor of a thousand — so tightening `tol` is close to free and
+there is no reason to trim it toward the danger.
+
 **Running out is safe.** A budget bounds the work. Exhausting it returns
 `coarse: true` and a cover that is wider than `tol` but still complete — never
 one that has dropped something.
