@@ -1,34 +1,59 @@
 // -----------------------------------------------------------------------------
-// What the world looks like right now
+// What the world looks like at a version
 //
-// A polygon keeps the points it was drawn with and a transform describing what
-// has happened to it since, so the thing to draw has to be worked out. That is
-// this: erode in the polygon's own frame, add whatever its vertices have been
-// nudged by, then turn, scale and move the result.
+// A world is a sequence of versions, and a version is a layer rather than a
+// copy: it stores what changed against its base and resolves against it here,
+// on demand. That is the whole reason this file exists — an edit made in v0 is
+// seen by v4 without being replayed by hand into v1, v2 and v3.
 //
-// The CSG over that is what the game would actually see — every `level` polygon
-// unioned and every `solid` one taken back out — and it is recomputed from
-// scratch on every change, which is affordable at this size and is what makes
-// it possible to watch it move while a transform is being dragged.
+// Resolution is sequential:
+//
+//   source(k) = transform_k(source(k - 1) + vertexEdits_k)
+//   shape(k)  = erode(source(k), depth_k)
+//
+// so `source` is what flows down the chain and `shape` is a read-only view
+// taken at each version. Version k + 1 erodes source(k), never shape(k), and
+// that one decision is what makes erosion free to delete vertices and split a
+// room in two: what it deletes belongs to a projection, and a projection has no
+// identity to lose. Nothing is written back, ever.
+//
+// The CSG over the shapes is what the game would see — every `level` polygon
+// unioned and every `solid` one taken back out — recomputed from scratch on
+// every change, which is affordable at this size and is what makes it possible
+// to watch it move while a gesture is running.
 //
 // Nothing in here derives a frame from geometry the user can edit. An earlier
-// version turned and scaled about `centroid(p.points)`, which tied the frame to
-// the points: moving one vertex moved the centroid, and every other vertex swung
-// about the difference. Under rotation and scale that difference is
-// `(I - scale·R)·Δcentroid`, which is zero only while the polygon is untouched —
-// so the whole thing looked right until the first rotate and then smeared. A
-// transform is about the world origin instead, and the gesture that builds one
-// puts the pivot it wants into the translation.
+// version turned and scaled about `centroid(points)`, which tied the frame to
+// the points: moving one vertex moved the centroid, and every other vertex
+// swung about the difference. A transform is about the world origin instead,
+// and the gesture that builds one puts the pivot it wants into the translation.
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
 import { OpSubtract, Ring, Shape, combine, contains, erode, isCCW, simplify } from './geometry';
-import { EMPTY_TRANSFORM, Polygon, PolygonId, PolygonType, World } from './types';
+import {
+  EMPTY_TRANSFORM,
+  Edit,
+  Polygon,
+  PolygonId,
+  PolygonType,
+  Transform,
+  VersionId,
+  VertexId,
+  World,
+} from './types';
 
+/** One polygon as a version left it: what edits are made against, and what is
+ * drawn. */
 export interface Resolved {
   id: PolygonId
   polygon: Polygon
-  ring: Ring
+  /** The ring this version's layer produced. The handles live here. */
+  source: Ring
+  /** The projection: the source decomposed and offset. Read-only, always. */
+  shape: Shape
+  /** The depth `shape` was taken at, inherited where this version states none. */
+  erosion: number
 }
 
 export function centroid(ring: Ring): Point {
@@ -44,126 +69,226 @@ export function centroid(ring: Ring): Point {
   return { x: x / ring.length, y: y / ring.length };
 }
 
+// -----------------------------------------------------------------------------
+// Building
+// -----------------------------------------------------------------------------
+
 /**
- * A polygon as drawn: wound counter-clockwise, nothing nudged, nothing done to
- * it yet. Every polygon in the world comes from here.
+ * A polygon as drawn, born into the version it was drawn in, with a fresh id
+ * for itself and for every one of its corners.
  *
- * The winding is settled once, at the source, rather than being read back off
- * the points at every CSG. Which way a ring is wound decides what it
- * contributes under the nonzero rule, so two polygons that overlap only merge
- * if they agree; clicking one out clockwise rather than anticlockwise is not a
- * statement about anything, and left alone it would punch a hole through
- * whatever it overlapped and leave the wall between them standing.
+ * The winding is settled once, here, rather than being read back off the points
+ * at every CSG. Which way a ring is wound decides what it contributes under the
+ * nonzero rule, so two polygons that overlap only merge if they agree; clicking
+ * one out clockwise rather than anticlockwise is not a statement about
+ * anything, and left alone it would punch a hole through whatever it overlapped
+ * and leave the wall between them standing.
  *
- * Fixing it here is also what leaves the *resolved* ring free to mean
- * something. A polygon eroded past the point of turning itself inside out comes
- * back wound the other way, and that inversion is real — it has to reach the
- * CSG and cancel, rather than being read as a hole and quietly flipped back.
+ * Fixing it here is also what leaves the resolved ring free to mean something.
+ * A polygon eroded past the point of turning itself inside out comes back wound
+ * the other way, and that inversion is real — it has to reach the CSG and
+ * cancel, rather than being read as a hole and quietly flipped back.
  */
-export function sourcePolygon(type: PolygonType, points: Point[]): Polygon {
-  return {
+export function addPolygon(
+  world: World,
+  type: PolygonType,
+  points: Point[],
+  birth: VersionId,
+): { world: World, id: PolygonId } {
+  const wound = isCCW(points) ? points : [...points].reverse();
+
+  const id = world.nextId;
+  const polygon: Polygon = {
     type,
-    points: isCCW(points) ? [...points] : [...points].reverse(),
-    nudges: points.map(() => ({ x: 0, y: 0 })),
-    transform: EMPTY_TRANSFORM,
+    birth,
+    points: wound.map((at, i) => ({ id: id + 1 + i, at: { ...at } })),
+  };
+
+  const polygons = new Map(world.polygons);
+  polygons.set(id, polygon);
+
+  return {
+    world: { ...world, polygons, nextId: id + 1 + wound.length },
+    id,
   };
 }
 
-/**
- * The ring in the polygon's own frame: eroded, then nudged.
- *
- * Erosion reads the points and nothing else, so a nudge moves its own vertex
- * and no other. Were it to read the nudged ring, dragging a vertex would swing
- * its two neighbours' bisectors and walk them off along with it — the same
- * frozen-bisector rule the rest of the erosion work rests on, arrived at from
- * the other end.
- */
-export function localRing(p: Polygon): Ring {
-  const { erosion } = p.transform;
-  const base = erosion === 0 ? p.points : erode(p.points, erosion);
+// -----------------------------------------------------------------------------
+// Resolution
+// -----------------------------------------------------------------------------
 
-  return base.map((q, i) => {
-    const n = p.nudges[i];
+/** The versions from the root down to `v`, in the order they apply. */
+export function chain(world: World, v: VersionId): VersionId[] {
+  const out: VersionId[] = [];
 
-    return { x: q.x + n.x, y: q.y + n.y };
-  });
-}
-
-/** The points, put where the transform says. */
-export function resolve(p: Polygon): Ring {
-  const { rotation, scale, translation } = p.transform;
-  const c = Math.cos(rotation), s = Math.sin(rotation);
-
-  return localRing(p).map(q => ({
-    x: (q.x * c - q.y * s) * scale + translation.x,
-    y: (q.x * s + q.y * c) * scale + translation.y,
-  }));
-}
-
-/** A world point back in a polygon's own frame. The exact inverse of the
- * affine half of `resolve`; erosion and nudges are not undone. */
-export function toLocal(p: Polygon, at: Point): Point {
-  const { rotation, scale, translation } = p.transform;
-  const c = Math.cos(-rotation), s = Math.sin(-rotation);
-
-  const x = (at.x - translation.x) / scale;
-  const y = (at.y - translation.y) / scale;
-
-  return { x: x * c - y * s, y: x * s + y * c };
-}
-
-/**
- * A vertex put under the cursor, exactly.
- *
- * With nothing eroded the drag moves the point itself, which is what any later
- * erosion should read. Once there is erosion it cannot: `erode` has no inverse
- * to reach for — a vertex's bisector depends on where that vertex is and on
- * where its neighbours are, so asking which point erodes to the cursor is an
- * implicit problem, and there is no iterative solver anywhere in this system.
- *
- * So the drag writes a nudge: a displacement added after the erosion. It lands
- * on the cursor by construction, at any erosion depth, and it leaves every
- * other vertex exactly where it was.
- */
-export function placeVertex(p: Polygon, index: number, at: Point): Polygon {
-  const target = toLocal(p, at);
-  const nudges = [...p.nudges];
-
-  if (p.transform.erosion === 0) {
-    const points = [...p.points];
-
-    // Erosion is the identity here, so the nudge has nowhere to hide: fold it
-    // into the point and leave the source saying what the shape is.
-    points[index] = target;
-    nudges[index] = { x: 0, y: 0 };
-
-    return { ...p, points, nudges };
-  }
-
-  const base = erode(p.points, p.transform.erosion)[index];
-
-  nudges[index] = { x: target.x - base.x, y: target.y - base.y };
-
-  return { ...p, nudges };
-}
-
-export function resolved(world: World): Resolved[] {
-  const out: Resolved[] = [];
-
-  for (const [id, polygon] of world.sourcePolygons) {
-    out.push({ id, polygon, ring: resolve(polygon) });
+  for (let at: VersionId | null = v; at !== null; at = world.versions[at].base) {
+    out.unshift(at);
   }
 
   return out;
 }
+
+/** The points, put where a transform says: scaled per axis, turned, moved. */
+export function apply(t: Transform, ring: Ring): Ring {
+  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
+
+  return ring.map(p => {
+    const x = p.x * t.scale.x, y = p.y * t.scale.y;
+
+    return {
+      x: x * c - y * s + t.translation.x,
+      y: x * s + y * c + t.translation.y,
+    };
+  });
+}
+
+/** The exact inverse of `apply` on one point. Erosion is not undone, because
+ * it was never done to the source in the first place. */
+export function unapply(t: Transform, p: Point): Point {
+  const c = Math.cos(-t.rotation), s = Math.sin(-t.rotation);
+  const x = p.x - t.translation.x, y = p.y - t.translation.y;
+
+  return {
+    x: (x * c - y * s) / t.scale.x,
+    y: (x * s + y * c) / t.scale.y,
+  };
+}
+
+/** The vertex displacements this layer holds, added to what the base handed
+ * over. Keyed by id, so an edit survives a vertex being inserted upstream. */
+function displaced(polygon: Polygon, ring: Ring, vertices: Map<VertexId, Point>): Ring {
+  if (vertices.size === 0) return ring;
+
+  return ring.map((p, i) => {
+    const d = vertices.get(polygon.points[i].id);
+
+    return d === undefined ? p : { x: p.x + d.x, y: p.y + d.y };
+  });
+}
+
+/**
+ * The projection: what a source ring at a depth actually looks like.
+ *
+ * `simplify` first, because a source ring is allowed to cross itself — the
+ * machinery for turning a self-crossing loop into loops that do not is already
+ * in this path for the offset, and having it here while forbidding it on the
+ * input would be an invariant enforced for its own sake.
+ */
+export function project(source: Ring, erosion: number): Shape {
+  return erosion === 0 ? [source] : erode(simplify([source]), erosion);
+}
+
+/**
+ * Every polygon as version `v` leaves it, one stage at a time from the root.
+ *
+ * Depth is inherited rather than restated: a version that says nothing about a
+ * polygon leaves it exactly as its base had it, erosion included, which is what
+ * makes a fresh version render identically to the one before it. To shrink
+ * progressively the author raises the depth version by version — 2, 5, 9, 14 —
+ * which is more direct to author than compounding and exactly reproducible.
+ */
+export function resolveAt(world: World, v: VersionId): Resolved[] {
+  const source = new Map<PolygonId, Ring>();
+  const depth = new Map<PolygonId, number>();
+
+  for (const k of chain(world, v)) {
+    const version = world.versions[k];
+
+    for (const [id, polygon] of world.polygons) {
+      if (polygon.birth === k) {
+        source.set(id, polygon.points.map(p => ({ ...p.at })));
+        depth.set(id, 0);
+      }
+
+      const ring = source.get(id);
+      const edit = version.edits.get(id);
+
+      if (ring === undefined || edit === undefined) continue;
+
+      source.set(id, apply(edit.transform, displaced(polygon, ring, edit.vertices)));
+      depth.set(id, edit.transform.erosion);
+    }
+  }
+
+  const out: Resolved[] = [];
+
+  for (const [id, ring] of source) {
+    const polygon = world.polygons.get(id)!;
+    const erosion = depth.get(id) ?? 0;
+
+    out.push({ id, polygon, source: ring, shape: project(ring, erosion), erosion });
+  }
+
+  return out;
+}
+
+// -----------------------------------------------------------------------------
+// Editing
+//
+// You edit the version you are standing in, and edits flow forward. That is the
+// entire propagation model: there is no way to author an edit that lands in an
+// earlier version than the one on screen, so if something is wrong in v0, go to
+// v0 and fix it, and watch the consequences downstream with ghosts.
+// -----------------------------------------------------------------------------
+
+/**
+ * This version's own edit for a polygon, or a fresh one that changes nothing.
+ *
+ * The depth is seeded from what the polygon already resolved to, so that the
+ * first thing written into a layer — a nudge, a move — does not also throw away
+ * the erosion its base had.
+ */
+export function editAt(world: World, v: VersionId, id: PolygonId, erosion: number): Edit {
+  return world.versions[v].edits.get(id)
+    ?? { transform: { ...EMPTY_TRANSFORM, erosion }, vertices: new Map() };
+}
+
+export function withEdit(world: World, v: VersionId, id: PolygonId, edit: Edit): World {
+  const versions = [...world.versions];
+  const edits = new Map(versions[v].edits);
+
+  edits.set(id, edit);
+  versions[v] = { ...versions[v], edits };
+
+  return { ...world, versions };
+}
+
+/**
+ * A source vertex put under the cursor, exactly.
+ *
+ * The displacement is written against what the base handed over and lands
+ * before this version's transform, so it turns with the polygon when an
+ * upstream version moves it. What the base handed over is recovered by taking
+ * this layer back off the vertex as it stands, which is exact: a transform is
+ * invertible and erosion is not in the way, having never touched the source.
+ */
+export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point): Edit {
+  const id = it.polygon.points[index].id;
+  const was = edit.vertices.get(id) ?? { x: 0, y: 0 };
+
+  const local = unapply(edit.transform, it.source[index]);
+  const target = unapply(edit.transform, at);
+
+  const vertices = new Map(edit.vertices);
+  vertices.set(id, {
+    x: was.x + target.x - local.x,
+    y: was.y + target.y - local.y,
+  });
+
+  return { ...edit, vertices };
+}
+
+// -----------------------------------------------------------------------------
+// Reading the result
+// -----------------------------------------------------------------------------
 
 /** Every `level` unioned, every `solid` taken out: the set the game would get. */
 export function csg(items: Resolved[]): Shape {
   const level: Ring[] = [], solid: Ring[] = [];
 
   for (const it of items) {
-    if (it.polygon.type === 'level') level.push(it.ring);
-    else if (it.polygon.type === 'solid') solid.push(it.ring);
+    if (it.polygon.type === 'level') level.push(...it.shape);
+    else if (it.polygon.type === 'solid') solid.push(...it.shape);
   }
 
   if (level.length === 0) return [];
@@ -172,16 +297,23 @@ export function csg(items: Resolved[]): Shape {
   return combine(level, solid, OpSubtract);
 }
 
-/** The topmost polygon under a point, or nothing. */
+/** The topmost polygon under a point, hit against what is on screen. */
 export function hitPolygon(items: Resolved[], at: Point): PolygonId | null {
   for (let i = items.length - 1; i >= 0; i--) {
-    if (contains([items[i].ring], at)) return items[i].id;
+    if (contains(items[i].shape, at)) return items[i].id;
   }
 
   return null;
 }
 
-/** The nearest vertex within `radius` world units, topmost first. */
+/**
+ * The nearest source vertex within `radius` world units, topmost first.
+ *
+ * The source ring, never the projection. The eroded outline carries no handles
+ * at all and there is no gesture that pretends it does — it is derived
+ * geometry, in the same sense the CSG result is, and nobody expects to drag
+ * that either.
+ */
 export function hitVertex(
   items: Resolved[],
   at: Point,
@@ -191,7 +323,7 @@ export function hitVertex(
   let bestDistance = radius;
 
   for (const it of items) {
-    it.ring.forEach((p, index) => {
+    it.source.forEach((p, index) => {
       const d = Math.hypot(p.x - at.x, p.y - at.y);
 
       if (d <= bestDistance) {
@@ -204,12 +336,13 @@ export function hitVertex(
   return best;
 }
 
-/** Everything with a vertex inside the box, which is enough for a marquee. */
+/** Everything with a source vertex inside the box, which is enough for a
+ * marquee. */
 export function withinBox(items: Resolved[], a: Point, b: Point): PolygonId[] {
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
 
   return items
-    .filter(it => it.ring.some(p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1))
+    .filter(it => it.source.some(p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1))
     .map(it => it.id);
 }

@@ -1,5 +1,4 @@
 import { Point, PolygonType } from '@ce/game/world';
-import { AABB } from './aabb';
 
 export type { Point, PolygonType };
 
@@ -101,65 +100,120 @@ export function resized(view: View, width: number, height: number, dpr: number):
 
 export interface Transform {
   translation: Point
-  /** Uniform: non-uniform scale does not commute with eroding. Identity is 1. */
-  scale: number
   rotation: number
-  /** How far each vertex has walked along its bisector. */
+  /**
+   * Per axis. Identity is 1, and a zero axis is refused: it is not invertible
+   * and there is no geometry on the far side of it worth having.
+   *
+   * Nothing accumulates a transform — each version applies its own to what the
+   * one before it produced — so nothing has to commute with eroding, which is
+   * the whole reason this was uniform before.
+   */
+  scale: { x: number, y: number }
+  /** How far each edge has moved inward in the projection. */
   erosion: number
 }
 
 export const EMPTY_TRANSFORM: Transform = {
   translation: { x: 0, y: 0 },
-  scale: 1,
   rotation: 0,
+  scale: { x: 1, y: 1 },
   erosion: 0,
 };
 
+// -----------------------------------------------------------------------------
+// Identities
+//
+// All three come from one counter on `World`, so an id is unique across the
+// document and can never be confused for another kind. Everything a version's
+// layer names, it names by id: an edit keyed by array index re-points at the
+// wrong thing the moment something upstream is inserted.
+// -----------------------------------------------------------------------------
+
+export type PolygonId = number;
+export type VertexId = number;
+export type VersionId = number;
+
+/** A corner, and where it was put when it was drawn. */
+export interface Vertex {
+  id: VertexId
+  at: Point
+}
+
 /**
- * The points as they were drawn, and what has happened to them since. A
- * transform never rewrites the points — that is what lets it be re-read,
- * composed with the next one, and interpolated between versions.
+ * The points as they were laid down, and nothing else. What has happened to
+ * them since belongs to the versions, one layer at a time — a polygon carries
+ * no transform of its own, because there is no version at which it would be the
+ * right one.
  *
- * `nudges` runs alongside `points`, one for each, and holds where a vertex has
- * been dragged to relative to where erosion left it. It is separate from the
- * points because erosion reads the points to work out its bisectors: a drag
- * that wrote the point instead would swing the two neighbouring bisectors and
- * take those vertices along with it. The transform is about the world origin,
- * so both arrays are in one frame that nothing but a redraw depends on.
+ * `points` is ordered, because winding matters. Two vertices resolving to the
+ * same position are still distinct ids; coincidence is emergent, never
+ * declared.
  */
 export interface Polygon {
   type: PolygonType
-  points: Point[]
-  nudges: Point[]
-  transform: Transform
+  /** The version whose layer introduced it. Nothing before it may name it. */
+  birth: VersionId
+  points: Vertex[]
 }
 
-export interface Group {
-  type: 'group'
-  children: (PolygonId | Group)[]
+/**
+ * What one version does to one polygon.
+ *
+ * `vertices` holds displacements against the geometry the base resolved to, in
+ * the frame before this version's transform, so an edit turns with its polygon
+ * when an upstream version moves it. They land on the source ring, always:
+ * erosion is a projection taken afterwards and what it projects to has no
+ * handles to drag.
+ */
+export interface Edit {
   transform: Transform
-  aabb: AABB
+  vertices: Map<VertexId, Point>
 }
 
+/**
+ * A version is a layer, not a copy. It stores what changed against its base and
+ * resolves against it on demand, so an edit to an early version is seen by
+ * every later one without being replayed by hand into any of them.
+ *
+ * `base` is a field rather than an assumption that it is `N - 1`, which is what
+ * would make forks free. There are none yet.
+ *
+ * A new version has no edits at all, so it renders identically to its base
+ * until touched. There is nothing to diff and nothing to reconcile.
+ */
 export interface Version {
-  children: (PolygonId | Group)[]
+  name: string
+  base: VersionId | null
+  /** Whether it draws as a ghost while another version is the one on screen. */
+  visible: boolean
+  edits: Map<PolygonId, Edit>
 }
-
-export type PolygonId = number;
 
 export interface World {
-  sourcePolygons: Map<PolygonId, Polygon>
-  nextId: PolygonId
-
+  polygons: Map<PolygonId, Polygon>
+  /** One counter for every kind of id. */
+  nextId: number
   versions: Version[]
 }
 
-export const EMPTY_WORLD: World = {
-  sourcePolygons: new Map(),
-  nextId: 0,
+/** Long enough to author a shrink sequence against, short enough to fit down
+ * the side of the window without a scrollbar. */
+export const VERSIONS = 5;
 
-  versions: []
-};
+export function emptyWorld(): World {
+  return {
+    polygons: new Map(),
+    nextId: 0,
+
+    versions: Array.from({ length: VERSIONS }, (_unused, i) => ({
+      name: `v${i}`,
+      base: i === 0 ? null : i - 1,
+      visible: true,
+      edits: new Map(),
+    })),
+  };
+}
 
 /**
  * Everything the editor is. Immutable throughout: a field that did not change
@@ -168,7 +222,9 @@ export const EMPTY_WORLD: World = {
  */
 export interface EditorState {
   world: World
-  currentVersion: number
+  /** The version being edited. Every edit lands in this one and flows forward
+   * from it; there is no way to author one that lands earlier. */
+  currentVersion: VersionId
   /** What the next transform applies to. */
   selection: PolygonId[]
 

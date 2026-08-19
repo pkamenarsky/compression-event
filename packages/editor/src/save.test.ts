@@ -1,26 +1,37 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
-import { sourcePolygon } from './scene';
-import { EMPTY_TRANSFORM, EditorState, initialState } from './types';
+import { addPolygon, editAt, withEdit } from './scene';
+import { EditorState, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
-  const s = initialState({
-    sourcePolygons: new Map([
-      [0, {
-        ...sourcePolygon('level', [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]),
-        transform: EMPTY_TRANSFORM,
-      }],
-      [7, {
-        ...sourcePolygon('solid', [{ x: 4, y: 4 }, { x: 8, y: 4 }, { x: 8, y: 8 }]),
-        nudges: [{ x: 0, y: 0 }, { x: 1, y: -1 }, { x: 0, y: 0 }],
-        transform: { translation: { x: 3, y: -2 }, scale: 1.5, rotation: 0.25, erosion: 2 },
-      }],
-    ]),
-    nextId: 8,
-    versions: [{ children: [0, 7] }],
+  const a = addPolygon(emptyWorld(), 'level', [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+  ], 0);
+
+  const b = addPolygon(a.world, 'solid', [
+    { x: 4, y: 4 },
+    { x: 8, y: 4 },
+    { x: 8, y: 8 },
+  ], 1);
+
+  const edit = editAt(b.world, 2, b.id, 0);
+  const vertices = new Map(edit.vertices);
+
+  vertices.set(b.world.polygons.get(b.id)!.points[1].id, { x: 1, y: -1 });
+
+  const w = withEdit(b.world, 2, b.id, {
+    transform: {
+      translation: { x: 3, y: -2 },
+      rotation: 0.25,
+      scale: { x: 1.5, y: 0.75 },
+      erosion: 2,
+    },
+    vertices,
   });
 
-  return { ...s, selection: [7], tool: 'polygon', currentVersion: 0 };
+  return { ...initialState(w), selection: [b.id], tool: 'polygon', currentVersion: 2 };
 }
 
 describe('save', () => {
@@ -31,13 +42,26 @@ describe('save', () => {
     expect(after).toEqual(before);
   });
 
-  test('the polygons keep their ids, not their positions in a list', () => {
-    // 0 and 7, with nothing at 1..6: reading them back as an array would
-    // silently renumber every edit that names one.
-    const file = saved(world());
+  test('a layer comes back as maps rather than as arrays', () => {
+    // Everything a version names, it names by id. Read back as a list, an edit
+    // would re-point at whatever now sits at that position.
+    const before = world();
+    const after = restored(JSON.parse(JSON.stringify(saved(before))));
 
-    expect(file.world.polygons.map(([id]) => id)).toEqual([0, 7]);
-    expect([...restored(file).world.sourcePolygons.keys()]).toEqual([0, 7]);
+    const edits = after.world.versions[2].edits;
+
+    expect(edits).toBeInstanceOf(Map);
+    expect([...edits.values()][0].vertices).toBeInstanceOf(Map);
+    expect([...edits.keys()]).toEqual([...before.world.versions[2].edits.keys()]);
+  });
+
+  test('the polygons keep their ids, not their positions in a list', () => {
+    const before = world();
+    const ids = [...before.world.polygons.keys()];
+    const file = saved(before);
+
+    expect(file.world.polygons.map(([id]) => id)).toEqual(ids);
+    expect([...restored(file).world.polygons.keys()]).toEqual(ids);
   });
 
   test('a file from a format this does not read is refused', () => {

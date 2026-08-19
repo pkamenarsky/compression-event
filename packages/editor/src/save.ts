@@ -12,33 +12,54 @@
 // -----------------------------------------------------------------------------
 
 import {
+  Edit,
   EditorState,
   Polygon,
   PolygonId,
   Settings,
   Tool,
+  Transform,
   Version,
+  VersionId,
+  VertexId,
   View,
+  Point,
 } from './types';
 
-/** 2: transforms turn about the world origin rather than a polygon's centroid,
- * and vertices carry nudges, so a format-1 file would come back the right shape
- * in the wrong place. */
-export const FORMAT = 2;
+/**
+ * 3: a polygon is points and nothing else, and what happens to them belongs to
+ * the versions. A format-2 file has a transform per polygon with no version to
+ * put it in, and nudges applied after an erosion that no longer exists, so
+ * there is nothing sensible to read it as.
+ */
+export const FORMAT = 3;
 
 export interface Saved {
   format: number
   tool: Tool
-  currentVersion: number
+  currentVersion: VersionId
   selection: PolygonId[]
   settings: Settings
   view: View
   world: {
-    nextId: PolygonId
+    nextId: number
     /** Entries rather than a map, which is all `JSON` will take. */
     polygons: [PolygonId, Polygon][]
-    versions: Version[]
+    versions: SavedVersion[]
   }
+}
+
+/** A version with its two maps written out as entries. */
+export interface SavedVersion {
+  name: string
+  base: VersionId | null
+  visible: boolean
+  edits: [PolygonId, SavedEdit][]
+}
+
+export interface SavedEdit {
+  transform: Transform
+  vertices: [VertexId, Point][]
 }
 
 export function saved(state: EditorState): Saved {
@@ -51,9 +72,21 @@ export function saved(state: EditorState): Saved {
     view: state.view,
     world: {
       nextId: state.world.nextId,
-      polygons: [...state.world.sourcePolygons],
-      versions: state.world.versions,
+      polygons: [...state.world.polygons],
+      versions: state.world.versions.map(savedVersion),
     },
+  };
+}
+
+function savedVersion(v: Version): SavedVersion {
+  return {
+    name: v.name,
+    base: v.base,
+    visible: v.visible,
+    edits: [...v.edits].map(([id, e]) => [
+      id,
+      { transform: e.transform, vertices: [...e.vertices] },
+    ]),
   };
 }
 
@@ -64,9 +97,9 @@ export function restored(file: Saved): EditorState {
 
   return {
     world: {
-      sourcePolygons: new Map(file.world.polygons),
+      polygons: new Map(file.world.polygons),
       nextId: file.world.nextId,
-      versions: file.world.versions,
+      versions: file.world.versions.map(restoredVersion),
     },
     currentVersion: file.currentVersion,
     selection: file.selection,
@@ -74,6 +107,14 @@ export function restored(file: Saved): EditorState {
     view: file.view,
     tool: file.tool,
   };
+}
+
+function restoredVersion(v: SavedVersion): Version {
+  const edits = new Map<PolygonId, Edit>(
+    v.edits.map(([id, e]) => [id, { transform: e.transform, vertices: new Map(e.vertices) }]),
+  );
+
+  return { name: v.name, base: v.base, visible: v.visible, edits };
 }
 
 /** Sortable, and legal on every filesystem worth worrying about. */

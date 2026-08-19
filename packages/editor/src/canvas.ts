@@ -18,17 +18,20 @@ import {
 } from './input';
 import {
   Resolved,
+  addPolygon,
   centroid,
   csg,
+  editAt,
   hitPolygon,
   hitVertex,
   placeVertex,
-  resolved,
-  sourcePolygon,
+  resolveAt,
+  withEdit,
   withinBox,
 } from './scene';
 import { theme } from './theme';
 import {
+  Edit,
   Point,
   Polygon,
   PolygonId,
@@ -36,6 +39,7 @@ import {
   Tool,
   Transform,
   Update,
+  VersionId,
   View,
   World,
   resized,
@@ -67,6 +71,7 @@ export function worldCanvas(
   view: Value<View>,
   tool: Value<Tool>,
   selection: Value<PolygonId[]>,
+  currentVersion: Value<VersionId>,
   input: Input,
   update: Update,
 ): VNode {
@@ -146,7 +151,7 @@ export function worldCanvas(
         setLocal({ ...local(), marquee: null });
 
         if (end.tag === 'done' && box !== null) {
-          const picked = withinBox(resolved(world()), box.a, box.b);
+          const picked = withinBox(resolveAt(world(), currentVersion()), box.a, box.b);
           update(s => ({ ...s, selection: picked }));
         }
 
@@ -155,28 +160,34 @@ export function worldCanvas(
     }
 
     /**
-     * A vertex follows the cursor. `placeVertex` decides whether that is a move
-     * of the point or a nudge on top of the erosion, and either way the vertex
-     * lands under the cursor and its neighbours do not move.
+     * A source vertex follows the cursor, and the projection under it updates
+     * live. The displacement lands in the version on screen, so every later
+     * version sees it too — which is what the ghosts held open during the drag
+     * are there to let the author judge.
      */
     function* draggingVertex(id: PolygonId, index: number): Op<void> {
+      const v = currentVersion();
+
+      setLocal({ ...local(), previewing: true });
+
       yield* select({
         dragging: pointerMoved(e => {
           const to = at(e, true);
 
           update(s => {
-            const p = s.world.sourcePolygons.get(id);
-            if (p === undefined) return s;
+            const it = resolveAt(s.world, v).find(r => r.id === id);
+            if (it === undefined) return s;
 
-            const sourcePolygons = new Map(s.world.sourcePolygons);
-            sourcePolygons.set(id, placeVertex(p, index, to));
+            const edit = placeVertex(it, editAt(s.world, v, id, it.erosion), index, to);
 
-            return { ...s, world: { ...s.world, sourcePolygons } };
+            return { ...s, world: withEdit(s.world, v, id, edit) };
           });
         }),
         done: pointerReleased(),
         lost: blurred(),
       });
+
+      setLocal({ ...local(), previewing: false });
     }
 
     /**
@@ -188,74 +199,75 @@ export function worldCanvas(
     function* transforming(code: string, mode: Mode): Op<void> {
       const ids = selection();
       const e = input.pointer();
+      const v = currentVersion();
 
       if (ids.length === 0 || e === null) return;
 
+      const items = resolveAt(world(), v).filter(it => ids.includes(it.id));
+
+      if (items.length === 0) return;
+
       const from = at(e);
 
-      const anchors = new Map<PolygonId, Transform>();
-
-      for (const id of ids) {
-        const p = world().sourcePolygons.get(id);
-        if (p !== undefined) anchors.set(id, p.transform);
-      }
+      // The layer as it stood when the key went down. A transform written into
+      // this version replaces whatever it held, so the gesture recomputes from
+      // here rather than composing onto its own last frame.
+      const anchors = new Map<PolygonId, Edit>(
+        items.map(it => [it.id, editAt(world(), v, it.id, it.erosion)]),
+      );
 
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself.
-      const rings = resolved(world()).filter(it => anchors.has(it.id));
-      const pivot = centroid(rings.flatMap(it => it.ring));
+      const pivot = centroid(items.flatMap(it => it.source));
 
       cursor('crosshair');
+      setLocal({ ...local(), previewing: true });
 
       yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
 
           update(s => {
-            const sourcePolygons = new Map(s.world.sourcePolygons);
+            let world = s.world;
 
             for (const [id, was] of anchors) {
-              const p = sourcePolygons.get(id);
-              if (p === undefined) continue;
-
-              sourcePolygons.set(id, { ...p, transform: mode(was, pivot, from, to) });
+              world = withEdit(world, v, id, {
+                ...was,
+                transform: mode(was.transform, pivot, from, to),
+              });
             }
 
-            return { ...s, world: { ...s.world, sourcePolygons } };
+            return { ...s, world };
           });
         }),
         done: keyReleased(input, code),
         lost: blurred(),
       });
 
+      setLocal({ ...local(), previewing: false });
       cursor('');
     }
 
     function retype(type: Polygon['type']): void {
       update(s => {
-        const sourcePolygons = new Map(s.world.sourcePolygons);
+        const polygons = new Map(s.world.polygons);
 
         for (const id of s.selection) {
-          const p = sourcePolygons.get(id);
-          if (p !== undefined) sourcePolygons.set(id, { ...p, type });
+          const p = polygons.get(id);
+          if (p !== undefined) polygons.set(id, { ...p, type });
         }
 
-        return { ...s, world: { ...s.world, sourcePolygons } };
+        return { ...s, world: { ...s.world, polygons } };
       });
     }
 
+    /** A polygon is born into the version it was drawn in, and nothing before
+     * that version may name it. */
     function commit(points: Point[]): void {
       update(s => {
-        const id = s.world.nextId;
-        const sourcePolygons = new Map(s.world.sourcePolygons);
+        const { world, id } = addPolygon(s.world, 'level', points, s.currentVersion);
 
-        sourcePolygons.set(id, sourcePolygon('level', points));
-
-        return {
-          ...s,
-          world: { ...s.world, sourcePolygons, nextId: id + 1 },
-          selection: [id],
-        };
+        return { ...s, world, selection: [id] };
       });
     }
 
@@ -284,7 +296,11 @@ export function worldCanvas(
         return;
       }
 
-      const hit = hitVertex(resolved(world()), at(e), HANDLE / view().zoom);
+      const hit = hitVertex(
+        resolveAt(world(), currentVersion()),
+        at(e),
+        HANDLE / view().zoom,
+      );
 
       if (hit !== null) {
         yield* draggingVertex(hit.id, hit.index);
@@ -295,7 +311,7 @@ export function worldCanvas(
     }
 
     function picking(e: PointerEvent): void {
-      const id = hitPolygon(resolved(world()), at(e));
+      const id = hitPolygon(resolveAt(world(), currentVersion()), at(e));
 
       update(s => ({ ...s, selection: id === null ? [] : [id] }));
     }
@@ -323,10 +339,18 @@ export function worldCanvas(
           effect(() => el && observeSize(el, update)),
 
           effect(
-            () => [world(), settings(), view(), tool(), selection(), local()] as const,
-            ([w, s, v, t, sel, l]) => {
+            () => [
+              world(),
+              settings(),
+              view(),
+              tool(),
+              selection(),
+              currentVersion(),
+              local(),
+            ] as const,
+            ([w, s, v, t, sel, at, l]) => {
               if (el && ctx) {
-                draw(el, ctx, v, layers(w, s, v, t, sel, l));
+                draw(el, ctx, v, layers(w, s, v, t, sel, at, l));
               }
             },
           ),
@@ -413,9 +437,18 @@ interface Draft {
 interface Local {
   marquee: Marquee | null
   draft: Draft | null
+  /**
+   * A gesture is running, so the versions downstream of this one are drawn
+   * whatever their eyes say.
+   *
+   * This is load-bearing rather than a nicety: it is the entire mechanism by
+   * which an edit made at v0 can be judged against its effect at v4, and it is
+   * what makes dropping backward propagation affordable.
+   */
+  previewing: boolean
 }
 
-const EMPTY_LOCAL: Local = { marquee: null, draft: null };
+const EMPTY_LOCAL: Local = { marquee: null, draft: null, previewing: false };
 
 // -----------------------------------------------------------------------------
 // The modal transforms
@@ -426,27 +459,64 @@ const EMPTY_LOCAL: Local = { marquee: null, draft: null };
 type Mode = (was: Transform, pivot: Point, from: Point, to: Point) => Transform;
 
 /**
- * A transform turned by `turn` and scaled by `factor` about `pivot`, which is
- * to say `pivot + factor·R·(p - pivot)` composed onto it.
+ * The same transform, turned by `angle` about `pivot`.
  *
+ * A rotation composes on the outside — turn the polygon, then carry its
+ * translation round the pivot — and the family is closed under that, since a
+ * rotation of a rotation is a rotation and the leftover is a translation.
  * Because a transform is about the world origin this is just the composition
- * written out, and one pivot serves the whole selection. When transforms were
- * about each polygon's own centroid this had to carry that centroid around the
- * pivot by hand to stop several polygons each spinning on the spot.
+ * written out, and one pivot serves the whole selection.
  */
-function orbit(t: Transform, pivot: Point, turn: number, factor: number): Transform {
-  const c = Math.cos(turn), s = Math.sin(turn);
+function turned(t: Transform, pivot: Point, angle: number): Transform {
+  const c = Math.cos(angle), s = Math.sin(angle);
   const dx = t.translation.x - pivot.x, dy = t.translation.y - pivot.y;
 
   return {
     ...t,
-    rotation: t.rotation + turn,
-    scale: t.scale * factor,
+    rotation: t.rotation + angle,
     translation: {
-      x: pivot.x + (dx * c - dy * s) * factor,
-      y: pivot.y + (dx * s + dy * c) * factor,
+      x: pivot.x + dx * c - dy * s,
+      y: pivot.y + dx * s + dy * c,
     },
   };
+}
+
+/**
+ * The same transform, scaled per axis with `pivot` held still.
+ *
+ * A squash has to go *inside* the rotation. Composed on the outside it would be
+ * a shear the moment the polygon is turned — rotate, squash, rotate again is
+ * not a rotation and a scale — and this family cannot say a shear, deliberately:
+ * the components stay separate so that the morph can interpolate rotation
+ * angularly rather than slewing a matrix through a shear on the way.
+ *
+ * So the factor multiplies the transform's own per-axis scale, which squashes
+ * along the polygon's own axes, and the translation takes up whatever that did
+ * to the pivot. Written out, `T' = pivot - R·F·R⁻¹·(pivot - T)`, which stays in
+ * the family because a translation is free.
+ */
+function squashed(t: Transform, pivot: Point, fx: number, fy: number): Transform {
+  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
+  const dx = pivot.x - t.translation.x, dy = pivot.y - t.translation.y;
+
+  const ux = (dx * c + dy * s) * fx;
+  const uy = (-dx * s + dy * c) * fy;
+
+  return {
+    ...t,
+    scale: { x: t.scale.x * fx, y: t.scale.y * fy },
+    translation: {
+      x: pivot.x - (ux * c - uy * s),
+      y: pivot.y - (ux * s + uy * c),
+    },
+  };
+}
+
+/** How far the cursor is from the pivot now against where it started, as a
+ * factor. Nothing is scaled by a gesture that started on the pivot, and a zero
+ * axis is refused: it is not invertible. */
+function ratio(was: number, now: number): number {
+  return Math.abs(was) < 1e-6 || Math.abs(now) < 1e-6 ? 1 : now / was;
 }
 
 const TRANSFORMS: Record<string, Mode> = {
@@ -458,20 +528,27 @@ const TRANSFORMS: Record<string, Mode> = {
     },
   }),
 
-  KeyR: (t, pivot, from, to) => orbit(
+  KeyR: (t, pivot, from, to) => turned(
     t,
     pivot,
     Math.atan2(to.y - pivot.y, to.x - pivot.x)
       - Math.atan2(from.y - pivot.y, from.x - pivot.x),
-    1,
   ),
 
   KeyS: (t, pivot, from, to) => {
-    const was = Math.hypot(from.x - pivot.x, from.y - pivot.y);
-    const now = Math.hypot(to.x - pivot.x, to.y - pivot.y);
+    const f = ratio(
+      Math.hypot(from.x - pivot.x, from.y - pivot.y),
+      Math.hypot(to.x - pivot.x, to.y - pivot.y),
+    );
 
-    return was < 1e-6 ? t : orbit(t, pivot, 0, now / was);
+    return squashed(t, pivot, f, f);
   },
+
+  // One axis at a time, which is the only way to say a squash: there is no
+  // reading of a single drag that gives two independent factors and is not a
+  // surprise on one of them.
+  KeyX: (t, pivot, from, to) => squashed(t, pivot, ratio(from.x - pivot.x, to.x - pivot.x), 1),
+  KeyY: (t, pivot, from, to) => squashed(t, pivot, 1, ratio(from.y - pivot.y, to.y - pivot.y)),
 
   KeyE: (t, _pivot, from, to) => ({
     ...t,
@@ -543,33 +620,6 @@ function draw(
   }
 }
 
-/**
- * Back to front. The CSG goes over the polygons that made it, because it is the
- * answer and they are the working.
- */
-function layers(
-  world: World,
-  settings: Settings,
-  view: View,
-  tool: Tool,
-  selection: PolygonId[],
-  local: Local,
-): Layer[] {
-  const items = resolved(world);
-  const out: Layer[] = [];
-
-  if (settings.showGrid) out.push(ctx => grid(ctx, settings, view));
-
-  out.push(ctx => axes(ctx, view));
-  out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
-  out.push(ctx => set(ctx, view, csg(items)));
-
-  if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
-  if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
-
-  return out;
-}
-
 function trace(ctx: CanvasRenderingContext2D, view: View, ring: Ring): void {
   ring.forEach((p, i) => {
     const s = toScreen(view, p);
@@ -581,7 +631,97 @@ function trace(ctx: CanvasRenderingContext2D, view: View, ring: Ring): void {
   ctx.closePath();
 }
 
-/** The polygons as drawn: outlines only, so the CSG over them stays readable. */
+/**
+ * Back to front. Ghosts of the other versions go under the version on screen,
+ * and the CSG goes over the polygons that made it, because it is the answer and
+ * they are the working.
+ */
+function layers(
+  world: World,
+  settings: Settings,
+  view: View,
+  tool: Tool,
+  selection: PolygonId[],
+  current: VersionId,
+  local: Local,
+): Layer[] {
+  const items = resolveAt(world, current);
+  const out: Layer[] = [];
+
+  if (settings.showGrid) out.push(ctx => grid(ctx, settings, view));
+
+  out.push(ctx => axes(ctx, view));
+
+  for (const k of ghostVersions(world, current, local.previewing)) {
+    const shown = resolveAt(world, k);
+    const stroke = ghostColour(k - current);
+
+    out.push(ctx => ghosts(ctx, view, shown, stroke));
+  }
+
+  out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
+  out.push(ctx => set(ctx, view, csg(items)));
+
+  if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
+  if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
+
+  return out;
+}
+
+/**
+ * Which other versions draw as ghosts. The eyes are only the resting state:
+ * while a gesture runs, everything downstream fades in whatever they say, since
+ * that is the whole point of editing an early version and watching a late one.
+ */
+function ghostVersions(world: World, current: VersionId, previewing: boolean): VersionId[] {
+  const out: VersionId[] = [];
+
+  for (let k = 0; k < world.versions.length; k++) {
+    if (k !== current && (world.versions[k].visible || (previewing && k > current))) {
+      out.push(k);
+    }
+  }
+
+  return out;
+}
+
+/** Outline only, no fill, and hue ramps along with alpha: past about three
+ * stacked versions opacity alone goes muddy. Behind is cool, ahead is warm. */
+function ghostColour(distance: number): string {
+  const d = Math.min(Math.abs(distance), theme.ghost.length) - 1;
+
+  return distance < 0 ? theme.ghostBehind[d] : theme.ghost[d];
+}
+
+function ghosts(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  items: Resolved[],
+  stroke: string,
+): void {
+  ctx.beginPath();
+
+  for (const it of items) {
+    for (const ring of it.shape) {
+      trace(ctx, view, ring);
+    }
+  }
+
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+/**
+ * The polygons as this version resolves them: outlines only, so the CSG over
+ * them stays readable.
+ *
+ * What is drawn solid is the projection — the eroded outline — and it carries no
+ * handles at all. Where the two differ the source ring is drawn behind it as a
+ * ghost, and the handles are on that, because the source is the only thing
+ * there is to edit. It is also the honest presentation: the eroded outline is
+ * derived geometry, in the same sense the CSG result is.
+ */
 function polygons(
   ctx: CanvasRenderingContext2D,
   view: View,
@@ -592,8 +732,22 @@ function polygons(
   for (const it of items) {
     const picked = selection.includes(it.id);
 
+    if (it.erosion !== 0 && (picked || handles)) {
+      ctx.beginPath();
+      trace(ctx, view, it.source);
+
+      ctx.strokeStyle = theme.source;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     ctx.beginPath();
-    trace(ctx, view, it.ring);
+
+    for (const ring of it.shape) {
+      trace(ctx, view, ring);
+    }
 
     ctx.strokeStyle = picked
       ? theme.picked
@@ -610,7 +764,7 @@ function polygons(
   ctx.beginPath();
 
   for (const it of items) {
-    for (const p of it.ring) {
+    for (const p of it.source) {
       const s = toScreen(view, p);
       ctx.rect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5);
     }
