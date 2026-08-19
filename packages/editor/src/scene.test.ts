@@ -4,12 +4,13 @@ import { OpSubtract, Shape, combine, shapeArea, simplify } from './geometry';
 import {
   Resolved,
   addPolygon,
-  apply,
+  affine,
   csg,
   editAt,
   placeVertex,
+  place,
   resolveAt,
-  unapply,
+  unplace,
   withEdit,
 } from './scene';
 import {
@@ -178,7 +179,7 @@ describe('transforms', () => {
 
   test('a squash and a turn come apart again exactly', () => {
     for (const p of rect(-30, 20, 70, 45)) {
-      const back = unapply(turned, apply(turned, [p])[0]);
+      const back = unplace(affine(turned), place(affine(turned), [p])[0]);
 
       expect(back.x).toBeCloseTo(p.x, 9);
       expect(back.y).toBeCloseTo(p.y, 9);
@@ -186,7 +187,10 @@ describe('transforms', () => {
   });
 
   test('the axes scale independently', () => {
-    const ring = apply({ ...EMPTY_TRANSFORM, scale: { x: 2, y: 0.5 } }, rect(0, 0, 10, 10));
+    const ring = place(
+      affine({ ...EMPTY_TRANSFORM, scale: { x: 2, y: 0.5 } }),
+      rect(0, 0, 10, 10),
+    );
 
     expect(ring[1].x - ring[0].x).toBeCloseTo(20, 9);
     expect(ring[2].y - ring[1].y).toBeCloseTo(5, 9);
@@ -347,20 +351,61 @@ describe('placeVertex', () => {
     expect(only(spun, 1, ids[0]).source[0].y).toBeCloseTo(was.x, 9);
   });
 
-  test('an edit sits on top of what its base handed over, in that frame', () => {
-    // `source(k) = transform_k(source(k - 1) + vertexEdits_k)`, straight out of
-    // docs/versioning.md: the displacement is added to the geometry the base
-    // resolved to, so a version *upstream* of it turning does not turn the
-    // displacement with it. The prose in the spec says the opposite of its own
-    // formula here — see the note in the summary.
+  test('an upstream turn carries an edit round with the rest of the ring', () => {
+    // The bug this is here for: the displacement used to be written against the
+    // world geometry the base handed over, so it kept its screen direction
+    // while the polygon turned underneath it. A corner nudged at v3 walked out
+    // of the ring the moment v0 was rotated, and the polygon was a different
+    // shape at every upstream angle.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const nudged = drag(world, 1, ids[0], 0, { x: 20, y: 0 });
-    const spun = transformed(nudged, 0, ids[0], { rotation: Math.PI / 2 });
+    const nudged = drag(world, 3, ids[0], 0, { x: -30, y: 40 });
 
-    // v0 turns the corner at (0, 0) onto itself, and v1's 20 to the right is
-    // still 20 to the right.
-    expect(only(spun, 1, ids[0]).source[0].x).toBeCloseTo(20, 9);
-    expect(only(spun, 1, ids[0]).source[0].y).toBeCloseTo(0, 9);
+    const before = only(nudged, 3, ids[0]).source;
+    const spun = transformed(nudged, 0, ids[0], { rotation: Math.PI / 2 });
+    const after = only(spun, 3, ids[0]).source;
+
+    // A quarter turn about the origin sends (x, y) to (-y, x) — every point of
+    // the ring, the nudged one included. The shape is rigid under it.
+    before.forEach((p, i) => {
+      expect(after[i].x).toBeCloseTo(-p.y, 9);
+      expect(after[i].y).toBeCloseTo(p.x, 9);
+    });
+  });
+
+  test('an upstream squash carries an edit too, and only squashes once', () => {
+    // The same property under a transform that is not rigid: a corner nudged at
+    // v2 is scaled by v0's squash exactly as its neighbours are.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const nudged = drag(world, 2, ids[0], 0, { x: -30, y: 40 });
+
+    const before = only(nudged, 2, ids[0]).source;
+    const squashed = transformed(nudged, 0, ids[0], { scale: { x: 3, y: 0.5 } });
+    const after = only(squashed, 2, ids[0]).source;
+
+    before.forEach((p, i) => {
+      expect(after[i].x).toBeCloseTo(p.x * 3, 9);
+      expect(after[i].y).toBeCloseTo(p.y * 0.5, 9);
+    });
+  });
+
+  test('a drag lands on the cursor whatever the chain above it is doing', () => {
+    // Which is what makes the frame change safe: the displacement is written
+    // through the inverse of the whole composed chain, so the corner is under
+    // the cursor at the version being edited however turned or squashed the
+    // versions above it have left the polygon.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+
+    const chained = transformed(
+      transformed(world, 0, ids[0], { rotation: 0.7, scale: { x: 2.5, y: 0.4 } }),
+      1,
+      ids[0],
+      { rotation: -1.2, translation: { x: 60, y: 15 }, erosion: 6 },
+    );
+
+    const after = drag(chained, 3, ids[0], 2, { x: 123, y: -45 });
+
+    expect(only(after, 3, ids[0]).source[2].x).toBeCloseTo(123, 9);
+    expect(only(after, 3, ids[0]).source[2].y).toBeCloseTo(-45, 9);
   });
 
   test('the handles are on the source, whatever the erosion is doing', () => {

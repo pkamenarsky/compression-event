@@ -73,8 +73,15 @@ export interface Entry {
   kind: Kind
   /** The points that came in, untouched. The editor's to draw and to edit. */
   source: Shape
-  /** The same polygon simplified — outer rings counter-clockwise, holes
-   * clockwise, no self-intersections — which is what the geometry runs on. */
+  /**
+   * The same polygon simplified — outer rings counter-clockwise, holes
+   * clockwise, no self-intersections — which is what the geometry runs on.
+   *
+   * May be empty, when the polygon has nothing left: eroded past its own
+   * middle, or drawn with no area to begin with. The entry stays, because the
+   * caller's id and kind outlive the geometry and an update has to be able to
+   * bring it back.
+   */
   shape: Shape
   /** Of `source`, so it covers `shape` too. */
   box: AABB
@@ -205,7 +212,11 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     if (was !== undefined) {
       // Whatever it used to lie over stops being buried by it.
       disturb(was.box);
-      tree = aabb.remove(tree, e.id, was.box);
+
+      // In the tree exactly when it has geometry, so this is where that is
+      // undone rather than unconditionally.
+      if (was.shape.length !== 0) tree = aabb.remove(tree, e.id, was.box);
+
       entries.delete(e.id);
       dirty.add(e.id);
     }
@@ -219,17 +230,27 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     // polygon takes part in a boundary. The points that came in are kept as
     // they are: the editor goes on editing those, not this.
     const shape = simplify(e.shape);
-    if (shape.length === 0) continue;
 
     // The source box covers the simplified one, so it is safe to search with
     // and it is the box the editor wants for picking.
     const box = ofRings(e.shape);
 
+    // The entry goes in whether or not there is any geometry left. Dropping it
+    // for an empty shape loses the kind, which is the one thing an update
+    // cannot supply — so a polygon eroded away to nothing could never be
+    // eroded back, and the caller had no way to know it had to insert instead.
+    // A version scrubbing a depth past a collapse and back does exactly that.
     entries.set(e.id, { id: e.id, kind, source: e.shape, shape, box });
-    tree = aabb.insert(tree, e.id, box);
 
-    // And whatever it now lies over starts being buried by it.
-    disturb(box);
+    // The tree is about what can bury something, so nothing goes in it. An
+    // empty box would be unfindable by the search that removes it, too.
+    if (shape.length !== 0) {
+      tree = aabb.insert(tree, e.id, box);
+
+      // And whatever it now lies over starts being buried by it.
+      disturb(box);
+    }
+
     dirty.add(e.id);
   }
 
@@ -269,6 +290,12 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
 
     if (e === undefined) {
       next.runs.delete(id);
+      continue;
+    }
+
+    // Present, but with nothing to contribute and nothing able to bury it.
+    if (e.shape.length === 0) {
+      next.runs.set(id, []);
       continue;
     }
 

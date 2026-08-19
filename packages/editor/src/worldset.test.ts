@@ -199,6 +199,92 @@ describe('incremental equals rebuilt', () => {
   });
 });
 
+describe('a polygon with nothing left', () => {
+  // The editor's erosion is a projection that may erase a polygon entirely: a
+  // room eroded past its own middle resolves to no rings at all. Scrubbing the
+  // depth back has to bring it straight back, including inside a single drag,
+  // which is where this was first seen — the yellow overlay went and stayed
+  // gone for the rest of the session.
+
+  test('an update to nothing empties its share of the outline', () => {
+    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+
+    set = update(set, 1, []).set;
+
+    expect(outline(set)).toEqual([]);
+    expect(length(set)).toBeCloseTo(0, 6);
+  });
+
+  test('and an update back brings it back', () => {
+    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+
+    set = update(set, 1, []).set;
+    set = update(set, 1, rect(0, 0, 10, 10)).set;
+
+    expect(length(set)).toBeCloseTo(40, 6);
+    expect(pieces(set).every(p => p.source === 1)).toBe(true);
+  });
+
+  test('scrubbing a depth down through nothing and back, one step at a time', () => {
+    // A drag, frame by frame. Every step goes in as an update, because from
+    // the caller's side the polygon never stopped existing.
+    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 100, 100)).set;
+
+    const at = (d: number): Shape => (d >= 50 ? [] : rect(d, d, 100 - 2 * d, 100 - 2 * d));
+
+    for (const d of [0, 10, 20, 30, 40, 45, 49, 50, 60, 70, 60, 50, 49, 40, 20, 0]) {
+      set = update(set, 1, at(d)).set;
+    }
+
+    expect(length(set)).toBeCloseTo(400, 6);
+  });
+
+  test('the entry keeps its id and kind while it has no geometry', () => {
+    // The kind is the thing an update cannot supply, so losing it is what made
+    // the polygon unrecoverable. A `solid` has to come back a `solid`.
+    let set = fromEntries([
+      { id: 1, type: level, shape: rect(0, 0, 20, 20) },
+      { id: 2, type: solid, shape: rect(5, 5, 10, 10) },
+    ]);
+
+    set = update(set, 2, []).set;
+
+    expect(entry(set, 2)?.kind).toBe(solid);
+    expect(entry(set, 2)?.shape).toEqual([]);
+
+    // Nothing to bury the room, so the room is whole.
+    expect(length(set)).toBeCloseTo(80, 6);
+
+    set = update(set, 2, rect(5, 5, 10, 10)).set;
+
+    // And back to a room with a pillar taken out of the middle of it.
+    expect(length(set)).toBeCloseTo(120, 6);
+  });
+
+  test('it is not returned by an overlap search while it is empty', () => {
+    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+
+    expect(overlapping(set, box(0, 0, 10, 10))).toEqual([1]);
+
+    set = update(set, 1, []).set;
+
+    expect(overlapping(set, box(0, 0, 10, 10))).toEqual([]);
+  });
+
+  test('removing one that is already empty leaves the set alone', () => {
+    let set = fromEntries([
+      { id: 1, type: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, type: level, shape: rect(100, 0, 10, 10) },
+    ]);
+
+    set = update(set, 2, []).set;
+    set = remove(set, 2).set;
+
+    expect(entry(set, 2)).toBeUndefined();
+    expect(length(set)).toBeCloseTo(40, 6);
+  });
+});
+
 describe('the diff', () => {
   test('replaying every diff lands where the set is', () => {
     let set = emptyWorldSet;

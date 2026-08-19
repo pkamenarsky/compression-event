@@ -8,7 +8,8 @@
 //
 // Resolution is sequential:
 //
-//   source(k) = transform_k(source(k - 1) + vertexEdits_k)
+//   local(k)  = local(k - 1) + vertexEdits_k
+//   source(k) = (transform_k o ... o transform_1)(local(k))
 //   shape(k)  = erode(source(k), depth_k)
 //
 // so `source` is what flows down the chain and `shape` is a read-only view
@@ -55,7 +56,13 @@ import {
 export interface Resolved {
   id: PolygonId
   polygon: Polygon
-  /** The ring this version's layer produced. The handles live here. */
+  /** The ring in the polygon's own frame: as drawn, plus every displacement
+   * written at this version or before it. */
+  local: Ring
+  /** Every transform down the chain, composed. Takes `local` to `source`. */
+  frame: Affine
+  /** The ring this version's layer produced, in world units. The handles live
+   * here. */
   source: Ring
   /** The projection: the source decomposed and offset. Read-only, always. */
   shape: Shape
@@ -135,34 +142,95 @@ export function chain(world: World, v: VersionId): VersionId[] {
   return out;
 }
 
-/** The points, put where a transform says: scaled per axis, turned, moved. */
-export function apply(t: Transform, ring: Ring): Ring {
-  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
+// -----------------------------------------------------------------------------
+// The composed frame
+//
+// A vertex edit is written in the polygon's own frame and every transform in
+// the chain carries it, which is the only reading under which a polygon is one
+// shape: nudge a corner at v3, turn the polygon at v0, and the corner stays
+// where it was put relative to its neighbours rather than swinging out of the
+// ring. Written the other way — a displacement against the world geometry the
+// base handed over — the nudge keeps its screen direction while the polygon
+// turns underneath it, and the shape is different at every upstream angle.
+//
+// So resolution accumulates one composed affine per polygon rather than pushing
+// each version's displacement through the transforms that come after it. That
+// is strictly less work, not more: the awkward `sum over j of (M_k ... M_j) e_j`
+// is gone, and what is left is one matrix product down the chain and one pass
+// over the points at the end.
+//
+// The composed map is a general affine — rotate, squash, rotate again is a
+// shear, so this family is not closed under composition. That costs nothing
+// here, because nothing interpolates an accumulated transform: every version
+// boundary is a keyframe, and the one in flight is stored per version in
+// components. Components are kept separate for interpolation, and this is not
+// interpolation.
+// -----------------------------------------------------------------------------
 
-  return ring.map(p => {
-    const x = p.x * t.scale.x, y = p.y * t.scale.y;
-
-    return {
-      x: x * c - y * s + t.translation.x,
-      y: x * s + y * c + t.translation.y,
-    };
-  });
+/** `(x, y)` goes to `(ax + cy + tx, bx + dy + ty)`. */
+export interface Affine {
+  a: number
+  b: number
+  c: number
+  d: number
+  tx: number
+  ty: number
 }
 
-/** The exact inverse of `apply` on one point. Erosion is not undone, because
- * it was never done to the source in the first place. */
-export function unapply(t: Transform, p: Point): Point {
-  const c = Math.cos(-t.rotation), s = Math.sin(-t.rotation);
-  const x = p.x - t.translation.x, y = p.y - t.translation.y;
+export const IDENTITY: Affine = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
+
+/** One version's layer as a matrix: scale per axis, then turn, then move. */
+export function affine(t: Transform): Affine {
+  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
 
   return {
-    x: (x * c - y * s) / t.scale.x,
-    y: (x * s + y * c) / t.scale.y,
+    a: c * t.scale.x,
+    b: s * t.scale.x,
+    c: -s * t.scale.y,
+    d: c * t.scale.y,
+    tx: t.translation.x,
+    ty: t.translation.y,
   };
 }
 
-/** The vertex displacements this layer holds, added to what the base handed
- * over. Keyed by id, so an edit survives a vertex being inserted upstream. */
+/** `outer` after `inner`. */
+export function compose(outer: Affine, inner: Affine): Affine {
+  return {
+    a: outer.a * inner.a + outer.c * inner.b,
+    b: outer.b * inner.a + outer.d * inner.b,
+    c: outer.a * inner.c + outer.c * inner.d,
+    d: outer.b * inner.c + outer.d * inner.d,
+    tx: outer.a * inner.tx + outer.c * inner.ty + outer.tx,
+    ty: outer.b * inner.tx + outer.d * inner.ty + outer.ty,
+  };
+}
+
+export function place(m: Affine, ring: Ring): Ring {
+  return ring.map(p => ({
+    x: m.a * p.x + m.c * p.y + m.tx,
+    y: m.b * p.x + m.d * p.y + m.ty,
+  }));
+}
+
+/**
+ * A world point back in the frame `m` came from. The inverse of `place`, named
+ * apart from `displaced` above, which is about vertex edits rather than frames.
+ *
+ * Always possible: every stage of the chain refuses a zero axis, so no stage is
+ * singular and neither is their product.
+ */
+export function unplace(m: Affine, p: Point): Point {
+  const det = m.a * m.d - m.b * m.c;
+  const x = p.x - m.tx, y = p.y - m.ty;
+
+  return {
+    x: (m.d * x - m.c * y) / det,
+    y: (m.a * y - m.b * x) / det,
+  };
+}
+
+/** The vertex displacements this layer holds, added to the ones already
+ * standing. Keyed by id, so an edit survives a vertex being inserted upstream. */
 function displaced(polygon: Polygon, ring: Ring, vertices: Map<VertexId, Point>): Ring {
   if (vertices.size === 0) return ring;
 
@@ -195,7 +263,8 @@ export function project(source: Ring, erosion: number): Shape {
  * which is more direct to author than compounding and exactly reproducible.
  */
 export function resolveAt(world: World, v: VersionId): Resolved[] {
-  const source = new Map<PolygonId, Ring>();
+  const local = new Map<PolygonId, Ring>();
+  const frame = new Map<PolygonId, Affine>();
   const depth = new Map<PolygonId, number>();
 
   for (const k of chain(world, v)) {
@@ -203,27 +272,39 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
     for (const [id, polygon] of world.polygons) {
       if (polygon.birth === k) {
-        source.set(id, polygon.points.map(p => ({ ...p.at })));
+        local.set(id, polygon.points.map(p => ({ ...p.at })));
+        frame.set(id, IDENTITY);
         depth.set(id, 0);
       }
 
-      const ring = source.get(id);
+      const ring = local.get(id);
       const edit = version.edits.get(id);
 
       if (ring === undefined || edit === undefined) continue;
 
-      source.set(id, apply(edit.transform, displaced(polygon, ring, edit.vertices)));
+      local.set(id, displaced(polygon, ring, edit.vertices));
+      frame.set(id, compose(affine(edit.transform), frame.get(id)!));
       depth.set(id, edit.transform.erosion);
     }
   }
 
   const out: Resolved[] = [];
 
-  for (const [id, ring] of source) {
+  for (const [id, ring] of local) {
     const polygon = world.polygons.get(id)!;
     const erosion = depth.get(id) ?? 0;
+    const m = frame.get(id)!;
+    const source = place(m, ring);
 
-    out.push({ id, polygon, source: ring, shape: project(ring, erosion), erosion });
+    out.push({
+      id,
+      polygon,
+      local: ring,
+      frame: m,
+      source,
+      shape: project(source, erosion),
+      erosion,
+    });
   }
 
   return out;
@@ -263,18 +344,22 @@ export function withEdit(world: World, v: VersionId, id: PolygonId, edit: Edit):
 /**
  * A source vertex put under the cursor, exactly.
  *
- * The displacement is written against what the base handed over and lands
- * before this version's transform, so it turns with the polygon when an
- * upstream version moves it. What the base handed over is recovered by taking
- * this layer back off the vertex as it stands, which is exact: a transform is
- * invertible and erosion is not in the way, having never touched the source.
+ * The displacement is written in the polygon's own frame, so every transform in
+ * the chain carries it and the corner keeps its place in the ring however the
+ * polygon is turned or squashed upstream. Taking the cursor back to that frame
+ * is one inverse of the composed matrix, which is exact: erosion is not in the
+ * way, having never touched the source.
+ *
+ * It is not cumulative. The displacement replaces what this layer held rather
+ * than adding to it, so a drag that returns to where it started leaves the
+ * layer as it found it.
  */
 export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point): Edit {
   const id = it.polygon.points[index].id;
   const was = edit.vertices.get(id) ?? { x: 0, y: 0 };
 
-  const local = unapply(edit.transform, it.source[index]);
-  const target = unapply(edit.transform, at);
+  const target = unplace(it.frame, at);
+  const local = it.local[index];
 
   const vertices = new Map(edit.vertices);
   vertices.set(id, {
