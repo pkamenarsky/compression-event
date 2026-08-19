@@ -649,9 +649,28 @@ export function combineTagged(
   fill: Fill = fieldContains,
 ): TaggedShape {
   const raw = [...segments(a, 0), ...segments(b, 1)];
-  const scale = scaleOf(raw);
-  const snap = scale * 1e-9;
-  const segs = split(raw, snap);
+  const snap = scaleOf(raw) * 1e-9;
+
+  return chain(arranged(a, b, op, fill, split(raw, snap), snap), snap);
+}
+
+/**
+ * The pieces of the arrangement that belong to the answer, each turned so the
+ * answer's interior is on its left.
+ *
+ * Shared by `combineTagged`, which chains them into rings, and `boundaryRuns`,
+ * which throws away everything but one polygon's own edges.
+ */
+function arranged(
+  a: Shape,
+  b: Shape,
+  op: Op,
+  fill: Fill,
+  segs: Seg[],
+  snap: number,
+): Seg[] {
+  // `snap` was scaled off the input the same way, so this recovers it.
+  const scale = snap / 1e-9;
 
   // Prepared once and asked four times per segment, which is the whole reason
   // they exist.
@@ -692,7 +711,131 @@ export function combineTagged(
     kept.push(dir);
   }
 
-  return chain(kept, snap);
+  return kept;
+}
+
+// -----------------------------------------------------------------------------
+// One polygon's share of the boundary
+//
+// The answer's outline is made of pieces of the inputs' edges, and every piece
+// belongs to exactly one input polygon. That partition is what makes an
+// incremental set possible: a piece of A's boundary survives exactly when
+// nothing lying over A buries it, so A's share depends on A and on the polygons
+// A actually overlaps — never on what those overlap in turn.
+//
+// So the caller hands over the polygon and its neighbours, and gets back the
+// runs of its own edges that reached the outline. Two polygons that touch
+// neither A nor each other cannot change this answer, however the union happens
+// to connect them up somewhere else.
+//
+// The runs are open on purpose. A closed ring is generally made of several
+// polygons' runs and belongs to none of them, and assembling one is a separate
+// job that most callers turn out not to need: collision wants edge normals, and
+// a corner needs only the run that carries on past it rather than the whole
+// loop.
+// -----------------------------------------------------------------------------
+
+/** A polygon taking part in the set, as `boundaryRuns` needs to see it. */
+export interface Member {
+  id: number
+  kind: 'level' | 'solid'
+  shape: Shape
+}
+
+/**
+ * The parts of `subject`'s edges that lie on the boundary of the set the
+ * members make — every `level` unioned, every `solid` taken back out — as open
+ * runs in the order they are walked.
+ *
+ * `others` is everything overlapping `subject`; nothing further away can make a
+ * difference, which is the point.
+ *
+ * Where two polygons share an edge exactly, only one of them may claim it or
+ * the boundary would be counted twice. The rings go in ordered by id so that
+ * the lower id always wins, whichever polygon this call happens to be asking
+ * about — the arrangement keeps the first of a pair of coincident edges, so the
+ * order they are handed over in *is* the rule.
+ */
+export function boundaryRuns(subject: Member, others: readonly Member[]): Point[][] {
+  const all = [subject, ...others];
+  const a: Shape = [], b: Shape = [];
+  let from = 0, to = 0;
+
+  for (const kind of ['level', 'solid'] as const) {
+    const into = kind === 'level' ? a : b;
+
+    for (const m of all.filter(x => x.kind === kind).sort((p, q) => p.id - q.id)) {
+      if (m.id === subject.id) {
+        from = into.length;
+        to = from + m.shape.length;
+      }
+
+      into.push(...m.shape);
+    }
+  }
+
+  const mine = subject.kind === 'level' ? 0 : 1;
+  const raw = [...segments(a, 0), ...segments(b, 1)];
+  const snap = scaleOf(raw) * 1e-9;
+  const kept = arranged(a, b, OpSubtract, fieldContains, split(raw, snap), snap);
+
+  return runs(
+    kept.filter(s => s.edge.shape === mine && s.edge.ring >= from && s.edge.ring < to),
+    snap,
+  );
+}
+
+/**
+ * Segments chained end to end into the longest runs they make, without closing
+ * them. Where a run does close on itself the loop is returned with its first
+ * point repeated at the end, so that every edge is present either way.
+ */
+function runs(segs: Seg[], snap: number): Point[][] {
+  const next = new Map<string, number[]>();
+  const incoming = new Map<string, number>();
+
+  segs.forEach((s, i) => {
+    const from = keyOf(s.a, snap), to = keyOf(s.b, snap);
+
+    (next.get(from) ?? next.set(from, []).get(from)!).push(i);
+    incoming.set(to, (incoming.get(to) ?? 0) + 1);
+  });
+
+  const used = segs.map(() => false);
+  const out: Point[][] = [];
+
+  const walk = (start: number) => {
+    const run: Point[] = [segs[start].a];
+    let e = start;
+
+    while (true) {
+      used[e] = true;
+      run.push(segs[e].b);
+
+      const on = next.get(keyOf(segs[e].b, snap));
+      const step = on?.find(i => !used[i]);
+
+      // A junction where several runs meet is where this one ends: which of
+      // them carries on is a question about the whole outline, not about this
+      // polygon, and nothing here needs the answer.
+      if (step === undefined || (on !== undefined && on.length > 1)) break;
+
+      e = step;
+    }
+
+    out.push(run);
+  };
+
+  // Open runs first, from their loose ends, so a run is never entered halfway.
+  segs.forEach((s, i) => {
+    if (!used[i] && (incoming.get(keyOf(s.a, snap)) ?? 0) === 0) walk(i);
+  });
+
+  segs.forEach((_s, i) => {
+    if (!used[i]) walk(i);
+  });
+
+  return out;
 }
 
 function keyOf(p: Point, snap: number): string {

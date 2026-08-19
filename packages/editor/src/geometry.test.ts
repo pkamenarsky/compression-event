@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 import {
+  Member,
   Op,
   OpIntersect,
   OpSubtract,
@@ -20,6 +21,7 @@ import {
   isCCW,
   shapeArea,
   signedArea2,
+  boundaryRuns,
   simplify,
   subtract,
   union,
@@ -835,5 +837,93 @@ describe('morph', () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// boundaryRuns
+// -----------------------------------------------------------------------------
+
+const member = (id: number, kind: 'level' | 'solid', r: Ring): Member =>
+  ({ id, kind, shape: [r] });
+
+const lv = (id: number, r: Ring): Member => member(id, 'level', r);
+const sd = (id: number, r: Ring): Member => member(id, 'solid', r);
+
+/** Total length of a set of open runs. */
+const runLength = (runs: Point[][]) =>
+  runs.reduce((t, r) => t + r.slice(1).reduce(
+    (u, p, i) => u + Math.hypot(p.x - r[i].x, p.y - r[i].y), 0), 0);
+
+const perimeter = (r: Ring) =>
+  r.reduce((t, p, i) => t + Math.hypot(
+    p.x - r[(i + 1) % r.length].x, p.y - r[(i + 1) % r.length].y), 0);
+
+/** Every member's share, added up: the whole outline, each piece once. */
+const wholeOutline = (ms: Member[]) => ms.reduce(
+  (t, m) => t + runLength(boundaryRuns(m, ms.filter(o => o.id !== m.id))), 0);
+
+describe('boundaryRuns', () => {
+  test('a lone polygon keeps its whole boundary', () => {
+    expect(runLength(boundaryRuns(lv(0, rect(0, 0, 10, 10)), []))).toBeCloseTo(40, 6);
+  });
+
+  test('a polygon swallowed whole contributes nothing', () => {
+    const inner = lv(1, rect(2, 2, 2, 2)), outer = lv(0, rect(0, 0, 10, 10));
+
+    expect(runLength(boundaryRuns(inner, [outer]))).toBeCloseTo(0, 6);
+    expect(runLength(boundaryRuns(outer, [inner]))).toBeCloseTo(40, 6);
+  });
+
+  test('overlapping squares split the outline between them, once each', () => {
+    // Sharing the y=0 and y=10 edges over the overlap, which is exactly the
+    // case where both could claim the same segment.
+    const ms = [lv(0, rect(0, 0, 10, 10)), lv(1, rect(5, 0, 10, 10))];
+
+    expect(wholeOutline(ms)).toBeCloseTo(perimeter(simplify(ms.map(m => m.shape[0]))[0]), 6);
+  });
+
+  test('the far side of a chain does not change the answer', () => {
+    // A-B-C in a row: A meets B, B meets C, A never meets C. A's share has to
+    // come out the same whether or not C is mentioned — the locality claim.
+    const a = lv(0, rect(0, 0, 10, 10));
+    const b = lv(1, rect(8, 0, 10, 10));
+    const c = lv(2, rect(16, 0, 10, 10));
+
+    expect(runLength(boundaryRuns(a, [b, c]))).toBeCloseTo(runLength(boundaryRuns(a, [b])), 6);
+  });
+
+  test('every share together rebuilds the whole outline', () => {
+    const ms = [
+      lv(0, rect(0, 0, 10, 10)),
+      lv(1, rect(8, 0, 10, 10)),
+      lv(2, rect(16, 0, 10, 10)),
+      lv(3, rect(4, 6, 10, 10)),
+    ];
+
+    const whole = simplify(ms.map(m => m.shape[0]));
+
+    expect(wholeOutline(ms)).toBeCloseTo(whole.reduce((t, r) => t + perimeter(r), 0), 4);
+  });
+
+  test('a solid cuts the level that contains it', () => {
+    const room = lv(0, rect(0, 0, 20, 20)), pillar = sd(1, rect(8, 8, 4, 4));
+
+    expect(runLength(boundaryRuns(room, [pillar]))).toBeCloseTo(80, 6);
+    expect(runLength(boundaryRuns(pillar, [room]))).toBeCloseTo(16, 6);
+  });
+
+  test('a solid outside every level contributes nothing', () => {
+    const room = lv(0, rect(0, 0, 20, 20)), away = sd(1, rect(50, 50, 4, 4));
+
+    expect(runLength(boundaryRuns(away, [room]))).toBeCloseTo(0, 6);
+  });
+
+  test('id order decides a shared edge, not argument order', () => {
+    // Two squares meeting exactly along x=10. Whichever is asked first, the
+    // shared edge belongs to the same one of them.
+    const a = lv(0, rect(0, 0, 10, 10)), b = lv(1, rect(10, 0, 10, 10));
+
+    expect(runLength(boundaryRuns(a, [b])) + runLength(boundaryRuns(b, [a]))).toBeCloseTo(60, 6);
   });
 });
