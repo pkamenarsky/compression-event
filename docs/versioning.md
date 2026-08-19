@@ -348,8 +348,22 @@ arrangement drops them.
 about the world. The transform has to be per-version or a group could not be
 eroded at v3, which is the point of having group transforms at all.
 
-Resolve order is scene-graph order: a polygon's own edit resolves first in its
-local frame, then its group's transform applies to the result.
+Resolve order is scene-graph order, and each level does the same two things —
+transform, then project:
+
+```
+shape(A)     = erode(T_A(source_A), d_A)
+shape(group) = erode(T_G(union of member shapes), d_G)
+```
+
+nesting to any depth. A member's own depth offsets its own ring; the group's
+offsets the union of what its members produced. Neither writes back, so this is
+still a projection rather than a stage: `source` is untouched and version *k+1*
+starts from `source(k)` as always.
+
+It is deliberately the same shape of composition as the version chain — apply
+mine, then the enclosing one's — so there is one rule to learn rather than two
+that happen to rhyme.
 
 Leaving a group preserves position. Since the group's transform differs per
 version, there is no single transform to absorb — baking the current version's
@@ -358,7 +372,35 @@ everywhere else. So **leaving writes a compensating transform into every version
 where the group transform is non-identity**, as one atomic undo entry. Joining is
 the same operation inverted. Both are heavier than they look.
 
+**Erosion is not compensated, and leaving does not take the group's depth.** A
+polygon owns one erosion depth, membership does not touch it, and a group's
+depth is the group's. Leaving a group with a non-zero depth therefore changes
+the polygon's shape — it stops being offset by the group's amount — while its
+position is preserved as promised. Position is what the compensation is about;
+shape was never in the promise.
+
+The reason is that transforms compensate and depths cannot. Affine transforms
+form a group: leaving composes `C` into the member's own transform, joining
+composes `C⁻¹`, and the round trip is exact even if the author scrubs the
+transform in between, because composition is associative and invertible. Erosion
+has neither property — offsetting by `a` then `b` is not offsetting by `a + b`
+once an event falls between them, and there is no inverse at all.
+
+Both ways of trying it break on a round trip. Adding the group's depth on
+leaving and not removing it on joining doubles the erosion for a polygon pulled
+out and put straight back. Replacing the polygon's own depth with the group's
+discards what the polygon had. Leave, scrub, rejoin has no defensible answer
+under either. Owning one depth and never transferring it has exactly one
+answer, and leave-then-rejoin is the identity.
+
 Members that do not exist yet are skipped by resolve.
+
+**Groups nest four deep.** The limit is the shader's — a vertex carries a chain
+of transforms rather than one composed matrix, so the chain has to be bounded —
+and it is stated in the status line when a fifth level is asked for rather than
+being discovered as a bake failure. Four is low on purpose: nesting is a
+legibility problem before it is a performance one, and the number is raisable
+later without breaking worlds.
 
 ### Eroding a group erodes the union
 
@@ -401,7 +443,12 @@ a selection erode cannot be written as per-member erosion, and there is nothing
 else in a version's layer to write it to. Since groups are global structure
 rather than per-version, minting an anonymous one inside a version is not
 available either. Eroding several polygons as one shape therefore requires them
-to *be* a group, and the UI offers to make one rather than pretending otherwise.
+to *be* a group.
+
+So the erode control is **greyed out for a selection**, with the status line
+reading *to erode a selection, make it a group first*. Refusing in the one place
+the author would try it is cheaper than any of the alternatives, all of which
+amount to inventing somewhere to put a number that has nowhere to go.
 
 ## Artefacts and paths
 
@@ -610,10 +657,14 @@ which is the same expression as before with the erosion folded into its
 endpoints.
 
 The transform interpolated here is the **in-flight version's own**, never an
-accumulation of the chain. Every version boundary is a keyframe, so at most one
-version's layer is partway applied across any stretch, and everything before it
-is already inside `local`. That is why transforms never have to compose, and
-therefore why they are free to be non-uniform.
+accumulation of the version chain. Every version boundary is a keyframe, so at
+most one version's layer is partway applied across any stretch, and everything
+before it is already inside `local`. That is why the chain never has to compose,
+and therefore why a version's scale is free to be non-uniform.
+
+The *scene graph* is a different axis, and it is not collapsed either. A polygon
+and the groups above it can all be in flight at once, so the shader keeps them
+apart and interpolates each in its own components — see *Data layout*.
 
 This also fixes something the old scheme got wrong. With `local` constant across
 a stretch, a vertex nudge could only pop at a version boundary. With `local`
@@ -728,6 +779,30 @@ only well inside `tol`.
 `coarse: true` and a cover that is wider than `tol` but still complete — never
 one that has dropped something.
 
+**How many false positives.** Three bounds, in increasing usefulness.
+
+The budget is a hard cap by construction: the search stops there, so the cover
+can never exceed what the budget allows whatever the geometry does.
+
+Structurally, the cover holds one cluster of intervals per true root, one per
+flat stretch, and one per near-tangency the search cannot resolve. Adjacent
+intervals merge, so a cluster is one keyframe rather than several. Nothing else
+survives, because interval arithmetic's overestimation is `O(w)` in the interval
+width: an interval holding no root is discarded as soon as `w` falls below
+`|f| / L`, which happens almost immediately away from zero. False positives
+concentrate exactly where `|f|` sits inside the flat band or the precision
+floor — a corner passing within noise of an edge without touching it — and there
+are as many of those as the geometry has near-misses, not as many as `1 / tol`.
+
+In the common case there are none at all, because there is no search: with no
+relative rotation `f` is polynomial and its roots come in closed form. Pure
+erosion, which is the core mechanic, is entirely inside that case.
+
+The cost of one is a stretch across which the topology happens not to change:
+duplicated buffers, identical connectivity either side of the keyframe, nothing
+rendering differently. That asymmetry is the whole reason the search is built to
+over-report — a redundant keyframe costs bytes, a missed one tears geometry.
+
 **A keyframe is a discontinuity, not a shared frame.** At an event the two sides
 genuinely have different vertex sets; that is what the event *is*. Continuity
 comes from the appearing or disappearing vertex being exactly degenerate at the
@@ -763,14 +838,45 @@ composing tags, so no reference ever carries a chain behind it.
 
 Per stretch:
 
-- **Polygon table** — the in-flight transform components at both ends: five
-  floats each end, ten per polygon. A grouped polygon carries its group's
-  in-flight transform too, applied after its own in scene-graph order.
-- **Vertex table** — `local` at both ends (4) and a polygon index (1). Lives in
-  an SSBO or texture. Entries are the inputs to the final CSG: source vertices
-  for an ungrouped polygon, eroded-union vertices for a grouped one.
+- **Transform table** — one slot per distinct transform in the scene, in
+  component form at both ends: translation (2), rotation (1), scale (2). Five
+  floats each end, ten per slot. A group's transform is one slot however many
+  vertices sit under it.
+- **Chain table** — per polygon, the transform slots that apply to it, innermost
+  first, up to the nesting limit. A handful of indices, sized by polygons rather
+  than by vertices.
+- **Vertex table** — `local` at both ends (4) and a chain index (1). Lives in an
+  SSBO or texture. Entries are the inputs to the final CSG: source vertices for
+  an ungrouped polygon, eroded-union vertices for a grouped one.
 - **Ring index buffer** — per output vertex: a kind flag, one or four vertex
   table indices, and `lineOpacity` at both ends. Around twenty bytes.
+
+**Group nesting is bounded, not flattened.** A vertex reads its chain and
+applies each transform in turn, interpolating every level in its own components.
+The limit is **four levels**, and the editor says so in the status line rather
+than silently failing when a fifth is asked for.
+
+The alternative was to flatten the chain into one composed transform per vertex,
+which does not work as cleanly as it looks. Composition is not closed in
+`(translation, rotation, scale)` — rotate, squash, rotate again is a shear — so a
+flattened slot needs a general matrix, and interpolating one entrywise slews
+through a shear and collapses a rotating polygon through its own centre. Storing
+a polar decomposition instead avoids that, but it has to re-extract an angle
+into a principal range, so a composed rotation past half a turn unwinds the
+wrong way; and once two levels carry non-uniform scale the composed rotation
+stops being the sum of the levels' angles, so the intermediate frames are no
+longer what per-level interpolation would give.
+
+Keeping the levels makes all of that go away by construction. Each level is
+authored, so its angle is already unwrapped and its scale is already in
+components, and the shader reproduces `geometry(t)` exactly at any nesting depth
+rather than approximately. The price is a bounded loop — four iterations at
+worst, one in the overwhelmingly common case — and one indirection through the
+chain table.
+
+Four is chosen low on purpose. Deep nesting is a legibility problem before it is
+a performance one, and the limit is trivially raisable later without breaking
+worlds, where lowering it would not be.
 
 Output vertices carry indices rather than data, so a crossing costs four
 lookups rather than four copies. Connectivity comes from the baked ring; the
@@ -780,6 +886,24 @@ A side table records each stretch's byte offsets and the `t` range it spans. The
 countdown maps to a global `t`, which selects a stretch and a normalised
 position within it. Running backward for the reversal artefact is the same table
 read in reverse.
+
+### Easing is a runtime concern
+
+Whatever shape the transitions have — ease in and out of each version, hold, snap
+— is entirely a question of how the countdown maps to `t`, and the bake neither
+knows nor needs to. `geometry(t)` is exact at every `t`; easing only chooses
+which ones get looked at.
+
+This is safe rather than merely convenient, because **the mapping is monotonic**.
+A monotonic reparameterisation cannot create or destroy a topology event or
+reorder two of them, so the completeness the event search guarantees in `t`
+carries over unchanged. That is the whole condition. An easing that overshoots
+its endpoints — the elastic and back families — would sample outside the baked
+range and has to be clamped; running backward is fine and already supported.
+
+Easing each version transition separately rather than the run as a whole needs
+the version boundaries in `t`, and the side table already carries them, since
+every version boundary is a keyframe.
 
 ### lineOpacity
 
@@ -988,17 +1112,6 @@ Scrolling plus collapsing untouched runs, settled against a real strip rather
 than on paper.
 
 ## TODOS / Questions
-
-- How many false positive keyframes can theoretically be generated during the topology event search?
-
-- Where does a selection erode get stored? Groups are global structure, so a
-  version cannot mint an anonymous one, and erosion does not distribute onto
-  members. Current answer is that the UI offers to make a real group; worth
-  revisiting if that turns out to be friction rather than clarity.
-
-- How many levels of nested group transform should the shader apply, and is it
-  cheaper to flatten them at bake? The polygon table currently assumes at most
-  own-plus-one.
 
 - The morph property test in `geometry.test.ts` covers uniform scale only. It
   needs a per-axis case, and one where a group's eroded union is the input.
