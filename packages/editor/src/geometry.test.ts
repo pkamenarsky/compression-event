@@ -13,6 +13,7 @@ import {
   Tag,
   TaggedShape,
   area,
+  bisectors,
   combineTagged,
   contains,
   decompose,
@@ -925,5 +926,73 @@ describe('boundaryRuns', () => {
     const a = lv(0, rect(0, 0, 10, 10)), b = lv(1, rect(10, 0, 10, 10));
 
     expect(runLength(boundaryRuns(a, [b])) + runLength(boundaryRuns(b, [a]))).toBeCloseTo(60, 6);
+  });
+});
+
+describe('bisectors', () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+
+  test('a corner moves diagonally inward, one over root two per unit', () => {
+    const b = bisectors(square);
+
+    expect(b).toHaveLength(4);
+
+    for (const v of b) {
+      expect(Math.hypot(v.x, v.y)).toBeCloseTo(Math.SQRT2, 9);
+    }
+
+    expect(b[0].x).toBeCloseTo(1, 9);
+    expect(b[0].y).toBeCloseTo(1, 9);
+    expect(b[2].x).toBeCloseTo(-1, 9);
+    expect(b[2].y).toBeCloseTo(-1, 9);
+  });
+
+  test('walking the corners agrees with the band, while the offset is simple', () => {
+    const b = bisectors(square);
+    const depth = 20;
+
+    const walked = square.map((p, i) => ({
+      x: p.x + depth * b[i].x,
+      y: p.y + depth * b[i].y,
+    }));
+
+    const [ring] = erode([square], depth);
+
+    expect(ring).toHaveLength(4);
+    expect(shapeArea([walked])).toBeCloseTo(shapeArea([ring]), 6);
+  });
+
+  test('winding does not change where a corner goes', () => {
+    const forward = bisectors(square);
+    const back = bisectors([...square].reverse());
+
+    // Same corners, listed the other way round.
+    forward.forEach((v, i) => {
+      const w = back[square.length - 1 - i];
+
+      expect(w.x).toBeCloseTo(v.x, 9);
+      expect(w.y).toBeCloseTo(v.y, 9);
+    });
+  });
+
+  test('a straight-on corner rides the offset itself', () => {
+    // Three collinear points: no meeting place, so the middle one just moves
+    // in by the normal.
+    const flat = [
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ];
+
+    const b = bisectors(flat);
+
+    expect(Math.hypot(b[1].x, b[1].y)).toBeCloseTo(1, 9);
   });
 });

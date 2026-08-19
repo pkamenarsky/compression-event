@@ -1,19 +1,19 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 import { Iv, at, cos, holdsZero, mul, sin, sub } from './interval';
-import { Frame, Moving, collinear, events, place, swept, vertexOnEdge } from './events';
+import { Frame, Moving, collinear, edgesMeet, events, place, swept, vertexOnEdge } from './events';
 import { Point } from '@ce/game/world';
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
-const still: Frame = { translation: { x: 0, y: 0 }, rotation: 0, scale: 1 };
+const still: Frame = { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } };
 
 /** A point that does not move. */
 function fixed(p: Point): Moving {
   return {
-    local: p,
+    local: [p, p],
     bisector: { x: 0, y: 0 },
     erosion: [0, 0],
     frames: [still, still],
@@ -158,12 +158,12 @@ describe('events', () => {
     const b = fixed({ x: 400, y: 0 });
 
     const corner: Moving = {
-      local: { x: 20, y: -100 },
+      local: [{ x: 20, y: -100 }, { x: 20, y: -100 }],
       bisector: { x: 0, y: 0 },
       erosion: [0, 0],
       frames: [
-        { translation: { x: 120, y: 0 }, rotation: 0, scale: 1 },
-        { translation: { x: 120, y: 0 }, rotation: Math.PI, scale: 1 },
+        { translation: { x: 120, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+        { translation: { x: 120, y: 0 }, rotation: Math.PI, scale: { x: 1, y: 1 } },
       ],
     };
 
@@ -182,11 +182,13 @@ describe('events', () => {
 const arbFrame = fc.record({
   translation: fc.record({ x: q(-80, 80, 0.5), y: q(-80, 80, 0.5) }),
   rotation: fc.integer({ min: -180, max: 180 }).map(d => d * Math.PI / 180),
-  scale: q(0.6, 1.6, 0.05),
+  scale: fc.record({ x: q(0.6, 1.6, 0.05), y: q(0.6, 1.6, 0.05) }),
 });
 
+const arbPoint = fc.record({ x: q(-60, 60, 0.5), y: q(-60, 60, 0.5) });
+
 const arbMoving: fc.Arbitrary<Moving> = fc.record({
-  local: fc.record({ x: q(-60, 60, 0.5), y: q(-60, 60, 0.5) }),
+  local: fc.tuple(arbPoint, arbPoint),
   bisector: fc.record({ x: q(-1, 1, 0.05), y: q(-1, 1, 0.05) }),
   erosion: fc.tuple(q(-6, 6, 0.25), q(-6, 6, 0.25)),
   frames: fc.tuple(arbFrame, arbFrame),
@@ -260,7 +262,7 @@ describe('collinear', () => {
   const still = (x: number, y: number): Frame => ({
     translation: { x, y },
     rotation: 0,
-    scale: 1,
+    scale: { x: 1, y: 1 },
   });
 
   const move = (
@@ -268,7 +270,8 @@ describe('collinear', () => {
     frames: [Frame, Frame],
     erosion: [number, number] = [0, 0],
     bisector: Point = { x: 0, y: 0 },
-  ): Moving => ({ local, bisector, erosion, frames });
+    to: Point = local,
+  ): Moving => ({ local: [local, to], bisector, erosion, frames });
 
   test('the closed form and the search find the same moments', () => {
     // A corner sliding across a static edge, driven three ways — by the
@@ -306,8 +309,8 @@ describe('collinear', () => {
     const a = move({ x: 0, y: -80 }, [still(30, 0), still(30, 0)]);
     const b = move({ x: 0, y: 80 }, [still(30, 0), still(30, 0)]);
     const spun = move({ x: 50, y: 0 }, [
-      { translation: { x: 0, y: 0 }, rotation: 0, scale: 1 },
-      { translation: { x: 0, y: 0 }, rotation: Math.PI, scale: 1 },
+      { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      { translation: { x: 0, y: 0 }, rotation: Math.PI, scale: { x: 1, y: 1 } },
     ]);
 
     const found = collinear(a, b, spun, { tol: 1e-9 });
@@ -327,21 +330,30 @@ describe('collinear', () => {
 
 describe('swept', () => {
   const at2 = (x: number, y: number, rot = 0): Frame =>
-    ({ translation: { x, y }, rotation: rot, scale: 1 });
+    ({ translation: { x, y }, rotation: rot, scale: { x: 1, y: 1 } });
 
   const corner = (lx: number, ly: number, f: Frame, g: Frame): Moving =>
-    ({ local: { x: lx, y: ly }, bisector: { x: 0, y: 0 }, erosion: [0, 0], frames: [f, g] });
+    ({
+      local: [{ x: lx, y: ly }, { x: lx, y: ly }],
+      bisector: { x: 0, y: 0 },
+      erosion: [0, 0],
+      frames: [f, g],
+    });
 
   /** Where a vertex actually is, sampled — the truth the box has to contain. */
   function sample(m: Moving, t: number): { x: number, y: number } {
     const [f, g] = m.frames;
     const th = f.rotation + (g.rotation - f.rotation) * t;
-    const k = f.scale + (g.scale - f.scale) * t;
+    const kx = f.scale.x + (g.scale.x - f.scale.x) * t;
+    const ky = f.scale.y + (g.scale.y - f.scale.y) * t;
     const c = Math.cos(th), s = Math.sin(th);
 
+    const lx = (m.local[0].x + (m.local[1].x - m.local[0].x) * t) * kx;
+    const ly = (m.local[0].y + (m.local[1].y - m.local[0].y) * t) * ky;
+
     return {
-      x: f.translation.x + (g.translation.x - f.translation.x) * t + k * (m.local.x * c - m.local.y * s),
-      y: f.translation.y + (g.translation.y - f.translation.y) * t + k * (m.local.x * s + m.local.y * c),
+      x: f.translation.x + (g.translation.x - f.translation.x) * t + lx * c - ly * s,
+      y: f.translation.y + (g.translation.y - f.translation.y) * t + lx * s + ly * c,
     };
   }
 
@@ -376,5 +388,130 @@ describe('swept', () => {
     expect(b.maxX).toBeCloseTo(10, 9);
     expect(b.minY).toBeCloseTo(-10, 9);
     expect(b.maxY).toBeCloseTo(10, 9);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// What the version model asks for
+// -----------------------------------------------------------------------------
+
+describe('the layer, as a version writes one', () => {
+  const layer = (
+    translation: Point,
+    rotation: number,
+    scale: Point,
+  ): Frame => ({ translation, rotation, scale });
+
+  const rides = (local: Point, frames: [Frame, Frame], to: Point = local): Moving =>
+    ({ local: [local, to], bisector: { x: 0, y: 0 }, erosion: [0, 0], frames });
+
+  const flat = layer({ x: 0, y: 0 }, 0, { x: 1, y: 1 });
+
+  test('a scale that is not uniform still solves rather than searching', () => {
+    // Nothing turns, so the path is straight and the closed form applies —
+    // which is the whole reason the two axes were allowed to come apart.
+    const a = rides({ x: -100, y: 0 }, [flat, flat]);
+    const b = rides({ x: 100, y: 0 }, [flat, flat]);
+
+    const squashed = rides({ x: 0, y: 40 }, [
+      flat,
+      layer({ x: 0, y: 0 }, 0, { x: 3, y: -0.5 }),
+    ]);
+
+    const found = collinear(a, b, squashed);
+
+    expect(found.coarse).toBe(false);
+
+    // `y` runs 40 down to -20, so it reaches the edge two thirds of the way.
+    expect(found.at).toHaveLength(1);
+    expect(found.at[0]).toBeCloseTo(2 / 3, 9);
+  });
+
+  test('the two axes are not the same axis', () => {
+    const wide = rides({ x: 10, y: 10 }, [flat, layer({ x: 0, y: 0 }, 0, { x: 4, y: 1 })]);
+    const tall = rides({ x: 10, y: 10 }, [flat, layer({ x: 0, y: 0 }, 0, { x: 1, y: 4 })]);
+
+    const box = (m: Moving) => swept([m]);
+
+    expect(box(wide).maxX).toBeCloseTo(40, 6);
+    expect(box(wide).maxY).toBeCloseTo(10, 6);
+    expect(box(tall).maxX).toBeCloseTo(10, 6);
+    expect(box(tall).maxY).toBeCloseTo(40, 6);
+  });
+
+  test('a vertex nudge moves the vertex, not just the polygon around it', () => {
+    const a = rides({ x: -100, y: 0 }, [flat, flat]);
+    const b = rides({ x: 100, y: 0 }, [flat, flat]);
+
+    // Held still by its frame, and moved across the edge by its own two ends.
+    const nudged = rides({ x: 0, y: 30 }, [flat, flat], { x: 0, y: -10 });
+
+    const found = collinear(a, b, nudged);
+
+    expect(found.at).toHaveLength(1);
+    expect(found.at[0]).toBeCloseTo(0.75, 9);
+  });
+});
+
+describe('edgesMeet', () => {
+  const flat: Frame = { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } };
+
+  const going = (from: Point, to: Point): Moving => ({
+    local: [from, to],
+    bisector: { x: 0, y: 0 },
+    erosion: [0, 0],
+    frames: [flat, flat],
+  });
+
+  const held = (p: Point): Moving => going(p, p);
+
+  test('finds the instant a third edge arrives at a crossing', () => {
+    // Two fixed edges crossing at the origin, and a horizontal line sliding
+    // down through it. Nothing is at an endpoint, so no signed area over three
+    // vertices ever vanishes and `collinear` cannot see this at all.
+    const one = [held({ x: -100, y: -100 }), held({ x: 100, y: 100 })] as const;
+    const two = [held({ x: -100, y: 100 }), held({ x: 100, y: -100 })] as const;
+
+    const sliding = [
+      going({ x: -100, y: 50 }, { x: -100, y: -50 }),
+      going({ x: 100, y: 50 }, { x: 100, y: -50 }),
+    ] as const;
+
+    const found = events(edgesMeet(one, two, sliding), { tol: 1e-9 });
+
+    expect(found.coarse).toBe(false);
+    expect(found.at).toHaveLength(1);
+    expect(found.at[0]).toBeCloseTo(0.5, 7);
+
+    // And the thing it is blind to, for contrast.
+    expect(collinear(one[0], one[1], sliding[0]).at).toEqual([]);
+  });
+
+  test('says nothing when the third edge never reaches the crossing', () => {
+    const one = [held({ x: -100, y: -100 }), held({ x: 100, y: 100 })] as const;
+    const two = [held({ x: -100, y: 100 }), held({ x: 100, y: -100 })] as const;
+
+    const clear = [
+      going({ x: -100, y: 90 }, { x: -100, y: 60 }),
+      going({ x: 100, y: 90 }, { x: 100, y: 60 }),
+    ] as const;
+
+    expect(events(edgesMeet(one, two, clear), { tol: 1e-9 }).at).toEqual([]);
+  });
+
+  test('reports a stretch that is concurrent throughout once, rather than for ever', () => {
+    // Three lines through the origin the whole way: the determinant is zero at
+    // every instant, and without `flat` the search would subdivide looking for
+    // the moment it happens.
+    const through = (dx: number, dy: number) =>
+      [held({ x: -dx, y: -dy }), held({ x: dx, y: dy })] as const;
+
+    const found = events(
+      edgesMeet(through(100, 0), through(0, 100), through(70, 70)),
+      { tol: 1e-6, flat: 1e-3 },
+    );
+
+    expect(found.at).toHaveLength(1);
+    expect(found.coarse).toBe(false);
   });
 });

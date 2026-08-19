@@ -8,6 +8,7 @@ import {
   pruned,
   sample,
   spanAt,
+  truth,
 } from './bake';
 import {
   addPolygon,
@@ -94,6 +95,38 @@ function editorAt(world: World, v: VersionId): number {
   return lengthOf(csg(resolveAt(world, v)));
 }
 
+/**
+ * The worst the replay is ever wrong across a span, against the CSG worked out
+ * directly at the same instant.
+ *
+ * This is the test that matters. Everything else here is about the machinery;
+ * this is about whether the game would draw the right thing, and it is what
+ * caught both the signature scan's blind spot and the crossings sliding.
+ */
+function drift(world: World, from = 0, steps = 40): number {
+  const span = run(bakeSpan(world, from));
+  let worst = 0;
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+
+    worst = Math.max(worst, Math.abs(length(sample(span, t)) - length(truth(world, from, t))));
+  }
+
+  return worst;
+}
+
+/** Where the span was cut, rounded to something a test can name. */
+function cuts(world: World, from = 0): number[] {
+  const span = run(bakeSpan(world, from));
+
+  return span.stretches.slice(1).map(s => Number(s.t0.toFixed(4)));
+}
+
+function torn(world: World, from = 0): number {
+  return run(bakeSpan(world, from)).stretches.filter(s => s.torn).length;
+}
+
 describe('the ends of a span', () => {
   test('agree with the editor at both versions', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 200)]);
@@ -151,8 +184,9 @@ describe('interpolation', () => {
 });
 
 describe('keyframes', () => {
-  test('an erosion that splits a room in two is cut', () => {
-    // A dumbbell: two rooms joined by a neck thin enough to pinch through.
+  test('a room pinching in two is cut where the neck closes', () => {
+    // Two rooms joined by a neck 40 across, so it pinches at a depth of 20 —
+    // four fifths of the way to the 25 the version asks for.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 200, 60)],
       ['level', rect(80, 60, 40, 40)],
@@ -162,10 +196,37 @@ describe('keyframes', () => {
     let w = world;
     for (const id of ids) w = transformed(w, 1, id, { erosion: 25 });
 
-    const span = run(bakeSpan(w, 0));
+    expect(cuts(w)).toContain(0.8);
+    expect(torn(w)).toBe(0);
+    expect(drift(w)).toBeCloseTo(0, 6);
+  });
 
-    expect(span.stretches.length).toBeGreaterThan(1);
-    expect(span.stretches.every(s => !s.torn)).toBe(true);
+  test('one polygon sliding through another is cut where it arrives and where it leaves', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-300, -40, 200, 80)],
+      ['level', rect(-100, -200, 80, 400)],
+    );
+
+    const w = transformed(world, 1, ids[0], { translation: { x: 240, y: 0 } });
+
+    expect(cuts(w)).toContain(0.3333);
+    expect(cuts(w)).toContain(0.8333);
+    expect(drift(w)).toBeCloseTo(0, 6);
+  });
+
+  test('polygons drawn edge to edge are cut the instant one of them erodes', () => {
+    // At rest they share an edge exactly, and the moment either shrinks they do
+    // not. That is a moment the arrangement changes, and the version before it
+    // is the one that renders the touching geometry.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+    );
+
+    const w = transformed(world, 1, ids[0], { erosion: 20 });
+
+    expect(run(bakeSpan(w, 0)).stretches[0].t1).toBe(0);
+    expect(drift(w)).toBeCloseTo(0, 6);
   });
 
   test('a polygon eroded away entirely is cut where it goes', () => {
@@ -187,6 +248,121 @@ describe('keyframes', () => {
     expect(length(sample(span, 0))).toBeCloseTo(400, 6);
     expect(length(sample(span, 0.999))).toBeCloseTo(400, 6);
     expect(length(sample(span, 1))).toBeCloseTo(800, 6);
+  });
+});
+
+describe('a pillar turning inside a wall', () => {
+  // The case the doc singles out, and the one that showed the first version of
+  // this was built on the wrong question. The pillar always cuts exactly two
+  // crossings, so nothing about the arrangement's *size* ever changes; what
+  // changes is which edge owns each crossing, as corner after corner sweeps
+  // through. A search that watches counts sees nothing at all here.
+  function wall(): World {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -60, 400, 120)],
+      ['level', rect(-40, -200, 80, 400)],
+    );
+
+    return transformed(world, 1, ids[1], { rotation: Math.PI / 3 });
+  }
+
+  test('the hole never closes and the geometry never tears', () => {
+    expect(torn(wall())).toBe(0);
+  });
+
+  test('the crossings slide where they should, all the way across', () => {
+    expect(drift(wall())).toBeCloseTo(0, 6);
+  });
+
+  test('and the same with a solid pillar, which subtracts instead', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -60, 400, 120)],
+      ['solid', rect(-40, -200, 80, 400)],
+    );
+
+    expect(drift(transformed(world, 1, ids[1], { rotation: Math.PI / 3 }))).toBeCloseTo(0, 6);
+  });
+});
+
+describe('the replay against the CSG worked out directly', () => {
+  test('erosion', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 200, 200)]);
+
+    expect(drift(transformed(world, 1, ids[0], { erosion: 60 }))).toBeCloseTo(0, 6);
+  });
+
+  test('a turn', () => {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+
+    expect(drift(transformed(world, 1, ids[0], { rotation: Math.PI / 2 }))).toBeCloseTo(0, 6);
+  });
+
+  test('a squash, which is where the scale stops being uniform', () => {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+
+    expect(drift(transformed(world, 1, ids[0], { scale: { x: 0.3, y: 2 } }))).toBeCloseTo(0, 6);
+  });
+
+  test('a turn and an erosion sharing a stretch', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
+
+    expect(drift(transformed(world, 1, ids[0], { erosion: 22, rotation: 0.4 })))
+      .toBeCloseTo(0, 6);
+  });
+
+  test('sliding and turning at once, which is where the closed form gives up', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-300, -40, 200, 80)],
+      ['level', rect(-100, -200, 80, 400)],
+    );
+
+    const w = transformed(world, 1, ids[0], {
+      translation: { x: 240, y: 0 },
+      rotation: 0.6,
+    });
+
+    expect(drift(w)).toBeCloseTo(0, 6);
+    expect(torn(w)).toBe(0);
+  });
+
+  test('a nudge on its own', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const edit = editAt(world, 1, ids[0], 0);
+    const vertices = new Map(edit.vertices);
+
+    vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
+
+    expect(drift(withEdit(world, 1, ids[0], { ...edit, vertices }))).toBeCloseTo(0, 6);
+  });
+
+  test('a nudge and an erosion together, which the format cannot do exactly', () => {
+    // A corner moves along its mitre, and the mitre is a function of the corner
+    // *angle*. Hold the ring still and the angle is constant, so the corner
+    // travels in a straight line and interpolating its two ends is exact —
+    // which is what makes every case above exact. Nudge the ring while it
+    // erodes and the angle turns, so the true path bends and the straight line
+    // between its ends is a chord across the bend.
+    //
+    // No keyframe fixes this: nothing discrete happens. It is the same limit
+    // the doc records for a squash and an erosion sharing a stretch, and it is
+    // in the interpolation format itself rather than in the search. Measured
+    // here at under two per cent of the outline, and it is pinned rather than
+    // asserted away so that it is noticed if it ever grows.
+    const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const edit = editAt(world, 1, ids[0], 0);
+    const vertices = new Map(edit.vertices);
+
+    vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
+
+    const nudged = withEdit(world, 1, ids[0], { ...edit, vertices });
+    const w = transformed(nudged, 1, ids[0], { erosion: 22 });
+
+    const off = drift(w);
+
+    expect(off).toBeGreaterThan(0);
+    expect(off).toBeLessThan(0.02 * length(truth(w, 0, 0)));
   });
 });
 

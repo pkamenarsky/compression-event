@@ -27,20 +27,42 @@ import { Point } from '@ce/game/world';
 import { AABB, box, empty, merge } from './aabb';
 import { Iv, add, at, cos, holdsZero, iv, mul, sin, sub } from './interval';
 
-/** A polygon's coalesced transform at one end of a stretch. */
+/**
+ * The one version in flight, at one end of a stretch — its own layer, never an
+ * accumulation of the chain, which is what lets the scale be per axis.
+ *
+ * Every version boundary is a keyframe, so at most one layer is ever partway
+ * applied. Everything before it is constant across the stretch and has already
+ * been folded into `local` and `bisector` by the caller: a constant map is not
+ * something to interpolate, which is exactly why `scene.ts` is free to keep it
+ * as a general affine even though a general affine cannot be interpolated.
+ */
 export interface Frame {
   translation: Point
   rotation: number
-  /** Uniform. */
-  scale: number
+  /**
+   * Per axis, as a version's layer is. Nothing here has to commute with
+   * eroding, so nothing forces this to be uniform.
+   */
+  scale: Point
 }
 
 /**
- * One source vertex across one stretch: where it sits in its polygon's frame,
- * which way it erodes, how deep at either end, and the frames it rides.
+ * One vertex across one stretch: where it sits at either end in the frame the
+ * layer applies to, which way it erodes, how deep at either end, and the layer
+ * it rides.
+ *
+ * `local` has two ends rather than one because a vertex nudge interpolates too.
+ * With it held constant a nudge could only pop at a version boundary; with it
+ * moving, a nudge morphs like everything else — and the search has to watch the
+ * trajectory the shader will actually draw, not a tidier one.
  */
 export interface Moving {
-  local: Point
+  local: [Point, Point]
+  /**
+   * Where the vertex goes per unit of depth: the mitre direction, constant for
+   * as long as the corner survives, and a corner not surviving is an event.
+   */
   bisector: Point
   erosion: [number, number]
   frames: [Frame, Frame]
@@ -60,7 +82,7 @@ export interface Riding {
   translation: { x: Iv, y: Iv }
   cos: Iv
   sin: Iv
-  scale: Iv
+  scale: { x: Iv, y: Iv }
 }
 
 export function riding(m: Moving, t: Iv): Riding {
@@ -74,7 +96,10 @@ export function riding(m: Moving, t: Iv): Riding {
     },
     cos: cos(th),
     sin: sin(th),
-    scale: lerp(f.scale, g.scale, t),
+    scale: {
+      x: lerp(f.scale.x, g.scale.x, t),
+      y: lerp(f.scale.y, g.scale.y, t),
+    },
   };
 }
 
@@ -90,12 +115,16 @@ export function riding(m: Moving, t: Iv): Riding {
 export function place(m: Moving, r: Riding, t: Iv): { x: Iv, y: Iv } {
   const e = lerp(m.erosion[0], m.erosion[1], t);
 
-  const qx = add(at(m.local.x), mul(e, at(m.bisector.x)));
-  const qy = add(at(m.local.y), mul(e, at(m.bisector.y)));
+  const qx = add(lerp(m.local[0].x, m.local[1].x, t), mul(e, at(m.bisector.x)));
+  const qy = add(lerp(m.local[0].y, m.local[1].y, t), mul(e, at(m.bisector.y)));
+
+  // Scale per axis, then turn, then move — the order `affine` builds a layer in.
+  const sx = mul(qx, r.scale.x);
+  const sy = mul(qy, r.scale.y);
 
   return {
-    x: add(r.translation.x, mul(r.scale, sub(mul(qx, r.cos), mul(qy, r.sin)))),
-    y: add(r.translation.y, mul(r.scale, add(mul(qx, r.sin), mul(qy, r.cos)))),
+    x: add(r.translation.x, sub(mul(sx, r.cos), mul(sy, r.sin))),
+    y: add(r.translation.y, add(mul(sx, r.sin), mul(sy, r.cos))),
   };
 }
 
@@ -116,6 +145,73 @@ export function vertexOnEdge(a: Moving, b: Moving, v: Moving): (t: Iv) => Iv {
       mul(sub(q.x, p.x), sub(w.y, p.y)),
       mul(sub(w.x, p.x), sub(q.y, p.y)),
     );
+  };
+}
+
+/**
+ * Three edges through one point.
+ *
+ * A crossing appearing or dying is a vertex reaching an edge, and `collinear`
+ * finds those. It cannot find the other way an outline's combinatorics change:
+ * three boundaries meeting at a single point, where two crossings arrive at the
+ * same place and the runs either side of them join or part. Nothing is at an
+ * endpoint there, so no signed area over three *vertices* vanishes — the point
+ * is a crossing, and crossings are not in `collinear`'s vocabulary.
+ *
+ * Written as lines it is the standard condition. An edge from `p` to `q` is the
+ * line `n . x = c` with `n = (p.y - q.y, q.x - p.x)` and `c = cross(p, q)`, and
+ * three lines are concurrent exactly when the three of them, stacked, have no
+ * volume:
+ *
+ * ```
+ *     | n1x  n1y  c1 |
+ * det | n2x  n2y  c2 | = 0
+ *     | n3x  n3y  c3 |
+ * ```
+ *
+ * Both ends of an edge ride the same polygon, so each edge costs one frame
+ * rather than two — the same sharing `vertexOnEdge` does, and the reason
+ * `riding` is separate.
+ *
+ * There is no closed form here, even when nothing turns. With every point
+ * linear in `t` the normals are linear and the offsets quadratic, so the
+ * determinant runs to a quartic, and a quartic solved in floating point is
+ * worse company than a search that cannot miss. The search is the same one, on
+ * the same footing.
+ */
+export function edgesMeet(
+  e1: readonly [Moving, Moving],
+  e2: readonly [Moving, Moving],
+  e3: readonly [Moving, Moving],
+): (t: Iv) => Iv {
+  return t => {
+    const [l1, l2, l3] = [e1, e2, e3].map(([p, q]) => {
+      const r = riding(p, t);
+
+      return line(place(p, r, t), place(q, r, t));
+    });
+
+    return sub(
+      add(
+        mul(l1.nx, sub(mul(l2.ny, l3.c), mul(l2.c, l3.ny))),
+        mul(l1.c, sub(mul(l2.nx, l3.ny), mul(l2.ny, l3.nx))),
+      ),
+      mul(l1.ny, sub(mul(l2.nx, l3.c), mul(l2.c, l3.nx))),
+    );
+  };
+}
+
+interface Line {
+  nx: Iv
+  ny: Iv
+  c: Iv
+}
+
+function line(p: { x: Iv, y: Iv }, q: { x: Iv, y: Iv }): Line {
+  return {
+    nx: sub(p.y, q.y),
+    ny: sub(q.x, p.x),
+    c: sub(mul(q.x, p.y), mul(q.y, p.x)),
   };
 }
 
@@ -244,24 +340,26 @@ export function events(f: (t: Iv) => Iv, search: Search = {}): Found {
 function steady(m: Moving): boolean {
   const [f, g] = m.frames;
 
-  return f.rotation === g.rotation && f.scale === g.scale;
+  return f.rotation === g.rotation
+    && f.scale.x === g.scale.x
+    && f.scale.y === g.scale.y;
 }
 
 /** Where that straight line starts and ends. Only meaningful for a `steady` m. */
 function ends(m: Moving): { x0: number, y0: number, x1: number, y1: number } {
   const [f, g] = m.frames;
-  const c = Math.cos(f.rotation), s = Math.sin(f.rotation), k = f.scale;
+  const c = Math.cos(f.rotation), s = Math.sin(f.rotation);
 
-  const ax = m.local.x + m.erosion[0] * m.bisector.x;
-  const ay = m.local.y + m.erosion[0] * m.bisector.y;
-  const bx = m.local.x + m.erosion[1] * m.bisector.x;
-  const by = m.local.y + m.erosion[1] * m.bisector.y;
+  const ax = (m.local[0].x + m.erosion[0] * m.bisector.x) * f.scale.x;
+  const ay = (m.local[0].y + m.erosion[0] * m.bisector.y) * f.scale.y;
+  const bx = (m.local[1].x + m.erosion[1] * m.bisector.x) * f.scale.x;
+  const by = (m.local[1].y + m.erosion[1] * m.bisector.y) * f.scale.y;
 
   return {
-    x0: f.translation.x + k * (ax * c - ay * s),
-    y0: f.translation.y + k * (ax * s + ay * c),
-    x1: g.translation.x + k * (bx * c - by * s),
-    y1: g.translation.y + k * (bx * s + by * c),
+    x0: f.translation.x + ax * c - ay * s,
+    y0: f.translation.y + ax * s + ay * c,
+    x1: g.translation.x + bx * c - by * s,
+    y1: g.translation.y + bx * s + by * c,
   };
 }
 
