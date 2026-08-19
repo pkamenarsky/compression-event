@@ -334,3 +334,332 @@ until that invariant is actually enforced on drawing and dragging.
   so the clamping work has something concrete to change.
 - **Groups, forks, undo, delinking, artefacts.** Specified in
   [versioning.md](versioning.md); none implemented yet.
+
+## Session two: fixing the drag bug led to rethinking erosion under versioning
+
+Started from a concrete complaint: creating a polygon, rotating it, then
+dragging a single point in point mode wiggled every other point. Same for
+scale; erode was worse, off from the cursor by an amount tracking the erosion
+factor.
+
+### The immediate bugs, fixed in code
+
+**The pivot was derived from editable geometry.** `resolve`/`toLocal` computed
+their rotation/scale pivot as `centroid(p.points)`. Dragging a vertex moves the
+centroid, and every other vertex swings by `(I - scale·R)·Δcentroid` — zero
+while the polygon is untouched, which is why it only showed up after the first
+rotate or scale. Fixed by moving the transform's frame to the world origin and
+having each gesture bake its own pivot into the translation at grab time
+([scene.ts](../packages/editor/src/scene.ts), [canvas.ts](../packages/editor/src/canvas.ts)).
+
+**Erosion's handle and its write target disagreed.** Vertex handles were hit
+against the *eroded* ring, but `toLocal` deliberately does not undo erosion, so
+the value written was a point on the *source* ring — off by the erosion depth
+along that vertex's bisector.
+
+**Winding moved into the constructor.** `facing()` in `scene.ts` re-derived
+winding from the resolved ring on every CSG; replaced by `sourcePolygon()`
+normalising winding once at creation, so `csg()` no longer needs to care.
+
+**Stale pointer after a modal gesture.** Rotate, release, press `r` again
+without moving the mouse: a visible jump. `pointer` was tracked only in the
+top-level `select`'s `tracking` branch, which is torn down for the duration of
+every gesture — so it froze at wherever the cursor was when the gesture key went
+down. Moved to `Input.pointer()`, a single `pointermove` listener alive for the
+editor's lifetime ([input.ts](../packages/editor/src/input.ts)).
+
+A `nudges: Point[]` array was added to `Polygon` at this point, applied *after*
+erosion, so a vertex could be dragged exactly under the cursor at any erosion
+depth without an inverse. **This is now stale** — see *What changed in code vs.
+what the design settled on*, below.
+
+### Sequential resolution replaces the accumulated coefficient
+
+Investigating erosion's failure modes surfaced that the original per-vertex
+accumulated coefficient — `coefficient(v) = Σ d_k / s_k`, collapsing the whole
+version chain into one expression — was the thing forcing every erosion
+constraint downstream of it: uniform scale only, frozen bisectors, and (once
+group erosion came up) no way to erode a union at all.
+
+Re-examined what accumulation actually bought:
+
+- **Floating point.** Sequential evaluation rounds once per stage; at the chain
+  lengths this design expects (tens of versions), the difference against one
+  rounding is around 1e-15 relative. Real, but not load-bearing.
+- **Determinism.** Argued to require the closed form; it doesn't. Memoizing a
+  pure function is transparent — `resolve(9)` reached from a cached `resolve(5)`
+  walks the same stages in the same order as one reached from the root, so
+  bit-identity comes from fixed evaluation order, not from collapsing the chain.
+
+Neither survived scrutiny as a reason to keep the constraints. Replaced with
+`resolve(v) = apply(v, resolve(v.base))`, walked and memoized, cached per
+version so an edit dirties exactly the chain it's actually in.
+
+**Non-uniform scale** came back as a direct consequence — nothing forced scale
+to commute with anything once nothing was being collapsed — but transform
+*components* were kept separate (`translation`, `rotation`, `scale: {x, y}`)
+rather than folded into a general 2×2, because the bake's interpolation still
+needs to lerp translation linearly, rotation angularly, and the two scales as
+scalars; a matrix lerped entrywise slews through a shear and collapses a
+rotating polygon through its own centre.
+
+### Group erosion: what member-wise and per-edge encoding both get wrong
+
+Wanted: eroding a group erodes it *as if it were one polygon*, and a selection
+should be able to piggyback on that by becoming a group.
+
+**Rejected: erode each member separately.** A corridor built from two
+overlapping rectangles, eroded per-member, pulls back lengthwise at the join —
+an overlap shorter than `2d` breaks the corridor in two; longer, it pinches.
+Eroding the union pulls back only the outer boundary and the corridor holds.
+The author can't see the seam that failed, because it's interior geometry
+behind a wall that still looks intact.
+
+**Rejected: push the offset back onto source edges on the union boundary**
+(give each contributing source edge line an offset of `d`, evaluated the same
+way single-polygon erosion is). Failed on the same confusion twice:
+
+- A source edge partly buried in a sibling contributes only part of itself to
+  the union boundary, but the encoding offsets the *whole line* — the buried
+  part moves too, and if it sat within `d` of the sibling's far boundary, it
+  sweeps past and opens a gap that shouldn't exist.
+- An edge *emerging* from behind a sibling contributes a boundary piece whose
+  length starts at zero — so offsetting the whole line moves the entire edge
+  the instant that piece exists. Drag a member one unit; geometry elsewhere in
+  the group jumps by `d`. Discontinuous and unexplainable, and manufactured
+  entirely by the encoding rather than inherent to the operation — `erode(union,
+  d)` is continuous in member positions away from real topology events.
+
+This also raised, then answered, a caching worry: pushing the offset onto
+source edges meant the boundary-set predicate would have to be snapshotted and
+invalidated to keep `resolve` a pure function of stored data, which reopened
+determinism and revision-tracking machinery for no reason once erosion stopped
+writing anything back at all (see *Erosion as a projection*, below).
+
+**Decided:** eroding a group computes `erode(union(members), d)` live at
+resolve time, using the CSG already run for rendering. No new erosion
+machinery — a union's boundary is a ring like any other, its vertices happen
+to be crossings rather than shared corners, but each still has two adjacent
+edges and a bisector.
+
+**Selections** can piggyback on groups for a *transform*, because a rigid
+motion of a set is a rigid motion of each member — it distributes, and a
+virtual temporary group is a faithful description. Erosion does not
+distribute, so a selection erode has nowhere to be written; **decided:** the
+erode control greys out on a selection, with a status-line message to make a
+group first.
+
+### The long argument about vertex identity under erosion
+
+This was the biggest back-and-forth, because "clamp, never remove" from
+session one turned out to be wrong on its own terms once looked at directly.
+
+**Rejected (this session): keep clamping as originally designed.** The
+original argument for freezing bisectors was that it gives "the better
+geometry" — conceded that only edges *touching* a clamp rotate. Worked
+through directly: a true mitred offset (every edge line moves inward by `d`,
+unconditionally) keeps **every** surviving edge exactly parallel to its
+original, forever. Freezing is the thing that *breaks* that — a vertex pinned
+at its collapse depth beside a still-moving neighbour drags the edge between
+them off its own line. The old design had the comparison backwards.
+
+**Rejected: true offsetting with vertices deleted on collapse, keeping no
+identity for the dead ones.** Geometrically correct (parallelism holds
+everywhere), but raised: which of a merged pair survives is an arbitrary
+choice with real downstream consequences, since the survivor's edits silently
+retarget onto a vertex that's now somewhere else — worse than losing the edit,
+because nothing says it happened.
+
+**Rejected: kill both endpoints of a collapsed edge, mint `Merged(a, b)`** as a
+deterministic id derived from its parents, and cascade-remove or suspend the
+parents' downstream edits. Solved the arbitrary-survivor problem but not
+`resolve`'s new obligation to walk source-derived ids anyway — dropped once
+the deeper problem was found (below).
+
+**Rejected: freeze edges in contact rather than clamping vertices**, letting
+every other edge keep moving (a genuinely good piece of geometry — a frozen
+*line* stays parallel to itself the same way a still-moving one does, so
+parallelism holds everywhere without exception, unlike vertex-clamping). But
+its actual purpose was to *cap* erosion below a split, and that's blunt in the
+wrong direction: a long room with one narrow neck stops closing everywhere
+once the neck pinches, when the intuition (confirmed once raised) was that the
+rest of the room should keep closing. Also motivated the question of whether a
+split should be allowed to happen at all, rather than prevented.
+
+**Rejected: allow the split, and name each resulting piece** so one lobe could
+be deleted after the room divides. Two naming schemes considered:
+
+- Index-based (`Split(originId, 0)`, `Split(originId, 1)`) — fails immediately
+  under the identity principle: going from two pieces to three renumbers, and
+  every edit naming a piece re-points at the wrong one.
+- A path in a **split tree**, with sides labelled combinatorially (the two
+  lobes are the two cycles through the pinch point, the one entered first in
+  winding order is `0`) rather than geometrically. Stable under scrubbing a
+  depth. Not stable under an upstream reshape that reorders which split
+  happens first, which permutes the whole tree. Never adopted, but recorded as
+  the fallback if the eventual answer (below) proves too coarse.
+
+**The actual resolution, once seen: erosion should never have been feeding the
+next version at all.** All of the above were fights about what happens to a
+vertex identity that erosion destroys. The fix is that erosion doesn't get to
+destroy any identity, because it's read-only:
+
+```
+source(k) = transform_k(source(k - 1) + vertexEdits_k)
+shape(k)  = erode(source(k), depth_k)
+```
+
+`source` is what flows down the chain; `shape` is a view taken fresh at each
+version and fed to nothing. This dissolved nearly everything above at once:
+
+- Source vertices are immortal — erosion never writes back, so there's nothing
+  to tombstone, no arbitrary survivor, no `Merged` id, no cascade firing off a
+  slider drag.
+- Erosion is trivially reversible — the depth is a number in a layer and stays
+  one, scrubbable forever.
+- Group erosion needs nothing written into members — already the answer above,
+  now clearly *why* it works: nothing is ever fed forward, so there's nothing
+  to keep consistent.
+- Crossings need no identity, because they only ever appear in a read-only
+  view.
+- **Splits are simply allowed** — `resolve` returns a `Shape` rather than a
+  `Ring`, the CSG already takes shapes, and no piece ever needs a name: wanting
+  one lobe gone is expressed by editing the *source* — deleting the run of
+  source edges that generates the unwanted lobe — not by pointing at a
+  resolved piece. Costs one honest thing: closing the source ring after
+  deletion adds a new edge that also erodes, so the survivor isn't pixel-exact
+  to what was on screen before, and the author hand-shapes the difference.
+
+**Consequence for editing:** the eroded outline is not editable at all.
+Clicking an eroded polygon shows its **source ring as a ghost, with handles on
+it**; dragging a source vertex updates the projection live underneath. You
+cannot place an eroded corner at an exact position — only the source corner
+that produces it — which is the one real cost, traded for never needing to
+bake, invert, or choose a vertex to kill.
+
+**Self-intersection was allowed as a consequence, not a separate decision.**
+Once splitting is fine, the same `simplify()` step already in the resolve path
+handles a self-crossing *source* ring too — `erode(simplify(source), depth)`.
+The old invariant (no self-intersecting polygons, enforced with a crossing
+test on drawing and dragging, hatched/badged invalid state, export refusal)
+was motivated by collision (`enx/eny` point the wrong way on a flipped
+section) and by erosion needing a simple ring to offset. Both turned out to be
+constraints on *output*, already guaranteed by the CSG the bake runs anyway —
+enforcing simplicity a second time at the source bought nothing. Removed:
+the crossing tests, the invalid state, the hatch/badge, the export refusal,
+and the bake's "refuse on any invalid polygon" step.
+
+### Accumulation, reintroduced as an optimization only
+
+With erosion no longer writing back, the closed-form chain collapse from
+session one turned out to be *safe again*, just no longer necessary: affine
+composition is closed regardless of whether scale is uniform, so
+`source(k) = (T_k ∘ … ∘ T_1)(P) + Σⱼ (M_k ⋯ M_j) eⱼ` is exact, letting
+`resolve(9)` skip intermediate geometry entirely. Recorded explicitly as an
+*equivalence a fast path may exploit*, not as the semantics — the failure mode
+from session one (constraints growing to protect a closed form treated as
+load-bearing) is exactly what this session spent most of its time undoing.
+
+### Groups: leaving and joining don't transfer erosion
+
+Raised: should a polygon leaving a group take the group's erosion depth, the
+way it already absorbs a compensating transform to preserve position?
+
+**Rejected: yes, add the group's depth to the polygon's own on leaving.**
+Breaks immediately on leave → scrub → rejoin: doubling the erosion on a round
+trip with nothing done in between.
+
+**Rejected: replace the polygon's own depth with the group's.** Discards
+whatever depth the polygon already had; same round-trip failure from the other
+side.
+
+**Decided: erosion never transfers.** A polygon owns one depth; group
+membership doesn't touch it. The reason the transform *can* compensate but
+depth *can't* is structural, not a design choice: affine transforms form a
+group (composing `C` on leave and `C⁻¹` on joining round-trips exactly, even
+with edits in between, because composition is associative and invertible);
+erosion depths are neither composable in the needed sense (`a` then `b` isn't
+`a + b` once a split falls between them) nor invertible at all. Leaving a
+group with non-zero erosion therefore visibly changes the polygon's shape —
+position is preserved as promised, shape was never part of that promise.
+
+### Shader data layout: bounded nesting beats flattening
+
+For the bake, considered flattening the whole scene graph (polygon transform
+composed with every enclosing group's, down to one matrix per vertex) against
+a fixed nesting depth with a shared per-polygon chain of transform slots.
+
+**Rejected: flatten to one composed transform, stored as a general matrix.**
+Composition isn't closed in `(translation, rotation, scale)` — rotate, squash,
+rotate again is a shear — so a flattened slot needs a full matrix, and
+interpolating one entrywise slews through a shear mid-transition and collapses
+a rotating polygon through its own centre.
+
+**Rejected: flatten to a polar decomposition** (`angle, symmetric 2×2,
+translation`) to dodge the matrix-lerp problem. Handles nested *rotation*
+exactly, because in 2D angles simply add — but two further problems: the
+decomposition returns an angle in a principal range, so a composed rotation
+past half a turn re-extracts wound the wrong way and interpolates the short
+way round; and once two or more levels in one chain carry non-uniform scale,
+the composed product isn't symmetric to begin with, so the composed rotation
+stops being the sum of the levels' angles and the intermediate frames are no
+longer what per-level interpolation would give.
+
+**Decided: bound nesting at four levels, keep each level's own components.**
+A vertex carries one index into a **chain table**, shared per polygon rather
+than duplicated per vertex; each polygon's chain lists up to four transform
+slots, innermost first. The shader applies and interpolates each level in its
+own authored components — already unwrapped, already the right decomposition —
+so both flattening failure modes disappear by construction rather than needing
+correction. Four was picked deliberately low: nesting is a legibility problem
+before a performance one, and the limit is raisable later without breaking
+existing worlds, where lowering it would not be. Surfaced to the author as a
+status-line message rather than a silent bake failure.
+
+### Discussed but not written into the spec
+
+**The topology-event search budget.** Asked whether an infinite budget or a
+brute-force fixed-step scan would work instead of interval bisection.
+Established but not recorded in `versioning.md`:
+
+- The search already terminates without a budget — an interval is discarded
+  once its enclosure excludes zero, accepted once its width is below `tol`,
+  and the `flat`-band check stops the one case (a truly degenerate stretch)
+  that would otherwise subdivide forever. The budget bounds wall-clock only,
+  and exhausting it already degrades safely (`coarse: true`, still complete).
+- A fixed N-step scan is not much cheaper in the region that matters — near a
+  root, interval bisection costs about `2·log2(1/tol)` evaluations, the same
+  order as a fixed scan — and is *more* expensive across the quiet majority of
+  the domain, where one interval evaluation discards a whole subrange at once.
+  It also reintroduces exactly the two failure modes the existing tests guard
+  against: two close roots falling inside one sample bracket, and a tangential
+  graze that never changes sign at any sample density.
+- The actual cost driver is the number of edge/vertex pairs checked across
+  polygons, not the root-finder inside each pair; a broad phase (cull pairs
+  whose swept AABBs don't overlap over the stretch) would matter more than
+  swapping the search strategy.
+
+Not added to `versioning.md` on request — recorded here in case the budget or
+the search strategy gets revisited.
+
+## What changed in code vs. what the design settled on
+
+The vertex-drag fixes landed in code before the erosion redesign above
+happened, and one piece of that code is now stale against `versioning.md`:
+
+- **`nudges: Point[]` on `Polygon`, applied after erosion**
+  ([scene.ts](../packages/editor/src/scene.ts),
+  [canvas.ts](../packages/editor/src/canvas.ts)) — built to solve the same
+  "drag a vertex on an eroded polygon" problem the design section above spent
+  most of its time on, and superseded by the projection model's answer:
+  eroded points aren't editable at all, only the source ring is, via a ghost
+  overlay with handles. The `nudges` field, `placeVertex`, and the erosion
+  branch of the vertex-drag gesture need to come back out; dragging should
+  become source-only, unconditionally, with the eroded outline rendered but
+  not hit-tested for handles when its depth is non-zero.
+- Everything else from the drag-bug fixes still matches the design: transform
+  frame at the world origin, winding normalised at construction, and the
+  `Input.pointer()` fix are all consistent with `versioning.md` as it stands.
+
+The layer/version model itself (`World.versions`), groups, forks, undo,
+delinking, and artefacts remain unbuilt, as before this session.
