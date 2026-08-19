@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { shapeArea } from './geometry';
+import { OpSubtract, Shape, combine, shapeArea, simplify } from './geometry';
 import {
   Resolved,
   addPolygon,
@@ -70,17 +70,35 @@ function everyWinding(a: Point[], b: Point[]): [Point[], Point[]][] {
   ];
 }
 
+/** Total length of a set of open runs. */
+const runLength = (runs: Point[][]) =>
+  runs.reduce((t, r) => t + r.slice(1).reduce(
+    (u, p, i) => u + Math.hypot(p.x - r[i].x, p.y - r[i].y), 0), 0);
+
+/** The perimeter the outline ought to have, taken the ring way round. */
+function outlineOf(items: Resolved[]): number {
+  const level = items.filter(i => i.polygon.type === 'level').flatMap(i => i.shape);
+  const solid = items.filter(i => i.polygon.type === 'solid').flatMap(i => i.shape);
+  const shape: Shape = solid.length === 0
+    ? simplify(level)
+    : combine(level, solid, OpSubtract);
+
+  return shape.reduce((t, r) => t + r.reduce(
+    (u, p, i) => u + Math.hypot(
+      p.x - r[(i + 1) % r.length].x, p.y - r[(i + 1) % r.length].y), 0), 0);
+}
+
 describe('csg', () => {
   test('overlapping rooms merge whichever way round they were drawn', () => {
     // 10x10 and 10x10 overlapping by 5x5: 100 + 100 - 25.
     for (const [a, b] of everyWinding(rect(0, 0, 10, 10), rect(5, 5, 10, 10))) {
       const { world } = drawn(['level', a], ['level', b]);
-      const shape = csg(resolveAt(world, 0));
+      const items = resolveAt(world, 0);
 
-      expect(shapeArea(shape)).toBeCloseTo(175, 6);
-
-      // One ring, not two. The wall between them would show up as an extra.
-      expect(shape.length).toBe(1);
+      // The runs add up to the union's outline and no more. A wall left
+      // standing between the two rooms would show up as extra length.
+      expect(runLength(csg(items))).toBeCloseTo(outlineOf(items), 6);
+      expect(shapeArea(simplify(items.flatMap(i => i.shape)))).toBeCloseTo(175, 6);
     }
   });
 
@@ -99,19 +117,23 @@ describe('csg', () => {
     const a = [{ x: -320, y: -128 }, { x: 96, y: -128 }, { x: -128, y: 192 }];
     const b = [{ x: 96, y: 224 }, { x: 288, y: -64 }, { x: -128, y: -64 }];
 
-    const apart = shapeArea(csg(resolveAt(drawn(['level', a]).world, 0)))
-      + shapeArea(csg(resolveAt(drawn(['level', b]).world, 0)));
+    const only = (r: Point[]) => resolveAt(drawn(['level', r]).world, 0);
+    const both = resolveAt(drawn(['level', a], ['level', b]).world, 0);
 
-    const shape = csg(resolveAt(drawn(['level', a], ['level', b]).world, 0));
+    const apart = shapeArea(simplify(only(a).flatMap(i => i.shape)))
+      + shapeArea(simplify(only(b).flatMap(i => i.shape)));
 
     expect(apart).toBeCloseTo(126464, 6);
 
-    // One ring: a second would be the hole the cancellation used to punch.
-    expect(shape.length).toBe(1);
+    // The outline is the union's, with nothing left over: the hole the
+    // cancellation used to punch would carry its own runs.
+    expect(runLength(csg(both))).toBeCloseTo(outlineOf(both), 6);
 
     // And they do overlap, so the union is smaller than the two of them.
-    expect(shapeArea(shape)).toBeLessThan(apart);
-    expect(shapeArea(shape)).toBeGreaterThan(66560);
+    const together = shapeArea(simplify(both.flatMap(i => i.shape)));
+
+    expect(together).toBeLessThan(apart);
+    expect(together).toBeGreaterThan(66560);
   });
 
   test('a room eroded past its own middle is gone, not inside out', () => {

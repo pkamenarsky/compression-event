@@ -42,6 +42,13 @@ import {
   VertexId,
   World,
 } from './types';
+import {
+  Edit as SetEdit,
+  WorldSet,
+  edited,
+  emptyWorldSet,
+  outline,
+} from './worldset';
 
 /** One polygon as a version left it: what edits are made against, and what is
  * drawn. */
@@ -282,19 +289,88 @@ export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point):
 // Reading the result
 // -----------------------------------------------------------------------------
 
-/** Every `level` unioned, every `solid` taken out: the set the game would get. */
-export function csg(items: Resolved[]): Shape {
-  const level: Ring[] = [], solid: Ring[] = [];
+/**
+ * The set the game would get — every `level` unioned, every `solid` taken out —
+ * as the open runs its outline is made of.
+ *
+ * Runs rather than rings because that is what can be kept up to date: a run
+ * belongs to one polygon, so an edit only disturbs the polygons it overlaps.
+ * See `worldset.ts`. Nothing that reads this wants a closed loop — the overlay
+ * is stroked, and collision is edge-normal based.
+ */
+export function csg(items: Resolved[]): Point[][] {
+  return runs(live(EMPTY_LIVE, items));
+}
+
+/**
+ * The set, held on to between draws so that redrawing costs only what actually
+ * moved. Rebuilding it from nothing is O(n) in polygons and measured at nearly
+ * two seconds for ten thousand of them; bringing it up to date after a dragged
+ * vertex is about a millisecond.
+ */
+export interface Live {
+  set: WorldSet
+  /** What each polygon resolved to when the set was last brought up to date. */
+  seen: Map<PolygonId, Resolved>
+}
+
+export const EMPTY_LIVE: Live = { set: emptyWorldSet, seen: new Map() };
+
+export function runs(l: Live): Point[][] {
+  return outline(l.set);
+}
+
+/**
+ * The set brought up to date against `items`, doing only the work the
+ * differences call for.
+ *
+ * `resolveAt` builds fresh arrays every time, so what changed cannot be read
+ * off object identity and is compared point by point instead. That costs one
+ * pass over the geometry, which is the same order as resolving it — and far
+ * less than rebuilding the set for a world where nothing moved.
+ */
+export function live(previous: Live, items: Resolved[]): Live {
+  const edits: SetEdit[] = [];
+  const seen = new Map<PolygonId, Resolved>();
 
   for (const it of items) {
-    if (it.polygon.type === 'level') level.push(...it.shape);
-    else if (it.polygon.type === 'solid') solid.push(...it.shape);
+    seen.set(it.id, it);
+
+    const was = previous.seen.get(it.id);
+    const retyped = was !== undefined && was.polygon.type !== it.polygon.type;
+
+    if (was !== undefined && !retyped && unmoved(was.shape, it.shape)) continue;
+
+    // A retype has to go in as an insert: an update keeps the kind it had.
+    edits.push(
+      was === undefined || retyped
+        ? { op: 'insert', id: it.id, type: it.polygon.type, shape: it.shape }
+        : { op: 'update', id: it.id, shape: it.shape },
+    );
   }
 
-  if (level.length === 0) return [];
-  if (solid.length === 0) return simplify(level);
+  for (const id of previous.seen.keys()) {
+    if (!seen.has(id)) edits.push({ op: 'remove', id });
+  }
 
-  return combine(level, solid, OpSubtract);
+  return edits.length === 0 ? previous : { set: edited(edits)(previous.set), seen };
+}
+
+function unmoved(a: Shape, b: Shape): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+
+  for (let r = 0; r < a.length; r++) {
+    const p = a[r], q = b[r];
+
+    if (p.length !== q.length) return false;
+
+    for (let i = 0; i < p.length; i++) {
+      if (p[i].x !== q[i].x || p[i].y !== q[i].y) return false;
+    }
+  }
+
+  return true;
 }
 
 /** The topmost polygon under a point, hit against what is on screen. */

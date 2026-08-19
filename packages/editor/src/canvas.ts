@@ -4,7 +4,7 @@ import { canvas } from '@incpt/kontinuum-dom/html';
 import { Op, select } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
-import { Ring, Shape } from './geometry';
+import { Ring } from './geometry';
 import {
   Input,
   SHIFT,
@@ -17,15 +17,18 @@ import {
   pointerReleased,
 } from './input';
 import {
+  EMPTY_LIVE,
+  Live,
   Resolved,
   addPolygon,
   centroid,
-  csg,
   editAt,
   hitPolygon,
   hitVertex,
+  live,
   placeVertex,
   resolveAt,
+  runs,
   withEdit,
   withinBox,
 } from './scene';
@@ -83,6 +86,11 @@ export function worldCanvas(
       el.style.cursor = value;
     }
   };
+
+  /** The CSG set, kept between draws. Derived from the world and nothing else,
+   * so it is a cache rather than state: rebuilding it would be correct and slow,
+   * and this makes a redraw cost only what actually moved. */
+  let set: Live = EMPTY_LIVE;
 
   return interactive<Local>(EMPTY_LOCAL, (local, setLocal) => {
     const at = (e: PointerEvent, snap = false): Point => {
@@ -350,7 +358,10 @@ export function worldCanvas(
             ] as const,
             ([w, s, v, t, sel, at, l]) => {
               if (el && ctx) {
-                draw(el, ctx, v, layers(w, s, v, t, sel, at, l));
+                const items = resolveAt(w, at);
+
+                set = live(set, items);
+                draw(el, ctx, v, layers(w, s, v, t, sel, at, l, items, runs(set)));
               }
             },
           ),
@@ -644,8 +655,9 @@ function layers(
   selection: PolygonId[],
   current: VersionId,
   local: Local,
+  items: Resolved[],
+  outline: Point[][],
 ): Layer[] {
-  const items = resolveAt(world, current);
   const out: Layer[] = [];
 
   if (settings.showGrid) out.push(ctx => grid(ctx, settings, view));
@@ -660,7 +672,7 @@ function layers(
   }
 
   out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
-  out.push(ctx => set(ctx, view, csg(items)));
+  out.push(ctx => outlines(ctx, view, outline));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
@@ -775,13 +787,21 @@ function polygons(
 }
 
 /** The set the game would see, over the top and in the one colour that says so. */
-function set(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
-  if (shape.length === 0) return;
+function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): void {
+  if (runs.length === 0) return;
 
   ctx.beginPath();
 
-  for (const ring of shape) {
-    trace(ctx, view, ring);
+  // Open, deliberately: a run is one polygon's share of the outline, and the
+  // loop it belongs to is generally made of several. Closing each would draw a
+  // chord across every junction.
+  for (const run of runs) {
+    run.forEach((p, i) => {
+      const q = toScreen(view, p);
+
+      if (i === 0) ctx.moveTo(q.x, q.y);
+      else ctx.lineTo(q.x, q.y);
+    });
   }
 
   ctx.strokeStyle = theme.csg;
