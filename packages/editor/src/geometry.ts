@@ -107,11 +107,6 @@ export function simplify(a: Shape): Shape {
   return combine(a, [], inA => inA);
 }
 
-/** `simplify`, keeping provenance. Both operand slots of a tag name shape 0. */
-export function simplifyTagged(a: Shape): TaggedShape {
-  return combineTagged(a, [], inA => inA);
-}
-
 /**
  * The plain mitred offset: every edge moves inward by `depth`, each corner goes
  * where its two moved lines meet, and an edge that runs out of room takes its
