@@ -64,8 +64,16 @@ export interface Resolved {
   /** The ring this version's layer produced, in world units. The handles live
    * here. */
   source: Ring
-  /** The projection: the source decomposed and offset. Read-only, always. */
-  shape: Shape
+  /**
+   * The projection: the source decomposed and offset. Read-only, always.
+   *
+   * Worked out when it is first asked for, and then kept. It is an arrangement
+   * per polygon, which is nothing next to what the editor does with it and is
+   * most of the cost of resolving a world the bake is about to look at five
+   * polygons of. Spreading a `Resolved` reads it, so anything wanting to build
+   * one from another names the fields.
+   */
+  readonly shape: Shape
   /** The depth `shape` was taken at, inherited where this version states none. */
   erosion: number
 }
@@ -262,6 +270,18 @@ export function project(source: Ring, erosion: number): Shape {
  * progressively the author raises the depth version by version — 2, 5, 9, 14 —
  * which is more direct to author than compounding and exactly reproducible.
  */
+/** A `Resolved` whose projection has not been taken yet. */
+export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
+  let shape: Shape | null = null;
+
+  return {
+    ...at,
+    get shape(): Shape {
+      return shape ??= project(at.source, at.erosion);
+    },
+  };
+}
+
 export function resolveAt(world: World, v: VersionId): Resolved[] {
   const local = new Map<PolygonId, Ring>();
   const frame = new Map<PolygonId, Affine>();
@@ -296,15 +316,7 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
     const m = frame.get(id)!;
     const source = place(m, ring);
 
-    out.push({
-      id,
-      polygon,
-      local: ring,
-      frame: m,
-      source,
-      shape: project(source, erosion),
-      erosion,
-    });
+    out.push(resolved({ id, polygon, local: ring, frame: m, source, erosion }));
   }
 
   return out;

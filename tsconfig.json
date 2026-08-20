@@ -19,5 +19,5 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["packages/*/src", "vite.config.ts"]
+  "include": ["packages/*/src", "bench", "vite.config.ts"]
 }

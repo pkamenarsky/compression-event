@@ -2,8 +2,8 @@
 import { defineConfig } from 'vite'
 import { resolve } from 'path'
 
-// Two pages off one server: /game.html and /editor.html. `pnpm build` emits
-// both into dist/.
+// Three pages off one server: /game.html, /editor.html and /bench.html.
+// `pnpm build` emits all of them into dist/.
 export default defineConfig({
   server: {
     host: true, // Expose to all network interfaces
@@ -18,6 +18,7 @@ export default defineConfig({
       input: {
         game: resolve(__dirname, 'game.html'),
         editor: resolve(__dirname, 'editor.html'),
+        bench: resolve(__dirname, 'bench.html'),
       },
     },
   },

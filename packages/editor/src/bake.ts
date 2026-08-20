@@ -92,7 +92,7 @@ import {
   compose,
   live,
   place,
-  project,
+  resolved,
   unplace,
   resolveAt,
 } from './scene';
@@ -225,6 +225,14 @@ export interface Span {
    * and to fail a test if it ever grows.
    */
   worst: number
+  /**
+   * Thread-milliseconds spent resolving the span and then cutting it, added up
+   * over however many threads did it. Nothing reads these; against the wall
+   * clock they say how well the work divided, and how much of what did not
+   * divide was setup.
+   */
+  setup: number
+  cut: number
   /** What the world looked like when this was baked. */
   stamp: Stamp
 }
@@ -441,14 +449,16 @@ function world1(items: Moving[], t: number): Resolved[] {
     const source = place(frame, local);
     const erosion = mix(m.depth[0], m.depth[1], t);
 
-    out.push({
-      ...m.at,
+    // Named rather than spread: spreading `m.at` would read its projection,
+    // which is the one thing worth not doing here.
+    out.push(resolved({
+      id: m.at.id,
+      polygon: m.at.polygon,
       local,
       frame,
       source,
-      shape: project(source, erosion),
       erosion,
-    });
+    }));
   }
 
   return out;
@@ -1058,38 +1068,108 @@ function* cutTrack(
 // Baking
 // -----------------------------------------------------------------------------
 
+/** Some of a span's tracks, and what cutting them measured. */
+export interface Slice {
+  tracks: Track[]
+  worst: number
+  evaluations: number
+  /** Milliseconds spent resolving the world before any of it could be cut. Not
+   * used for anything; it is here because it is the part a thread cannot share
+   * with the others, and therefore the part that decides how well this scales. */
+  setup: number
+  /** Milliseconds spent cutting, which is the part that divides. */
+  cut: number
+}
+
 /**
- * One span, as a generator so that the editor can run it a slice at a time and
- * keep drawing. It yields how far along it is, between 0 and 1.
- *
- * Every polygon is cut on its own, against the polygons it can reach. Each one
- * gets an equal slice of the progress; how long one takes depends on how much
- * is happening around it, so the bar is honest about where the work is rather
- * than about how long it will take.
+ * What every polygon's runs ride, which the span needs and a slice of it does
+ * not: it is small, and a thread that has been handed some of the polygons has
+ * no business deciding it for the others.
  */
-export function* bakeSpan(
-  world: World,
-  from: VersionId,
-  tol: number = TOLERANCE,
-): Generator<number, Span, void> {
+/**
+ * What every polygon's runs ride, which the span needs and a handful of it does
+ * not.
+ *
+ * In the order `ready` puts its items in, because that is what a job names its
+ * polygons by: both go through `moving`, and a job that meant a different
+ * polygon than the thread cutting it would be a silent wrong answer rather than
+ * an error.
+ */
+export function ridersOf(world: World, from: VersionId): Map<PolygonId, Rider> {
+  return riding(moving(world, from));
+}
+
+function riding(items: readonly Moving[]): Map<PolygonId, Rider> {
+  return new Map(
+    items.map(m => [
+      m.at.id,
+      { base: m.base, layer: m.newborn ? EMPTY_TRANSFORM : m.layer },
+    ]),
+  );
+}
+
+/**
+ * A span resolved and ready to be cut, but not cut.
+ *
+ * Worth naming because it is the part a thread cannot share with the others and
+ * cannot avoid: resolving the world twice, and working out who can reach whom.
+ * A thread that is handed the polygons a few at a time does this once and keeps
+ * it, rather than once per handful.
+ */
+export interface Ready {
+  from: VersionId
+  items: Moving[]
+  near: Moving[][]
+  riders: Map<PolygonId, Rider>
+  /** Milliseconds it took, which is the fixed cost of putting a thread on this
+   * span at all. */
+  setup: number
+}
+
+export function ready(world: World, from: VersionId): Ready {
+  const began = now();
   const items = moving(world, from);
 
-  const riders = new Map<PolygonId, Rider>(
-    items.map(m => [m.at.id, { base: m.base, layer: m.newborn ? EMPTY_TRANSFORM : m.layer }]),
-  );
+  return {
+    from,
+    items,
+    near: neighbourhoods(items),
+    riders: riding(items),
+    setup: now() - began,
+  };
+}
 
-  const near = neighbourhoods(items);
+/**
+ * Some of a span's polygons, named by their place in `at.items`.
+ *
+ * Tracks are independent by construction: each is cut against its own
+ * neighbourhood, reads nothing but the world it was given, and writes nowhere.
+ * That is what makes this a dealing-out problem rather than a synchronising
+ * one — and what lets the caller deal them out a handful at a time and keep
+ * whichever thread comes back first busy, which matters because polygons differ
+ * wildly in what they cost. One that nothing happens to is a single stretch;
+ * one in a corner where three rooms are all eroding is a hundred. Dealt out in
+ * advance, one thread draws the short straw and everybody waits for it.
+ */
+export function* cutSome(
+  at: Ready,
+  which: readonly number[],
+  tol: number = TOLERANCE,
+): Generator<number, Slice, void> {
+  const began = now();
   const tracks: Track[] = [];
 
   let worst = 0;
   let evaluations = 0;
 
-  for (let i = 0; i < items.length; i++) {
-    const id = items[i].at.id;
+  for (let k = 0; k < which.length; k++) {
+    const i = which[k];
+    const id = at.items[i].at.id;
+
     const cut = yield* weighted(
-      cutTrack(near[i], id, riders, tol),
-      i / items.length,
-      1 / items.length,
+      cutTrack(at.near[i], id, at.riders, tol),
+      k / which.length,
+      1 / which.length,
     );
 
     tracks.push({ id, stretches: cut.stretches });
@@ -1098,9 +1178,67 @@ export function* bakeSpan(
     evaluations += cut.evaluations;
   }
 
-  tracks.sort((p, q) => p.id - q.id);
+  return { tracks, worst, evaluations, setup: 0, cut: now() - began };
+}
 
-  return { from, tracks, riders, worst, evaluations, stamp: stamp(world, from) };
+function now(): number {
+  return typeof performance === 'undefined' ? Date.now() : performance.now();
+}
+
+/** Part of a span: every polygon whose place in the list falls to `index` when
+ * the list is dealt out `of` ways. The serial path's slicing, and the bench's. */
+export function* bakeSlice(
+  world: World,
+  from: VersionId,
+  index: number,
+  of: number,
+  tol: number = TOLERANCE,
+): Generator<number, Slice, void> {
+  const at = ready(world, from);
+  const which: number[] = [];
+
+  for (let i = index; i < at.items.length; i += of) which.push(i);
+
+  const slice = yield* cutSome(at, which, tol);
+
+  return { ...slice, setup: at.setup };
+}
+
+/** Every slice put back together, in the order `sample` reads them. */
+export function joined(
+  world: World,
+  from: VersionId,
+  riders: Map<PolygonId, Rider>,
+  slices: readonly Slice[],
+): Span {
+  const tracks = slices.flatMap(s => s.tracks).sort((p, q) => p.id - q.id);
+
+  return {
+    from,
+    tracks,
+    riders,
+    worst: Math.max(0, ...slices.map(s => s.worst)),
+    evaluations: slices.reduce((n, s) => n + s.evaluations, 0),
+    setup: slices.reduce((n, s) => n + s.setup, 0),
+    cut: slices.reduce((n, s) => n + s.cut, 0),
+    stamp: stamp(world, from),
+  };
+}
+
+/**
+ * One span, as a generator so that the editor can run it a slice at a time and
+ * keep drawing. It yields how far along it is, between 0 and 1.
+ *
+ * The whole thing on one thread: the slice that is all of it.
+ */
+export function* bakeSpan(
+  world: World,
+  from: VersionId,
+  tol: number = TOLERANCE,
+): Generator<number, Span, void> {
+  const slice = yield* bakeSlice(world, from, 0, 1, tol);
+
+  return joined(world, from, riding(moving(world, from)), [slice]);
 }
 
 /** Every span in the chain, one after the other. */

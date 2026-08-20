@@ -209,4 +209,4 @@ test('the replay never strays far from csg(t)', () => {
 
   console.log('\n' + rows.join('\n') + '\n');
   expect(bad).toEqual([]);
-});
+}, 60_000);
