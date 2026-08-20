@@ -670,11 +670,11 @@ This also fixes something the old scheme got wrong. With `local` constant across
 a stretch, a vertex nudge could only pop at a version boundary. With `local`
 interpolated between its endpoints, a nudge morphs like everything else.
 
-### Keyframes are exactly the topology events
+### Keyframes are the topology events, and one thing besides
 
 The shader can compute *where* a vertex is. It cannot compute *whether it should
 exist*, or what order the ring visits its vertices in. Those are discrete facts,
-and their change points are the only keyframes needed:
+and their change points are where a keyframe is unavoidable:
 
 - **a crossing appears or disappears** — a corner passes through another edge, so
   two edges start or stop intersecting within their segment bounds
@@ -690,16 +690,23 @@ and their change points are the only keyframes needed:
 - **every version boundary**, because transform interpolation is piecewise
   linear in the version parameter and its derivative changes there
 
-Find the first two by bisection on `t`: the crossings move continuously, so a
-sign change brackets the event. The rest are known from the layer chain.
+The first two were found analytically at one point, and are now found by
+measuring — the reasoning is under *Finding the keyframes*. The rest are known
+from the layer chain.
+
+The one thing besides is that constant combinatorics do not by themselves make
+the geometry straight: a corner's mitre turns when the ring under it is being
+nudged, so the path bends with no event anywhere near it. A stretch has to be
+short enough for the chord to follow the bend as well as combinatorially whole,
+which is why the bake ends up with a tolerance and adaptive subdivision after
+all — see *Finding the keyframes*.
 
 The span between two consecutive keyframes is a **stretch**. The word is used
 throughout rather than "segment", which already means a piece of a line in
 `geometry.ts` and would be ambiguous in every sentence that mentions both.
 Across a stretch the ring's vertex set and order are constant by construction,
-correspondence is ring traversal, and the shader reproduces `geometry(t)`
-exactly. There is no tolerance parameter and no adaptive
-subdivision anywhere in the bake.
+correspondence is ring traversal, and the shader reproduces `geometry(t)` to
+within `TOLERANCE`.
 
 The rotating-pillar case falls out correctly without needing a special rule. A
 pillar centred on a wall always cuts exactly two crossings, but as it turns,
@@ -708,121 +715,74 @@ next. Each handoff is an event, so each gets a keyframe, and between them the
 two crossings slide along the wall. The player sees the hole widen and narrow
 continuously; it never closes and its sides never touch.
 
-### Finding the events
+### Finding the keyframes
 
-Bisection is what the prototype uses and it cannot diverge — a bracketed
-bisection is unconditionally convergent, halving the interval every step. But
-divergence is the wrong thing to worry about. The failure modes are missing
-events, not overshooting them.
+**Built, and not the way this section first said.** The original plan was to
+locate every topology event analytically — root-find the orientation
+determinant `f(t) = cross(A(t), B(t), V(t))` over intervals of `t`, so that a
+range excluding zero has *proved* no root lives inside it and nothing can be
+missed. That was built — in `interval.ts` and `events.ts`, both since
+removed — and it worked: it
+found the crossings, the collapses, the folds, and — once a second event
+function for three edges through one point was added — the ring merges too. It
+still did not do the job, for two reasons that no further event kind fixes.
 
-**The event function.** A crossing appears or disappears exactly when an
-intersection parameter reaches an endpoint, which is to say when a vertex lies
-on an edge. So the quantity to track is the orientation determinant
+**Between events the geometry is not straight.** A corner travels along its
+mitre, and the mitre is a function of the corner *angle*. Hold the ring still
+and the angle is constant, the corner moves in a straight line, and
+interpolating its two ends is exact — which is why pure erosion comes out
+perfect. Nudge a vertex while the polygon erodes and the angle turns, so the
+true path bends and the chord across the stretch cuts the bend. Nothing
+discrete happens anywhere in there. Measured at 7.9 world units on a 120-unit
+square. This is the same limit *Known limits* records for a squash and an
+erosion sharing a stretch, and it is not a corner case: nudging while eroding
+is the ordinary way to author.
 
-```
-f(t) = cross(A(t), B(t), V(t))
-```
+**Not every change in the output is a change in the geometry.** The CSG reports
+its boundary as runs, and where several runs meet, which one carries on through
+the junction is settled by a walk rather than by the shape. That can shift with
+no vertex near any edge and no three edges concurrent — found on six
+overlapping boxes, at an instant whose nearest coincidence was 0.05 world units
+away. An event search cannot see it, because geometrically there is nothing
+there to see.
 
-for edge `A-B` and vertex `V`, and an event is a sign change. This is much
-better than bisecting on "does this tag exist", which is what the test does: `f`
-is continuous, it gives a sign to bracket, and it does not depend on the CSG's
-own snap tolerance.
+**So the bake measures instead of proving.** It evaluates `csg(t)` at both ends
+of a candidate stretch; if they disagree about the arrangement it splits, and if
+they agree it builds the stretch, evaluates `csg` once more at the midpoint, and
+compares that against what the stretch would have drawn there. Further than
+`TOLERANCE` — 0.05 world units, a width the eye would see rather than a
+tolerance in `t` — and it splits, reusing the midpoint it just paid for.
 
-**Analytic where it is cheap.** If the two polygons have no relative rotation,
-`p(t)` is polynomial in `t` and so is `f` — low degree, roots in closed form, no
-iteration. That covers pure erosion, which is the common case and the core
-mechanic. With two different rotation rates `f` picks up `cos` and `sin` of two
-different angles and becomes a trigonometric polynomial with no closed-form
-root, so iteration is unavoidable there.
+The recursion stops on width as well as on error, and that is what finds the
+discontinuities. At a real event the two sides never come to agree however
+narrow the interval gets, so it keeps halving until it is thinner than 1e-4 and
+is handed back as a *gap* between two stretches rather than as a stretch. The
+same keyframe, arrived at from the other side, without the bake ever having to
+know what kind of event it was.
 
-**The real risks:**
+**The guarantee is now a measurement rather than an argument.** A span reports
+`worst`: the furthest the replay was ever found from the truth while it was
+being built. `divergence.test.ts` checks it again at 998 instants that are
+deliberately not the midpoints the bake looked at, over the cases that broke
+earlier designs — a pillar turning in a wall, a nudge and an erosion together,
+six overlapping boxes eroding at different rates. All inside tolerance, and the
+replay's frame-to-frame step equals the world's own in every one, which is the
+most a replay can be asked for: not smooth, but no jumpier than what it
+reproduces.
 
-- **Two events inside one sampling interval.** `f` changes sign twice, the scan
-  sees no sign change, and both are missed. This is the one that actually bites.
-- **Tangential contact.** A corner grazing an edge is a double root: `f` touches
-  zero without crossing. Bisection cannot see it at all; it needs a search for
-  local minima of `|f|`.
-- **Coincident events.** Symmetric geometry — a square eroding until four
-  corners collapse at once — puts several roots at the same `t`. One keyframe has
-  to absorb all of them rather than the search iterating per root.
-- **Precision floor.** Near the root `f` is a difference of nearly equal
-  quantities, so its sign is noise below some epsilon. Bisection converges to
-  that floor and no further, which is fine as long as the next point is handled.
+**What it costs.** One CSG evaluation per stretch plus a shared one at each end,
+and about fourteen to pin down each discontinuity. Where the world is straight
+that is three evaluations for the whole span — pure erosion, a turn, a squash,
+and the rotating pillar all come out as a single exact stretch. Where it is not,
+six overlapping boxes all turning and eroding took 389 evaluations and 200ms.
+Offline work behind a progress bar, and adaptive beats a fixed frame rate in
+both directions: a fixed ten frames would have been wasteful on the first set
+and nowhere near enough on the second.
 
-**Completeness rather than convergence.** Built, in `interval.ts` and
-`events.ts`. Rather than bound `|f'|` analytically, `f` is evaluated over whole
-*intervals* of `t`: every operation returns a range guaranteed to contain the
-true range of its result, so an interval whose enclosure excludes zero has been
-*proved* free of roots and is discarded outright. Anything unproven is
-subdivided. A root always lives inside some interval whose enclosure holds zero,
-and those are exactly the ones never thrown away, so nothing can be missed —
-including the graze, which never changes sign, and the close pair, which shares
-a sample interval.
-
-**The answer is a superset, and that is the right trade.** The arithmetic cannot
-know that the several appearances of `t` in an expression move together, so its
-ranges are wider than the truth and it may name a moment where nothing actually
-happens. The cost is one redundant keyframe: a stretch across which the topology
-happens not to change, which is harmless. A missed event tears the geometry.
-
-**Degenerate stretches are answered, not searched.** Three points that stay
-collinear for a whole stretch give `f ≡ 0`, and hunting for the instant it
-vanishes subdivides for ever. The search takes a `flat` band — an `|f|` small
-enough to count as zero — and reports such a stretch once. The test is on how
-big `f` gets, not on how narrow the enclosure is: enclosures narrow under
-subdivision for *every* function, so a width test would cut every search short.
-Since `f` is twice a signed area, `flat` scales as the square of the world units
-in play, and a genuine root has `f` steep enough around it to reach that band
-only well inside `tol`.
-
-**Choosing `tol`.** It is a width in `t`, not in world units, so it never needs
-retuning per world. The one constraint that matters is
-
-```
-4 · tol  <<  the smallest event separation worth resolving
-```
-
-because `4 · tol` is also the distance below which two surviving intervals are
-merged as one root seen from both sides. Two genuine events closer than that
-collapse into a single keyframe, which leaves one of the two topology changes
-*inside* a stretch — the tearing this whole search exists to prevent. Nothing
-else about the number is load-bearing: the sensitivity is entirely one-sided,
-since too large silently merges events while too small only spends work and
-degrades to `coarse`, which is safe.
-
-There is a floor, well below anything worth choosing. `f` is twice a signed
-area, so its absolute noise is around `L²·ε` and enclosures stop narrowing
-underneath that. Cost in between is logarithmic — roughly forty extra
-evaluations per factor of a thousand — so tightening `tol` is close to free and
-there is no reason to trim it toward the danger.
-
-**Running out is safe.** A budget bounds the work. Exhausting it returns
-`coarse: true` and a cover that is wider than `tol` but still complete — never
-one that has dropped something.
-
-**How many false positives.** Three bounds, in increasing usefulness.
-
-The budget is a hard cap by construction: the search stops there, so the cover
-can never exceed what the budget allows whatever the geometry does.
-
-Structurally, the cover holds one cluster of intervals per true root, one per
-flat stretch, and one per near-tangency the search cannot resolve. Adjacent
-intervals merge, so a cluster is one keyframe rather than several. Nothing else
-survives, because interval arithmetic's overestimation is `O(w)` in the interval
-width: an interval holding no root is discarded as soon as `w` falls below
-`|f| / L`, which happens almost immediately away from zero. False positives
-concentrate exactly where `|f|` sits inside the flat band or the precision
-floor — a corner passing within noise of an edge without touching it — and there
-are as many of those as the geometry has near-misses, not as many as `1 / tol`.
-
-In the common case there are none at all, because there is no search: with no
-relative rotation `f` is polynomial and its roots come in closed form. Pure
-erosion, which is the core mechanic, is entirely inside that case.
-
-The cost of one is a stretch across which the topology happens not to change:
-duplicated buffers, identical connectivity either side of the keyframe, nothing
-rendering differently. That asymmetry is the whole reason the search is built to
-over-report — a redundant keyframe costs bytes, a missed one tears geometry.
+**A superset is still the right trade, and still what comes out.** A redundant
+keyframe costs bytes; a missed one tears geometry. Splitting on measured error
+over-reports for the same reason the interval search did — it will cut a stretch
+the eye would have forgiven — and that remains the direction to err in.
 
 **A keyframe is a discontinuity, not a shared frame.** At an event the two sides
 genuinely have different vertex sets; that is what the event *is*. Continuity

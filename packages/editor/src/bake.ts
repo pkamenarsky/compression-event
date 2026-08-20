@@ -28,44 +28,34 @@
 // interpolates an accumulated chain — the property the composed frame in
 // `scene.ts` was allowed to give up.
 //
-// When a keyframe is needed
-// -------------------------
+// Where a stretch ends
+// --------------------
 // The shader can work out *where* a vertex goes. It cannot work out *whether it
-// exists*, or what order a ring visits its vertices in. Those are the only
-// things that need cutting, and there are two ways to know about them:
+// exists*, or what order a ring visits its vertices in, and it cannot follow a
+// path that bends. So a stretch has to end wherever any of those gives out, and
+// there are two ways to know:
 //
 // - **Known outright, from the layer chain.** Both ends of the span, always: a
 //   version boundary is a keyframe because the interpolation's derivative
 //   changes there, and because a polygon born in `k + 1` appears exactly there
-//   and nowhere inside. Those cost nothing to find.
+//   and nowhere inside. Those cost nothing.
 //
-// - **Found, because the geometry decided.** A corner passing through an edge,
-//   two rooms joining, a room pinching in two, an eroded ring losing a corner.
-//   Every one of them shows up as a change in the CSG's combinatorics.
+// - **Measured, because nothing else is trustworthy.** Everything else — a
+//   corner passing through an edge, two rooms joining, an eroded ring losing a
+//   corner, and the bends and reshufflings that are not events at all — is
+//   found by checking the stretch against `csg(t)` in the middle and splitting
+//   until it is close enough. See *Cutting the span*, which is also where the
+//   analytic search that used to live here is buried.
 //
-// The second kind is found in `events.ts`, over the corners of the offset ring
-// rather than over the source: the offset is what the CSG combines, and a
-// corner of it travels along its mitre at one unit per unit of depth. Every
-// edge is asked about every corner that is not one of its own ends, within a
-// polygon as well as across a pair, which is one rule covering all of them —
-// see *Cutting the span* below.
-//
-// The search is over intervals, not samples, so a pair of events sharing a
-// sample interval and a corner that grazes an edge without going through are
-// both found rather than missed. Where nothing turns and nothing squashes it
-// does not search at all: `p(t)` is a straight line, `f` is a quadratic, and
-// the roots come in closed form. Pure erosion is entirely inside that case.
-//
-// Why the set is incremental
-// --------------------------
-// A span is evaluated at both ends of every stretch and most polygons are not
-// moving in it — a version edits a few things and leaves the rest alone. So
-// each evaluation goes through `live`, which diffs the resolved shapes against
-// the last evaluation and hands `worldset` only what actually moved. The full
-// CSG is paid once per span, at the first evaluation; everything after it costs
-// the polygons that moved and their overlappers. A polygon untouched by the
-// version in flight is never re-CSG'd at all, however many stretches the span
-// turns out to have.
+// Why the CSG runs from nothing every time
+// ----------------------------------------
+// It used to be kept incrementally, on the reasoning that a version edits a few
+// polygons and leaves the rest alone, so most of the set would survive from one
+// instant to the next. That is true of a *gesture* and false of a *span*: a
+// version that erodes moves every polygon it names, every instant, so the diff
+// found nothing to skip and paid its bookkeeping for the privilege. Each
+// evaluation now builds a set from nothing. `worldset` is still the engine; the
+// bake simply does not carry one across instants.
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
@@ -385,14 +375,8 @@ export function truth(world: World, from: VersionId, t: number): Frame {
 // Evaluating
 // -----------------------------------------------------------------------------
 
-/**
- * The CSG at one `t`, through the incremental set.
- *
- * `held` is carried from the last evaluation whatever `t` was, and that is the
- * point: the diff is per polygon, not per instant, so a polygon the version
- * does not touch stays out of the CSG for the whole span however far the search
- * jumps around.
- */
+/** The whole answer at one instant: the set, and everything the check and the
+ * crossings need to be worked out from it. */
 interface Taken {
   t: number
   frame: Frame
@@ -463,7 +447,7 @@ function signature(frame: Frame): string {
 // It is done at both ends and kept only where the two agree, which is a real
 // check rather than a formality: the stretch is *supposed* to hold the
 // arrangement constant, so a point that comes from different edges at the two
-// ends is the search having missed something.
+// ends is a stretch that should have been split.
 // -----------------------------------------------------------------------------
 
 /** How close counts as on. Relative, so a world measured in thousands is not
@@ -852,8 +836,9 @@ export function* bakeAll(world: World): Generator<number, Map<VersionId, Span>, 
   const count = world.versions.length - 1;
 
   for (let k = 0; k < count; k++) {
-    // Two thirds of a span goes on the search and a third on the stretches,
-    // which is roughly how the samples fall.
+    // Each span gets an equal slice of the bar. How long one takes depends
+    // entirely on how much is moving in it, so the bar is honest about where
+    // the work is rather than about how long it will take.
     const span = yield* weighted(bakeSpan(world, k), k / count, 1 / count);
 
     out.set(k, span);

@@ -93,28 +93,27 @@ special case for this scenario.
 The game lerps between versions in a vertex shader rather than switching
 instantaneously. That only works if consecutive keyframes agree on vertex
 count and order, which is exactly the tag correspondence above, plus a
-decision about *where* keyframes go: **exactly at topology events** — a
-crossing appearing or disappearing, a ring merging or splitting — found by
-treating the arrangement as a continuous function of `t` and root-finding on
-it, rather than by sampling and hoping nothing was missed between samples.
+decision about *where* keyframes go: at least at every topology event — a
+crossing appearing or disappearing, a ring merging or splitting.
 
-**Built** — [interval.ts](../packages/editor/src/interval.ts) and
-[events.ts](../packages/editor/src/events.ts). Interval arithmetic gives a
-completeness guarantee sampling can't: every operation returns a range
-*guaranteed* to contain the function's true range over that interval, so a
-range that excludes zero has *proved* no root lives there and can be
-discarded outright; anything unproven gets subdivided. Verified against two
-cases sampling is blind to — a tangential graze that never changes sign, and
-two roots 1e-5 apart that a 2,000-sample scan steps straight over — and
-against 400 random configurations where nothing a 3,000-sample scan noticed
-was ever missing from the search's answer.
+**Built** — [bake.ts](../packages/editor/src/bake.ts), and not by root-finding
+in the end. Locating the events analytically was built first, with interval
+arithmetic for the completeness sampling cannot give, and it found every event
+it was written to find. It was still not enough, because a stretch can go wrong
+without any event in it: a corner rides its mitre, the mitre depends on the
+corner angle, and nudging a vertex while the polygon erodes turns that angle —
+so the path bends and the chord across the stretch cuts the bend, with nothing
+discrete happening anywhere. The CSG's own run decomposition can shift with no
+coincidence nearby either.
 
-Two things fell out that weren't part of the original ask: degenerate
-stretches (three points staying collinear for a whole interval) need a `flat`
-magnitude threshold or the search subdivides forever hunting for an instant
-that never arrives; and a budget makes the search *safe* to run unbounded —
-exhausting it returns a coarser-but-still-complete cover rather than
-something wrong.
+So the bake measures. It evaluates `csg(t)` at the middle of every candidate
+stretch, compares it against what the stretch would have drawn there, and splits
+until the difference is under 0.05 world units. Splitting stops on width too, and
+an interval whose two sides never come to agree is handed back as a gap — which
+is the keyframe, found without having to know what kind of event made it. A span
+reports the worst it ever measured, and
+[divergence.test.ts](../packages/editor/src/divergence.test.ts) checks that again
+at 998 instants the bake did not look at.
 
 ## The editor, built and verified live
 
