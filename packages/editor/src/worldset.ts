@@ -59,7 +59,7 @@
 import { PolygonType } from '@ce/game/world';
 import { AABB, Tree, emptyTree, ofRings } from './aabb';
 import * as aabb from './aabb';
-import { Member, Point, Shape, boundaryRuns, simplify } from './geometry';
+import { Member, Point, Shape, boundaryRuns, ground, simplify } from './geometry';
 
 export type Id = number;
 
@@ -121,9 +121,19 @@ export interface WorldSet {
   nextPiece: PieceId
 }
 
+/**
+ * `simple` says the shape is already an arrangement — rings that cross neither
+ * themselves nor each other — and that `simplify` may be skipped. It is a
+ * promise, not a hint: a shape that is not simple and says it is will produce a
+ * boundary that is quietly wrong.
+ *
+ * Worth making because the caller often has just run an arrangement to get the
+ * shape. Anything `erode` returns is one by construction, and re-deriving that
+ * is the same work over again on every polygon of every frame the bake takes.
+ */
 export type Edit =
-  | { op: 'insert', id: Id, type: PolygonType, shape: Shape }
-  | { op: 'update', id: Id, shape: Shape }
+  | { op: 'insert', id: Id, type: PolygonType, shape: Shape, simple?: boolean }
+  | { op: 'update', id: Id, shape: Shape, simple?: boolean }
   | { op: 'remove', id: Id };
 
 export const emptyWorldSet: WorldSet = {
@@ -229,7 +239,7 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     // Self-intersections are resolved once, here, rather than every time the
     // polygon takes part in a boundary. The points that came in are kept as
     // they are: the editor goes on editing those, not this.
-    const shape = simplify(e.shape);
+    const shape = e.simple === true ? e.shape : simplify(e.shape);
 
     // The source box covers the simplified one, so it is safe to search with
     // and it is the box the editor wants for picking.
@@ -283,6 +293,15 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
 
   let nextPiece = next.nextPiece;
 
+  // Who each disturbed polygon has to be worked out against, gathered before
+  // any of it is worked out. The field the classification asks is the same for
+  // all of them, so it is built once over everybody taking part rather than
+  // once per subject — which at a full rebuild is the difference between
+  // putting each polygon's edges into a tree once and doing it once per
+  // neighbour it has.
+  const work: { subject: Member, others: Member[] }[] = [];
+  const taking = new Map<Id, Member>();
+
   for (const id of dirty) {
     for (const p of before.runs.get(id) ?? []) removed.push(p.id);
 
@@ -299,20 +318,33 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
       continue;
     }
 
+    const subject = member(e);
     const others: Member[] = [];
 
     for (const other of aabb.search(next.tree, e.box)) {
       const o = next.entries.get(other);
-      if (o !== undefined && o.id !== id) others.push(member(o));
+
+      if (o !== undefined && o.id !== id) {
+        const m = member(o);
+        others.push(m);
+        taking.set(o.id, m);
+      }
     }
 
-    const mine = boundaryRuns(member(e), others).map(points => ({
+    taking.set(id, subject);
+    work.push({ subject, others });
+  }
+
+  const on = ground(taking.values());
+
+  for (const { subject, others } of work) {
+    const mine = boundaryRuns(subject, others, on).map(points => ({
       id: nextPiece++,
-      source: id,
+      source: subject.id,
       points,
     }));
 
-    next.runs.set(id, mine);
+    next.runs.set(subject.id, mine);
     inserted.push(...mine);
   }
 

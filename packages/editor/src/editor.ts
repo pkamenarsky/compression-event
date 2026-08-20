@@ -7,7 +7,7 @@ import { interaction } from '@incpt/kontinuum-interaction/dom';
 import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { download } from './save';
+import { download, upload } from './save';
 import { theme } from './theme';
 import {
   EditorState,
@@ -45,7 +45,7 @@ export function editor(initial: World): VNode {
         },
         [
           inputListener(input),
-          saving(state, input),
+          saving(state, input, update),
 
           worldCanvas(
             s.world,
@@ -69,17 +69,33 @@ export function editor(initial: World): VNode {
 }
 
 /**
- * `o` puts the whole state in a file. It exists so that a world which is doing
- * something odd can be handed over as it is: the numbers that produced it, not
- * a picture of the result.
+ * Cmd+S puts the whole state in a file and Cmd+O reads one back. They exist so
+ * that a world which is doing something odd can be handed over as it is: the
+ * numbers that produced it, not a picture of the result.
+ *
+ * The browser wants both of these for itself, so both are taken off it. That
+ * has to happen while the event is still being dispatched, which is why the
+ * signal wakes its waiters synchronously.
  */
-function saving(state: Value<EditorState>, input: Input): VNode {
+function saving(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* keyPressed(input, 'KeyO');
+      const e = yield* keyPressed(input, 'KeyS', 'KeyO');
 
       // Holding a key repeats it, and one press should be one file
-      if (!e.repeat) download(state());
+      if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
+
+      e.preventDefault();
+
+      if (e.code === 'KeyS') {
+        download(state());
+      }
+      else {
+        // The load lands whenever the picker is answered, which is long after
+        // this. Everything the editor keeps is in the file bar the bake, and
+        // `restored` supplies an empty one.
+        upload(loaded => update(() => loaded));
+      }
     }
   });
 }

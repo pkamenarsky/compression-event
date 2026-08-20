@@ -20,7 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { AABB, Tree, box, build, each, expand } from './aabb';
+import { AABB, Tree, box, build, each, emptyTree, expand, ofRings } from './aabb';
 
 export type { Point };
 
@@ -318,6 +318,12 @@ function turn(a: Point, b: Point, p: Point): number {
 // over the edges answers the rest without looking. What comes back is a
 // superset — a box can reach past `p.x` while its edge crosses behind — and the
 // same `turn` sorts those out, so the answer is the one `winding` gives.
+//
+// A field is per shape, and deliberately not per world. The ray runs to
+// infinity, so pouring every polygon into one field makes every query walk
+// everything to the right of it, and the cost of a point starts growing with
+// the map. `Ground` is what a world wants instead: one field each, and a tree
+// to find the one or two that could possibly contain the point.
 // -----------------------------------------------------------------------------
 
 export interface Field {
@@ -406,6 +412,22 @@ interface Seg {
   edge: SourceRef
   ta: Tag
   tb: Tag
+  /**
+   * Which operand owns it, in the order that settles a shared edge: where two
+   * of them lie on exactly the same ground only the lowest rank may claim it,
+   * or the boundary would be counted twice.
+   */
+  rank: number
+  /** The lowest rank lying on top of this piece, or `Infinity` where nothing
+   * does. Filled in by `split`, read by `arranged`. */
+  shadow: number
+}
+
+/** A stretch of one segment that a lower-ranked segment lies along. */
+interface Cover {
+  t0: number
+  t1: number
+  rank: number
 }
 
 /** A cut parameter along a segment, and what the point there is. */
@@ -432,11 +454,16 @@ function scaleOf(segs: Seg[]): number {
   return Number.isFinite(d) && d > 0 ? d : 1;
 }
 
-function segments(shape: Shape, which: 0 | 1): Seg[] {
+/**
+ * `ranks` gives each ring its owner, for a shape that is several polygons
+ * concatenated. A shape that is one operand is one owner, which is `which`.
+ */
+function segments(shape: Shape, which: 0 | 1, ranks?: readonly number[]): Seg[] {
   const out: Seg[] = [];
 
   for (let r = 0; r < shape.length; r++) {
     const ring = shape[r];
+    const rank = ranks === undefined ? which : ranks[r];
 
     for (let i = 0; i < ring.length; i++) {
       const j = (i + 1) % ring.length;
@@ -449,6 +476,8 @@ function segments(shape: Shape, which: 0 | 1): Seg[] {
         edge: { shape: which, ring: r, index: i },
         ta: { kind: 'vertex', at: { shape: which, ring: r, index: i } },
         tb: { kind: 'vertex', at: { shape: which, ring: r, index: j } },
+        rank,
+        shadow: Infinity,
       });
     }
   }
@@ -492,9 +521,19 @@ function betterTag(x: Tag, y: Tag): Tag {
  * Every segment cut at every point another segment touches it. Collinear
  * overlaps count: their endpoints are projected back onto each other so that a
  * shared edge ends up split identically on both sides.
+ *
+ * Only the first `primary` segments come back cut up. The rest are still
+ * consulted — they are what does the cutting — but their own pieces are never
+ * built, which is the whole saving when a caller wants one polygon's edges out
+ * of a neighbourhood of eight. Every pair with a primary in it is still visited
+ * exactly once; the pairs skipped are the ones with no primary at all, and
+ * those can only cut each other.
  */
-function split(segs: Seg[], eps: number): Seg[] {
+function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
   const ts: Param[][] = segs.map(s => [{ t: 0, tag: s.ta }, { t: 1, tag: s.tb }]);
+  const covers: Cover[][] = [];
+
+  for (let i = 0; i < primary; i++) covers.push([]);
 
   // Two segments whose boxes miss each other cannot touch, so the tree answers
   // for almost every pair at once. This used to be every pair against every
@@ -521,10 +560,14 @@ function split(segs: Seg[], eps: number): Seg[] {
   const tree = build(boxes);
   const near: number[] = [];
 
-  for (let i = 0; i < segs.length; i++) {
+  for (let i = 0; i < primary; i++) {
     near.length = 0;
+
+    // A pair of primaries would be visited from both ends, so it is taken from
+    // the lower one only. A pair with a secondary in it is reached from the
+    // primary end alone, so it is always taken.
     each(tree, boxes[i].box, j => {
-      if (j > i) near.push(j);
+      if (j !== i && (j > i || j >= primary)) near.push(j);
     });
 
     // In index order, so the pairs are visited exactly as the nested loops
@@ -532,12 +575,19 @@ function split(segs: Seg[], eps: number): Seg[] {
     // whichever arrived first, so the order is not quite free to change.
     near.sort((x, y) => x - y);
 
-    for (const j of near) intersectInto(segs[i], segs[j], ts[i], ts[j], eps);
+    for (const j of near) {
+      intersectInto(
+        segs[i], segs[j],
+        ts[i], ts[j],
+        covers[i], covers[j] ?? null,
+        eps,
+      );
+    }
   }
 
   const out: Seg[] = [];
 
-  for (let i = 0; i < segs.length; i++) {
+  for (let i = 0; i < primary; i++) {
     const { a, b } = segs[i];
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
@@ -561,12 +611,22 @@ function split(segs: Seg[], eps: number): Seg[] {
 
     for (let k = 0; k + 1 < kept.length; k++) {
       const t0 = kept[k], t1 = kept[k + 1];
+      const mid = (t0.t + t1.t) / 2;
+
+      let shadow = Infinity;
+
+      for (const c of covers[i]) {
+        if (c.t0 <= mid && mid <= c.t1) shadow = Math.min(shadow, c.rank);
+      }
+
       out.push({
         a: { x: a.x + dx * t0.t, y: a.y + dy * t0.t },
         b: { x: a.x + dx * t1.t, y: a.y + dy * t1.t },
         edge: segs[i].edge,
         ta: t0.tag,
         tb: t1.tag,
+        rank: segs[i].rank,
+        shadow,
       });
     }
   }
@@ -574,8 +634,22 @@ function split(segs: Seg[], eps: number): Seg[] {
   return out;
 }
 
-/** Parameters at which `s` and `u` meet, appended to their respective lists. */
-function intersectInto(s: Seg, u: Seg, ts: Param[], us: Param[], eps: number): void {
+/**
+ * Parameters at which `s` and `u` meet, appended to their respective lists.
+ *
+ * Where the two run along each other the stretch is recorded as well, on
+ * whichever of them is outranked. That is the one thing a segment cannot work
+ * out from its own pieces later: that something else is lying on it.
+ */
+function intersectInto(
+  s: Seg,
+  u: Seg,
+  ts: Param[],
+  us: Param[],
+  cs: Cover[] | null,
+  cu: Cover[] | null,
+  eps: number,
+): void {
   const rx = s.b.x - s.a.x, ry = s.b.y - s.a.y;
   const sx = u.b.x - u.a.x, sy = u.b.y - u.a.y;
   const d = rx * sy - ry * sx;
@@ -597,8 +671,19 @@ function intersectInto(s: Seg, u: Seg, ts: Param[], us: Param[], eps: number): v
     addParam(ts, t1, u.tb);
 
     const ss = sx * sx + sy * sy;
-    addParam(us, (-qx * sx - qy * sy) / ss, s.ta);
-    addParam(us, (rx * sx + ry * sy - qx * sx - qy * sy) / ss, s.tb);
+    const u0 = (-qx * sx - qy * sy) / ss;
+    const u1 = (rx * sx + ry * sy - qx * sx - qy * sy) / ss;
+
+    addParam(us, u0, s.ta);
+    addParam(us, u1, s.tb);
+
+    if (cs !== null && u.rank < s.rank) {
+      cs.push({ t0: Math.min(t0, t1), t1: Math.max(t0, t1), rank: u.rank });
+    }
+
+    if (cu !== null && s.rank < u.rank) {
+      cu.push({ t0: Math.min(u0, u1), t1: Math.max(u0, u1), rank: s.rank });
+    }
 
     return;
   }
@@ -646,7 +731,14 @@ export function combineTagged(
   const raw = [...segments(a, 0), ...segments(b, 1)];
   const snap = scaleOf(raw) * 1e-9;
 
-  return chain(arranged(a, b, op, fill, split(raw, snap), snap), snap);
+  // Prepared once and asked four times per segment, which is the whole reason
+  // they exist.
+  const fa = field(a), fb = field(b);
+
+  return chain(
+    arranged(p => fill(fa, p), p => fill(fb, p), op, split(raw, snap), snap),
+    snap,
+  );
 }
 
 /**
@@ -654,22 +746,19 @@ export function combineTagged(
  * answer's interior is on its left.
  *
  * Shared by `combineTagged`, which chains them into rings, and `boundaryRuns`,
- * which throws away everything but one polygon's own edges.
+ * which asks about one polygon's own edges and nobody else's. They disagree
+ * about how much of the operands is worth preparing in advance, so each hands
+ * in its own way of asking whether a point is inside one rather than a shape.
  */
 function arranged(
-  a: Shape,
-  b: Shape,
+  inA: (p: Point) => boolean,
+  inB: (p: Point) => boolean,
   op: Op,
-  fill: Fill,
   segs: Seg[],
   snap: number,
 ): Seg[] {
   // `snap` was scaled off the input the same way, so this recovers it.
   const scale = snap / 1e-9;
-
-  // Prepared once and asked four times per segment, which is the whole reason
-  // they exist.
-  const fa = field(a), fb = field(b);
 
   const kept: Seg[] = [];
   const seen = new Set<string>();
@@ -688,16 +777,23 @@ function arranged(
     const left = { x: mx + nx, y: my + ny };
     const right = { x: mx - nx, y: my - ny };
 
-    const inLeft = op(fill(fa, left), fill(fb, left));
-    const inRight = op(fill(fa, right), fill(fb, right));
+    const inLeft = op(inA(left), inB(left));
+    const inRight = op(inA(right), inB(right));
 
     if (inLeft === inRight) continue;
+
+    // Something lower-ranked lies along exactly this piece and has as good a
+    // claim to it. Coincident pieces are the same geometry, so they classified
+    // alike, and the loser would have survived for the same reason the winner
+    // did — which is why losing can be decided without classifying the winner
+    // at all.
+    if (s.shadow < s.rank) continue;
 
     // Orient so the answer's interior is on the left. Coincident edges of the
     // two operands land on the same directed segment and collapse to one.
     const dir: Seg = inLeft
       ? s
-      : { a: s.b, b: s.a, edge: s.edge, ta: s.tb, tb: s.ta };
+      : { ...s, a: s.b, b: s.a, ta: s.tb, tb: s.ta };
     const key = keyOf(dir.a, snap) + '|' + keyOf(dir.b, snap);
 
     if (seen.has(key)) continue;
@@ -728,6 +824,22 @@ function arranged(
 // job that most callers turn out not to need: collision wants edge normals, and
 // a corner needs only the run that carries on past it rather than the whole
 // loop.
+//
+// Asking about the neighbours costs nothing extra
+// ----------------------------------------------
+// A neighbourhood is asked about many times over — once per polygon in it, by
+// whoever wants that polygon's share — and the neighbours overlap, so the same
+// polygon turns up in eight of these. Everything a call does that is not about
+// its own subject is therefore work some other call is doing too, and work this
+// one is about to throw away.
+//
+// Two things follow. The subject's edges are the only ones cut up and
+// classified: the neighbours do the cutting, and where a shared edge decides
+// who owns it `rank` settles that without the loser ever being built. And the
+// point queries run off a `Ground` prepared once for everybody, rather than a
+// field assembled per subject out of shapes it has in common with the next
+// subject along. Together those took a ten thousand polygon world from four and
+// a half seconds to under two.
 // -----------------------------------------------------------------------------
 
 /** A polygon taking part in the set, as `boundaryRuns` needs to see it. */
@@ -738,6 +850,66 @@ export interface Member {
 }
 
 /**
+ * Every member's edges, prepared for the point queries the classification
+ * makes.
+ *
+ * A neighbourhood's own field gives the same answers as the whole world's: a
+ * ring contributes to the winding at a point only when it contains that point,
+ * and a polygon containing a point a hair off `subject`'s edge is a polygon
+ * overlapping `subject`. So the field can be built once for everybody instead
+ * of once per member — which matters because the members overlap, and a world
+ * of ten thousand polygons was putting each polygon's edges into a tree once
+ * for every neighbour it had.
+ *
+ * Nothing in here is a tolerance. Those stay local, worked out from the
+ * neighbourhood actually being asked about.
+ */
+export interface Ground {
+  level: Side
+  solid: Side
+}
+
+/** One kind's members, each prepared on its own and findable by where it is. */
+interface Side {
+  tree: Tree
+  parts: Field[]
+}
+
+export function ground(members: Iterable<Member>): Ground {
+  const sides: Side[] = [{ tree: emptyTree, parts: [] }, { tree: emptyTree, parts: [] }];
+  const boxes: { id: number, box: AABB }[][] = [[], []];
+
+  for (const m of members) {
+    if (m.shape.length === 0) continue;
+
+    const which = m.kind === 'level' ? 0 : 1;
+    const side = sides[which];
+
+    boxes[which].push({ id: side.parts.length, box: ofRings(m.shape) });
+    side.parts.push(field(m.shape));
+  }
+
+  for (const which of [0, 1]) sides[which].tree = build(boxes[which]);
+
+  return { level: sides[0], solid: sides[1] };
+}
+
+/**
+ * Nonzero fill over a whole side. Winding is additive over rings, and a member
+ * that does not have `p` in its box contributes none of it, so the tree hands
+ * back the one or two members that could and the rest are never read.
+ */
+function covers(side: Side, p: Point): boolean {
+  let w = 0;
+
+  each(side.tree, box(p.x, p.y, p.x, p.y), i => {
+    w += fieldWinding(side.parts[i], p);
+  });
+
+  return w !== 0;
+}
+
+/**
  * The parts of `subject`'s edges that lie on the boundary of the set the
  * members make — every `level` unioned, every `solid` taken back out — as open
  * runs in the order they are walked.
@@ -745,37 +917,66 @@ export interface Member {
  * `others` is everything overlapping `subject`; nothing further away can make a
  * difference, which is the point.
  *
+ * Only `subject`'s edges are ever cut up and classified. The others take part
+ * — they do the cutting, and their crossings with `subject` are where its runs
+ * end — but their own pieces are not built, because this call would throw them
+ * away and the next one is going to build them again anyway.
+ *
  * Where two polygons share an edge exactly, only one of them may claim it or
- * the boundary would be counted twice. The rings go in ordered by id so that
- * the lower id always wins, whichever polygon this call happens to be asking
- * about — the arrangement keeps the first of a pair of coincident edges, so the
- * order they are handed over in *is* the rule.
+ * the boundary would be counted twice. Rank settles it: the members are ordered
+ * by kind and then by id, and a piece with something lower-ranked lying along
+ * it is dropped. Two coincident edges are the same geometry, so they classify
+ * alike and the loser would have been kept or dropped for the same reason the
+ * winner was — which is why the loser never has to be classified to know it
+ * lost.
+ *
+ * `on` is the shared field, when the caller has one. Without it the
+ * neighbourhood builds its own, which gives the same answer at more cost.
  */
-export function boundaryRuns(subject: Member, others: readonly Member[]): Point[][] {
+export function boundaryRuns(
+  subject: Member,
+  others: readonly Member[],
+  on?: Ground,
+): Point[][] {
   const all = [subject, ...others];
   const a: Shape = [], b: Shape = [];
-  let from = 0, to = 0;
+  const ranks: number[][] = [[], []];
+
+  let rank = 0, mine = -1;
 
   for (const kind of ['level', 'solid'] as const) {
-    const into = kind === 'level' ? a : b;
+    const which = kind === 'level' ? 0 : 1;
+    const into = which === 0 ? a : b;
 
     for (const m of all.filter(x => x.kind === kind).sort((p, q) => p.id - q.id)) {
-      if (m.id === subject.id) {
-        from = into.length;
-        to = from + m.shape.length;
+      if (m.id === subject.id) mine = rank;
+
+      for (const ring of m.shape) {
+        into.push(ring);
+        ranks[which].push(rank);
       }
 
-      into.push(...m.shape);
+      rank++;
     }
   }
 
-  const mine = subject.kind === 'level' ? 0 : 1;
-  const raw = [...segments(a, 0), ...segments(b, 1)];
+  // Subject first, so that `split` can cut it and leave the rest alone. The
+  // order no longer decides anything: rank does.
+  const raw = [...segments(a, 0, ranks[0]), ...segments(b, 1, ranks[1])];
+  const ours = raw.filter(s => s.rank === mine);
+  const rest = raw.filter(s => s.rank !== mine);
+
   const snap = scaleOf(raw) * 1e-9;
-  const kept = arranged(a, b, OpSubtract, fieldContains, split(raw, snap), snap);
+  const shared = on ?? ground(all);
 
   return runs(
-    kept.filter(s => s.edge.shape === mine && s.edge.ring >= from && s.edge.ring < to),
+    arranged(
+      p => covers(shared.level, p),
+      p => covers(shared.solid, p),
+      OpSubtract,
+      split([...ours, ...rest], snap, ours.length),
+      snap,
+    ),
     snap,
   );
 }

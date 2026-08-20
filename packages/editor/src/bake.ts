@@ -14,7 +14,7 @@
 // eased from identity to itself, and everything before it is already inside the
 // base frame and inside `local`:
 //
-//   frame(t)  = lerp(I, T_{k+1}, t) o A_k        (translation, rotation, scale)
+//   frame(t)  = ease(T_{k+1}, t) o A_k           (rotation, scale, translation)
 //   local(t)  = lerp(local_k, local_{k+1}, t)    (vertex nudges)
 //   depth(t)  = lerp(d_k, d_{k+1}, t)
 //   shape(t)  = erode(frame(t)(local(t)), depth(t))
@@ -23,6 +23,10 @@
 // polygon that turns therefore turns through the morph rather than collapsing
 // through its own centre, which is the whole reason a version keeps its
 // transform in components instead of as a matrix.
+//
+// Rotation and scale ease from identity on their own terms. The translation
+// does not: it is whatever holds the layer's own fixed point still, so a turn
+// goes round its pivot instead of round the world origin. See `pivot`.
 //
 // `A_k` is a general affine and is constant across the span, so nothing here
 // interpolates an accumulated chain — the property the composed frame in
@@ -302,18 +306,74 @@ function mix(u: number, v: number, t: number): number {
   return u + (v - u) * t;
 }
 
-/** The layer eased on, in components. Identity at 0, itself at 1. */
+/**
+ * The one point a layer leaves where it found it, or nothing when it has none.
+ *
+ * A transform turns about the world origin and carries a translation, so the
+ * pivot a gesture was made about is not stored anywhere — `turned` folds it
+ * into the translation and forgets it. It can be had back regardless: a map
+ * with a fixed point has exactly one, and it is the pivot, whatever gesture put
+ * the layer there. Solving `(I - A) f = T` recovers it.
+ *
+ * That is also the answer to a version holding several gestures about several
+ * different pivots. Their composite is still one map and still has one fixed
+ * point, so there is nothing to store, nothing to choose between, and no order
+ * to remember. Turn a polygon about its middle and then about its corner, and
+ * the morph spins it about the single point that both agree stayed put.
+ *
+ * A pure translation has no fixed point, and neither has a scale that leaves an
+ * axis alone. `null` says so, and the caller falls back to a straight line —
+ * which for a translation is exactly right anyway.
+ */
+function pivot(layer: Transform): Point | null {
+  const m = affine({ ...layer, translation: { x: 0, y: 0 } });
+
+  const det = (1 - m.a) * (1 - m.d) - m.b * m.c;
+  const size = Math.max(1, Math.abs(m.a), Math.abs(m.b), Math.abs(m.c), Math.abs(m.d));
+
+  if (Math.abs(det) < 1e-9 * size * size) return null;
+
+  const { x: tx, y: ty } = layer.translation;
+
+  return {
+    x: ((1 - m.d) * tx + m.c * ty) / det,
+    y: (m.b * tx + (1 - m.a) * ty) / det,
+  };
+}
+
+/**
+ * The layer eased on, in components. Identity at 0, itself at 1.
+ *
+ * Rotation and scale ease on their own terms, and the translation is then
+ * whatever holds the pivot still: `T(t) = f - A(t) f`. Easing it in a straight
+ * line instead is what makes a turning polygon swing out on a great arc and
+ * come back — the translation a rotation gesture leaves behind is the pivot
+ * carried round a circle, and a chord is not a circle. Both ends are unmoved by
+ * this, since `A(0)` is the identity and `A(1) f` is `f - T` by construction.
+ */
 function easing(layer: Transform, t: number): Transform {
+  const rotation = layer.rotation * t;
+  const scale = { x: mix(1, layer.scale.x, t), y: mix(1, layer.scale.y, t) };
+  const held = t === 0 || t === 1 ? null : pivot(layer);
+
+  if (held === null) {
+    return {
+      translation: { x: layer.translation.x * t, y: layer.translation.y * t },
+      rotation,
+      scale,
+      erosion: 0,
+    };
+  }
+
+  const a = affine({ translation: { x: 0, y: 0 }, rotation, scale, erosion: 0 });
+
   return {
     translation: {
-      x: layer.translation.x * t,
-      y: layer.translation.y * t,
+      x: held.x - (a.a * held.x + a.c * held.y),
+      y: held.y - (a.b * held.x + a.d * held.y),
     },
-    rotation: layer.rotation * t,
-    scale: {
-      x: mix(1, layer.scale.x, t),
-      y: mix(1, layer.scale.y, t),
-    },
+    rotation,
+    scale,
     erosion: 0,
   };
 }

@@ -365,6 +365,101 @@ describe('the replay against the CSG worked out directly', () => {
   });
 });
 
+describe('a turn goes round its pivot, not round the origin', () => {
+  // The transform a rotation gesture leaves behind, for a turn of `angle`
+  // about `at`: the pivot carried round to where the rotation would have sent
+  // it, then put back. This is `turned` in the canvas, starting from identity.
+  function about(at: Point, angle: number): Partial<Transform> {
+    const c = Math.cos(angle), s = Math.sin(angle);
+
+    return {
+      rotation: angle,
+      translation: {
+        x: at.x - (at.x * c - at.y * s),
+        y: at.y - (at.x * s + at.y * c),
+      },
+    };
+  }
+
+  function reach(frame: Frame, at: Point): { near: number, far: number } {
+    let near = Infinity, far = 0;
+
+    for (const run of frame) {
+      for (const p of run.points) {
+        const d = Math.hypot(p.x - at.x, p.y - at.y);
+
+        near = Math.min(near, d);
+        far = Math.max(far, d);
+      }
+    }
+
+    return { near, far };
+  }
+
+  /** Every distance to the pivot, at its widest and its narrowest, across the
+   * whole morph. A turn about a point moves nothing towards or away from it. */
+  function held(world: World, at: Point): number {
+    const start = reach(truth(world, 0, 0), at);
+    let off = 0;
+
+    for (let i = 0; i <= 40; i++) {
+      const now = reach(truth(world, 0, i / 40), at);
+
+      off = Math.max(off, Math.abs(now.near - start.near), Math.abs(now.far - start.far));
+    }
+
+    return off;
+  }
+
+  test('about the middle', () => {
+    const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
+    const at = { x: 500, y: 360 };
+
+    expect(held(transformed(world, 1, ids[0], about(at, Math.PI / 2)), at)).toBeLessThan(1e-6);
+  });
+
+  test('about a corner, well away from the origin', () => {
+    const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
+    const at = { x: 400, y: 300 };
+
+    expect(held(transformed(world, 1, ids[0], about(at, 1.1)), at)).toBeLessThan(1e-6);
+  });
+
+  test('and two turns about different pivots agree on a third', () => {
+    // Composing them gives a rotation about neither, and the morph has to find
+    // it rather than be told: nothing stores a pivot.
+    const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
+    const one = about({ x: 500, y: 360 }, 0.7);
+    const two = about({ x: 400, y: 300 }, 0.5);
+
+    const c = Math.cos(0.5), s = Math.sin(0.5);
+    const both: Partial<Transform> = {
+      rotation: 1.2,
+      translation: {
+        x: two.translation!.x + one.translation!.x * c - one.translation!.y * s,
+        y: two.translation!.y + one.translation!.x * s + one.translation!.y * c,
+      },
+    };
+
+    // Where the composite holds still, which is neither of the two it was made
+    // from, and which nothing wrote down.
+    const c2 = Math.cos(1.2), s2 = Math.sin(1.2);
+    const det = (1 - c2) * (1 - c2) + s2 * s2;
+    const at = {
+      x: ((1 - c2) * both.translation!.x - s2 * both.translation!.y) / det,
+      y: (s2 * both.translation!.x + (1 - c2) * both.translation!.y) / det,
+    };
+
+    expect(at.x).not.toBeCloseTo(400, 1);
+    expect(at.x).not.toBeCloseTo(500, 1);
+
+    const w = transformed(world, 1, ids[0], both);
+
+    expect(held(w, at)).toBeLessThan(1e-6);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+  });
+});
+
 describe('the incremental set', () => {
   test('leaves a polygon the version does not touch out of the work', () => {
     const still: [PolygonType, Point[]][] = Array.from(

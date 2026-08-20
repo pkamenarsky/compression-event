@@ -141,3 +141,33 @@ export function download(state: EditorState, now = new Date()): void {
   // The click has to have been dealt with before the url goes away
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+/**
+ * The other direction. There is no filesystem here, so the only way to a file
+ * is to ask for one: a hidden input, clicked from whatever gesture asked, and
+ * thrown away once it has answered.
+ *
+ * A bad file is refused loudly rather than half-read. `restored` throws on the
+ * format, `JSON.parse` throws on anything that is not JSON at all, and neither
+ * has touched the editor's state by then, so the world on screen survives.
+ */
+export function upload(then: (state: EditorState) => void): void {
+  const input = document.createElement('input');
+
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (file === undefined) return;
+
+    try {
+      then(restored(JSON.parse(await file.text()) as Saved));
+    }
+    catch (e) {
+      window.alert(`${file.name} is not a world this reads:\n\n${e}`);
+    }
+  });
+
+  input.click();
+}

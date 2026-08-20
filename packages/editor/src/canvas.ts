@@ -531,7 +531,7 @@ const EMPTY_LOCAL: Local = {
 };
 
 /** How long one span takes to play. Slow enough to watch a room pinch in two. */
-const REPLAY_MS = 2000;
+const REPLAY_MS = 400;
 
 // -----------------------------------------------------------------------------
 // The modal transforms
@@ -745,7 +745,7 @@ function layers(
   }
 
   out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
-  // out.push(ctx => outlines(ctx, view, outline));
+  out.push(ctx => outlines(ctx, view, outline));
 
   // Over the editor's own answer, so the two can be read against each other:
   // where they agree the thin line sits inside the thick one, and where the

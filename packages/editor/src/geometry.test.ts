@@ -22,6 +22,7 @@ import {
   shapeArea,
   signedArea2,
   boundaryRuns,
+  ground,
   simplify,
   subtract,
   union,
@@ -925,6 +926,34 @@ describe('boundaryRuns', () => {
     const a = lv(0, rect(0, 0, 10, 10)), b = lv(1, rect(10, 0, 10, 10));
 
     expect(runLength(boundaryRuns(a, [b])) + runLength(boundaryRuns(b, [a]))).toBeCloseTo(60, 6);
+  });
+
+  test('two polygons on exactly the same ground are counted once', () => {
+    // Every edge of one lies along an edge of the other, so every edge is
+    // claimed twice unless rank settles it. The lower id takes the lot.
+    const a = lv(3, rect(0, 0, 10, 10)), b = lv(7, rect(0, 0, 10, 10));
+
+    expect(runLength(boundaryRuns(a, [b]))).toBeCloseTo(40, 6);
+    expect(runLength(boundaryRuns(b, [a]))).toBeCloseTo(0, 6);
+  });
+
+  test('a shared ground gives the same answer as a private one', () => {
+    const ms = [
+      lv(0, rect(0, 0, 10, 10)),
+      lv(1, rect(6, 2, 10, 10)),
+      lv(2, rect(12, 4, 10, 10)),
+      sd(3, rect(7, 5, 3, 3)),
+      sd(4, rect(1, 1, 2, 2)),
+    ];
+
+    const on = ground(ms);
+
+    for (const m of ms) {
+      const others = ms.filter(o => o.id !== m.id);
+
+      expect(runLength(boundaryRuns(m, others, on)))
+        .toBeCloseTo(runLength(boundaryRuns(m, others)), 6);
+    }
   });
 });
 

@@ -426,11 +426,16 @@ export function live(previous: Live, items: Resolved[]): Live {
 
     if (was !== undefined && !retyped && unmoved(was.shape, it.shape)) continue;
 
+    // A projection at any depth came out of an arrangement and is already
+    // simple, so the set is spared deriving that again. At depth zero it is the
+    // source ring as drawn, which is allowed to cross itself.
+    const simple = it.erosion !== 0;
+
     // A retype has to go in as an insert: an update keeps the kind it had.
     edits.push(
       was === undefined || retyped
-        ? { op: 'insert', id: it.id, type: it.polygon.type, shape: it.shape }
-        : { op: 'update', id: it.id, shape: it.shape },
+        ? { op: 'insert', id: it.id, type: it.polygon.type, shape: it.shape, simple }
+        : { op: 'update', id: it.id, shape: it.shape, simple },
     );
   }
 
