@@ -957,3 +957,45 @@ describe('boundaryRuns', () => {
   });
 });
 
+
+describe('a crossing reached by two routes is one point', () => {
+  // The two edges through a crossing each work it out for themselves, and the
+  // answers differ in the last bits. Rounding to a cell reunites them except
+  // when the pair straddles a cell boundary — and the coordinates an editor
+  // makes, snapped to a grid and dragged in whole pixels, land on one exactly.
+  // A crossing split in two cannot be stitched through, so the ring comes back
+  // a corner short, or does not come back at all.
+  const quad = [
+    { x: 352, y: -160 }, { x: 608, y: 256 },
+    { x: 32, y: 256 }, { x: 128, y: -192 },
+  ];
+
+  const sig = (s: Shape) => s.map(r => r.length).join('+');
+
+  test('an exactly representable erosion depth is no different from any other', () => {
+    const base = simplify([quad]);
+
+    // A depth that divides into the snapping cell exactly, so that the two
+    // copies of a crossing sit either side of a rounding boundary.
+    expect(sig(erode(base, 136.28125))).toEqual('4');
+    expect(sig(erode(base, 125.71875))).toEqual('4');
+  });
+
+  test('nothing about the depth changes the answer it is a hair away from', () => {
+    const base = simplify([quad]);
+    const wrong: string[] = [];
+
+    // Every thirty-second, which is the granularity a slider hands over. The
+    // truth is continuous, so a depth and the same depth nudged by an ulp have
+    // to agree; where they do not, one of the two is wrong.
+    for (let k = 1; k < 160 * 32; k++) {
+      const d = k / 32;
+      const here = sig(erode(base, d));
+      const near = sig(erode(base, d * (1 + 1e-11)));
+
+      if (here !== near) wrong.push(`${d}: ${here} against ${near}`);
+    }
+
+    expect(wrong).toEqual([]);
+  });
+});

@@ -762,6 +762,7 @@ function arranged(
 
   const kept: Seg[] = [];
   const seen = new Set<string>();
+  const weld = welder(snap);
 
   for (const s of segs) {
     const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
@@ -794,7 +795,7 @@ function arranged(
     const dir: Seg = inLeft
       ? s
       : { ...s, a: s.b, b: s.a, ta: s.tb, tb: s.ta };
-    const key = keyOf(dir.a, snap) + '|' + keyOf(dir.b, snap);
+    const key = weld.id(dir.a) + '|' + weld.id(dir.b);
 
     if (seen.has(key)) continue;
 
@@ -987,11 +988,12 @@ export function boundaryRuns(
  * point repeated at the end, so that every edge is present either way.
  */
 function runs(segs: Seg[], snap: number): Point[][] {
-  const next = new Map<string, number[]>();
-  const incoming = new Map<string, number>();
+  const weld = welder(snap);
+  const next = new Map<number, number[]>();
+  const incoming = new Map<number, number>();
 
   segs.forEach((s, i) => {
-    const from = keyOf(s.a, snap), to = keyOf(s.b, snap);
+    const from = weld.id(s.a), to = weld.id(s.b);
 
     (next.get(from) ?? next.set(from, []).get(from)!).push(i);
     incoming.set(to, (incoming.get(to) ?? 0) + 1);
@@ -1008,7 +1010,7 @@ function runs(segs: Seg[], snap: number): Point[][] {
       used[e] = true;
       run.push(segs[e].b);
 
-      const on = next.get(keyOf(segs[e].b, snap));
+      const on = next.get(weld.id(segs[e].b));
       const step = on?.find(i => !used[i]);
 
       // A junction where several runs meet is where this one ends: which of
@@ -1024,7 +1026,7 @@ function runs(segs: Seg[], snap: number): Point[][] {
 
   // Open runs first, from their loose ends, so a run is never entered halfway.
   segs.forEach((s, i) => {
-    if (!used[i] && (incoming.get(keyOf(s.a, snap)) ?? 0) === 0) walk(i);
+    if (!used[i] && (incoming.get(weld.id(s.a)) ?? 0) === 0) walk(i);
   });
 
   segs.forEach((_s, i) => {
@@ -1034,8 +1036,93 @@ function runs(segs: Seg[], snap: number): Point[][] {
   return out;
 }
 
-function keyOf(p: Point, snap: number): string {
-  return `${Math.round(p.x / snap)},${Math.round(p.y / snap)}`;
+/** Points meant to be one point, made one point. See `welder`. */
+interface Welder {
+  /** Which point this is, joining anything already standing within `snap`. */
+  id: (p: Point) => number
+  /** The representative of each, by that id. */
+  at: Point[]
+}
+
+/**
+ * A crossing is worked out twice — once as the split of each edge that runs
+ * through it — and the two answers differ in their last bits. Rounding to a
+ * grid is very nearly enough to reunite them, and fails exactly when the pair
+ * straddles a cell boundary: then one crossing becomes two, a ring cannot be
+ * stitched through it, and what comes out is the outline with a corner missing
+ * or nothing at all.
+ *
+ * That is not the rare accident it looks. A cell boundary sits at a half, and
+ * the coordinates this editor deals in — a grid snap, a drag quantised to a
+ * pixel — divide into the cell size exactly and land on one, where a single ulp
+ * decides which side each copy falls. Erosion depths taken off a slider put
+ * roughly one in six of them there.
+ *
+ * So the cell is where to look rather than the answer: a point takes the
+ * identity of anything already standing within `snap` of it, and starts a new
+ * one only when there is nothing to join. Only a point near a wall can have a
+ * twin on the other side of it, so only that one pays to look — which leaves
+ * the common path at the single lookup it always was.
+ */
+function welder(snap: number): Welder {
+  const cells = new Map<string, number[]>();
+  const at: Point[] = [];
+
+  const look = (cx: number, cy: number, p: Point): number | null => {
+    for (const i of cells.get(`${cx},${cy}`) ?? []) {
+      if (Math.abs(at[i].x - p.x) <= snap && Math.abs(at[i].y - p.y) <= snap) return i;
+    }
+
+    return null;
+  };
+
+  return {
+    at,
+
+    id: p => {
+      const fx = p.x / snap, fy = p.y / snap;
+      const cx = Math.round(fx), cy = Math.round(fy);
+      const ex = edge(fx - cx), ey = edge(fy - cy);
+
+      const found = look(cx, cy, p)
+        ?? (ex === 0 ? null : look(cx + ex, cy, p))
+        ?? (ey === 0 ? null : look(cx, cy + ey, p))
+        ?? (ex === 0 || ey === 0 ? null : look(cx + ex, cy + ey, p));
+
+      if (found !== null) return found;
+
+      const key = `${cx},${cy}`;
+      const here = cells.get(key);
+      const i = at.length;
+
+      at.push(p);
+
+      if (here === undefined) {
+        cells.set(key, [i]);
+      }
+      else {
+        here.push(i);
+      }
+
+      return i;
+    },
+  };
+}
+
+/**
+ * Which way the cell next door lies, for a coordinate close enough to the wall
+ * that its own last bits could have put it on the wrong side, and zero for one
+ * sitting safely inside.
+ *
+ * The doubt in a coordinate is a part in about ten million of a cell, `snap`
+ * being that much larger than the last bit of the numbers it is scaled from.
+ * This allows three orders of magnitude more than that, and still sends all but
+ * a few points in ten thousand straight down the single-cell path.
+ */
+function edge(off: number): number {
+  const EDGE = 1e-4;
+
+  return off > 0.5 - EDGE ? 1 : off < EDGE - 0.5 ? -1 : 0;
 }
 
 /**
@@ -1045,23 +1132,14 @@ function keyOf(p: Point, snap: number): string {
  * crossing and coming back out as one self-intersecting loop.
  */
 function chain(segs: Seg[], snap: number): TaggedShape {
-  const nodes: Point[] = [];
+  const weld = welder(snap);
+  const nodes = weld.at;
   const tags: Tag[] = [];
-  const byKey = new Map<string, number>();
 
   const node = (p: Point, tag: Tag): number => {
-    const k = keyOf(p, snap);
-    const found = byKey.get(k);
+    const i = weld.id(p);
 
-    if (found !== undefined) {
-      tags[found] = betterTag(tags[found], tag);
-      return found;
-    }
-
-    const i = nodes.length;
-    nodes.push(p);
-    tags.push(tag);
-    byKey.set(k, i);
+    tags[i] = i < tags.length ? betterTag(tags[i], tag) : tag;
 
     return i;
   };
