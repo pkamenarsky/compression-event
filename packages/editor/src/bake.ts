@@ -69,22 +69,10 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import * as aabb from './aabb';
-import { AABB } from './aabb';
-import {
-  Frame as Layer,
-  Moving as Corner,
-  Search,
-  collinear,
-  edgesMeet,
-  events,
-  swept,
-} from './events';
-import { Ring, Shape, bisectors } from './geometry';
+import { Ring, Shape } from './geometry';
 import {
   Affine,
   EMPTY_LIVE,
-  Live,
   Resolved,
   affine,
   compose,
@@ -189,13 +177,6 @@ export interface Stretch {
    * vertex of its own polygon and interpolates exactly.
    */
   origins: (Origin | null)[][]
-  /**
-   * The two ends disagree about the arrangement, so there is an event inside
-   * that the search did not find. Nothing can be interpolated across it and the
-   * replay snaps instead — which is the tear this whole search exists to
-   * prevent, made visible rather than papered over.
-   */
-  torn: boolean
 }
 
 /** Everything between two adjacent versions. */
@@ -205,8 +186,16 @@ export interface Span {
   /** Per polygon, what its runs ride. Constant across the span: only the
    * easing of `layer` varies, and that is a function of `t` alone. */
   riders: Map<PolygonId, Rider>
-  /** How many times the CSG was evaluated to find them. */
-  samples: number
+  /** How many times the CSG was run to settle the span. */
+  evaluations: number
+  /**
+   * The furthest the replay was ever measured from `csg(t)`, in world units.
+   *
+   * The bake states its own error rather than resting on an argument about
+   * which topology events exist. Nothing consults it — it is here to be read,
+   * and to fail a test if it ever grows.
+   */
+  worst: number
   /** What the world looked like when this was baked. */
   stamp: Stamp
 }
@@ -286,9 +275,6 @@ interface Moving {
   local: [Ring, Ring]
   depth: [number, number]
   newborn: boolean
-  /** The version in flight does nothing to it, so it is the same shape at every
-   * `t` and the set never has to hear about it again. */
-  still: boolean
 }
 
 function moving(world: World, from: VersionId): Moving[] {
@@ -308,7 +294,6 @@ function moving(world: World, from: VersionId): Moving[] {
         local: [it.local, it.local] as [Ring, Ring],
         depth: [it.erosion, it.erosion] as [number, number],
         newborn: true,
-        still: false,
       };
     }
 
@@ -319,10 +304,6 @@ function moving(world: World, from: VersionId): Moving[] {
       local: [was.local, it.local] as [Ring, Ring],
       depth: [was.erosion, it.erosion] as [number, number],
       newborn: false,
-      // The version in flight says nothing about it, so by construction its
-      // local ring, its frame and its depth are all its base's. There is
-      // nothing to compare: the absence of a layer is the whole test.
-      still: edit === undefined,
     };
   });
 }
@@ -358,14 +339,14 @@ function between(a: Ring, b: Ring, t: number): Ring {
   });
 }
 
-/** The world at one instant inside the span, in the form `live` wants. */
+/** The world at one instant inside the span, resolved. */
 function world1(items: Moving[], t: number): Resolved[] {
   const out: Resolved[] = [];
 
   for (const m of items) {
     if (m.newborn && t < 1) continue;
 
-    if (m.still || m.newborn) {
+    if (m.newborn) {
       out.push(m.at);
       continue;
     }
@@ -397,11 +378,7 @@ function world1(items: Moving[], t: number): Resolved[] {
  * the editor calls this; it is the yardstick.
  */
 export function truth(world: World, from: VersionId, t: number): Frame {
-  const items = world1(moving(world, from), t);
-
-  return pieces(live(EMPTY_LIVE, items).set)
-    .map(p => ({ id: p.source, points: p.points }))
-    .sort((p, q) => p.id - q.id);
+  return evaluate(moving(world, from), t).out;
 }
 
 // -----------------------------------------------------------------------------
@@ -417,7 +394,7 @@ export function truth(world: World, from: VersionId, t: number): Frame {
  * jumps around.
  */
 interface Taken {
-  held: Live
+  t: number
   frame: Frame
   /** Each polygon's eroded shape, in the same frame the runs are kept in: the
    * table the crossings are solved from. */
@@ -429,9 +406,8 @@ interface Taken {
   out: Frame
 }
 
-function evaluate(held: Live, items: Moving[], t: number): Taken {
+function evaluate(items: Moving[], t: number): Taken {
   const at = world1(items, t);
-  const next = live(held, at);
 
   const frames = new Map(at.map(it => [it.id, it.frame]));
   const table = new Map<PolygonId, Shape>();
@@ -446,7 +422,7 @@ function evaluate(held: Live, items: Moving[], t: number): Taken {
   // runs back in whatever order the entries happen to sit in, which an edit
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
-  const out = pieces(next.set)
+  const out = pieces(live(EMPTY_LIVE, at).set)
     .map(p => ({ id: p.source, points: p.points }))
     .sort((p, q) => p.id - q.id);
 
@@ -455,7 +431,7 @@ function evaluate(held: Live, items: Moving[], t: number): Taken {
     points: r.points.map(q => unplace(frames.get(r.id)!, q)),
   }));
 
-  return { held: next, frame, table, world, out };
+  return { frame, table, world, out, t };
 }
 
 /**
@@ -621,260 +597,222 @@ function lying(shape: Shape, p: Point, snap: number): { ring: number, index: num
 // -----------------------------------------------------------------------------
 // Cutting the span
 //
-// A crossing appears or dies exactly when a vertex reaches the line through an
-// edge, so the quantity to watch is a signed area and an event is where it
-// vanishes. `events.ts` does that part; everything here is about handing it the
-// right vertices.
+// The rule this has to meet is simple and is about the output, not about the
+// method: at no instant may the replay be far from `csg(t)`. So rather than
+// prove where the cuts belong and hope the proof covers everything, the bake
+// *measures* — it builds a candidate stretch, checks it against the CSG in the
+// middle, and splits until the check passes.
 //
-// The vertices are the *offset* ring's, not the source's: those are what the
-// CSG combines, and a corner of the offset ring travels along its mitre at a
-// rate of one per unit of depth. So a corner is `local + depth * bisector`,
-// which is the form `Moving` is written in, and `bisectors` in `geometry.ts`
-// supplies the direction.
-//
-// Which questions get asked
-// -------------------------
-// Every edge against every vertex that is not one of its own two ends, within
-// a polygon as well as across a pair of them. That one rule covers all four
-// kinds of event at once:
-//
-// - a corner passing through another polygon's edge — the crossing appears
-// - an edge of the offset ring collapsing — its two ends meet, so the end lands
-//   on the line through its neighbour's edge
-// - the offset folding through itself — a corner reaches an edge of its own
-//   polygon
-//
-// Asking within a polygon is why the adjacent vertex is included rather than
-// skipped as degenerate: a collapse *is* the adjacent vertex arriving.
-//
-// And then every triple of edges from three different polygons, for the events
-// that are not about vertices at all. Where three boundaries pass through one
-// point, two crossings arrive at the same place and the runs either side of
-// them join or come apart — a room connecting to a room, or a wall pinching in
-// two, seen at the moment it happens. Nothing is at an endpoint there, so no
-// signed area over three vertices vanishes and `collinear` is blind to it. That
-// is `edgesMeet`, and leaving it out is worth about four per cent: measured on
-// six overlapping boxes eroding at different rates it left the whole span in
-// one torn stretch, missing both of the two events it had.
-//
-// Triples are cubic in edges, so the pruning matters more here than anywhere
-// else. Each edge carries its own swept box rather than its polygon's, and a
-// triple is only asked about when all three boxes meet each other. In a level,
-// where most things are nowhere near most other things, almost nothing gets
-// past that.
-//
-// What is not searched for, because it is known: both ends of the span. The
-// interpolation's derivative breaks at a version boundary and a polygon born
-// into the later version appears there, and neither is something the geometry
-// has to be asked about.
-//
-// Why this replaces a scan
+// Why not the event search
 // ------------------------
-// The first version of this bisected on the arrangement's *signature* — how
-// many runs each polygon owned and how long each was. It is blind to exactly
-// the case the doc singles out. A pillar turning inside a wall always cuts two
-// crossings; as it turns, each corner sweeping through hands a crossing from
-// one edge to the next. The counts never change, so the scan sees nothing and
-// the whole turn comes out as one stretch, interpolated straight through every
-// handoff. Measured against the truth it ran ten per cent wrong across the
-// middle of the span. `f` has no such blind spot: it is about *which* edge, not
-// how many.
+// The previous version located topology events analytically: a vertex reaching
+// an edge, and three edges through one point, both found by interval arithmetic
+// over `t` with a completeness guarantee. That machinery is real and it works,
+// and it still did not meet the rule, for two reasons that no amount of extra
+// event kinds fixes:
+//
+// - **Between events the geometry is not straight.** A corner travels along its
+//   mitre, and the mitre depends on the corner angle. Erode a polygon while a
+//   vertex nudge is also in flight and the angle turns, so the corner's true
+//   path bends and the chord between the two ends of the stretch cuts across
+//   the bend. Nothing discrete happens, so there is no event to find. The doc
+//   files this under *Known limits* for a squash and an erosion together, and
+//   a nudge and an erosion is the same thing — but nudging while eroding is the
+//   ordinary way to author, not a corner case.
+//
+// - **Not every change in the output is a change in the geometry.** The CSG
+//   reports its boundary as runs, and where several runs meet, which one
+//   carries on through the junction is decided by a walk rather than by the
+//   shape. That can change with no vertex near any edge and no three edges
+//   concurrent — measured on six overlapping boxes, at a moment whose nearest
+//   coincidence was 0.05 world units away.
+//
+// Measuring answers both, because it does not care why two things differ.
+//
+// How it goes
+// -----------
+// Take the whole span, evaluate the CSG at both ends, and ask whether one
+// stretch would do:
+//
+// - The two ends disagree about the arrangement — different runs, or the same
+//   runs coming off different edges — so there is nothing to interpolate along.
+//   Split.
+// - They agree. Build the stretch, evaluate the CSG at the midpoint, and
+//   compare it against what the stretch would have drawn there. Too far? Split.
+// - Good enough. Keep it.
+//
+// Splitting reuses the midpoint that was just evaluated, so a stretch costs one
+// evaluation plus a shared one at each end.
+//
+// The recursion stops on width as well as on error, and that is what finds the
+// discontinuities: at a genuine event the two sides never come to agree however
+// narrow the interval gets, so the interval keeps halving until it is thinner
+// than `GAP` and is then handed back as a gap between two stretches rather than
+// as a stretch. That is the same keyframe the event search was there to place —
+// arrived at from the other side, and without needing to know what kind of
+// event it was.
+//
+// What it costs, and what that buys
+// ---------------------------------
+// A CSG evaluation per stretch, plus about fourteen per discontinuity to pin it
+// down. That is more than the analytic search spent, and it is offline work
+// behind a progress bar. What it buys is the guarantee itself: `Span.worst` is
+// how far the replay was ever measured to be from the truth, so the bake states
+// its own error instead of resting on an argument about which events exist.
 // -----------------------------------------------------------------------------
 
-/** How wide a bracket to leave around a root. The two sides of a keyframe
- * disagree, so nothing is evaluated at the event itself — only just outside it,
- * and this is how far. */
-const BRACKET = 1e-6;
+/**
+ * How far, in world units, the replay may sit from the CSG before a stretch is
+ * split. Well under a pixel at any sane zoom.
+ *
+ * A width, not a tolerance in `t`, which is what makes it meaningful: it is the
+ * thing the eye would see.
+ */
+export const TOLERANCE = 0.05;
 
-/** Roots closer together than this are one event seen twice: symmetric geometry
- * puts several at the same instant, and one keyframe absorbs them all. */
-const TOGETHER = 4 * BRACKET;
+/**
+ * Narrower than this and an interval the two sides will not agree on is a
+ * discontinuity rather than a stretch to keep splitting.
+ *
+ * It is a width in `t`, and the pop it leaves is that width times how fast the
+ * geometry is moving — for a span crossing a couple of hundred world units,
+ * a few thousandths of a unit.
+ */
+const GAP = 1e-4;
+
+/** Two evaluations that could be the ends of one stretch, or could not. */
+function comparable(a: Taken, b: Taken): boolean {
+  return signature(a.frame) === signature(b.frame);
+}
+
+/**
+ * The furthest any point of the interpolated stretch sits from the point the
+ * CSG puts there. Infinite when the two do not even agree on what points there
+ * are, which is a disagreement no distance describes.
+ */
+function apart(guess: Frame, actual: Frame): number {
+  if (guess.length !== actual.length) return Infinity;
+
+  let worst = 0;
+
+  for (let r = 0; r < guess.length; r++) {
+    const p = guess[r], q = actual[r];
+
+    if (p.id !== q.id || p.points.length !== q.points.length) return Infinity;
+
+    for (let i = 0; i < p.points.length; i++) {
+      worst = Math.max(worst, Math.hypot(
+        p.points[i].x - q.points[i].x,
+        p.points[i].y - q.points[i].y,
+      ));
+    }
+  }
+
+  return worst;
+}
+
+function stretchOf(a: Taken, b: Taken): Stretch {
+  return {
+    t0: a.t,
+    t1: b.t,
+    a: a.frame,
+    b: b.frame,
+    table: table(a.table, b.table),
+    origins: agreed(a, b),
+  };
+}
+
+/** A stretch of no width, carrying one instant exactly. Either side of a gap
+ * needs one, so that the geometry at the discontinuity itself is not lost. */
+function instant(a: Taken): Stretch {
+  return stretchOf(a, a);
+}
 
 interface Cut {
-  /** The last `t` on the near side, and the first on the far side. */
-  lo: number
-  hi: number
+  stretches: Stretch[]
+  /** The worst the check ever measured, over the whole span. */
+  worst: number
+  evaluations: number
 }
 
-/** One polygon's offset corners, in the form the search wants. */
-function corners(m: Moving): Corner[] {
-  const layer: [Layer, Layer] = [
-    { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    {
-      translation: m.layer.translation,
-      rotation: m.layer.rotation,
-      scale: m.layer.scale,
-    },
-  ];
+function* cutSpan(
+  items: Moving[],
+  riders: Map<PolygonId, Rider>,
+  tol: number,
+): Generator<number, Cut, void> {
+  const out: Stretch[] = [];
 
-  // The chain below the version in flight is constant across the span, so it
-  // is folded in here rather than carried: `local` is what the layer applies
-  // to, which is the source ring already put in place by everything before it.
-  const a = place(m.base, m.local[0]);
-  const b = place(m.base, m.local[1]);
+  let evaluations = 0;
+  let worst = 0;
 
-  const bis = bisectors(a);
+  const at = (t: number): Taken => {
+    evaluations++;
 
-  return a.map((p, i) => ({
-    local: [p, b[i] ?? p] as [Point, Point],
-    bisector: bis[i],
-    erosion: m.depth,
-    frames: layer,
-  }));
-}
+    return evaluate(items, t);
+  };
 
-/**
- * Every moment the arrangement can change, bracketed and in order.
- *
- * The broad phase is the boxes the same interval arithmetic produces for the
- * whole span: a box that holds everywhere a polygon's corners go is sound by
- * construction, so a pair whose boxes miss each other has been *proved* to have
- * no event between them, on the same footing as an interval the search throws
- * away. A polygon is still asked about itself, whatever its box overlaps.
- */
-function* cuts(items: Moving[], search: Search): Generator<number, Cut[], void> {
-  const live = items.filter(m => !m.newborn);
-  const sets = live.map(corners);
+  // Left to right, so what comes out is in order and the progress is honest:
+  // how much of the span has been settled, which only ever goes forwards.
+  const stack: [Taken, Taken][] = [[at(0), at(1)]];
 
-  const boxes = sets.map((cs, i) => ({ id: i, box: swept(cs) }));
-  const edges = sets.map(edgesOf);
-  const tree = aabb.build(boxes);
+  let done = 0;
 
-  const roots: number[] = [];
+  while (stack.length > 0) {
+    const [a, b] = stack.pop()!;
+    const narrow = b.t - a.t <= GAP;
 
-  for (let i = 0; i < sets.length; i++) {
-    // Itself, and every polygon it might reach — each unordered pair once, but
-    // asked both ways round, because an edge of one against a corner of the
-    // other is a different question from the reverse.
-    const near = aabb.search(tree, boxes[i].box).filter(j => j >= i);
+    if (!comparable(a, b)) {
+      if (!narrow) {
+        const m = at((a.t + b.t) / 2);
 
-    for (const j of near) {
-      ask(sets[i], sets[j], roots, search);
-
-      if (j !== i) ask(sets[j], sets[i], roots, search);
-    }
-
-    // Three at a time, this one lowest, so each triple is asked about once.
-    for (const j of near) {
-      if (j <= i) continue;
-
-      for (const k of near) {
-        if (k <= j || !aabb.overlaps(boxes[j].box, boxes[k].box)) continue;
-
-        meeting(edges[i], edges[j], edges[k], roots, search);
+        stack.push([m, b], [a, m]);
+        continue;
       }
-    }
 
-    yield (i + 1) / Math.max(1, sets.length);
-  }
+      // Pinned as far as it is worth pinning: a discontinuity, and the two
+      // sides of it genuinely have different geometry. Both are kept.
+      keep(instant(a));
+      keep(instant(b));
 
-  return bracketed(roots);
-}
-
-/** One edge, and the box holding everywhere it goes over the span. */
-interface Edge {
-  ends: readonly [Corner, Corner]
-  box: AABB
-}
-
-function edgesOf(cs: Corner[]): Edge[] {
-  if (cs.length < 2) return [];
-
-  return cs.map((c, i) => {
-    const ends = [c, cs[(i + 1) % cs.length]] as const;
-
-    return { ends, box: swept(ends) };
-  });
-}
-
-/**
- * Every moment three boundaries pass through one point.
- *
- * `flat` scales as the cube of the world units in play, because the determinant
- * is one: without it, two polygons sharing a stretch of edge make the
- * determinant vanish for the whole span, and the search subdivides for ever
- * looking for the instant it does.
- */
-function meeting(
-  one: Edge[],
-  two: Edge[],
-  three: Edge[],
-  out: number[],
-  search: Search,
-): void {
-  for (const a of one) {
-    for (const b of two) {
-      if (!aabb.overlaps(a.box, b.box)) continue;
-
-      for (const c of three) {
-        if (!aabb.overlaps(a.box, c.box) || !aabb.overlaps(b.box, c.box)) continue;
-
-        const scale = span(a.box, b.box, c.box);
-
-        out.push(...events(edgesMeet(a.ends, b.ends, c.ends), {
-          ...search,
-          flat: search.flat ?? scale * scale * scale * 1e-12,
-        }).at);
-      }
-    }
-  }
-}
-
-function span(...boxes: AABB[]): number {
-  let out = 1;
-
-  for (const b of boxes) {
-    out = Math.max(out, b.maxX - b.minX, b.maxY - b.minY);
-  }
-
-  return out;
-}
-
-/** Every edge of `edges` against every corner of `points` that is not one of
- * its own ends. */
-function ask(edges: Corner[], points: Corner[], out: number[], search: Search): void {
-  const n = edges.length;
-  if (n < 2) return;
-
-  const same = edges === points;
-
-  for (let i = 0; i < n; i++) {
-    const a = edges[i], b = edges[(i + 1) % n];
-
-    for (let k = 0; k < points.length; k++) {
-      if (same && (k === i || k === (i + 1) % n)) continue;
-
-      out.push(...collinear(a, b, points[k], search).at);
-    }
-  }
-}
-
-/**
- * The roots, sorted, coincident ones absorbed into one, each opened out into the
- * gap a keyframe leaves.
- *
- * A root at either end of the span is kept rather than discarded as an artefact
- * of the boundary. Polygons drawn edge to edge separate the instant one of them
- * erodes, so `t = 0` really is a moment the arrangement changes, and the stretch
- * of no width it leaves behind carries the touching geometry — which is what the
- * earlier version renders, and so has to be what the span begins with.
- */
-function bracketed(roots: number[]): Cut[] {
-  const sorted = [...roots].sort((p, q) => p - q);
-  const out: Cut[] = [];
-
-  for (const t of sorted) {
-    const last = out[out.length - 1];
-
-    if (last !== undefined && t - last.hi <= TOGETHER) {
-      last.hi = Math.min(1, t + BRACKET);
+      done = b.t;
+      yield done;
       continue;
     }
 
-    out.push({ lo: Math.max(0, t - BRACKET), hi: Math.min(1, t + BRACKET) });
+    const s = stretchOf(a, b);
+
+    if (narrow) {
+      keep(s);
+      continue;
+    }
+
+    const m = at((a.t + b.t) / 2);
+    const off = comparable(a, m) ? apart(drawn(s, riders, m.t), m.out) : Infinity;
+
+    if (off > tol) {
+      stack.push([m, b], [a, m]);
+      continue;
+    }
+
+    worst = Math.max(worst, off);
+    keep(s);
+
+    done = b.t;
+    yield done;
   }
 
-  return out;
+  return { stretches: out, worst, evaluations };
+
+  function keep(s: Stretch): void {
+    const last = out[out.length - 1];
+
+    // Two instants running together, or a stretch that adds nothing.
+    if (last !== undefined && last.t0 === last.t1 && last.t0 === s.t0 && s.t0 === s.t1) {
+      return;
+    }
+
+    out.push(s);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -888,70 +826,24 @@ function bracketed(roots: number[]): Cut[] {
 export function* bakeSpan(
   world: World,
   from: VersionId,
-  search: Search = {},
+  tol: number = TOLERANCE,
 ): Generator<number, Span, void> {
   const items = moving(world, from);
-  const held = { at: EMPTY_LIVE };
-
-  let samples = 0;
-
-  const found = yield* cuts(items, search);
-
-  // A polygon born into the later version appears at the boundary and nowhere
-  // inside, so the boundary is a keyframe on its own account — known from the
-  // layer chain, never searched for. The span runs to just short of it with the
-  // newborn absent, and the instant itself is a stretch of no width carrying
-  // the version as it really is.
-  if (items.some(m => m.newborn)) found.push({ lo: 1 - BRACKET, hi: 1 });
-
-  // A stretch runs from the far side of one event to the near side of the next,
-  // so the events themselves are the gaps between them. Nothing is evaluated
-  // *at* an event, because at an event the two sides genuinely disagree.
-  const bounds: [number, number][] = [];
-
-  let t0 = 0;
-
-  for (const c of found) {
-    bounds.push([t0, c.lo]);
-    t0 = c.hi;
-  }
-
-  bounds.push([t0, 1]);
-
-  const stretches: Stretch[] = [];
-
-  for (const [i, [u, v]] of bounds.entries()) {
-    const a = evaluate(held.at, items, u);
-    held.at = a.held;
-
-    const b = evaluate(held.at, items, v);
-    held.at = b.held;
-
-    samples += 2;
-
-    const torn = signature(a.frame) !== signature(b.frame);
-
-    stretches.push({
-      t0: u,
-      t1: v,
-      a: a.frame,
-      b: b.frame,
-      table: table(a.table, b.table),
-      // Read off both ends and only kept where they say the same thing. A
-      // crossing solved from the wrong pair of edges would be worse than one
-      // interpolated, so disagreement gives up rather than guesses.
-      origins: torn ? a.frame.map(r => r.points.map(() => null)) : agreed(a, b),
-      torn,
-    });
-
-    yield (i + 1) / bounds.length;
-  }
 
   const riders = new Map<PolygonId, Rider>(
     items.map(m => [m.at.id, { base: m.base, layer: m.newborn ? EMPTY_TRANSFORM : m.layer }]),
   );
 
-  return { from, stretches, riders, samples, stamp: stamp(world, from) };
+  const cut = yield* cutSpan(items, riders, tol);
+
+  return {
+    from,
+    stretches: cut.stretches,
+    riders,
+    worst: cut.worst,
+    evaluations: cut.evaluations,
+    stamp: stamp(world, from),
+  };
 }
 
 /** Every span in the chain, one after the other. */
@@ -996,16 +888,16 @@ function* weighted<T>(
 
 export function sample(span: Span, t: number): Frame {
   const s = stretchAt(span, t);
-  if (s === null) return [];
 
-  // Snapped rather than interpolated. The ends do not agree about what exists,
-  // so there is no correspondence to interpolate along — but the frame is
-  // still a function of `t`, so the snapped geometry rides it like any other.
-  const u = s.torn
-    ? (t < (s.t0 + s.t1) / 2 ? 0 : 1)
-    : s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
+  return s === null ? [] : drawn(s, span.riders, t);
+}
 
-  const from = s.torn && u === 1 ? s.b : s.a;
+/**
+ * One stretch, evaluated at an instant inside it — the whole of what the shader
+ * would do, and the thing the bake checks itself against.
+ */
+function drawn(s: Stretch, riders: Map<PolygonId, Rider>, t: number): Frame {
+  const u = s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
 
   // One per polygon rather than one per point: every vertex of a polygon rides
   // the same layer, and rebuilding it is four trig calls.
@@ -1015,7 +907,7 @@ export function sample(span: Span, t: number): Frame {
     const known = frames.get(id);
     if (known !== undefined) return known;
 
-    const rider = span.riders.get(id)!;
+    const rider = riders.get(id)!;
     const made = compose(affine(easing(rider.layer, t)), rider.base);
 
     frames.set(id, made);
@@ -1047,8 +939,8 @@ export function sample(span: Span, t: number): Frame {
     return a === null || b === null ? null : [a, b];
   };
 
-  return from.map((run, i) => {
-    const to = s.torn ? from[i] : s.b[i];
+  return s.a.map((run, i) => {
+    const to = s.b[i] ?? run;
     const frame = frameOf(run.id);
     const origins = s.origins[i] ?? [];
 
@@ -1061,7 +953,7 @@ export function sample(span: Span, t: number): Frame {
 
         // A vertex of its own polygon, or a point the reading could not place.
         // Either way it interpolates in the polygon's frame, which for a vertex
-        // is exact and for the rest is the best there is.
+        // is exact and for the rest is what the measured check is for.
         const q = to.points[j] ?? p;
 
         return place(frame, [{ x: mix(p.x, q.x, u), y: mix(p.y, q.y, u) }])[0];

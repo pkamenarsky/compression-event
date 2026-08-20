@@ -3,6 +3,7 @@ import { Point } from '@ce/game/world';
 import {
   Frame,
   Span,
+  TOLERANCE,
   bakeAll,
   bakeSpan,
   pruned,
@@ -123,8 +124,9 @@ function cuts(world: World, from = 0): number[] {
   return span.stretches.slice(1).map(s => Number(s.t0.toFixed(4)));
 }
 
-function torn(world: World, from = 0): number {
-  return run(bakeSpan(world, from)).stretches.filter(s => s.torn).length;
+/** What the bake says its own error was, which is the number that matters. */
+function worst(world: World, from = 0): number {
+  return run(bakeSpan(world, from)).worst;
 }
 
 describe('the ends of a span', () => {
@@ -144,7 +146,7 @@ describe('the ends of a span', () => {
     const span = run(bakeSpan(world, 0));
 
     expect(span.stretches).toHaveLength(1);
-    expect(span.stretches[0].torn).toBe(false);
+    expect(span.worst).toBe(0);
   });
 });
 
@@ -197,8 +199,8 @@ describe('keyframes', () => {
     for (const id of ids) w = transformed(w, 1, id, { erosion: 25 });
 
     expect(cuts(w)).toContain(0.8);
-    expect(torn(w)).toBe(0);
-    expect(drift(w)).toBeCloseTo(0, 6);
+    expect(worst(w)).toBeLessThan(TOLERANCE);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
   test('one polygon sliding through another is cut where it arrives and where it leaves', () => {
@@ -211,7 +213,7 @@ describe('keyframes', () => {
 
     expect(cuts(w)).toContain(0.3333);
     expect(cuts(w)).toContain(0.8333);
-    expect(drift(w)).toBeCloseTo(0, 6);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
   test('polygons drawn edge to edge are cut the instant one of them erodes', () => {
@@ -226,7 +228,7 @@ describe('keyframes', () => {
     const w = transformed(world, 1, ids[0], { erosion: 20 });
 
     expect(run(bakeSpan(w, 0)).stretches[0].t1).toBe(0);
-    expect(drift(w)).toBeCloseTo(0, 6);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
   test('a polygon eroded away entirely is cut where it goes', () => {
@@ -267,11 +269,11 @@ describe('a pillar turning inside a wall', () => {
   }
 
   test('the hole never closes and the geometry never tears', () => {
-    expect(torn(wall())).toBe(0);
+    expect(worst(wall())).toBeLessThan(TOLERANCE);
   });
 
   test('the crossings slide where they should, all the way across', () => {
-    expect(drift(wall())).toBeCloseTo(0, 6);
+    expect(drift(wall())).toBeLessThan(TOLERANCE);
   });
 
   test('and the same with a solid pillar, which subtracts instead', () => {
@@ -280,7 +282,7 @@ describe('a pillar turning inside a wall', () => {
       ['solid', rect(-40, -200, 80, 400)],
     );
 
-    expect(drift(transformed(world, 1, ids[1], { rotation: Math.PI / 3 }))).toBeCloseTo(0, 6);
+    expect(drift(transformed(world, 1, ids[1], { rotation: Math.PI / 3 }))).toBeLessThan(TOLERANCE);
   });
 });
 
@@ -288,26 +290,26 @@ describe('the replay against the CSG worked out directly', () => {
   test('erosion', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 200)]);
 
-    expect(drift(transformed(world, 1, ids[0], { erosion: 60 }))).toBeCloseTo(0, 6);
+    expect(drift(transformed(world, 1, ids[0], { erosion: 60 }))).toBeLessThan(TOLERANCE);
   });
 
   test('a turn', () => {
     const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
 
-    expect(drift(transformed(world, 1, ids[0], { rotation: Math.PI / 2 }))).toBeCloseTo(0, 6);
+    expect(drift(transformed(world, 1, ids[0], { rotation: Math.PI / 2 }))).toBeLessThan(TOLERANCE);
   });
 
   test('a squash, which is where the scale stops being uniform', () => {
     const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
 
-    expect(drift(transformed(world, 1, ids[0], { scale: { x: 0.3, y: 2 } }))).toBeCloseTo(0, 6);
+    expect(drift(transformed(world, 1, ids[0], { scale: { x: 0.3, y: 2 } }))).toBeLessThan(TOLERANCE);
   });
 
   test('a turn and an erosion sharing a stretch', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
 
     expect(drift(transformed(world, 1, ids[0], { erosion: 22, rotation: 0.4 })))
-      .toBeCloseTo(0, 6);
+      .toBeLessThan(TOLERANCE);
   });
 
   test('sliding and turning at once, which is where the closed form gives up', () => {
@@ -321,8 +323,8 @@ describe('the replay against the CSG worked out directly', () => {
       rotation: 0.6,
     });
 
-    expect(drift(w)).toBeCloseTo(0, 6);
-    expect(torn(w)).toBe(0);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(worst(w)).toBeLessThan(TOLERANCE);
   });
 
   test('a nudge on its own', () => {
@@ -333,22 +335,21 @@ describe('the replay against the CSG worked out directly', () => {
 
     vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
 
-    expect(drift(withEdit(world, 1, ids[0], { ...edit, vertices }))).toBeCloseTo(0, 6);
+    expect(drift(withEdit(world, 1, ids[0], { ...edit, vertices }))).toBeLessThan(TOLERANCE);
   });
 
-  test('a nudge and an erosion together, which the format cannot do exactly', () => {
+  test('a nudge and an erosion together, which nothing analytic can cut', () => {
     // A corner moves along its mitre, and the mitre is a function of the corner
     // *angle*. Hold the ring still and the angle is constant, so the corner
-    // travels in a straight line and interpolating its two ends is exact —
-    // which is what makes every case above exact. Nudge the ring while it
-    // erodes and the angle turns, so the true path bends and the straight line
-    // between its ends is a chord across the bend.
+    // travels in a straight line and interpolating its two ends is exact.
+    // Nudge the ring while it erodes and the angle turns, so the true path
+    // bends and the straight line between the ends of a stretch is a chord
+    // across the bend.
     //
-    // No keyframe fixes this: nothing discrete happens. It is the same limit
-    // the doc records for a squash and an erosion sharing a stretch, and it is
-    // in the interpolation format itself rather than in the search. Measured
-    // here at under two per cent of the outline, and it is pinned rather than
-    // asserted away so that it is noticed if it ever grows.
+    // Nothing discrete happens, so there is no event to find and no keyframe
+    // that fixes it — this is the case that decided the bake should measure
+    // rather than prove. Splitting until the chord is close enough costs a few
+    // extra stretches and answers it outright.
     const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
     const edit = editAt(world, 1, ids[0], 0);
@@ -359,10 +360,8 @@ describe('the replay against the CSG worked out directly', () => {
     const nudged = withEdit(world, 1, ids[0], { ...edit, vertices });
     const w = transformed(nudged, 1, ids[0], { erosion: 22 });
 
-    const off = drift(w);
-
-    expect(off).toBeGreaterThan(0);
-    expect(off).toBeLessThan(0.02 * length(truth(w, 0, 0)));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(run(bakeSpan(w, 0)).stretches.length).toBeGreaterThan(1);
   });
 });
 

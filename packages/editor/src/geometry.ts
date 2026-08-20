@@ -225,53 +225,6 @@ function moved(ring: Ring, depth: number): Moved[] {
   return out;
 }
 
-/**
- * Where each corner goes per unit of depth.
- *
- * The offset of an edge is linear in depth and a corner is where two offset
- * lines meet, so the corner is linear in depth too: at depth `d` it sits at
- * `ring[i] + d * bisectors(ring)[i]`. That is the whole reason a stretch can be
- * interpolated — and the reason a corner collapsing has to end one, since the
- * moment two of these meet, the line they were both on stops existing.
- *
- * `erode` does not use this. It subtracts a swept band, which is robust to the
- * offset folding through itself in a way that walking corners is not, and this
- * is for the search that decides where the folding happens rather than for the
- * geometry that results. Parallel edges have no meeting point, and their corner
- * simply rides the offset itself.
- */
-export function bisectors(ring: Ring): Point[] {
-  const wound = ccw(ring);
-  const flipped = wound !== ring;
-
-  const edges = moved(wound, 1);
-  const out: Point[] = wound.map(() => ({ x: 0, y: 0 }));
-
-  if (edges.length === 0) return out;
-
-  // `moved` drops repeated points, so an edge's index is not a vertex's. Each
-  // edge starts at some vertex, and that is the one whose two edges meet here.
-  const starts = new Map<Point, number>();
-
-  wound.forEach((p, i) => starts.set(p, i));
-
-  for (let e = 0; e < edges.length; e++) {
-    const previous = edges[(e - 1 + edges.length) % edges.length];
-    const here = edges[e];
-    const i = starts.get(here.a);
-
-    if (i === undefined) continue;
-
-    const m = meet(previous, here);
-
-    out[i] = m === null
-      ? { x: here.ma.x - here.a.x, y: here.ma.y - here.a.y }
-      : { x: m.x - here.a.x, y: m.y - here.a.y };
-  }
-
-  return flipped ? [...out].reverse() : out;
-}
-
 /** Where two moved edges' lines cross, or nothing when they are parallel. */
 function meet(p: Moved, q: Moved): Point | null {
   const d = p.ux * q.uy - p.uy * q.ux;
