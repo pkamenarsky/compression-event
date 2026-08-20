@@ -128,7 +128,7 @@ function report(name: string, w: World) {
     `${name.padEnd(38)} worst ${worst.toFixed(4).padStart(8)}` +
     `  miss ${String(broken).padStart(3)}/${N + 1}` +
     `  jump ${j.replay.toFixed(2).padStart(7)} vs ${j.world.toFixed(2).padStart(7)}` +
-    `  stretches ${String(span.stretches.length).padStart(4)}` +
+    `  stretches ${String(span.tracks.reduce((n, t) => n + t.stretches.length, 0)).padStart(4)}` +
     `  csg ${String(span.evaluations).padStart(4)}  ${String(ms).padStart(4)}ms`);
 
   return { worst, broken, jump: j };
@@ -160,6 +160,14 @@ test('the replay never strays far from csg(t)', () => {
     check('sliding through', transformed(world, 1, ids[0], { translation: { x: 240, y: 0 } })); }
   { const { world, ids } = drawn(['level', rect(-200,-60,400,120)], ['level', rect(-40,-200,80,400)]);
     check('pillar turning in a wall', transformed(world, 1, ids[1], { rotation: Math.PI/3 })); }
+  {
+    // A bar that turns half way round, so it ends up where it started and
+    // sweeps a room on the way that it touches at neither end of the span. The
+    // track is cut against a fixed neighbourhood, so this is the case that
+    // says whether the sweep that chooses it reaches far enough.
+    const { world, ids } = drawn(['level', rect(-200,-20,400,40)], ['level', rect(-30,60,60,100)]);
+    check('a bar sweeping a room it never touches at either end',
+      transformed(world, 1, ids[0], { rotation: Math.PI })); }
   { const { world, ids } = drawn(['level', rect(0,0,200,60)], ['level', rect(80,60,40,40)], ['level', rect(0,100,200,60)]);
     let w = world; for (const id of ids) w = transformed(w, 1, id, { erosion: 25 });
     check('dumbbell pinching', w); }

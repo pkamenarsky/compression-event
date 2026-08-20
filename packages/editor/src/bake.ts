@@ -32,6 +32,25 @@
 // interpolates an accumulated chain — the property the composed frame in
 // `scene.ts` was allowed to give up.
 //
+// A stretch belongs to a polygon
+// ------------------------------
+// Not to the level. A polygon's share of the outline is a question about that
+// polygon and the ones it overlaps — that is what `boundaryRuns` promises and
+// what the whole set is built on — so its keyframes are a question about the
+// same handful of polygons, and a room losing a corner is no business of a room
+// two hundred rooms away.
+//
+// Cutting the level as one thing made both the work and the file grow with the
+// square of it: every event anywhere ended the stretch for everybody, and every
+// keyframe then stored every polygon's outline, nearly all of it unchanged. A
+// thousand-polygon level measured at twenty-odd minutes and half a gigabyte for
+// one span. Cut per polygon, against a neighbourhood of about five, the same
+// span is half a minute and four megabytes.
+//
+// So a `Span` holds one `Track` per polygon, each with its own stretches, and
+// `sample` reads them all at the same instant and puts the runs back in id
+// order. Two tracks' keyframes almost never line up, which is the point.
+//
 // Where a stretch ends
 // --------------------
 // The shader can work out *where* a vertex goes. It cannot work out *whether it
@@ -63,7 +82,8 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { Ring, Shape } from './geometry';
+import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
+import { Member, Ring, Shape, boundaryRuns, ground, simplify } from './geometry';
 import {
   Affine,
   EMPTY_LIVE,
@@ -152,17 +172,22 @@ export interface Rider {
 }
 
 /**
- * A stretch of `t` across which nothing discrete happens, and the geometry at
- * both ends of it. This is the unit the game would be handed: everything
- * between `a` and `b` is a lerp.
+ * A stretch of `t` across which nothing discrete happens to *one polygon*, and
+ * that polygon's geometry at both ends of it. This is the unit the game would
+ * be handed: everything between `a` and `b` is a lerp.
+ *
+ * `a` and `b` are the runs the polygon owns, which is usually one and is
+ * several where other polygons cut its boundary into pieces.
  */
 export interface Stretch {
   t0: number
   t1: number
   a: Frame
   b: Frame
-  /** Every polygon's eroded shape at both ends, in the frame its runs are kept
-   * in. The four endpoints a crossing is solved from live in here. */
+  /** The polygon's own eroded shape at both ends, and its neighbours', in the
+   * frame each one's runs are kept in. The four endpoints a crossing is solved
+   * from live in here — and a crossing is with a neighbour, which is why they
+   * are here at all. */
   table: Map<PolygonId, { a: Shape, b: Shape }>
   /**
    * Where each run point comes from, run by run and point by point, or null
@@ -173,14 +198,24 @@ export interface Stretch {
   origins: (Origin | null)[][]
 }
 
+/** One polygon's own cut of the span, in order and covering all of it. */
+export interface Track {
+  id: PolygonId
+  stretches: Stretch[]
+}
+
 /** Everything between two adjacent versions. */
 export interface Span {
   from: VersionId
-  stretches: Stretch[]
+  /** One per polygon, ordered by id — which is also the order `sample` puts
+   * their runs back in. */
+  tracks: Track[]
   /** Per polygon, what its runs ride. Constant across the span: only the
    * easing of `layer` varies, and that is a function of `t` alone. */
   riders: Map<PolygonId, Rider>
-  /** How many times the CSG was run to settle the span. */
+  /** How many times the CSG was run to settle the span. One of these is a
+   * polygon's own neighbourhood, not the level, so the count is large and each
+   * one is small. */
   evaluations: number
   /**
    * The furthest the replay was ever measured from `csg(t)`, in world units.
@@ -428,7 +463,7 @@ function world1(items: Moving[], t: number): Resolved[] {
  * the editor calls this; it is the yardstick.
  */
 export function truth(world: World, from: VersionId, t: number): Frame {
-  return evaluate(moving(world, from), t).out;
+  return evaluate(moving(world, from), t, null).out;
 }
 
 // -----------------------------------------------------------------------------
@@ -436,7 +471,13 @@ export function truth(world: World, from: VersionId, t: number): Frame {
 // -----------------------------------------------------------------------------
 
 /** The whole answer at one instant: the set, and everything the check and the
- * crossings need to be worked out from it. */
+ * crossings need to be worked out from it.
+ *
+ * `frame` and `out` hold whatever was asked for — one polygon's runs when a
+ * track is being cut, everybody's when the yardstick is being taken. The two
+ * shape tables are the same either way: they hold what was handed in, which for
+ * a track is the polygon and its neighbours.
+ */
 interface Taken {
   t: number
   frame: Frame
@@ -450,7 +491,65 @@ interface Taken {
   out: Frame
 }
 
-function evaluate(items: Moving[], t: number): Taken {
+/** A polygon as the boundary wants to see it: simplified, unless it came out of
+ * an erosion and is an arrangement already. The same reasoning `worldset` uses,
+ * and it has to be the same or the two would not agree. */
+function memberOf(it: Resolved): Member | null {
+  const kind = it.polygon.type;
+
+  if (kind !== 'level' && kind !== 'solid') return null;
+
+  const shape = it.erosion === 0 ? simplify(it.shape) : it.shape;
+
+  return shape.length === 0 ? null : { id: it.id, kind, shape };
+}
+
+/**
+ * One polygon's share of the outline, worked out against the handful of
+ * polygons that could bury it and nothing else.
+ *
+ * This is the whole reason a track is cheap. `boundaryRuns` already promises
+ * that a polygon's share is a question about that polygon and the ones it
+ * overlaps, so evaluating it does not need the level — it needs five polygons.
+ * The overlap test is by box and against the same boxes `worldset` uses, so the
+ * member list is the one the full set would have handed over, ranks and
+ * tolerances included, and the two answers are the same answer.
+ */
+function share(at: Resolved[], only: PolygonId): Frame {
+  const members: Member[] = [];
+  let subject: Member | null = null;
+
+  for (const it of at) {
+    const m = memberOf(it);
+
+    if (m === null) continue;
+    if (m.id === only) subject = m;
+
+    members.push(m);
+  }
+
+  if (subject === null) return [];
+
+  const box = ofRings(subject.shape);
+  const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
+
+  return boundaryRuns(subject, others, ground([subject, ...others]))
+    .map(points => ({ id: only, points }));
+}
+
+/** Everybody's share at once, through the full set. The yardstick's path, and
+ * what the editor's own drawing goes through. */
+function everything(at: Resolved[]): Frame {
+  // Sorted, so that two evaluations line up run by run. `worldset` hands its
+  // runs back in whatever order the entries happen to sit in, which an edit
+  // reorders; within one polygon the order is the boundary's own and is stable
+  // for as long as the combinatorics are — which is exactly a stretch.
+  return pieces(live(EMPTY_LIVE, at).set)
+    .map(p => ({ id: p.source, points: p.points }))
+    .sort((p, q) => p.id - q.id);
+}
+
+function evaluate(items: Moving[], t: number, only: PolygonId | null): Taken {
   const at = world1(items, t);
 
   const frames = new Map(at.map(it => [it.id, it.frame]));
@@ -462,13 +561,7 @@ function evaluate(items: Moving[], t: number): Taken {
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
   }
 
-  // Sorted, so that two evaluations line up run by run. `worldset` hands its
-  // runs back in whatever order the entries happen to sit in, which an edit
-  // reorders; within one polygon the order is the boundary's own and is stable
-  // for as long as the combinatorics are — which is exactly a stretch.
-  const out = pieces(live(EMPTY_LIVE, at).set)
-    .map(p => ({ id: p.source, points: p.points }))
-    .sort((p, q) => p.id - q.id);
+  const out = only === null ? everything(at) : share(at, only);
 
   const frame = out.map(r => ({
     id: r.id,
@@ -476,6 +569,70 @@ function evaluate(items: Moving[], t: number): Taken {
   }));
 
   return { frame, table, world, out, t };
+}
+
+// -----------------------------------------------------------------------------
+// Who can reach whom
+//
+// A track is cut against a fixed list of polygons, so that list has to hold for
+// the whole span rather than for one instant: something can slide into range
+// half way through and start burying a boundary that was open until then.
+//
+// So each polygon is given the box it can reach anywhere in the span. The
+// points are sampled along `t` and the boxes unioned, and the union is then
+// grown by half the furthest any point travelled between two samples — which is
+// the most a path can bow away from the chord its two samples span.
+//
+// It is taken off the polygon before the erosion, which only ever shrinks it,
+// so the box covers the eroded shape at every depth the span passes through.
+// That matters because erosion is the expensive part and this must not pay for
+// it: reaching for the source ring is a few multiplies per vertex, and the
+// whole sweep costs less than one CSG.
+// -----------------------------------------------------------------------------
+
+const PROBES = 16;
+
+function reach(m: Moving): AABB {
+  if (m.newborn) return ofRings([m.at.source]);
+
+  let all: AABB | null = null;
+  let step = 0;
+  let was: Ring | null = null;
+
+  for (let k = 0; k <= PROBES; k++) {
+    const t = k / PROBES;
+    const now = place(compose(affine(easing(m.layer, t)), m.base), between(m.local[0], m.local[1], t));
+    const box = ofRings([now]);
+
+    all = all === null ? box : merge(all, box);
+
+    if (was !== null) {
+      for (let i = 0; i < now.length && i < was.length; i++) {
+        step = Math.max(step, Math.hypot(now[i].x - was[i].x, now[i].y - was[i].y));
+      }
+    }
+
+    was = now;
+  }
+
+  return expandBox(all ?? ofRings([m.at.source]), step / 2);
+}
+
+function expandBox(a: AABB, m: number): AABB {
+  return { minX: a.minX - m, minY: a.minY - m, maxX: a.maxX + m, maxY: a.maxY + m };
+}
+
+/** For each polygon, the ones it shares a span with — itself first, so a track
+ * always has its own subject. */
+function neighbourhoods(items: Moving[]): Moving[][] {
+  const boxes = items.map(reach);
+  const tree: Tree = build(boxes.map((box, id) => ({ id, box })));
+
+  return items.map((m, i) => {
+    const near = search(tree, boxes[i]).filter(j => j !== i);
+
+    return [m, ...near.map(j => items[j])];
+  });
 }
 
 /**
@@ -698,11 +855,15 @@ function lying(shape: Shape, p: Point, snap: number): { ring: number, index: num
 //
 // What it costs, and what that buys
 // ---------------------------------
-// A CSG evaluation per stretch, plus about fourteen per discontinuity to pin it
-// down. That is more than the analytic search spent, and it is offline work
-// behind a progress bar. What it buys is the guarantee itself: `Span.worst` is
-// how far the replay was ever measured to be from the truth, so the bake states
-// its own error instead of resting on an argument about which events exist.
+// Three evaluations per stretch kept, one per stretch rejected, and about
+// fourteen per discontinuity to pin it down — but each one is a polygon's own
+// neighbourhood rather than the level, so a busy thousand-polygon span runs a
+// hundred thousand of them in half a minute. It is offline work behind a
+// progress bar either way.
+//
+// What it buys is the guarantee itself: `Span.worst` is how far the replay was
+// ever measured to be from the truth, so the bake states its own error instead
+// of resting on an argument about which events exist.
 // -----------------------------------------------------------------------------
 
 /**
@@ -723,6 +884,8 @@ export const TOLERANCE = 0.05;
  * a few thousandths of a unit.
  */
 const GAP = 1e-4;
+
+const MARGIN = 0.5;
 
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
@@ -774,13 +937,23 @@ function instant(a: Taken): Stretch {
 
 interface Cut {
   stretches: Stretch[]
-  /** The worst the check ever measured, over the whole span. */
+  /** The worst the check ever measured, over the whole track. */
   worst: number
   evaluations: number
 }
 
-function* cutSpan(
-  items: Moving[],
+/**
+ * One polygon's own cut of the span.
+ *
+ * The measuring is the same as it ever was; what has changed is what is being
+ * measured. A stretch used to end when *anything anywhere* changed, which put a
+ * whole-world keyframe in the file for an event two hundred rooms away and made
+ * both the work and the file grow with the square of the level. A polygon's
+ * boundary is a question about its own neighbourhood, so its keyframes are too.
+ */
+function* cutTrack(
+  sub: Moving[],
+  id: PolygonId,
   riders: Map<PolygonId, Rider>,
   tol: number,
 ): Generator<number, Cut, void> {
@@ -792,7 +965,7 @@ function* cutSpan(
   const at = (t: number): Taken => {
     evaluations++;
 
-    return evaluate(items, t);
+    return evaluate(sub, t, id);
   };
 
   // Left to right, so what comes out is in order and the progress is honest:
@@ -830,10 +1003,32 @@ function* cutSpan(
       continue;
     }
 
-    const m = at((a.t + b.t) / 2);
-    const off = comparable(a, m) ? apart(drawn(s, riders, m.t), m.out) : Infinity;
+    // How far the stretch would sit from the truth at an instant inside it.
+    const check = (c: Taken): number =>
+      comparable(a, c) ? apart(drawn(s, riders, c.t), c.out) : Infinity;
 
-    if (off > tol) {
+    const m = at((a.t + b.t) / 2);
+
+    let off = check(m);
+
+    // One sample does not bound a curve. The middle is where a bend is worst
+    // and is therefore the right place to look first, but a run whose points
+    // are moving different ways can be well behaved there and off elsewhere,
+    // so an acceptance is confirmed at the quarters before it is believed.
+    //
+    // This used to be carried by accident: a stretch ended when anything
+    // anywhere changed, so a busy neighbour's keyframes were sprinkled through
+    // a quiet polygon's span and cut its curves up for it. Cutting each polygon
+    // on its own takes that away, and it has to be paid for honestly.
+    if (off <= tol * MARGIN) {
+      for (const f of [0.25, 0.75]) {
+        off = Math.max(off, check(at(a.t + (b.t - a.t) * f)));
+
+        if (off > tol * MARGIN) break;
+      }
+    }
+
+    if (off > tol * MARGIN) {
       stack.push([m, b], [a, m]);
       continue;
     }
@@ -866,6 +1061,11 @@ function* cutSpan(
 /**
  * One span, as a generator so that the editor can run it a slice at a time and
  * keep drawing. It yields how far along it is, between 0 and 1.
+ *
+ * Every polygon is cut on its own, against the polygons it can reach. Each one
+ * gets an equal slice of the progress; how long one takes depends on how much
+ * is happening around it, so the bar is honest about where the work is rather
+ * than about how long it will take.
  */
 export function* bakeSpan(
   world: World,
@@ -878,16 +1078,29 @@ export function* bakeSpan(
     items.map(m => [m.at.id, { base: m.base, layer: m.newborn ? EMPTY_TRANSFORM : m.layer }]),
   );
 
-  const cut = yield* cutSpan(items, riders, tol);
+  const near = neighbourhoods(items);
+  const tracks: Track[] = [];
 
-  return {
-    from,
-    stretches: cut.stretches,
-    riders,
-    worst: cut.worst,
-    evaluations: cut.evaluations,
-    stamp: stamp(world, from),
-  };
+  let worst = 0;
+  let evaluations = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const id = items[i].at.id;
+    const cut = yield* weighted(
+      cutTrack(near[i], id, riders, tol),
+      i / items.length,
+      1 / items.length,
+    );
+
+    tracks.push({ id, stretches: cut.stretches });
+
+    worst = Math.max(worst, cut.worst);
+    evaluations += cut.evaluations;
+  }
+
+  tracks.sort((p, q) => p.id - q.id);
+
+  return { from, tracks, riders, worst, evaluations, stamp: stamp(world, from) };
 }
 
 /** Every span in the chain, one after the other. */
@@ -896,9 +1109,6 @@ export function* bakeAll(world: World): Generator<number, Map<VersionId, Span>, 
   const count = world.versions.length - 1;
 
   for (let k = 0; k < count; k++) {
-    // Each span gets an equal slice of the bar. How long one takes depends
-    // entirely on how much is moving in it, so the bar is honest about where
-    // the work is rather than about how long it will take.
     const span = yield* weighted(bakeSpan(world, k), k / count, 1 / count);
 
     out.set(k, span);
@@ -931,10 +1141,24 @@ function* weighted<T>(
 // would disagree with the game.
 // -----------------------------------------------------------------------------
 
+/**
+ * Every track read at the same instant and put back together, in id order,
+ * which is the order the full set hands its runs over in.
+ *
+ * The tracks are cut independently and their keyframes almost never line up,
+ * which is the point: two rooms at opposite ends of a level have no reason to
+ * be told about each other's corners.
+ */
 export function sample(span: Span, t: number): Frame {
-  const s = stretchAt(span, t);
+  const out: Frame = [];
 
-  return s === null ? [] : drawn(s, span.riders, t);
+  for (const track of span.tracks) {
+    const s = stretchAt(track, t);
+
+    if (s !== null) out.push(...drawn(s, span.riders, t));
+  }
+
+  return out;
 }
 
 /**
@@ -1037,24 +1261,41 @@ function crossing(
   return { x: p.x + ux * k, y: p.y + uy * k };
 }
 
-/** The stretch holding `t`, or the nearest one when `t` has landed in an event's
- * own bracket. */
-function stretchAt(span: Span, t: number): Stretch | null {
-  let best: Stretch | null = null;
-  let away = Infinity;
+/**
+ * The stretch holding `t`, or the nearest one when `t` has landed in an event's
+ * own bracket.
+ *
+ * The stretches come out of the cut in order and cover the span, so this is a
+ * search rather than a scan. It is asked once per polygon per frame, and a
+ * level's worth of linear scans through a busy track was showing up in the
+ * replay's own frame time.
+ */
+function stretchAt(track: Track, t: number): Stretch | null {
+  const all = track.stretches;
+  if (all.length === 0) return null;
 
-  for (const s of span.stretches) {
-    if (t >= s.t0 && t <= s.t1) return s;
+  let lo = 0, hi = all.length - 1;
 
-    const d = t < s.t0 ? s.t0 - t : t - s.t1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
 
-    if (d < away) {
-      away = d;
-      best = s;
+    if (all[mid].t1 < t) {
+      lo = mid + 1;
+    }
+    else {
+      hi = mid;
     }
   }
 
-  return best;
+  // `lo` is the first stretch ending at or after `t`. Either it holds `t`, or
+  // `t` is in the gap before it and the stretch behind is just as close.
+  const here = all[lo];
+  if (t >= here.t0) return here;
+
+  const back = all[lo - 1];
+  if (back === undefined) return here;
+
+  return t - back.t1 <= here.t0 - t ? back : here;
 }
 
 /**

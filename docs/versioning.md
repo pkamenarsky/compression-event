@@ -629,7 +629,9 @@ An earlier design collapsed the whole chain from root to keyframe into one
 any length could be evaluated in one step. That went with the accumulation it
 rested on. The bake computes each keyframe's geometry on the CPU, sequentially,
 at whatever cost it likes, and **the shader only ever interpolates between two
-adjacent keyframes.**
+adjacent keyframes.** Adjacent in that polygon's own track: keyframes are cut
+per polygon against the polygons it overlaps, so two rooms far apart share
+none.
 
 Nothing is lost by this, because erosion is linear in depth:
 

@@ -117,11 +117,23 @@ function drift(world: World, from = 0, steps = 40): number {
   return worst;
 }
 
+/** Every t any track was cut at, in order and without repeats: the span's
+ * keyframes, as one list. */
+function cut(span: Span): number[] {
+  const at = new Set<number>();
+
+  for (const track of span.tracks) {
+    for (const s of track.stretches) at.add(s.t0);
+  }
+
+  return [...at].sort((p, q) => p - q);
+}
+
 /** Where the span was cut, rounded to something a test can name. */
 function cuts(world: World, from = 0): number[] {
   const span = run(bakeSpan(world, from));
 
-  return span.stretches.slice(1).map(s => Number(s.t0.toFixed(4)));
+  return cut(span).slice(1).map(t => Number(t.toFixed(4)));
 }
 
 /** What the bake says its own error was, which is the number that matters. */
@@ -145,7 +157,7 @@ describe('the ends of a span', () => {
 
     const span = run(bakeSpan(world, 0));
 
-    expect(span.stretches).toHaveLength(1);
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
     expect(span.worst).toBe(0);
   });
 });
@@ -227,7 +239,7 @@ describe('keyframes', () => {
 
     const w = transformed(world, 1, ids[0], { erosion: 20 });
 
-    expect(run(bakeSpan(w, 0)).stretches[0].t1).toBe(0);
+    expect(run(bakeSpan(w, 0)).tracks[0].stretches[0].t1).toBe(0);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
@@ -237,7 +249,7 @@ describe('keyframes', () => {
 
     const span = run(bakeSpan(w, 0));
 
-    expect(span.stretches.length).toBeGreaterThan(1);
+    expect(span.tracks[0].stretches.length).toBeGreaterThan(1);
     expect(length(sample(span, 1))).toBeCloseTo(0, 6);
   });
 
@@ -361,7 +373,7 @@ describe('the replay against the CSG worked out directly', () => {
     const w = transformed(nudged, 1, ids[0], { erosion: 22 });
 
     expect(drift(w)).toBeLessThan(TOLERANCE);
-    expect(run(bakeSpan(w, 0)).stretches.length).toBeGreaterThan(1);
+    expect(run(bakeSpan(w, 0)).tracks[0].stretches.length).toBeGreaterThan(1);
   });
 });
 

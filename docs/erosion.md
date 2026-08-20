@@ -106,14 +106,26 @@ so the path bends and the chord across the stretch cuts the bend, with nothing
 discrete happening anywhere. The CSG's own run decomposition can shift with no
 coincidence nearby either.
 
-So the bake measures. It evaluates `csg(t)` at the middle of every candidate
-stretch, compares it against what the stretch would have drawn there, and splits
-until the difference is under 0.05 world units. Splitting stops on width too, and
-an interval whose two sides never come to agree is handed back as a gap — which
-is the keyframe, found without having to know what kind of event made it. A span
+So the bake measures. It evaluates `csg(t)` inside every candidate stretch,
+compares it against what the stretch would have drawn there, and splits until
+the difference is under 0.05 world units. Splitting stops on width too, and an
+interval whose two sides never come to agree is handed back as a gap — which is
+the keyframe, found without having to know what kind of event made it. A span
 reports the worst it ever measured, and
 [divergence.test.ts](../packages/editor/src/divergence.test.ts) checks that again
 at 998 instants the bake did not look at.
+
+Keyframes are **per polygon**, not per level. A polygon's share of the outline
+depends only on the polygons it overlaps, so its keyframes do too, and a room
+losing a corner is no business of a room at the other end of the map. Cutting
+the level as one thing made both the bake and the file grow with the square of
+it — every event anywhere ended the stretch for everybody, and every keyframe
+then stored every polygon's outline, nearly all of it unchanged. A thousand
+polygons with two thirds of them moving measured at twenty-odd minutes and half
+a gigabyte for one span; cut per polygon, against a neighbourhood of about five,
+the same span is half a minute and four megabytes. The neighbourhood is chosen
+from where each polygon can reach across the whole span, not from where it
+happens to be at either end.
 
 ## The editor, built and verified live
 
