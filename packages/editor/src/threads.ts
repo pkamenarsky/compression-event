@@ -22,29 +22,25 @@
 // at the same work, repeatably, so the threads spend their parallelism buying
 // back what the move cost and never quite finish paying.
 //
-// Why, and what would fix it
-// --------------------------
+// What it is not
+// --------------
 // Not the message protocol: handing the work out one polygon at a time and a
 // whole span at a time bracket the same number, and the span-at-a-time end is
 // the *worse* one. Not the copy back, which measures at two per cent. Not the
-// worker itself — arithmetic in one runs at exactly main-thread speed, and so
-// does allocation, so long as little is being held.
+// world crossing the wire — a worker that builds its own world from scratch and
+// runs plain `bakeAll` inside itself takes 24s where this thread takes 4.4s.
+// Not the code being cold: two passes agree to within one per cent.
 //
-// It is the garbage collector, and the thing it responds to is how much the
-// thread is holding while it allocates. Allocating hard while retaining a large
-// live set costs this thread 0.5s the first time and 3.6s every time after,
-// once its heap has grown — and costs a worker 4.4s from the outset. A worker
-// starts where a main thread ends up, and the bake is exactly that shape of
-// work: millions of short-lived points, against a live set that grows all the
-// way through a span.
+// Nor is it any of the obvious things about a worker, each of which was put to
+// a micro-benchmark and came back level or better: arithmetic, allocation,
+// allocation while holding a large live set, and short-lived strings used as
+// `Map` keys. Halving what a span retains — the pruning `table` now does —
+// moved the serial bake and did not move this at all.
 //
-// Most of that live set is `Stretch.table` — every neighbour's whole eroded
-// shape at both ends of every stretch, which is what the crossings are solved
-// from. Measured at seven times the runs it exists to serve: 28MB against 4MB
-// on a thousand-polygon span, and a neighbour's shape repeated in every stretch
-// of every track that touches it. Sharing those instead of copying them would
-// shrink the file, the retained set and the collector's work together, and is
-// the thing to do before reaching for threads again.
+// So the effect is real, repeatable and isolated to a worker running this
+// particular code, and the mechanism is not known. Anyone picking this up should
+// start by profiling a worker directly rather than by trusting the paragraph
+// above, which is a list of dead ends rather than an explanation.
 // -----------------------------------------------------------------------------
 
 import { Slice, Span, TOLERANCE, joined, ridersOf } from './bake';

@@ -35,21 +35,20 @@ function serial(world: World): Map<number, Span> {
 }
 
 function summary(spans: Map<number, Span>): string {
-  let points = 0, table = 0, stretches = 0, evaluations = 0, worst = 0;
+  let written = 0, held = 0, stretches = 0, evaluations = 0, worst = 0;
 
   for (const span of spans.values()) {
     const w = weight(span);
 
-    points += w.points;
-    table += w.table;
+    written += w.written;
+    held += w.held;
     stretches += w.stretches;
     evaluations += span.evaluations;
     worst = Math.max(worst, span.worst);
   }
 
   return `csg ${String(evaluations).padStart(6)}  stretches ${String(stretches).padStart(6)}` +
-    `  worst ${worst.toFixed(4)}  runs ${(points * 8 / 1e6).toFixed(1)}MB` +
-    `  table ${(table * 8 / 1e6).toFixed(1)}MB`;
+    `  worst ${worst.toFixed(4)}  held ${(held * 16 / 1e6).toFixed(1)}MB`;
 }
 
 /** The same spans from both paths, compared track by track. */

@@ -51,6 +51,15 @@
 // `sample` reads them all at the same instant and puts the runs back in id
 // order. Two tracks' keyframes almost never line up, which is the point.
 //
+// What a stretch carries
+// ----------------------
+// Its runs, and the rings a crossing has to be solved from — which is a
+// neighbour's business, since a crossing is where two polygons meet. Only the
+// rings some `Origin` actually names: carrying the neighbours whole cost nine
+// of the fifteen megabytes a busy thousand-polygon span held, all of it never
+// read. Adjacent stretches take their geometry off the same evaluation and so
+// share it already; what needed saying was which of it was wanted at all.
+//
 // Where a stretch ends
 // --------------------
 // The shader can work out *where* a vertex goes. It cannot work out *whether it
@@ -137,6 +146,9 @@ export interface Run {
  * interpolated run by run. */
 export type Frame = Run[];
 
+/** A shape with only some of its rings, held at their own indices. */
+export type Rings = (Ring | undefined)[];
+
 /** One edge of one polygon's eroded shape: the edge that starts at `index`. */
 export interface Ref {
   id: PolygonId
@@ -184,11 +196,20 @@ export interface Stretch {
   t1: number
   a: Frame
   b: Frame
-  /** The polygon's own eroded shape at both ends, and its neighbours', in the
-   * frame each one's runs are kept in. The four endpoints a crossing is solved
-   * from live in here — and a crossing is with a neighbour, which is why they
-   * are here at all. */
-  table: Map<PolygonId, { a: Shape, b: Shape }>
+  /**
+   * The rings a crossing is solved from: the polygon's own and its
+   * neighbours', in the frame each one's runs are kept in, at both ends of the
+   * stretch.
+   *
+   * Only the rings some `Origin` names. Everything else about the neighbours is
+   * of no use here — the runs carry their own points — and carrying it anyway
+   * measured at nine of the fifteen megabytes a busy thousand-polygon span held.
+   * So the arrays are indexed by ring number and have holes in them wherever
+   * nothing asked, which is most places. The two readers already treat a
+   * missing ring as a point they cannot place, which is the right answer for a
+   * ring that no origin named.
+   */
+  table: Map<PolygonId, { a: Rings, b: Rings }>
   /**
    * Where each run point comes from, run by run and point by point, or null
    * where the two ends could not be made to agree about it. A `cross` is
@@ -691,15 +712,44 @@ function near(shapes: Map<PolygonId, Shape>): number {
   return extent * 1e-9;
 }
 
+/**
+ * The rings the origins name, at both ends, and nothing else.
+ *
+ * A polygon appears only where both ends have it: a stretch is supposed to hold
+ * the arrangement still, and one that gained or lost a polygon part way is one
+ * that should have been split.
+ */
 function table(
   a: Map<PolygonId, Shape>,
   b: Map<PolygonId, Shape>,
-): Map<PolygonId, { a: Shape, b: Shape }> {
-  const out = new Map<PolygonId, { a: Shape, b: Shape }>();
+  origins: (Origin | null)[][],
+): Map<PolygonId, { a: Rings, b: Rings }> {
+  const out = new Map<PolygonId, { a: Rings, b: Rings }>();
 
-  for (const [id, shape] of a) {
-    const other = b.get(id);
-    if (other !== undefined) out.set(id, { a: shape, b: other });
+  const need = (r: Ref): void => {
+    const from = a.get(r.id), to = b.get(r.id);
+
+    if (from === undefined || to === undefined) return;
+    if (from[r.ring] === undefined || to[r.ring] === undefined) return;
+
+    let both = out.get(r.id);
+
+    if (both === undefined) {
+      both = { a: [], b: [] };
+      out.set(r.id, both);
+    }
+
+    both.a[r.ring] = from[r.ring];
+    both.b[r.ring] = to[r.ring];
+  };
+
+  for (const run of origins) {
+    for (const o of run) {
+      if (o === null || o.kind !== 'cross') continue;
+
+      need(o.a);
+      need(o.b);
+    }
   }
 
   return out;
@@ -929,13 +979,15 @@ function apart(guess: Frame, actual: Frame): number {
 }
 
 function stretchOf(a: Taken, b: Taken): Stretch {
+  const origins = agreed(a, b);
+
   return {
     t0: a.t,
     t1: b.t,
     a: a.frame,
     b: b.frame,
-    table: table(a.table, b.table),
-    origins: agreed(a, b),
+    table: table(a.table, b.table, origins),
+    origins,
   };
 }
 

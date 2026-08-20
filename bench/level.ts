@@ -106,38 +106,96 @@ export function version(world: World, ids: PolygonId[], share: number, v = 1): W
   return out;
 }
 
-/** What a baked span weighs, and how finely it was cut. */
-export function weight(span: {
-  tracks: {
-    stretches: {
-      a: { points: unknown[] }[]
-      b: { points: unknown[] }[]
-      table: Map<number, { a: { length: number }[], b: { length: number }[] }>
-    }[]
-  }[]
-}): { points: number, table: number, stretches: number } {
-  let points = 0;
-  let table = 0;
+interface Ref { id: number, ring: number, index: number }
+
+type Origin =
+  | { kind: 'vertex', at: Ref }
+  | { kind: 'cross', a: Ref, b: Ref };
+
+interface Stretch {
+  a: { points: unknown[] }[]
+  b: { points: unknown[] }[]
+  table: Map<number, { a: (unknown[] | undefined)[], b: (unknown[] | undefined)[] }>
+  origins: (Origin | null)[][]
+}
+
+/**
+ * What a baked span weighs.
+ *
+ * Counted three ways. `written` walks everything the span refers to, which is
+ * what it would cost in a file, where sharing does not survive. `held` counts
+ * each array the first time it is seen, which is what it costs in memory —
+ * adjacent stretches take their shapes off the same evaluation, so a good deal
+ * is already shared. `read` counts only the rings some crossing actually names;
+ * the rest is carried and never looked at.
+ */
+export function weight(span: { tracks: { stretches: Stretch[] }[] }): {
+  written: number
+  held: number
+  runs: number
+  read: number
+  stretches: number
+} {
+  let written = 0;
   let stretches = 0;
+
+  const seen = new Set<unknown>();
+  const wanted = new Set<unknown>();
+
+  let held = 0;
+  let runs = 0;
+  let read = 0;
+
+  const count = (ring: unknown[] | undefined, into: 'run' | 'table') => {
+    if (ring === undefined) return;
+
+    written += ring.length;
+
+    if (seen.has(ring)) return;
+
+    seen.add(ring);
+    held += ring.length;
+
+    if (into === 'run') runs += ring.length;
+  };
+
+  const want = (ring: unknown[] | undefined) => {
+    if (ring === undefined || wanted.has(ring)) return;
+
+    wanted.add(ring);
+    read += ring.length;
+  };
 
   for (const track of span.tracks) {
     stretches += track.stretches.length;
 
     for (const st of track.stretches) {
-      for (const run of st.a) points += run.points.length;
-      for (const run of st.b) points += run.points.length;
+      for (const run of st.a) count(run.points, 'run');
+      for (const run of st.b) count(run.points, 'run');
 
-      // Every neighbour's whole eroded shape at both ends, which is what the
-      // crossings are solved from — and which is repeated in every stretch of
-      // every track that neighbour touches.
       for (const both of st.table.values()) {
-        for (const ring of both.a) table += ring.length;
-        for (const ring of both.b) table += ring.length;
+        for (const ring of both.a) count(ring, 'table');
+        for (const ring of both.b) count(ring, 'table');
+      }
+
+      // The rings a crossing is actually solved from, which is the only reason
+      // the table is there.
+      for (const run of st.origins) {
+        for (const o of run) {
+          if (o === null || o.kind !== 'cross') continue;
+
+          for (const r of [o.a, o.b]) {
+            const both = st.table.get(r.id);
+
+            want(both?.a[r.ring]);
+            want(both?.b[r.ring]);
+          }
+        }
       }
     }
   }
 
-  return { points, table, stretches };
+  return { written, held, runs, read, stretches };
 }
 
 export const SIZES: [number, number][] = [
