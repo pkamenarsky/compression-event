@@ -33,6 +33,7 @@
 import { Point } from '@ce/game/world';
 import { OpSubtract, Ring, Shape, combine, contains, erode, isCCW, simplify } from './geometry';
 import {
+  Clipping,
   EMPTY_TRANSFORM,
   Edit,
   Polygon,
@@ -496,8 +497,8 @@ export function hitVertex(
   items: Resolved[],
   at: Point,
   radius: number,
-): { id: PolygonId, index: number } | null {
-  let best: { id: PolygonId, index: number } | null = null;
+): Grabbed | null {
+  let best: Grabbed | null = null;
   let bestDistance = radius;
 
   for (const it of items) {
@@ -506,12 +507,245 @@ export function hitVertex(
 
       if (d <= bestDistance) {
         bestDistance = d;
-        best = { id: it.id, index };
+        best = { id: it.id, index, vertex: it.polygon.points[index].id };
       }
     });
   }
 
   return best;
+}
+
+/** One corner of one polygon: where it is in the ring, and which corner it is.
+ * The index moves when a corner is inserted before it; the id never does. */
+export interface Grabbed {
+  id: PolygonId
+  index: number
+  vertex: VertexId
+}
+
+/**
+ * The nearest point of a source edge within `radius`, and which edge it is on.
+ *
+ * `index` is the corner the edge leaves, so what gets inserted for this hit
+ * goes directly after it. Callers are expected to have asked `hitVertex` first
+ * and taken its answer: every corner lies on two edges, and a click on one
+ * means the corner rather than either edge.
+ */
+export function hitEdge(
+  items: Resolved[],
+  at: Point,
+  radius: number,
+): { id: PolygonId, index: number, at: Point } | null {
+  let best: { id: PolygonId, index: number, at: Point } | null = null;
+  let bestDistance = radius;
+
+  for (const it of items) {
+    const ring = it.source;
+
+    for (let i = 0; i < ring.length; i++) {
+      const on = along(ring[i], ring[(i + 1) % ring.length], at);
+      const d = Math.hypot(on.x - at.x, on.y - at.y);
+
+      if (d <= bestDistance) {
+        bestDistance = d;
+        best = { id: it.id, index: i, at: on };
+      }
+    }
+  }
+
+  return best;
+}
+
+/** How far along `a`–`b` the foot of `p` falls, clamped to the segment. */
+function fraction(a: Point, b: Point, p: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = dx * dx + dy * dy;
+
+  if (len === 0) return 0;
+
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+}
+
+/** The point of `a`–`b` closest to `p`. */
+function along(a: Point, b: Point, p: Point): Point {
+  const t = fraction(a, b, p);
+
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** Every corner inside the box, by id, which is what a marquee over the points
+ * is asking for. */
+export function verticesWithinBox(items: Resolved[], a: Point, b: Point): VertexId[] {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const out: VertexId[] = [];
+
+  for (const it of items) {
+    it.source.forEach((p, i) => {
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
+        out.push(it.polygon.points[i].id);
+      }
+    });
+  }
+
+  return out;
+}
+
+// -----------------------------------------------------------------------------
+// Corners, added and taken away
+//
+// A polygon's `points` are what gain and lose one, so a corner exists at every
+// version or at none. It could not be otherwise: the versions after this one
+// are layers over the same ring, and a ring with four corners at v0 and five at
+// v1 leaves their displacements with nothing to be against.
+//
+// What that costs is that inserting has to decide where the new corner stands
+// at versions nobody was looking at. It is put the same fraction along the edge
+// as the click was, measured in the polygon's own frame, which leaves it
+// exactly on the line at every version whose layer has not pulled the two ends
+// apart — and where one has, this version's layer takes the displacement that
+// puts it under the cursor and the others keep the straight edge they had.
+// -----------------------------------------------------------------------------
+
+/**
+ * A corner put into the edge that was clicked, at the point of it that was.
+ *
+ * Two steps, because they answer different questions: the ring gains a corner
+ * at a sensible resting place everywhere, and then this version alone says
+ * exactly where it goes. The second writes nothing when the first already
+ * landed it, which is every polygon no upstream layer has nudged.
+ */
+export function addVertex(
+  world: World,
+  v: VersionId,
+  it: Resolved,
+  index: number,
+  at: Point,
+): { world: World, vertex: VertexId } {
+  const points = [...it.polygon.points];
+  const next = (index + 1) % points.length;
+  const t = fraction(it.source[index], it.source[next], at);
+
+  const from = points[index].at, to = points[next].at;
+  const vertex = world.nextId;
+
+  points.splice(index + 1, 0, {
+    id: vertex,
+    at: {
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+    },
+  });
+
+  const polygons = new Map(world.polygons);
+  polygons.set(it.id, { ...it.polygon, points });
+
+  const grown: World = { ...world, polygons, nextId: vertex + 1 };
+  const now = resolveAt(grown, v).find(r => r.id === it.id);
+
+  if (now === undefined) return { world: grown, vertex };
+
+  const where = now.polygon.points.findIndex(p => p.id === vertex);
+  const stands = now.source[where];
+
+  if (Math.hypot(stands.x - at.x, stands.y - at.y) <= 1e-9) {
+    return { world: grown, vertex };
+  }
+
+  const edit = placeVertex(now, editAt(grown, v, it.id, now.erosion), where, at);
+
+  return { world: withEdit(grown, v, it.id, edit), vertex };
+}
+
+/**
+ * Corners taken out, along with every displacement written against them.
+ *
+ * Three is the fewest a ring can have and still be one, so a polygon at three
+ * keeps all of them: what is being asked for below that is to delete the
+ * polygon, and that is a different thing to ask for.
+ */
+export function removeVertices(world: World, going: Iterable<VertexId>): World {
+  const gone = new Set(going);
+
+  if (gone.size === 0) return world;
+
+  const polygons = new Map(world.polygons);
+  let changed = false;
+
+  for (const [id, polygon] of world.polygons) {
+    const points = polygon.points.filter(p => !gone.has(p.id));
+
+    if (points.length === polygon.points.length || points.length < 3) continue;
+
+    polygons.set(id, { ...polygon, points });
+    changed = true;
+  }
+
+  if (!changed) return world;
+
+  // The layers' displacements are keyed by corner, and a key nothing names is
+  // never read again. It is dropped anyway so that a file says only what is
+  // true; undo puts the whole world back, displacements included.
+  const versions = world.versions.map(version => ({
+    ...version,
+    edits: new Map([...version.edits].map(([id, edit]) => [
+      id,
+      { ...edit, vertices: new Map([...edit.vertices].filter(([v]) => !gone.has(v))) },
+    ])),
+  }));
+
+  return { ...world, polygons, versions };
+}
+
+// -----------------------------------------------------------------------------
+// Copying
+// -----------------------------------------------------------------------------
+
+/** The picked polygons as they stand, cut loose from the ids they came from. */
+export function copied(items: Resolved[], ids: readonly PolygonId[]): Clipping[] {
+  return items
+    .filter(it => ids.includes(it.id))
+    .map(it => ({
+      type: it.polygon.type,
+      points: it.source.map(p => ({ ...p })),
+      erosion: it.erosion,
+    }));
+}
+
+/**
+ * Clippings put back as new polygons, born into the version on screen and
+ * offset by `by` so that a paste is something you can see happen.
+ *
+ * The depth rides along in this version's layer rather than in the ring: a
+ * clipping's points are the source it was taken from, which is what erosion
+ * projects from, so writing them as the polygon and the depth as the edit
+ * reproduces exactly what was copied.
+ */
+export function pasted(
+  world: World,
+  v: VersionId,
+  clips: readonly Clipping[],
+  by: Point,
+): { world: World, ids: PolygonId[] } {
+  const ids: PolygonId[] = [];
+  let out = world;
+
+  for (const clip of clips) {
+    const shifted = clip.points.map(p => ({ x: p.x + by.x, y: p.y + by.y }));
+    const added = addPolygon(out, clip.type, shifted, v);
+
+    out = added.world;
+    ids.push(added.id);
+
+    if (clip.erosion !== 0) {
+      out = withEdit(out, v, added.id, {
+        transform: { ...EMPTY_TRANSFORM, erosion: clip.erosion },
+        vertices: new Map(),
+      });
+    }
+  }
+
+  return { world: out, ids };
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

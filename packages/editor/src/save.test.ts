@@ -31,7 +31,12 @@ function world(): EditorState {
     vertices,
   });
 
-  return { ...initialState(w), selection: [b.id], tool: 'polygon', currentVersion: 2 };
+  return {
+    ...initialState(w),
+    selection: { polygons: [b.id], vertices: [] },
+    tool: 'polygon',
+    currentVersion: 2,
+  };
 }
 
 describe('save', () => {

@@ -4,11 +4,17 @@ import { OpSubtract, Shape, combine, shapeArea, simplify } from './geometry';
 import {
   Resolved,
   addPolygon,
+  addVertex,
   affine,
+  copied,
   csg,
   editAt,
+  hitEdge,
+  hitVertex,
+  pasted,
   placeVertex,
   place,
+  removeVertices,
   resolveAt,
   unplace,
   withEdit,
@@ -416,5 +422,123 @@ describe('placeVertex', () => {
     const after = drag(eroded, 0, ids[0], 0, { x: -50, y: -50 });
 
     expect(only(after, 0, ids[0]).source[0]).toEqual({ x: -50, y: -50 });
+  });
+});
+
+describe('corners added and taken away', () => {
+  const ring = (world: World, v: VersionId, id: PolygonId) =>
+    only(world, v, id).source.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+
+  function drag(world: World, v: VersionId, id: PolygonId, index: number, to: Point): World {
+    const it = only(world, v, id);
+
+    return withEdit(world, v, id, placeVertex(it, editAt(world, v, id, it.erosion), index, to));
+  }
+
+  test('a click on an edge puts a corner exactly where it was clicked', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const it = only(world, 0, ids[0]);
+    const hit = hitEdge([it], { x: 40, y: 3 }, 9)!;
+
+    expect(hit.id).toEqual(ids[0]);
+    expect(hit.at).toEqual({ x: 40, y: 0 });
+
+    const after = addVertex(world, 0, it, hit.index, hit.at);
+
+    expect(ring(after.world, 0, ids[0])).toEqual([
+      { x: 0, y: 0 }, { x: 40, y: 0 }, { x: 100, y: 0 },
+      { x: 100, y: 100 }, { x: 0, y: 100 },
+    ]);
+  });
+
+  test('a corner goes in between the two it was clicked between, not at the end', () => {
+    // The ring is ordered and winding matters, so an insert that appends would
+    // put a spike through the polygon rather than a corner on its edge.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const it = only(world, 0, ids[0]);
+    const hit = hitEdge([it], { x: 103, y: 60 }, 9)!;
+    const after = addVertex(world, 0, it, hit.index, hit.at);
+
+    expect(shapeArea(only(after.world, 0, ids[0]).shape)).toBeCloseTo(10000, 6);
+  });
+
+  test('adding one where an upstream layer bent the edge still lands on the cursor', () => {
+    // The resting place is the fraction along the edge as the polygon was
+    // drawn, which is off the line once a layer has moved one of its ends. This
+    // version's own displacement is what makes up the difference.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const bent = drag(world, 0, ids[0], 1, { x: 160, y: -40 });
+    const at = { x: 70, y: 12 };
+
+    const after = addVertex(bent, 1, only(bent, 1, ids[0]), 0, at);
+    const now = only(after.world, 1, ids[0]);
+    const where = now.polygon.points.findIndex(c => c.id === after.vertex);
+
+    expect(now.source[where].x).toBeCloseTo(at.x, 9);
+    expect(now.source[where].y).toBeCloseTo(at.y, 9);
+
+    // And the version before it keeps the straight edge it had.
+    const before = only(after.world, 0, ids[0]);
+    expect(before.source.length).toEqual(5);
+  });
+
+  test('a corner comes out of every version at once, with its displacements', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const nudged = drag(world, 1, ids[0], 2, { x: 130, y: 130 });
+    const going = nudged.polygons.get(ids[0])!.points[2].id;
+    const after = removeVertices(nudged, [going]);
+
+    expect(ring(after, 0, ids[0])).toEqual([
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 },
+    ]);
+    expect(ring(after, 1, ids[0]).length).toEqual(3);
+    expect(after.versions[1].edits.get(ids[0])?.vertices.has(going)).toEqual(false);
+  });
+
+  test('the last three corners stay: below that there is no ring to talk about', () => {
+    const { world, ids } = drawn(['level', [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }]]);
+    const all = world.polygons.get(ids[0])!.points.map(p => p.id);
+
+    expect(removeVertices(world, [all[0]])).toBe(world);
+  });
+
+  test('a corner beats the edges it lies on', () => {
+    // Every corner is on two edges, so a click on one would otherwise insert a
+    // corner a hair away from the one being reached for.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const items = resolveAt(world, 0);
+
+    expect(hitVertex(items, { x: 2, y: 2 }, 9)).not.toEqual(null);
+  });
+});
+
+describe('copy and paste', () => {
+  test('what comes back looks exactly like what was taken, offset', () => {
+    const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
+    const eroded = transformed(world, 0, ids[0], { erosion: 12 });
+
+    const clips = copied(resolveAt(eroded, 0), [ids[0]]);
+    const after = pasted(eroded, 0, clips, { x: 32, y: 32 });
+    const copy = only(after.world, 0, after.ids[0]);
+
+    expect(copy.polygon.type).toEqual('solid');
+    expect(copy.erosion).toEqual(12);
+    expect(shapeArea(copy.shape))
+      .toBeCloseTo(shapeArea(only(eroded, 0, ids[0]).shape), 6);
+    expect(copy.source[0]).toEqual({ x: 32, y: 32 });
+  });
+
+  test('a paste survives the original being deleted', () => {
+    // A clipping is geometry, not a reference: it has to outlive what it came
+    // from, since that is most of what a clipboard is for.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const clips = copied(resolveAt(world, 0), [ids[0]]);
+
+    const polygons = new Map(world.polygons);
+    polygons.delete(ids[0]);
+
+    const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
+
+    expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
   });
 });

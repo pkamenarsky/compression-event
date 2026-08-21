@@ -7,6 +7,7 @@ import { interaction } from '@incpt/kontinuum-interaction/dom';
 import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { Input, createInput, inputListener, keyPressed } from './input';
+import { copied, pasted, resolveAt } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
@@ -18,6 +19,9 @@ import {
   VersionId,
   World,
   initialState,
+  marked,
+  redone,
+  undone,
 } from './types';
 
 /**
@@ -46,6 +50,7 @@ export function editor(initial: World): VNode {
         [
           inputListener(input),
           saving(state, input, update),
+          shortcuts(input, update),
 
           worldCanvas(
             s.world,
@@ -95,6 +100,83 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
         // this. Everything the editor keeps is in the file bar the bake, and
         // `restored` supplies an empty one.
         upload(loaded => update(() => loaded));
+      }
+    }
+  });
+}
+
+/**
+ * The shortcuts that are about the document rather than about the canvas.
+ *
+ * They live here rather than in the canvas loop because that loop is only
+ * listening between gestures: it is busy for as long as a drag runs, and undo
+ * has no business being unavailable because a marquee is open. Every waiter on
+ * the bus is woken, so both can watch the same keys without knowing about each
+ * other — the canvas ignores anything with a command key on it, and everything
+ * here has one bar the two tool letters.
+ *
+ * `a` and `v` are Illustrator's, and mean what they mean there: `a` to get at
+ * the corners, `v` to get at whole polygons.
+ */
+function shortcuts(input: Input, update: Update): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(
+        input,
+        'KeyA', 'KeyV', 'KeyZ', 'KeyY', 'KeyC',
+      );
+
+      const command = e.metaKey || e.ctrlKey;
+
+      if (!command) {
+        if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
+        else if (e.code === 'KeyV') update(s => ({ ...s, tool: 'polygon' }));
+
+        continue;
+      }
+
+      // Cmd+A is select-all, which this does not have; leave it to the browser
+      // rather than swallowing it into a tool switch.
+      if (e.code === 'KeyA') continue;
+
+      e.preventDefault();
+
+      // Undo and redo are the two worth holding down. One copy is one copy.
+      if (e.repeat && e.code !== 'KeyZ' && e.code !== 'KeyY') continue;
+
+      if (e.code === 'KeyZ') {
+        // Cmd+Shift+Z is redo everywhere a Mac is involved, and Cmd+Y is redo
+        // everywhere else. Both, since both hands turn up.
+        update(e.shiftKey ? redone : undone);
+      }
+      else if (e.code === 'KeyY') {
+        update(redone);
+      }
+      else if (e.code === 'KeyC') {
+        update(s => ({
+          ...s,
+          clipboard: copied(resolveAt(s.world, s.currentVersion), s.selection.polygons),
+        }));
+      }
+      else if (e.code === 'KeyV') {
+        update(s => {
+          if (s.clipboard.length === 0) return s;
+
+          // One grid step down and right, so that a paste is something you can
+          // see happen rather than a polygon hidden exactly under its original.
+          const by = s.settings.gridSize;
+          const { world, ids } = pasted(
+            s.world,
+            s.currentVersion,
+            s.clipboard,
+            { x: by, y: by },
+          );
+
+          return marked(
+            { ...s, world, selection: { ...s.selection, polygons: ids } },
+            s.world,
+          );
+        });
       }
     }
   });

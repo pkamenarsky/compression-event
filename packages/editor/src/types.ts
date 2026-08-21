@@ -217,6 +217,131 @@ export function emptyWorld(): World {
 }
 
 /**
+ * What the next thing done applies to.
+ *
+ * Two lists rather than one, because the two tools ask different questions and
+ * both answers are worth keeping: going to the points to nudge a corner and
+ * coming back should not have thrown away which rooms were picked.
+ */
+export interface Selection {
+  polygons: PolygonId[]
+  vertices: VertexId[]
+}
+
+export const EMPTY_SELECTION: Selection = { polygons: [], vertices: [] };
+
+/** `more` added to `some`, keeping what was already there and its order. */
+export function alsoPicked(some: readonly number[], more: readonly number[]): number[] {
+  const has = new Set(some);
+
+  return [...some, ...more.filter(id => !has.has(id))];
+}
+
+/** The same, except that anything already picked is let go: a shift-click on
+ * something is how it comes out of a selection everywhere. */
+export function togglePicked(some: readonly number[], id: number): number[] {
+  return some.includes(id) ? some.filter(x => x !== id) : [...some, id];
+}
+
+/**
+ * A polygon lifted out of the world, ready to be put back.
+ *
+ * Its ring in world units as it resolved when it was taken, rather than the id
+ * it was taken from: a paste has to work after the original has been changed,
+ * or deleted, or the file reloaded. What comes back is a new polygon born into
+ * whatever version is on screen, which is the only kind this editor has.
+ */
+export interface Clipping {
+  type: PolygonType
+  points: Point[]
+  erosion: number
+}
+
+// -----------------------------------------------------------------------------
+// Undo
+//
+// Whole worlds rather than diffs. Everything here is persistent, so a version
+// nothing touched is the same object in every entry and a step back costs a
+// pointer; what it costs instead is nothing at all to think about, since there
+// is no inverse to write per kind of edit and none to keep in step as more
+// arrive.
+//
+// A drag writes a world per pointer move and not one of those is a step. So the
+// history is not written by whoever changes the world — it is written by
+// whoever finishes doing so, handing over the world as it was when they
+// started. See `marked`.
+// -----------------------------------------------------------------------------
+
+export interface History {
+  past: World[]
+  future: World[]
+}
+
+export const EMPTY_HISTORY: History = { past: [], future: [] };
+
+/** Deep enough to cover an afternoon's fiddling, short enough that the worlds
+ * held do not add up to anything. */
+const DEPTH = 200;
+
+/**
+ * `was` becomes the world undo comes back to.
+ *
+ * Called at the end of everything that may have changed the world, including
+ * the gestures that turn out not to have: a press that moved nothing is not a
+ * step, and comparing is cheaper here than deciding at every call site.
+ */
+export function marked(s: EditorState, was: World): EditorState {
+  if (s.world === was) return s;
+
+  return {
+    ...s,
+    history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
+  };
+}
+
+export function undone(s: EditorState): EditorState {
+  const { past, future } = s.history;
+
+  if (past.length === 0) return s;
+
+  return settled({
+    ...s,
+    world: past[past.length - 1],
+    history: { past: past.slice(0, -1), future: [...future, s.world] },
+  });
+}
+
+export function redone(s: EditorState): EditorState {
+  const { past, future } = s.history;
+
+  if (future.length === 0) return s;
+
+  return settled({
+    ...s,
+    world: future[future.length - 1],
+    history: { past: [...past, s.world], future: future.slice(0, -1) },
+  });
+}
+
+/** The selection with anything the world no longer has dropped: stepping back
+ * past the birth of a polygon leaves it picked and gone. */
+function settled(s: EditorState): EditorState {
+  const corners = new Set<VertexId>();
+
+  for (const p of s.world.polygons.values()) {
+    for (const v of p.points) corners.add(v.id);
+  }
+
+  return {
+    ...s,
+    selection: {
+      polygons: s.selection.polygons.filter(id => s.world.polygons.has(id)),
+      vertices: s.selection.vertices.filter(id => corners.has(id)),
+    },
+  };
+}
+
+/**
  * Everything the editor is. Immutable throughout: a field that did not change
  * keeps its identity, which is what lets `object` wake only the parts that
  * care — panning touches `view` and nothing redraws but the canvas.
@@ -227,7 +352,7 @@ export interface EditorState {
    * from it; there is no way to author one that lands earlier. */
   currentVersion: VersionId
   /** What the next transform applies to. */
-  selection: PolygonId[]
+  selection: Selection
 
   settings: Settings
   view: View
@@ -240,6 +365,12 @@ export interface EditorState {
    * an edit invalidates it rather than having to update it. See `bake.ts`.
    */
   bake: Bake
+
+  /** Where undo goes. Not in the file: it is about this sitting rather than
+   * about the world, and reloading one is a fresh start by definition. */
+  history: History
+  /** What was last copied. Also not in the file, and for the same reason. */
+  clipboard: Clipping[]
 }
 
 /** Everything that writes to the store goes through one of these. */
@@ -249,10 +380,12 @@ export function initialState(world: World): EditorState {
   return {
     world,
     currentVersion: 0,
-    selection: [],
+    selection: EMPTY_SELECTION,
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
     bake: { spans: new Map(), progress: null },
+    history: EMPTY_HISTORY,
+    clipboard: [],
   };
 }

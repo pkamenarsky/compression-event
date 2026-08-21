@@ -34,6 +34,16 @@ export interface Input {
    * alive for as long as the editor is.
    */
   pointer: () => PointerEvent | null
+  /**
+   * Whether a key is down right now.
+   *
+   * The same reason as `pointer`, and it bites harder: a gesture that wants to
+   * know whether a modifier is held cannot have been the one watching for it,
+   * because it was started by the press it would have had to be waiting on. The
+   * browser keeps this for shift and the rest and hands it out on every event;
+   * for an ordinary key there is nobody keeping it but us.
+   */
+  holding: (code: string) => boolean
   listen: () => () => void
 }
 
@@ -42,12 +52,15 @@ export function createInput(): Input {
   const keyUp = signal<KeyboardEvent>();
 
   let pointer: PointerEvent | null = null;
+  const down = new Set<string>();
 
   function onKeyDown(e: KeyboardEvent) {
+    down.add(e.code);
     keyDown.emit(e);
   }
 
   function onKeyUp(e: KeyboardEvent) {
+    down.delete(e.code);
     keyUp.emit(e);
   }
 
@@ -55,20 +68,29 @@ export function createInput(): Input {
     pointer = e;
   }
 
+  // A key let go while another window had the focus never comes back up here,
+  // and would read as held for ever after.
+  function onBlur() {
+    down.clear();
+  }
+
   return {
     keyDown,
     keyUp,
     pointer: () => pointer,
+    holding: code => down.has(code),
 
     listen: () => {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('blur', onBlur);
 
       return () => {
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
         window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('blur', onBlur);
       };
     },
   };
@@ -134,6 +156,26 @@ export function blurred(): Op<void> {
  */
 export function pointerMoved(onMove: (e: PointerEvent) => void): Op<never> {
   return perform(() => {
+    window.addEventListener('pointermove', onMove);
+
+    return () => window.removeEventListener('pointermove', onMove);
+  });
+}
+
+/**
+ * The pointer leaving the neighbourhood of where it went down, which is what
+ * separates a press that meant to be a drag from one that meant to be a click.
+ *
+ * `slop` is in screen pixels. A hand on a mouse moves a pixel or two on its way
+ * to letting go, and reading that as a drag would mean the marquee flickered up
+ * over every click; every editor forgives it and this is how much.
+ */
+export function pointerDragged(from: Point, slop: number): Op<PointerEvent> {
+  return perform(resume => {
+    const onMove = (e: PointerEvent) => {
+      if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > slop) resume(e);
+    };
+
     window.addEventListener('pointermove', onMove);
 
     return () => window.removeEventListener('pointermove', onMove);

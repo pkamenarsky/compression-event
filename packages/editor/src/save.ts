@@ -12,6 +12,7 @@
 // -----------------------------------------------------------------------------
 
 import {
+  EMPTY_HISTORY,
   Edit,
   EditorState,
   Polygon,
@@ -38,6 +39,8 @@ export interface Saved {
   format: number
   tool: Tool
   currentVersion: VersionId
+  /** The picked polygons. Corners are not written: which of them were picked
+   * is about the gesture in progress rather than about the world. */
   selection: PolygonId[]
   settings: Settings
   view: View
@@ -67,7 +70,7 @@ export function saved(state: EditorState): Saved {
     format: FORMAT,
     tool: state.tool,
     currentVersion: state.currentVersion,
-    selection: state.selection,
+    selection: state.selection.polygons,
     settings: state.settings,
     view: state.view,
     world: {
@@ -102,7 +105,7 @@ export function restored(file: Saved): EditorState {
       versions: file.world.versions.map(restoredVersion),
     },
     currentVersion: file.currentVersion,
-    selection: file.selection,
+    selection: { polygons: file.selection, vertices: [] },
     settings: file.settings,
     view: file.view,
     tool: file.tool,
@@ -110,6 +113,11 @@ export function restored(file: Saved): EditorState {
     // Not in the file, and deliberately: it is derived, it is large, and it is
     // stamped against a world that this one only resembles.
     bake: { spans: new Map(), progress: null },
+
+    // Nor are these, for a different reason: they are about the sitting rather
+    // than about the world, and opening a file is a fresh one.
+    history: EMPTY_HISTORY,
+    clipboard: [],
   };
 }
 
