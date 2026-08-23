@@ -501,7 +501,7 @@ function mix(u: number, v: number, t: number): number {
  * axis alone. `null` says so, and the caller falls back to a straight line —
  * which for a translation is exactly right anyway.
  */
-function pivot(layer: Transform): Point | null {
+export function pivot(layer: Transform): Point | null {
   const m = affine({ ...layer, translation: { x: 0, y: 0 } });
 
   const det = (1 - m.a) * (1 - m.d) - m.b * m.c;

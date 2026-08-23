@@ -1,10 +1,6 @@
-import { World } from './world';
+import { World, emptyWorld } from './world';
 
-const world: World = {
-  paths: [],
-  versions: [],
-  artefacts: [],
-};
+const world: World = emptyWorld();
 
 const screen = document.getElementById('screen') as HTMLCanvasElement;
 const ctx = screen.getContext('2d')!;

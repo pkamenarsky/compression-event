@@ -1,0 +1,130 @@
+// -----------------------------------------------------------------------------
+// Walking into things, held to what it promises
+//
+// The trace itself is the jam build's and was not changed. What was changed is
+// what it is handed — rings rather than polygons, normals precomputed, and a
+// hole wound against the room it is in — so that is what this is about: the
+// player stops a radius short of a wall whichever side of it the material is
+// on, and `standable` answers the same question the union would without ever
+// building one.
+// -----------------------------------------------------------------------------
+
+import { describe, expect, test } from 'vitest';
+import { Hulls, PLAYER_RADIUS } from './coldet';
+import { Point, Polygon, PolygonType, withNormals } from './world';
+
+/** Counter-clockwise, which for a `level` ring is a room. */
+function rect(x: number, y: number, w: number, h: number): Point[] {
+  return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+}
+
+function ring(type: PolygonType, points: Point[]): Polygon {
+  return { type, points: withNormals(points) };
+}
+
+/** The same ring the other way round: a hole, where its outer ring is a room. */
+function hole(type: PolygonType, points: Point[]): Polygon {
+  return ring(type, [...points].reverse());
+}
+
+/** World units per editor unit. One, so that every number below is both. */
+const SCALE = 1;
+
+function room(...polygons: Polygon[]): Hulls {
+  return new Hulls(polygons, SCALE);
+}
+
+const ROOM = ring('level', rect(0, 0, 100, 100));
+
+describe('a move into a wall', () => {
+  test('stops a radius short of it', () => {
+    const at = room(ROOM).trace({ x: 50, y: 50 }, { x: 0, y: -100 });
+
+    expect(at.x).toBeCloseTo(50, 6);
+    expect(at.y).toBeGreaterThan(PLAYER_RADIUS - 1e-3);
+    expect(at.y).toBeLessThan(PLAYER_RADIUS + 1e-2);
+  });
+
+  test('slides along it when it arrives at an angle', () => {
+    const at = room(ROOM).trace({ x: 50, y: 50 }, { x: 30, y: -100 });
+
+    expect(at.y).toBeGreaterThan(PLAYER_RADIUS - 1e-3);
+    expect(at.y).toBeLessThan(PLAYER_RADIUS + 1e-2);
+
+    // It kept most of the sideways part of the move rather than stopping dead.
+    expect(at.x).toBeGreaterThan(70);
+  });
+
+  test('stops dead in a corner rather than slipping round it', () => {
+    const at = room(ROOM).trace({ x: 20, y: 20 }, { x: -100, y: -100 });
+
+    expect(at.x).toBeGreaterThan(PLAYER_RADIUS - 1e-3);
+    expect(at.y).toBeGreaterThan(PLAYER_RADIUS - 1e-3);
+    expect(at.x).toBeLessThan(PLAYER_RADIUS + 1e-1);
+    expect(at.y).toBeLessThan(PLAYER_RADIUS + 1e-1);
+  });
+
+  test('leaves a move that reaches nothing alone', () => {
+    const at = room(ROOM).trace({ x: 50, y: 50 }, { x: 5, y: 5 });
+
+    expect(at.x).toBeCloseTo(55, 6);
+    expect(at.y).toBeCloseTo(55, 6);
+  });
+});
+
+describe('which side of a ring is material', () => {
+  test('a room stops the player inside it', () => {
+    expect(room(ROOM).insideAny({ x: 50, y: 50 })).toBe(false);
+    expect(room(ROOM).insideAny({ x: 0.1, y: 50 })).toBe(true);
+  });
+
+  test('a hole in a room stops the player outside it', () => {
+    const pillar = hole('level', rect(40, 40, 20, 20));
+    const hulls = room(ROOM, pillar);
+
+    // Walking at the pillar from the room stops a radius short of its face.
+    const at = hulls.trace({ x: 20, y: 50 }, { x: 100, y: 0 });
+
+    expect(at.x).toBeGreaterThan(40 - PLAYER_RADIUS - 1e-2);
+    expect(at.x).toBeLessThan(40 - PLAYER_RADIUS + 1e-2);
+  });
+
+  test('a solid is the same thing said the other way', () => {
+    const pillar = ring('solid', rect(40, 40, 20, 20));
+    const at = room(ROOM, pillar).trace({ x: 20, y: 50 }, { x: 100, y: 0 });
+
+    expect(at.x).toBeGreaterThan(40 - PLAYER_RADIUS - 1e-2);
+    expect(at.x).toBeLessThan(40 - PLAYER_RADIUS + 1e-2);
+  });
+});
+
+describe('somewhere to stand', () => {
+  test('is inside a room and not inside its wall', () => {
+    const hulls = room(ROOM);
+
+    expect(hulls.standable({ x: 50, y: 50 })).toBe(true);
+    expect(hulls.standable({ x: 150, y: 50 })).toBe(false);
+    expect(hulls.standable({ x: 0.1, y: 50 })).toBe(false);
+  });
+
+  test('is not inside a solid', () => {
+    const hulls = room(ROOM, ring('solid', rect(40, 40, 20, 20)));
+
+    expect(hulls.standable({ x: 50, y: 50 })).toBe(false);
+    expect(hulls.standable({ x: 20, y: 20 })).toBe(true);
+  });
+
+  test('is not inside a hole, which nothing had to be told is a hole', () => {
+    const hulls = room(ROOM, hole('level', rect(40, 40, 20, 20)));
+
+    expect(hulls.standable({ x: 50, y: 50 })).toBe(false);
+    expect(hulls.standable({ x: 20, y: 20 })).toBe(true);
+  });
+
+  test('two rooms overlapping is still one place to stand', () => {
+    const hulls = room(ROOM, ring('level', rect(60, 20, 100, 60)));
+
+    expect(hulls.standable({ x: 80, y: 50 })).toBe(true);
+    expect(hulls.standable({ x: 140, y: 50 })).toBe(true);
+  });
+});

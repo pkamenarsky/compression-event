@@ -1,0 +1,324 @@
+// -----------------------------------------------------------------------------
+// Walking into things
+//
+// The jam build's collision, carried over with two changes.
+//
+// **The normals arrive precomputed.** `PolygonPoint` carries the edge normal
+// and the scaled bisector, worked out once where the world is written rather
+// than on every level load. Nothing here recomputes them.
+//
+// **A polygon is a ring, and a version has more of them than it was authored
+// with.** Erosion is a projection: a room whose walls close until they meet is
+// two rooms, and a room with something taken out of it has a hole wound the
+// other way. Which side of a ring is material follows from its winding and its
+// type, and is the one thing this has to get right — see `sideOf`.
+//
+// Everything else is Quake 2's: expand each wall by the player's radius so the
+// player is a point, trace the point against the convex hulls that produces,
+// stop at the first, and slide along it unless two of them arrive at once.
+// -----------------------------------------------------------------------------
+
+import { Point, Polygon, PolygonPoint, signedArea } from './world';
+
+/** World units. The player is a point and the walls are this much closer. */
+export const PLAYER_RADIUS = 0.3;
+
+/** One convex hull: the expansion of a single wall. */
+interface Hull {
+  /** Counter-clockwise, so the plane normals come out pointing outward. */
+  verts: Point[]
+  planes: { nx: number, ny: number, d: number }[]
+  /** The original wall's outward normal, which is what a slide is taken
+   * against and what tells two hulls of one wall apart from a corner. */
+  wallNx: number
+  wallNy: number
+}
+
+/**
+ * Which way a ring's walls are expanded.
+ *
+ * `withNormals` points a ring's normals away from the region it encloses in the
+ * counter-clockwise sense, whichever way round it happens to be wound. What
+ * that region *is* is the type's business: a `level` ring encloses somewhere to
+ * stand and a `solid` one encloses something to bump into, and either can be
+ * inverted by being a hole in the other.
+ *
+ * So the walls move toward the walkable side, which is along the normal for a
+ * solid and against it for a level, flipped again where the ring is a hole.
+ */
+function sideOf(polygon: Polygon): number {
+  const ccw = signedArea(polygon.points) > 0 ? 1 : -1;
+
+  return (polygon.type === 'level' ? -1 : 1) * ccw;
+}
+
+function planesOf(verts: Point[]): { nx: number, ny: number, d: number }[] {
+  const planes = [];
+
+  for (let i = 0; i < verts.length; i++) {
+    const a = verts[i], b = verts[(i + 1) % verts.length];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const len = Math.hypot(ex, ey);
+
+    if (len < 1e-12) continue;
+
+    // Counter-clockwise winding puts the outward normal at (ey, -ex).
+    const nx = ey / len, ny = -ex / len;
+
+    planes.push({ nx, ny, d: nx * a.x + ny * a.y });
+  }
+
+  return planes;
+}
+
+/** Where two segments meet along the first, or nothing. */
+function meeting(
+  p1: Point, p2: Point,
+  p3: Point, p4: Point,
+): number | null {
+  const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+
+  const det = d1x * d2y - d1y * d2x;
+  if (Math.abs(det) < 1e-12) return null;
+
+  const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / det;
+  const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / det;
+
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
+}
+
+function hullOf(
+  a: PolygonPoint,
+  b: PolygonPoint,
+  scale: number,
+  side: number,
+  radius: number,
+): Hull | null {
+  const wa = { x: a.x * scale, y: a.y * scale };
+  const wb = { x: b.x * scale, y: b.y * scale };
+
+  if (Math.hypot(wb.x - wa.x, wb.y - wa.y) < 1e-12) return null;
+
+  // Along the bisector rather than the edge normal, so that both walls meeting
+  // at a corner end up exactly `radius` away from it rather than pinching.
+  const ea = { x: wa.x + a.bnx * radius * side, y: wa.y + a.bny * radius * side };
+  const eb = { x: wb.x + b.bnx * radius * side, y: wb.y + b.bny * radius * side };
+
+  // At a sharp enough corner the expanded edge crosses back over the original
+  // one, and the quad turns itself inside out. The triangle up to the crossing
+  // is what is left of it.
+  const crossed = meeting(wa, wb, ea, eb);
+
+  const verts: Point[] = crossed === null
+    ? [wa, wb, eb, ea]
+    : [wa, wb, { x: wa.x + crossed * (wb.x - wa.x), y: wa.y + crossed * (wb.y - wa.y) }];
+
+  if (signedArea(verts) < 0) verts.reverse();
+
+  const planes = planesOf(verts);
+  if (planes.length < 3) return null;
+
+  return { verts, planes, wallNx: a.enx, wallNy: a.eny };
+}
+
+/** What a trace against one hull found: where it went in, where it would come
+ * out, and the plane it went in through. */
+interface Crossed {
+  enter: number
+  exit: number
+  nx: number
+  ny: number
+}
+
+const MISSED: Crossed = { enter: 1, exit: -1, nx: 0, ny: 0 };
+
+function traced(from: Point, to: Point, hull: Hull): Crossed {
+  let enter = -1, exit = 1, nx = 0, ny = 0;
+
+  for (const plane of hull.planes) {
+    const ds = plane.nx * from.x + plane.ny * from.y - plane.d;
+    const de = plane.nx * to.x + plane.ny * to.y - plane.d;
+
+    // Outside this plane the whole way is outside the hull, whatever the
+    // others say.
+    if (ds > 0 && de > 0) return MISSED;
+    if (ds <= 0 && de <= 0) continue;
+
+    const frac = ds / (ds - de);
+
+    if (ds > 0) {
+      if (frac > enter) {
+        enter = frac;
+        nx = plane.nx;
+        ny = plane.ny;
+      }
+    }
+    else if (frac < exit) {
+      exit = frac;
+    }
+  }
+
+  return { enter, exit, nx, ny };
+}
+
+function hit(c: Crossed): boolean {
+  return c.enter < c.exit && c.enter >= 0 && c.enter <= 1;
+}
+
+/** How far behind the wall the trace stops, so that the next frame does not
+ * start inside it. */
+const GAP = 1e-4;
+
+/** Two hulls whose walls point the same way are one wall, not a corner. */
+const SAME_WALL = 0.99;
+
+/** Hits this much of the move apart are the same instant. */
+const TOGETHER = 0.01;
+
+/**
+ * One version's walls, expanded and ready to be walked into.
+ *
+ * Built per version rather than per frame. The walls the player sees are the
+ * union's, morphing continuously; the walls that stop the player are the
+ * rooms', and a room is a polygon. During a transition the two are a little
+ * apart, which is what the jam build had between its snaps as well.
+ */
+export class Hulls {
+  private hulls: Hull[] = [];
+
+  constructor(
+    private polygons: Polygon[],
+    private scale: number,
+    radius = PLAYER_RADIUS,
+  ) {
+    for (const polygon of polygons) {
+      if (polygon.type !== 'level' && polygon.type !== 'solid') continue;
+      if (polygon.points.length < 3) continue;
+
+      const side = sideOf(polygon);
+      const n = polygon.points.length;
+
+      for (let i = 0; i < n; i++) {
+        const made = hullOf(polygon.points[i], polygon.points[(i + 1) % n], this.scale, side, radius);
+
+        if (made !== null) this.hulls.push(made);
+      }
+    }
+  }
+
+  /** Inside a wall, which is not somewhere the player is allowed to be. */
+  insideAny(at: Point): boolean {
+    return this.hulls.some(hull =>
+      hull.planes.every(p => p.nx * at.x + p.ny * at.y - p.d <= 0));
+  }
+
+  /**
+   * Somewhere to stand: not inside a wall, not inside anything solid, and
+   * inside some room.
+   *
+   * The three questions are asked of the source rings rather than of the
+   * union, and holes are handled by the winding rather than by being listed:
+   * a hole is wound against its outer ring, so the nonzero rule takes it out
+   * without anything here having to know which is which.
+   */
+  standable(at: Point): boolean {
+    if (this.insideAny(at)) return false;
+    if (this.winding(at, 'solid') !== 0) return false;
+
+    return this.winding(at, 'level') !== 0;
+  }
+
+  /** How many times the rings of one type wind round the point. */
+  private winding(at: Point, type: Polygon['type']): number {
+    const x = at.x / this.scale, y = at.y / this.scale;
+    let turns = 0;
+
+    for (const polygon of this.polygons) {
+      if (polygon.type !== type) continue;
+
+      const points = polygon.points;
+
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+
+        if (a.y <= y) {
+          if (b.y > y && (b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y) > 0) turns++;
+        }
+        else if (b.y <= y && (b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y) < 0) {
+          turns--;
+        }
+      }
+    }
+
+    return turns;
+  }
+
+  /**
+   * A move, stopped and slid.
+   *
+   * Everything is traced, not just the first thing in the way: two walls
+   * arriving at the same instant is a corner and stops the player dead, where
+   * sliding along either one of them would walk through the other.
+   */
+  trace(start: Point, move: Point): Point {
+    const length = Math.hypot(move.x, move.y);
+    if (length < 1e-8) return { ...start };
+
+    const end = { x: start.x + move.x, y: start.y + move.y };
+    const hits = [];
+
+    for (const hull of this.hulls) {
+      const crossed = traced(start, end, hull);
+
+      if (hit(crossed)) {
+        hits.push({ frac: crossed.enter, ...crossed, wall: hull });
+      }
+    }
+
+    if (hits.length === 0) return end;
+
+    hits.sort((a, b) => a.frac - b.frac);
+
+    const first = hits[0];
+    const safe = Math.max(0, first.frac - GAP / length);
+    const stopped = { x: start.x + move.x * safe, y: start.y + move.y * safe };
+
+    // Two hulls off one wall are not two walls: a long wall is one hull per
+    // edge, and crossing where they meet would otherwise read as a corner.
+    const walls: typeof hits = [];
+
+    for (const h of hits) {
+      if (h.frac - first.frac >= TOGETHER) break;
+
+      const known = walls.some(w =>
+        h.wall.wallNx * w.wall.wallNx + h.wall.wallNy * w.wall.wallNy > SAME_WALL);
+
+      if (!known) walls.push(h);
+    }
+
+    if (walls.length >= 2) return stopped;
+
+    const rest = { x: move.x * (1 - first.frac), y: move.y * (1 - first.frac) };
+    const into = rest.x * first.nx + rest.y * first.ny;
+    const slide = { x: rest.x - into * first.nx, y: rest.y - into * first.ny };
+
+    const along = Math.hypot(slide.x, slide.y);
+    if (along < 1e-8) return stopped;
+
+    // The slide is traced too: sliding along one wall is how the player
+    // reaches the next one.
+    const to = { x: stopped.x + slide.x, y: stopped.y + slide.y };
+    let frac = 1;
+
+    for (const hull of this.hulls) {
+      const crossed = traced(stopped, to, hull);
+
+      if (hit(crossed) && crossed.enter < frac) frac = crossed.enter;
+    }
+
+    const safely = Math.max(0, frac - GAP / along);
+
+    return { x: stopped.x + slide.x * safely, y: stopped.y + slide.y * safely };
+  }
+}
