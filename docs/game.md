@@ -207,10 +207,91 @@ that differs there is a flicker in the one place a viewer is looking hardest.
 over a room eroding, a pillar turning in a wall, and rooms joining. They agree
 to single precision, which is the most that can be asked of a `Float32Array`.
 
-**What will not scale, and is fine for now.** Every edit rebuilds the wall
-buffers whole. `worldset` hands back a diff naming the pieces an edit disturbed,
-so the answer when that hurts is a geometry pool keyed by piece rather than a
-rebuild. A level of a few hundred polygons will not notice.
+**The rebuild is not worth avoiding.** Every edit rebuilds the wall buffers
+whole, and the obvious next move is to use the diff `worldset` already hands
+back — `apply` returns `Change`, naming the pieces an edit disturbed, which
+`live` currently drops on the floor. Measured, it is not worth it. A grid of
+overlapping rooms, one polygon nudged, which is the middle of a drag:
+
+```
+             boundary            ONE EDIT
+  100 polys  177 runs   381 pts   live 0.37ms   runs + rebuild 0.05ms
+ 1000 polys  1728 runs  3546 pts  live 0.48ms   runs + rebuild 0.45ms
+```
+
+The whole rebuild is 0.45ms at a thousand polygons — *less* than the incremental
+CSG update that has to happen anyway. Spending the diff would buy back under
+half a millisecond and cost a slab allocator over the vertex buffers with a free
+list, degenerate triangles or an index rewrite on free, partial uploads through
+three's update ranges, and compaction when it fragments. Several hundred lines
+and a new class of stale-slot bug, to save less than the work already being done
+to know what changed.
+
+The reason it stays cheap is that **the boundary does not grow with the level**.
+A thousand overlapping rooms have 3546 boundary points, because the union
+collapses every interior wall; it grows with the level's perimeter. The rebuild
+would have to get some fifty times bigger before it cost a frame, and at that
+point the diff is sitting there waiting.
+
+### 4c. lineOpacity, which is not set at all
+
+**What is wrong.** A vertical line is drawn at every point of every outline run,
+including points that are not corners. They show up as lines standing in the
+middle of flat walls.
+
+They come from `spanning`. Both ends of a span have to be written over the same
+corners or the rings cannot interpolate, so a corner that dies at the far end is
+kept for the whole span and placed *exactly on the edge between its
+ring-neighbours* at the end that does not have it. Geometrically it is not
+there; structurally it is a point of the ring like any other, and the line pass
+cannot tell the difference. A room with a corner taken out at v1:
+
+```
+morph  t=0 … t=1   interior 4   collinear 1     ← carried the whole way across
+still  v1          interior 3   collinear 0     ← the editor's own answer
+```
+
+`versioning.md` already says what should happen, under *lineOpacity*: a vertex
+that does not exist across a whole stretch is present in the ring, on the edge
+between its neighbours, with opacity 0, and the line fades in over precisely the
+stretch where the vertex is emerging. Nothing computes it.
+
+**Why it is not simply a collinearity test.** Hiding points that lie on a
+straight line would work on this case and would be the wrong thing: it reads the
+symptom rather than the cause, it costs a test per point per frame, and it
+cannot tell a corner that is *arriving* — genuinely there, momentarily
+straight — from one that was never there. The fact wanted is existence, and
+existence is known: `spanning` computes `here.has(c.id)` and `there.has(c.id)`
+and throws both away.
+
+**What makes it awkward.** The fact is known about a *source* corner, and the
+thing that needs it is an *output* point, several transformations downstream:
+source ring → `project` → eroded ring → CSG → boundary run. `Origin` already
+links an output point to an eroded ring vertex, by position. The missing link is
+eroded vertex → source corner, and erosion does not track it — the surviving
+boundary comes from the band that `erode` subtracts, not from the ring, and then
+goes through a full arrangement.
+
+**The way through, without provenance.** Erode twice. A dead corner is exactly
+collinear in the source ring, so removing it changes the *geometry* of the
+projection not at all — only its vertex count. So:
+
+```
+project(source with the dead corners, depth)      → the ring the span uses
+project(source without them, depth)               → the same shape, fewer vertices
+```
+
+Any vertex of the first that is not in the second is a dead corner's artifact,
+and its opacity at that end is 0. Matching is by position with the same snap
+`origins` already uses, and it is exact rather than approximate, because the two
+rings are the same curve. It costs one extra erosion per polygon per keyframe,
+and only for polygons whose corner set actually changes across the span.
+
+**Then it is plumbing.** `Stretch` gains an opacity per run point at each end;
+`BakedSpan` gains `opacityA` and `opacityB`; `extrude` marks which line vertices
+are the vertical pair rather than the horizontal ones; the morph vertex shader
+lerps the two and the line fragment shader drops the vertical where it is 0. The
+still path has no such vertices and is 1 throughout.
 
 ### 5. The game loop
 
