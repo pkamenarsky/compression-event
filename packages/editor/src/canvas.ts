@@ -218,7 +218,7 @@ export function worldCanvas(
       const held = new Map<VertexId, { id: PolygonId, from: Point }>();
 
       for (const it of items) {
-        it.polygon.points.forEach((corner, i) => {
+        it.corners.forEach((corner, i) => {
           if (ids.includes(corner.id)) held.set(corner.id, { id: it.id, from: it.source[i] });
         });
       }
@@ -241,7 +241,7 @@ export function worldCanvas(
               const it = resolveAt(world, v).find(r => r.id === id);
               if (it === undefined) continue;
 
-              const index = it.polygon.points.findIndex(c => c.id === vertex);
+              const index = it.corners.findIndex(c => c.id === vertex);
               if (index < 0) continue;
 
               const edit = placeVertex(
@@ -394,7 +394,7 @@ export function worldCanvas(
         update(s => marked(
           {
             ...s,
-            world: removeVertices(s.world, [corner.vertex]),
+            world: removeVertices(s.world, s.currentVersion, [corner.vertex]),
             selection: {
               ...s.selection,
               vertices: s.selection.vertices.filter(id => id !== corner.vertex),
@@ -514,7 +514,7 @@ export function worldCanvas(
           return marked(
             {
               ...s,
-              world: removeVertices(s.world, s.selection.vertices),
+              world: removeVertices(s.world, s.currentVersion, s.selection.vertices),
               selection: { ...s.selection, vertices: [] },
             },
             s.world,
@@ -1087,7 +1087,7 @@ function polygons(
 
     for (const it of items) {
       it.source.forEach((p, i) => {
-        if (corners.has(it.polygon.points[i].id) !== picked) return;
+        if (corners.has(it.corners[i].id) !== picked) return;
 
         const s = toScreen(view, p);
         ctx.rect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5);

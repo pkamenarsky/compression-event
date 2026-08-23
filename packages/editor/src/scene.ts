@@ -36,6 +36,7 @@ import {
   Clipping,
   EMPTY_TRANSFORM,
   Edit,
+  Vertex,
   Polygon,
   PolygonId,
   PolygonType,
@@ -43,6 +44,7 @@ import {
   VersionId,
   VertexId,
   World,
+  standing,
 } from './types';
 import {
   Edit as SetEdit,
@@ -57,6 +59,15 @@ import {
 export interface Resolved {
   id: PolygonId
   polygon: Polygon
+  /**
+   * The corners this version actually has, in ring order.
+   *
+   * Index for index with `local` and `source`. `polygon.points` is not: it
+   * holds every corner the polygon has ever had, and which of them are standing
+   * is a question about the version. Anything wanting the id of the corner it
+   * is looking at reads this.
+   */
+  corners: Vertex[]
   /** The ring in the polygon's own frame: as drawn, plus every displacement
    * written at this version or before it. */
   local: Ring
@@ -124,7 +135,7 @@ export function addPolygon(
   const polygon: Polygon = {
     type,
     birth,
-    points: wound.map((at, i) => ({ id: id + 1 + i, at: { ...at } })),
+    points: wound.map((at, i) => ({ id: id + 1 + i, at: { ...at }, birth, death: null })),
   };
 
   const polygons = new Map(world.polygons);
@@ -238,16 +249,19 @@ export function unplace(m: Affine, p: Point): Point {
   };
 }
 
-/** The vertex displacements this layer holds, added to the ones already
- * standing. Keyed by id, so an edit survives a vertex being inserted upstream. */
-function displaced(polygon: Polygon, ring: Ring, vertices: Map<VertexId, Point>): Ring {
-  if (vertices.size === 0) return ring;
+/**
+ * This layer's displacements, added to what the corners already stood at.
+ *
+ * Keyed by corner throughout, rather than by where it sits in the ring: which
+ * corners a version has is not what the version before it had, so an index is
+ * not a name that survives the step.
+ */
+function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): void {
+  for (const [id, d] of vertices) {
+    const p = at.get(id);
 
-  return ring.map((p, i) => {
-    const d = vertices.get(polygon.points[i].id);
-
-    return d === undefined ? p : { x: p.x + d.x, y: p.y + d.y };
-  });
+    if (p !== undefined) at.set(id, { x: p.x + d.x, y: p.y + d.y });
+  }
 }
 
 /**
@@ -284,7 +298,12 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
 }
 
 export function resolveAt(world: World, v: VersionId): Resolved[] {
-  const local = new Map<PolygonId, Ring>();
+  const inherited = new Set(chain(world, v));
+
+  // Where each corner stands in its polygon's own frame. A map rather than a
+  // ring, because the ring is not a fixed length any more: corners arrive and
+  // leave as the chain is walked, and only the ids hold still.
+  const local = new Map<PolygonId, Map<VertexId, Point>>();
   const frame = new Map<PolygonId, Affine>();
   const depth = new Map<PolygonId, number>();
 
@@ -293,17 +312,26 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
     for (const [id, polygon] of world.polygons) {
       if (polygon.birth === k) {
-        local.set(id, polygon.points.map(p => ({ ...p.at })));
+        local.set(id, new Map());
         frame.set(id, IDENTITY);
         depth.set(id, 0);
       }
 
-      const ring = local.get(id);
+      const at = local.get(id);
+
+      if (at === undefined) continue;
+
+      // Corners this version introduces take their resting place before its
+      // own layer is applied, so that a layer can move a corner it just added.
+      for (const corner of polygon.points) {
+        if (corner.birth === k) at.set(corner.id, { ...corner.at });
+      }
+
       const edit = version.edits.get(id);
 
-      if (ring === undefined || edit === undefined) continue;
+      if (edit === undefined) continue;
 
-      local.set(id, displaced(polygon, ring, edit.vertices));
+      displace(at, edit.vertices);
       frame.set(id, compose(affine(edit.transform), frame.get(id)!));
       depth.set(id, edit.transform.erosion);
     }
@@ -311,13 +339,28 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
   const out: Resolved[] = [];
 
-  for (const [id, ring] of local) {
+  for (const [id, at] of local) {
     const polygon = world.polygons.get(id)!;
+    const corners = polygon.points.filter(c => standing(c, inherited));
+
+    // A polygon whose corners have all gone is not geometry any more. It cannot
+    // happen through the editor, which will not take a ring below three, but
+    // resolving is not the place to be sure of that.
+    if (corners.length < 3) continue;
+
+    const ring = corners.map(c => at.get(c.id) ?? { ...c.at });
     const erosion = depth.get(id) ?? 0;
     const m = frame.get(id)!;
-    const source = place(m, ring);
 
-    out.push(resolved({ id, polygon, local: ring, frame: m, source, erosion }));
+    out.push(resolved({
+      id,
+      polygon,
+      corners,
+      local: ring,
+      frame: m,
+      source: place(m, ring),
+      erosion,
+    }));
   }
 
   return out;
@@ -368,7 +411,7 @@ export function withEdit(world: World, v: VersionId, id: PolygonId, edit: Edit):
  * layer as it found it.
  */
 export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point): Edit {
-  const id = it.polygon.points[index].id;
+  const id = it.corners[index].id;
   const was = edit.vertices.get(id) ?? { x: 0, y: 0 };
 
   const target = unplace(it.frame, at);
@@ -507,7 +550,7 @@ export function hitVertex(
 
       if (d <= bestDistance) {
         bestDistance = d;
-        best = { id: it.id, index, vertex: it.polygon.points[index].id };
+        best = { id: it.id, index, vertex: it.corners[index].id };
       }
     });
   }
@@ -583,7 +626,7 @@ export function verticesWithinBox(items: Resolved[], a: Point, b: Point): Vertex
   for (const it of items) {
     it.source.forEach((p, i) => {
       if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
-        out.push(it.polygon.points[i].id);
+        out.push(it.corners[i].id);
       }
     });
   }
@@ -594,17 +637,25 @@ export function verticesWithinBox(items: Resolved[], a: Point, b: Point): Vertex
 // -----------------------------------------------------------------------------
 // Corners, added and taken away
 //
-// A polygon's `points` are what gain and lose one, so a corner exists at every
-// version or at none. It could not be otherwise: the versions after this one
-// are layers over the same ring, and a ring with four corners at v0 and five at
-// v1 leaves their displacements with nothing to be against.
+// A corner is added and removed the way a polygon is: it is born into the
+// version doing the adding and dies at the version doing the removing, and the
+// versions before that one are not touched. Nothing a layer does reaches back
+// past itself — that is the rule the whole design rests on, and a corner is not
+// an exception to it.
 //
-// What that costs is that inserting has to decide where the new corner stands
-// at versions nobody was looking at. It is put the same fraction along the edge
-// as the click was, measured in the polygon's own frame, which leaves it
-// exactly on the line at every version whose layer has not pulled the two ends
-// apart — and where one has, this version's layer takes the displacement that
-// puts it under the cursor and the others keep the straight edge they had.
+// The list itself never shrinks. `polygon.points` holds every corner the
+// polygon has ever had, in ring order, and which of them a version has is
+// `standing`. Keeping the dead in place is what lets a corner be inserted
+// between two others without the versions that lack it losing the order.
+//
+// A corner has to stand somewhere at versions that were never looking at it,
+// and it is put the same fraction along the edge as the click was, measured in
+// the polygon's own frame. Where an upstream layer has since pulled the edge's
+// ends apart that is no longer under the cursor, and the adding version's own
+// layer takes the displacement that makes up the difference.
+//
+// What the span between two versions does about the change is `bake.ts`: the
+// corner is there at both ends of it, sitting on the edge it grows out of.
 // -----------------------------------------------------------------------------
 
 /**
@@ -622,20 +673,27 @@ export function addVertex(
   index: number,
   at: Point,
 ): { world: World, vertex: VertexId } {
-  const points = [...it.polygon.points];
-  const next = (index + 1) % points.length;
+  const next = (index + 1) % it.corners.length;
   const t = fraction(it.source[index], it.source[next], at);
 
-  const from = points[index].at, to = points[next].at;
+  const from = it.corners[index].at, to = it.corners[next].at;
   const vertex = world.nextId;
 
-  points.splice(index + 1, 0, {
+  const corner: Vertex = {
     id: vertex,
     at: {
       x: from.x + (to.x - from.x) * t,
       y: from.y + (to.y - from.y) * t,
     },
-  });
+    birth: v,
+    death: null,
+  };
+
+  // Directly after the corner the edge leaves, in the full list rather than in
+  // this version's view of it: a corner that died earlier still holds its place
+  // in the order, and stepping over it would put this one on the wrong edge.
+  const points = [...it.polygon.points];
+  points.splice(points.indexOf(it.corners[index]) + 1, 0, corner);
 
   const polygons = new Map(world.polygons);
   polygons.set(it.id, { ...it.polygon, points });
@@ -645,7 +703,7 @@ export function addVertex(
 
   if (now === undefined) return { world: grown, vertex };
 
-  const where = now.polygon.points.findIndex(p => p.id === vertex);
+  const where = now.corners.findIndex(c => c.id === vertex);
   const stands = now.source[where];
 
   if (Math.hypot(stands.x - at.x, stands.y - at.y) <= 1e-9) {
@@ -658,43 +716,48 @@ export function addVertex(
 }
 
 /**
- * Corners taken out, along with every displacement written against them.
+ * Corners taken out as of `v`, and standing as they were before it.
  *
- * Three is the fewest a ring can have and still be one, so a polygon at three
- * keeps all of them: what is being asked for below that is to delete the
+ * Their displacements stay written where they were written. A layer that moved
+ * a corner still moved it, at the versions that still have it, and dropping
+ * that on the way out would quietly edit the past.
+ *
+ * Three is the fewest a ring can have and still be one, so a polygon down to
+ * three keeps all of them: what is being asked for below that is to delete the
  * polygon, and that is a different thing to ask for.
  */
-export function removeVertices(world: World, going: Iterable<VertexId>): World {
+export function removeVertices(
+  world: World,
+  v: VersionId,
+  going: Iterable<VertexId>,
+): World {
   const gone = new Set(going);
 
   if (gone.size === 0) return world;
 
+  const inherited = new Set(chain(world, v));
   const polygons = new Map(world.polygons);
   let changed = false;
 
   for (const [id, polygon] of world.polygons) {
-    const points = polygon.points.filter(p => !gone.has(p.id));
+    const here = polygon.points.filter(c => standing(c, inherited));
+    const taking = here.filter(c => gone.has(c.id));
 
-    if (points.length === polygon.points.length || points.length < 3) continue;
+    if (taking.length === 0 || here.length - taking.length < 3) continue;
+
+    const points = polygon.points.flatMap(c => {
+      if (!gone.has(c.id) || !standing(c, inherited)) return [c];
+
+      // Added and taken out at the same version: it never stood anywhere, so
+      // there is nothing for the order to remember and it goes entirely.
+      return c.birth === v ? [] : [{ ...c, death: v }];
+    });
 
     polygons.set(id, { ...polygon, points });
     changed = true;
   }
 
-  if (!changed) return world;
-
-  // The layers' displacements are keyed by corner, and a key nothing names is
-  // never read again. It is dropped anyway so that a file says only what is
-  // true; undo puts the whole world back, displacements included.
-  const versions = world.versions.map(version => ({
-    ...version,
-    edits: new Map([...version.edits].map(([id, edit]) => [
-      id,
-      { ...edit, vertices: new Map([...edit.vertices].filter(([v]) => !gone.has(v))) },
-    ])),
-  }));
-
-  return { ...world, polygons, versions };
+  return changed ? { ...world, polygons } : world;
 }
 
 // -----------------------------------------------------------------------------

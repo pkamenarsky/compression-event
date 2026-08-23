@@ -110,6 +110,8 @@ import {
   PolygonId,
   Transform,
   VersionId,
+  Vertex,
+  VertexId,
   World,
 } from './types';
 import { pieces } from './worldset';
@@ -330,9 +332,115 @@ interface Moving {
   at: Resolved
   base: Affine
   layer: Transform
+  /**
+   * The corners both ends are written over: every corner either version has,
+   * in ring order. `local` and `corners` are index for index at both ends, so
+   * the two rings interpolate straight across. See `spanning`.
+   */
+  corners: Vertex[]
   local: [Ring, Ring]
   depth: [number, number]
   newborn: boolean
+}
+
+/**
+ * The two ends of a span written over the same corners, so that a ring which
+ * gains or loses one still interpolates.
+ *
+ * A corner added at the far end of the span is put in at the near end as well,
+ * sitting on the edge it is about to grow out of; one taken away at the far end
+ * stays for the whole span and lands back on that edge at the end of it. Either
+ * way the ring never changes length while the span runs, and at the instant the
+ * corner is not supposed to exist it is a point on a straight edge, which is
+ * the same shape as not being there at all.
+ *
+ * Which edge is the whole of it. The corner goes between its nearest
+ * neighbours *that the end being filled in actually has* — not its nearest
+ * neighbours that both ends have. Those are different questions whenever a
+ * corner arrives next to one that is leaving: the leaving one is still there at
+ * the near end, and stepping over it to reach the next survivor anchors the
+ * arrival on a chord across the polygon's inside rather than on its boundary.
+ * What that looks like is a corner diving through the middle of the shape and
+ * back out, which is what it did.
+ *
+ * Where along that edge is a matter of taste rather than correctness — anywhere
+ * on it leaves the shape alone. Where the far end has the same two neighbours,
+ * the fraction the corner sits at over there is used, so one added near an end
+ * of a long edge grows from near that end rather than sliding along it. Where
+ * it does not — the arriving-beside-a-leaving case again — there is no shared
+ * pair to measure against, and a run of them is spread evenly instead.
+ */
+function spanning(was: Resolved, now: Resolved): { corners: Vertex[], local: [Ring, Ring] } {
+  const here = new Map(was.corners.map((c, i) => [c.id, was.local[i]]));
+  const there = new Map(now.corners.map((c, i) => [c.id, now.local[i]]));
+
+  const corners = was.polygon.points.filter(c => here.has(c.id) || there.has(c.id));
+
+  // Same count as both ends means the same corners as both ends: each is a
+  // subset of the union, so equal sizes make all three the same set.
+  if (corners.length === was.corners.length && corners.length === now.corners.length) {
+    return { corners, local: [was.local, now.local] };
+  }
+
+  const n = corners.length;
+  const ends = [here, there] as const;
+  const local: [Ring, Ring] = [
+    corners.map(c => here.get(c.id) ?? ORIGIN),
+    corners.map(c => there.get(c.id) ?? ORIGIN),
+  ];
+
+  // The nearest corner in that direction that `has` holds. It terminates
+  // because neither end is ever left with fewer than three corners.
+  const nearest = (i: number, step: number, has: Map<VertexId, Point>): number => {
+    let k = i;
+
+    do {
+      k = (k + step + n) % n;
+    }
+    while (!has.has(corners[k].id));
+
+    return k;
+  };
+
+  corners.forEach((c, i) => {
+    for (const side of [0, 1] as const) {
+      const mine = ends[side], other = ends[1 - side];
+
+      if (mine.has(c.id)) continue;
+
+      const before = nearest(i, -1, mine), after = nearest(i, 1, mine);
+      const from = mine.get(corners[before].id)!, to = mine.get(corners[after].id)!;
+
+      const sameBefore = nearest(i, -1, other) === before;
+      const sameAfter = nearest(i, 1, other) === after;
+
+      // Everything strictly between two neighbours is missing here by
+      // construction, so its place in that run is all the spreading needs.
+      const at = sameBefore && sameAfter
+        ? fraction(other.get(corners[before].id)!, other.get(corners[after].id)!, other.get(c.id)!)
+        : ((i - before + n) % n) / ((after - before + n) % n);
+
+      local[side][i] = between2(from, to, at);
+    }
+  });
+
+  return { corners, local };
+}
+
+const ORIGIN: Point = { x: 0, y: 0 };
+
+/** How far along `a`–`b` the foot of `p` falls, clamped to the segment. */
+function fraction(a: Point, b: Point, p: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = dx * dx + dy * dy;
+
+  if (len === 0) return 0;
+
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+}
+
+function between2(a: Point, b: Point, t: number): Point {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
 function moving(world: World, from: VersionId): Moving[] {
@@ -349,17 +457,21 @@ function moving(world: World, from: VersionId): Moving[] {
         at: it,
         base: it.frame,
         layer: EMPTY_TRANSFORM,
+        corners: it.corners,
         local: [it.local, it.local] as [Ring, Ring],
         depth: [it.erosion, it.erosion] as [number, number],
         newborn: true,
       };
     }
 
+    const over = spanning(was, it);
+
     return {
       at: it,
       base: was.frame,
       layer,
-      local: [was.local, it.local] as [Ring, Ring],
+      corners: over.corners,
+      local: over.local,
       depth: [was.erosion, it.erosion] as [number, number],
       newborn: false,
     };
@@ -475,6 +587,7 @@ function world1(items: Moving[], t: number): Resolved[] {
     out.push(resolved({
       id: m.at.id,
       polygon: m.at.polygon,
+      corners: m.corners,
       local,
       frame,
       source,

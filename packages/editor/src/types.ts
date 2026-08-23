@@ -135,10 +135,25 @@ export type PolygonId = number;
 export type VertexId = number;
 export type VersionId = number;
 
-/** A corner, and where it was put when it was drawn. */
+/**
+ * A corner, where it was put when it was drawn, and the stretch of the chain
+ * over which it is one of the polygon's.
+ *
+ * Corners come and go the way polygons do, and for the same reason: a version
+ * is a layer over the versions before it, and nothing a layer does may reach
+ * back past itself. Adding a corner at v3 and having it appear at v0 is exactly
+ * the backward propagation the whole design is built to refuse.
+ *
+ * `death` is where it stops, not the last version that has it, so the two read
+ * the same way round: alive from `birth`, gone from `death`.
+ */
 export interface Vertex {
   id: VertexId
   at: Point
+  /** The version whose layer put it there. */
+  birth: VersionId
+  /** The version whose layer took it out, or nothing while it still stands. */
+  death: VersionId | null
 }
 
 /**
@@ -150,6 +165,12 @@ export interface Vertex {
  * `points` is ordered, because winding matters. Two vertices resolving to the
  * same position are still distinct ids; coincidence is emergent, never
  * declared.
+ *
+ * It holds every corner the polygon has ever had, in ring order, including the
+ * ones no longer standing and the ones not yet. Which of them a version
+ * actually has is `standing`; the order is the one thing they all agree on, and
+ * keeping the dead in place is what lets a corner be inserted between two
+ * others without the versions that lack it losing track of where it went.
  */
 export interface Polygon {
   type: PolygonType
@@ -189,6 +210,18 @@ export interface Version {
   /** Whether it draws as a ghost while another version is the one on screen. */
   visible: boolean
   edits: Map<PolygonId, Edit>
+}
+
+/**
+ * Whether a corner is one of the polygon's, at a version that inherits from
+ * `from`: born into one of those versions, and not yet taken out by one.
+ *
+ * Membership rather than `<=`, because the chain is a chain rather than a
+ * count. Versions happen to be numbered in order today and forks would end
+ * that; nothing here would need changing when they do.
+ */
+export function standing(corner: Vertex, from: ReadonlySet<VersionId>): boolean {
+  return from.has(corner.birth) && (corner.death === null || !from.has(corner.death));
 }
 
 export interface World {

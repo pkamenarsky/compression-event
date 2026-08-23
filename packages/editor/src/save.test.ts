@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
+import { resolveAt } from './scene';
 import { addPolygon, editAt, withEdit } from './scene';
 import { EditorState, emptyWorld, initialState } from './types';
 
@@ -73,5 +74,37 @@ describe('save', () => {
     const file = { ...saved(world()), format: FORMAT + 1 };
 
     expect(() => restored(file)).toThrow(/format/);
+  });
+
+  test('a format-3 file opens, with every corner standing throughout', () => {
+    // Before 4 there was no way for a corner to say it came or went, so a file
+    // that says nothing is read as one where none of them did.
+    const file = saved(world());
+    const old = {
+      ...file,
+      format: 3,
+      world: {
+        ...file.world,
+        polygons: file.world.polygons.map(([id, p]) => [
+          id,
+          { ...p, points: p.points.map(({ id: v, at }) => ({ id: v, at })) },
+        ]),
+      },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    for (const [id, p] of after.world.polygons) {
+      expect(p.points.length).toBeGreaterThan(2);
+
+      for (const c of p.points) {
+        expect(c.birth).toEqual(p.birth);
+        expect(c.death).toEqual(null);
+      }
+
+      // And it resolves to the same ring the format-4 file does.
+      expect(resolveAt(after.world, 4).find(r => r.id === id)!.corners.length)
+        .toEqual(p.points.length);
+    }
   });
 });

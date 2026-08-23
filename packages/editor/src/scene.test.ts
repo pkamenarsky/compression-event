@@ -472,34 +472,62 @@ describe('corners added and taken away', () => {
 
     const after = addVertex(bent, 1, only(bent, 1, ids[0]), 0, at);
     const now = only(after.world, 1, ids[0]);
-    const where = now.polygon.points.findIndex(c => c.id === after.vertex);
+    const where = now.corners.findIndex(c => c.id === after.vertex);
 
     expect(now.source[where].x).toBeCloseTo(at.x, 9);
     expect(now.source[where].y).toBeCloseTo(at.y, 9);
-
-    // And the version before it keeps the straight edge it had.
-    const before = only(after.world, 0, ids[0]);
-    expect(before.source.length).toEqual(5);
   });
 
-  test('a corner comes out of every version at once, with its displacements', () => {
+  test('a corner added at one version is not there at the versions before it', () => {
+    // The rule the whole design rests on: nothing a layer does reaches back
+    // past itself. A corner is not an exception to it.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const after = addVertex(world, 2, only(world, 2, ids[0]), 0, { x: 50, y: 0 }).world;
+
+    expect(only(after, 0, ids[0]).corners.length).toEqual(4);
+    expect(only(after, 1, ids[0]).corners.length).toEqual(4);
+    expect(only(after, 2, ids[0]).corners.length).toEqual(5);
+    expect(only(after, 3, ids[0]).corners.length).toEqual(5);
+  });
+
+  test('a corner taken out at one version is still there at the versions before it', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const going = world.polygons.get(ids[0])!.points[2].id;
+    const after = removeVertices(world, 2, [going]);
+
+    expect(ring(after, 1, ids[0])).toEqual([
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 },
+    ]);
+    expect(ring(after, 2, ids[0])).toEqual([
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 },
+    ]);
+  });
+
+  test('a corner keeps the displacements written against it where it still stands', () => {
+    // Dropping them on the way out would quietly edit the past: the layer that
+    // moved the corner still moved it, at the versions that still have it.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const nudged = drag(world, 1, ids[0], 2, { x: 130, y: 130 });
     const going = nudged.polygons.get(ids[0])!.points[2].id;
-    const after = removeVertices(nudged, [going]);
+    const after = removeVertices(nudged, 2, [going]);
 
-    expect(ring(after, 0, ids[0])).toEqual([
-      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 },
-    ]);
-    expect(ring(after, 1, ids[0]).length).toEqual(3);
-    expect(after.versions[1].edits.get(ids[0])?.vertices.has(going)).toEqual(false);
+    expect(ring(after, 1, ids[0])[2]).toEqual({ x: 130, y: 130 });
+    expect(ring(after, 2, ids[0]).length).toEqual(3);
+  });
+
+  test('a corner added and taken out at the same version leaves no trace', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const added = addVertex(world, 1, only(world, 1, ids[0]), 0, { x: 50, y: 0 });
+    const after = removeVertices(added.world, 1, [added.vertex]);
+
+    expect(after.polygons.get(ids[0])!.points.length).toEqual(4);
   });
 
   test('the last three corners stay: below that there is no ring to talk about', () => {
     const { world, ids } = drawn(['level', [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }]]);
     const all = world.polygons.get(ids[0])!.points.map(p => p.id);
 
-    expect(removeVertices(world, [all[0]])).toBe(world);
+    expect(removeVertices(world, 0, [all[0]])).toBe(world);
   });
 
   test('a corner beats the edges it lies on', () => {

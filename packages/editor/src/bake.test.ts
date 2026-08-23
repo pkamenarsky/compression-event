@@ -13,8 +13,10 @@ import {
 } from './bake';
 import {
   addPolygon,
+  addVertex,
   csg,
   editAt,
+  removeVertices,
   resolveAt,
   withEdit,
 } from './scene';
@@ -563,5 +565,195 @@ describe('progress', () => {
     expect(seen.length).toBeGreaterThan(0);
     expect(seen[seen.length - 1]).toBeCloseTo(1, 6);
     expect(seen.every((x, i) => i === 0 || x >= seen[i - 1])).toBe(true);
+  });
+});
+
+describe('a corner coming or going across a span', () => {
+  // The editor's rule is that nothing a layer does reaches back past itself, so
+  // a ring can have four corners at one version and five at the next. The span
+  // between them still has to be one continuous move: the corner is there at
+  // both ends of it, sitting on the edge it grows out of at the end where it is
+  // not real, which is the same shape as not being there.
+  //
+  // `editorAt` goes through `csg(resolveAt(...))` rather than through the
+  // bake's own `moving`, so these are checked against the editor rather than
+  // against the machinery under test.
+
+  test('adding one leaves the version before it exactly as it was', () => {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    const before = editorAt(world, 0);
+
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 0, y: -100 }).world;
+
+    expect(editorAt(grown, 0)).toBeCloseTo(before, 6);
+    expect(resolveAt(grown, 0).find(r => r.id === ids[0])!.corners.length).toEqual(4);
+    expect(resolveAt(grown, 1).find(r => r.id === ids[0])!.corners.length).toEqual(5);
+  });
+
+  test('the span agrees with the editor at both ends of it', () => {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 0, y: -100 }).world;
+
+    // Pull the new corner off the edge, so the span has something to animate.
+    const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const edit = editAt(grown, 1, ids[0], now.erosion);
+    const vertices = new Map(edit.vertices);
+    vertices.set(now.corners[where].id, { x: 0, y: -80 });
+    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+
+    const span = run(bakeSpan(pulled, 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(pulled, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(pulled, 1), 6);
+  });
+
+  test('a corner arriving is one stretch: it is a move, not an event', () => {
+    // The whole point of putting it on the edge at the near end. Were it to
+    // appear part way through, the span would have to be cut at that instant
+    // and the outline would jump.
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 0, y: -100 }).world;
+
+    const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const edit = editAt(grown, 1, ids[0], now.erosion);
+    const vertices = new Map(edit.vertices);
+    vertices.set(now.corners[where].id, { x: 0, y: -80 });
+    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+
+    const span = run(bakeSpan(pulled, 0));
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(drift(pulled)).toBeLessThan(TOLERANCE);
+  });
+
+  test('the outline grows steadily rather than in one step', () => {
+    // A corner that appeared all at once would show up as the whole of the
+    // change happening between two neighbouring instants.
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 0, y: -100 }).world;
+
+    const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const edit = editAt(grown, 1, ids[0], now.erosion);
+    const vertices = new Map(edit.vertices);
+    vertices.set(now.corners[where].id, { x: 0, y: -80 });
+    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+
+    const span = run(bakeSpan(pulled, 0));
+
+    const steps: number[] = [];
+    for (let i = 0; i <= 40; i++) steps.push(length(sample(span, i / 40)));
+
+    const biggest = Math.max(...steps.slice(1).map((v, i) => Math.abs(v - steps[i])));
+    const total = Math.abs(steps[steps.length - 1] - steps[0]);
+
+    expect(total).toBeGreaterThan(1);
+    // No single frame carries more than a small share of the whole change.
+    expect(biggest).toBeLessThan(total * 0.2);
+  });
+
+  test('removing one leaves the versions before it exactly as they were', () => {
+    const { world, ids } = drawn(['level', [
+      { x: -100, y: -100 }, { x: 0, y: -170 }, { x: 100, y: -100 },
+      { x: 100, y: 100 }, { x: -100, y: 100 },
+    ]]);
+    const before = editorAt(world, 0);
+    const going = world.polygons.get(ids[0])!.points[1].id;
+    const cut = removeVertices(world, 1, [going]);
+
+    expect(editorAt(cut, 0)).toBeCloseTo(before, 6);
+
+    const span = run(bakeSpan(cut, 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(cut, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(cut, 1), 6);
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+  });
+});
+
+describe('a corner arriving right beside one that is leaving', () => {
+  /**
+   * The case that broke: the two are neighbours in the ring, so the corner
+   * present at only one end is the very one the other needs to lean on.
+   *
+   * Anchoring on the nearest corner both ends have steps straight over it, onto
+   * a chord across the polygon's inside — and the ring picks up a spur that
+   * dives through the middle of the shape and back out. It shows up as a span
+   * whose far end is not the shape the editor draws there.
+   */
+  function beside(): { world: World, ids: PolygonId[] } {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    const corners = world.polygons.get(ids[0])!.points;
+
+    // A corner into the edge leaving the first, and the second one out: they
+    // end up adjacent, added and removed by the same version.
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 100, y: -20 }).world;
+
+    return { world: removeVertices(grown, 1, [corners[1].id]), ids };
+  }
+
+  test('the span ends on the shape the editor draws, not beside it', () => {
+    const { world } = beside();
+    const span = run(bakeSpan(world, 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(world, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(world, 1), 6);
+  });
+
+  test('and gets there in one stretch, without a detour', () => {
+    // A ring that folds through itself part way makes the outline wander far
+    // outside the range its two ends bracket, and the bake cuts and cuts trying
+    // to follow it. One stretch says the path is the straight one.
+    const { world } = beside();
+    const span = run(bakeSpan(world, 0));
+
+    const ends = [length(sample(span, 0)), length(sample(span, 1))];
+    const lo = Math.min(...ends), hi = Math.max(...ends);
+
+    for (let i = 0; i <= 40; i++) {
+      const now = length(sample(span, i / 40));
+
+      // Room for the corner genuinely moving, but nowhere near enough for a
+      // spur across the polygon.
+      expect(now).toBeGreaterThan(lo - (hi - lo));
+      expect(now).toBeLessThan(hi + (hi - lo));
+    }
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(drift(world)).toBeLessThan(TOLERANCE);
+  });
+
+  test('the corner that arrives starts on the boundary, not across it', () => {
+    // Directly: at the near end every point of the interpolated ring has to sit
+    // on the ring the editor resolves there. A chord anchor puts one inside.
+    const { world, ids } = beside();
+    const span = run(bakeSpan(world, 0));
+    const drawn0 = resolveAt(world, 0).find(r => r.id === ids[0])!.source;
+
+    const onRing = (p: Point): number => {
+      let best = Infinity;
+
+      for (let i = 0; i < drawn0.length; i++) {
+        const a = drawn0[i], b = drawn0[(i + 1) % drawn0.length];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = dx * dx + dy * dy;
+        const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+
+        best = Math.min(best, Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y));
+      }
+
+      return best;
+    };
+
+    for (const run of sample(span, 0)) {
+      for (const p of run.points) expect(onRing(p)).toBeLessThan(1e-6);
+    }
   });
 });

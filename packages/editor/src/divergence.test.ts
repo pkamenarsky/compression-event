@@ -21,7 +21,7 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, sample, truth } from './bake';
-import { addPolygon, resolveAt, editAt, withEdit } from './scene';
+import { addPolygon, addVertex, removeVertices, resolveAt, editAt, withEdit } from './scene';
 import { PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -168,6 +168,46 @@ test('the replay never strays far from csg(t)', () => {
     const { world, ids } = drawn(['level', rect(-200,-20,400,40)], ['level', rect(-30,60,60,100)]);
     check('a bar sweeping a room it never touches at either end',
       transformed(world, 1, ids[0], { rotation: Math.PI })); }
+  {
+    // A corner that arrives at the far end of the span. It has to be there at
+    // the near end too, sitting on the edge it grows out of, or the two rings
+    // have nothing to interpolate between.
+    const { world, ids } = drawn(['level', rect(-100,-100,200,200)]);
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(world, 1, it, 0, { x: 0, y: -100 }).world;
+    const pulled = (() => {
+      const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
+      const where = now.corners.length - now.corners.length + 1;
+      const edit = editAt(grown, 1, ids[0], now.erosion);
+      const vertices = new Map(edit.vertices);
+      vertices.set(now.corners[where].id, { x: 0, y: -90 });
+      return withEdit(grown, 1, ids[0], { ...edit, vertices });
+    })();
+    check('a corner arriving', pulled);
+  }
+  {
+    // And one that leaves, which is the same thing run backwards.
+    const { world, ids } = drawn(['level', [
+      { x: -100, y: -100 }, { x: 0, y: -170 }, { x: 100, y: -100 },
+      { x: 100, y: 100 }, { x: -100, y: 100 },
+    ]]);
+    const going = world.polygons.get(ids[0])!.points[1].id;
+    check('a corner leaving', removeVertices(world, 1, [going]));
+  }
+  {
+    // Both at once, over a polygon that is also turning and eroding: the
+    // topology change has to survive the rest of the layer moving too.
+    const { world, ids } = drawn(['level', [
+      { x: -100, y: -100 }, { x: 0, y: -160 }, { x: 100, y: -100 },
+      { x: 100, y: 100 }, { x: -100, y: 100 },
+    ]]);
+    const going = world.polygons.get(ids[0])!.points[1].id;
+    const cut = removeVertices(world, 1, [going]);
+    const it = resolveAt(cut, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(cut, 1, it, 1, { x: 100, y: 0 }).world;
+    check('a corner arriving as another leaves',
+      transformed(grown, 1, ids[0], { rotation: 0.5, erosion: 14 }));
+  }
   { const { world, ids } = drawn(['level', rect(0,0,200,60)], ['level', rect(80,60,40,40)], ['level', rect(0,100,200,60)]);
     let w = world; for (const id of ids) w = transformed(w, 1, id, { erosion: 25 });
     check('dumbbell pinching', w); }

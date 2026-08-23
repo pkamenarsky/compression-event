@@ -28,12 +28,22 @@ import {
 } from './types';
 
 /**
+ * 4: a corner carries the stretch of the chain it stands over, the way a
+ * polygon carries the version it was born into.
+ *
  * 3: a polygon is points and nothing else, and what happens to them belongs to
  * the versions. A format-2 file has a transform per polygon with no version to
  * put it in, and nudges applied after an erosion that no longer exists, so
  * there is nothing sensible to read it as.
+ *
+ * A 3 still opens. Every corner in one stood for the whole of its polygon's
+ * life — there was no way to say otherwise — so that is what it is read as, and
+ * nothing about the file is guessed at.
  */
-export const FORMAT = 3;
+export const FORMAT = 4;
+
+/** The oldest that still says something this can read without inventing it. */
+const OLDEST = 3;
 
 export interface Saved {
   format: number
@@ -94,13 +104,13 @@ function savedVersion(v: Version): SavedVersion {
 }
 
 export function restored(file: Saved): EditorState {
-  if (file.format !== FORMAT) {
-    throw new Error(`state file is format ${file.format}, and this reads ${FORMAT}`);
+  if (file.format > FORMAT || file.format < OLDEST) {
+    throw new Error(`state file is format ${file.format}, and this reads ${OLDEST} to ${FORMAT}`);
   }
 
   return {
     world: {
-      polygons: new Map(file.world.polygons),
+      polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
       nextId: file.world.nextId,
       versions: file.world.versions.map(restoredVersion),
     },
@@ -118,6 +128,26 @@ export function restored(file: Saved): EditorState {
     // than about the world, and opening a file is a fresh one.
     history: EMPTY_HISTORY,
     clipboard: [],
+  };
+}
+
+/**
+ * A polygon whose corners say when they stand, given one whose corners may not.
+ *
+ * Before format 4 they always did, so a corner with nothing to say about it is
+ * read as having been there since its polygon was drawn and never taken out.
+ * Written out again it says so; nothing is lost and nothing is invented.
+ */
+function standingThroughout(polygon: Polygon): Polygon {
+  if (polygon.points.every(c => c.birth !== undefined)) return polygon;
+
+  return {
+    ...polygon,
+    points: polygon.points.map(c => ({
+      ...c,
+      birth: c.birth ?? polygon.birth,
+      death: c.death ?? null,
+    })),
   };
 }
 
