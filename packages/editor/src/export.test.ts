@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { CROSSING, outline } from '@ce/game';
+import { CROSSING, Hulls, outline, signedArea } from '@ce/game';
 import { Frame, bakeSpan, sample } from './bake';
 import { bakedSpan, versionOf } from './export';
 import { addPolygon, editAt, resolveAt, withEdit } from './scene';
@@ -195,6 +195,108 @@ describe('what the buffers are', () => {
 
     expect(flat.frames.length / 16).toBe(2);
     expect([...flat.slots].every(s => s === 0 || s === 1)).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The union, which is what collision runs on
+//
+// The bug this was written for: hulls built from the authored rings stop the
+// player at walls the set does not have. Two rooms overlapping is the ordinary
+// way to author a level here, and the seam between them was a wall you could
+// see through and not walk through.
+// -----------------------------------------------------------------------------
+
+/** One world unit per editor unit, so every number below is both. */
+const ONE = 1;
+
+function hullsAt(world: World, v: VersionId): Hulls {
+  return new Hulls(versionOf(world, v).polygons, ONE);
+}
+
+describe('a seam between two rooms is not a wall', () => {
+  const overlapping = drawn(
+    ['level', rect(0, 0, 100, 100)],
+    ['level', rect(60, 20, 100, 60)],
+  ).world;
+
+  test('the two rooms come out as one ring', () => {
+    const version = versionOf(overlapping, 0);
+
+    expect(version.polygons.length).toBe(1);
+    expect(version.polygons[0].type).toBe('level');
+  });
+
+  test('the player walks across it', () => {
+    const at = hullsAt(overlapping, 0).trace({ x: 80, y: 50 }, { x: 40, y: 0 });
+
+    // Where the source rings were used this stopped at 99.7, against the first
+    // room's east wall — in the middle of the second room's floor.
+    expect(at.x).toBeCloseTo(120, 6);
+    expect(at.y).toBeCloseTo(50, 6);
+  });
+
+  test('and can stand on it', () => {
+    expect(hullsAt(overlapping, 0).standable({ x: 99.9, y: 50 })).toBe(true);
+  });
+
+  test('while the outer wall of the union still stops them', () => {
+    const at = hullsAt(overlapping, 0).trace({ x: 120, y: 50 }, { x: 100, y: 0 });
+
+    expect(at.x).toBeGreaterThan(160 - 0.3 - 1e-2);
+    expect(at.x).toBeLessThan(160 - 0.3 + 1e-2);
+  });
+});
+
+describe('a solid becomes a hole, and a hole is one by its winding', () => {
+  const pillared = drawn(
+    ['level', rect(0, 0, 200, 200)],
+    ['solid', rect(80, 80, 40, 40)],
+  ).world;
+
+  test('an outer ring and a hole, wound against each other', () => {
+    const rings = versionOf(pillared, 0).polygons;
+
+    expect(rings.length).toBe(2);
+
+    const areas = rings.map(r => signedArea(r.points));
+
+    expect(areas.some(a => a > 0)).toBe(true);
+    expect(areas.some(a => a < 0)).toBe(true);
+  });
+
+  test('the hole is not somewhere to stand', () => {
+    const hulls = hullsAt(pillared, 0);
+
+    expect(hulls.standable({ x: 100, y: 100 })).toBe(false);
+    expect(hulls.standable({ x: 30, y: 30 })).toBe(true);
+  });
+
+  test('and stops the player a radius short of its face', () => {
+    const at = hullsAt(pillared, 0).trace({ x: 40, y: 100 }, { x: 100, y: 0 });
+
+    expect(at.x).toBeGreaterThan(80 - 0.3 - 1e-2);
+    expect(at.x).toBeLessThan(80 - 0.3 + 1e-2);
+  });
+});
+
+describe('floors come along without taking part', () => {
+  const withFloor = drawn(
+    ['level', rect(0, 0, 200, 200)],
+    ['floor', rect(50, 50, 60, 60)],
+  ).world;
+
+  test('kept, and kept apart', () => {
+    const polygons = versionOf(withFloor, 0).polygons;
+
+    expect(polygons.filter(p => p.type === 'floor').length).toBe(1);
+    expect(polygons.filter(p => p.type === 'level').length).toBe(1);
+  });
+
+  test('and nothing walks into one', () => {
+    const at = hullsAt(withFloor, 0).trace({ x: 20, y: 80 }, { x: 60, y: 0 });
+
+    expect(at.x).toBeCloseTo(80, 6);
   });
 });
 

@@ -375,6 +375,25 @@ function settled(s: EditorState): EditorState {
 }
 
 /**
+ * The walk from one version to another, as far along as it has got.
+ *
+ * Not a fact about the document — nothing it does survives it, and it does not
+ * change what is on screen underneath, which is already at `to`. It sits in the
+ * store all the same, because two views now watch the same walk go by: the
+ * canvas draws the outline it passes through, and the 3D view flies the same
+ * `t` into the shader. One clock, so they cannot drift apart.
+ */
+export interface Replay {
+  from: VersionId
+  to: VersionId
+  /** 0 to 1 over the whole walk, however many versions it crosses. */
+  at: number
+}
+
+/** How long one span takes to play. Slow enough to watch a room pinch in two. */
+export const REPLAY_MS = 400;
+
+/**
  * Everything the editor is. Immutable throughout: a field that did not change
  * keeps its identity, which is what lets `object` wake only the parts that
  * care — panning touches `view` and nothing redraws but the canvas.
@@ -390,6 +409,13 @@ export interface EditorState {
   settings: Settings
   view: View
   tool: Tool
+
+  /** A version switch being watched go by, rather than jumped. Null between
+   * them, which is nearly always. */
+  replay: Replay | null
+  /** Whether the 3D view is up. It costs a WebGL context and a walk of the
+   * bake, so it is asked for rather than assumed. */
+  preview: boolean
 
   /**
    * What the game would be shipped, for the spans that have been baked. It is
@@ -417,6 +443,8 @@ export function initialState(world: World): EditorState {
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
+    replay: null,
+    preview: false,
     bake: { spans: new Map(), progress: null },
     history: EMPTY_HISTORY,
     clipboard: [],

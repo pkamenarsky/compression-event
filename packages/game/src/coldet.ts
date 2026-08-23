@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 // Walking into things
 //
-// The jam build's collision, carried over with two changes.
+// The jam build's collision, carried over with three changes.
 //
 // **The normals arrive precomputed.** `PolygonPoint` carries the edge normal
 // and the scaled bisector, worked out once where the world is written rather
@@ -12,6 +12,22 @@
 // two rooms, and a room with something taken out of it has a hole wound the
 // other way. Which side of a ring is material follows from its winding and its
 // type, and is the one thing this has to get right — see `sideOf`.
+//
+// **The rings are the union's, not the author's.** This is the one that
+// mattered. Hulls built from the source rings give the player walls the union
+// does not have: two rooms overlapping is the ordinary way to author a level
+// here, and the seam between them stopped the player dead in the middle of open
+// floor. So what arrives here is the CSG at each version — every `level`
+// unioned, every `solid` taken back out — and a seam is not in it, because the
+// union dissolved it. That is `versionOf` in the editor's exporter, and it is
+// why everything below deals only in `level` rings.
+//
+// Which leaves the walls a version behind the walls being drawn, since the
+// drawn ones morph continuously and these snap. The transition is short and the
+// lag is a wall that has visually moved slightly ahead of where it stops you —
+// which is what the jam build had between its snaps too. Rebuilding the hulls
+// off the morphing boundary every frame would close that gap and cost a
+// per-frame CSG readback to do it; it is not worth the trade.
 //
 // Everything else is Quake 2's: expand each wall by the player's radius so the
 // player is a point, trace the point against the convex hulls that produces,
@@ -179,10 +195,9 @@ const TOGETHER = 0.01;
 /**
  * One version's walls, expanded and ready to be walked into.
  *
- * Built per version rather than per frame. The walls the player sees are the
- * union's, morphing continuously; the walls that stop the player are the
- * rooms', and a room is a polygon. During a transition the two are a little
- * apart, which is what the jam build had between its snaps as well.
+ * The rings are the union's, so there is one kind of them and a hole is a hole
+ * because of the way it is wound rather than because of what it was authored
+ * as. `sideOf` is the whole of that.
  */
 export class Hulls {
   private hulls: Hull[] = [];

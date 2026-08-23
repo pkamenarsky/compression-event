@@ -1,17 +1,19 @@
 import { Value } from '@incpt/kontinuum';
-import { VNode, object, stateful } from '@incpt/kontinuum-dom';
+import { VNode, effect, object, stateful } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
+import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
 import { copied, pasted, resolveAt } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
   EditorState,
+  REPLAY_MS,
   Tool,
   Update,
   VERSIONS,
@@ -52,6 +54,8 @@ export function editor(initial: World): VNode {
           saving(state, input, update),
           shortcuts(input, update),
 
+          replaying(s.currentVersion, update),
+
           worldCanvas(
             s.world,
             s.settings,
@@ -59,17 +63,61 @@ export function editor(initial: World): VNode {
             s.tool,
             s.selection,
             s.currentVersion,
+            s.replay,
             s.bake,
             input,
             update,
           ),
 
+          preview(s.preview, s.world, s.bake, s.currentVersion, s.replay),
+
           toolbar(s.tool, update),
           versionStrip(s.world, s.currentVersion, update),
           bakeButton(state, s.world, s.bake, update),
+          previewButton(s.preview, update),
         ],
       ),
     );
+  });
+}
+
+/**
+ * A version switch, watched rather than jumped.
+ *
+ * The walk between the two runs on a clock and leaves how far it has got in the
+ * store, where both views find it: the canvas draws the outline it passes
+ * through and the 3D view flies the same instant into the shader. The geometry
+ * comes out of the bake either way, so a span that has not been baked plays
+ * nothing rather than guessing.
+ *
+ * It lives here rather than in either view because it belongs to neither. Two
+ * clocks would be two walks, and they would not stay in step.
+ */
+function replaying(current: Value<VersionId>, update: Update): VNode {
+  // The version last played to, so a switch knows where it came from. The
+  // effect's own memory rather than state: what is on screen is already at the
+  // new version, and this is only about the way there.
+  let shown: VersionId | null = null;
+
+  return effect(current, v => {
+    const was = shown;
+
+    shown = v;
+
+    if (was === null || was === v) return;
+
+    const started = performance.now();
+    const ms = REPLAY_MS * Math.abs(v - was);
+
+    let frame = requestAnimationFrame(function tick() {
+      const at = Math.min(1, (performance.now() - started) / ms);
+
+      update(s => ({ ...s, replay: at < 1 ? { from: was, to: v, at } : null }));
+
+      if (at < 1) frame = requestAnimationFrame(tick);
+    });
+
+    return () => cancelAnimationFrame(frame);
   });
 }
 
@@ -597,6 +645,72 @@ function bakeButton(
  * pacing and the worse promise: a hidden tab stops being given them, and a bake
  * left half done because the author looked at something else is not a bake.
  */
+/**
+ * The switch for the 3D view.
+ *
+ * Under the bake button, because that is what it depends on: a level that has
+ * not been baked has nothing to show, and the two read as one thought.
+ */
+function previewButton(showing: Value<boolean>, update: Update): VNode {
+  const on = () => showing();
+
+  return svg(
+    {
+      width: STRIP_WIDTH,
+      height: BUTTON_ROW,
+      viewBox: `0 0 ${STRIP_WIDTH} ${BUTTON_ROW}`,
+      style: {
+        position: 'absolute',
+        right: '12px',
+        top: `${12 + VERSIONS * ROW + 2 * PADDING + 8 + BAKE_HEIGHT + 8}px`,
+        filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
+      },
+    },
+    [
+      rect({
+        x: 0.5,
+        y: 0.5,
+        width: STRIP_WIDTH - 1,
+        height: BUTTON_ROW - 1,
+        rx: 8,
+        fill: theme.panel,
+        stroke: theme.border,
+      }),
+
+      g(
+        {
+          style: { cursor: 'pointer' },
+          onclick: () => update(s => ({ ...s, preview: !s.preview })),
+        },
+        [
+          rect({
+            x: PADDING,
+            y: PADDING,
+            width: STRIP_WIDTH - 2 * PADDING,
+            height: 24,
+            rx: 6,
+            fill: () => (on() ? theme.accent : theme.border),
+          }),
+
+          text(
+            {
+              x: STRIP_WIDTH / 2,
+              y: PADDING + 16,
+              'text-anchor': 'middle',
+              fill: () => (on() ? theme.onAccent : theme.text),
+              'font-family': 'system-ui, sans-serif',
+              'font-size': '12px',
+            },
+            () => (on() ? '3d view  on' : '3d view  off'),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
+const BUTTON_ROW = 24 + 2 * PADDING;
+
 function start(state: Value<EditorState>, update: Update): void {
   const job = bakeAll(state().world);
 

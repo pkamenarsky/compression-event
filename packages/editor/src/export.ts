@@ -28,8 +28,9 @@ import {
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
-import { resolveAt } from './scene';
-import { PolygonId, World } from './types';
+import { Shape, simplify, subtract, union } from './geometry';
+import { Resolved, resolveAt } from './scene';
+import { PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -225,23 +226,77 @@ export function bakedLevel(bake: Bake, world: World): BakedLevel {
 }
 
 /**
- * The source rings at one version, wound and normalled: what collision and the
- * out-of-bounds check run on.
- *
- * The projection rather than the authored ring, because that is the geometry
- * the version actually has — a room eroded until its walls meet is two rooms,
- * and the player should be stopped by both of them. Each ring comes out as its
- * own entry; which of them are holes is in their winding, and `withNormals`
- * reads it there.
+ * A polygon as the set wants to see it. The same reasoning `worldset` and the
+ * bake both use, and it has to be the same or the three would not agree: a ring
+ * that came out of an erosion is an arrangement already and simplifying it
+ * again would be work with nothing to do.
  */
-export function versionOf(world: World, v: number): GameVersion {
-  const polygons: GamePolygon[] = [];
+function shapeOf(it: Resolved): Shape {
+  return it.erosion === 0 ? simplify(it.shape) : it.shape;
+}
+
+/**
+ * The set at one version, as closed rings: every `level` unioned, every `solid`
+ * taken back out.
+ *
+ * The same set the bake cuts into stretches, evaluated at one instant and left
+ * whole instead of being cut into runs. Runs are what the drawing wants,
+ * because a run belongs to one polygon and can be kept up to date on its own; a
+ * ring is what collision wants, because a wall needs two neighbours to mitre
+ * against and the ring is where they are.
+ *
+ * Rebuilt from nothing per version rather than kept incrementally. A version is
+ * not an edit — a version that erodes moves every polygon it names — so there
+ * would be nothing for a diff to skip, and this runs once where the editor's
+ * own set runs once a frame.
+ */
+export function unionAt(world: World, v: VersionId): Shape {
+  let level: Shape = [], solid: Shape = [];
 
   for (const it of resolveAt(world, v)) {
+    if (it.polygon.type === 'level') level = union(level, shapeOf(it));
+    else if (it.polygon.type === 'solid') solid = union(solid, shapeOf(it));
+  }
+
+  if (level.length === 0) return [];
+
+  return solid.length === 0 ? level : subtract(level, solid);
+}
+
+/**
+ * The version as collision and the out-of-bounds check get it: the union's
+ * rings, wound and normalled, and the floor polygons that take no part in it.
+ *
+ * The union rather than the polygons it was made of, which is the whole of the
+ * fix recorded as *3b* in `docs/game.md`. Source rings carry walls the set does
+ * not have — two rooms overlapping is the ordinary way to author a level here,
+ * and the seam between them was a wall the player could see through and not
+ * walk through. The union has no seam, because dissolving it is what a union
+ * is.
+ *
+ * Every ring comes out as `level`, whatever it was made of: a `solid` has been
+ * subtracted by now and is a hole, and a hole is one because of the way it is
+ * wound. `withNormals` reads the winding and `sideOf` in `coldet.ts` acts on
+ * it, and neither needs telling which is which.
+ */
+export function versionOf(world: World, v: VersionId): GameVersion {
+  const polygons: GamePolygon[] = [];
+
+  for (const ring of unionAt(world, v)) {
+    const points = withNormals(ring);
+
+    if (points.length >= 3) polygons.push({ type: 'level', points });
+  }
+
+  // Floors are not in the set — `worldset` takes only `level` and `solid` — and
+  // are not walls either. They come along so that something can draw them.
+  for (const it of resolveAt(world, v)) {
+    if (it.polygon.type !== 'floor') continue;
+
     for (const ring of it.shape) {
       const points = withNormals(ring);
 
-      if (points.length >= 3) polygons.push({ type: it.polygon.type, points });
+      if (points.length >= 3) polygons.push({ type: 'floor', points });
     }
   }
 

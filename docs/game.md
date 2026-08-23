@@ -15,10 +15,9 @@ the end of it.
 between the two halves. It keeps two things that answer two different
 questions:
 
-- `versions` — the source polygons as each version resolves them, in world
-  units, with edge and bisector normals precomputed. This is what collision and
-  the point-in-polygon checks run on. It is flat, id-free and dumb, exactly as
-  before.
+- `versions` — the set at each version as closed rings, in editor units, with
+  edge and bisector normals precomputed. This is what collision and the
+  out-of-bounds check run on. It is flat, id-free and dumb, exactly as before.
 - `baked` — the morph, as buffers. One `BakedSpan` per pair of adjacent
   versions, holding what the vertex shader needs to reconstruct the outline at
   any instant inside it. Nothing in here is resolved at runtime; it is read and
@@ -30,16 +29,12 @@ authored polygons. The new one extrudes them off the *CSG boundary* — every
 `worldset` computes and what the bake cuts into stretches. A wall segment is a
 consecutive pair of points in a run.
 
-**Collision is on the source, for now.** The reasoning was that the player is
-inside a room and a room is a source polygon, so `coldet` could keep working the
-way it did — off `versions[k]`, with the visual morph running over the top of
-it, and a transition costing no more than a wall that has moved a little ahead
-of where it stops you.
-
-Half of that is right and half of it is not. The lag during a transition is
-fine. What is not fine is that the source rings have walls the union does not:
-where two rooms overlap, the seam between them stops the player. See task *3b*,
-which is where the fix is written down.
+**Collision is on the union, a version at a time.** `versions[k].polygons` is
+the CSG at that version as closed rings, not the polygons it was made of — the
+authored rings carry seams the set does not have, and a seam is a wall you can
+see through and cannot walk through. Hulls are rebuilt per version rather than
+per frame, so during a transition the wall you see is slightly ahead of the wall
+that stops you. That lag is fine and was chosen; the seams were not.
 
 ## The baked format
 
@@ -105,52 +100,47 @@ level with rooms eroding and pillars turning inside walls, and the two coincide
 at every instant including the crossings. Any disagreement would show as green
 peeling off the wall.
 
-### 3. Collision — *done, with one thing wrong under it*
+### 3. Collision — *done*
 
 `packages/game/src/coldet.ts`, off `PolygonPoint[]`, which carries the edge
 normals and the scaled bisectors the jam build recomputed on every level load.
 The trace itself is unchanged: same Minkowski expansion, same Quake 2 sweep,
 same corner rule.
 
-What did change is that a version resolves to more rings than it was authored
-with — a room eroded until its walls meet is two rooms, and a hole is wound
-against the ring it is in — so which side of a ring is material is now derived
-from its winding and its type rather than from its type alone. That is `sideOf`,
-and it is what lets a hole and a solid be the same case seen from two sides.
+Two things around it did change.
 
-### 3b. Collision is on the wrong geometry, and the fix is already sitting there
+**The rings are the union's.** Hulls built from the authored rings stop the
+player at walls the set does not have. Two rooms overlapping is the ordinary way
+to author a level here, and the seam between them was a wall the player could
+see through and could not walk through — measured at the time as a stop at
+x = 99.7 walking east across rooms at `(0,0,100,100)` and `(60,20,100,60)`. So
+`versionOf` now ships the CSG at each version — every `level` unioned, every
+`solid` taken back out, as closed rings — and a seam is not in it, because
+dissolving one is what a union is. The same walk now runs to x = 120 unobstructed.
 
-**The problem.** Hulls are built from the *source* rings, so every authored wall
-stops the player — including the ones the union does not have. Two rooms
-overlapping is the ordinary way to author a level here, and the seam between
-them is a wall the player can see through and cannot walk through:
+Rings rather than the runs the drawing uses, and that is the only reason this
+is a separate evaluation rather than a read of the bake: a run belongs to one
+polygon and can be kept up to date on its own, which is what the editor wants,
+while a wall needs two neighbours to mitre against and the ring is where they
+are.
 
-```
-rooms at (0,0,100,100) and (60,20,100,60), walking east from x = 80
-   stops at x = 99.7, against a wall the union dissolved
-```
+**Which side is material comes from the winding.** Every ring ships as `level`,
+whatever it was made of. A `solid` has been subtracted by then and is a hole,
+and a hole is one because of the way it is wound. `withNormals` reads the
+winding and `sideOf` acts on it, so a hole, a pillar and a room pinched in two
+by its own erosion are one case rather than three.
 
-The jam build had the same code and the same hole; it mattered less there
-because its levels were drawn as rooms that met rather than rooms that
-overlapped. Under an editor whose whole model is *union the level polygons and
-subtract the solids*, it is not survivable.
+**What it costs.** Collision snaps at version boundaries while the walls morph
+between them, so during a transition the wall you see is slightly ahead of the
+wall that stops you. The transition is short and the gap is a fraction of the
+erosion step; the jam build had the same lag between its snaps. The alternative
+— rebuilding hulls off the morphing boundary every frame — buys a few hundred
+milliseconds of exactness per transition for a per-frame CSG, and was not worth
+it.
 
-**The fix.** Build the hulls from the union boundary instead — which is exactly
-what `outline(span, t)` already returns, in world units, run by run. A run is an
-open polyline rather than a ring, and `hullOf` never needed a closed one: it
-works an edge at a time. What it needs beside the points is which side is
-material, and the runs inherit their owner's winding, so the rule is the one
-`sideOf` already applies.
-
-The cost is that hulls stop being a per-version build and become a per-frame
-one, since `t` moves continuously. That is the reason it was not done this way
-to begin with, and it is answerable: only the tracks near the player can reach
-the player, and the reach boxes the bake already computes per polygon are the
-broadphase. Nothing needs inventing; it needs cutting.
-
-**Until then**, the source rings are what collision runs on, `standable` is what
-the out-of-bounds check asks, and levels whose rooms overlap will feel wrong in
-exactly the way described.
+`scratch/preview.html` draws this: orange is what the player walks into, green
+is the outline being drawn, and watching them part and rejoin across a
+transition is the whole of the trade.
 
 ### 4. The editor's 3D view
 
@@ -172,15 +162,15 @@ call, and that the countdown's mapping to `t` is where easing lives. See
 `three` is a dependency of `packages/game` now, and of nothing else.
 
 `scratch/preview.html` bakes a world, ships it, and draws it, with the CPU's
-outline overlaid on the GPU's walls in green. It is a bench rather than a page
-the build knows about — `scratch/` is not an entry point — and it is how tasks
-1 and 2 were checked.
+outline overlaid on the GPU's walls in green and the collision rings in orange.
+It is a bench rather than a page the build knows about — `scratch/` is not an
+entry point — and it is how tasks 1 to 3 were checked.
 
 ```
 /scratch/preview.html?world=demo          rooms, pillars turning inside walls
 /scratch/preview.html?world=<file>.json   a world saved out of the editor
 
-space  pause      o  the overlay      arrows  step
+space  pause    o  the CPU outline    c  the collision rings    arrows  step
 ```
 
 ## What is missing, and is nobody's fault yet

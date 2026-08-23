@@ -43,6 +43,7 @@ import {
   Point,
   Polygon,
   PolygonId,
+  Replay,
   Selection,
   Settings,
   Tool,
@@ -105,6 +106,7 @@ export function worldCanvas(
   tool: Value<Tool>,
   selection: Value<Selection>,
   currentVersion: Value<VersionId>,
+  replay: Value<Replay | null>,
   bake: Value<Bake>,
   input: Input,
   update: Update,
@@ -472,39 +474,6 @@ export function worldCanvas(
     }
 
     /**
-     * The version last drawn, so that a switch knows where it came from. It is
-     * the effect's own memory rather than state: what is on screen is already
-     * at the new version, and this is only about the way there.
-     */
-    let shown: VersionId | null = null;
-
-    /**
-     * A version switch, watched rather than jumped. Runs the walk between the
-     * two on a clock and leaves `at` where the draw can find it; the geometry
-     * comes out of the bake, so a span that has not been baked simply plays
-     * nothing.
-     */
-    function playing(v: VersionId): void | (() => void) {
-      const was = shown;
-      shown = v;
-
-      if (was === null || was === v) return;
-
-      const started = performance.now();
-      const ms = REPLAY_MS * Math.abs(v - was);
-
-      let frame = requestAnimationFrame(function tick() {
-        const at = Math.min(1, (performance.now() - started) / ms);
-
-        setLocal({ ...local(), replay: at < 1 ? { from: was, to: v, at } : null });
-
-        if (at < 1) frame = requestAnimationFrame(tick);
-      });
-
-      return () => cancelAnimationFrame(frame);
-    }
-
-    /**
      * Picking a polygon, and picking the one underneath it.
      *
      * Clicking overlapping polygons has to reach the ones behind somehow, and
@@ -683,18 +652,19 @@ export function worldCanvas(
               tool(),
               selection(),
               currentVersion(),
+              replay(),
               bake(),
               local(),
             ] as const,
-            ([w, s, v, t, sel, at, b, l]) => {
+            ([w, s, v, t, sel, at, r, b, l]) => {
               if (el && ctx) {
                 const items = resolveAt(w, at);
 
                 set = live(set, items);
 
-                const played = l.replay === null
+                const played = r === null
                   ? null
-                  : replayed(b, w, l.replay.from, l.replay.to, l.replay.at);
+                  : replayed(b, w, r.from, r.to, r.at);
 
                 draw(
                   el,
@@ -705,8 +675,6 @@ export function worldCanvas(
               }
             },
           ),
-
-          effect(currentVersion, v => playing(v)),
 
           // A half-drawn polygon belongs to the pen. Leaving it on screen after
           // switching away would leave it waiting for clicks that now mean
@@ -881,33 +849,13 @@ interface Local {
    * what makes dropping backward propagation affordable.
    */
   previewing: boolean
-  /** A version switch being watched go by, rather than jumped. */
-  replay: Replay | null
-}
-
-/**
- * The walk from one version to another, as far along as it has got.
- *
- * It is local rather than in the store because it is not a fact about the
- * document at all — nothing it does survives it, and it does not even change
- * what is on screen underneath, which is already at `to`.
- */
-interface Replay {
-  from: VersionId
-  to: VersionId
-  /** 0 to 1 over the whole walk, however many versions it crosses. */
-  at: number
 }
 
 const EMPTY_LOCAL: Local = {
   marquee: null,
   draft: null,
   previewing: false,
-  replay: null,
 };
-
-/** How long one span takes to play. Slow enough to watch a room pinch in two. */
-const REPLAY_MS = 400;
 
 // -----------------------------------------------------------------------------
 // The modal transforms

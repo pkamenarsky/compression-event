@@ -120,6 +120,11 @@ export function restored(file: Saved): EditorState {
     view: file.view,
     tool: file.tool,
 
+    // Neither is in the file: one is a transition that is not running, and the
+    // other is whether a panel is open.
+    replay: null,
+    preview: false,
+
     // Not in the file, and deliberately: it is derived, it is large, and it is
     // stamped against a world that this one only resembles.
     bake: { spans: new Map(), progress: null },
