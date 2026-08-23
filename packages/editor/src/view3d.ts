@@ -298,12 +298,24 @@ function panel(
             x = m.clientX;
             y = m.clientY;
 
-            // Inside, the same drag is walking rather than orbiting: across turns
-            // and up and down goes forward and back. No pointer lock, because the
-            // whole point of the panel is that the cursor is still the editor's —
-            // let go and it is a mouse again.
+            // Inside, the same drag is walking rather than orbiting: up and
+            // down goes forward and back, and across turns — or strafes, with
+            // the command key down, for keeping a wall in view while moving
+            // past it. No pointer lock, because the whole point of the panel
+            // is that the cursor is still the editor's: let go and it is a
+            // mouse again.
+            //
+            // The key is read off each move rather than off the press, so it
+            // can be taken and let go in the middle of one drag.
             if (inside()) {
-              walker.angle += dx * TURN;
+              if (m.metaKey || m.ctrlKey) {
+                walker.x += Math.cos(walker.angle) * dx * STEP;
+                walker.z += Math.sin(walker.angle) * dx * STEP;
+              }
+              else {
+                walker.angle += dx * TURN;
+              }
+
               walker.x -= Math.sin(walker.angle) * dy * STEP;
               walker.z += Math.cos(walker.angle) * dy * STEP;
 
@@ -610,7 +622,7 @@ function label(
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     const how = inside()
-      ? 'drag walks · dbl-click to rise · enter fills'
+      ? 'drag walks · cmd strafes · dbl-click rises · enter fills'
       : 'drag turns · wheel zooms · dbl-click stands up';
 
     return spanAt(b, w, 0) === null ? `${how} · unbaked` : how;

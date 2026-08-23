@@ -163,9 +163,10 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
 
       e.preventDefault();
 
-      // Up is forward: later versions are further down the strip, but they are
-      // also further along, and forward is what an arrow pointing up means here.
-      const by = e.code === 'ArrowUp' ? 1 : -1;
+      // Down is forward, because the strip runs downward: the arrows walk it
+      // the way it is drawn rather than the way time runs, and the strip is
+      // what is on screen.
+      const by = e.code === 'ArrowDown' ? 1 : -1;
 
       update(s => switched(s, clamped(s.currentVersion + by)));
     }

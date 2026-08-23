@@ -391,7 +391,7 @@ export interface Replay {
 }
 
 /** How long one span takes to play. Slow enough to watch a room pinch in two. */
-export const REPLAY_MS = 400;
+export const REPLAY_MS = 100;
 
 /**
  * Everything the editor is. Immutable throughout: a field that did not change
