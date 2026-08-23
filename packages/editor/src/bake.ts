@@ -101,6 +101,7 @@ import {
   compose,
   live,
   place,
+  project,
   resolved,
   unplace,
   resolveAt,
@@ -219,6 +220,16 @@ export interface Stretch {
    * vertex of its own polygon and interpolates exactly.
    */
   origins: (Origin | null)[][]
+  /**
+   * How solid each run point is at each end — the doc's `lineOpacity`.
+   *
+   * A corner that is not the polygon's at one end of the span is still in the
+   * ring there, sitting on the edge between its neighbours so the shape is
+   * unchanged. It is not a corner, and a wall drawn with a line standing at it
+   * says it is. Zero there and one where the corner is real, lerped across the
+   * stretch, so the line fades over exactly the run the vertex emerges through.
+   */
+  opacity: [number[][], number[][]]
 }
 
 /** One polygon's own cut of the span, in order and covering all of it. */
@@ -339,6 +350,19 @@ interface Moving {
    */
   corners: Vertex[]
   local: [Ring, Ring]
+  /**
+   * Which of `corners` is not really the polygon's at each end — the ones
+   * `spanning` had to invent so that both ends could be written over the same
+   * ring.
+   *
+   * This is the whole of what `lineOpacity` is worked out from. A corner that
+   * is not there is sitting on the edge between its neighbours, and the wall it
+   * stands on is straight; drawing a line at it says there is a corner where
+   * there is none. Existence is known here and nowhere downstream, so it is
+   * carried rather than inferred later from the geometry — which could not tell
+   * a corner that is arriving from one that was never there.
+   */
+  dead: [boolean[], boolean[]]
   depth: [number, number]
   newborn: boolean
 }
@@ -370,16 +394,24 @@ interface Moving {
  * it does not — the arriving-beside-a-leaving case again — there is no shared
  * pair to measure against, and a run of them is spread evenly instead.
  */
-function spanning(was: Resolved, now: Resolved): { corners: Vertex[], local: [Ring, Ring] } {
+function spanning(
+  was: Resolved,
+  now: Resolved,
+): { corners: Vertex[], local: [Ring, Ring], dead: [boolean[], boolean[]] } {
   const here = new Map(was.corners.map((c, i) => [c.id, was.local[i]]));
   const there = new Map(now.corners.map((c, i) => [c.id, now.local[i]]));
 
   const corners = was.polygon.points.filter(c => here.has(c.id) || there.has(c.id));
 
+  const dead: [boolean[], boolean[]] = [
+    corners.map(c => !here.has(c.id)),
+    corners.map(c => !there.has(c.id)),
+  ];
+
   // Same count as both ends means the same corners as both ends: each is a
   // subset of the union, so equal sizes make all three the same set.
   if (corners.length === was.corners.length && corners.length === now.corners.length) {
-    return { corners, local: [was.local, now.local] };
+    return { corners, local: [was.local, now.local], dead };
   }
 
   const n = corners.length;
@@ -424,7 +456,7 @@ function spanning(was: Resolved, now: Resolved): { corners: Vertex[], local: [Ri
     }
   });
 
-  return { corners, local };
+  return { corners, local, dead };
 }
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -459,6 +491,7 @@ function moving(world: World, from: VersionId): Moving[] {
         layer: EMPTY_TRANSFORM,
         corners: it.corners,
         local: [it.local, it.local] as [Ring, Ring],
+        dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
         depth: [it.erosion, it.erosion] as [number, number],
         newborn: true,
       };
@@ -472,6 +505,7 @@ function moving(world: World, from: VersionId): Moving[] {
       layer,
       corners: over.corners,
       local: over.local,
+      dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
       newborn: false,
     };
@@ -599,6 +633,75 @@ function world1(items: Moving[], t: number): Resolved[] {
 }
 
 /**
+ * How solid each vertex of a polygon's projection is, at one instant — the
+ * doc's `lineOpacity`, worked out where the answer is actually known.
+ *
+ * A corner `spanning` invented sits exactly on the edge between its
+ * ring-neighbours at the end that does not have it, and erosion moves edges
+ * parallel, so it is exactly collinear in the projection too. Take it out of
+ * the source ring and the projection is the *same curve* with one vertex
+ * fewer. So the extras are found by projecting twice and matching, rather than
+ * by asking which points look straight — which would hide a real corner that
+ * happens to be flat, and could not tell a corner arriving from one that was
+ * never there.
+ *
+ * Only polygons whose corner set actually changes across the span pay for it,
+ * which in most spans is none of them.
+ *
+ * The value is the lerp of the two ends: a corner leaving goes 1 to 0 across
+ * the span and one arriving goes 0 to 1, so the line fades over exactly the
+ * stretch the vertex is emerging through.
+ */
+function fading(m: Moving, it: Resolved, t: number): number[][] | null {
+  const changing: number[] = [];
+
+  for (let i = 0; i < m.corners.length; i++) {
+    if (m.dead[0][i] || m.dead[1][i]) changing.push(i);
+  }
+
+  if (changing.length === 0) return null;
+
+  const full = it.shape;
+  const keep = it.local.filter((_unused, i) => !m.dead[0][i] && !m.dead[1][i]);
+
+  if (keep.length < 3) return null;
+
+  const reduced = project(place(it.frame, keep), it.erosion);
+
+  // A ring that split or collapsed between the two is not something the zip
+  // below can be trusted on. Everything draws, which is what happens today.
+  if (reduced.length !== full.length) return null;
+
+  const snap = near(new Map([[it.id, full]]));
+  const out: number[][] = [];
+  const extras: { ring: number, index: number }[] = [];
+
+  for (let r = 0; r < full.length; r++) {
+    const mine = full[r], theirs = reduced[r];
+
+    out.push(mine.map(() => 1));
+
+    for (let i = 0; i < mine.length; i++) {
+      if (corner(theirs === undefined ? [] : [theirs], mine[i], snap) === null) {
+        extras.push({ ring: r, index: i });
+      }
+    }
+  }
+
+  // The extras come out in ring order and so do the corners that were taken
+  // out, so they line up. Where they do not, nothing is claimed.
+  if (extras.length !== changing.length) return null;
+
+  extras.forEach((at, k) => {
+    const i = changing[k];
+
+    out[at.ring][at.index] = mix(m.dead[0][i] ? 0 : 1, m.dead[1][i] ? 0 : 1, t);
+  });
+
+  return out;
+}
+
+/**
  * The set at one instant, worked out directly rather than interpolated: what
  * the replay is supposed to reproduce, and what the tests hold it to.
  *
@@ -633,6 +736,10 @@ interface Taken {
   /** The runs before they were taken back to their frames, for the same
    * reason: an edge of another polygon is only nearby in the world. */
   out: Frame
+  /** Per polygon, how solid each vertex of its projection is. Missing for a
+   * polygon whose corners do not change across the span, which is most of
+   * them, and read as one throughout. */
+  fade: Map<PolygonId, number[][]>
 }
 
 /** A polygon as the boundary wants to see it: simplified, unless it came out of
@@ -699,10 +806,17 @@ function evaluate(items: Moving[], t: number, only: PolygonId | null): Taken {
   const frames = new Map(at.map(it => [it.id, it.frame]));
   const table = new Map<PolygonId, Shape>();
   const world = new Map<PolygonId, Shape>();
+  const fade = new Map<PolygonId, number[][]>();
+  const moving = new Map(items.map(m => [m.at.id, m]));
 
   for (const it of at) {
     world.set(it.id, it.shape);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
+
+    const m = moving.get(it.id);
+    const how = m === undefined ? null : fading(m, it, t);
+
+    if (how !== null) fade.set(it.id, how);
   }
 
   const out = only === null ? everything(at) : share(at, only);
@@ -712,7 +826,7 @@ function evaluate(items: Moving[], t: number, only: PolygonId | null): Taken {
     points: r.points.map(q => unplace(frames.get(r.id)!, q)),
   }));
 
-  return { frame, table, world, out, t };
+  return { frame, table, world, out, fade, t };
 }
 
 // -----------------------------------------------------------------------------
@@ -868,10 +982,7 @@ function table(
   return out;
 }
 
-function agreed(a: Taken, b: Taken): (Origin | null)[][] {
-  const one = origins(a);
-  const two = origins(b);
-
+function agreed(one: (Origin | null)[][], two: (Origin | null)[][]): (Origin | null)[][] {
   return one.map((run, r) => run.map((o, i) => {
     const q = two[r]?.[i];
 
@@ -1092,16 +1203,34 @@ function apart(guess: Frame, actual: Frame): number {
 }
 
 function stretchOf(a: Taken, b: Taken): Stretch {
-  const origins = agreed(a, b);
+  const one = origins(a), two = origins(b);
+  const reconciled = agreed(one, two);
 
   return {
     t0: a.t,
     t1: b.t,
     a: a.frame,
     b: b.frame,
-    table: table(a.table, b.table, origins),
-    origins,
+    table: table(a.table, b.table, reconciled),
+    origins: reconciled,
+
+    // Each end's own reading, rather than the reconciled one: a point the two
+    // ends disagree about the provenance of still has an opacity at each of
+    // them, and it is the fade that would be lost by insisting they agree.
+    opacity: [faded(a, one), faded(b, two)],
   };
+}
+
+/** How solid each output point is, from the projection vertex it stands on. A
+ * crossing is a corner by construction and is always drawn. */
+function faded(taken: Taken, os: (Origin | null)[][]): number[][] {
+  return taken.out.map((run, r) => run.points.map((_unused, i) => {
+    const o = os[r]?.[i];
+
+    if (o === null || o === undefined || o.kind !== 'vertex') return 1;
+
+    return taken.fade.get(o.at.id)?.[o.at.ring]?.[o.at.index] ?? 1;
+  }));
 }
 
 /** A stretch of no width, carrying one instant exactly. Either side of a gap

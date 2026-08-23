@@ -155,6 +155,7 @@ export function bakedSpan(span: Span): BakedSpan {
 
   const pointsA: number[] = [], pointsB: number[] = [];
   const slotOf: number[] = [], kinds: number[] = [], crossings: number[] = [];
+  const opacityA: number[] = [], opacityB: number[] = [];
 
   const tracks: BakedTrack[] = span.tracks.map(track => ({
     stretches: track.stretches.map((s): BakedStretch => {
@@ -175,6 +176,8 @@ export function bakedSpan(span: Span): BakedSpan {
 
           pointsA.push(p.x, p.y);
           pointsB.push(q.x, q.y);
+          opacityA.push(s.opacity[0][i]?.[j] ?? 1);
+          opacityB.push(s.opacity[1][i]?.[j] ?? 1);
           slotOf.push(slot);
           kinds.push(cross === null ? CORNER : CROSSING);
           crossings.push(...(cross ?? [-1, -1, -1, -1]));
@@ -193,6 +196,8 @@ export function bakedSpan(span: Span): BakedSpan {
     entries: new Float32Array(table.floats),
     pointsA: new Float32Array(pointsA),
     pointsB: new Float32Array(pointsB),
+    opacityA: new Float32Array(opacityA),
+    opacityB: new Float32Array(opacityB),
     slots: new Int32Array(slotOf),
     kinds: new Uint8Array(kinds),
     crossings: new Int32Array(crossings),

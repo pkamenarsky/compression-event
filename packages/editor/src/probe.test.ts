@@ -1,72 +1,53 @@
 import { test } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { Point } from '@ce/game/world';
-import { bakeSpan } from './bake';
-import { erode, simplify } from './geometry';
-import { addPolygon, addVertex, editAt, removeVertices, resolveAt, withEdit } from './scene';
-import { PolygonId, Transform, VersionId, World, emptyWorld } from './types';
+import { restored, Saved } from './save';
+import { EMPTY_LIVE, live, resolveAt, runs } from './scene';
 
-function rect(x: number, y: number, w: number, h: number): Point[] {
-  return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+const FILE = 'scratch/world-2026-08-23T20-11-29Z.json';
+
+function bend(a: Point, b: Point, c: Point): number {
+  const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+  const l = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+  return l === 0 ? 0 : Math.abs(ux * vy - uy * vx) / l;
 }
-function drawn(...specs: [any, Point[]][]) {
-  let world = emptyWorld(); const ids: PolygonId[] = [];
-  for (const [type, points] of specs) { const a = addPolygon(world, type, points, 0); world = a.world; ids.push(a.id); }
-  return { world, ids };
-}
-function transformed(w: World, v: VersionId, id: PolygonId, t: Partial<Transform>): World {
-  const it = resolveAt(w, v).find(r => r.id === id)!;
-  const e = editAt(w, v, id, it.erosion);
-  return withEdit(w, v, id, { ...e, transform: { ...e.transform, ...t } });
-}
-function eroded(w: World, v: VersionId, id: PolygonId, depth: number): World {
-  return withEdit(w, v, id, { ...editAt(w, v, id, depth), transform: { ...editAt(w, v, id, depth).transform, erosion: depth } });
-}
-function run<T>(g: Generator<number, T, void>): T { let s = g.next(); while (!s.done) s = g.next(); return s.value; }
 
-test('what an erosion costs next to a bake', () => {
-  // How long one projection takes, on a ring the size the bake sees.
-  const ring = simplify([rect(0, 0, 300, 200)]);
-  let t = performance.now();
-  const N = 20000;
-  for (let i = 0; i < N; i++) erode(ring, 10 + (i % 5));
-  const each = (performance.now() - t) / N;
+test('the still path, per version', () => {
+  const w = restored(JSON.parse(readFileSync(FILE, 'utf8')) as Saved).world;
 
-  console.log(`one erode of a 4-corner ring: ${(each * 1000).toFixed(1)}us`);
+  for (let v = 0; v < w.versions.length; v++) {
+    const items = resolveAt(w, v);
+    const rs = runs(live(EMPTY_LIVE, items));
 
-  const big = simplify([Array.from({ length: 40 }, (_u, i) => ({
-    x: 200 + 150 * Math.cos(i / 40 * Math.PI * 2) + (i % 3) * 7,
-    y: 200 + 150 * Math.sin(i / 40 * Math.PI * 2),
-  }))]);
+    let interior = 0, collinear = 0;
+    const flats: string[] = [];
 
-  t = performance.now();
-  for (let i = 0; i < 2000; i++) erode(big, 5 + (i % 5));
-  console.log(`one erode of a 40-corner ring: ${((performance.now() - t) / 2000 * 1000).toFixed(1)}us`);
-
-  // And a whole span, for scale.
-  const cases: [string, () => World][] = [
-    ['a corner dying', () => {
-      const { world, ids } = drawn(['level', rect(0, 0, 300, 200)]);
-      const at0 = resolveAt(world, 0).find(r => r.id === ids[0])!;
-      const added = addVertex(world, 0, at0, 0, { x: 150, y: 0 });
-      return eroded(removeVertices(added.world, 1, [added.vertex]), 1, ids[0], 18);
-    }],
-    ['six boxes all moving', () => {
-      const specs = Array.from({ length: 6 }, (_u, i) =>
-        ['level', rect(i * 60, (i % 2) * 40, 150, 130)] as [any, Point[]]);
-      const { world, ids } = drawn(...specs);
-      let w = world;
-      for (let i = 0; i < 6; i++) {
-        w = eroded(w, 1, ids[i], 6 + i * 2);
-        w = transformed(w, 1, ids[i], { rotation: 0.2 + i * 0.05 });
+    for (const r of rs) {
+      for (let i = 1; i < r.length - 1; i++) {
+        interior++;
+        const d = bend(r[i - 1], r[i], r[i + 1]);
+        if (d < 1e-4) { collinear++; flats.push(`(${r[i].x.toFixed(1)},${r[i].y.toFixed(1)})`); }
       }
-      return w;
-    }],
-  ];
+    }
 
-  for (const [name, build] of cases) {
-    const world = build();
-    t = performance.now();
-    const span = run(bakeSpan(world, 0));
-    console.log(`${name}: ${(performance.now() - t).toFixed(0)}ms  ${span.evaluations} evaluations`);
+    // And the source projections the boundary is cut from.
+    let shapePts = 0, shapeFlat = 0;
+
+    for (const it of items) {
+      for (const ring of it.shape) {
+        shapePts += ring.length;
+        for (let i = 0; i < ring.length; i++) {
+          const a = ring[(i - 1 + ring.length) % ring.length];
+          const c = ring[(i + 1) % ring.length];
+          if (bend(a, ring[i], c) < 1e-4) shapeFlat++;
+        }
+      }
+    }
+
+    console.log(
+      `v${v}: outline ${rs.length} runs ${rs.reduce((s, r) => s + r.length, 0)} pts`
+      + ` | interior ${interior} collinear ${collinear} ${flats.slice(0, 6).join(' ')}`
+      + ` | projections ${shapePts} pts, ${shapeFlat} of them flat`,
+    );
   }
 });

@@ -233,65 +233,67 @@ collapses every interior wall; it grows with the level's perimeter. The rebuild
 would have to get some fifty times bigger before it cost a frame, and at that
 point the diff is sitting there waiting.
 
-### 4c. lineOpacity, which is not set at all
+### 4c. lineOpacity — *built, and it may not be the whole of what you saw*
 
-**What is wrong.** A vertical line is drawn at every point of every outline run,
-including points that are not corners. They show up as lines standing in the
-middle of flat walls.
-
-They come from `spanning`. Both ends of a span have to be written over the same
+**What was wrong.** A vertical line is drawn at every point of every outline
+run, whether or not there is a corner there. `spanning` is one way to get a
+point that is not a corner: both ends of a span must be written over the same
 corners or the rings cannot interpolate, so a corner that dies at the far end is
-kept for the whole span and placed *exactly on the edge between its
-ring-neighbours* at the end that does not have it. Geometrically it is not
-there; structurally it is a point of the ring like any other, and the line pass
-cannot tell the difference. A room with a corner taken out at v1:
+carried the whole way and placed *exactly on the edge between its
+ring-neighbours* at the end that lacks it. The shape is unchanged, which is the
+point — but it is not a corner there.
+
+**How it is worked out.** Not by asking which points look straight. That reads
+the symptom, costs a test per point per frame, and cannot tell a corner that is
+*arriving* — genuinely there, momentarily flat — from one that was never there.
+The fact wanted is existence, and `spanning` knows it: it computes
+`here.has(c.id)` and `there.has(c.id)` and used to throw both away. It now
+carries them as `Moving.dead`.
+
+Getting that from a *source* corner to an *output* point crosses erosion and the
+CSG, and erosion keeps no provenance — the surviving boundary comes from the
+band it subtracts, not from the ring. So `fading` projects twice instead. A dead
+corner is exactly collinear in the source ring, so taking it out changes the
+projection's *geometry* not at all, only its vertex count:
 
 ```
-morph  t=0 … t=1   interior 4   collinear 1     ← carried the whole way across
-still  v1          interior 3   collinear 0     ← the editor's own answer
+project(source with the dead corners, depth)   → the ring the span uses
+project(source without them, depth)            → the same curve, fewer vertices
 ```
 
-`versioning.md` already says what should happen, under *lineOpacity*: a vertex
-that does not exist across a whole stretch is present in the ring, on the edge
-between its neighbours, with opacity 0, and the line fades in over precisely the
-stretch where the vertex is emerging. Nothing computes it.
+The unmatched vertices are the artifacts, zipped to the removed corners in ring
+order. Where the two disagree about ring count or how many are missing, nothing
+is claimed and everything draws — which is what happened before.
 
-**Why it is not simply a collinearity test.** Hiding points that lie on a
-straight line would work on this case and would be the wrong thing: it reads the
-symptom rather than the cause, it costs a test per point per frame, and it
-cannot tell a corner that is *arriving* — genuinely there, momentarily
-straight — from one that was never there. The fact wanted is existence, and
-existence is known: `spanning` computes `here.has(c.id)` and `there.has(c.id)`
-and throws both away.
+**What it costs.** Nothing at all unless a polygon's corner set actually changes
+across the span, and that is most spans. Measured on six boxes eroding and
+turning: 94ms where no corners change, against 94ms before the change; 200ms
+where every polygon loses one, which is the worst it can be and is offline
+behind a progress bar.
 
-**What makes it awkward.** The fact is known about a *source* corner, and the
-thing that needs it is an *output* point, several transformations downstream:
-source ring → `project` → eroded ring → CSG → boundary run. `Origin` already
-links an output point to an eroded ring vertex, by position. The missing link is
-eroded vertex → source corner, and erosion does not track it — the surviving
-boundary comes from the band that `erode` subtracts, not from the ring, and then
-goes through a full arrangement.
+**Then it is plumbing.** `Stretch.opacity` per run point at each end,
+`BakedSpan.opacityA` / `opacityB`, `extrude` marking which line vertices are the
+vertical rather than the horizontals, and the morph vertex shader lerping the
+two into `vOpacity` for the line fragment shader to fade. The still path has no
+such vertices and is 1 throughout.
 
-**The way through, without provenance.** Erode twice. A dead corner is exactly
-collinear in the source ring, so removing it changes the *geometry* of the
-projection not at all — only its vertex count. So:
+**What is not established.** The case above is real and tested — a room with a
+corner removed at v1 goes 1 to 0 across the span, exactly 0 at v1 — but it is
+*not* reproduced by any world in `scratch/`, nor by the bench demo. In both,
+the artifact vertex never reaches the output boundary at all, so there is
+nothing for this to bite on and no line to remove:
 
 ```
-project(source with the dead corners, depth)      → the ring the span uses
-project(source without them, depth)               → the same shape, fewer vertices
+bench demo, span 1:  fading computed for 364 evaluations, minimum 0
+                     output points landing on a faded vertex: 0
 ```
 
-Any vertex of the first that is not in the second is a dead corner's artifact,
-and its opacity at that end is 0. Matching is by position with the same snap
-`origins` already uses, and it is exact rather than approximate, because the two
-rings are the same curve. It costs one extra erosion per polygon per keyframe,
-and only for polygons whose corner set actually changes across the span.
-
-**Then it is plumbing.** `Stretch` gains an opacity per run point at each end;
-`BakedSpan` gains `opacityA` and `opacityB`; `extrude` marks which line vertices
-are the vertical pair rather than the horizontal ones; the morph vertex shader
-lerps the two and the line fragment shader drops the vertical where it is 0. The
-still path has no such vertices and is 1 throughout.
+Their outlines have a genuine corner at every point and every run junction. So
+whatever drew a vertical line down a flat wall in the screenshot that prompted
+this is *something else*, and it is still there. Save that world into
+`scratch/` and `scratch/preview.html?world=<file>` will load it; the probe that
+answered the above counts collinear interior points and straight run junctions
+per version, and would find it in a minute.
 
 ### 5. The game loop
 

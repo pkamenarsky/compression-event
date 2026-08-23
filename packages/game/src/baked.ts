@@ -135,6 +135,20 @@ export interface BakedSpan {
   /** Per output point, `CORNER` or `CROSSING`. */
   kinds: Uint8Array
   /**
+   * Per output point, how solid it is at each end of its stretch — the doc's
+   * `lineOpacity`.
+   *
+   * A corner that is not its polygon's at one end of the span is still in the
+   * ring there, put on the edge between its ring-neighbours so that the shape
+   * is unchanged and the two ends still interpolate. It is not a corner, and
+   * the vertical line a wall draws at a corner has nothing to stand on. Zero
+   * there, one where the corner is real, and lerped between — so the line
+   * fades in over exactly the stretch the vertex emerges through.
+   */
+  opacityA: Float32Array
+  opacityB: Float32Array
+
+  /**
    * Per output point, four entries: the two ends of one edge and the two ends
    * of the other. Only read where the kind is `CROSSING`; elsewhere it is -1,
    * which is also what a crossing the bake could not place is written as, so

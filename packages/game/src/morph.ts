@@ -60,9 +60,13 @@ const vertexShader = /* glsl */ `
   attribute vec4 aCross;
   attribute vec2 aRange;
   attribute float aHeight;
+  /** How solid this point is at each end of the stretch, and whether the line
+   * standing on it is the vertical that can be wrong about it. */
+  attribute vec3 aFade;
 
   varying vec3 vWorldPosition;
   varying float vHeightFrac;
+  varying float vOpacity;
 
   const int WIDTH = ${WIDTH};
 
@@ -128,6 +132,10 @@ const vertexShader = /* glsl */ `
     float u = aRange.y == aRange.x
       ? 0.0
       : clamp((t - aRange.x) / (aRange.y - aRange.x), 0.0, 1.0);
+
+    // The horizontals along a wall are drawn whatever their ends turn out to
+    // be; only the vertical claims there is a corner here.
+    vOpacity = aFade.z > 0.5 ? mix(aFade.x, aFade.y, u) : 1.0;
 
     bool solved = false;
     vec2 at = vec2(0.0);
@@ -252,6 +260,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   const geometry = (
     point: Int32Array,
     height: Float32Array,
+    vertical: Float32Array | null,
     index: Uint32Array | null,
   ): THREE.BufferGeometry => {
     const g = new THREE.BufferGeometry();
@@ -260,6 +269,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     const a = new Float32Array(n * 2), b = new Float32Array(n * 2);
     const slot = new Float32Array(n), kind = new Float32Array(n);
     const cross = new Float32Array(n * 4), within = new Float32Array(n * 2);
+    const fade = new Float32Array(n * 3);
 
     for (let i = 0; i < n; i++) {
       const p = point[i];
@@ -275,6 +285,10 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
 
       within[i * 2] = range[p * 2];
       within[i * 2 + 1] = range[p * 2 + 1];
+
+      fade[i * 3] = span.opacityA[p];
+      fade[i * 3 + 1] = span.opacityB[p];
+      fade[i * 3 + 2] = vertical === null ? 0 : vertical[i];
     }
 
     // Positions come out of the shader, so there is nothing to put in
@@ -287,14 +301,15 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     g.setAttribute('aCross', new THREE.BufferAttribute(cross, 4));
     g.setAttribute('aRange', new THREE.BufferAttribute(within, 2));
     g.setAttribute('aHeight', new THREE.BufferAttribute(height, 1));
+    g.setAttribute('aFade', new THREE.BufferAttribute(fade, 3));
 
     if (index !== null) g.setIndex(new THREE.BufferAttribute(index, 1));
 
     return g;
   };
 
-  const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, shape.index);
-  const lineGeometry = geometry(shape.linePoint, shape.lineHeight, null);
+  const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
+  const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);

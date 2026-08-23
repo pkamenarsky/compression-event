@@ -26,8 +26,13 @@ const vertexShader = /* glsl */ `
 
   varying vec3 vWorldPosition;
   varying float vHeightFrac;
+  varying float vOpacity;
 
   void main() {
+    // The boundary as it stands has no vertices that are not there: every point
+    // of it is a corner the CSG actually produced.
+    vOpacity = 1.0;
+
     // The position attribute holds the outline point in editor units, in x
     // and z; the height is a flag rather than a coordinate, so that one point
     // of the outline serves both ends of its wall.

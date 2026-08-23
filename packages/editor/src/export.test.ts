@@ -18,7 +18,7 @@ import { Point } from '@ce/game/world';
 import { CROSSING, Hulls, outline, signedArea } from '@ce/game';
 import { Frame, bakeSpan, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
-import { addPolygon, editAt, resolveAt, withEdit } from './scene';
+import { addPolygon, addVertex, editAt, removeVertices, resolveAt, withEdit } from './scene';
 import { PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -360,6 +360,68 @@ describe('floors come along without taking part', () => {
     const at = hullsAt(withFloor, 0).trace({ x: 20, y: 80 }, { x: 60, y: 0 });
 
     expect(at.x).toBeCloseTo(80, 6);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// lineOpacity
+//
+// Both ends of a span are written over the same corners or the rings cannot
+// interpolate, so a corner that dies at the far end is carried the whole way
+// and placed on the edge between its ring-neighbours at the end that lacks it.
+// The shape is unchanged, which is the point — but it is not a corner there,
+// and a wall that draws a vertical line at it says it is.
+// -----------------------------------------------------------------------------
+
+describe('a corner that is not there does not draw a line', () => {
+  /** A room with a corner added mid-wall at v0 and taken out at v1. */
+  function dying(): { world: World, vertex: number } {
+    const { world, ids } = drawn(['level', rect(0, 0, 300, 200)]);
+    const at0 = resolveAt(world, 0).find(r => r.id === ids[0])!;
+    const added = addVertex(world, 0, at0, 0, { x: 150, y: 0 });
+
+    return { world: removeVertices(added.world, 1, [added.vertex]), vertex: added.vertex };
+  }
+
+  test('it is solid where it is real and gone where it is not', () => {
+    const flat = bakedSpan(run(bakeSpan(dying().world, 0)));
+
+    // One point of the span fades away across it; everything else is a corner
+    // at both ends.
+    const fading = [...flat.opacityA].filter((a, i) => a !== flat.opacityB[i]);
+
+    expect(fading.length).toBeGreaterThan(0);
+
+    // The corner is the polygon's at v0 and not at v1, so it goes 1 to 0 —
+    // never the other way, and never past either end.
+    for (let i = 0; i < flat.opacityA.length; i++) {
+      expect(flat.opacityA[i]).toBeGreaterThanOrEqual(0);
+      expect(flat.opacityA[i]).toBeLessThanOrEqual(1);
+      expect(flat.opacityB[i]).toBeLessThanOrEqual(flat.opacityA[i] + 1e-9);
+    }
+  });
+
+  test('and it is exactly gone at the version that took it out', () => {
+    const span = run(bakeSpan(dying().world, 0));
+    const last = span.tracks[0].stretches[span.tracks[0].stretches.length - 1];
+
+    // The far end of the last stretch is v1 itself, where the corner is gone.
+    expect(last.t1).toBeCloseTo(1, 9);
+    expect(Math.min(...last.opacity[1].flat())).toBeCloseTo(0, 9);
+
+    // And the near end of the first is v0, where it is real.
+    const first = span.tracks[0].stretches[0];
+
+    expect(first.t0).toBeCloseTo(0, 9);
+    expect(Math.min(...first.opacity[0].flat())).toBeCloseTo(1, 9);
+  });
+
+  test('a room whose corners never change fades nothing', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 300, 200)]);
+    const flat = bakedSpan(run(bakeSpan(eroded(world, 1, ids[0], 30), 0)));
+
+    expect([...flat.opacityA].every(a => a === 1)).toBe(true);
+    expect([...flat.opacityB].every(b => b === 1)).toBe(true);
   });
 });
 

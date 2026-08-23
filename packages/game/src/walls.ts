@@ -42,12 +42,21 @@ export interface Extruded {
   wallHeight: Float32Array
   linePoint: Int32Array
   lineHeight: Float32Array
+  /**
+   * Per line vertex: 1 for the vertical at a corner, 0 for the top and bottom
+   * of a wall.
+   *
+   * Only the vertical is a claim that there is a corner there, so only it can
+   * be wrong about one. The horizontals run along a wall and are drawn whatever
+   * the points at their ends turn out to be.
+   */
+  lineVertical: Float32Array
   index: Uint32Array
 }
 
 export function extrude(runs: Iterable<Run>): Extruded {
   const wallPoint: number[] = [], wallHeight: number[] = [];
-  const linePoint: number[] = [], lineHeight: number[] = [];
+  const linePoint: number[] = [], lineHeight: number[] = [], lineVertical: number[] = [];
   const index: number[] = [];
 
   const wall = (point: number, height: number): void => {
@@ -55,9 +64,10 @@ export function extrude(runs: Iterable<Run>): Extruded {
     wallHeight.push(height);
   };
 
-  const line = (point: number, height: number): void => {
+  const line = (point: number, height: number, vertical: number): void => {
     linePoint.push(point);
     lineHeight.push(height);
+    lineVertical.push(vertical);
   };
 
   for (const run of runs) {
@@ -73,15 +83,15 @@ export function extrude(runs: Iterable<Run>): Extruded {
 
       index.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
 
-      line(i, 0);
-      line(i + 1, 0);
-      line(i, 1);
-      line(i + 1, 1);
+      line(i, 0, 0);
+      line(i + 1, 0, 0);
+      line(i, 1, 0);
+      line(i + 1, 1, 0);
     }
 
     for (let i = run.first; i <= last; i++) {
-      line(i, 0);
-      line(i, 1);
+      line(i, 0, 1);
+      line(i, 1, 1);
     }
   }
 
@@ -90,6 +100,7 @@ export function extrude(runs: Iterable<Run>): Extruded {
     wallHeight: new Float32Array(wallHeight),
     linePoint: new Int32Array(linePoint),
     lineHeight: new Float32Array(lineHeight),
+    lineVertical: new Float32Array(lineVertical),
     index: new Uint32Array(index),
   };
 }
@@ -108,6 +119,7 @@ export function extrude(runs: Iterable<Run>): Extruded {
 export const VARYINGS = /* glsl */ `
   varying vec3 vWorldPosition;
   varying float vHeightFrac;
+  varying float vOpacity;
 `;
 
 export const wallFragment = /* glsl */ `
@@ -147,7 +159,11 @@ export const lineFragment = /* glsl */ `
   layout(location = 0) out vec4 fragColor;
 
   void main() {
-    fragColor = vec4(uLineColor, 1.0);
+    // A vertical standing at a corner that is not there yet is not drawn at
+    // all, and fades in as the corner emerges. Everything else is opaque.
+    if (vOpacity < 0.02) discard;
+
+    fragColor = vec4(uLineColor, vOpacity);
   }
 `;
 
@@ -182,6 +198,12 @@ export function materials(
     vertexShader,
     fragmentShader: lineFragment,
     uniforms: { ...uniforms, uLineColor: { value: new THREE.Color(options.lineColor) } },
+
+    // A fading vertical is the only thing that is ever part way there, and it
+    // is a hairline over a wall it is about to lie flat against, so there is
+    // nothing for it to sort against.
+    transparent: true,
+    depthWrite: false,
   });
 
   return { wall, line };
