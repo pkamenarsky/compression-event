@@ -5,6 +5,7 @@ import {
   Resolved,
   addPolygon,
   addVertex,
+  hitPolygons,
   affine,
   copied,
   csg,
@@ -568,5 +569,33 @@ describe('copy and paste', () => {
     const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
 
     expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
+  });
+});
+
+describe('clicking through a stack of polygons', () => {
+  test('what is under the cursor comes back topmost first', () => {
+    // Later polygons draw over earlier ones, so that is the order a click has
+    // to walk: the top one first, and down from there.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(50, 50, 100, 100)],
+      ['level', rect(60, 60, 10, 10)],
+    );
+    const items = resolveAt(world, 0);
+
+    expect(hitPolygons(items, { x: 65, y: 65 })).toEqual([ids[2], ids[1], ids[0]]);
+    expect(hitPolygons(items, { x: 120, y: 120 })).toEqual([ids[1]]);
+    expect(hitPolygons(items, { x: 10, y: 10 })).toEqual([ids[0]]);
+    expect(hitPolygons(items, { x: 400, y: 400 })).toEqual([]);
+  });
+
+  test('a hole is not something to click through to', () => {
+    // `contains` is the nonzero fill of the projection, so what a click finds
+    // is what is actually drawn there rather than what a bounding box suggests.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['solid', rect(20, 20, 60, 60)]);
+    const items = resolveAt(world, 0);
+
+    expect(hitPolygons(items, { x: 10, y: 10 })).toEqual([ids[0]]);
+    expect(hitPolygons(items, { x: 50, y: 50 })).toEqual([ids[1], ids[0]]);
   });
 });

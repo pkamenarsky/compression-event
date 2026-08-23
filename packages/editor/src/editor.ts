@@ -115,15 +115,17 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
  * other — the canvas ignores anything with a command key on it, and everything
  * here has one bar the two tool letters.
  *
- * `a` and `v` are Illustrator's, and mean what they mean there: `a` to get at
- * the corners, `v` to get at whole polygons.
+ * `a`, `v` and `p` are Illustrator's, and mean what they mean there: `a` to get
+ * at the corners, `v` to get at whole polygons, `p` to draw a new one. Drawing
+ * being its own tool is what lets a click on empty canvas mean letting go under
+ * the other two, rather than having to guess between that and starting a shape.
  */
 function shortcuts(input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
       const e = yield* keyPressed(
         input,
-        'KeyA', 'KeyV', 'KeyZ', 'KeyY', 'KeyC',
+        'KeyA', 'KeyV', 'KeyP', 'KeyZ', 'KeyY', 'KeyC',
       );
 
       const command = e.metaKey || e.ctrlKey;
@@ -131,9 +133,12 @@ function shortcuts(input: Input, update: Update): VNode {
       if (!command) {
         if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
         else if (e.code === 'KeyV') update(s => ({ ...s, tool: 'polygon' }));
+        else if (e.code === 'KeyP') update(s => ({ ...s, tool: 'path' }));
 
         continue;
       }
+
+      if (e.code === 'KeyP') continue;
 
       // Cmd+A is select-all, which this does not have; leave it to the browser
       // rather than swallowing it into a tool switch.

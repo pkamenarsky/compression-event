@@ -26,7 +26,7 @@ import {
   centroid,
   editAt,
   hitEdge,
-  hitPolygon,
+  hitPolygons,
   hitVertex,
   live,
   placeVertex,
@@ -352,34 +352,49 @@ export function worldCanvas(
     }
 
     /**
+     * A press with the pen up, once it is known to be a click: another point of
+     * the polygon being laid down, or the first of a new one.
+     *
+     * Drawing is its own tool, and that is the whole answer to what a click on
+     * empty canvas means. Under the point tool it means letting go of what was
+     * picked; here it means starting a shape. One tool doing both has to guess,
+     * and there is nothing in the click to guess from — which is why no editor
+     * asks it to. Illustrator has the pen apart from direct selection, Figma
+     * has P apart from V, Inkscape has the bezier tool apart from the node
+     * editor.
+     */
+    function penning(e: PointerEvent): void {
+      const l = local();
+      const to = at(e, true);
+
+      if (l.draft === null) {
+        setLocal({ ...l, draft: { points: [to], at: to } });
+        return;
+      }
+
+      const first = l.draft.points[0];
+      const closing = l.draft.points.length >= 3
+        && Math.hypot(first.x - to.x, first.y - to.y) * view().zoom <= HANDLE;
+
+      if (closing) {
+        commit(l.draft.points);
+        setLocal({ ...l, draft: null });
+      }
+      else {
+        setLocal({ ...l, draft: { points: [...l.draft.points, to], at: to } });
+      }
+    }
+
+    /**
      * A press with the point tool up, once it is known to be a click.
      *
      * The order is the whole design. A corner beats an edge, because every
      * corner lies on two of them and a click there means the corner; an edge
      * beats empty canvas, because clicking a line is how a corner is added; and
-     * a half-drawn polygon beats both, because while one is being laid down
-     * every click is another of its points and nothing else.
+     * empty canvas means letting go of what was picked, which is what a click
+     * on nothing means everywhere.
      */
-    function* clicked(e: PointerEvent): Op<void> {
-      const l = local();
-      const to = at(e, true);
-
-      if (l.draft !== null) {
-        const first = l.draft.points[0];
-        const closing = l.draft.points.length >= 3
-          && Math.hypot(first.x - to.x, first.y - to.y) * view().zoom <= HANDLE;
-
-        if (closing) {
-          commit(l.draft.points);
-          setLocal({ ...l, draft: null });
-        }
-        else {
-          setLocal({ ...l, draft: { points: [...l.draft.points, to], at: to } });
-        }
-
-        return;
-      }
-
+    function clicked(e: PointerEvent): void {
       const items = resolveAt(world(), currentVersion());
       const reach = HANDLE / view().zoom;
       const corner = hitVertex(items, at(e), reach);
@@ -407,23 +422,19 @@ export function worldCanvas(
       }
 
       if (corner !== null) {
-        if (e.shiftKey) {
-          update(s => ({
-            ...s,
-            selection: {
-              ...s.selection,
-              vertices: togglePicked(s.selection.vertices, corner.vertex),
-            },
-          }));
-
-          return;
-        }
-
-        // Only ever a selection. A press that meant to move this corner became
-        // a drag and was dealt with before the button came up; by the time it
-        // reaches here the button is already up, and starting a gesture that
-        // waits for a release would wait for the next one.
-        update(s => ({ ...s, selection: { ...s.selection, vertices: [corner.vertex] } }));
+        update(s => ({
+          ...s,
+          selection: {
+            ...s.selection,
+            // Only ever a selection. A press that meant to move this corner
+            // became a drag and was dealt with before the button came up; by
+            // the time it reaches here the button is already up, and starting a
+            // gesture that waits for a release would wait for the next one.
+            vertices: e.shiftKey
+              ? togglePicked(s.selection.vertices, corner.vertex)
+              : [corner.vertex],
+          },
+        }));
 
         return;
       }
@@ -453,10 +464,11 @@ export function worldCanvas(
         return;
       }
 
-      // Nothing under it: start laying down a polygon, which is what a click on
-      // empty canvas has always meant here. A drag never reaches this — it was
-      // taken as a marquee before the button came up.
-      setLocal({ ...l, draft: { points: [to], at: to } });
+      // Nothing under it: let go of what was picked. Shift means adding, and
+      // adding nothing to a selection leaves it alone.
+      if (!e.shiftKey) {
+        update(s => ({ ...s, selection: { ...s.selection, vertices: [] } }));
+      }
     }
 
     /**
@@ -492,18 +504,131 @@ export function worldCanvas(
       return () => cancelAnimationFrame(frame);
     }
 
-    function picking(e: PointerEvent): void {
-      const id = hitPolygon(resolveAt(world(), currentVersion()), at(e));
+    /**
+     * Where the last click landed and what was under it, so that clicking the
+     * same place again can mean the next one down.
+     *
+     * Not in `Local`: nothing about it is on screen, and putting it there would
+     * redraw the canvas every time the mouse went down.
+     */
+    let stacked: { at: Point, stack: PolygonId[], index: number } | null = null;
 
-      update(s => ({
-        ...s,
-        selection: {
-          ...s.selection,
-          polygons: id === null
-            ? (e.shiftKey ? s.selection.polygons : [])
-            : e.shiftKey ? togglePicked(s.selection.polygons, id) : [id],
-        },
-      }));
+    /**
+     * Picking a polygon, and picking the one underneath it.
+     *
+     * Clicking overlapping polygons has to reach the ones behind somehow, and
+     * the approaches divide: Illustrator and Figma put it on a modifier
+     * (command-click, again and again, going deeper), while others cycle on
+     * repeated clicks in the same spot. This does the second, because it needs
+     * nothing to be discovered — click the same place twice and you get the
+     * other one — and because it costs nothing where it is not wanted: with a
+     * single polygon under the cursor the stack is one deep and clicking again
+     * lands on the same thing.
+     */
+    function picking(e: PointerEvent): void {
+      const p = at(e);
+      const stack = hitPolygons(resolveAt(world(), currentVersion()), p);
+
+      if (stack.length === 0) {
+        stacked = null;
+
+        if (!e.shiftKey) {
+          update(s => ({ ...s, selection: { ...s.selection, polygons: [] } }));
+        }
+
+        return;
+      }
+
+      if (e.shiftKey) {
+        stacked = null;
+        update(s => ({
+          ...s,
+          selection: { ...s.selection, polygons: togglePicked(s.selection.polygons, stack[0]) },
+        }));
+
+        return;
+      }
+
+      // The same place, over the same polygons, and still standing on the one
+      // it left us on: anything else is a fresh click and starts at the top.
+      const again = stacked !== null
+        && Math.hypot(stacked.at.x - p.x, stacked.at.y - p.y) * view().zoom <= HANDLE
+        && stacked.stack.length === stack.length
+        && stacked.stack.every((id, i) => id === stack[i])
+        && selection().polygons.length === 1
+        && selection().polygons[0] === stacked.stack[stacked.index];
+
+      const index = again ? (stacked!.index + 1) % stack.length : 0;
+
+      stacked = { at: p, stack, index };
+      update(s => ({ ...s, selection: { ...s.selection, polygons: [stack[index]] } }));
+    }
+
+    /**
+     * The picked polygons dragged along, which is what a hand reaches for
+     * before it reaches for a key.
+     *
+     * `t` still does this from the keyboard and is still the way to do it
+     * without having something under the cursor to grab. This is the same
+     * translation written the same way — recomputed every move from the layer
+     * as it stood when the drag began, so it cannot drift.
+     *
+     * The step is snapped rather than the position: a polygon has no one point
+     * that ought to land on the grid, and snapping any particular corner of it
+     * would drag the rest out of whatever alignment they had.
+     */
+    function* draggingPolygons(from: PointerEvent): Op<void> {
+      const v = currentVersion();
+      const was = world();
+      const ids = selection().polygons;
+      const start = at(from);
+
+      const anchors = new Map<PolygonId, Edit>(
+        resolveAt(was, v)
+          .filter(it => ids.includes(it.id))
+          .map(it => [it.id, editAt(was, v, it.id, it.erosion)]),
+      );
+
+      if (anchors.size === 0) return;
+
+      cursor('move');
+      setLocal({ ...local(), previewing: true });
+
+      yield* select({
+        moving: pointerMoved(e => {
+          const to = at(e);
+          const g = settings();
+          const step = g.snapToGrid ? g.gridSize : 0;
+
+          const dx = step === 0 ? to.x - start.x : Math.round((to.x - start.x) / step) * step;
+          const dy = step === 0 ? to.y - start.y : Math.round((to.y - start.y) / step) * step;
+
+          update(st => {
+            let world = st.world;
+
+            for (const [id, edit] of anchors) {
+              world = withEdit(world, v, id, {
+                ...edit,
+                transform: {
+                  ...edit.transform,
+                  translation: {
+                    x: edit.transform.translation.x + dx,
+                    y: edit.transform.translation.y + dy,
+                  },
+                },
+              });
+            }
+
+            return { ...st, world };
+          });
+        }),
+        done: pointerReleased(),
+        lost: blurred(),
+      });
+
+      setLocal({ ...local(), previewing: false });
+      cursor('');
+      update(s => marked(s, was));
     }
 
     /** The picked corners taken out, or the picked polygons under the other
@@ -591,6 +716,15 @@ export function worldCanvas(
           ),
 
           effect(currentVersion, v => playing(v)),
+
+          // A half-drawn polygon belongs to the pen. Leaving it on screen after
+          // switching away would leave it waiting for clicks that now mean
+          // something else entirely.
+          effect(tool, t => {
+            if (t !== 'path' && local().draft !== null) {
+              setLocal({ ...local(), draft: null });
+            }
+          }),
         ],
       ),
 
@@ -668,33 +802,55 @@ export function worldCanvas(
               // a drag is a click that wandered.
               if (local().draft !== null) continue;
 
-              // A drag that started on a corner is that corner being moved,
-              // and a click on it would have started the same gesture anyway.
-              const grab = tool() === 'point'
-                ? hitVertex(
+              // A drag that started on something is that thing being moved: a
+              // corner under the point tool, a polygon under the polygon one.
+              // Anywhere else it is a marquee.
+              if (tool() === 'point') {
+                const grab = hitVertex(
                   resolveAt(world(), currentVersion()),
                   at(e),
                   HANDLE / view().zoom,
-                )
-                : null;
+                );
 
-              if (grab !== null) {
-                const picked = selection().vertices.includes(grab.vertex)
-                  ? selection().vertices
-                  : [grab.vertex];
+                if (grab !== null) {
+                  const picked = selection().vertices.includes(grab.vertex)
+                    ? selection().vertices
+                    : [grab.vertex];
 
-                update(s => ({ ...s, selection: { ...s.selection, vertices: picked } }));
-                yield* draggingVertices(grab.vertex, picked);
+                  update(s => ({ ...s, selection: { ...s.selection, vertices: picked } }));
+                  yield* draggingVertices(grab.vertex, picked);
+                  continue;
+                }
               }
-              else {
-                yield* marqueeing(e, e.shiftKey);
+              else if (tool() === 'polygon') {
+                const under = hitPolygons(resolveAt(world(), currentVersion()), at(e));
+
+                if (under.length > 0) {
+                  // Grabbing something already picked takes the whole selection
+                  // with it; grabbing anything else picks that one and moves it.
+                  if (!selection().polygons.includes(under[0])) {
+                    stacked = null;
+                    update(s => ({
+                      ...s,
+                      selection: { ...s.selection, polygons: [under[0]] },
+                    }));
+                  }
+
+                  yield* draggingPolygons(e);
+                  continue;
+                }
               }
+
+              yield* marqueeing(e, e.shiftKey);
             }
             else if (tool() === 'point') {
-              yield* clicked(e);
+              clicked(e);
             }
             else if (tool() === 'polygon') {
               picking(e);
+            }
+            else if (tool() === 'path') {
+              penning(e);
             }
           }
         }

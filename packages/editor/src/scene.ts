@@ -521,11 +521,19 @@ function unmoved(a: Shape, b: Shape): boolean {
 
 /** The topmost polygon under a point, hit against what is on screen. */
 export function hitPolygon(items: Resolved[], at: Point): PolygonId | null {
+  return hitPolygons(items, at)[0] ?? null;
+}
+
+/** Every polygon under a point, topmost first, which is what clicking through
+ * a stack of them needs. */
+export function hitPolygons(items: Resolved[], at: Point): PolygonId[] {
+  const out: PolygonId[] = [];
+
   for (let i = items.length - 1; i >= 0; i--) {
-    if (contains(items[i].shape, at)) return items[i].id;
+    if (contains(items[i].shape, at)) out.push(items[i].id);
   }
 
-  return null;
+  return out;
 }
 
 /**
