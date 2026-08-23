@@ -54,7 +54,7 @@ export function editor(initial: World): VNode {
           saving(state, input, update),
           shortcuts(input, update),
 
-          replaying(s.currentVersion, update),
+          replaying(s.currentVersion, state, update),
 
           worldCanvas(
             s.world,
@@ -82,43 +82,61 @@ export function editor(initial: World): VNode {
 }
 
 /**
- * A version switch, watched rather than jumped.
+ * The clock behind a version switch, which is watched rather than jumped.
  *
- * The walk between the two runs on a clock and leaves how far it has got in the
- * store, where both views find it: the canvas draws the outline it passes
- * through and the 3D view flies the same instant into the shader. The geometry
- * comes out of the bake either way, so a span that has not been baked plays
- * nothing rather than guessing.
+ * The walk leaves how far it has got in the store, where both views find it:
+ * the canvas draws the outline it passes through and the 3D view flies the same
+ * instant into the shader. It lives here rather than in either view because it
+ * belongs to neither — two clocks would be two walks, and they would not stay
+ * in step.
  *
- * It lives here rather than in either view because it belongs to neither. Two
- * clocks would be two walks, and they would not stay in step.
+ * It does not decide that a walk is happening. `switched` does that, in the
+ * same update that moves the version, and this only advances what it finds. The
+ * two being one update is load-bearing: writing the version first and the walk
+ * a frame later leaves one frame in which a view is told it is at the
+ * destination with nothing in flight, and anything drawing the walk rather than
+ * drawing over it lurches to the end and back. The canvas never noticed —
+ * what it draws underneath is supposed to snap — and the 3D view could not
+ * have been more obvious about it.
  */
-function replaying(current: Value<VersionId>, update: Update): VNode {
-  // The version last played to, so a switch knows where it came from. The
-  // effect's own memory rather than state: what is on screen is already at the
-  // new version, and this is only about the way there.
-  let shown: VersionId | null = null;
-
+function replaying(current: Value<VersionId>, state: Value<EditorState>, update: Update): VNode {
   return effect(current, v => {
-    const was = shown;
+    const walk = state().replay;
 
-    shown = v;
-
-    if (was === null || was === v) return;
+    // A version can move without a transition being meant by it — a file
+    // opened, a state restored. Only a walk that says it is going here is one.
+    if (walk === null || walk.to !== v) return;
 
     const started = performance.now();
-    const ms = REPLAY_MS * Math.abs(v - was);
+    const ms = REPLAY_MS * Math.abs(v - walk.from);
 
     let frame = requestAnimationFrame(function tick() {
       const at = Math.min(1, (performance.now() - started) / ms);
 
-      update(s => ({ ...s, replay: at < 1 ? { from: was, to: v, at } : null }));
+      update(s => ({ ...s, replay: at < 1 ? { ...walk, at } : null }));
 
       if (at < 1) frame = requestAnimationFrame(tick);
     });
 
     return () => cancelAnimationFrame(frame);
   });
+}
+
+/**
+ * A version switch: where the walk is declared, in the one update that also
+ * moves the version.
+ *
+ * Clicking the version already on screen is not a switch and does not start
+ * one.
+ */
+function switched(s: EditorState, to: VersionId): EditorState {
+  if (s.currentVersion === to) return s;
+
+  return {
+    ...s,
+    currentVersion: to,
+    replay: { from: s.currentVersion, to, at: 0 },
+  };
 }
 
 /**
@@ -434,7 +452,7 @@ function versionRow(
     g(
       {
         style: { cursor: 'pointer' },
-        onclick: () => update(s => ({ ...s, currentVersion: index })),
+        onclick: () => update(s => switched(s, index)),
       },
       [
         // A hit area over the whole row, so the name is as clickable as the node

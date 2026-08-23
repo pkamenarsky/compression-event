@@ -16,7 +16,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { CROSSING, Hulls, outline, signedArea } from '@ce/game';
-import { Frame, bakeSpan, sample } from './bake';
+import { Frame, bakeSpan, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
 import { addPolygon, editAt, resolveAt, withEdit } from './scene';
 import { PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
@@ -153,6 +153,69 @@ describe('a flattened span replays as its span does', () => {
 
     expect(agrees(w, 0)).toBeLessThan(SLACK);
   });
+});
+
+// -----------------------------------------------------------------------------
+// The seam
+//
+// The 3D view draws two things: the boundary as the editor keeps it, while
+// anyone is editing, and the baked span, while a transition plays. It crosses
+// between them at the moment a switch starts and again when it ends, and
+// anything that differs across that crossing is a flicker in the one place a
+// viewer is looking hardest.
+//
+// The bake argues the two are the same answer — same members, same ranks, same
+// tolerances — and `divergence.test.ts` holds the replay to `TOLERANCE` in the
+// middle of a span, which is a width the eye can see. Neither says the ends
+// land exactly on what the editor draws. This does.
+// -----------------------------------------------------------------------------
+
+/** Nothing about either end of a span is approximate, so the only thing being
+ * allowed for is that the buffers are single precision. */
+const EXACT = 1e-3;
+
+describe('a span begins and ends on what the editor draws', () => {
+  const cases: [string, () => World][] = [
+    ['a room eroding', () => {
+      const { world, ids } = drawn(['level', rect(0, 0, 200, 160)]);
+
+      return eroded(world, 1, ids[0], 30);
+    }],
+    ['a pillar turning in a wall', () => {
+      const { world, ids } = drawn(
+        ['level', rect(0, 0, 300, 200)],
+        ['solid', rect(120, 80, 60, 60)],
+      );
+
+      return transformed(world, 1, ids[1], { rotation: 1.1 });
+    }],
+    ['rooms joining as they erode', () => {
+      const { world, ids } = drawn(
+        ['level', rect(0, 0, 200, 200)],
+        ['level', rect(150, 60, 200, 90)],
+        ['solid', rect(80, 80, 70, 70)],
+      );
+
+      let w = eroded(world, 1, ids[0], 20);
+
+      w = eroded(w, 1, ids[1], 12);
+
+      return transformed(w, 1, ids[2], { rotation: 0.5 });
+    }],
+  ];
+
+  for (const [name, build] of cases) {
+    test(name, () => {
+      const world = build();
+      const flat = bakedSpan(run(bakeSpan(world, 0)));
+
+      // `truth` is the CSG run outright at an instant — the same path the
+      // editor's own drawing goes through, which is what the still source will
+      // be handed.
+      expect(apart(truth(world, 0, 0), outline(flat, 0))).toBeLessThan(EXACT);
+      expect(apart(truth(world, 0, 1), outline(flat, 1))).toBeLessThan(EXACT);
+    });
+  }
 });
 
 describe('what the buffers are', () => {

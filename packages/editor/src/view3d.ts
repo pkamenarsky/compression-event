@@ -1,47 +1,70 @@
 // -----------------------------------------------------------------------------
 // The 3D view
 //
-// A panel holding the game's own renderer, fed from the live bake. Not a
-// preview of the editor's drawing in three dimensions — the game's, exactly:
-// the same buffers, the same vertex shader, the same walls. Whatever this shows
-// is what the game will show, and if the two ever disagree it is this that is
-// right.
+// A panel holding the game's own renderer. Not a preview of the editor's
+// drawing in three dimensions — the game's walls, exactly: the same extrusion,
+// the same shading. Whatever this shows is what the game will show.
 //
-// It follows the version on screen, and it follows the walk between two of them
-// on the same clock the canvas does. So switching version here is the
-// transition the player will see, at the speed they will see it, over geometry
-// the bake actually produced.
+// Live, and the bake is not a precondition
+// ----------------------------------------
+// What this draws while anyone is editing is the CSG at the version on screen,
+// which the editor already keeps — `worldset` maintains it incrementally for
+// the 2D canvas, and an edit costs about a millisecond of it even on a large
+// level. So an edit shows up here as it is made, on an unbaked world, from the
+// first polygon drawn.
+//
+// The bake is for *movement*. It exists so the game can go between two versions
+// without resolving anything, and this reaches for it only while a transition
+// is actually playing. Where a span has been baked, the transition is the one
+// the player will see, at the speed they will see it, over geometry the bake
+// actually produced. Where it has not, the version switch simply snaps — which
+// is what the jam build did, and is not a reason to show nothing.
 //
 // What it costs, and when
 // -----------------------
-// A WebGL context and a walk of the whole bake, so it is asked for rather than
-// assumed: `preview` in the store says whether it is up, and nothing here
-// exists while it is down.
+// A WebGL context, so it is asked for rather than assumed: `preview` in the
+// store says whether it is up, and nothing here exists while it is down.
 //
-// The shipped world is rebuilt when the bake changes and at no other time. An
-// edit invalidates the spans it touched, which changes the bake, which empties
-// what is shown — so what is on screen is either the bake or nothing, and never
-// a stale bake dressed up as a current one. That is the same promise `replayed`
-// makes on the canvas, and for the same reason: quietly resolving the version
-// instead would show something the game will never get.
+// Every edit rebuilds the wall buffers whole. `worldset` hands back a diff
+// naming the pieces an edit disturbed, so the answer when that starts to hurt
+// is a geometry pool keyed by piece rather than a rebuild; a level of a few
+// hundred polygons will not notice.
 // -----------------------------------------------------------------------------
 
 import { Value } from '@incpt/kontinuum';
 import { VNode, effect, show, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
-import { Renderer, SCALE, World as GameWorld, renderer } from '@ce/game';
+import { Point, Renderer, SCALE, renderer } from '@ce/game';
 import { Bake, spanAt } from './bake';
-import { shipped } from './export';
+import { bakedLevel } from './export';
+import { EMPTY_LIVE, Live, live, resolveAt, runs } from './scene';
 import { theme } from './theme';
 import { Replay, VersionId, World } from './types';
+
+interface Orbit {
+  angle: number
+  pitch: number
+  distance: number
+  x: number
+  z: number
+  held: boolean
+}
 
 const WIDTH = 380;
 const HEIGHT = 260;
 
-/** How far back the camera sits, as a multiple of the level's own size. */
-const BACK = 0.75;
-const UP = 0.85;
+/** Vertical, in radians, and the one the framing is worked out against. */
+const FOV = 60 * Math.PI / 180;
+
+/**
+ * How far back the camera sits, as a multiple of what it has to fit.
+ *
+ * The level's diagonal over the tangent of the half angle is where it exactly
+ * fills the frame; the rest is air, so that a room at the edge does not sit on
+ * the edge.
+ */
+const MARGIN = 1.25;
 
 /** Radians per pixel dragged. */
 const TURN = 0.008;
@@ -67,10 +90,25 @@ function panel(
 ): VNode {
   let host: HTMLDivElement | undefined;
   let view: Renderer | null = null;
-  let level: GameWorld | null = null;
 
-  /** Where the camera is looking and from how far, in world units. */
-  const orbit = { angle: 0.9, pitch: 0.75, distance: 20, x: 0, z: 0 };
+  /** How many spans the renderer currently holds. The walk is measured against
+   * this rather than against the chain's length: a half-baked level should show
+   * the half it has rather than race through all of it. */
+  let spans = 0;
+
+  /**
+   * The CSG at the version on screen, kept between edits.
+   *
+   * Its own rather than the canvas', which keeps one too. Both are caches of
+   * the same thing and `live` is incremental, so the second costs a pass over
+   * what actually moved; sharing one would mean threading a mutable cache
+   * through the reactive tree to save about a millisecond.
+   */
+  let set: Live = EMPTY_LIVE;
+
+  /** Where the camera is looking and from how far, in world units. `held` once
+   * someone has moved it themselves. */
+  const orbit: Orbit = { angle: 0.9, pitch: 0.75, distance: 20, x: 0, z: 0, held: false };
 
   const placed = (): void => {
     if (view === null) return;
@@ -87,24 +125,38 @@ function panel(
   };
 
   /**
-   * Where in the walk the renderer should be, as a fraction of everything it
-   * was given.
+   * Where the walk has got to, or nothing at all.
    *
-   * The version being watched is a position along the chain; the renderer's own
-   * scale is however many spans it holds, which is fewer whenever the bake is
-   * unfinished. Dividing by the second rather than by the chain's length is
-   * what keeps a half-baked level showing the half it has instead of racing
-   * through it.
+   * Nothing at all is the ordinary case: standing at a version, what is drawn
+   * is the boundary `shown` last put there, and the bake is not consulted. A
+   * transition over a span that was never baked is also nothing at all, and
+   * snaps.
    */
-  const seek = (v: VersionId, r: Replay | null): void => {
-    if (view === null || level === null) return;
+  const walked = (r: Replay | null): void => {
+    if (view === null) return;
 
-    const spans = level.baked.spans.length;
-    if (spans === 0) return;
+    if (r === null || spans === 0) {
+      view.walk(null);
+      return;
+    }
 
-    const at = r === null ? v : r.from + (r.to - r.from) * r.at;
+    const at = r.from + (r.to - r.from) * r.at;
 
-    view.seek(Math.min(Math.max(at / spans, 0), 1));
+    view.walk(Math.min(Math.max(at / spans, 0), 1));
+  };
+
+  /** The boundary at the version on screen, which is what is drawn whenever
+   * nothing is in flight. */
+  const shown = (w: World, v: VersionId): void => {
+    if (view === null) return;
+
+    set = live(set, resolveAt(w, v));
+
+    const outline = runs(set) as Point[][];
+
+    view.show(outline);
+    framed(outline, orbit);
+    placed();
   };
 
   return div(
@@ -137,6 +189,8 @@ function panel(
 
         let x = e.clientX, y = e.clientY;
 
+        orbit.held = true;
+
         const moved = (m: PointerEvent) => {
           orbit.angle += (m.clientX - x) * TURN;
           orbit.pitch = Math.min(
@@ -165,6 +219,7 @@ function panel(
         e.preventDefault();
         e.stopPropagation();
 
+        orbit.held = true;
         orbit.distance = Math.max(2, orbit.distance * Math.exp(e.deltaY * 0.001));
         placed();
       },
@@ -175,7 +230,7 @@ function panel(
       effect(() => {
         if (host === undefined) return;
 
-        view = renderer(host, { dither: false, fov: 60 });
+        view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
 
         let frame = requestAnimationFrame(function tick() {
           view?.render();
@@ -186,51 +241,60 @@ function panel(
           cancelAnimationFrame(frame);
           view?.dispose();
           view = null;
-          level = null;
+          set = EMPTY_LIVE;
+          spans = 0;
         };
       }),
 
+      // The boundary, rebuilt as it is edited. No bake anywhere in this.
+      effect(
+        () => [world(), current()] as const,
+        ([w, v]) => shown(w, v),
+      ),
+
+      // The bake, held ready for the next transition. Nothing is played off one
+      // that no longer stands: `spanAt` decides, against the world in front of
+      // it, and an edit that invalidates a span takes the animation away and
+      // leaves the geometry alone.
       effect(
         () => [world(), bake()] as const,
         ([w, b]) => {
           if (view === null) return;
 
-          // Nothing is shown off a bake that no longer stands. `spanAt` is what
-          // decides, and it decides against the world in front of it.
-          level = spanAt(b, w, 0) === null ? null : shipped(w, b);
+          const baked = spanAt(b, w, 0) === null ? { spans: [] } : bakedLevel(b, w);
 
-          view.load(level ?? { paths: [], versions: [], artefacts: [], baked: { spans: [] } });
+          spans = baked.spans.length;
 
-          if (level !== null) framed(level, orbit);
-
-          placed();
-          seek(current(), replay());
+          view.load({ paths: [], versions: [], artefacts: [], baked });
+          walked(replay());
         },
       ),
 
-      effect(
-        () => [current(), replay()] as const,
-        ([v, r]) => seek(v, r),
-      ),
+      effect(replay, r => walked(r)),
 
       label(bake, world),
     ],
   );
 }
 
-/** The level's middle and how big it is, so the camera starts looking at it
- * rather than at wherever the origin happens to be. */
-function framed(level: GameWorld, orbit: { distance: number, x: number, z: number }): void {
+/**
+ * Where the camera looks, and from how far.
+ *
+ * Only until someone takes hold of it: an edit that moved a wall should not
+ * also fly the camera somewhere, so once the view has been turned or zoomed it
+ * is theirs and this stops writing to it.
+ */
+function framed(outline: readonly Point[][], orbit: Orbit): void {
+  if (orbit.held) return;
+
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
 
-  for (const version of level.versions) {
-    for (const polygon of version.polygons) {
-      for (const p of polygon.points) {
-        minX = Math.min(minX, p.x * SCALE);
-        maxX = Math.max(maxX, p.x * SCALE);
-        minZ = Math.min(minZ, p.y * SCALE);
-        maxZ = Math.max(maxZ, p.y * SCALE);
-      }
+  for (const run of outline) {
+    for (const p of run) {
+      minX = Math.min(minX, p.x * SCALE);
+      maxX = Math.max(maxX, p.x * SCALE);
+      minZ = Math.min(minZ, p.y * SCALE);
+      maxZ = Math.max(maxZ, p.y * SCALE);
     }
   }
 
@@ -238,17 +302,26 @@ function framed(level: GameWorld, orbit: { distance: number, x: number, z: numbe
 
   orbit.x = (minX + maxX) / 2;
   orbit.z = (minZ + maxZ) / 2;
-  orbit.distance = Math.max(4, Math.hypot(maxX - minX, maxZ - minZ) * BACK / UP);
+  const across = Math.hypot(maxX - minX, maxZ - minZ);
+
+  orbit.distance = Math.max(4, across / (2 * Math.tan(FOV / 2)) * MARGIN);
 }
 
-/** What is on screen, or why nothing is. */
+/**
+ * What the transitions will do, which is the only thing about this view the
+ * bake still decides.
+ *
+ * The geometry is always there. What a bake buys is the walk between two
+ * versions; without one a switch arrives rather than happens, and saying so is
+ * better than leaving someone to wonder whether it is broken.
+ */
 function label(bake: Value<Bake>, world: Value<World>): VNode {
   const says = (): string => {
     const b = bake(), w = world();
 
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
-    return spanAt(b, w, 0) === null ? 'not baked' : 'drag to turn · wheel to zoom';
+    return spanAt(b, w, 0) === null ? 'not baked · switches snap' : 'drag to turn · wheel to zoom';
   };
 
   return div(

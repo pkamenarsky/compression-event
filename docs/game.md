@@ -142,12 +142,75 @@ it.
 is the outline being drawn, and watching them part and rejoin across a
 transition is the whole of the trade.
 
-### 4. The editor's 3D view
+### 4. The editor's 3D view — *done*
 
-A panel in the editor holding a `renderer(element)`, fed from the live `Bake`
-through the exporter, following `currentVersion` and the replay scrubber that
-`replayed` already drives. The editor depends on the game package already, so
-this is wiring rather than design.
+`packages/editor/src/view3d.ts` is a panel holding `renderer(element)`. It
+orbits on a drag, zooms on a wheel, frames the level until someone takes hold of
+the camera themselves, and is off until asked for, because it costs a WebGL
+context.
+
+It draws the CSG at the version on screen, live, and it does not need a bake to
+do it. See *4b*.
+
+### 4b. Live, and the jump — *done*
+
+**The jump.** Switching version made the 3D walls lurch, and the 2D canvas did
+not. The difference was never in either view: it was the order two fields were
+written. A version row committed `currentVersion` on its own, and the clock that
+fills in `replay` did not start until the next animation frame, so every view
+saw this:
+
+```
+v3 —                ← committed by the click
+v3 0->3 @0.02       ← one frame later
+```
+
+That first line puts anything deriving its instant from both fields at the
+destination for a frame, before the walk drags it back to the start. The canvas
+survived it because it draws two things — the set at `currentVersion`, which is
+*supposed* to snap, and the replay as an overlay over the top — and a one-frame
+snap of something that always snaps is invisible. In 3D the walls *are* the
+replay.
+
+`switched` now writes both in one update and the clock only advances what it
+finds. The same probe reads `v3 0->3 @0.00` as the first line, which is v0's
+geometry, which is where a walk from v0 starts.
+
+**Live.** The 3D view used to show nothing until the level was baked, and an
+edit invalidates the bake, so it showed nothing for most of the time anyone was
+editing. Baking is for *movement*; standing still at one version needs none of
+it. The view now draws `runs(live(set, resolveAt(world, currentVersion)))` —
+the same incrementally-maintained boundary the 2D canvas draws — and reaches for
+the bake only while a transition is playing. Where the span is baked the
+transition is the one the player will see; where it is not, the switch snaps,
+and the label says so rather than the view going blank.
+
+**The two sources.** `walls.ts` holds what they share: the extrusion — four
+vertices and two triangles per consecutive pair, plus the lines — and the
+fragment shaders. `still.ts` positions from an attribute, `morph.ts` from the
+frame and entry tables. The renderer picks between them:
+
+```ts
+show(runs: readonly Point[][]): void   // the boundary, as it stands
+load(world: World): void               // the baked spans, held ready
+walk(u: number | null): void           // through them, or null to hand back
+```
+
+The game calls `load` once and `walk` every frame. The editor calls `show` on
+every edit, `load` when the bake changes, and `walk` for the length of a
+transition.
+
+**The seam is tested.** The two sources meet at the ends of a span, and anything
+that differs there is a flicker in the one place a viewer is looking hardest.
+`export.test.ts` holds `outline(bakedSpan(span), 0)` and `…, 1)` against
+`truth` — the CSG run outright, which is the path the still source is handed —
+over a room eroding, a pillar turning in a wall, and rooms joining. They agree
+to single precision, which is the most that can be asked of a `Float32Array`.
+
+**What will not scale, and is fine for now.** Every edit rebuilds the wall
+buffers whole. `worldset` hands back a diff naming the pieces an edit disturbed,
+so the answer when that hurts is a geometry pool keyed by piece rather than a
+rebuild. A level of a few hundred polygons will not notice.
 
 ### 5. The game loop
 
@@ -165,6 +228,10 @@ call, and that the countdown's mapping to `t` is where easing lives. See
 outline overlaid on the GPU's walls in green and the collision rings in orange.
 It is a bench rather than a page the build knows about — `scratch/` is not an
 entry point — and it is how tasks 1 to 3 were checked.
+
+`scratch/editor.html` is the editor opened on a world instead of on nothing,
+which the editor itself has no way to be told from a URL. Same mount as
+`packages/editor/src/main.ts` and the same `?world=` argument as above.
 
 ```
 /scratch/preview.html?world=demo          rooms, pillars turning inside walls

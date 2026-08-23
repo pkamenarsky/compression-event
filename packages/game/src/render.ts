@@ -8,7 +8,21 @@
 // puts one on the page and the editor puts one in a panel, and neither has to
 // know what the other is doing with it.
 //
-// What moves is one number. `seek` takes a position in the walk from the first
+// Two sources, one scene
+// ----------------------
+// A wall can come from either of two places, and the renderer's job is that
+// nobody outside it can tell which:
+//
+// - **`show`** — the boundary as it stands, handed over as runs. This is what
+//   the editor draws while anyone is editing, and it needs no bake: the CSG at
+//   the version on screen is something the editor already keeps.
+// - **`load` and `walk`** — the bake, moving. This is what the game draws
+//   always, and what the editor draws for the length of a transition.
+//
+// They are the same walls, out of `walls.ts`, and crossing between them shows
+// nothing. `walk(null)` hands the view back to whatever `show` last put there.
+//
+// What moves is one number. `walk` takes a position in the walk from the first
 // version to the last, works out which span that lands in and where inside it,
 // and writes a uniform. Nothing is rebuilt, nothing is uploaded, and running
 // backwards is the same call with a smaller number — which is what the
@@ -18,7 +32,9 @@
 import * as THREE from 'three';
 import { DitherPass } from './dither';
 import { Morph, morph } from './morph';
-import { Point, World, emptyWorld } from './world';
+import { still } from './still';
+import { Source, WallOptions } from './walls';
+import { Point, World } from './world';
 
 /** World units per editor unit: the editor's grid of 25 is one metre. */
 export const SCALE = 1 / 25;
@@ -53,17 +69,28 @@ export interface Renderer {
    * scrubber's marker, whatever the editor decides it wants. */
   readonly scene: THREE.Scene
 
-  load(world: World): void
   /**
-   * Where in the walk from the first version to the last, 0 to 1.
+   * The boundary as it stands, in editor units, as the open runs the CSG hands
+   * over. Shown whenever no walk is in flight, and replaced as often as the
+   * caller likes — an edit is a rebuild of these buffers and nothing else.
+   */
+  show(runs: readonly Point[][]): void
+
+  /** The baked spans, built and held ready. An empty level drops them. */
+  load(world: World): void
+
+  /**
+   * Where in the walk from the first version to the last, 0 to 1 — or null to
+   * hand the view back to `show`.
    *
    * Whatever shape the transition has — eased, held, snapped — is the caller's:
    * the geometry is exact at every instant and easing only chooses which ones
    * get looked at. See *Easing is a runtime concern* in `docs/versioning.md`.
    */
-  seek(u: number): void
-  /** Which version the caller is standing in, for anything that wants the
-   * source polygons: the two either side of `seek`. */
+  walk(u: number | null): void
+
+  /** Which two versions a position sits between, for anything that wants the
+   * source polygons. */
   between(u: number): [number, number]
 
   resize(): void
@@ -90,50 +117,80 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
   dither.enabled = options.dither ?? true;
 
-  let world = emptyWorld();
+  const walls: WallOptions = {
+    scale: SCALE,
+    wallHeight: WALL_HEIGHT,
+    wallColor: WALL_COLOR,
+    lineColor: LINE_COLOR,
+  };
+
+  let standing: Source | null = null;
   let morphs: Morph[] = [];
   let ground: THREE.Object3D[] = [];
-  let showing = -1;
+  let box: Bounds | null = null;
 
-  function clear(): void {
+  /** Which morph is in the scene, and whether it rather than `standing` is
+   * what the viewer is looking at. */
+  let showing = -1;
+  let walking = false;
+
+  /** The scene brought into line with what should be in it. Called after
+   * anything that changes either, rather than by each of them, so there is one
+   * place that knows what is added and what is not. */
+  function reconcile(want: number): void {
+    if (want !== showing) {
+      const was = morphs[showing];
+
+      if (was !== undefined) scene.remove(was.walls, was.lines);
+
+      const now = morphs[want];
+
+      if (now !== undefined) scene.add(now.walls, now.lines);
+
+      showing = want;
+    }
+
+    if (standing !== null) {
+      const wanted = !walking || morphs[showing] === undefined;
+
+      standing.walls.visible = wanted;
+      standing.lines.visible = wanted;
+    }
+  }
+
+  function show(runs: readonly Point[][]): void {
+    if (standing !== null) {
+      scene.remove(standing.walls, standing.lines);
+      standing.dispose();
+    }
+
+    standing = still(runs, walls);
+    scene.add(standing.walls, standing.lines);
+
+    grow(bounding(runs));
+    reconcile(showing);
+  }
+
+  function drop(): void {
     for (const m of morphs) {
       scene.remove(m.walls, m.lines);
       m.dispose();
     }
 
-    for (const g of ground) {
-      scene.remove(g);
-
-      const it = g as THREE.Mesh;
-
-      it.geometry?.dispose();
-      (it.material as THREE.Material | undefined)?.dispose();
-    }
-
     morphs = [];
-    ground = [];
     showing = -1;
   }
 
   function load(next: World): void {
-    clear();
+    drop();
 
-    world = next;
-    ground = floor(bounds(next));
+    morphs = next.baked.spans.map(span => morph(span, walls));
 
-    for (const g of ground) scene.add(g);
+    for (const version of next.versions) {
+      grow(bounding(version.polygons.map(p => p.points)));
+    }
 
-    morphs = next.baked.spans.map(span => morph(span, {
-      scale: SCALE,
-      wallHeight: WALL_HEIGHT,
-      wallColor: WALL_COLOR,
-      lineColor: LINE_COLOR,
-    }));
-
-    // Nothing is added to the scene until it is the span being shown: a level's
-    // worth of spans is a level's worth of geometry, and all but one of them is
-    // somewhere else in time.
-    seek(0);
+    reconcile(-1);
   }
 
   /**
@@ -152,20 +209,48 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     return { span: i, t: x - i };
   }
 
-  function seek(u: number): void {
-    const { span, t } = at(u);
-
-    if (span !== showing) {
-      const was = morphs[showing];
-      const now = morphs[span];
-
-      if (was !== undefined) scene.remove(was.walls, was.lines);
-      if (now !== undefined) scene.add(now.walls, now.lines);
-
-      showing = span;
+  function walk(u: number | null): void {
+    if (u === null) {
+      walking = false;
+      reconcile(-1);
+      return;
     }
 
+    const { span, t } = at(u);
+
+    walking = true;
+    reconcile(span);
     morphs[span]?.seek(t);
+  }
+
+  /** The floor covers everything anything has ever asked to be drawn, and
+   * grows rather than being recomputed: a floor that resized itself every time
+   * a wall moved would shimmer under geometry that was standing still. */
+  function grow(next: Bounds | null): void {
+    if (next === null) return;
+
+    const merged = box === null ? next : union(box, next);
+    const snapped = snap(merged);
+
+    if (box !== null && same(snap(box), snapped)) {
+      box = merged;
+      return;
+    }
+
+    box = merged;
+
+    for (const g of ground) {
+      scene.remove(g);
+
+      const it = g as THREE.Mesh;
+
+      it.geometry?.dispose();
+      (it.material as THREE.Material | undefined)?.dispose();
+    }
+
+    ground = floor(snapped);
+
+    for (const g of ground) scene.add(g);
   }
 
   function resize(): void {
@@ -186,11 +271,18 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   watching.observe(element);
   resize();
 
+  // Something has to be underfoot before anything has been shown, or an empty
+  // panel is a void rather than a room with nothing in it yet.
+  ground = floor(null);
+
+  for (const g of ground) scene.add(g);
+
   return {
     camera,
     scene,
+    show,
     load,
-    seek,
+    walk,
 
     between(u: number): [number, number] {
       const { span } = at(u);
@@ -205,7 +297,14 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     dispose(): void {
       watching.disconnect();
-      clear();
+      drop();
+
+      if (standing !== null) {
+        scene.remove(standing.walls, standing.lines);
+        standing.dispose();
+      }
+
+      standing = null;
       dither.dispose();
       renderer.dispose();
       renderer.domElement.remove();
@@ -216,10 +315,10 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 // -----------------------------------------------------------------------------
 // The ground
 //
-// A grid of tiles under everything, big enough to cover every version of the
-// level and snapped outward to a tile boundary. It is not the floor of any
-// room — the rooms have no floor, they have walls standing on this — which is
-// why it can be built once and left alone while the walls move over it.
+// A grid of tiles under everything, big enough to cover whatever has been shown
+// and snapped outward to a tile boundary. It is not the floor of any room — the
+// rooms have no floor, they have walls standing on this — which is why it can
+// be built once and left alone while the walls move over it.
 // -----------------------------------------------------------------------------
 
 interface Bounds {
@@ -229,35 +328,56 @@ interface Bounds {
   maxZ: number
 }
 
-function bounds(world: World): Bounds {
+/** In world units, from anything in editor ones. */
+function bounding(runs: readonly (readonly Point[])[]): Bounds | null {
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
 
-  for (const version of world.versions) {
-    for (const polygon of version.polygons) {
-      for (const p of polygon.points) {
-        minX = Math.min(minX, p.x * SCALE);
-        maxX = Math.max(maxX, p.x * SCALE);
-        minZ = Math.min(minZ, p.y * SCALE);
-        maxZ = Math.max(maxZ, p.y * SCALE);
-      }
+  for (const run of runs) {
+    for (const p of run) {
+      minX = Math.min(minX, p.x * SCALE);
+      maxX = Math.max(maxX, p.x * SCALE);
+      minZ = Math.min(minZ, p.y * SCALE);
+      maxZ = Math.max(maxZ, p.y * SCALE);
     }
   }
 
-  if (!isFinite(minX)) {
-    return { minX: -TILE_SIZE, minZ: -TILE_SIZE, maxX: TILE_SIZE, maxZ: TILE_SIZE };
-  }
+  return isFinite(minX) ? { minX, minZ, maxX, maxZ } : null;
+}
 
+function union(a: Bounds, b: Bounds): Bounds {
   return {
-    minX: Math.floor(minX / TILE_SIZE) * TILE_SIZE - TILE_SIZE,
-    minZ: Math.floor(minZ / TILE_SIZE) * TILE_SIZE - TILE_SIZE,
-    maxX: Math.ceil(maxX / TILE_SIZE) * TILE_SIZE + TILE_SIZE,
-    maxZ: Math.ceil(maxZ / TILE_SIZE) * TILE_SIZE + TILE_SIZE,
+    minX: Math.min(a.minX, b.minX),
+    minZ: Math.min(a.minZ, b.minZ),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxZ: Math.max(a.maxZ, b.maxZ),
   };
 }
 
-function floor(b: Bounds): THREE.Object3D[] {
+function same(a: Bounds, b: Bounds): boolean {
+  return a.minX === b.minX && a.minZ === b.minZ && a.maxX === b.maxX && a.maxZ === b.maxZ;
+}
+
+function snap(b: Bounds): Bounds {
+  return {
+    minX: Math.floor(b.minX / TILE_SIZE) * TILE_SIZE - TILE_SIZE,
+    minZ: Math.floor(b.minZ / TILE_SIZE) * TILE_SIZE - TILE_SIZE,
+    maxX: Math.ceil(b.maxX / TILE_SIZE) * TILE_SIZE + TILE_SIZE,
+    maxZ: Math.ceil(b.maxZ / TILE_SIZE) * TILE_SIZE + TILE_SIZE,
+  };
+}
+
+const EMPTY_BOUNDS: Bounds = {
+  minX: -TILE_SIZE,
+  minZ: -TILE_SIZE,
+  maxX: TILE_SIZE,
+  maxZ: TILE_SIZE,
+};
+
+function floor(b: Bounds | null): THREE.Object3D[] {
+  const box = b ?? EMPTY_BOUNDS;
+
   const surface = new THREE.Mesh(
-    new THREE.PlaneGeometry(b.maxX - b.minX, b.maxZ - b.minZ),
+    new THREE.PlaneGeometry(box.maxX - box.minX, box.maxZ - box.minZ),
     new THREE.MeshBasicMaterial({
       color: FLOOR_COLOR,
       side: THREE.DoubleSide,
@@ -268,16 +388,16 @@ function floor(b: Bounds): THREE.Object3D[] {
   );
 
   surface.rotation.x = -Math.PI / 2;
-  surface.position.set((b.minX + b.maxX) / 2, FLOOR_Y, (b.minZ + b.maxZ) / 2);
+  surface.position.set((box.minX + box.maxX) / 2, FLOOR_Y, (box.minZ + box.maxZ) / 2);
 
   const grid: number[] = [];
 
-  for (let z = b.minZ; z <= b.maxZ + 1e-6; z += TILE_SIZE) {
-    grid.push(b.minX, FLOOR_Y, z, b.maxX, FLOOR_Y, z);
+  for (let z = box.minZ; z <= box.maxZ + 1e-6; z += TILE_SIZE) {
+    grid.push(box.minX, FLOOR_Y, z, box.maxX, FLOOR_Y, z);
   }
 
-  for (let x = b.minX; x <= b.maxX + 1e-6; x += TILE_SIZE) {
-    grid.push(x, FLOOR_Y, b.minZ, x, FLOOR_Y, b.maxZ);
+  for (let x = box.minX; x <= box.maxX + 1e-6; x += TILE_SIZE) {
+    grid.push(x, FLOOR_Y, box.minZ, x, FLOOR_Y, box.maxZ);
   }
 
   const geometry = new THREE.BufferGeometry();

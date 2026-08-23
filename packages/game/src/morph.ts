@@ -18,17 +18,18 @@
 // frame, two per entry, `texelFetch` throughout — no filtering, no mipmaps, and
 // no normalised coordinates to get half a texel wrong.
 //
-// Normals are not shipped
-// -----------------------
-// A wall that morphs has no fixed normal, and shipping one per end of a stretch
-// and lerping it would be a third thing to keep in step. The fragment shader
-// takes it from the derivatives of the world position instead, which for a flat
-// quad is exact and for free.
+// The same walls as the still source
+// ----------------------------------
+// The topology and the shading are `walls.ts`, called from here and from
+// `still.ts` alike, because the editor crosses between the two every time a
+// transition starts or ends and anything that differs across that crossing is a
+// flicker. What is left here is the one thing that genuinely differs: where a
+// vertex is.
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
 import { BakedSpan, CROSSING, ENTRY_STRIDE, FRAME_STRIDE } from './baked';
-import { bayerGLSL } from './dither';
+import { Run, Source, WallOptions, extrude, materials } from './walls';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -160,57 +161,8 @@ const vertexShader = /* glsl */ `
   }
 `;
 
-/**
- * The jam build's wall shading, with its normal taken from the derivatives of
- * the world position rather than from an attribute. Two quantised lights, a
- * darkening toward the floor, and a Bayer shift on top of what the dither pass
- * will do again in screen space.
- */
-const fragmentShader = /* glsl */ `
-  uniform vec3 uWallColor;
-
-  // Under GLSL 3 there is no \`gl_FragColor\` and three does not put one back,
-  // so the output is declared here rather than inherited.
-  layout(location = 0) out vec4 fragColor;
-
-  varying vec3 vWorldPosition;
-  varying float vHeightFrac;
-
-  ${bayerGLSL}
-
-  void main() {
-    vec3 n = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
-    if (!gl_FrontFacing) n = -n;
-
-    vec3 key = normalize(vec3(0.5, 0.8, 0.3));
-    vec3 fill = normalize(vec3(-0.3, 0.4, -0.6));
-
-    float light = max(dot(n, key), 0.0) * 0.7 + max(dot(n, fill), 0.0) * 0.3;
-
-    light = light * 0.6 + 0.4;
-    light *= mix(0.7, 1.0, vHeightFrac);
-
-    vec3 color = uWallColor * light + (bayerDither(gl_FragCoord.xy) - 0.5) * 1.2;
-
-    fragColor = vec4(color, 1.0);
-  }
-`;
-
-const lineFragmentShader = /* glsl */ `
-  uniform vec3 uLineColor;
-
-  layout(location = 0) out vec4 fragColor;
-
-  varying vec3 vWorldPosition;
-  varying float vHeightFrac;
-
-  void main() {
-    fragColor = vec4(uLineColor, 1.0);
-  }
-`;
-
 /** What both materials are told about the world, and what changes per frame. */
-export interface MorphUniforms {
+export interface MorphUniforms extends Record<string, { value: unknown }> {
   uFrames: { value: THREE.DataTexture }
   uEntries: { value: THREE.DataTexture }
   uTime: { value: number }
@@ -219,12 +171,9 @@ export interface MorphUniforms {
 }
 
 /** A span, ready to draw: the two meshes and the one number that moves. */
-export interface Morph {
-  walls: THREE.Mesh
-  lines: THREE.LineSegments
+export interface Morph extends Source {
   /** Where in the span, 0 at the earlier version and 1 at the later one. */
   seek(t: number): void
-  dispose(): void
 }
 
 /**
@@ -234,7 +183,7 @@ export interface Morph {
  * Nearest everywhere and no mipmaps, because nothing is sampled — every read is
  * a `texelFetch` at an integer the buffer layout put there.
  */
-function tabled(data: Float32Array, stride: number): THREE.DataTexture {
+function tabled(data: Float32Array): THREE.DataTexture {
   const texels = Math.max(1, Math.ceil(data.length / 4));
   const height = Math.max(1, Math.ceil(texels / WIDTH));
   const padded = new Float32Array(WIDTH * height * 4);
@@ -251,148 +200,104 @@ function tabled(data: Float32Array, stride: number): THREE.DataTexture {
   return tex;
 }
 
-/**
- * Every wall of every stretch, as attributes.
- *
- * A wall is a consecutive pair of points inside one run, extruded. Runs are
- * open — a ring of the union belongs to no single polygon and so is not kept —
- * which costs nothing here, since a wall was never more than a pair.
- *
- * The lines are the jam build's: the top and bottom of each wall, and a
- * vertical at every corner.
- */
-function built(span: BakedSpan): { walls: THREE.BufferGeometry, lines: THREE.BufferGeometry } {
-  const wall = fields(), line = fields();
-  const index: number[] = [];
+/** Every stretch of every track, one after another: a span is one buffer and
+ * one draw, and which of it is alive at an instant is the shader's business. */
+function spanRuns(span: BakedSpan): Run[] {
+  const out: { run: Run, t0: number, t1: number }[] = [];
+
+  for (const track of span.tracks) {
+    for (const s of track.stretches) {
+      for (const run of s.runs) out.push({ run, t0: s.t0, t1: s.t1 });
+    }
+  }
+
+  return out.map(x => x.run);
+}
+
+/** The stretch each point belongs to, so a vertex can be told whether it is
+ * alive at the instant being drawn. */
+function ranges(span: BakedSpan): Float32Array {
+  const out = new Float32Array(span.slots.length * 2);
 
   for (const track of span.tracks) {
     for (const s of track.stretches) {
       for (const run of s.runs) {
-        const last = run.first + run.count - 1;
-
-        for (let i = run.first; i < last; i++) {
-          const base = wall.count;
-
-          emit(wall, span, i, 0, s.t0, s.t1);
-          emit(wall, span, i + 1, 0, s.t0, s.t1);
-          emit(wall, span, i, 1, s.t0, s.t1);
-          emit(wall, span, i + 1, 1, s.t0, s.t1);
-
-          index.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-
-          emit(line, span, i, 0, s.t0, s.t1);
-          emit(line, span, i + 1, 0, s.t0, s.t1);
-          emit(line, span, i, 1, s.t0, s.t1);
-          emit(line, span, i + 1, 1, s.t0, s.t1);
-        }
-
-        for (let i = run.first; i <= last; i++) {
-          emit(line, span, i, 0, s.t0, s.t1);
-          emit(line, span, i, 1, s.t0, s.t1);
+        for (let i = run.first; i < run.first + run.count; i++) {
+          out[i * 2] = s.t0;
+          out[i * 2 + 1] = s.t1;
         }
       }
     }
   }
 
-  const walls = geometry(wall);
-
-  walls.setIndex(index);
-
-  return { walls, lines: geometry(line) };
-}
-
-interface Fields {
-  count: number
-  a: number[]
-  b: number[]
-  slot: number[]
-  kind: number[]
-  cross: number[]
-  range: number[]
-  height: number[]
-}
-
-function fields(): Fields {
-  return { count: 0, a: [], b: [], slot: [], kind: [], cross: [], range: [], height: [] };
-}
-
-function emit(f: Fields, span: BakedSpan, i: number, h: number, t0: number, t1: number): void {
-  f.a.push(span.pointsA[i * 2], span.pointsA[i * 2 + 1]);
-  f.b.push(span.pointsB[i * 2], span.pointsB[i * 2 + 1]);
-  f.slot.push(span.slots[i]);
-  f.kind.push(span.kinds[i] === CROSSING ? 1 : 0);
-  f.cross.push(
-    span.crossings[i * 4],
-    span.crossings[i * 4 + 1],
-    span.crossings[i * 4 + 2],
-    span.crossings[i * 4 + 3],
-  );
-  f.range.push(t0, t1);
-  f.height.push(h);
-  f.count++;
-}
-
-function geometry(f: Fields): THREE.BufferGeometry {
-  const g = new THREE.BufferGeometry();
-
-  const attr = (xs: number[], size: number): THREE.BufferAttribute =>
-    new THREE.BufferAttribute(new Float32Array(xs), size);
-
-  // Positions come out of the shader, so there is nothing here to put in
-  // `position`. Something has to be, or three has no vertex count to draw.
-  g.setAttribute('position', attr(new Array(f.count * 3).fill(0), 3));
-  g.setAttribute('aPointA', attr(f.a, 2));
-  g.setAttribute('aPointB', attr(f.b, 2));
-  g.setAttribute('aSlot', attr(f.slot, 1));
-  g.setAttribute('aKind', attr(f.kind, 1));
-  g.setAttribute('aCross', attr(f.cross, 4));
-  g.setAttribute('aRange', attr(f.range, 2));
-  g.setAttribute('aHeight', attr(f.height, 1));
-
-  return g;
-}
-
-export interface MorphOptions {
-  /** World units per editor unit. */
-  scale: number
-  wallHeight: number
-  wallColor: THREE.ColorRepresentation
-  lineColor: THREE.ColorRepresentation
+  return out;
 }
 
 /** One span's meshes, sharing one set of uniforms so that seeking is one
  * write. */
-export function morph(span: BakedSpan, options: MorphOptions): Morph {
+export function morph(span: BakedSpan, options: WallOptions): Morph {
   const uniforms: MorphUniforms = {
-    uFrames: { value: tabled(span.frames, FRAME_STRIDE) },
-    uEntries: { value: tabled(span.entries, ENTRY_STRIDE) },
+    uFrames: { value: tabled(span.frames) },
+    uEntries: { value: tabled(span.entries) },
     uTime: { value: 0 },
     uScale: { value: options.scale },
     uWallHeight: { value: options.wallHeight },
   };
 
-  const wallMaterial = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
-    vertexShader,
-    fragmentShader,
-    uniforms: { ...uniforms, uWallColor: { value: new THREE.Color(options.wallColor) } },
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-  });
+  const { wall, line } = materials(vertexShader, options, uniforms);
 
-  const lineMaterial = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
-    vertexShader,
-    fragmentShader: lineFragmentShader,
-    uniforms: { ...uniforms, uLineColor: { value: new THREE.Color(options.lineColor) } },
-  });
+  const shape = extrude(spanRuns(span));
+  const range = ranges(span);
 
-  const { walls: wallGeometry, lines: lineGeometry } = built(span);
+  const geometry = (
+    point: Int32Array,
+    height: Float32Array,
+    index: Uint32Array | null,
+  ): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    const n = point.length;
 
-  const walls = new THREE.Mesh(wallGeometry, wallMaterial);
-  const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+    const a = new Float32Array(n * 2), b = new Float32Array(n * 2);
+    const slot = new Float32Array(n), kind = new Float32Array(n);
+    const cross = new Float32Array(n * 4), within = new Float32Array(n * 2);
+
+    for (let i = 0; i < n; i++) {
+      const p = point[i];
+
+      a[i * 2] = span.pointsA[p * 2];
+      a[i * 2 + 1] = span.pointsA[p * 2 + 1];
+      b[i * 2] = span.pointsB[p * 2];
+      b[i * 2 + 1] = span.pointsB[p * 2 + 1];
+      slot[i] = span.slots[p];
+      kind[i] = span.kinds[p] === CROSSING ? 1 : 0;
+
+      for (let j = 0; j < 4; j++) cross[i * 4 + j] = span.crossings[p * 4 + j];
+
+      within[i * 2] = range[p * 2];
+      within[i * 2 + 1] = range[p * 2 + 1];
+    }
+
+    // Positions come out of the shader, so there is nothing to put in
+    // `position`. Something has to be, or three has no vertex count to draw.
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    g.setAttribute('aPointA', new THREE.BufferAttribute(a, 2));
+    g.setAttribute('aPointB', new THREE.BufferAttribute(b, 2));
+    g.setAttribute('aSlot', new THREE.BufferAttribute(slot, 1));
+    g.setAttribute('aKind', new THREE.BufferAttribute(kind, 1));
+    g.setAttribute('aCross', new THREE.BufferAttribute(cross, 4));
+    g.setAttribute('aRange', new THREE.BufferAttribute(within, 2));
+    g.setAttribute('aHeight', new THREE.BufferAttribute(height, 1));
+
+    if (index !== null) g.setIndex(new THREE.BufferAttribute(index, 1));
+
+    return g;
+  };
+
+  const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, shape.index);
+  const lineGeometry = geometry(shape.linePoint, shape.lineHeight, null);
+
+  const walls = new THREE.Mesh(wallGeometry, wall);
+  const lines = new THREE.LineSegments(lineGeometry, line);
 
   // Nothing is where its `position` attribute says it is, so there is no box
   // worth testing against the frustum.
@@ -404,8 +309,8 @@ export function morph(span: BakedSpan, options: MorphOptions): Morph {
     lines,
 
     seek(t: number): void {
-      wallMaterial.uniforms.uTime.value = t;
-      lineMaterial.uniforms.uTime.value = t;
+      wall.uniforms.uTime.value = t;
+      line.uniforms.uTime.value = t;
     },
 
     dispose(): void {
@@ -413,8 +318,8 @@ export function morph(span: BakedSpan, options: MorphOptions): Morph {
       uniforms.uEntries.value.dispose();
       wallGeometry.dispose();
       lineGeometry.dispose();
-      wallMaterial.dispose();
-      lineMaterial.dispose();
+      wall.dispose();
+      line.dispose();
     },
   };
 }
