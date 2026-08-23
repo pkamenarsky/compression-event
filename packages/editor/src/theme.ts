@@ -29,6 +29,9 @@ export const theme = {
   level: '#7b8496',
   solid: '#b0705f',
   picked: '#5b8cff',
+  /** Under a picked polygon. Faint enough that two overlapping ones still read
+   * as two, and that the CSG outline over the top keeps the eye. */
+  pickedFill: 'rgba(91, 140, 255, 0.16)',
   vertex: '#c8cad2',
   /** The source ring under an eroded polygon: where the handles are. */
   source: '#6f7788',

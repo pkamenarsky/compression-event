@@ -1221,6 +1221,14 @@ function polygons(
       trace(ctx, view, ring);
     }
 
+    // Filled, so that what is picked reads at a glance rather than having to be
+    // traced. Nonzero, which is the rule the shape was arranged under, so a
+    // polygon eroded into two rooms fills both and one with a hole keeps it.
+    if (picked) {
+      ctx.fillStyle = theme.pickedFill;
+      ctx.fill();
+    }
+
     ctx.strokeStyle = picked
       ? theme.picked
       : it.polygon.type === 'solid' ? theme.solid : theme.level;
