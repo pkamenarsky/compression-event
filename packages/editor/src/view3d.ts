@@ -362,12 +362,40 @@ function panel(
           return;
         }
 
-        // Asked for on the way in, where an Enter press is still counted as
-        // something a person did. Refused is not fatal: the keys still walk and
-        // only turning is lost, so there is nothing to undo here.
-        void host.requestPointerLock?.();
+        // Asked for on the way in, where the Enter press is still counted as
+        // something a person did. A browser can refuse it — too soon after the
+        // last one is the usual reason — and the promise it hands back rejects
+        // rather than throwing, so it is caught here and the view says to click.
+        // Walking still works without it; only turning is lost, and a click
+        // inside asks again.
+        let caught = false;
+
+        const capture = (): void => {
+          const asked = host?.requestPointerLock?.() as Promise<void> | undefined;
+
+          void asked?.catch(() => {});
+        };
+
+        capture();
 
         const down = (e: KeyboardEvent) => {
+          // Escape leaves, and leaves whether or not the pointer was ever
+          // captured. Watching the lock alone for this is how a refused capture
+          // turned into a room with no door.
+          if (e.code === 'Escape') {
+            e.preventDefault();
+            update(st => ({ ...st, roaming: false }));
+            return;
+          }
+
+          // Enter again asks for the pointer again, for when the first ask was
+          // refused and clicking is not what a hand on WASD wants to do.
+          if (e.code === 'Enter') {
+            e.preventDefault();
+            if (document.pointerLockElement !== host) capture();
+            return;
+          }
+
           if (MOVES.includes(e.code)) {
             e.preventDefault();
             held.add(e.code);
@@ -382,18 +410,28 @@ function panel(
           walker.angle += e.movementX * LOOK;
         };
 
-        // Escape leaves by way of the browser: it drops the lock without a key
-        // reaching anyone, so the lock going is what says someone left rather
-        // than a key being watched for.
+        // Escape drops the lock without a key reaching anyone, so losing a lock
+        // that was actually held is someone leaving. Never having had one is
+        // not: that is a refusal, and it leaves the view up to be clicked.
         const locked = () => {
-          if (document.pointerLockElement !== host) {
-            update(st => ({ ...st, roaming: false }));
+          if (document.pointerLockElement === host) {
+            caught = true;
+            return;
           }
+
+          if (caught) update(st => ({ ...st, roaming: false }));
+        };
+
+        // Somewhere to click if the capture was refused, and how the pointer
+        // comes back after a tab away.
+        const pressed = () => {
+          if (document.pointerLockElement !== host) capture();
         };
 
         // A window that loses the focus keeps whatever was held down forever.
         const blurred = () => held.clear();
 
+        host.addEventListener('pointerdown', pressed);
         window.addEventListener('keydown', down);
         window.addEventListener('keyup', up);
         window.addEventListener('blur', blurred);
@@ -401,6 +439,7 @@ function panel(
         document.addEventListener('pointerlockchange', locked);
 
         return () => {
+          host?.removeEventListener('pointerdown', pressed);
           window.removeEventListener('keydown', down);
           window.removeEventListener('keyup', up);
           window.removeEventListener('blur', blurred);
@@ -433,11 +472,17 @@ const MOVES = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
 function entered(host: HTMLElement, on: boolean, orbit: Orbit, walker: Walker): void {
   const style = host.style;
 
-  style.inset = on ? '0' : '';
-  style.right = on ? '' : '12px';
-  style.bottom = on ? '' : '12px';
-  style.width = on ? '' : `${WIDTH}px`;
-  style.height = on ? '' : `${HEIGHT}px`;
+  // Every side written out rather than `inset`, and a width alongside them:
+  // the shorthand and the longhands are the same four properties, so clearing
+  // `right` to get the panel's corner back also unsets what `inset` had just
+  // put there, and the box collapses to nothing.
+  style.top = on ? '0' : '';
+  style.left = on ? '0' : '';
+  style.right = on ? '0' : '12px';
+  style.bottom = on ? '0' : '12px';
+  style.width = on ? '100%' : `${WIDTH}px`;
+  style.height = on ? '100%' : `${HEIGHT}px`;
+  style.zIndex = on ? '10' : '';
   style.border = on ? 'none' : `1px solid ${theme.border}`;
   style.borderRadius = on ? '0' : '8px';
   style.boxShadow = on ? 'none' : `0 6px 18px ${theme.panelShadow}`;
@@ -503,8 +548,9 @@ function label(bake: Value<Bake>, world: Value<World>, roaming: Value<boolean>):
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     const switches = spanAt(b, w, 0) === null ? '↑↓ switch (unbaked · snaps)' : '↑↓ switch';
-
-    return `wasd · mouse · ${switches} · esc to leave`;
+    // Nothing here watches the lock: it is not something the store knows about,
+    // and a line that went stale would be worse than one that says both ways.
+    return `wasd · mouse turns (click or enter if it does not) · ${switches} · esc to leave`;
   };
 
   return div(

@@ -163,7 +163,9 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
 
       e.preventDefault();
 
-      const by = e.code === 'ArrowUp' ? -1 : 1;
+      // Up is forward: later versions are further down the strip, but they are
+      // also further along, and forward is what an arrow pointing up means here.
+      const by = e.code === 'ArrowUp' ? 1 : -1;
 
       update(s => switched(s, clamped(s.currentVersion + by)));
     }
