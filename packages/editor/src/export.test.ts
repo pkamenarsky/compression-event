@@ -383,21 +383,18 @@ describe('a corner that is not there does not draw a line', () => {
     return { world: removeVertices(added.world, 1, [added.vertex]), vertex: added.vertex };
   }
 
-  test('it is solid where it is real and gone where it is not', () => {
+  test('it is solid where it is a corner and gone where it is not', () => {
     const flat = bakedSpan(run(bakeSpan(dying().world, 0)));
 
-    // One point of the span fades away across it; everything else is a corner
-    // at both ends.
-    const fading = [...flat.opacityA].filter((a, i) => a !== flat.opacityB[i]);
+    // Somewhere in the span a point draws nothing. Everywhere else the corner
+    // is part way out of the wall and turns like any other, so it draws.
+    expect(Math.min(...flat.opacityB)).toBeCloseTo(0, 9);
 
-    expect(fading.length).toBeGreaterThan(0);
-
-    // The corner is the polygon's at v0 and not at v1, so it goes 1 to 0 —
-    // never the other way, and never past either end.
     for (let i = 0; i < flat.opacityA.length; i++) {
       expect(flat.opacityA[i]).toBeGreaterThanOrEqual(0);
       expect(flat.opacityA[i]).toBeLessThanOrEqual(1);
-      expect(flat.opacityB[i]).toBeLessThanOrEqual(flat.opacityA[i] + 1e-9);
+      expect(flat.opacityB[i]).toBeGreaterThanOrEqual(0);
+      expect(flat.opacityB[i]).toBeLessThanOrEqual(1);
     }
   });
 

@@ -31,7 +31,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { OpSubtract, Ring, Shape, combine, contains, erode, isCCW, simplify } from './geometry';
+import { OpSubtract, Ring, Shape, combine, contains, erode, isCCW, keeping, simplify } from './geometry';
 import {
   Clipping,
   EMPTY_TRANSFORM,
@@ -88,6 +88,18 @@ export interface Resolved {
   readonly shape: Shape
   /** The depth `shape` was taken at, inherited where this version states none. */
   erosion: number
+  /**
+   * Points the projection must have as vertices even though it does not turn
+   * at them, in world units.
+   *
+   * The bake's business alone. A corner it invented so that both ends of a
+   * span carry the same ring sits exactly on the edge between its neighbours at
+   * the end that does not have it, and `cornersOnly` would drop it there — so
+   * the ring would change length part way through the span, which is the one
+   * event the invention exists to prevent. Nothing else sets this, and an empty
+   * one costs nothing.
+   */
+  keep?: readonly Point[]
 }
 
 export function centroid(ring: Ring): Point {
@@ -292,7 +304,7 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
   return {
     ...at,
     get shape(): Shape {
-      return shape ??= project(at.source, at.erosion);
+      return shape ??= keeping(project(at.source, at.erosion), at.keep ?? []);
     },
   };
 }

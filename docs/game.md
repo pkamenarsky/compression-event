@@ -277,23 +277,69 @@ vertical rather than the horizontals, and the morph vertex shader lerping the
 two into `vOpacity` for the line fragment shader to fade. The still path has no
 such vertices and is 1 throughout.
 
-**What is not established.** The case above is real and tested — a room with a
-corner removed at v1 goes 1 to 0 across the span, exactly 0 at v1 — but it is
-*not* reproduced by any world in `scratch/`, nor by the bench demo. In both,
-the artifact vertex never reaches the output boundary at all, so there is
-nothing for this to bite on and no line to remove:
+**It was not the whole of it.** The case above is real and tested, and it is
+not what was on screen. `world-2026-08-23T20-11-29Z.json` reproduces the
+phantom lines and they come from somewhere else entirely — from `erode`:
 
 ```
-bench demo, span 1:  fading computed for 364 evaluations, minimum 0
-                     output points landing on a faded vertex: 0
+box eroded, convex corners only    4 pts    0 collinear
+L eroded, one reflex corner        8 pts    2 collinear
+box dilated (negative depth)      12 pts    8 collinear
 ```
 
-Their outlines have a genuine corner at every point and every run junction. So
-whatever drew a vertical line down a flat wall in the screenshot that prompted
-this is *something else*, and it is still there. Save that world into
-`scratch/` and `scratch/preview.html?world=<file>` will load it; the probe that
-answered the above counts collinear interior points and straight run junctions
-per version, and would find it in a minute.
+`band` is one quad per edge and one mitred wedge per corner, and where a quad
+meets its wedge the boundary carries straight on — so the arrangement leaves a
+vertex that is not a corner. Convex corners under erosion skip the wedge
+(`turn * depth >= 0`) and come out clean, which is why a plain shrinking box
+never showed it. Reflex corners and *any* corner under a negative depth do not.
+That world has a dilation of -0.66 on one polygon and an erosion of 59 on
+another, and its outline is 8 of 19 points at v0 and 14 of 26 at v1.
+
+### 4d. Where the collinear vertices are dropped — *done*
+
+They are dropped in `chain`, where rings are built, so that a ring never claims
+to turn where it does not. `cornersOnly` takes out any vertex whose two edges
+are collinear to within the arrangement's own tolerance. Every boolean goes
+through it, so `erode`'s band junk is gone from the projections, from the CSG
+that reads them, from the outline the editor draws and from the buffers the game
+gets. On the world that showed the problem:
+
+```
+              before                     after
+  still v0    21 pts,  7 of 17 flat      13 pts, 0 of 9 flat
+  still v1    28 pts, 12 of 24 flat      14 pts, 0 of 10 flat
+  projections 19 pts,  8 flat            11 pts, 0 flat
+```
+
+**The exception, and why there has to be one.** A corner `spanning` invented so
+that both ends of a span carry the same ring sits exactly on the edge between
+its neighbours at the end that does not have it — so `cornersOnly` would take it
+out there and nowhere else, and the ring would change length part way through
+the span. That is the one event the invention exists to prevent, and letting it
+happen costs sixteen stretches per birth and a pop the size of the edit. It was
+tried; it is written up above.
+
+So the bake asks for those vertices back, by position, through `keeping`.
+`Resolved.keep` carries them and nothing but the bake ever sets it. Two things
+make it cheap. A flat corner's edges are parallel, so where it lands on the
+eroded boundary is its own position moved along the edge normal by the depth —
+no mitre to solve. And it is only flat at *one* instant: everywhere inside the
+span it is part way out of the wall and turns like any other corner, so the
+projection keeps it without being asked. `invented` is empty at every instant
+but two.
+
+**What it costs the cut.** Nothing where the world is straightforward — the
+three quiet spans of that world stay at one stretch each. On its busy span, the
+one that erodes by 59 units, one track goes from 47 stretches to 59 and the
+other from 29 to 28, at the same wall time and the same measured error. Vertices
+now appear and disappear where the geometry passes through a straight
+configuration, and those are real events; a superset is the direction to err in.
+
+**And `lineOpacity` still earns its place**, at the two instants that matter: the
+invented corner is a genuine corner everywhere inside the span and draws its
+line, and at the boundary where it lies flat it draws nothing. The still path
+does not have the vertex at all there, so the two agree across a transition
+rather than flickering.
 
 ### 5. The game loop
 

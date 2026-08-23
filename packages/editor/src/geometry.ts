@@ -1176,12 +1176,129 @@ function chain(segs: Seg[], snap: number): TaggedShape {
     }
 
     if (ring.length >= 3 && Math.abs(signedArea2(ring)) > snap * snap) {
-      rings.push(ring);
-      ringTags.push(ringTag);
+      const kept = cornersOnly(ring, ringTag, snap);
+
+      if (kept !== null) {
+        rings.push(kept.ring);
+        ringTags.push(kept.tags);
+      }
     }
   }
 
   return { rings, tags: ringTags };
+}
+
+/**
+ * The ring without the vertices it does not turn at.
+ *
+ * An arrangement puts a vertex wherever two of its input segments met, and
+ * plenty of those meetings are along a straight line rather than at a corner.
+ * `erode` is the worst of it: the band it subtracts is one quad per edge and
+ * one mitred wedge per corner, and where a quad meets its wedge the boundary
+ * carries straight on. A dilated rectangle came out with twelve vertices, eight
+ * of which were not corners; an eroded reflex corner came out with two. Convex
+ * corners under erosion skip the wedge, which is why a plain shrinking box
+ * never showed it.
+ *
+ * Nothing wants them. They are extra segments for every later boolean to split
+ * against, extra points for the bake to carry at both ends of every stretch,
+ * and — the reason this was noticed — a wall draws a vertical line at every
+ * point of its outline, so each one stood a line up in the middle of a flat
+ * wall.
+ *
+ * A ring that says it turns where it does not is wrong at the source, so this
+ * is where it is put right rather than in whichever reader was bothered. What
+ * the bake needs kept in spite of this, it asks for by name: see `keeping`.
+ *
+ * `null` where nothing is left worth having — three collinear points enclose no
+ * area, and taking their middles out leaves something that is not a ring.
+ */
+function cornersOnly(
+  ring: Ring,
+  tags: Tag[],
+  snap: number,
+): { ring: Ring, tags: Tag[] } | null {
+  const n = ring.length;
+
+  const turns = (i: number): boolean => {
+    const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+    const ux = b.x - a.x, uy = b.y - a.y;
+    const vx = c.x - b.x, vy = c.y - b.y;
+
+    // Against the longer of the two, so this is a distance off the line rather
+    // than an area, and is comparable with the arrangement's own tolerance.
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    return reach > 0 && Math.abs(ux * vy - uy * vx) / reach > snap;
+  };
+
+  const keep: number[] = [];
+
+  for (let i = 0; i < n; i++) {
+    if (turns(i)) keep.push(i);
+  }
+
+  if (keep.length === n) return { ring, tags };
+  if (keep.length < 3) return null;
+
+  return { ring: keep.map(i => ring[i]), tags: keep.map(i => tags[i]) };
+}
+
+/**
+ * The shape with each of `points` present as a vertex, splitting whatever edge
+ * it lies on.
+ *
+ * The exception `cornersOnly` leaves room for. A corner the bake invented so
+ * that both ends of a span could be written over the same ring sits exactly on
+ * the edge between its neighbours at the end that does not have it — which is
+ * to say it is not a corner there, and would be dropped. It has to survive
+ * anyway: the ring changing length part way through a span is the one event
+ * `spanning` exists to prevent, and without it a corner leaving jumps to the
+ * wall rather than sliding onto it.
+ *
+ * So the bake asks for those back, by position, and gets a ring whose
+ * combinatorics hold across the span while every other flat vertex is gone.
+ * Anything that does not land on an edge is not put anywhere: an eroded ring
+ * that has swallowed the edge a corner sat on genuinely does not have it.
+ */
+export function keeping(shape: Shape, points: readonly Point[]): Shape {
+  if (points.length === 0) return shape;
+
+  // The same tolerance the arrangement works to, taken off the same geometry.
+  let scale = 1;
+
+  for (const ring of shape) {
+    for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+  }
+
+  const snap = scale * 1e-9;
+  const out = shape.map(ring => [...ring]);
+
+  for (const p of points) {
+    let best: { ring: number, index: number, off: number } | null = null;
+
+    for (let r = 0; r < out.length; r++) {
+      const ring = out[r];
+
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const l = Math.hypot(dx, dy);
+
+        if (l === 0) continue;
+
+        const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
+        const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
+
+        if (along <= snap || along >= l - snap) continue;
+        if (best === null || off < best.off) best = { ring: r, index: i, off };
+      }
+    }
+
+    if (best !== null && best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
+  }
+
+  return out;
 }
 
 function successor(

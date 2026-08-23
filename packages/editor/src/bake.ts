@@ -92,7 +92,7 @@
 
 import { Point } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
-import { Member, Ring, Shape, boundaryRuns, ground, simplify } from './geometry';
+import { Member, Ring, Shape, boundaryRuns, ground, keeping, simplify } from './geometry';
 import {
   Affine,
   EMPTY_LIVE,
@@ -599,6 +599,44 @@ function between(a: Ring, b: Ring, t: number): Ring {
   });
 }
 
+/**
+ * Where the corners `spanning` invented land in the projection, at the one
+ * instant each of them is flat.
+ *
+ * They are only a problem where they are not corners, and that is exactly the
+ * end of the span that does not have them — everywhere in between they are part
+ * way out of the wall and turn like anything else, so the projection keeps them
+ * without being asked. So this is empty at every instant but two, and at those
+ * two it is a handful of points.
+ *
+ * A flat corner's two edges are parallel, so its place on the eroded boundary
+ * is its own position moved along the edge normal by the depth: the mitre a
+ * corner would get has nothing to bite on. That is the offset `moved` takes in
+ * `erode`, and it has to be, or the point would miss the edge it is meant to
+ * land on.
+ */
+function invented(m: Moving, source: Ring, erosion: number, t: number): Point[] {
+  const dead = t === 0 ? m.dead[0] : t === 1 ? m.dead[1] : null;
+  if (dead === null) return [];
+
+  const out: Point[] = [];
+  const n = source.length;
+
+  for (let i = 0; i < n; i++) {
+    if (dead[i] !== true) continue;
+
+    const a = source[(i - 1 + n) % n], b = source[i];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l = Math.hypot(dx, dy);
+
+    if (l === 0) continue;
+
+    out.push({ x: b.x - dy / l * erosion, y: b.y + dx / l * erosion });
+  }
+
+  return out;
+}
+
 /** The world at one instant inside the span, resolved. */
 function world1(items: Moving[], t: number): Resolved[] {
   const out: Resolved[] = [];
@@ -626,6 +664,7 @@ function world1(items: Moving[], t: number): Resolved[] {
       frame,
       source,
       erosion,
+      keep: invented(m, source, erosion, t),
     }));
   }
 
@@ -750,7 +789,10 @@ function memberOf(it: Resolved): Member | null {
 
   if (kind !== 'level' && kind !== 'solid') return null;
 
-  const shape = it.erosion === 0 ? simplify(it.shape) : it.shape;
+  // At depth zero the projection is the source ring as drawn, which is allowed
+  // to cross itself, so it goes through an arrangement here — and an
+  // arrangement drops the vertices it does not turn at, this one included.
+  const shape = it.erosion === 0 ? keeping(simplify(it.shape), it.keep ?? []) : it.shape;
 
   return shape.length === 0 ? null : { id: it.id, kind, shape };
 }
