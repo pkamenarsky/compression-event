@@ -32,7 +32,7 @@
 // -----------------------------------------------------------------------------
 
 import { Value } from '@incpt/kontinuum';
-import { VNode, effect, show, text } from '@incpt/kontinuum-dom';
+import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
 import { Point, Renderer, SCALE, renderer } from '@ce/game';
@@ -83,6 +83,10 @@ const MARGIN = 1.25;
  * trying to see behind it is not what this is for. */
 const EYE = 1.6;
 const SPEED = 5;
+
+/** World units per pixel dragged, walking in the panel. A drag from the top of
+ * it to the bottom crosses a couple of rooms. */
+const STEP = 0.04;
 
 /** Radians per pixel of mouse movement, turning. */
 const LOOK = 0.0022;
@@ -140,317 +144,370 @@ function panel(
   const walker: Walker = { x: 0, z: 0, angle: 0 };
   const held = new Set<string>();
 
-  const placed = (): void => {
-    if (view === null || roaming()) return
-
-    const flat = Math.cos(orbit.pitch) * orbit.distance;
-
-    view.camera.position.set(
-      orbit.x + Math.cos(orbit.angle) * flat,
-      Math.sin(orbit.pitch) * orbit.distance,
-      orbit.z + Math.sin(orbit.angle) * flat,
-    );
-
-    view.camera.lookAt(orbit.x, 0, orbit.z);
-  };
-
   /**
-   * Where the walk has got to, or nothing at all.
+   * Which of the two the little panel is showing, and everything under it.
    *
-   * Nothing at all is the ordinary case: standing at a version, what is drawn
-   * is the boundary `shown` last put there, and the bake is not consulted. A
-   * transition over a span that was never baked is also nothing at all, and
-   * snaps.
-   */
-  const walked = (r: Replay | null): void => {
-    if (view === null) return;
-
-    if (r === null || spans === 0) {
-      view.walk(null);
-      return;
-    }
-
-    const at = r.from + (r.to - r.from) * r.at;
-
-    view.walk(Math.min(Math.max(at / spans, 0), 1));
-  };
-
-  /**
-   * One frame of walking.
+   * Not in the store: it is how someone happens to be looking at their level
+   * this minute, it survives nothing, and nothing outside this reads it. The
+   * full-window walk *is* in the store, because the editor has to know that
+   * its keyboard has been taken.
    *
-   * Off the two axes of the facing rather than off the keys directly, so that
-   * holding two of them goes diagonally at the same speed rather than at root
-   * two of it.
+   * It is a state rather than a plain flag only so that the line along the
+   * bottom, which says which gesture does what, changes when the gesture does.
    */
-  const stepped = (dt: number): void => {
-    if (view === null) return;
+  return stateful(false, (inside, setInside) => {
+    /** Standing in it either way: the full window with the pointer captured, or
+     * the panel in the corner with a drag doing the walking. */
+    const afoot = (): boolean => roaming() || inside();
 
-    const ahead = (held.has('KeyW') ? 1 : 0) - (held.has('KeyS') ? 1 : 0);
-    const across = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
+    const placed = (): void => {
+      if (view === null) return;
 
-    if (ahead !== 0 || across !== 0) {
-      const l = Math.hypot(ahead, across);
-      const sin = Math.sin(walker.angle), cos = Math.cos(walker.angle);
+      if (afoot()) {
+        view.camera.position.set(walker.x, EYE, walker.z);
+        view.camera.lookAt(
+          walker.x + Math.sin(walker.angle),
+          EYE,
+          walker.z - Math.cos(walker.angle),
+        );
 
-      walker.x += (sin * ahead + cos * across) / l * SPEED * dt;
-      walker.z += (-cos * ahead + sin * across) / l * SPEED * dt;
-    }
+        return;
+      }
 
-    view.camera.position.set(walker.x, EYE, walker.z);
-    view.camera.lookAt(
-      walker.x + Math.sin(walker.angle),
-      EYE,
-      walker.z - Math.cos(walker.angle),
-    );
-  };
+      const flat = Math.cos(orbit.pitch) * orbit.distance;
 
-  /** The boundary at the version on screen, which is what is drawn whenever
-   * nothing is in flight. */
-  const shown = (w: World, v: VersionId): void => {
-    if (view === null) return;
+      view.camera.position.set(
+        orbit.x + Math.cos(orbit.angle) * flat,
+        Math.sin(orbit.pitch) * orbit.distance,
+        orbit.z + Math.sin(orbit.angle) * flat,
+      );
 
-    set = live(set, resolveAt(w, v));
+      view.camera.lookAt(orbit.x, 0, orbit.z);
+    };
 
-    const outline = runs(set) as Point[][];
+    /**
+     * Where the walk has got to, or nothing at all.
+     *
+     * Nothing at all is the ordinary case: standing at a version, what is drawn
+     * is the boundary `shown` last put there, and the bake is not consulted. A
+     * transition over a span that was never baked is also nothing at all, and
+     * snaps.
+     */
+    const walked = (r: Replay | null): void => {
+      if (view === null) return;
 
-    view.show(outline);
+      if (r === null || spans === 0) {
+        view.walk(null);
+        return;
+      }
 
-    if (!roaming()) framed(outline, orbit);
+      const at = r.from + (r.to - r.from) * r.at;
 
-    placed();
-  };
+      view.walk(Math.min(Math.max(at / spans, 0), 1));
+    };
 
-  return div(
-    {
-      style: {
-        position: 'absolute',
-        right: '12px',
-        bottom: '12px',
-        width: `${WIDTH}px`,
-        height: `${HEIGHT}px`,
-        background: theme.canvas,
-        border: `1px solid ${theme.border}`,
-        borderRadius: '8px',
-        overflow: 'hidden',
-        boxShadow: `0 6px 18px ${theme.panelShadow}`,
-      },
+    /**
+     * One frame of walking.
+     *
+     * Off the two axes of the facing rather than off the keys directly, so that
+     * holding two of them goes diagonally at the same speed rather than at root
+     * two of it.
+     */
+    const stepped = (dt: number): void => {
+      if (view === null) return;
 
-      // Runs before the children below register, so they can count on it.
-      ref: (node: HTMLDivElement) => {
-        host = node;
-      },
+      const ahead = (held.has('KeyW') ? 1 : 0) - (held.has('KeyS') ? 1 : 0);
+      const across = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
 
-      // The canvas underneath is listening for drags of its own, and a turn of
-      // the camera is not a pan of the world.
-      onpointerdown: (e: PointerEvent) => {
-        e.stopPropagation();
-        if (host === undefined || roaming()) return;
+      if (ahead !== 0 || across !== 0) {
+        const l = Math.hypot(ahead, across);
+        const sin = Math.sin(walker.angle), cos = Math.cos(walker.angle);
 
-        host.setPointerCapture(e.pointerId);
+        walker.x += (sin * ahead + cos * across) / l * SPEED * dt;
+        walker.z += (-cos * ahead + sin * across) / l * SPEED * dt;
+      }
 
-        let x = e.clientX, y = e.clientY;
+      placed();
+    };
 
-        orbit.held = true;
+    /** The boundary at the version on screen, which is what is drawn whenever
+     * nothing is in flight. */
+    const shown = (w: World, v: VersionId): void => {
+      if (view === null) return;
 
-        const moved = (m: PointerEvent) => {
-          orbit.angle += (m.clientX - x) * TURN;
-          orbit.pitch = Math.min(
-            PITCH[1],
-            Math.max(PITCH[0], orbit.pitch + (m.clientY - y) * TURN),
-          );
+      set = live(set, resolveAt(w, v));
 
-          x = m.clientX;
-          y = m.clientY;
+      const outline = runs(set) as Point[][];
 
-          placed();
-        };
+      view.show(outline);
 
-        const done = () => {
-          host?.removeEventListener('pointermove', moved);
-          host?.removeEventListener('pointerup', done);
-          host?.removeEventListener('pointercancel', done);
-        };
+      if (!afoot()) framed(outline, orbit);
 
-        host.addEventListener('pointermove', moved);
-        host.addEventListener('pointerup', done);
-        host.addEventListener('pointercancel', done);
-      },
+      placed();
+    };
 
-      onwheel: (e: WheelEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (roaming()) return;
-
-        orbit.held = true;
-        orbit.distance = Math.max(2, orbit.distance * Math.exp(e.deltaY * 0.001));
-        placed();
-      },
-    },
-    [
-      // The renderer owns everything inside this: it appends its own canvas and
-      // watches the box for resizes.
-      effect(() => {
-        if (host === undefined) return;
-
-        view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
-
-        let last = performance.now();
-
-        let frame = requestAnimationFrame(function tick(now: number) {
-          // Capped, so that a tab left in the background does not come back and
-          // fly whoever is standing in it through a wall in one step.
-          const dt = Math.min(0.1, (now - last) / 1000);
-
-          last = now;
-
-          if (roaming()) stepped(dt);
-
-          view?.render();
-          frame = requestAnimationFrame(tick);
-        });
-
-        return () => {
-          cancelAnimationFrame(frame);
-          view?.dispose();
-          view = null;
-          set = EMPTY_LIVE;
-          spans = 0;
-        };
-      }),
-
-      // The boundary, rebuilt as it is edited. No bake anywhere in this.
-      effect(
-        () => [world(), current()] as const,
-        ([w, v]) => shown(w, v),
-      ),
-
-      // The bake, held ready for the next transition. Nothing is played off one
-      // that no longer stands: `spanAt` decides, against the world in front of
-      // it, and an edit that invalidates a span takes the animation away and
-      // leaves the geometry alone.
-      effect(
-        () => [world(), bake()] as const,
-        ([w, b]) => {
-          if (view === null) return;
-
-          const baked = spanAt(b, w, 0) === null ? { spans: [] } : bakedLevel(b, w);
-
-          spans = baked.spans.length;
-
-          view.load({ paths: [], versions: [], artefacts: [], baked });
-          walked(replay());
+    return div(
+      {
+        style: {
+          position: 'absolute',
+          right: '12px',
+          bottom: '12px',
+          width: `${WIDTH}px`,
+          height: `${HEIGHT}px`,
+          background: theme.canvas,
+          border: `1px solid ${theme.border}`,
+          borderRadius: '8px',
+          overflow: 'hidden',
+          boxShadow: `0 6px 18px ${theme.panelShadow}`,
         },
-      ),
 
-      effect(replay, r => walked(r)),
+        // Runs before the children below register, so they can count on it.
+        ref: (node: HTMLDivElement) => {
+          host = node;
+        },
 
-      // Standing in it. Everything about that is here: the panel over the whole
-      // window, the pointer taken by the page, and the keyboard read directly
-      // rather than off the editor's bus — nothing else is listening for a key
-      // being *held*, which is the whole of walking.
-      effect(roaming, on => {
-        if (host === undefined) return;
+        // Standing up and lying back down. Two views of the same level and one
+        // gesture between them, so that a wall can be moved on the canvas and
+        // looked at from the floor without leaving the drawing.
+        ondblclick: (e: MouseEvent) => {
+          e.stopPropagation();
+          if (roaming()) return;
 
-        held.clear();
-        entered(host, on, orbit, walker);
+          setInside(!inside());
 
-        if (!on) {
-          if (document.pointerLockElement === host) document.exitPointerLock();
+          if (inside()) stood(orbit, walker);
 
           placed();
-          return;
-        }
+        },
 
-        // Asked for on the way in, where the Enter press is still counted as
-        // something a person did. A browser can refuse it — too soon after the
-        // last one is the usual reason — and the promise it hands back rejects
-        // rather than throwing, so it is caught here and the view says to click.
-        // Walking still works without it; only turning is lost, and a click
-        // inside asks again.
-        let caught = false;
+        // The canvas underneath is listening for drags of its own, and a turn of
+        // the camera is not a pan of the world.
+        onpointerdown: (e: PointerEvent) => {
+          e.stopPropagation();
+          if (host === undefined || roaming()) return;
 
-        const capture = (): void => {
-          const asked = host?.requestPointerLock?.() as Promise<void> | undefined;
+          host.setPointerCapture(e.pointerId);
 
-          void asked?.catch(() => {});
-        };
+          let x = e.clientX, y = e.clientY;
 
-        capture();
+          orbit.held = true;
 
-        const down = (e: KeyboardEvent) => {
-          // Escape leaves, and leaves whether or not the pointer was ever
-          // captured. Watching the lock alone for this is how a refused capture
-          // turned into a room with no door.
-          if (e.code === 'Escape') {
-            e.preventDefault();
-            update(st => ({ ...st, roaming: false }));
+          const moved = (m: PointerEvent) => {
+            const dx = m.clientX - x, dy = m.clientY - y;
+
+            x = m.clientX;
+            y = m.clientY;
+
+            // Inside, the same drag is walking rather than orbiting: across turns
+            // and up and down goes forward and back. No pointer lock, because the
+            // whole point of the panel is that the cursor is still the editor's —
+            // let go and it is a mouse again.
+            if (inside()) {
+              walker.angle += dx * TURN;
+              walker.x -= Math.sin(walker.angle) * dy * STEP;
+              walker.z += Math.cos(walker.angle) * dy * STEP;
+
+              placed();
+              return;
+            }
+
+            orbit.angle += dx * TURN;
+            orbit.pitch = Math.min(PITCH[1], Math.max(PITCH[0], orbit.pitch + dy * TURN));
+
+            placed();
+          };
+
+          const done = () => {
+            host?.removeEventListener('pointermove', moved);
+            host?.removeEventListener('pointerup', done);
+            host?.removeEventListener('pointercancel', done);
+          };
+
+          host.addEventListener('pointermove', moved);
+          host.addEventListener('pointerup', done);
+          host.addEventListener('pointercancel', done);
+        },
+
+        onwheel: (e: WheelEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (afoot()) return;
+
+          orbit.held = true;
+          orbit.distance = Math.max(2, orbit.distance * Math.exp(e.deltaY * 0.001));
+          placed();
+        },
+      },
+      [
+        // The renderer owns everything inside this: it appends its own canvas and
+        // watches the box for resizes.
+        effect(() => {
+          if (host === undefined) return;
+
+          view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
+
+          let last = performance.now();
+
+          let frame = requestAnimationFrame(function tick(now: number) {
+            // Capped, so that a tab left in the background does not come back and
+            // fly whoever is standing in it through a wall in one step.
+            const dt = Math.min(0.1, (now - last) / 1000);
+
+            last = now;
+
+            if (roaming()) stepped(dt);
+
+            view?.render();
+            frame = requestAnimationFrame(tick);
+          });
+
+          return () => {
+            cancelAnimationFrame(frame);
+            view?.dispose();
+            view = null;
+            set = EMPTY_LIVE;
+            spans = 0;
+          };
+        }),
+
+        // The boundary, rebuilt as it is edited. No bake anywhere in this.
+        effect(
+          () => [world(), current()] as const,
+          ([w, v]) => shown(w, v),
+        ),
+
+        // The bake, held ready for the next transition. Nothing is played off one
+        // that no longer stands: `spanAt` decides, against the world in front of
+        // it, and an edit that invalidates a span takes the animation away and
+        // leaves the geometry alone.
+        effect(
+          () => [world(), bake()] as const,
+          ([w, b]) => {
+            if (view === null) return;
+
+            const baked = spanAt(b, w, 0) === null ? { spans: [] } : bakedLevel(b, w);
+
+            spans = baked.spans.length;
+
+            view.load({ paths: [], versions: [], artefacts: [], baked });
+            walked(replay());
+          },
+        ),
+
+        effect(replay, r => walked(r)),
+
+        // Standing in it. Everything about that is here: the panel over the whole
+        // window, the pointer taken by the page, and the keyboard read directly
+        // rather than off the editor's bus — nothing else is listening for a key
+        // being *held*, which is the whole of walking.
+        effect(roaming, on => {
+          if (host === undefined) return;
+
+          held.clear();
+          entered(host, on);
+
+          // Standing up in the panel and then filling the window keeps the spot;
+          // going straight there from above has to be given one.
+          if (on && !inside()) stood(orbit, walker);
+
+          if (!on) {
+            if (document.pointerLockElement === host) document.exitPointerLock();
+
+            placed();
             return;
           }
 
-          // Enter again asks for the pointer again, for when the first ask was
-          // refused and clicking is not what a hand on WASD wants to do.
-          if (e.code === 'Enter') {
-            e.preventDefault();
+          // Asked for on the way in, where the Enter press is still counted as
+          // something a person did. A browser can refuse it — too soon after the
+          // last one is the usual reason — and the promise it hands back rejects
+          // rather than throwing, so it is caught here and the view says to click.
+          // Walking still works without it; only turning is lost, and a click
+          // inside asks again.
+          let caught = false;
+
+          const capture = (): void => {
+            const asked = host?.requestPointerLock?.() as Promise<void> | undefined;
+
+            void asked?.catch(() => {});
+          };
+
+          capture();
+
+          const down = (e: KeyboardEvent) => {
+            // Escape leaves, and leaves whether or not the pointer was ever
+            // captured. Watching the lock alone for this is how a refused capture
+            // turned into a room with no door.
+            if (e.code === 'Escape') {
+              e.preventDefault();
+              update(st => ({ ...st, roaming: false }));
+              return;
+            }
+
+            // Enter again asks for the pointer again, for when the first ask was
+            // refused and clicking is not what a hand on WASD wants to do.
+            if (e.code === 'Enter') {
+              e.preventDefault();
+              if (document.pointerLockElement !== host) capture();
+              return;
+            }
+
+            if (MOVES.includes(e.code)) {
+              e.preventDefault();
+              held.add(e.code);
+            }
+          };
+
+          const up = (e: KeyboardEvent) => held.delete(e.code);
+
+          const moved = (e: MouseEvent) => {
+            if (document.pointerLockElement !== host) return;
+
+            walker.angle += e.movementX * LOOK;
+          };
+
+          // Escape drops the lock without a key reaching anyone, so losing a lock
+          // that was actually held is someone leaving. Never having had one is
+          // not: that is a refusal, and it leaves the view up to be clicked.
+          const locked = () => {
+            if (document.pointerLockElement === host) {
+              caught = true;
+              return;
+            }
+
+            if (caught) update(st => ({ ...st, roaming: false }));
+          };
+
+          // Somewhere to click if the capture was refused, and how the pointer
+          // comes back after a tab away.
+          const pressed = () => {
             if (document.pointerLockElement !== host) capture();
-            return;
-          }
+          };
 
-          if (MOVES.includes(e.code)) {
-            e.preventDefault();
-            held.add(e.code);
-          }
-        };
+          // A window that loses the focus keeps whatever was held down forever.
+          const blurred = () => held.clear();
 
-        const up = (e: KeyboardEvent) => held.delete(e.code);
+          host.addEventListener('pointerdown', pressed);
+          window.addEventListener('keydown', down);
+          window.addEventListener('keyup', up);
+          window.addEventListener('blur', blurred);
+          document.addEventListener('mousemove', moved);
+          document.addEventListener('pointerlockchange', locked);
 
-        const moved = (e: MouseEvent) => {
-          if (document.pointerLockElement !== host) return;
+          return () => {
+            host?.removeEventListener('pointerdown', pressed);
+            window.removeEventListener('keydown', down);
+            window.removeEventListener('keyup', up);
+            window.removeEventListener('blur', blurred);
+            document.removeEventListener('mousemove', moved);
+            document.removeEventListener('pointerlockchange', locked);
+          };
+        }),
 
-          walker.angle += e.movementX * LOOK;
-        };
-
-        // Escape drops the lock without a key reaching anyone, so losing a lock
-        // that was actually held is someone leaving. Never having had one is
-        // not: that is a refusal, and it leaves the view up to be clicked.
-        const locked = () => {
-          if (document.pointerLockElement === host) {
-            caught = true;
-            return;
-          }
-
-          if (caught) update(st => ({ ...st, roaming: false }));
-        };
-
-        // Somewhere to click if the capture was refused, and how the pointer
-        // comes back after a tab away.
-        const pressed = () => {
-          if (document.pointerLockElement !== host) capture();
-        };
-
-        // A window that loses the focus keeps whatever was held down forever.
-        const blurred = () => held.clear();
-
-        host.addEventListener('pointerdown', pressed);
-        window.addEventListener('keydown', down);
-        window.addEventListener('keyup', up);
-        window.addEventListener('blur', blurred);
-        document.addEventListener('mousemove', moved);
-        document.addEventListener('pointerlockchange', locked);
-
-        return () => {
-          host?.removeEventListener('pointerdown', pressed);
-          window.removeEventListener('keydown', down);
-          window.removeEventListener('keyup', up);
-          window.removeEventListener('blur', blurred);
-          document.removeEventListener('mousemove', moved);
-          document.removeEventListener('pointerlockchange', locked);
-        };
-      }),
-
-      label(bake, world, roaming),
-    ],
-  );
+        label(bake, world, roaming, inside),
+      ],
+    );
+  });
 }
 
 /** The keys walking takes for itself, which are taken off everything else for
@@ -469,7 +526,7 @@ const MOVES = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
  * the orbit camera was looking is the middle of the level, which is as good a
  * spot as any and better than the origin, which may be nowhere.
  */
-function entered(host: HTMLElement, on: boolean, orbit: Orbit, walker: Walker): void {
+function entered(host: HTMLElement, on: boolean): void {
   const style = host.style;
 
   // Every side written out rather than `inset`, and a width alongside them:
@@ -487,9 +544,15 @@ function entered(host: HTMLElement, on: boolean, orbit: Orbit, walker: Walker): 
   style.borderRadius = on ? '0' : '8px';
   style.boxShadow = on ? 'none' : `0 6px 18px ${theme.panelShadow}`;
   style.cursor = on ? 'none' : '';
+}
 
-  if (!on) return;
-
+/**
+ * Somewhere to stand, taken from wherever the orbit camera was looking.
+ *
+ * That is the middle of the level, which is as good a spot as any and much
+ * better than the origin, which may be nowhere near it.
+ */
+function stood(orbit: Orbit, walker: Walker): void {
   walker.x = orbit.x;
   walker.z = orbit.z;
   walker.angle = 0;
@@ -533,23 +596,36 @@ function framed(outline: readonly Point[][], orbit: Orbit): void {
  * versions; without one a switch arrives rather than happens, and saying so is
  * better than leaving someone to wonder whether it is broken.
  */
-function label(bake: Value<Bake>, world: Value<World>, roaming: Value<boolean>): VNode {
+function label(
+  bake: Value<Bake>,
+  world: Value<World>,
+  roaming: Value<boolean>,
+  inside: Value<boolean>,
+): VNode {
+  /** The panel in the corner: which gesture does what, and whether a version
+   * switch will be a walk or a jump. */
   const says = (): string => {
     const b = bake(), w = world();
 
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
-    return spanAt(b, w, 0) === null ? 'not baked · switches snap' : 'drag to turn · wheel to zoom';
+    const how = inside()
+      ? 'drag walks · dbl-click to rise · enter fills'
+      : 'drag turns · wheel zooms · dbl-click stands up';
+
+    return spanAt(b, w, 0) === null ? `${how} · unbaked` : how;
   };
 
-  const inside = (): string => {
+  /** Filling the window, where the keyboard is the walker's. Nothing here
+   * watches the pointer lock: it is not something the store knows about, and a
+   * line that had gone stale would be worse than one that says both ways. */
+  const walking = (): string => {
     const b = bake(), w = world();
 
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     const switches = spanAt(b, w, 0) === null ? '↑↓ switch (unbaked · snaps)' : '↑↓ switch';
-    // Nothing here watches the lock: it is not something the store knows about,
-    // and a line that went stale would be worse than one that says both ways.
+
     return `wasd · mouse turns (click or enter if it does not) · ${switches} · esc to leave`;
   };
 
@@ -565,6 +641,6 @@ function label(bake: Value<Bake>, world: Value<World>, roaming: Value<boolean>):
         textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)',
       },
     },
-    [text(() => (roaming() ? inside() : says()))],
+    [text(() => (roaming() ? walking() : says()))],
   );
 }
