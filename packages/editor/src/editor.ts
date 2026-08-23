@@ -52,9 +52,10 @@ export function editor(initial: World): VNode {
         [
           inputListener(input),
           saving(state, input, update),
-          shortcuts(input, update),
+          shortcuts(state, input, update),
 
           replaying(s.currentVersion, state, update),
+          roaming(input, state, update),
 
           worldCanvas(
             s.world,
@@ -65,11 +66,20 @@ export function editor(initial: World): VNode {
             s.currentVersion,
             s.replay,
             s.bake,
+            s.roaming,
             input,
             update,
           ),
 
-          preview(s.preview, s.world, s.bake, s.currentVersion, s.replay),
+          preview(
+            () => s.preview() || s.roaming(),
+            s.world,
+            s.bake,
+            s.currentVersion,
+            s.replay,
+            s.roaming,
+            update,
+          ),
 
           toolbar(s.tool, update),
           versionStrip(s.world, s.currentVersion, update),
@@ -120,6 +130,48 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
 
     return () => cancelAnimationFrame(frame);
   });
+}
+
+/**
+ * Standing in the level rather than looking down at it.
+ *
+ * Enter goes in — and turns the 3D view on if it was not already, since being
+ * inside something invisible is not a state worth having. Coming back out is
+ * the pointer lock going, which the view watches for, so Escape works without
+ * anything here waiting for it.
+ *
+ * The arrows switch version while inside, and switch it the same way the
+ * version strip does: `switched`, so a transition is declared in the same
+ * update that moves the version and the walls morph across rather than jump.
+ */
+function roaming(input: Input, state: Value<EditorState>, update: Update): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(input, 'Enter', 'ArrowUp', 'ArrowDown');
+
+      if (e.metaKey || e.ctrlKey) continue;
+
+      if (e.code === 'Enter') {
+        if (e.repeat || state().roaming) continue;
+
+        e.preventDefault();
+        update(s => ({ ...s, roaming: true }));
+        continue;
+      }
+
+      if (!state().roaming) continue;
+
+      e.preventDefault();
+
+      const by = e.code === 'ArrowUp' ? -1 : 1;
+
+      update(s => switched(s, clamped(s.currentVersion + by)));
+    }
+  });
+}
+
+function clamped(v: number): VersionId {
+  return Math.min(VERSIONS - 1, Math.max(0, v));
 }
 
 /**
@@ -186,7 +238,7 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
  * being its own tool is what lets a click on empty canvas mean letting go under
  * the other two, rather than having to guess between that and starting a shape.
  */
-function shortcuts(input: Input, update: Update): VNode {
+function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
       const e = yield* keyPressed(
@@ -195,6 +247,10 @@ function shortcuts(input: Input, update: Update): VNode {
       );
 
       const command = e.metaKey || e.ctrlKey;
+
+      // Whoever is walking has the keyboard. Undo with a command key on it is
+      // still theirs to press, but A, V and S are strafing.
+      if (state().roaming && !command) continue;
 
       if (!command) {
         if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));

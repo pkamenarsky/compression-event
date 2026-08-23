@@ -40,7 +40,19 @@ import { Bake, spanAt } from './bake';
 import { bakedLevel } from './export';
 import { EMPTY_LIVE, Live, live, resolveAt, runs } from './scene';
 import { theme } from './theme';
-import { Replay, VersionId, World } from './types';
+import { Replay, Update, VersionId, World } from './types';
+
+/**
+ * Standing in it: where the walker is and which way they are facing.
+ *
+ * No pitch. Looking up and down in a level whose walls are the whole subject
+ * buys nothing and costs the horizon, so the mouse turns and only turns.
+ */
+interface Walker {
+  x: number
+  z: number
+  angle: number
+}
 
 interface Orbit {
   angle: number
@@ -51,8 +63,8 @@ interface Orbit {
   held: boolean
 }
 
-const WIDTH = 380;
-const HEIGHT = 260;
+const WIDTH = 640;
+const HEIGHT = 480;
 
 /** Vertical, in radians, and the one the framing is worked out against. */
 const FOV = 60 * Math.PI / 180;
@@ -66,6 +78,15 @@ const FOV = 60 * Math.PI / 180;
  */
 const MARGIN = 1.25;
 
+/** Eye height, in world units, and how fast someone walks in them. There is no
+ * collision: the walls are there to be read, and being stopped by one while
+ * trying to see behind it is not what this is for. */
+const EYE = 1.6;
+const SPEED = 5;
+
+/** Radians per pixel of mouse movement, turning. */
+const LOOK = 0.0022;
+
 /** Radians per pixel dragged. */
 const TURN = 0.008;
 /** How far the elevation may be pushed before it is looking through the floor
@@ -78,8 +99,10 @@ export function preview(
   bake: Value<Bake>,
   current: Value<VersionId>,
   replay: Value<Replay | null>,
+  roaming: Value<boolean>,
+  update: Update,
 ): VNode {
-  return show(showing, panel(world, bake, current, replay));
+  return show(showing, panel(world, bake, current, replay, roaming, update));
 }
 
 function panel(
@@ -87,6 +110,8 @@ function panel(
   bake: Value<Bake>,
   current: Value<VersionId>,
   replay: Value<Replay | null>,
+  roaming: Value<boolean>,
+  update: Update,
 ): VNode {
   let host: HTMLDivElement | undefined;
   let view: Renderer | null = null;
@@ -110,8 +135,13 @@ function panel(
    * someone has moved it themselves. */
   const orbit: Orbit = { angle: 0.9, pitch: 0.75, distance: 20, x: 0, z: 0, held: false };
 
+  /** Where whoever is inside it is standing, and what they are holding down.
+   * Both are read every frame and neither is state anything else looks at. */
+  const walker: Walker = { x: 0, z: 0, angle: 0 };
+  const held = new Set<string>();
+
   const placed = (): void => {
-    if (view === null) return;
+    if (view === null || roaming()) return
 
     const flat = Math.cos(orbit.pitch) * orbit.distance;
 
@@ -145,6 +175,35 @@ function panel(
     view.walk(Math.min(Math.max(at / spans, 0), 1));
   };
 
+  /**
+   * One frame of walking.
+   *
+   * Off the two axes of the facing rather than off the keys directly, so that
+   * holding two of them goes diagonally at the same speed rather than at root
+   * two of it.
+   */
+  const stepped = (dt: number): void => {
+    if (view === null) return;
+
+    const ahead = (held.has('KeyW') ? 1 : 0) - (held.has('KeyS') ? 1 : 0);
+    const across = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
+
+    if (ahead !== 0 || across !== 0) {
+      const l = Math.hypot(ahead, across);
+      const sin = Math.sin(walker.angle), cos = Math.cos(walker.angle);
+
+      walker.x += (sin * ahead + cos * across) / l * SPEED * dt;
+      walker.z += (-cos * ahead + sin * across) / l * SPEED * dt;
+    }
+
+    view.camera.position.set(walker.x, EYE, walker.z);
+    view.camera.lookAt(
+      walker.x + Math.sin(walker.angle),
+      EYE,
+      walker.z - Math.cos(walker.angle),
+    );
+  };
+
   /** The boundary at the version on screen, which is what is drawn whenever
    * nothing is in flight. */
   const shown = (w: World, v: VersionId): void => {
@@ -155,7 +214,9 @@ function panel(
     const outline = runs(set) as Point[][];
 
     view.show(outline);
-    framed(outline, orbit);
+
+    if (!roaming()) framed(outline, orbit);
+
     placed();
   };
 
@@ -183,7 +244,7 @@ function panel(
       // the camera is not a pan of the world.
       onpointerdown: (e: PointerEvent) => {
         e.stopPropagation();
-        if (host === undefined) return;
+        if (host === undefined || roaming()) return;
 
         host.setPointerCapture(e.pointerId);
 
@@ -219,6 +280,8 @@ function panel(
         e.preventDefault();
         e.stopPropagation();
 
+        if (roaming()) return;
+
         orbit.held = true;
         orbit.distance = Math.max(2, orbit.distance * Math.exp(e.deltaY * 0.001));
         placed();
@@ -232,7 +295,17 @@ function panel(
 
         view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
 
-        let frame = requestAnimationFrame(function tick() {
+        let last = performance.now();
+
+        let frame = requestAnimationFrame(function tick(now: number) {
+          // Capped, so that a tab left in the background does not come back and
+          // fly whoever is standing in it through a wall in one step.
+          const dt = Math.min(0.1, (now - last) / 1000);
+
+          last = now;
+
+          if (roaming()) stepped(dt);
+
           view?.render();
           frame = requestAnimationFrame(tick);
         });
@@ -272,9 +345,109 @@ function panel(
 
       effect(replay, r => walked(r)),
 
-      label(bake, world),
+      // Standing in it. Everything about that is here: the panel over the whole
+      // window, the pointer taken by the page, and the keyboard read directly
+      // rather than off the editor's bus — nothing else is listening for a key
+      // being *held*, which is the whole of walking.
+      effect(roaming, on => {
+        if (host === undefined) return;
+
+        held.clear();
+        entered(host, on, orbit, walker);
+
+        if (!on) {
+          if (document.pointerLockElement === host) document.exitPointerLock();
+
+          placed();
+          return;
+        }
+
+        // Asked for on the way in, where an Enter press is still counted as
+        // something a person did. Refused is not fatal: the keys still walk and
+        // only turning is lost, so there is nothing to undo here.
+        void host.requestPointerLock?.();
+
+        const down = (e: KeyboardEvent) => {
+          if (MOVES.includes(e.code)) {
+            e.preventDefault();
+            held.add(e.code);
+          }
+        };
+
+        const up = (e: KeyboardEvent) => held.delete(e.code);
+
+        const moved = (e: MouseEvent) => {
+          if (document.pointerLockElement !== host) return;
+
+          walker.angle += e.movementX * LOOK;
+        };
+
+        // Escape leaves by way of the browser: it drops the lock without a key
+        // reaching anyone, so the lock going is what says someone left rather
+        // than a key being watched for.
+        const locked = () => {
+          if (document.pointerLockElement !== host) {
+            update(st => ({ ...st, roaming: false }));
+          }
+        };
+
+        // A window that loses the focus keeps whatever was held down forever.
+        const blurred = () => held.clear();
+
+        window.addEventListener('keydown', down);
+        window.addEventListener('keyup', up);
+        window.addEventListener('blur', blurred);
+        document.addEventListener('mousemove', moved);
+        document.addEventListener('pointerlockchange', locked);
+
+        return () => {
+          window.removeEventListener('keydown', down);
+          window.removeEventListener('keyup', up);
+          window.removeEventListener('blur', blurred);
+          document.removeEventListener('mousemove', moved);
+          document.removeEventListener('pointerlockchange', locked);
+        };
+      }),
+
+      label(bake, world, roaming),
     ],
   );
+}
+
+/** The keys walking takes for itself, which are taken off everything else for
+ * as long as it is on. */
+const MOVES = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+
+/**
+ * The panel becoming the window, and back.
+ *
+ * Written onto the node rather than declared, because the box the renderer
+ * watches has to be the same box either way: a second element swapped in for
+ * the first would be a second WebGL context, and going in and out of first
+ * person would rebuild every buffer in it.
+ *
+ * Somewhere to stand is decided on the way in and kept on the way out. Where
+ * the orbit camera was looking is the middle of the level, which is as good a
+ * spot as any and better than the origin, which may be nowhere.
+ */
+function entered(host: HTMLElement, on: boolean, orbit: Orbit, walker: Walker): void {
+  const style = host.style;
+
+  style.inset = on ? '0' : '';
+  style.right = on ? '' : '12px';
+  style.bottom = on ? '' : '12px';
+  style.width = on ? '' : `${WIDTH}px`;
+  style.height = on ? '' : `${HEIGHT}px`;
+  style.border = on ? 'none' : `1px solid ${theme.border}`;
+  style.borderRadius = on ? '0' : '8px';
+  style.boxShadow = on ? 'none' : `0 6px 18px ${theme.panelShadow}`;
+  style.cursor = on ? 'none' : '';
+
+  if (!on) return;
+
+  walker.x = orbit.x;
+  walker.z = orbit.z;
+  walker.angle = 0;
 }
 
 /**
@@ -315,13 +488,23 @@ function framed(outline: readonly Point[][], orbit: Orbit): void {
  * versions; without one a switch arrives rather than happens, and saying so is
  * better than leaving someone to wonder whether it is broken.
  */
-function label(bake: Value<Bake>, world: Value<World>): VNode {
+function label(bake: Value<Bake>, world: Value<World>, roaming: Value<boolean>): VNode {
   const says = (): string => {
     const b = bake(), w = world();
 
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     return spanAt(b, w, 0) === null ? 'not baked · switches snap' : 'drag to turn · wheel to zoom';
+  };
+
+  const inside = (): string => {
+    const b = bake(), w = world();
+
+    if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
+
+    const switches = spanAt(b, w, 0) === null ? '↑↓ switch (unbaked · snaps)' : '↑↓ switch';
+
+    return `wasd · mouse · ${switches} · esc to leave`;
   };
 
   return div(
@@ -336,6 +519,6 @@ function label(bake: Value<Bake>, world: Value<World>): VNode {
         textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)',
       },
     },
-    [text(says)],
+    [text(() => (roaming() ? inside() : says()))],
   );
 }

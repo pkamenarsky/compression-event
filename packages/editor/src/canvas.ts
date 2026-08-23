@@ -108,6 +108,7 @@ export function worldCanvas(
   currentVersion: Value<VersionId>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
+  roaming: Value<boolean>,
   input: Input,
   update: Update,
 ): VNode {
@@ -708,6 +709,10 @@ export function worldCanvas(
 
           if (started.tag === 'key') {
             const e = started.value;
+
+            // Someone is standing in the level. W and S are theirs, and a
+            // scale started under a full-window 3D view would be invisible.
+            if (roaming()) continue;
 
             // Everything with a command key on it belongs to the shortcuts in
             // `editor.ts`. Without this, Cmd+S would save and start a scale,

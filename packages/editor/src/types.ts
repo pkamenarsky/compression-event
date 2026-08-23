@@ -416,6 +416,16 @@ export interface EditorState {
   /** Whether the 3D view is up. It costs a WebGL context and a walk of the
    * bake, so it is asked for rather than assumed. */
   preview: boolean
+  /**
+   * Standing in it rather than looking at it: the 3D view over the whole
+   * window, the camera at eye height, and the keyboard belonging to whoever is
+   * walking rather than to the editor. Enter goes in and Escape comes back.
+   *
+   * It implies `preview` — the view is up for as long as someone is inside it,
+   * whether or not the panel was — and it takes the shortcuts away from the
+   * canvas while it is on, or W and S would strafe and scale at once.
+   */
+  roaming: boolean
 
   /**
    * What the game would be shipped, for the spans that have been baked. It is
@@ -445,6 +455,7 @@ export function initialState(world: World): EditorState {
     tool: 'point',
     replay: null,
     preview: false,
+    roaming: false,
     bake: { spans: new Map(), progress: null },
     history: EMPTY_HISTORY,
     clipboard: [],
