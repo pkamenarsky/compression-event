@@ -505,33 +505,27 @@ export function worldCanvas(
     }
 
     /**
-     * Where the last click landed and what was under it, so that clicking the
-     * same place again can mean the next one down.
-     *
-     * Not in `Local`: nothing about it is on screen, and putting it there would
-     * redraw the canvas every time the mouse went down.
-     */
-    let stacked: { at: Point, stack: PolygonId[], index: number } | null = null;
-
-    /**
      * Picking a polygon, and picking the one underneath it.
      *
      * Clicking overlapping polygons has to reach the ones behind somehow, and
-     * the approaches divide: Illustrator and Figma put it on a modifier
-     * (command-click, again and again, going deeper), while others cycle on
-     * repeated clicks in the same spot. This does the second, because it needs
-     * nothing to be discovered — click the same place twice and you get the
-     * other one — and because it costs nothing where it is not wanted: with a
-     * single polygon under the cursor the stack is one deep and clicking again
-     * lands on the same thing.
+     * the approaches divide: Illustrator and Figma put it on a modifier —
+     * command-click, again and again, going deeper — while others cycle on
+     * repeated clicks. This cycles, because it needs nothing to be discovered
+     * and costs nothing where it is not wanted: with one polygon under the
+     * cursor the stack is one deep and clicking again lands on the same thing.
+     *
+     * Where in the stack to go next is read off the selection rather than
+     * remembered. Nothing is kept between clicks at all — not where the last
+     * one landed, not what was under it — so moving the cursor cannot lose the
+     * thread, and neither can anything else that changes the selection. The
+     * question each click asks is only ever "is what is picked one of the
+     * things under me?", and if it is, the answer is the next one along.
      */
     function picking(e: PointerEvent): void {
-      const p = at(e);
-      const stack = hitPolygons(resolveAt(world(), currentVersion()), p);
+      const stack = hitPolygons(resolveAt(world(), currentVersion()), at(e));
 
       if (stack.length === 0) {
-        stacked = null;
-
+        // Shift means adding, and adding nothing leaves the selection alone.
         if (!e.shiftKey) {
           update(s => ({ ...s, selection: { ...s.selection, polygons: [] } }));
         }
@@ -540,7 +534,6 @@ export function worldCanvas(
       }
 
       if (e.shiftKey) {
-        stacked = null;
         update(s => ({
           ...s,
           selection: { ...s.selection, polygons: togglePicked(s.selection.polygons, stack[0]) },
@@ -549,19 +542,17 @@ export function worldCanvas(
         return;
       }
 
-      // The same place, over the same polygons, and still standing on the one
-      // it left us on: anything else is a fresh click and starts at the top.
-      const again = stacked !== null
-        && Math.hypot(stacked.at.x - p.x, stacked.at.y - p.y) * view().zoom <= HANDLE
-        && stacked.stack.length === stack.length
-        && stacked.stack.every((id, i) => id === stack[i])
-        && selection().polygons.length === 1
-        && selection().polygons[0] === stacked.stack[stacked.index];
+      update(s => {
+        const picked = s.selection.polygons;
 
-      const index = again ? (stacked!.index + 1) % stack.length : 0;
+        // Standing on exactly one of them: step to the next. Anything else —
+        // nothing picked, several picked, or something picked that is not under
+        // the cursor — starts at the top of the stack.
+        const on = picked.length === 1 ? stack.indexOf(picked[0]) : -1;
+        const next = on < 0 ? 0 : (on + 1) % stack.length;
 
-      stacked = { at: p, stack, index };
-      update(s => ({ ...s, selection: { ...s.selection, polygons: [stack[index]] } }));
+        return { ...s, selection: { ...s.selection, polygons: [stack[next]] } };
+      });
     }
 
     /**
@@ -826,10 +817,13 @@ export function worldCanvas(
                 const under = hitPolygons(resolveAt(world(), currentVersion()), at(e));
 
                 if (under.length > 0) {
-                  // Grabbing something already picked takes the whole selection
-                  // with it; grabbing anything else picks that one and moves it.
-                  if (!selection().polygons.includes(under[0])) {
-                    stacked = null;
+                  // Anything picked under the cursor means the drag is that
+                  // selection moving, and the whole of it comes along. It has
+                  // to be any of them rather than the topmost: having just
+                  // clicked down through a stack to reach the one underneath,
+                  // grabbing it would otherwise hand the drag straight back to
+                  // the one on top and undo the reaching.
+                  if (!under.some(id => selection().polygons.includes(id))) {
                     update(s => ({
                       ...s,
                       selection: { ...s.selection, polygons: [under[0]] },
