@@ -274,7 +274,7 @@ export interface Span {
 /**
  * A span's geometry depends on its own two versions and on every version above
  * them, since that is what `resolveAt` walks. So the stamp is the whole chain
- * down to `k + 1`, plus the polygons themselves.
+ * down to `k + 1`, plus the polygons and the group structure themselves.
  *
  * It is the `edits` maps rather than the `Version` objects, so that opening and
  * closing a ghost's eye — which replaces the version but changes no
@@ -283,6 +283,7 @@ export interface Span {
 export interface Stamp {
   edits: unknown[]
   polygons: unknown
+  groups: unknown
 }
 
 export interface Bake {
@@ -298,6 +299,7 @@ export function stamp(world: World, from: VersionId): Stamp {
   return {
     edits: world.versions.slice(0, from + 2).map(v => v.edits),
     polygons: world.polygons,
+    groups: world.groups,
   };
 }
 
@@ -309,6 +311,7 @@ export function spanAt(bake: Bake, world: World, from: VersionId): Span | null {
   const now = stamp(world, from);
 
   if (span.stamp.polygons !== now.polygons) return null;
+  if (span.stamp.groups !== now.groups) return null;
   if (span.stamp.edits.length !== now.edits.length) return null;
 
   return span.stamp.edits.every((e, i) => e === now.edits[i]) ? span : null;

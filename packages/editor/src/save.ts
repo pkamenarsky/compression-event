@@ -15,6 +15,9 @@ import {
   EMPTY_HISTORY,
   Edit,
   EditorState,
+  Group,
+  GroupId,
+  Id,
   Polygon,
   PolygonId,
   Settings,
@@ -28,6 +31,11 @@ import {
 } from './types';
 
 /**
+ * 5: polygons can be grouped, and a version's edits are keyed by anything a
+ * transform can be written for rather than by polygons alone. A format-4 file
+ * has no groups and every edit in it names a polygon, so it reads as a world
+ * where nothing is grouped — which it is.
+ *
  * 4: a corner carries the stretch of the chain it stands over, the way a
  * polygon carries the version it was born into.
  *
@@ -40,7 +48,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 4;
+export const FORMAT = 5;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -58,6 +66,8 @@ export interface Saved {
     nextId: number
     /** Entries rather than a map, which is all `JSON` will take. */
     polygons: [PolygonId, Polygon][]
+    /** Absent before format 5, where there were none. */
+    groups?: [GroupId, Group][]
     versions: SavedVersion[]
   }
 }
@@ -67,7 +77,7 @@ export interface SavedVersion {
   name: string
   base: VersionId | null
   visible: boolean
-  edits: [PolygonId, SavedEdit][]
+  edits: [Id, SavedEdit][]
 }
 
 export interface SavedEdit {
@@ -86,6 +96,7 @@ export function saved(state: EditorState): Saved {
     world: {
       nextId: state.world.nextId,
       polygons: [...state.world.polygons],
+      groups: [...state.world.groups],
       versions: state.world.versions.map(savedVersion),
     },
   };
@@ -111,6 +122,7 @@ export function restored(file: Saved): EditorState {
   return {
     world: {
       polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
+      groups: new Map(file.world.groups ?? []),
       nextId: file.world.nextId,
       versions: file.world.versions.map(restoredVersion),
     },
@@ -159,7 +171,7 @@ function standingThroughout(polygon: Polygon): Polygon {
 }
 
 function restoredVersion(v: SavedVersion): Version {
-  const edits = new Map<PolygonId, Edit>(
+  const edits = new Map<Id, Edit>(
     v.edits.map(([id, e]) => [id, { transform: e.transform, vertices: new Map(e.vertices) }]),
   );
 

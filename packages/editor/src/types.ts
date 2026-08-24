@@ -125,14 +125,19 @@ export const EMPTY_TRANSFORM: Transform = {
 // -----------------------------------------------------------------------------
 // Identities
 //
-// All three come from one counter on `World`, so an id is unique across the
+// All of them come from one counter on `World`, so an id is unique across the
 // document and can never be confused for another kind. Everything a version's
 // layer names, it names by id: an edit keyed by array index re-points at the
 // wrong thing the moment something upstream is inserted.
 // -----------------------------------------------------------------------------
 
 export type PolygonId = number;
+export type GroupId = number;
 export type VertexId = number;
+
+/** Whatever a version's layer can carry a transform for. One counter, so the
+ * two never collide and a map over both is well defined. */
+export type Id = PolygonId | GroupId;
 export type VersionId = number;
 
 /**
@@ -209,7 +214,12 @@ export interface Version {
   base: VersionId | null
   /** Whether it draws as a ghost while another version is the one on screen. */
   visible: boolean
-  edits: Map<PolygonId, Edit>
+  /**
+   * Keyed by anything a transform can be written for: a polygon, or a group.
+   * A group's edit uses the transform and leaves `vertices` empty — there is
+   * no ring under it to displace, only members with rings of their own.
+   */
+  edits: Map<Id, Edit>
 }
 
 /**
@@ -224,8 +234,32 @@ export function standing(corner: Vertex, from: ReadonlySet<VersionId>): boolean 
   return from.has(corner.birth) && (corner.death === null || !from.has(corner.death));
 }
 
+/**
+ * Polygons and groups held together, so that one transform moves all of them.
+ *
+ * **Structure is global; the transform is versioned.** Membership is one fact
+ * about the world — a polygon is in this group or it is not, at every version
+ * that has both. The transform has to be per-version or a group could not be
+ * eroded at v3, which is what group transforms are for.
+ *
+ * `members` is ordered and may name groups as well as polygons, so groups nest.
+ * Nothing here bounds the depth: the chain a vertex carries is the shader's
+ * problem and the shipped level states how deep it goes.
+ *
+ * A group holds no geometry of its own. What it resolves to is a read taken
+ * over what its members resolved to — the union, offset by the depth on its own
+ * transform — and nothing is written back into them. See *Groups* in
+ * `docs/versioning.md`.
+ */
+export interface Group {
+  /** The version whose layer introduced it. Nothing before it may name it. */
+  birth: VersionId
+  members: Id[]
+}
+
 export interface World {
   polygons: Map<PolygonId, Polygon>
+  groups: Map<GroupId, Group>
   /** One counter for every kind of id. */
   nextId: number
   versions: Version[]
@@ -238,6 +272,7 @@ export const VERSIONS = 5;
 export function emptyWorld(): World {
   return {
     polygons: new Map(),
+    groups: new Map(),
     nextId: 0,
 
     versions: Array.from({ length: VERSIONS }, (_unused, i) => ({
@@ -247,6 +282,74 @@ export function emptyWorld(): World {
       edits: new Map(),
     })),
   };
+}
+
+// -----------------------------------------------------------------------------
+// Reading the structure
+//
+// A group holds its members, because that is the direction that cannot go
+// inconsistent: two groups claiming the same member is unrepresentable, and
+// there is nothing to keep in step. Everything that reads the structure asks
+// the other way round — what encloses me — so the index for that is derived,
+// and cached against the map it was derived from.
+// -----------------------------------------------------------------------------
+
+const parents = new WeakMap<World['groups'], ReadonlyMap<Id, GroupId>>();
+
+/** Who each member belongs to. Nothing for anything at the top level. */
+export function parentOf(world: World): ReadonlyMap<Id, GroupId> {
+  const held = parents.get(world.groups);
+
+  if (held !== undefined) return held;
+
+  const out = new Map<Id, GroupId>();
+
+  for (const [id, group] of world.groups) {
+    for (const member of group.members) out.set(member, id);
+  }
+
+  parents.set(world.groups, out);
+
+  return out;
+}
+
+/** Every group `id` is inside, innermost first. Empty at the top level. */
+export function enclosing(world: World, id: Id): GroupId[] {
+  const up = parentOf(world);
+  const out: GroupId[] = [];
+
+  // A group that contained one of its own ancestors would spin here. Making
+  // that unrepresentable is the joining command's, so this only has to not be
+  // the place it is discovered.
+  const seen = new Set<Id>([id]);
+
+  let at = up.get(id);
+
+  while (at !== undefined && !seen.has(at)) {
+    out.push(at);
+    seen.add(at);
+    at = up.get(at);
+  }
+
+  return out;
+}
+
+/** The outermost thing `id` moves with, which is `id` itself at the top level.
+ * What a click selects. */
+export function outermost(world: World, id: Id): Id {
+  const up = enclosing(world, id);
+
+  return up[up.length - 1] ?? id;
+}
+
+/** `id` and everything under it, groups included. What a removal has to reach
+ * and what a join has to refuse to swallow. */
+export function within(world: World, id: Id): Id[] {
+  const group = world.groups.get(id);
+
+  if (group === undefined) return [id];
+
+  return [id, ...group.members.flatMap(m => within(world, m))];
 }
 
 /**
@@ -368,7 +471,9 @@ function settled(s: EditorState): EditorState {
   return {
     ...s,
     selection: {
-      polygons: s.selection.polygons.filter(id => s.world.polygons.has(id)),
+      polygons: s.selection.polygons.filter(
+        id => s.world.polygons.has(id) || s.world.groups.has(id),
+      ),
       vertices: s.selection.vertices.filter(id => corners.has(id)),
     },
   };

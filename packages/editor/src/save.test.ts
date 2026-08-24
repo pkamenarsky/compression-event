@@ -76,6 +76,33 @@ describe('save', () => {
     expect(() => restored(file)).toThrow(/format/);
   });
 
+  test('groups survive the trip, and a format-4 file has none', () => {
+    const before = world();
+    const ids = [...before.world.polygons.keys()];
+
+    const grouped: EditorState = {
+      ...before,
+      world: {
+        ...before.world,
+        groups: new Map([[100, { birth: 0, members: ids }]]),
+        nextId: 101,
+      },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(saved(grouped))));
+
+    expect(after.world.groups).toBeInstanceOf(Map);
+    expect(after.world.groups.get(100)).toEqual({ birth: 0, members: ids });
+
+    // A file written before there were any says nothing about them rather than
+    // saying there are none, and both read the same way.
+    const file = saved(grouped);
+    const old = { ...file, format: 4, world: { ...file.world, groups: undefined } };
+
+    expect(restored(JSON.parse(JSON.stringify(old)) as typeof file).world.groups.size)
+      .toEqual(0);
+  });
+
   test('a format-3 file opens, with every corner standing throughout', () => {
     // Before 4 there was no way for a corner to say it came or went, so a file
     // that says nothing is read as one where none of them did.
