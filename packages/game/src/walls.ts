@@ -15,6 +15,28 @@
 
 import * as THREE from 'three';
 import { bayerGLSL } from './dither';
+import { Point } from './world';
+
+/** How far off straight a corner has to be to count as one, as the sine of
+ * the angle it turns through. */
+const TURNED = 1e-6;
+
+/**
+ * Whether the boundary actually turns at `b`.
+ *
+ * The CSG leaves a point wherever two edges met, and where a union runs
+ * through one — two polygons overlapping, or a solid one cutting across the
+ * pair — the point it leaves sits in the middle of what is now one flat wall.
+ * The wall is right. The vertical standing on it is a claim that there is a
+ * corner there, and there is not.
+ */
+export function turns(a: Point, b: Point, c: Point): boolean {
+  const ux = b.x - a.x, uy = b.y - a.y;
+  const vx = c.x - b.x, vy = c.y - b.y;
+  const len = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+
+  return len === 0 || Math.abs(ux * vy - uy * vx) > len * TURNED;
+}
 
 /** A stretch of consecutive points in whatever flat array of them the caller
  * holds. Open — a ring of the union belongs to no one polygon, and a wall was

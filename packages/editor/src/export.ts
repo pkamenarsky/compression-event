@@ -25,12 +25,13 @@ import {
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
+  turns,
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Resolved, resolveAt } from './scene';
-import { PolygonId, VersionId, World } from './types';
+import { Point, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -148,6 +149,20 @@ function solvable(s: Stretch, table: Table, origin: Origin | null | undefined): 
   return one === null || two === null ? null : [one[0], one[1], two[0], two[1]];
 }
 
+/**
+ * Whether the run turns at `j`, as a factor to fade a vertical by.
+ *
+ * The ends of a run are open — the boundary carries on into another run, and
+ * nothing here says it does not turn — so only the inside of one is asked.
+ */
+function cornered(points: readonly Point[], j: number): number {
+  const a = points[j - 1], b = points[j], c = points[j + 1];
+
+  if (a === undefined || b === undefined || c === undefined) return 1;
+
+  return turns(a, b, c) ? 1 : 0;
+}
+
 /** Everything the shader reads, flattened. */
 export function bakedSpan(span: Span): BakedSpan {
   const slots = slotted(span.riders);
@@ -176,8 +191,15 @@ export function bakedSpan(span: Span): BakedSpan {
 
           pointsA.push(p.x, p.y);
           pointsB.push(q.x, q.y);
-          opacityA.push(s.opacity[0][i]?.[j] ?? 1);
-          opacityB.push(s.opacity[1][i]?.[j] ?? 1);
+
+          // A point the boundary runs straight through is not a corner, and
+          // the vertical the extrusion stands on it would be a line drawn down
+          // the middle of a flat wall. Folded into the fade rather than given
+          // its own channel: both say how much of a corner is there, and the
+          // shader already carries this one from one end of the span to the
+          // other. See `turns`.
+          opacityA.push(cornered(run.points, j) * (s.opacity[0][i]?.[j] ?? 1));
+          opacityB.push(cornered(to.points, j) * (s.opacity[1][i]?.[j] ?? 1));
           slotOf.push(slot);
           kinds.push(cross === null ? CORNER : CROSSING);
           crossings.push(...(cross ?? [-1, -1, -1, -1]));

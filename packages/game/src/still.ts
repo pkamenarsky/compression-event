@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Source, WallOptions, extrude, materials } from './walls';
+import { Source, WallOptions, extrude, materials, turns } from './walls';
 import { Point } from './world';
 
 const vertexShader = /* glsl */ `
@@ -23,15 +23,17 @@ const vertexShader = /* glsl */ `
   uniform float uWallHeight;
 
   attribute float aHeight;
+  attribute float aOpacity;
 
   varying vec3 vWorldPosition;
   varying float vHeightFrac;
   varying float vOpacity;
 
   void main() {
-    // The boundary as it stands has no vertices that are not there: every point
-    // of it is a corner the CSG actually produced.
-    vOpacity = 1.0;
+    // Every point of the boundary is one the CSG actually produced, so nothing
+    // here is part way into existence. What a point can be is not a corner: see
+    // \`turns\`, which is what decided this.
+    vOpacity = aOpacity;
 
     // The position attribute holds the outline point in editor units, in x
     // and z; the height is a flag rather than a coordinate, so that one point
@@ -60,6 +62,17 @@ export function still(runs: readonly Point[][], options: WallOptions): Source {
 
   const shape = extrude(spans);
 
+  // Per point of the flattened outline, whether a vertical standing on it is
+  // telling the truth. The ends of a run are open — nothing says the boundary
+  // does not turn there — so only the inside of one is asked.
+  const cornered = new Float32Array(points.length).fill(1);
+
+  for (const span of spans) {
+    for (let i = span.first + 1; i < span.first + span.count - 1; i++) {
+      if (!turns(points[i - 1], points[i], points[i + 1])) cornered[i] = 0;
+    }
+  }
+
   const uniforms = {
     uScale: { value: options.scale },
     uWallHeight: { value: options.wallHeight },
@@ -70,28 +83,35 @@ export function still(runs: readonly Point[][], options: WallOptions): Source {
   const geometry = (
     point: Int32Array,
     height: Float32Array,
+    vertical: Float32Array | null,
     index: Uint32Array | null,
   ): THREE.BufferGeometry => {
     const g = new THREE.BufferGeometry();
     const position = new Float32Array(point.length * 3);
+    const opacity = new Float32Array(point.length);
 
     for (let i = 0; i < point.length; i++) {
       const p = points[point[i]];
 
       position[i * 3] = p.x;
       position[i * 3 + 2] = p.y;
+
+      // Only the vertical claims a corner; the horizontals run along a wall
+      // and are drawn whatever the points at their ends turn out to be.
+      opacity[i] = vertical === null || vertical[i] < 0.5 ? 1 : cornered[point[i]];
     }
 
     g.setAttribute('position', new THREE.BufferAttribute(position, 3));
     g.setAttribute('aHeight', new THREE.BufferAttribute(height, 1));
+    g.setAttribute('aOpacity', new THREE.BufferAttribute(opacity, 1));
 
     if (index !== null) g.setIndex(new THREE.BufferAttribute(index, 1));
 
     return g;
   };
 
-  const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, shape.index);
-  const lineGeometry = geometry(shape.linePoint, shape.lineHeight, null);
+  const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
+  const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
