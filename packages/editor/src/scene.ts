@@ -781,14 +781,67 @@ export function contributing(
 ): Contributed[] {
   const depth = depths(world, v);
 
-  return contributed(world, items, id => depth.get(id) ?? 0);
+  // At a version, a group with no depth on it is doing nothing at all, so it
+  // hands its members over. The bake reads it differently, and has to — see
+  // `Standing`.
+  return contributed(world, items, id => {
+    const d = depth.get(id) ?? 0;
+
+    return d === 0 ? null : { depth: d };
+  });
 }
 
 /**
- * The same, with the depths asked for rather than read off a version.
+ * What a group does where it is being read.
  *
- * The bake wants them part way between two versions, where a depth being
- * scrubbed on is a number in flight like any other.
+ * `null` is transparent: it contributes nothing of its own and hands its
+ * members over one by one. Anything else means it stands for them, and then
+ * `depth` is how far its union is offset — which may be zero, and that is not
+ * the same as being transparent. A depth arriving over a span is zero at one
+ * end of it, and a group that stopped standing for its members at that end
+ * would change what the boundary is *made of* half way through a stretch,
+ * which no interpolation describes.
+ */
+/**
+ * The id a group's solid side goes by.
+ *
+ * A group holding a room and a pillar contributes to both sides of the set, and
+ * one id names one contributor: the level union and the solid union have
+ * different boundaries, take different tracks, and are told apart everywhere
+ * downstream by nothing but this number. So the solid side gets one of its own.
+ *
+ * Negative, because ids come from a counter that only counts up, so nothing
+ * authored can ever collide with one — and reversible, so what it belongs to
+ * can always be read back.
+ */
+export function solidSide(id: GroupId): Id {
+  return -(id + 1);
+}
+
+/** Whose solid side that is, or nothing where the id is an ordinary one. */
+export function sidedWith(id: Id): GroupId | null {
+  return id < 0 ? -id - 1 : null;
+}
+
+export interface Standing {
+  depth: number
+  /**
+   * The frame to keep the union's points in.
+   *
+   * The identity, or nothing, says world units — which is what anything
+   * drawing them wants and what anything interpolating them does not. See
+   * `groupFrame`.
+   */
+  frame?: Affine
+}
+
+/**
+ * The same, with what each group is doing asked for rather than read off a
+ * version.
+ *
+ * The bake wants the depths part way between two versions, where a depth being
+ * scrubbed on is a number in flight like any other — and it wants which groups
+ * stand for their members settled for the whole span rather than per instant.
  *
  * Only what `items` reaches: the walk starts at what it was given and goes up,
  * so handing it a neighbourhood rather than the world gives that
@@ -797,14 +850,7 @@ export function contributing(
 export function contributed(
   world: World,
   items: readonly Resolved[],
-  depthOf: (id: GroupId) => number,
-  /**
-   * The frame to keep a group's points in, if the caller has one.
-   *
-   * The identity says world units, which is what anything drawing them wants
-   * and what anything interpolating them does not: see `groupFrame`.
-   */
-  frameOf?: (id: GroupId) => Affine,
+  standing: (id: GroupId) => Standing | null,
   /**
    * Where the group projections are kept, if the caller wants them kept.
    *
@@ -835,7 +881,7 @@ export function contributed(
     if (known !== undefined) return known;
 
     const all = unionAll(group.members.map(m => offer(m, kind)));
-    const d = depthOf(id);
+    const d = standing(id)?.depth ?? 0;
     const out = d === 0 || all.length === 0 ? all : erode(all, d);
 
     held?.set(key, out);
@@ -843,7 +889,7 @@ export function contributed(
     return out;
   };
 
-  const walk = (id: Id): void => {
+  const emit = (id: Id): void => {
     const it = mine.get(id);
 
     if (it !== undefined) {
@@ -859,25 +905,40 @@ export function contributed(
       return;
     }
 
-    const group = world.groups.get(id);
+    const how = standing(id);
 
-    if (group === undefined) return;
-
-    if (depthOf(id) === 0) {
-      for (const m of group.members) walk(m);
-      return;
-    }
+    if (world.groups.get(id) === undefined || how === null) return;
 
     for (const kind of ['level', 'solid'] as const) {
       const shape = offer(id, kind);
 
       if (shape.length !== 0) {
-        out.push({ id, kind, shape, frame: frameOf?.(id) ?? IDENTITY, simple: true });
+        out.push({
+          id: kind === 'solid' ? solidSide(id) : id,
+          kind,
+          shape,
+          frame: how.frame ?? IDENTITY,
+          simple: true,
+        });
       }
     }
   };
 
-  for (const id of new Set(items.map(it => outermost(world, it.id)))) walk(id);
+  // Upwards from what is actually here, rather than down from the top.
+  //
+  // Down would reach a standing group by way of a transparent one holding it,
+  // with none of that group's members in hand — and answer for it anyway, out
+  // of nothing. Every polygon here names the one thing that stands for it, and
+  // a group nothing here belongs to is never asked about at all.
+  const tops = new Set<Id>();
+
+  for (const it of items) {
+    const up = enclosing(world, it.id).filter(g => standing(g) !== null);
+
+    tops.add(up[up.length - 1] ?? it.id);
+  }
+
+  for (const id of tops) emit(id);
 
   return out;
 }

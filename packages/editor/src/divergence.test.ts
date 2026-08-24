@@ -228,6 +228,29 @@ test('the replay never strays far from csg(t)', () => {
       held(transformed(world, 1, ids[1], { translation: { x: 60, y: 0 } }), ids, 1,
         { erosion: 18 })); }
   {
+    // A group holding both kinds, with the depth arriving over the span. Two
+    // boundaries out of one group, and the depth is zero at the near end —
+    // where a group that stopped standing for its members would change what
+    // the boundary is made of half way through a stretch.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -100, 400, 200)],
+      ['level', rect(160, -100, 200, 200)],
+      ['solid', rect(-60, -40, 120, 80)],
+    );
+
+    check('a group of both kinds, eroding', held(world, ids, 1, { erosion: 18 })); }
+  {
+    // A solid crossing an eroding group it is no part of, which is where a
+    // member polygon's ring was reaching the buffers with nothing to ride.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 120)],
+      ['level', rect(160, 0, 200, 120)],
+      ['solid', rect(150, 40, 60, 200)],
+    );
+
+    check('a solid crossing an eroding group',
+      held(world, [ids[0], ids[1]], 1, { erosion: 15 })); }
+  {
     // A bar that turns half way round, so it ends up where it started and
     // sweeps a room on the way that it touches at neither end of the span. The
     // track is cut against a fixed neighbourhood, so this is the case that

@@ -7,6 +7,8 @@ import {
   composed,
   contributing,
   grouped,
+  sidedWith,
+  solidSide,
   polygonsIn,
   ungrouped,
   without,
@@ -911,6 +913,52 @@ describe('a group erodes as one shape', () => {
     // changes what the offset is taken on.
     expect(shapeArea(out.find(c => c.kind === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
     expect(shapeArea(out.find(c => c.kind === 'solid')!.shape)).toBeCloseTo(10 * 10, 6);
+  });
+
+  test('a group holding both kinds contributes to both sides of the set', () => {
+    // One id names one contributor, and these are two boundaries: the level
+    // union and the solid union take different tracks and are told apart
+    // everywhere downstream by nothing but the number. The solid side gets one
+    // of its own.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 120)],
+      ['solid', rect(60, 40, 60, 40)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const d = 10;
+    const w = moved(made.world, 0, made.id, { erosion: d });
+
+    const out = contributing(w, 0, resolveAt(w, 0));
+
+    expect(out.map(c => c.id)).toEqual([made.id, solidSide(made.id)]);
+    expect(sidedWith(solidSide(made.id))).toEqual(made.id);
+
+    // And the set is what those two say it is: the room pulled in by the depth
+    // with the pillar, also pulled in, taken back out of it.
+    expect(shapeArea(csg(w, 0)))
+      .toBeCloseTo((200 - 2 * d) * (120 - 2 * d) - (60 - 2 * d) * (40 - 2 * d), 6);
+  });
+
+  test('a group nothing in hand belongs to is not answered for', () => {
+    // The fold walks up from what it was given, never down from the top. Down
+    // would reach a standing group by way of a transparent one holding it, with
+    // none of that group's members in hand, and answer out of nothing.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(80, 0, 100, 100)],
+      ['level', rect(400, 0, 100, 100)],
+    );
+
+    const inner = grouped(world, 0, [ids[0], ids[1]])!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+    const w = moved(outer.world, 0, inner.id, { erosion: 12 });
+
+    // Handed only the far room, which is inside the transparent outer group and
+    // nowhere near the eroding inner one.
+    const far = resolveAt(w, 0).filter(it => it.id === ids[2]);
+
+    expect(contributing(w, 0, far).map(c => c.id)).toEqual([ids[2]]);
   });
 
   test('a group inside an eroding group is projected first', () => {

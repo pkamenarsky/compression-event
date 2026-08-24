@@ -104,6 +104,8 @@ import {
   contributed,
   depths,
   groupFrame,
+  sidedWith,
+  solidSide,
   live,
   place,
   project,
@@ -116,6 +118,7 @@ import {
   GroupId,
   Id,
   PolygonId,
+  PolygonType,
   Transform,
   VersionId,
   Vertex,
@@ -932,15 +935,20 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
   return contributed(
     cast.world,
     at,
+
+    // Which groups stand for their members is settled for the whole span, not
+    // asked at each instant. A depth arriving is zero at the near end, and a
+    // group that handed its members back there would change what the boundary
+    // is made of half way through a stretch.
     id => {
       const both = cast.eroding.get(id);
 
-      return both === undefined ? 0 : mix(both[0], both[1], t);
-    },
-    id => {
-      const rider = cast.riders.get(id);
+      if (both === undefined) return null;
 
-      return rider === undefined ? IDENTITY : riding(rider, t);
+      return {
+        depth: mix(both[0], both[1], t),
+        frame: riding(cast.riders.get(id)!, t),
+      };
     },
     held,
   );
@@ -951,6 +959,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
  * an eroding group in place of all of its members. */
 function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
   const out = new Map<Id, Moving[]>();
+  const kinds = new Map<Id, Set<PolygonType>>();
 
   for (const m of cast.items) {
     // The outermost group that erodes, or the polygon itself. Everything
@@ -959,9 +968,25 @@ function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
     const id = up[up.length - 1] ?? m.at.id;
 
     (out.get(id) ?? out.set(id, []).get(id)!).push(m);
+    (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(m.at.polygon.type);
   }
 
-  return [...out].map(([id, mine]) => ({ id, mine }));
+  const all: { id: Id, mine: Moving[] }[] = [];
+
+  for (const [id, mine] of out) {
+    if (!cast.eroding.has(id)) {
+      all.push({ id, mine });
+      continue;
+    }
+
+    // A group that holds both kinds contributes to both sides of the set, and
+    // each side is its own boundary and its own track. They are cut over the
+    // same members and ride the same frame; only the classification differs.
+    if (kinds.get(id)?.has('level')) all.push({ id, mine });
+    if (kinds.get(id)?.has('solid')) all.push({ id: solidSide(id), mine });
+  }
+
+  return all;
 }
 
 /** A polygon as the boundary wants to see it: simplified, unless it came out of
@@ -1049,6 +1074,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
   }
 
   const out = only === null ? everything(at) : share(at, only);
+
 
   const frame = out.map(r => ({
     id: r.id,
@@ -1644,11 +1670,12 @@ function ridden(cast: Cast, all: { id: Id, mine: Moving[] }[]): Map<Id, Rider> {
 
   return new Map(all.map(s => {
     const m = own.get(s.id);
+    const group = sidedWith(s.id) ?? s.id;
 
     return [
       s.id,
       m === undefined
-        ? cast.riders.get(s.id) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
+        ? cast.riders.get(group) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
         : {
           base: m.base,
           layer: m.newborn ? EMPTY_TRANSFORM : m.layer,
