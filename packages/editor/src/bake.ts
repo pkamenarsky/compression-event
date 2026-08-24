@@ -103,6 +103,7 @@ import {
   compose,
   contributed,
   depths,
+  groupFrame,
   live,
   place,
   project,
@@ -858,6 +859,32 @@ export interface Cast {
   /** Group to its depth at each end of the span, for the groups that have one
    * at either end. A depth arriving is a depth in flight like any other. */
   eroding: Map<GroupId, [number, number]>
+  /**
+   * What each eroding group's own points ride: its frame at the near version,
+   * its layer in flight over the span, and whatever holds it.
+   *
+   * A group carries no geometry, so this is not where its shape comes from —
+   * its members' frames already have all of this in them and the union arrives
+   * in world units. It is what the union is taken *back* into, so that a group
+   * turning is a turn in the buffers rather than a chord across it.
+   */
+  riders: Map<GroupId, Rider>
+  /**
+   * Every group projection worked out so far, by the instant it was worked out
+   * at.
+   *
+   * A group's offset union is a full arrangement and it is asked for once per
+   * track that the group falls near, which is every track its box touches. The
+   * answer depends on nothing but the instant — a neighbourhood holds all of a
+   * group's members or none of them, so the union is never a partial one — so
+   * the same instant is the same shape and it is worked out once.
+   *
+   * Bounded, because a span reaches far more instants than it shares: over a
+   * hundred-room level, 18438 of 19166 evaluations land on an instant nothing
+   * else ever asks about, and holding all of them would be holding the span
+   * over again to save a few per cent.
+   */
+  folds: Map<number, Map<string, Shape>>
 }
 
 function casting(world: World, from: VersionId): Cast {
@@ -870,17 +897,55 @@ function casting(world: World, from: VersionId): Cast {
     if (pair[0] !== 0 || pair[1] !== 0) eroding.set(id, pair);
   }
 
-  return { world, items: moving(world, from), eroding };
+  const next = world.versions[from + 1];
+  const riders = new Map<GroupId, Rider>();
+
+  for (const id of eroding.keys()) {
+    riders.set(id, {
+      base: groupFrame(world, from, id),
+      layer: next.edits.get(id)?.transform ?? EMPTY_TRANSFORM,
+      holders: enclosing(world, id)
+        .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM })),
+    });
+  }
+
+  return { world, items: moving(world, from), eroding, riders, folds: new Map() };
 }
+
+/** How many instants' worth of group projections to hold at once. */
+const FOLDS = 512;
 
 /** The polygons at an instant, folded into what the CSG sees there. */
 function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
-  return contributed(cast.world, at, id => {
-    const both = cast.eroding.get(id);
+  let held = cast.folds.get(t);
 
-    return both === undefined ? 0 : mix(both[0], both[1], t);
-  });
+  // Full, and then closed rather than emptied. The instants that get asked
+  // about more than once are the early ones — both ends of the span, and the
+  // first few places the cut bisects at — so the ones already in are worth more
+  // than the ones still arriving, and throwing them out to make room would give
+  // up exactly the sharing this is for.
+  if (held === undefined && cast.folds.size < FOLDS) {
+    held = new Map();
+    cast.folds.set(t, held);
+  }
+
+  return contributed(
+    cast.world,
+    at,
+    id => {
+      const both = cast.eroding.get(id);
+
+      return both === undefined ? 0 : mix(both[0], both[1], t);
+    },
+    id => {
+      const rider = cast.riders.get(id);
+
+      return rider === undefined ? IDENTITY : riding(rider, t);
+    },
+    held,
+  );
 }
+
 
 /** Everything the span's tracks are cut for: a polygon that nothing holds, and
  * an eroding group in place of all of its members. */
@@ -1583,7 +1648,7 @@ function ridden(cast: Cast, all: { id: Id, mine: Moving[] }[]): Map<Id, Rider> {
     return [
       s.id,
       m === undefined
-        ? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
+        ? cast.riders.get(s.id) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
         : {
           base: m.base,
           layer: m.newborn ? EMPTY_TRANSFORM : m.layer,

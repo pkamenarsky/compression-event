@@ -41,7 +41,7 @@ import {
   isCCW,
   keeping,
   simplify,
-  union,
+  unionAll,
 } from './geometry';
 import {
   Clipping,
@@ -352,6 +352,28 @@ function held(world: World, version: Version, id: Id): Affine {
     (m, g) => compose(affine(version.edits.get(g)?.transform ?? EMPTY_TRANSFORM), m),
     IDENTITY,
   );
+}
+
+/**
+ * A group's own frame at a version: its layer at every stage of the chain, and
+ * every group holding it, in the order resolve applies them.
+ *
+ * The same walk `resolveAt` does for a polygon, without the geometry — a group
+ * has none. What it is for is the bake: keeping a group's points in this rather
+ * than in world units is what makes a turning group interpolate along its arc
+ * instead of across the chord.
+ */
+export function groupFrame(world: World, v: VersionId, id: GroupId): Affine {
+  let m = IDENTITY;
+
+  for (const k of chain(world, v)) {
+    const version = world.versions[k];
+
+    m = compose(affine(version.edits.get(id)?.transform ?? EMPTY_TRANSFORM), m);
+    m = compose(held(world, version, id), m);
+  }
+
+  return m;
 }
 
 export function resolveAt(world: World, v: VersionId): Resolved[] {
@@ -776,6 +798,23 @@ export function contributed(
   world: World,
   items: readonly Resolved[],
   depthOf: (id: GroupId) => number,
+  /**
+   * The frame to keep a group's points in, if the caller has one.
+   *
+   * The identity says world units, which is what anything drawing them wants
+   * and what anything interpolating them does not: see `groupFrame`.
+   */
+  frameOf?: (id: GroupId) => Affine,
+  /**
+   * Where the group projections are kept, if the caller wants them kept.
+   *
+   * A group's offset union is a full arrangement, and the bake asks for the
+   * same one over and over: every track whose neighbourhood the group falls
+   * into needs it, at whatever instant that track is looking at. The caller
+   * owns the map because only the caller knows what makes two asks the same
+   * ask — for the bake, the same instant.
+   */
+  held?: Map<string, Shape>,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
@@ -790,17 +829,18 @@ export function contributed(
 
     if (group === undefined) return [];
 
-    let all: Shape = [];
+    const key = `${id}:${kind}`;
+    const known = held?.get(key);
 
-    for (const m of group.members) {
-      const part = offer(m, kind);
+    if (known !== undefined) return known;
 
-      all = all.length === 0 ? part : part.length === 0 ? all : union(all, part);
-    }
-
+    const all = unionAll(group.members.map(m => offer(m, kind)));
     const d = depthOf(id);
+    const out = d === 0 || all.length === 0 ? all : erode(all, d);
 
-    return d === 0 || all.length === 0 ? all : erode(all, d);
+    held?.set(key, out);
+
+    return out;
   };
 
   const walk = (id: Id): void => {
@@ -832,7 +872,7 @@ export function contributed(
       const shape = offer(id, kind);
 
       if (shape.length !== 0) {
-        out.push({ id, kind, shape, frame: IDENTITY, simple: true });
+        out.push({ id, kind, shape, frame: frameOf?.(id) ?? IDENTITY, simple: true });
       }
     }
   };

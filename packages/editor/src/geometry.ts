@@ -86,6 +86,48 @@ export function union(a: Shape, b: Shape): Shape {
   return combine(a, b, OpUnion);
 }
 
+/**
+ * Every shape unioned, in one arrangement rather than one per pair.
+ *
+ * `union(union(union(a, b), c), d)` cuts the accumulated answer up again at
+ * every step, so what it costs grows with the square of how many there are —
+ * and a group's projection asks for exactly this, at every instant of every
+ * track the group falls near. Handing them all to the arrangement at once is
+ * the same machinery `boundaryRuns` uses for a neighbourhood, where the members
+ * were never going to be unioned two at a time either.
+ *
+ * Rank settles a shared edge, as it does there: the shapes are ranked by the
+ * order they arrive in, coincident pieces classify alike, and the loser is
+ * dropped without being built.
+ */
+export function unionAll(shapes: readonly Shape[]): Shape {
+  const live = shapes.filter(s => s.length !== 0);
+
+  if (live.length <= 1) return live[0] ?? [];
+
+  const rings: Shape = [];
+  const ranks: number[] = [];
+
+  live.forEach((shape, rank) => {
+    for (const ring of shape) {
+      rings.push(ring);
+      ranks.push(rank);
+    }
+  });
+
+  const raw = segments(rings, 0, ranks);
+  const snap = scaleOf(raw) * 1e-9;
+
+  // One field over all of them, and a point is in the union when it is in any:
+  // the same reading `covers` gives a neighbourhood's level side.
+  const on = ground(live.map((shape, id) => ({ id, kind: 'level' as const, shape })));
+
+  return chain(
+    arranged(p => covers(on.level, p), () => false, OpUnion, split(raw, snap), snap),
+    snap,
+  ).rings;
+}
+
 export function subtract(a: Shape, b: Shape): Shape {
   return combine(a, b, OpSubtract);
 }

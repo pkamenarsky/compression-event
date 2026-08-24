@@ -11,6 +11,8 @@
 
 import { test } from 'vitest';
 import { Span, bakeSpan, sample } from '../packages/editor/src/bake';
+import { grouped, withEdit } from '../packages/editor/src/scene';
+import { EMPTY_TRANSFORM, World } from '../packages/editor/src/types';
 import { SIZES, level, version, weight } from './level';
 
 /**
@@ -47,6 +49,59 @@ function bytes(span: Span): number {
 
   return n;
 }
+
+/**
+ * What an eroding group costs, which is a different question from what a level
+ * costs.
+ *
+ * A group with a depth on it is one boundary rather than several, so its track
+ * is cut against everything any of its members touches, and its projection is
+ * an arrangement worked out afresh at every instant that track's neighbours
+ * look at. Neither is avoidable — that is what eroding the union means — so the
+ * row is here to keep the constant honest rather than to be driven to zero.
+ */
+test('what an eroding group adds', () => {
+  const rooms = 120;
+
+  const held = (w: World, ids: number[], n: number, t: Partial<typeof EMPTY_TRANSFORM>) => {
+    const made = grouped(w, 0, ids.slice(0, n));
+
+    if (made === null) throw new Error('a group needs two');
+
+    return withEdit(made.world, 1, made.id, {
+      transform: { ...EMPTY_TRANSFORM, ...t },
+      vertices: new Map(),
+    });
+  };
+
+  const { world, ids } = level(rooms);
+  const plain = version(world, ids, 0.6);
+
+  const cases: [string, World][] = [
+    ['no group', plain],
+    ['a group of 8, no depth', held(plain, ids, 8, {})],
+    ['a group of 8, eroding', held(plain, ids, 8, { erosion: 10 })],
+    ['a group of 8, eroding and turning', held(plain, ids, 8, { erosion: 10, rotation: 0.35 })],
+  ];
+
+  for (const [name, w] of cases) {
+    const t0 = performance.now();
+    const job = bakeSpan(w, 0);
+
+    let step = job.next();
+    while (!step.done) step = job.next();
+
+    const span: Span = step.value;
+    const ms = performance.now() - t0;
+
+    console.log(
+      `${name.padEnd(36)} bake ${ms.toFixed(0).padStart(6)}ms  ` +
+      `csg ${String(span.evaluations).padStart(6)}  ` +
+      `stretches ${String(weight(span).stretches).padStart(5)}  ` +
+      `worst ${span.worst.toFixed(4)}`,
+    );
+  }
+}, 1200000);
 
 test('a bake at level scale', () => {
   for (const [rooms, share] of SIZES) {
