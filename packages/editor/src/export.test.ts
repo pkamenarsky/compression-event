@@ -15,11 +15,22 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { CROSSING, Hulls, outline, signedArea } from '@ce/game';
-import { Frame, bakeSpan, sample, truth } from './bake';
+import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
+import { Frame, bakeSpan, riding, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
-import { addPolygon, addVertex, editAt, removeVertices, resolveAt, withEdit } from './scene';
-import { PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import {
+  Affine,
+  addPolygon,
+  addVertex,
+  affine,
+  compose,
+  editAt,
+  grouped,
+  removeVertices,
+  resolveAt,
+  withEdit,
+} from './scene';
+import { EMPTY_TRANSFORM, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -461,4 +472,141 @@ describe('the source rings a version resolves to', () => {
 
     expect(version.polygons.length).toBe(2);
   });
+});
+
+// -----------------------------------------------------------------------------
+// The frame table, read the way the shader reads it
+// -----------------------------------------------------------------------------
+
+/**
+ * `frameAt` out of `morph.ts`, in TypeScript: one slot's own frame, then up the
+ * chain by the parent the table names, `depth` links at most.
+ *
+ * Transcribed rather than shared, deliberately. What is being checked is that
+ * the table says what the shader will read out of it — the slot a group landed
+ * in, the parent index beside every polygon, and the depth the loop is built
+ * to. A helper both sides called would agree with itself.
+ */
+function shaderFrame(frames: Float32Array, depth: number, slot: number, t: number): Affine {
+  const link = (at: number): Affine => {
+    const o = at * FRAME_STRIDE;
+    const base: Affine = {
+      a: frames[o], b: frames[o + 1], c: frames[o + 2],
+      d: frames[o + 3], tx: frames[o + 4], ty: frames[o + 5],
+    };
+
+    const layer: Transform = {
+      translation: { x: frames[o + 6], y: frames[o + 7] },
+      rotation: frames[o + 8],
+      scale: { x: frames[o + 9], y: frames[o + 10] },
+      erosion: 0,
+    };
+
+    const rot = layer.rotation * t;
+    const sx = 1 + (layer.scale.x - 1) * t;
+    const sy = 1 + (layer.scale.y - 1) * t;
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    const m = { a: cos * sx, b: sin * sx, c: -sin * sy, d: cos * sy, tx: 0, ty: 0 };
+
+    const fixed = frames[o + 11] !== 0 && t !== 0 && t !== 1;
+    const p = { x: frames[o + 12], y: frames[o + 13] };
+
+    const tr = fixed
+      ? { x: p.x - (m.a * p.x + m.c * p.y), y: p.y - (m.b * p.x + m.d * p.y) }
+      : { x: layer.translation.x * t, y: layer.translation.y * t };
+
+    return compose({ ...m, tx: tr.x, ty: tr.y }, base);
+  };
+
+  let out = link(slot);
+
+  for (let i = 1; i < depth; i++) {
+    slot = frames[slot * FRAME_STRIDE + 14];
+
+    if (slot < 0) break;
+
+    out = compose(link(slot), out);
+  }
+
+  return out;
+}
+
+/** To three places, because the table is `Float32Array` and the walk is the
+ * one thing here that reads it back through that. */
+function near(a: Affine, b: Affine): void {
+  for (const k of ['a', 'b', 'c', 'd', 'tx', 'ty'] as const) {
+    expect(a[k]).toBeCloseTo(b[k], 3);
+  }
+}
+
+describe('the chain a vertex rides', () => {
+  /** Two rooms in a group, the group in another group, and every level of it
+   * doing something at v1 that does not commute with the others. */
+  function nested(): { world: World, ids: PolygonId[] } {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -60, 400, 120)],
+      ['level', rect(-40, -200, 80, 400)],
+      ['level', rect(150, 150, 120, 120)],
+    );
+
+    const inner = grouped(world, 0, [ids[0], ids[1]])!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+
+    const turned = withEdit(outer.world, 1, inner.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 5 },
+      vertices: new Map(),
+    });
+
+    const squashed = withEdit(turned, 1, outer.id, {
+      transform: { ...EMPTY_TRANSFORM, scale: { x: 1.6, y: 0.7 } },
+      vertices: new Map(),
+    });
+
+    return {
+      world: transformed(squashed, 1, ids[0], { translation: { x: 30, y: 0 } }),
+      ids,
+    };
+  }
+
+  test('the table says how deep it goes, and the groups have slots of their own', () => {
+    const span = run(bakeSpan(nested().world, 0));
+    const flat = bakedSpan(span);
+
+    // Three polygons, two groups, and a walk of three links from the deepest.
+    expect(flat.frames.length / FRAME_STRIDE).toEqual(5);
+    expect(flat.depth).toEqual(3);
+
+    // Nothing grouped is one link and no parents at all.
+    const plain = bakedSpan(run(bakeSpan(
+      transformed(drawn(['level', rect(0, 0, 100, 100)]).world, 1, 0, { rotation: 1 }),
+      0,
+    )));
+
+    expect(plain.depth).toEqual(1);
+    expect(plain.frames[14]).toEqual(-1);
+  });
+
+  test('walking it gives what the bake places the polygon by', () => {
+    const { world, ids } = nested();
+    const span = run(bakeSpan(world, 0));
+    const flat = bakedSpan(span);
+
+    // The slots are the riders and their holders, by id in order.
+    const slots = new Map(
+      [...new Set([
+        ...span.riders.keys(),
+        ...[...span.riders.values()].flatMap(r => r.holders.map(h => h.id)),
+      ])].sort((a, b) => a - b).map((id, i) => [id, i]),
+    );
+
+    for (const t of [0, 0.13, 0.5, 0.77, 1]) {
+      for (const id of ids) {
+        near(
+          shaderFrame(flat.frames, flat.depth, slots.get(id)!, t),
+          riding(span.riders.get(id)!, t),
+        );
+      }
+    }
+  });
+
 });

@@ -30,29 +30,71 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Resolved, resolveAt } from './scene';
-import { Point, PolygonId, VersionId, World } from './types';
+import { IDENTITY, Resolved, resolveAt } from './scene';
+import { Id, Point, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
 // -----------------------------------------------------------------------------
 
-/** Where a polygon's frame sits in the span's frame table. Ids are dense enough
- * to index by in a small level and are not promised to be, so they are looked
- * up rather than assumed. */
-type Slots = Map<PolygonId, number>;
+/** Where a polygon's or a group's frame sits in the span's frame table. Ids are
+ * dense enough to index by in a small level and are not promised to be, so they
+ * are looked up rather than assumed. */
+type Slots = Map<Id, number>;
 
+/**
+ * A slot for every polygon, and one for every group holding any of them.
+ *
+ * The groups are in the same table rather than a second one, because what a
+ * vertex walks is one chain: a group's frame is composed exactly the way a
+ * polygon's is, and giving it its own kind of slot would be two readers of two
+ * tables agreeing by hand.
+ */
 function slotted(riders: Map<PolygonId, Rider>): Slots {
-  const ids = [...riders.keys()].sort((a, b) => a - b);
+  const ids = new Set<Id>(riders.keys());
 
-  return new Map(ids.map((id, i) => [id, i]));
+  for (const rider of riders.values()) {
+    for (const h of rider.holders) ids.add(h.id);
+  }
+
+  return new Map([...ids].sort((a, b) => a - b).map((id, i) => [id, i]));
+}
+
+/** Every slot's own layer and who holds it, which the riders say once per
+ * polygon and the table says once per slot. */
+function chains(riders: Map<PolygonId, Rider>): Map<Id, Rider> {
+  const out = new Map<Id, Rider>(riders);
+
+  for (const rider of riders.values()) {
+    rider.holders.forEach((h, i) => {
+      // A group carries no geometry, so it stands on nothing: identity base,
+      // its own layer in flight, and whatever holds it in turn.
+      out.set(h.id, {
+        base: IDENTITY,
+        layer: h.layer,
+        holders: rider.holders.slice(i + 1),
+      });
+    });
+  }
+
+  return out;
+}
+
+/** How deep the deepest chain in the table goes, in slots. */
+function deepest(riders: Map<PolygonId, Rider>): number {
+  let out = 1;
+
+  for (const rider of riders.values()) out = Math.max(out, rider.holders.length + 1);
+
+  return out;
 }
 
 function frames(riders: Map<PolygonId, Rider>, slots: Slots): Float32Array {
   const out = new Float32Array(slots.size * FRAME_STRIDE);
+  const all = chains(riders);
 
   for (const [id, slot] of slots) {
-    const { base, layer } = riders.get(id)!;
+    const { base, layer, holders } = all.get(id)!;
     const held = pivot(layer);
     const o = slot * FRAME_STRIDE;
 
@@ -72,6 +114,10 @@ function frames(riders: Map<PolygonId, Rider>, slots: Slots): Float32Array {
     out[o + 11] = held === null ? 0 : 1;
     out[o + 12] = held?.x ?? 0;
     out[o + 13] = held?.y ?? 0;
+
+    // The chain, one link at a time. Everything above this slot is that
+    // slot's business, and it says so the same way.
+    out[o + 14] = holders.length === 0 ? -1 : slots.get(holders[0].id) ?? -1;
   }
 
   return out;
@@ -215,6 +261,7 @@ export function bakedSpan(span: Span): BakedSpan {
   return {
     from: span.from,
     frames: frames(span.riders, slots),
+    depth: deepest(span.riders),
     entries: new Float32Array(table.floats),
     pointsA: new Float32Array(pointsA),
     pointsB: new Float32Array(pointsB),

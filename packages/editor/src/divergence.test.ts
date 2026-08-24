@@ -21,8 +21,8 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, sample, truth } from './bake';
-import { addPolygon, addVertex, removeVertices, resolveAt, editAt, withEdit } from './scene';
-import { PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import { addPolygon, addVertex, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
+import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -41,6 +41,17 @@ function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Trans
   const edit = editAt(world, v, id, it.erosion);
   return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
 }
+/** A group over these, and whatever the version does to it. Groups carry no
+ * geometry, so there is no resolved depth to seed from. */
+function held(world: World, ids: Id[], v: VersionId, t: Partial<Transform>): World {
+  const made = grouped(world, 0, ids)!;
+
+  return withEdit(made.world, v, made.id, {
+    transform: { ...EMPTY_TRANSFORM, ...t },
+    vertices: new Map(),
+  });
+}
+
 function run<T>(g: Generator<number, T, void>): T { let s = g.next(); while (!s.done) s = g.next(); return s.value; }
 
 /** The worst any point of the replay sits from the point csg(t) puts there. */
@@ -160,6 +171,30 @@ test('the replay never strays far from csg(t)', () => {
     check('sliding through', transformed(world, 1, ids[0], { translation: { x: 240, y: 0 } })); }
   { const { world, ids } = drawn(['level', rect(-200,-60,400,120)], ['level', rect(-40,-200,80,400)]);
     check('pillar turning in a wall', transformed(world, 1, ids[1], { rotation: Math.PI/3 })); }
+  {
+    // A group turning while what is in it turns too. The two layers are eased
+    // apart and multiplied, which is the whole reason a vertex rides a chain
+    // rather than one matrix: composed and lerped, the pillar would swing out
+    // on an arc the world never takes.
+    const { world, ids } = drawn(['level', rect(-200,-60,400,120)], ['level', rect(-40,-200,80,400)]);
+    check('a group turning round a polygon that is turning',
+      held(transformed(world, 1, ids[1], { rotation: Math.PI/3 }), ids, 1, { rotation: -Math.PI/4 })); }
+  {
+    // And one group inside another, so the walk up is two links rather than
+    // one, with a squash at the top that does not commute with either turn.
+    const { world, ids } = drawn(
+      ['level', rect(-200,-60,400,120)],
+      ['level', rect(-40,-200,80,400)],
+      ['level', rect(150,150,120,120)],
+    );
+
+    const inner = grouped(world, 0, [ids[0], ids[1]])!;
+    const w = withEdit(inner.world, 1, inner.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI/5 },
+      vertices: new Map(),
+    });
+
+    check('a group inside a group', held(w, [inner.id, ids[2]], 1, { scale: { x: 1.6, y: 0.7 } })); }
   {
     // A bar that turns half way round, so it ends up where it started and
     // sweeps a room on the way that it touches at neither end of the span. The

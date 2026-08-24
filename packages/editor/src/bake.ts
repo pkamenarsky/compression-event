@@ -108,12 +108,14 @@ import {
 } from './scene';
 import {
   EMPTY_TRANSFORM,
+  Id,
   PolygonId,
   Transform,
   VersionId,
   Vertex,
   VertexId,
   World,
+  enclosing,
 } from './types';
 import { pieces } from './worldset';
 
@@ -179,11 +181,47 @@ export type Origin =
   | { kind: 'vertex', at: Ref }
   | { kind: 'cross', a: Ref, b: Ref };
 
-/** What takes a polygon's runs back out to the world, in the form that can be
- * interpolated: a constant chain, and the one layer in flight over it. */
+/**
+ * A group holding a polygon over the span, and the layer it is in flight with.
+ *
+ * Named, because the shader shares one of these between everything the group
+ * holds rather than carrying a copy per polygon: what a vertex rides is a
+ * chain, and the chain is the structure.
+ */
+export interface Holder {
+  id: Id
+  layer: Transform
+}
+
+/**
+ * What takes a polygon's runs back out to the world, in the form that can be
+ * interpolated: a constant chain, the one layer in flight over it, and every
+ * group in flight over that, innermost first.
+ *
+ * The groups stay a chain rather than being composed into one layer, and they
+ * have to: a `Transform` is components, composing two of them is a general
+ * matrix, and a matrix lerped entrywise slews a rotation through a shear. Each
+ * is eased on its own terms and the results multiply, which is the same thing
+ * `resolveAt` does one stage at a time.
+ */
 export interface Rider {
   base: Affine
   layer: Transform
+  holders: Holder[]
+}
+
+/** Where a polygon's own frame stands at an instant of the span: its base, its
+ * layer in flight over that, and every group's in flight over that. */
+export function riding(r: {
+  base: Affine
+  layer: Transform
+  holders: readonly Holder[]
+}, t: number): Affine {
+  let frame = compose(affine(easing(r.layer, t)), r.base);
+
+  for (const h of r.holders) frame = compose(affine(easing(h.layer, t)), frame);
+
+  return frame;
 }
 
 /**
@@ -367,6 +405,8 @@ interface Moving {
    */
   dead: [boolean[], boolean[]]
   depth: [number, number]
+  /** The groups holding it over this span, innermost first. */
+  holders: Holder[]
   newborn: boolean
 }
 
@@ -482,9 +522,23 @@ function moving(world: World, from: VersionId): Moving[] {
   const before = new Map(resolveAt(world, from).map(it => [it.id, it]));
   const after = resolveAt(world, from + 1);
 
+  const next = world.versions[from + 1];
+
+  /** Every group holding a polygon at the later version, with what that
+   * version does to it. A group nothing has reached yet holds nobody, the same
+   * way `resolveAt` has it. */
+  const holding = (id: PolygonId): Holder[] =>
+    enclosing(world, id)
+      .filter(g => {
+        const group = world.groups.get(g);
+
+        return group !== undefined && group.birth <= from + 1;
+      })
+      .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM }));
+
   return after.map(it => {
     const was = before.get(it.id);
-    const edit = world.versions[from + 1].edits.get(it.id);
+    const edit = next.edits.get(it.id);
     const layer = edit?.transform ?? EMPTY_TRANSFORM;
 
     if (was === undefined) {
@@ -496,6 +550,7 @@ function moving(world: World, from: VersionId): Moving[] {
         local: [it.local, it.local] as [Ring, Ring],
         dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
         depth: [it.erosion, it.erosion] as [number, number],
+        holders: [],
         newborn: true,
       };
     }
@@ -510,6 +565,7 @@ function moving(world: World, from: VersionId): Moving[] {
       local: over.local,
       dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
+      holders: holding(it.id),
       newborn: false,
     };
   });
@@ -653,7 +709,7 @@ function world1(items: Moving[], t: number): Resolved[] {
     }
 
     const local = between(m.local[0], m.local[1], t);
-    const frame = compose(affine(easing(m.layer, t)), m.base);
+    const frame = riding(m, t);
     const source = place(frame, local);
     const erosion = mix(m.depth[0], m.depth[1], t);
 
@@ -904,7 +960,7 @@ function reach(m: Moving): AABB {
 
   for (let k = 0; k <= PROBES; k++) {
     const t = k / PROBES;
-    const now = place(compose(affine(easing(m.layer, t)), m.base), between(m.local[0], m.local[1], t));
+    const now = place(riding(m, t), between(m.local[0], m.local[1], t));
     const box = ofRings([now]);
 
     all = all === null ? box : merge(all, box);
@@ -1435,14 +1491,18 @@ export interface Slice {
  * an error.
  */
 export function ridersOf(world: World, from: VersionId): Map<PolygonId, Rider> {
-  return riding(moving(world, from));
+  return ridden(moving(world, from));
 }
 
-function riding(items: readonly Moving[]): Map<PolygonId, Rider> {
+function ridden(items: readonly Moving[]): Map<PolygonId, Rider> {
   return new Map(
     items.map(m => [
       m.at.id,
-      { base: m.base, layer: m.newborn ? EMPTY_TRANSFORM : m.layer },
+      {
+        base: m.base,
+        layer: m.newborn ? EMPTY_TRANSFORM : m.layer,
+        holders: m.holders,
+      },
     ]),
   );
 }
@@ -1473,7 +1533,7 @@ export function ready(world: World, from: VersionId): Ready {
     from,
     items,
     near: neighbourhoods(items),
-    riders: riding(items),
+    riders: ridden(items),
     setup: now() - began,
   };
 }
@@ -1577,7 +1637,7 @@ export function* bakeSpan(
 ): Generator<number, Span, void> {
   const slice = yield* bakeSlice(world, from, 0, 1, tol);
 
-  return joined(world, from, riding(moving(world, from)), [slice]);
+  return joined(world, from, ridden(moving(world, from)), [slice]);
 }
 
 /** Every span in the chain, one after the other. */
@@ -1653,8 +1713,7 @@ function drawn(s: Stretch, riders: Map<PolygonId, Rider>, t: number): Frame {
     const known = frames.get(id);
     if (known !== undefined) return known;
 
-    const rider = riders.get(id)!;
-    const made = compose(affine(easing(rider.layer, t)), rider.base);
+    const made = riding(riders.get(id)!, t);
 
     frames.set(id, made);
 

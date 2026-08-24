@@ -46,7 +46,13 @@ const WIDTH = 512;
  */
 const SLACK = 1e-3;
 
-const vertexShader = /* glsl */ `
+/**
+ * Built per span rather than once, because how deep the chain of groups goes is
+ * a fact about the level and the walk up it is per vertex. A bounded loop is
+ * unrolled and its register cost is known; `while (slot >= 0)` would be legal
+ * and would leave that to the driver.
+ */
+const shaderFor = (depth: number): string => /* glsl */ `
   uniform sampler2D uFrames;
   uniform sampler2D uEntries;
   uniform float uTime;
@@ -74,13 +80,15 @@ const vertexShader = /* glsl */ `
     return texelFetch(tex, ivec2(texel % WIDTH, texel / WIDTH), 0);
   }
 
+  const int DEPTH = ${depth};
+
   /**
-   * The polygon's frame: the version in flight eased from identity to itself,
+   * One slot's own frame: the version in flight eased from identity to itself,
    * composed onto the chain it already stood in.
    *
    * Column-major, so that \`m * vec3(p, 1.0)\` is the point placed.
    */
-  mat3 frameAt(int slot, float t) {
+  mat3 linkAt(int slot, float t) {
     int o = slot * 4;
     vec4 f0 = fetch(uFrames, o);
     vec4 f1 = fetch(uFrames, o + 1);
@@ -110,6 +118,30 @@ const vertexShader = /* glsl */ `
       vec3(a * bc.x + c * bc.y, b * bc.x + d * bc.y, 0.0),
       vec3(a * bt.x + c * bt.y + tr.x, b * bt.x + d * bt.y + tr.y, 1.0)
     );
+  }
+
+  /**
+   * The frame a vertex actually rides: its own, and every group holding it,
+   * each eased on its own terms and multiplied.
+   *
+   * Not one composed matrix handed over ready-made. Composing two layers gives
+   * a general matrix, and a general matrix lerped entrywise slews through a
+   * shear — a group turning round a polygon that is turning would collapse
+   * through its own middle on the way. So the chain stays a chain, exactly as
+   * \`resolveAt\` walks it one stage at a time.
+   */
+  mat3 frameAt(int slot, float t) {
+    mat3 m = linkAt(slot, t);
+
+    for (int i = 1; i < DEPTH; i++) {
+      slot = int(fetch(uFrames, slot * 4 + 3).z);
+
+      if (slot < 0) break;
+
+      m = linkAt(slot, t) * m;
+    }
+
+    return m;
   }
 
   vec2 entryAt(int e, float t, float u) {
@@ -252,7 +284,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     uWallHeight: { value: options.wallHeight },
   };
 
-  const { wall, line } = materials(vertexShader, options, uniforms);
+  const { wall, line } = materials(shaderFor(span.depth), options, uniforms);
 
   const shape = extrude(spanRuns(span));
   const range = ranges(span);

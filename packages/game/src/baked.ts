@@ -44,7 +44,14 @@ import { Point } from './world';
  *   9, 10  the layer's scale, per axis
  *   11     whether the layer has a fixed point at all
  *   12, 13 that fixed point
- *   14, 15 spare
+ *   14     the slot of the group holding this one, or -1
+ *   15     spare
+ *
+ * A group is a slot like any other: an identity base, the group's own layer in
+ * flight, and its own holder above it. A vertex rides the chain up to the top
+ * rather than one composed matrix, because composing two layers gives a
+ * general matrix and a matrix lerped entrywise slews a rotation through a
+ * shear. How deep the chain goes is `BakedSpan.depth`.
  *
  * The layer is kept in components rather than as a matrix because it is
  * interpolated, and a matrix lerped entrywise slews a rotation through a shear.
@@ -120,8 +127,18 @@ export interface BakedTrack {
 export interface BakedSpan {
   /** The earlier of the two versions. `t` runs 0 to 1 from it to the next. */
   from: number
-  /** `FRAME_STRIDE` floats per polygon slot. */
+  /** `FRAME_STRIDE` floats per slot: one per polygon, and one per group
+   * holding any of them. */
   frames: Float32Array
+  /**
+   * How many slots deep the deepest chain of them goes: 1 where nothing is
+   * grouped, 2 for a polygon in a group, and so on.
+   *
+   * The shader walks the chain per vertex, so it is written down here and the
+   * loop is built to it rather than to a limit the author has to be told
+   * about. Nothing about the format caps it.
+   */
+  depth: number
   /** `ENTRY_STRIDE` floats per entry. */
   entries: Float32Array
 
