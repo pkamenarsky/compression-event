@@ -31,7 +31,7 @@
 // hundred polygons will not notice.
 // -----------------------------------------------------------------------------
 
-import { Value } from '@incpt/kontinuum';
+import { Value, untracked } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
@@ -156,9 +156,17 @@ function panel(
    * bottom, which says which gesture does what, changes when the gesture does.
    */
   return stateful(false, (inside, setInside) => {
-    /** Standing in it either way: the full window with the pointer captured, or
-     * the panel in the corner with a drag doing the walking. */
-    const afoot = (): boolean => roaming() || inside();
+    /**
+     * Standing in it either way: the full window with the pointer captured, or
+     * the panel in the corner with a drag doing the walking.
+     *
+     * Both read `untracked`, and it matters. An effect is invalidated by
+     * whatever its *body* reads, not only by what its dependency function
+     * names, and `shown` — which rebuilds the wall buffers — calls this on the
+     * way past. Read plainly, standing up would cost a full rebuild of the
+     * level, for a camera move.
+     */
+    const afoot = (): boolean => untracked(roaming) || untracked(inside);
 
     const placed = (): void => {
       if (view === null) return;
@@ -273,9 +281,11 @@ function panel(
           e.stopPropagation();
           if (roaming()) return;
 
-          setInside(!inside());
+          const next = !untracked(inside);
 
-          if (inside()) stood(orbit, walker);
+          setInside(next);
+
+          if (next) stood(orbit, walker);
 
           placed();
         },
@@ -403,7 +413,12 @@ function panel(
             spans = baked.spans.length;
 
             view.load({ paths: [], versions: [], artefacts: [], baked });
-            walked(replay());
+            // Untracked, and that is the whole of why a transition is cheap.
+            // The walk writes where it has got to into the store on every tick,
+            // so an effect whose body read it there was invalidated on every
+            // tick — and this one rebuilds every span's buffers and reloads
+            // every morph. It ran the length of the transition it was drawing.
+            walked(untracked(replay));
           },
         ),
 
@@ -421,7 +436,7 @@ function panel(
 
           // Standing up in the panel and then filling the window keeps the spot;
           // going straight there from above has to be given one.
-          if (on && !inside()) stood(orbit, walker);
+          if (on && !untracked(inside)) stood(orbit, walker);
 
           if (!on) {
             if (document.pointerLockElement === host) document.exitPointerLock();
