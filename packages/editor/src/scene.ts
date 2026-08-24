@@ -695,9 +695,22 @@ export interface Contributed {
   id: Id
   kind: PolygonType
   shape: Shape
+  /**
+   * The frame the shape is placed by, which is what the bake keeps its points
+   * in so that a turn is a turn rather than a chord.
+   *
+   * The identity for a group. Its members' frames already carry its transform —
+   * that is what `held` does — so the union comes out in world units with the
+   * motion in it, and a group that applied its own layer again would apply it
+   * twice.
+   */
+  frame: Affine
   /** Whether the shape is already an arrangement and `simplify` may be
    * skipped. A projection is one by construction. */
   simple: boolean
+  /** The bake's invented corners, carried through the arrangement. A group's
+   * union has none: nothing invents a corner on it. See `Resolved.keep`. */
+  keep?: readonly Point[]
 }
 
 /**
@@ -745,8 +758,26 @@ export function contributing(
   items: readonly Resolved[],
 ): Contributed[] {
   const depth = depths(world, v);
+
+  return contributed(world, items, id => depth.get(id) ?? 0);
+}
+
+/**
+ * The same, with the depths asked for rather than read off a version.
+ *
+ * The bake wants them part way between two versions, where a depth being
+ * scrubbed on is a number in flight like any other.
+ *
+ * Only what `items` reaches: the walk starts at what it was given and goes up,
+ * so handing it a neighbourhood rather than the world gives that
+ * neighbourhood's contributors, which is what a track is cut against.
+ */
+export function contributed(
+  world: World,
+  items: readonly Resolved[],
+  depthOf: (id: GroupId) => number,
+): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
-  const up = parentOf(world);
   const out: Contributed[] = [];
 
   /** What one member offers of a kind, projected if it is an eroding group. */
@@ -767,7 +798,7 @@ export function contributing(
       all = all.length === 0 ? part : part.length === 0 ? all : union(all, part);
     }
 
-    const d = depth.get(id) ?? 0;
+    const d = depthOf(id);
 
     return d === 0 || all.length === 0 ? all : erode(all, d);
   };
@@ -776,7 +807,15 @@ export function contributing(
     const it = mine.get(id);
 
     if (it !== undefined) {
-      out.push({ id, kind: it.polygon.type, shape: it.shape, simple: it.erosion !== 0 });
+      out.push({
+        id,
+        kind: it.polygon.type,
+        shape: it.shape,
+        frame: it.frame,
+        simple: it.erosion !== 0,
+        keep: it.keep,
+      });
+
       return;
     }
 
@@ -784,7 +823,7 @@ export function contributing(
 
     if (group === undefined) return;
 
-    if ((depth.get(id) ?? 0) === 0) {
+    if (depthOf(id) === 0) {
       for (const m of group.members) walk(m);
       return;
     }
@@ -792,17 +831,13 @@ export function contributing(
     for (const kind of ['level', 'solid'] as const) {
       const shape = offer(id, kind);
 
-      if (shape.length !== 0) out.push({ id, kind, shape, simple: true });
+      if (shape.length !== 0) {
+        out.push({ id, kind, shape, frame: IDENTITY, simple: true });
+      }
     }
   };
 
-  for (const it of items) {
-    if (!up.has(it.id)) walk(it.id);
-  }
-
-  for (const id of world.groups.keys()) {
-    if (!up.has(id)) walk(id);
-  }
+  for (const id of new Set(items.map(it => outermost(world, it.id)))) walk(id);
 
   return out;
 }
@@ -814,6 +849,8 @@ export function plainly(items: readonly Resolved[]): Contributed[] {
     id: it.id,
     kind: it.polygon.type,
     shape: it.shape,
+    frame: it.frame,
+    keep: it.keep,
 
     // A projection at any depth came out of an arrangement and is already
     // simple. At depth zero it is the source ring as drawn, which is allowed

@@ -95,14 +95,16 @@ import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import { Member, Ring, Shape, boundaryRuns, ground, keeping, simplify } from './geometry';
 import {
   Affine,
+  Contributed,
   EMPTY_LIVE,
+  IDENTITY,
   Resolved,
   affine,
   compose,
+  contributed,
   depths,
   live,
   place,
-  plainly,
   project,
   resolved,
   unplace,
@@ -110,6 +112,7 @@ import {
 } from './scene';
 import {
   EMPTY_TRANSFORM,
+  GroupId,
   Id,
   PolygonId,
   Transform,
@@ -286,7 +289,7 @@ export interface Span {
   tracks: Track[]
   /** Per polygon, what its runs ride. Constant across the span: only the
    * easing of `layer` varies, and that is a function of `t` alone. */
-  riders: Map<PolygonId, Rider>
+  riders: Map<Id, Rider>
   /** How many times the CSG was run to settle the span. One of these is a
    * polygon's own neighbourhood, not the level, so the count is large and each
    * one is small. */
@@ -334,28 +337,6 @@ export interface Bake {
 }
 
 export const EMPTY_BAKE: Bake = { spans: new Map(), progress: null };
-
-/**
- * Whether a group anywhere in the world has a depth on it.
- *
- * The bake cuts one track per polygon, against the handful of polygons that
- * could bury it, and that rests on a polygon's boundary being a question about
- * that polygon and its neighbours. An eroding group's boundary is not: it is
- * the offset of the union of everything under it, so the unit that moves is
- * the group, and the unit the bake cuts is not that yet.
- *
- * Answered rather than assumed away, because the alternative is a bake that
- * looks finished and ships geometry the editor is not drawing.
- */
-export function erodingGroup(world: World): boolean {
-  for (let v = 0; v < world.versions.length; v++) {
-    for (const d of depths(world, v).values()) {
-      if (d !== 0) return true;
-    }
-  }
-
-  return false;
-}
 
 export function stamp(world: World, from: VersionId): Stamp {
   return {
@@ -827,7 +808,9 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * the editor calls this; it is the yardstick.
  */
 export function truth(world: World, from: VersionId, t: number): Frame {
-  return evaluate(moving(world, from), t, null).out;
+  const cast = casting(world, from);
+
+  return evaluate(cast, cast.items, t, null).out;
 }
 
 // -----------------------------------------------------------------------------
@@ -845,32 +828,89 @@ export function truth(world: World, from: VersionId, t: number): Frame {
 interface Taken {
   t: number
   frame: Frame
-  /** Each polygon's eroded shape, in the same frame the runs are kept in: the
-   * table the crossings are solved from. */
-  table: Map<PolygonId, Shape>
+  /** Each contributor's eroded shape, in the same frame the runs are kept in:
+   * the table the crossings are solved from. */
+  table: Map<Id, Shape>
   /** The same, left in world units, which is where a point is classified. */
-  world: Map<PolygonId, Shape>
+  world: Map<Id, Shape>
   /** The runs before they were taken back to their frames, for the same
-   * reason: an edge of another polygon is only nearby in the world. */
+   * reason: an edge of another contributor is only nearby in the world. */
   out: Frame
-  /** Per polygon, how solid each vertex of its projection is. Missing for a
-   * polygon whose corners do not change across the span, which is most of
-   * them, and read as one throughout. */
-  fade: Map<PolygonId, number[][]>
+  /** Per contributor, how solid each vertex of its projection is. Missing for
+   * anything whose corners do not change across the span, which is most of
+   * them, and read as one throughout — a group's union has no source corners
+   * to fade, so it is never in here. */
+  fade: Map<Id, number[][]>
+}
+
+/**
+ * The whole cast of a span: how every polygon moves, and which groups are
+ * eroding over it.
+ *
+ * The polygons are the geometry; the contributors are what the CSG is handed,
+ * and an eroding group is one of those in place of everything under it. Kept
+ * together because working out the second needs the first and the structure
+ * they hang off.
+ */
+export interface Cast {
+  world: World
+  items: Moving[]
+  /** Group to its depth at each end of the span, for the groups that have one
+   * at either end. A depth arriving is a depth in flight like any other. */
+  eroding: Map<GroupId, [number, number]>
+}
+
+function casting(world: World, from: VersionId): Cast {
+  const a = depths(world, from), b = depths(world, from + 1);
+  const eroding = new Map<GroupId, [number, number]>();
+
+  for (const id of world.groups.keys()) {
+    const pair: [number, number] = [a.get(id) ?? 0, b.get(id) ?? 0];
+
+    if (pair[0] !== 0 || pair[1] !== 0) eroding.set(id, pair);
+  }
+
+  return { world, items: moving(world, from), eroding };
+}
+
+/** The polygons at an instant, folded into what the CSG sees there. */
+function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
+  return contributed(cast.world, at, id => {
+    const both = cast.eroding.get(id);
+
+    return both === undefined ? 0 : mix(both[0], both[1], t);
+  });
+}
+
+/** Everything the span's tracks are cut for: a polygon that nothing holds, and
+ * an eroding group in place of all of its members. */
+function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
+  const out = new Map<Id, Moving[]>();
+
+  for (const m of cast.items) {
+    // The outermost group that erodes, or the polygon itself. Everything
+    // between them is transparent and hands its members on.
+    const up = enclosing(cast.world, m.at.id).filter(g => cast.eroding.has(g));
+    const id = up[up.length - 1] ?? m.at.id;
+
+    (out.get(id) ?? out.set(id, []).get(id)!).push(m);
+  }
+
+  return [...out].map(([id, mine]) => ({ id, mine }));
 }
 
 /** A polygon as the boundary wants to see it: simplified, unless it came out of
  * an erosion and is an arrangement already. The same reasoning `worldset` uses,
  * and it has to be the same or the two would not agree. */
-function memberOf(it: Resolved): Member | null {
-  const kind = it.polygon.type;
+function memberOf(it: Contributed): Member | null {
+  const kind = it.kind;
 
   if (kind !== 'level' && kind !== 'solid') return null;
 
-  // At depth zero the projection is the source ring as drawn, which is allowed
-  // to cross itself, so it goes through an arrangement here — and an
-  // arrangement drops the vertices it does not turn at, this one included.
-  const shape = it.erosion === 0 ? keeping(simplify(it.shape), it.keep ?? []) : it.shape;
+  // A source ring as drawn is allowed to cross itself, so it goes through an
+  // arrangement here — and an arrangement drops the vertices it does not turn
+  // at, this one included. Anything already simple is spared it.
+  const shape = it.simple ? it.shape : keeping(simplify(it.shape), it.keep ?? []);
 
   return shape.length === 0 ? null : { id: it.id, kind, shape };
 }
@@ -886,7 +926,7 @@ function memberOf(it: Resolved): Member | null {
  * member list is the one the full set would have handed over, ranks and
  * tolerances included, and the two answers are the same answer.
  */
-function share(at: Resolved[], only: PolygonId): Frame {
+function share(at: readonly Contributed[], only: Id): Frame {
   const members: Member[] = [];
   let subject: Member | null = null;
 
@@ -910,31 +950,35 @@ function share(at: Resolved[], only: PolygonId): Frame {
 
 /** Everybody's share at once, through the full set. The yardstick's path, and
  * what the editor's own drawing goes through. */
-function everything(at: Resolved[]): Frame {
+function everything(at: readonly Contributed[]): Frame {
   // Sorted, so that two evaluations line up run by run. `worldset` hands its
   // runs back in whatever order the entries happen to sit in, which an edit
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
-  return pieces(live(EMPTY_LIVE, plainly(at)).set)
+  return pieces(live(EMPTY_LIVE, at).set)
     .map(p => ({ id: p.source, points: p.points }))
     .sort((p, q) => p.id - q.id);
 }
 
-function evaluate(items: Moving[], t: number, only: PolygonId | null): Taken {
-  const at = world1(items, t);
+function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
+  const resolved = world1(items, t);
+  const at = folded(cast, resolved, t);
 
   const frames = new Map(at.map(it => [it.id, it.frame]));
-  const table = new Map<PolygonId, Shape>();
-  const world = new Map<PolygonId, Shape>();
-  const fade = new Map<PolygonId, number[][]>();
+  const table = new Map<Id, Shape>();
+  const world = new Map<Id, Shape>();
+  const fade = new Map<Id, number[][]>();
   const moving = new Map(items.map(m => [m.at.id, m]));
+  const was = new Map(resolved.map(it => [it.id, it]));
 
   for (const it of at) {
     world.set(it.id, it.shape);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
 
-    const m = moving.get(it.id);
-    const how = m === undefined ? null : fading(m, it, t);
+    // Only a polygon has source corners, and only they can be invented. A
+    // group's union boundary has none to fade.
+    const m = moving.get(it.id), mine = was.get(it.id);
+    const how = m === undefined || mine === undefined ? null : fading(m, mine, t);
 
     if (how !== null) fade.set(it.id, how);
   }
@@ -1000,16 +1044,22 @@ function expandBox(a: AABB, m: number): AABB {
   return { minX: a.minX - m, minY: a.minY - m, maxX: a.maxX + m, maxY: a.maxY + m };
 }
 
-/** For each polygon, the ones it shares a span with — itself first, so a track
- * always has its own subject. */
-function neighbourhoods(items: Moving[]): Moving[][] {
-  const boxes = items.map(reach);
+/**
+ * For each subject, the polygons it shares a span with — its own first, so a
+ * track always has what it is about.
+ *
+ * By subject rather than by polygon, because an eroding group's boundary is a
+ * question about the whole group: its members are never split across two
+ * neighbourhoods, or a track would be cut against half of itself.
+ */
+function neighbourhoods(all: { id: Id, mine: Moving[] }[]): Moving[][] {
+  const boxes = all.map(s => s.mine.map(reach).reduce(merge));
   const tree: Tree = build(boxes.map((box, id) => ({ id, box })));
 
-  return items.map((m, i) => {
+  return all.map((s, i) => {
     const near = search(tree, boxes[i]).filter(j => j !== i);
 
-    return [m, ...near.map(j => items[j])];
+    return [...s.mine, ...near.flatMap(j => all[j].mine)];
   });
 }
 
@@ -1376,9 +1426,10 @@ interface Cut {
  * boundary is a question about its own neighbourhood, so its keyframes are too.
  */
 function* cutTrack(
+  cast: Cast,
   sub: Moving[],
-  id: PolygonId,
-  riders: Map<PolygonId, Rider>,
+  id: Id,
+  riders: Map<Id, Rider>,
   tol: number,
 ): Generator<number, Cut, void> {
   const out: Stretch[] = [];
@@ -1389,7 +1440,7 @@ function* cutTrack(
   const at = (t: number): Taken => {
     evaluations++;
 
-    return evaluate(sub, t, id);
+    return evaluate(cast, sub, t, id);
   };
 
   // Left to right, so what comes out is in order and the progress is honest:
@@ -1509,21 +1560,37 @@ export interface Slice {
  * polygon than the thread cutting it would be a silent wrong answer rather than
  * an error.
  */
-export function ridersOf(world: World, from: VersionId): Map<PolygonId, Rider> {
-  return ridden(moving(world, from));
+export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
+  const cast = casting(world, from);
+
+  return ridden(cast, subjects(cast));
 }
 
-function ridden(items: readonly Moving[]): Map<PolygonId, Rider> {
-  return new Map(
-    items.map(m => [
-      m.at.id,
-      {
-        base: m.base,
-        layer: m.newborn ? EMPTY_TRANSFORM : m.layer,
-        holders: m.holders,
-      },
-    ]),
-  );
+/**
+ * What each subject's runs ride.
+ *
+ * A polygon rides its own chain. An eroding group rides nothing: its members'
+ * frames already carry every transform above them, so the union it hands over
+ * is in world units with the motion in it, and a layer applied here would be
+ * that motion applied twice.
+ */
+function ridden(cast: Cast, all: { id: Id, mine: Moving[] }[]): Map<Id, Rider> {
+  const own = new Map(cast.items.map(m => [m.at.id, m]));
+
+  return new Map(all.map(s => {
+    const m = own.get(s.id);
+
+    return [
+      s.id,
+      m === undefined
+        ? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
+        : {
+          base: m.base,
+          layer: m.newborn ? EMPTY_TRANSFORM : m.layer,
+          holders: m.holders,
+        },
+    ];
+  }));
 }
 
 /**
@@ -1536,9 +1603,11 @@ function ridden(items: readonly Moving[]): Map<PolygonId, Rider> {
  */
 export interface Ready {
   from: VersionId
-  items: Moving[]
+  cast: Cast
+  /** What the tracks are cut for, and what a job names them by. */
+  items: { id: Id, mine: Moving[] }[]
   near: Moving[][]
-  riders: Map<PolygonId, Rider>
+  riders: Map<Id, Rider>
   /** Milliseconds it took, which is the fixed cost of putting a thread on this
    * span at all. */
   setup: number
@@ -1546,13 +1615,15 @@ export interface Ready {
 
 export function ready(world: World, from: VersionId): Ready {
   const began = now();
-  const items = moving(world, from);
+  const cast = casting(world, from);
+  const items = subjects(cast);
 
   return {
     from,
+    cast,
     items,
     near: neighbourhoods(items),
-    riders: ridden(items),
+    riders: ridden(cast, items),
     setup: now() - began,
   };
 }
@@ -1582,10 +1653,10 @@ export function* cutSome(
 
   for (let k = 0; k < which.length; k++) {
     const i = which[k];
-    const id = at.items[i].at.id;
+    const id = at.items[i].id;
 
     const cut = yield* weighted(
-      cutTrack(at.near[i], id, at.riders, tol),
+      cutTrack(at.cast, at.near[i], id, at.riders, tol),
       k / which.length,
       1 / which.length,
     );
@@ -1626,7 +1697,7 @@ export function* bakeSlice(
 export function joined(
   world: World,
   from: VersionId,
-  riders: Map<PolygonId, Rider>,
+  riders: Map<Id, Rider>,
   slices: readonly Slice[],
 ): Span {
   const tracks = slices.flatMap(s => s.tracks).sort((p, q) => p.id - q.id);
@@ -1656,7 +1727,7 @@ export function* bakeSpan(
 ): Generator<number, Span, void> {
   const slice = yield* bakeSlice(world, from, 0, 1, tol);
 
-  return joined(world, from, ridden(moving(world, from)), [slice]);
+  return joined(world, from, ridersOf(world, from), [slice]);
 }
 
 /** Every span in the chain, one after the other. */
@@ -1721,7 +1792,7 @@ export function sample(span: Span, t: number): Frame {
  * One stretch, evaluated at an instant inside it — the whole of what the shader
  * would do, and the thing the bake checks itself against.
  */
-function drawn(s: Stretch, riders: Map<PolygonId, Rider>, t: number): Frame {
+function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
   const u = s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
 
   // One per polygon rather than one per point: every vertex of a polygon rides

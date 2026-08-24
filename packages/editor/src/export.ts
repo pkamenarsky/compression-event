@@ -50,7 +50,7 @@ type Slots = Map<Id, number>;
  * polygon's is, and giving it its own kind of slot would be two readers of two
  * tables agreeing by hand.
  */
-function slotted(riders: Map<PolygonId, Rider>): Slots {
+function slotted(riders: Map<Id, Rider>): Slots {
   const ids = new Set<Id>(riders.keys());
 
   for (const rider of riders.values()) {
@@ -62,7 +62,7 @@ function slotted(riders: Map<PolygonId, Rider>): Slots {
 
 /** Every slot's own layer and who holds it, which the riders say once per
  * polygon and the table says once per slot. */
-function chains(riders: Map<PolygonId, Rider>): Map<Id, Rider> {
+function chains(riders: Map<Id, Rider>): Map<Id, Rider> {
   const out = new Map<Id, Rider>(riders);
 
   for (const rider of riders.values()) {
@@ -81,7 +81,7 @@ function chains(riders: Map<PolygonId, Rider>): Map<Id, Rider> {
 }
 
 /** How deep the deepest chain in the table goes, in slots. */
-function deepest(riders: Map<PolygonId, Rider>): number {
+function deepest(riders: Map<Id, Rider>): number {
   let out = 1;
 
   for (const rider of riders.values()) out = Math.max(out, rider.holders.length + 1);
@@ -89,7 +89,7 @@ function deepest(riders: Map<PolygonId, Rider>): number {
   return out;
 }
 
-function frames(riders: Map<PolygonId, Rider>, slots: Slots): Float32Array {
+function frames(riders: Map<Id, Rider>, slots: Slots): Float32Array {
   const out = new Float32Array(slots.size * FRAME_STRIDE);
   const all = chains(riders);
 

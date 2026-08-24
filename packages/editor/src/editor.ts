@@ -4,7 +4,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { Bake, bakeAll, erodingGroup, spanAt } from './bake';
+import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
@@ -665,13 +665,9 @@ function bakeButton(
     return n;
   };
 
-  // A group with a depth on it has a boundary the bake's per-polygon tracks
-  // cannot cut. Said here rather than discovered as a wrong shipped level.
-  const refused = () => erodingGroup(world());
-
   const label = () => (running()
     ? `baking ${Math.round((bake().progress ?? 0) * 100)}%`
-    : refused() ? 'no bake · group erosion' : `bake  ${done()} / ${spans}`);
+    : `bake  ${done()} / ${spans}`);
 
   return svg(
     {
@@ -700,7 +696,7 @@ function bakeButton(
         {
           style: { cursor: 'pointer' },
           onclick: () => {
-            if (!running() && !refused()) start(state, update);
+            if (!running()) start(state, update);
           },
         },
         [

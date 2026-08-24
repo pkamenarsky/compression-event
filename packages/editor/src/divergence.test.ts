@@ -196,6 +196,38 @@ test('the replay never strays far from csg(t)', () => {
 
     check('a group inside a group', held(w, [inner.id, ids[2]], 1, { scale: { x: 1.6, y: 0.7 } })); }
   {
+    // A corridor of two overlapping rectangles, eroded as one shape. Eroding
+    // each member instead would break it in two at a seam behind a wall, so
+    // this is the case that says the bake's unit is the group rather than the
+    // polygons under it.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 80)],
+      ['level', rect(160, 0, 200, 80)],
+    );
+
+    check('a group eroding as one shape', held(world, ids, 1, { erosion: 25 })); }
+  {
+    // And the same while it moves, so the union's boundary is being cut at the
+    // same time as it is being offset.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 80)],
+      ['level', rect(160, 0, 200, 80)],
+    );
+
+    check('a group eroding while it turns',
+      held(world, ids, 1, { erosion: 20, rotation: Math.PI / 6 })); }
+  {
+    // A depth arriving on a group that holds a polygon which is moving inside
+    // it: the union changes shape and offset at once.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -60, 400, 120)],
+      ['level', rect(-40, -200, 80, 400)],
+    );
+
+    check('a group eroding round something moving inside it',
+      held(transformed(world, 1, ids[1], { translation: { x: 60, y: 0 } }), ids, 1,
+        { erosion: 18 })); }
+  {
     // A bar that turns half way round, so it ends up where it started and
     // sweeps a room on the way that it touches at neither end of the span. The
     // track is cut against a fixed neighbourhood, so this is the case that
