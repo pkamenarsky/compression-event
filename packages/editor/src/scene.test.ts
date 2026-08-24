@@ -4,6 +4,11 @@ import { OpSubtract, Shape, combine, shapeArea, simplify } from './geometry';
 import {
   Resolved,
   addPolygon,
+  composed,
+  grouped,
+  polygonsIn,
+  ungrouped,
+  without,
   addVertex,
   hitPolygons,
   affine,
@@ -22,6 +27,8 @@ import {
 } from './scene';
 import {
   EMPTY_TRANSFORM,
+  GroupId,
+  Id,
   PolygonId,
   PolygonType,
   Transform,
@@ -597,5 +604,218 @@ describe('clicking through a stack of polygons', () => {
 
     expect(hitPolygons(items, { x: 10, y: 10 })).toEqual([ids[0]]);
     expect(hitPolygons(items, { x: 50, y: 50 })).toEqual([ids[1], ids[0]]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Groups
+// -----------------------------------------------------------------------------
+
+/** Two rooms side by side, and the group over both. */
+function pair(): { world: World, ids: PolygonId[], group: GroupId } {
+  const { world, ids } = drawn(
+    ['level', rect(0, 0, 10, 10)],
+    ['level', rect(20, 0, 10, 10)],
+  );
+
+  const made = grouped(world, 0, ids)!;
+
+  return { world: made.world, ids, group: made.id };
+}
+
+/** Where a polygon's corners actually are at a version. */
+function at(world: World, v: VersionId, id: PolygonId): Point[] {
+  return only(world, v, id).source;
+}
+
+function moved(world: World, v: VersionId, id: Id, t: Partial<Transform>): World {
+  const edit = editAt(world, v, id, 0);
+
+  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+}
+
+describe('a group moves what is in it', () => {
+  test('a member takes its group\'s transform on top of its own', () => {
+    const { world, ids, group } = pair();
+
+    const shifted = moved(world, 0, group, { translation: { x: 100, y: 0 } });
+
+    expect(at(shifted, 0, ids[0])[0]).toEqual({ x: 100, y: 0 });
+    expect(at(shifted, 0, ids[1])[0]).toEqual({ x: 120, y: 0 });
+
+    // And on top of the member's own, which is applied first.
+    const both = moved(shifted, 0, ids[0], { translation: { x: 0, y: 5 } });
+
+    expect(at(both, 0, ids[0])[0]).toEqual({ x: 100, y: 5 });
+  });
+
+  test('the group turns the whole of it about the world origin', () => {
+    const { world, ids, group } = pair();
+    const turned = moved(world, 0, group, { rotation: Math.PI / 2 });
+
+    // The far room swings round with the near one rather than turning in
+    // place: a group is a frame its members sit in.
+    const p = at(turned, 0, ids[1])[0];
+
+    expect(p.x).toBeCloseTo(0, 9);
+    expect(p.y).toBeCloseTo(20, 9);
+  });
+
+  test('a group inside a group composes outwards', () => {
+    const { world, ids, group } = pair();
+    const { world: outer, ids: more } = (() => {
+      const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0);
+
+      return { world: added.world, ids: [added.id] };
+    })();
+
+    const top = grouped(outer, 0, [group, more[0]])!;
+
+    const w = moved(
+      moved(top.world, 0, group, { translation: { x: 1, y: 0 } }),
+      0,
+      top.id,
+      { translation: { x: 0, y: 2 } },
+    );
+
+    // Inner then outer, for a member of both; outer only, for the newcomer.
+    expect(at(w, 0, ids[0])[0]).toEqual({ x: 1, y: 2 });
+    expect(at(w, 0, more[0])[0]).toEqual({ x: 40, y: 2 });
+  });
+
+  test('a group holds nobody before it is born', () => {
+    // A layer may not reach back past itself, and a group born at v2 moving
+    // something at v0 is exactly that.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 10, 10)],
+      ['level', rect(20, 0, 10, 10)],
+    );
+
+    const made = grouped(world, 2, ids)!;
+    const w = moved(made.world, 0, made.id, { translation: { x: 100, y: 0 } });
+
+    expect(at(w, 1, ids[0])[0]).toEqual({ x: 0, y: 0 });
+    expect(at(w, 2, ids[0])[0]).toEqual({ x: 0, y: 0 });
+  });
+
+  test('the version chain still runs one stage at a time under a group', () => {
+    const { world, ids, group } = pair();
+
+    const w = moved(
+      moved(world, 0, group, { translation: { x: 10, y: 0 } }),
+      1,
+      group,
+      { rotation: Math.PI / 2, translation: { x: 0, y: 0 } },
+    );
+
+    // v1 turns what v0 left, rather than turning the drawing and then moving.
+    const p = at(w, 1, ids[0])[0];
+
+    expect(p.x).toBeCloseTo(0, 9);
+    expect(p.y).toBeCloseTo(10, 9);
+  });
+});
+
+describe('making and taking apart', () => {
+  test('a group of fewer than two things is not a group', () => {
+    const { world, ids } = pair();
+
+    expect(grouped(world, 0, [ids[0]])).toEqual(null);
+
+    // Nor is grouping something with what already holds it.
+    expect(grouped(world, 0, ids)).toEqual(null);
+  });
+
+  test('members leave exactly where they stood, at every version', () => {
+    const { world, ids, group } = pair();
+
+    const w = moved(
+      moved(world, 0, group, { translation: { x: 10, y: 4 }, rotation: 0.3 }),
+      2,
+      group,
+      { translation: { x: -5, y: 0 }, scale: { x: 2, y: 2 } },
+    );
+
+    const apart = ungrouped(w, group)!;
+
+    expect(apart.groups.size).toEqual(0);
+
+    for (let v = 0; v < 4; v++) {
+      for (const id of ids) {
+        const before = at(w, v as VersionId, id);
+        const after = at(apart, v as VersionId, id);
+
+        after.forEach((p, i) => {
+          expect(p.x).toBeCloseTo(before[i].x, 9);
+          expect(p.y).toBeCloseTo(before[i].y, 9);
+        });
+      }
+    }
+  });
+
+  test('what a version cannot hold is refused whole', () => {
+    // Turn, squash, turn again is a shear, and no combination of a turn and
+    // two scales says shear.
+    const { world, ids, group } = pair();
+
+    const w = moved(
+      moved(world, 0, ids[0], { rotation: 0.4 }),
+      0,
+      group,
+      { scale: { x: 2, y: 1 } },
+    );
+
+    expect(composed(
+      { ...EMPTY_TRANSFORM, scale: { x: 2, y: 1 } },
+      { ...EMPTY_TRANSFORM, rotation: 0.4 },
+    )).toEqual(null);
+
+    // A squash outside a turn is the shear. Either on its own composes, and so
+    // does a turn outside anything at all.
+    expect(composed(
+      { ...EMPTY_TRANSFORM, rotation: 0.7 },
+      { ...EMPTY_TRANSFORM, rotation: 0.4, scale: { x: 2, y: 1 } },
+    )).not.toEqual(null);
+
+    expect(ungrouped(w, group)).toEqual(null);
+
+    // And the world it refused is the world that stands.
+    expect(w.groups.has(group)).toEqual(true);
+  });
+
+  test('a depth is nobody else\'s', () => {
+    // Leaving a group does not take its erosion, and does not lose your own.
+    const both = composed(
+      { ...EMPTY_TRANSFORM, erosion: 5 },
+      { ...EMPTY_TRANSFORM, erosion: 2 },
+    );
+
+    expect(both!.erosion).toEqual(2);
+  });
+
+  test('a group nested inside another takes its place in the holder', () => {
+    const { world, ids, group } = pair();
+    const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0);
+    const top = grouped(added.world, 0, [group, added.id])!;
+
+    const apart = ungrouped(top.world, group)!;
+
+    expect(apart.groups.get(top.id)!.members).toEqual([...ids, added.id]);
+  });
+});
+
+describe('what a selection reaches', () => {
+  test('a group stands for the polygons under it', () => {
+    const { world, ids, group } = pair();
+
+    expect(polygonsIn(world, [group]).sort()).toEqual([...ids].sort());
+    expect(polygonsIn(world, [ids[0]])).toEqual([ids[0]]);
+  });
+
+  test('taking a member out leaves no group of one', () => {
+    const { world, ids, group } = pair();
+    const w = without(world, new Set([ids[0]]));
+
+    expect(w.groups.has(group)).toEqual(false);
   });
 });

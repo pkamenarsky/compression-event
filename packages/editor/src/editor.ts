@@ -8,11 +8,12 @@ import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { copied, pasted, resolveAt } from './scene';
+import { copied, grouped, pasted, resolveAt, ungrouped } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
   EditorState,
+  Id,
   REPLAY_MS,
   Tool,
   Update,
@@ -246,7 +247,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
     while (true) {
       const e = yield* keyPressed(
         input,
-        'KeyA', 'KeyV', 'KeyP', 'KeyZ', 'KeyY', 'KeyC',
+        'KeyA', 'KeyV', 'KeyP', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
       );
 
       const command = e.metaKey || e.ctrlKey;
@@ -282,6 +283,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyY') {
         update(redone);
       }
+      else if (e.code === 'KeyG') {
+        update(e.shiftKey ? apart : together);
+      }
       else if (e.code === 'KeyC') {
         update(s => ({
           ...s,
@@ -310,6 +314,48 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
     }
   });
+}
+
+/** The picked things made one, and picked as one. */
+function together(s: EditorState): EditorState {
+  const made = grouped(s.world, s.currentVersion, s.selection.polygons);
+
+  if (made === null) return s;
+
+  return marked(
+    { ...s, world: made.world, selection: { ...s.selection, polygons: [made.id] } },
+    s.world,
+  );
+}
+
+/**
+ * The picked groups taken apart, and their members picked instead.
+ *
+ * Nothing at all where a version cannot hold what taking one apart would have
+ * to write — see `composed`. Refusing the whole gesture is the point: half of
+ * it would leave the members displaced at the versions it could not do.
+ */
+function apart(s: EditorState): EditorState {
+  let world = s.world;
+  const picked: Id[] = [];
+
+  for (const id of s.selection.polygons) {
+    const group = s.world.groups.get(id);
+
+    if (group === undefined) {
+      picked.push(id);
+      continue;
+    }
+
+    const taken = ungrouped(world, id);
+
+    if (taken === null) return s;
+
+    world = taken;
+    picked.push(...group.members);
+  }
+
+  return marked({ ...s, world, selection: { ...s.selection, polygons: picked } }, s.world);
 }
 
 // -----------------------------------------------------------------------------

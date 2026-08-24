@@ -30,6 +30,8 @@ import {
   hitVertex,
   live,
   placeVertex,
+  polygonsIn,
+  without,
   removeVertices,
   resolveAt,
   runs,
@@ -40,6 +42,7 @@ import {
 import { theme } from './theme';
 import {
   Edit,
+  Id,
   Point,
   Polygon,
   PolygonId,
@@ -55,6 +58,8 @@ import {
   World,
   alsoPicked,
   marked,
+  outermost,
+  within,
   resized,
   togglePicked,
   toScreen,
@@ -188,9 +193,11 @@ export function worldCanvas(
       const items = resolveAt(world(), currentVersion());
       const points = tool() === 'point';
 
+      // A marquee takes whole groups: half a group picked is a selection that
+      // no gesture could act on without taking the group apart.
       const caught = points
         ? verticesWithinBox(items, box.a, box.b)
-        : withinBox(items, box.a, box.b);
+        : [...new Set(withinBox(items, box.a, box.b).map(id => outermost(world(), id)))];
 
       update(s => ({
         ...s,
@@ -282,18 +289,22 @@ export function worldCanvas(
 
       if (ids.length === 0 || e === null) return;
 
-      const items = resolveAt(world(), v).filter(it => ids.includes(it.id));
+      const reached = new Set(polygonsIn(world(), ids));
+      const items = resolveAt(world(), v).filter(it => reached.has(it.id));
 
       if (items.length === 0) return;
+
+      // A depth belongs to whoever it is written on, and a group's offsets the
+      // union of what its members produced. There is nothing there to resolve
+      // yet, so the one gesture that writes one is not offered on a group.
+      if (code === 'KeyE' && ids.some(id => world().groups.has(id))) return;
 
       const from = at(e);
 
       // The layer as it stood when the key went down. A transform written into
       // this version replaces whatever it held, so the gesture recomputes from
       // here rather than composing onto its own last frame.
-      const anchors = new Map<PolygonId, Edit>(
-        items.map(it => [it.id, editAt(world(), v, it.id, it.erosion)]),
-      );
+      const anchors = anchored(world(), v, ids);
 
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself.
@@ -332,7 +343,7 @@ export function worldCanvas(
       update(s => {
         const polygons = new Map(s.world.polygons);
 
-        for (const id of s.selection.polygons) {
+        for (const id of polygonsIn(s.world, s.selection.polygons)) {
           const p = polygons.get(id);
           if (p !== undefined) polygons.set(id, { ...p, type });
         }
@@ -492,7 +503,7 @@ export function worldCanvas(
      * things under me?", and if it is, the answer is the next one along.
      */
     function picking(e: PointerEvent): void {
-      const stack = hitPolygons(resolveAt(world(), currentVersion()), at(e));
+      const stack = standingIn(world(), hitPolygons(resolveAt(world(), currentVersion()), at(e)), e);
 
       if (stack.length === 0) {
         // Shift means adding, and adding nothing leaves the selection alone.
@@ -526,6 +537,39 @@ export function worldCanvas(
     }
 
     /**
+     * What is under the cursor, as the things a click would move: the outermost
+     * group each one is in, rather than the polygon itself.
+     *
+     * Command reaches past that to the polygon, which is the one gesture for
+     * editing inside a group. Grouping is for moving several things as one, so
+     * the default has to be the group; reaching a member of one is rarer and is
+     * worth a modifier rather than a mode.
+     */
+    /**
+     * What each picked thing's layer holds now, which is what a gesture
+     * recomputes from every frame rather than composing onto its own last one.
+     *
+     * Keyed by what was picked rather than by what is drawn: picking a group
+     * writes one transform to the group, not one to each of its members, and
+     * that is the whole of what a group is for.
+     */
+    function anchored(w: World, v: VersionId, ids: readonly Id[]): Map<Id, Edit> {
+      const depths = new Map(resolveAt(w, v).map(it => [it.id, it.erosion]));
+
+      return new Map(
+        ids
+          .filter(id => w.polygons.has(id) || w.groups.has(id))
+          .map(id => [id, editAt(w, v, id, depths.get(id) ?? 0)]),
+      );
+    }
+
+    function standingIn(w: World, under: PolygonId[], e: MouseEvent): Id[] {
+      if (e.metaKey || e.ctrlKey) return under;
+
+      return [...new Set(under.map(id => outermost(w, id)))];
+    }
+
+    /**
      * The picked polygons dragged along, which is what a hand reaches for
      * before it reaches for a key.
      *
@@ -544,11 +588,7 @@ export function worldCanvas(
       const ids = selection().polygons;
       const start = at(from);
 
-      const anchors = new Map<PolygonId, Edit>(
-        resolveAt(was, v)
-          .filter(it => ids.includes(it.id))
-          .map(it => [it.id, editAt(was, v, it.id, it.erosion)]),
-      );
+      const anchors = anchored(was, v, ids);
 
       if (anchors.size === 0) return;
 
@@ -609,13 +649,18 @@ export function worldCanvas(
 
         if (s.selection.polygons.length === 0) return s;
 
+        // A group goes with what was in it: picking one is picking the rooms
+        // under it, and deleting it while they stayed would be a selection
+        // that deleted less than it drew.
+        const gone = new Set(s.selection.polygons.flatMap(id => within(s.world, id)));
         const polygons = new Map(s.world.polygons);
-        for (const id of s.selection.polygons) polygons.delete(id);
+
+        for (const id of gone) polygons.delete(id);
 
         return marked(
           {
             ...s,
-            world: { ...s.world, polygons },
+            world: without({ ...s.world, polygons }, gone),
             selection: { ...s.selection, polygons: [] },
           },
           s.world,
@@ -787,7 +832,11 @@ export function worldCanvas(
                 }
               }
               else if (tool() === 'polygon') {
-                const under = hitPolygons(resolveAt(world(), currentVersion()), at(e));
+                const under = standingIn(
+                  world(),
+                  hitPolygons(resolveAt(world(), currentVersion()), at(e)),
+                  e,
+                );
 
                 if (under.length > 0) {
                   // Anything picked under the cursor means the drag is that
@@ -1073,7 +1122,9 @@ function layers(
     out.push(ctx => ghosts(ctx, view, shown, stroke));
   }
 
-  out.push(ctx => polygons(ctx, view, items, selection, tool === 'point'));
+  const reached = new Set(polygonsIn(world, selection.polygons));
+
+  out.push(ctx => polygons(ctx, view, items, selection, reached, tool === 'point'));
   out.push(ctx => outlines(ctx, view, outline));
 
   // Over the editor's own answer, so the two can be read against each other:
@@ -1146,10 +1197,14 @@ function polygons(
   view: View,
   items: Resolved[],
   selection: Selection,
+  /** The polygons the selection reaches: itself, or everything under a group.
+   * A group has no outline of its own, so what says it is picked is its
+   * members drawn as picked. */
+  reached: ReadonlySet<PolygonId>,
   handles: boolean,
 ): void {
   for (const it of items) {
-    const picked = selection.polygons.includes(it.id);
+    const picked = reached.has(it.id);
 
     if (it.erosion !== 0 && (picked || handles)) {
       ctx.beginPath();

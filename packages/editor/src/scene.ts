@@ -36,15 +36,23 @@ import {
   Clipping,
   EMPTY_TRANSFORM,
   Edit,
+  Group,
+  GroupId,
+  Id,
   Vertex,
   Polygon,
   PolygonId,
   PolygonType,
   Transform,
+  Version,
   VersionId,
   VertexId,
   World,
+  enclosing,
+  outermost,
+  parentOf,
   standing,
+  within,
 } from './types';
 import {
   Edit as SetEdit,
@@ -309,6 +317,37 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
   };
 }
 
+/**
+ * The transform every group holding `id` puts on it at one version, composed
+ * outermost last.
+ *
+ * A group is a frame its members sit in, so this is the same composition the
+ * version chain does — apply mine, then the enclosing one's — one level of
+ * structure at a time instead of one version at a time. That is deliberate:
+ * one rule to learn rather than two that rhyme.
+ *
+ * The group's own erosion is not read here. It offsets the union of what the
+ * members produced, which is a read taken after this one and after the CSG has
+ * put the union together. See *Groups* in `docs/versioning.md`.
+ */
+function held(
+  world: World,
+  version: Version,
+  standing: ReadonlySet<VersionId>,
+  id: Id,
+): Affine {
+  return enclosing(world, id).reduce((m, g) => {
+    const group = world.groups.get(g);
+
+    // A group nothing has reached yet holds nobody: a layer may not reach back
+    // past itself, and a group born at v3 moving something at v0 is exactly
+    // that.
+    if (group === undefined || !standing.has(group.birth)) return m;
+
+    return compose(affine(version.edits.get(g)?.transform ?? EMPTY_TRANSFORM), m);
+  }, IDENTITY);
+}
+
 export function resolveAt(world: World, v: VersionId): Resolved[] {
   const inherited = new Set(chain(world, v));
 
@@ -319,8 +358,16 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
   const frame = new Map<PolygonId, Affine>();
   const depth = new Map<PolygonId, number>();
 
+  // The versions walked so far, which is what a group's birth is tested
+  // against: the chain is a chain, and the stage in hand is as far as it has
+  // got rather than a number to compare with.
+  const reached = new Set<VersionId>();
+
   for (const k of chain(world, v)) {
     const version = world.versions[k];
+    const outer = new Map<Id, Affine>();
+
+    reached.add(k);
 
     for (const [id, polygon] of world.polygons) {
       if (polygon.birth === k) {
@@ -341,11 +388,22 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
       const edit = version.edits.get(id);
 
-      if (edit === undefined) continue;
+      if (edit !== undefined) {
+        displace(at, edit.vertices);
+        frame.set(id, compose(affine(edit.transform), frame.get(id)!));
+        depth.set(id, edit.transform.erosion);
+      }
 
-      displace(at, edit.vertices);
-      frame.set(id, compose(affine(edit.transform), frame.get(id)!));
-      depth.set(id, edit.transform.erosion);
+      // After its own, and whether or not it has one of its own: what moves a
+      // polygon at this version is not only what the version says about it.
+      const up = parentOf(world).get(id);
+
+      if (up === undefined) continue;
+
+      const m = outer.get(up) ?? held(world, version, reached, id);
+
+      outer.set(up, m);
+      frame.set(id, compose(m, frame.get(id)!));
     }
   }
 
@@ -394,12 +452,12 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
  * first thing written into a layer — a nudge, a move — does not also throw away
  * the erosion its base had.
  */
-export function editAt(world: World, v: VersionId, id: PolygonId, erosion: number): Edit {
+export function editAt(world: World, v: VersionId, id: Id, erosion: number): Edit {
   return world.versions[v].edits.get(id)
     ?? { transform: { ...EMPTY_TRANSFORM, erosion }, vertices: new Map() };
 }
 
-export function withEdit(world: World, v: VersionId, id: PolygonId, edit: Edit): World {
+export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World {
   const versions = [...world.versions];
   const edits = new Map(versions[v].edits);
 
@@ -407,6 +465,190 @@ export function withEdit(world: World, v: VersionId, id: PolygonId, edit: Edit):
   versions[v] = { ...versions[v], edits };
 
   return { ...world, versions };
+}
+
+// -----------------------------------------------------------------------------
+// Grouping
+//
+// Structure is global and the transform is versioned, so making a group is a
+// change to the world and moving one is a change to a layer. What that costs is
+// all at the other end: taking a group apart has to leave its members where
+// they are *at every version*, and there is no single transform to bake in,
+// because the group's own differs from one version to the next.
+// -----------------------------------------------------------------------------
+
+/**
+ * `outer` after `inner` as one layer, or nothing where that is not a layer.
+ *
+ * A `Transform` is components rather than a matrix — a turn, a scale per axis,
+ * a move — and that family is not closed under composition: turn, squash and
+ * turn again is a shear, and no combination of the three says shear. Nothing in
+ * the chain ever needed it to be closed, because nothing composes; taking a
+ * group apart is the one operation that does.
+ *
+ * So this answers where it can and refuses where it cannot, and the refusal is
+ * the honest one: what the author is asking for is not something the document
+ * can hold.
+ */
+export function composed(outer: Transform, inner: Transform): Transform | null {
+  const m = compose(affine(outer), affine(inner));
+
+  // `affine` builds `R(rotation) · diag(scale)`, so the first column is the
+  // turn at the length of one axis and the second is what is left.
+  const rotation = Math.atan2(m.b, m.a);
+  const cos = Math.cos(rotation), sin = Math.sin(rotation);
+
+  const x = Math.hypot(m.a, m.b);
+  const y = m.d * cos - m.c * sin;
+
+  // Whatever of the second column lies along the first. Zero for anything this
+  // family can say, and a shear otherwise.
+  const skew = m.c * cos + m.d * sin;
+
+  if (Math.abs(skew) > 1e-9 * Math.max(1, Math.abs(x), Math.abs(y))) return null;
+
+  return {
+    translation: { x: m.tx, y: m.ty },
+    rotation,
+    scale: { x, y },
+
+    // Depths never transfer. A polygon owns one, membership does not touch it,
+    // and a group's is the group's — which is the only rule under which
+    // leaving and rejoining is the identity.
+    erosion: inner.erosion,
+  };
+}
+
+/**
+ * A new group over `ids`, born into the version on screen.
+ *
+ * Only what is not already held: grouping something with a thing it is already
+ * inside means grouping what holds it, and grouping a group with its own member
+ * is not a structure — it is the same member twice.
+ *
+ * Nothing is compensated. A new group's transform is identity at every version,
+ * so its members are exactly where they were, which is the whole reason making
+ * one is cheap and taking one apart is not.
+ */
+export function grouped(world: World, v: VersionId, ids: readonly Id[]): {
+  world: World
+  id: GroupId
+} | null {
+  const tops = [...new Set(ids.map(id => outermost(world, id)))];
+
+  if (tops.length < 2) return null;
+
+  const id = world.nextId;
+  const groups = new Map(world.groups);
+
+  groups.set(id, { birth: v, members: tops });
+
+  return { world: { ...world, groups, nextId: id + 1 }, id };
+}
+
+/**
+ * A group taken apart, with its members left exactly where they stood at every
+ * version.
+ *
+ * The group's transform differs per version, so there is no one transform to
+ * bake into the members: baking the version on screen would hold them still
+ * where the author is standing and shift them everywhere else. So every version
+ * that says anything about the group writes it into every member instead, as
+ * one change.
+ *
+ * Nothing where a version cannot hold the composition — see `composed`. It is
+ * refused whole rather than in part: half an ungroup would leave the members
+ * displaced at the versions it could not do, which is worse than not having
+ * done it.
+ */
+export function ungrouped(world: World, id: GroupId): World | null {
+  const group = world.groups.get(id);
+
+  if (group === undefined) return null;
+
+  const versions = [...world.versions];
+
+  for (let k = 0; k < versions.length; k++) {
+    const mine = versions[k].edits.get(id);
+
+    if (mine === undefined) continue;
+
+    const edits = new Map(versions[k].edits);
+
+    for (const member of group.members) {
+      const was = edits.get(member) ?? { transform: EMPTY_TRANSFORM, vertices: new Map() };
+      const now = composed(mine.transform, was.transform);
+
+      if (now === null) return null;
+
+      edits.set(member, { ...was, transform: now });
+    }
+
+    edits.delete(id);
+    versions[k] = { ...versions[k], edits };
+  }
+
+  const groups = new Map(world.groups);
+  const up = parentOf(world).get(id);
+
+  groups.delete(id);
+
+  // The members take the group's place rather than being appended, so what a
+  // click walks through stays in the order it was drawn in.
+  if (up !== undefined) {
+    const holder = groups.get(up)!;
+
+    groups.set(up, {
+      ...holder,
+      members: holder.members.flatMap(m => (m === id ? group.members : [m])),
+    });
+  }
+
+  return { ...world, groups, versions };
+}
+
+/**
+ * The structure with `gone` taken out of it.
+ *
+ * A group that ends up holding one thing or nothing is not holding anything
+ * together, so it goes too — and its own holder loses it in turn, which is why
+ * this settles rather than passing once.
+ */
+export function without(world: World, gone: ReadonlySet<Id>): World {
+  const groups = new Map(world.groups);
+
+  while (true) {
+    const empty = new Set<GroupId>();
+
+    for (const [id, group] of groups) {
+      const members = group.members.filter(m => !gone.has(m) && !empty.has(m));
+
+      if (members.length !== group.members.length) groups.set(id, { ...group, members });
+      if (members.length < 2) empty.add(id);
+    }
+
+    if (empty.size === 0) break;
+
+    for (const id of empty) groups.delete(id);
+
+    gone = empty;
+  }
+
+  return { ...world, groups };
+}
+
+/** `ids` and everything under them, with the groups left out: what a gesture
+ * over a selection actually reaches. */
+export function polygonsIn(world: World, ids: readonly Id[]): PolygonId[] {
+  const out = new Set<PolygonId>();
+
+  for (const id of ids) {
+    for (const m of within(world, id)) {
+      if (world.polygons.has(m)) out.add(m);
+    }
+  }
+
+  return [...out];
 }
 
 /**
