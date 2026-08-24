@@ -69,9 +69,17 @@ coincidence is emergent, never declared by the structure.
 
 ### Lifetime
 
-Every polygon, group, vertex and artefact has a **birth version**: the version
-whose layer introduced it. Nothing may reference it before that. A tombstone
-hides it from a given version onward.
+Every polygon, vertex and artefact has a **birth version**: the version whose
+layer introduced it. Nothing may reference it before that. A tombstone hides it
+from a given version onward.
+
+Groups are the exception, and for the reason at the head of *Groups* below:
+structure is global. A group records the version it was made at, because that is
+worth knowing, but it is not a gate — a group made while standing at v3 holds
+its members at v0 too, and can be moved there like anything else. What is
+versioned about a group is its transform, and a version that says nothing about
+one leaves it alone, so making a group changes nothing anywhere until it is
+used.
 
 Removing an entity at version *V* **cascades**: every edit naming it at *V* or
 later is removed too, and the undo entry carries them so the operation stays
@@ -395,12 +403,17 @@ answer, and leave-then-rejoin is the identity.
 
 Members that do not exist yet are skipped by resolve.
 
-**Groups nest four deep.** The limit is the shader's — a vertex carries a chain
-of transforms rather than one composed matrix, so the chain has to be bounded —
-and it is stated in the status line when a fifth level is asked for rather than
-being discovered as a bake failure. Four is low on purpose: nesting is a
-legibility problem before it is a performance one, and the number is raisable
-later without breaking worlds.
+**Groups nest as deep as they are nested.** A vertex carries a chain of
+transforms rather than one composed matrix, so the shader's loop has to be
+bounded — but the bound is a fact about the level rather than a rule the author
+is told: the bake writes the deepest chain it found into the span as `depth`,
+and the shader is compiled to that number. There is nothing to state in a status
+line and nothing to discover as a bake failure.
+
+An earlier draft capped it at four, on the grounds that nesting is a legibility
+problem before it is a performance one. That is still true, and it is still an
+argument for the *interface* discouraging deep nesting — but not for the format
+refusing it, which was the only thing the cap actually did.
 
 ### Eroding a group erodes the union
 

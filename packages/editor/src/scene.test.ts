@@ -685,19 +685,26 @@ describe('a group moves what is in it', () => {
     expect(at(w, 0, more[0])[0]).toEqual({ x: 40, y: 2 });
   });
 
-  test('a group holds nobody before it is born', () => {
-    // A layer may not reach back past itself, and a group born at v2 moving
-    // something at v0 is exactly that.
+  test('a group made at one version holds its members at every version', () => {
+    // Structure is global; the transform is versioned. A group made while
+    // standing at v2 is a fact about the world, so it can be moved at v0 like
+    // anything else — and until it is moved, it changes nothing anywhere.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 10, 10)],
       ['level', rect(20, 0, 10, 10)],
     );
 
     const made = grouped(world, 2, ids)!;
+
+    for (let v = 0; v < 4; v++) {
+      expect(at(made.world, v as VersionId, ids[0])[0]).toEqual({ x: 0, y: 0 });
+    }
+
     const w = moved(made.world, 0, made.id, { translation: { x: 100, y: 0 } });
 
-    expect(at(w, 1, ids[0])[0]).toEqual({ x: 0, y: 0 });
-    expect(at(w, 2, ids[0])[0]).toEqual({ x: 0, y: 0 });
+    // And moving it at v0 carries down the chain, the way every edit does.
+    expect(at(w, 0, ids[0])[0]).toEqual({ x: 100, y: 0 });
+    expect(at(w, 1, ids[1])[0]).toEqual({ x: 120, y: 0 });
   });
 
   test('the version chain still runs one stage at a time under a group', () => {

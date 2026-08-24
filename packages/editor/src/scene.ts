@@ -337,26 +337,21 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
  * structure at a time instead of one version at a time. That is deliberate:
  * one rule to learn rather than two that rhyme.
  *
+ * Every version, whenever the group was made. Membership is one fact about the
+ * world, not something a layer does, so a group made while standing at v3 holds
+ * its members at v0 too and can be moved there. What is versioned is the
+ * transform, and a version that says nothing about a group leaves it alone —
+ * which is why making one changes nothing anywhere until it is used.
+ *
  * The group's own erosion is not read here. It offsets the union of what the
  * members produced, which is a read taken after this one and after the CSG has
  * put the union together. See *Groups* in `docs/versioning.md`.
  */
-function held(
-  world: World,
-  version: Version,
-  standing: ReadonlySet<VersionId>,
-  id: Id,
-): Affine {
-  return enclosing(world, id).reduce((m, g) => {
-    const group = world.groups.get(g);
-
-    // A group nothing has reached yet holds nobody: a layer may not reach back
-    // past itself, and a group born at v3 moving something at v0 is exactly
-    // that.
-    if (group === undefined || !standing.has(group.birth)) return m;
-
-    return compose(affine(version.edits.get(g)?.transform ?? EMPTY_TRANSFORM), m);
-  }, IDENTITY);
+function held(world: World, version: Version, id: Id): Affine {
+  return enclosing(world, id).reduce(
+    (m, g) => compose(affine(version.edits.get(g)?.transform ?? EMPTY_TRANSFORM), m),
+    IDENTITY,
+  );
 }
 
 export function resolveAt(world: World, v: VersionId): Resolved[] {
@@ -369,16 +364,9 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
   const frame = new Map<PolygonId, Affine>();
   const depth = new Map<PolygonId, number>();
 
-  // The versions walked so far, which is what a group's birth is tested
-  // against: the chain is a chain, and the stage in hand is as far as it has
-  // got rather than a number to compare with.
-  const reached = new Set<VersionId>();
-
   for (const k of chain(world, v)) {
     const version = world.versions[k];
     const outer = new Map<Id, Affine>();
-
-    reached.add(k);
 
     for (const [id, polygon] of world.polygons) {
       if (polygon.birth === k) {
@@ -411,7 +399,7 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
       if (up === undefined) continue;
 
-      const m = outer.get(up) ?? held(world, version, reached, id);
+      const m = outer.get(up) ?? held(world, version, id);
 
       outer.set(up, m);
       frame.set(id, compose(m, frame.get(id)!));

@@ -548,16 +548,11 @@ function moving(world: World, from: VersionId): Moving[] {
 
   const next = world.versions[from + 1];
 
-  /** Every group holding a polygon at the later version, with what that
-   * version does to it. A group nothing has reached yet holds nobody, the same
-   * way `resolveAt` has it. */
+  /** Every group holding a polygon, with what the later version does to it.
+   * Membership is global, so this is not a question about when the group was
+   * made — only about what this version says. */
   const holding = (id: PolygonId): Holder[] =>
     enclosing(world, id)
-      .filter(g => {
-        const group = world.groups.get(g);
-
-        return group !== undefined && group.birth <= from + 1;
-      })
       .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM }));
 
   return after.map(it => {
