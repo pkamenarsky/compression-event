@@ -5,6 +5,7 @@ import {
   Resolved,
   addPolygon,
   composed,
+  contributing,
   grouped,
   polygonsIn,
   ungrouped,
@@ -112,7 +113,7 @@ describe('csg', () => {
 
       // The runs add up to the union's outline and no more. A wall left
       // standing between the two rooms would show up as extra length.
-      expect(runLength(csg(items))).toBeCloseTo(outlineOf(items), 6);
+      expect(runLength(csg(world, 0))).toBeCloseTo(outlineOf(items), 6);
       expect(shapeArea(simplify(items.flatMap(i => i.shape)))).toBeCloseTo(175, 6);
     }
   });
@@ -121,7 +122,7 @@ describe('csg', () => {
     for (const [a, b] of everyWinding(rect(0, 0, 10, 10), rect(5, 5, 10, 10))) {
       const { world } = drawn(['level', a], ['solid', b]);
 
-      expect(shapeArea(csg(resolveAt(world, 0)))).toBeCloseTo(75, 6);
+      expect(shapeArea(csg(world, 0))).toBeCloseTo(75, 6);
     }
   });
 
@@ -133,7 +134,8 @@ describe('csg', () => {
     const b = [{ x: 96, y: 224 }, { x: 288, y: -64 }, { x: -128, y: -64 }];
 
     const only = (r: Point[]) => resolveAt(drawn(['level', r]).world, 0);
-    const both = resolveAt(drawn(['level', a], ['level', b]).world, 0);
+    const pair = drawn(['level', a], ['level', b]).world;
+    const both = resolveAt(pair, 0);
 
     const apart = shapeArea(simplify(only(a).flatMap(i => i.shape)))
       + shapeArea(simplify(only(b).flatMap(i => i.shape)));
@@ -142,7 +144,7 @@ describe('csg', () => {
 
     // The outline is the union's, with nothing left over: the hole the
     // cancellation used to punch would carry its own runs.
-    expect(runLength(csg(both))).toBeCloseTo(outlineOf(both), 6);
+    expect(runLength(csg(pair, 0))).toBeCloseTo(outlineOf(both), 6);
 
     // And they do overlap, so the union is smaller than the two of them.
     const together = shapeArea(simplify(both.flatMap(i => i.shape)));
@@ -159,7 +161,7 @@ describe('csg', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
     const gone = transformed(world, 0, ids[0], { erosion: 8 });
 
-    expect(shapeArea(csg(resolveAt(gone, 0)))).toBeCloseTo(0, 6);
+    expect(shapeArea(csg(gone, 0))).toBeCloseTo(0, 6);
   });
 
   test('an eroded strip takes its ground with it', () => {
@@ -168,14 +170,14 @@ describe('csg', () => {
 
     // The strip is inside the room, so it never added anything; eroding it flat
     // must not add any either.
-    expect(shapeArea(csg(resolveAt(eroded, 0)))).toBeCloseTo(1600, 6);
+    expect(shapeArea(csg(eroded, 0))).toBeCloseTo(1600, 6);
   });
 
   test('a transform moves what the set is computed from', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 10, 10)], ['level', rect(0, 0, 10, 10)]);
     const moved = transformed(world, 0, ids[1], { translation: { x: 100, y: 0 } });
 
-    const shape = csg(resolveAt(moved, 0));
+    const shape = csg(moved, 0);
 
     // Far enough apart to stay two rooms, and no area lost in the move.
     expect(shape.length).toBe(2);
@@ -217,7 +219,7 @@ describe('transforms', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
     const squashed = transformed(world, 0, ids[0], { scale: { x: 4, y: 1 }, erosion: 2 });
 
-    expect(shapeArea(csg(resolveAt(squashed, 0)))).toBeCloseTo(36 * 6, 6);
+    expect(shapeArea(csg(squashed, 0))).toBeCloseTo(36 * 6, 6);
   });
 });
 
@@ -230,10 +232,10 @@ describe('versions', () => {
     // rather than dropping back to the unshrunk shape.
     for (const v of [1, 2, 3, 4]) {
       expect(only(eroded, v, ids[0]).erosion).toBe(10);
-      expect(shapeArea(csg(resolveAt(eroded, v)))).toBeCloseTo(6400, 6);
+      expect(shapeArea(csg(eroded, v))).toBeCloseTo(6400, 6);
     }
 
-    expect(shapeArea(csg(resolveAt(eroded, 0)))).toBeCloseTo(10000, 6);
+    expect(shapeArea(csg(eroded, 0))).toBeCloseTo(10000, 6);
   });
 
   test('an edit made in an early version flows forward into every later one', () => {
@@ -249,7 +251,7 @@ describe('versions', () => {
 
     // And v3's own erosion is still on top of it, so the two compose.
     expect(late.erosion).toBe(20);
-    expect(shapeArea(csg(resolveAt(moved, 4)))).toBeCloseTo(60 * 60, 6);
+    expect(shapeArea(csg(moved, 4))).toBeCloseTo(60 * 60, 6);
   });
 
   test('an edit lands in the version it was made in and no earlier one', () => {
@@ -276,7 +278,7 @@ describe('versions', () => {
     const a = transformed(world, 1, ids[0], { erosion: 10 });
     const b = transformed(a, 2, ids[0], { erosion: 20 });
 
-    expect(shapeArea(csg(resolveAt(b, 2)))).toBeCloseTo(60 * 60, 6);
+    expect(shapeArea(csg(b, 2))).toBeCloseTo(60 * 60, 6);
 
     // And the source is untouched by either of them, at every version.
     for (const v of [0, 1, 2, 3, 4]) {
@@ -288,11 +290,11 @@ describe('versions', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const gone = transformed(world, 2, ids[0], { erosion: 80 });
 
-    expect(shapeArea(csg(resolveAt(gone, 2)))).toBeCloseTo(0, 6);
+    expect(shapeArea(csg(gone, 2))).toBeCloseTo(0, 6);
 
     const back = transformed(gone, 2, ids[0], { erosion: 0 });
 
-    expect(shapeArea(csg(resolveAt(back, 2)))).toBeCloseTo(10000, 6);
+    expect(shapeArea(csg(back, 2))).toBeCloseTo(10000, 6);
   });
 });
 
@@ -817,5 +819,104 @@ describe('what a selection reaches', () => {
     const w = without(world, new Set([ids[0]]));
 
     expect(w.groups.has(group)).toEqual(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Eroding a group
+// -----------------------------------------------------------------------------
+
+describe('a group erodes as one shape', () => {
+  /** Two rectangles overlapping end to end: a corridor with a join in the
+   * middle of it. */
+  function corridor(): { world: World, ids: PolygonId[], group: GroupId } {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 40)],
+      ['level', rect(80, 0, 100, 40)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+
+    return { world: made.world, ids, group: made.id };
+  }
+
+  test('the union pulls back at its outer boundary, not at the seam', () => {
+    const { world, group } = corridor();
+    const d = 15;
+    const w = moved(world, 0, group, { erosion: d });
+
+    // 180 x 40 eroded by 15 is 150 x 10, in one piece.
+    const shape = csg(w, 0);
+
+    expect(shapeArea(shape)).toBeCloseTo(150 * 10, 6);
+    expect(shape.length).toEqual(1);
+  });
+
+  test('which is not what eroding each of them gives', () => {
+    // The overlap is 20 and the depth is 15, so each member pulls back 15 from
+    // its own end of it and the corridor breaks: two rooms where the author
+    // drew one. That is the case the union exists for.
+    const { world, ids } = corridor();
+
+    let w = world;
+
+    for (const id of ids) w = moved(w, 0, id, { erosion: 15 });
+
+    const apart = csg(w, 0);
+
+    expect(apart.length).toBeGreaterThan(1);
+    expect(shapeArea(apart)).toBeLessThan(150 * 10);
+  });
+
+  test('a group at depth zero hands its members over one by one', () => {
+    // Not a special case for speed: the union of a set is what the CSG does
+    // with them anyway. It is what keeps an edit inside a plain group as cheap
+    // as an edit outside one.
+    const { world, ids, group } = corridor();
+
+    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id).sort())
+      .toEqual([...ids].sort());
+
+    expect(contributing(
+      moved(world, 0, group, { erosion: 5 }),
+      0,
+      resolveAt(world, 0),
+    ).map(c => c.id)).toEqual([group]);
+  });
+
+  test('the two kinds are unioned apart', () => {
+    // A room and a pillar is one group, but the room's boundary and the
+    // pillar's are not one boundary, and there is no shape that is the union
+    // of a thing and a hole in it.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const w = moved(made.world, 0, made.id, { erosion: 5 });
+    const out = contributing(w, 0, resolveAt(w, 0));
+
+    expect(out.map(c => c.kind).sort()).toEqual(['level', 'solid']);
+
+    // Each union pulls back by the depth in its own sense, which is what the
+    // same depth on each of them separately would have done — the group only
+    // changes what the offset is taken on.
+    expect(shapeArea(out.find(c => c.kind === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
+    expect(shapeArea(out.find(c => c.kind === 'solid')!.shape)).toBeCloseTo(10 * 10, 6);
+  });
+
+  test('a group inside an eroding group is projected first', () => {
+    const { world, group: inner } = corridor();
+    const third = addPolygon(world, 'level', rect(300, 0, 40, 40), 0);
+    const outer = grouped(third.world, 0, [inner, third.id])!;
+
+    const w = moved(moved(outer.world, 0, inner, { erosion: 15 }), 0, outer.id, { erosion: 2 });
+    const out = contributing(w, 0, resolveAt(w, 0));
+
+    // One contributor, and the inner group's own offset is inside the outer
+    // one's rather than replaced by it.
+    expect(out.map(c => c.id)).toEqual([outer.id]);
+    expect(shapeArea(out[0].shape)).toBeCloseTo(146 * 6 + 36 * 36, 6);
   });
 });

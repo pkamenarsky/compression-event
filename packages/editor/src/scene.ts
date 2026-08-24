@@ -31,7 +31,18 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { OpSubtract, Ring, Shape, combine, contains, erode, isCCW, keeping, simplify } from './geometry';
+import {
+  OpSubtract,
+  Ring,
+  Shape,
+  combine,
+  contains,
+  erode,
+  isCCW,
+  keeping,
+  simplify,
+  union,
+} from './geometry';
 import {
   Clipping,
   EMPTY_TRANSFORM,
@@ -685,6 +696,145 @@ export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point):
 // -----------------------------------------------------------------------------
 
 /**
+ * What the CSG is actually handed: a polygon, or the projection an eroding
+ * group takes over what its members produced.
+ *
+ * Separate from `Resolved` because a group has none of what a `Resolved`
+ * is — no source ring, no corners, nothing to put a handle on. What it has is
+ * a shape, which is all this end of the pipe ever wanted.
+ */
+export interface Contributed {
+  id: Id
+  kind: PolygonType
+  shape: Shape
+  /** Whether the shape is already an arrangement and `simplify` may be
+   * skipped. A projection is one by construction. */
+  simple: boolean
+}
+
+/**
+ * Every polygon's depth, and every group's, as version `v` leaves it.
+ *
+ * Inherited down the chain exactly as a polygon's is: a version that says
+ * nothing about a group leaves its depth where its base had it.
+ */
+export function depths(world: World, v: VersionId): Map<Id, number> {
+  const out = new Map<Id, number>();
+
+  for (const k of chain(world, v)) {
+    for (const [id, edit] of world.versions[k].edits) {
+      if (world.groups.has(id)) out.set(id, edit.transform.erosion);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * The resolved polygons as the CSG should see them: a group with a depth on it
+ * standing in for its members, and everything else passed straight through.
+ *
+ * A group erodes **as if it were one polygon** — union the members, offset that
+ * boundary inward — rather than each member being offset on its own. Two
+ * rectangles making a corridor, each eroded by `d`, both pull back lengthwise
+ * at the join and the corridor breaks in two; eroding the union pulls back only
+ * the outer boundary and the corridor stays put. The author cannot see the seam
+ * that failed, because it is interior geometry behind a wall that still looks
+ * right, which is what makes it unacceptable rather than approximate.
+ *
+ * A group at depth zero contributes nothing of its own and hands its members
+ * over one by one. That is not a special case for speed — the union of a set is
+ * what the CSG does with them anyway — but it is what keeps an edit inside an
+ * unerroded group as cheap as an edit outside one.
+ *
+ * The two kinds are unioned apart. A group holding a room and a pillar is one
+ * group, but the room's boundary and the pillar's are not one boundary, and
+ * there is no shape that is the union of a thing and a hole in it.
+ */
+export function contributing(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+): Contributed[] {
+  const depth = depths(world, v);
+  const mine = new Map(items.map(it => [it.id as Id, it]));
+  const up = parentOf(world);
+  const out: Contributed[] = [];
+
+  /** What one member offers of a kind, projected if it is an eroding group. */
+  const offer = (id: Id, kind: PolygonType): Shape => {
+    const it = mine.get(id);
+
+    if (it !== undefined) return it.polygon.type === kind ? it.shape : [];
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return [];
+
+    let all: Shape = [];
+
+    for (const m of group.members) {
+      const part = offer(m, kind);
+
+      all = all.length === 0 ? part : part.length === 0 ? all : union(all, part);
+    }
+
+    const d = depth.get(id) ?? 0;
+
+    return d === 0 || all.length === 0 ? all : erode(all, d);
+  };
+
+  const walk = (id: Id): void => {
+    const it = mine.get(id);
+
+    if (it !== undefined) {
+      out.push({ id, kind: it.polygon.type, shape: it.shape, simple: it.erosion !== 0 });
+      return;
+    }
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return;
+
+    if ((depth.get(id) ?? 0) === 0) {
+      for (const m of group.members) walk(m);
+      return;
+    }
+
+    for (const kind of ['level', 'solid'] as const) {
+      const shape = offer(id, kind);
+
+      if (shape.length !== 0) out.push({ id, kind, shape, simple: true });
+    }
+  };
+
+  for (const it of items) {
+    if (!up.has(it.id)) walk(it.id);
+  }
+
+  for (const id of world.groups.keys()) {
+    if (!up.has(id)) walk(id);
+  }
+
+  return out;
+}
+
+/** Resolved polygons as contributors, one for one. What the CSG sees wherever
+ * no group is eroding, and what the bake works in. */
+export function plainly(items: readonly Resolved[]): Contributed[] {
+  return items.map(it => ({
+    id: it.id,
+    kind: it.polygon.type,
+    shape: it.shape,
+
+    // A projection at any depth came out of an arrangement and is already
+    // simple. At depth zero it is the source ring as drawn, which is allowed
+    // to cross itself.
+    simple: it.erosion !== 0,
+  }));
+}
+
+/**
  * The set the game would get — every `level` unioned, every `solid` taken out —
  * as the open runs its outline is made of.
  *
@@ -693,8 +843,8 @@ export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point):
  * See `worldset.ts`. Nothing that reads this wants a closed loop — the overlay
  * is stroked, and collision is edge-normal based.
  */
-export function csg(items: Resolved[]): Point[][] {
-  return runs(live(EMPTY_LIVE, items));
+export function csg(world: World, v: VersionId): Point[][] {
+  return runs(live(EMPTY_LIVE, contributing(world, v, resolveAt(world, v))));
 }
 
 /**
@@ -705,8 +855,9 @@ export function csg(items: Resolved[]): Point[][] {
  */
 export interface Live {
   set: WorldSet
-  /** What each polygon resolved to when the set was last brought up to date. */
-  seen: Map<PolygonId, Resolved>
+  /** What each contributor resolved to when the set was last brought up to
+   * date. A group with a depth on it is one of them; its members are not. */
+  seen: Map<Id, Contributed>
 }
 
 export const EMPTY_LIVE: Live = { set: emptyWorldSet, seen: new Map() };
@@ -724,28 +875,23 @@ export function runs(l: Live): Point[][] {
  * pass over the geometry, which is the same order as resolving it — and far
  * less than rebuilding the set for a world where nothing moved.
  */
-export function live(previous: Live, items: Resolved[]): Live {
+export function live(previous: Live, items: readonly Contributed[]): Live {
   const edits: SetEdit[] = [];
-  const seen = new Map<PolygonId, Resolved>();
+  const seen = new Map<Id, Contributed>();
 
   for (const it of items) {
     seen.set(it.id, it);
 
     const was = previous.seen.get(it.id);
-    const retyped = was !== undefined && was.polygon.type !== it.polygon.type;
+    const retyped = was !== undefined && was.kind !== it.kind;
 
     if (was !== undefined && !retyped && unmoved(was.shape, it.shape)) continue;
-
-    // A projection at any depth came out of an arrangement and is already
-    // simple, so the set is spared deriving that again. At depth zero it is the
-    // source ring as drawn, which is allowed to cross itself.
-    const simple = it.erosion !== 0;
 
     // A retype has to go in as an insert: an update keeps the kind it had.
     edits.push(
       was === undefined || retyped
-        ? { op: 'insert', id: it.id, type: it.polygon.type, shape: it.shape, simple }
-        : { op: 'update', id: it.id, shape: it.shape, simple },
+        ? { op: 'insert', id: it.id, type: it.kind, shape: it.shape, simple: it.simple }
+        : { op: 'update', id: it.id, shape: it.shape, simple: it.simple },
     );
   }
 

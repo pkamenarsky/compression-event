@@ -99,8 +99,10 @@ import {
   Resolved,
   affine,
   compose,
+  depths,
   live,
   place,
+  plainly,
   project,
   resolved,
   unplace,
@@ -332,6 +334,28 @@ export interface Bake {
 }
 
 export const EMPTY_BAKE: Bake = { spans: new Map(), progress: null };
+
+/**
+ * Whether a group anywhere in the world has a depth on it.
+ *
+ * The bake cuts one track per polygon, against the handful of polygons that
+ * could bury it, and that rests on a polygon's boundary being a question about
+ * that polygon and its neighbours. An eroding group's boundary is not: it is
+ * the offset of the union of everything under it, so the unit that moves is
+ * the group, and the unit the bake cuts is not that yet.
+ *
+ * Answered rather than assumed away, because the alternative is a bake that
+ * looks finished and ships geometry the editor is not drawing.
+ */
+export function erodingGroup(world: World): boolean {
+  for (let v = 0; v < world.versions.length; v++) {
+    for (const d of depths(world, v).values()) {
+      if (d !== 0) return true;
+    }
+  }
+
+  return false;
+}
 
 export function stamp(world: World, from: VersionId): Stamp {
   return {
@@ -896,7 +920,7 @@ function everything(at: Resolved[]): Frame {
   // runs back in whatever order the entries happen to sit in, which an edit
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
-  return pieces(live(EMPTY_LIVE, at).set)
+  return pieces(live(EMPTY_LIVE, plainly(at)).set)
     .map(p => ({ id: p.source, points: p.points }))
     .sort((p, q) => p.id - q.id);
 }

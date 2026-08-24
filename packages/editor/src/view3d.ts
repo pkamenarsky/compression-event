@@ -38,7 +38,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { Point, Renderer, SCALE, renderer } from '@ce/game';
 import { Bake, spanAt } from './bake';
 import { bakedLevel } from './export';
-import { EMPTY_LIVE, Live, live, resolveAt, runs } from './scene';
+import { EMPTY_LIVE, Live, contributing, live, resolveAt, runs } from './scene';
 import { theme } from './theme';
 import { Replay, Update, VersionId, World } from './types';
 
@@ -243,7 +243,7 @@ function panel(
     const shown = (w: World, v: VersionId): void => {
       if (view === null) return;
 
-      set = live(set, resolveAt(w, v));
+      set = live(set, contributing(w, v, resolveAt(w, v)));
 
       const outline = runs(set) as Point[][];
 

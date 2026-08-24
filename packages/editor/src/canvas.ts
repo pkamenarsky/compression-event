@@ -28,6 +28,7 @@ import {
   hitEdge,
   hitPolygons,
   hitVertex,
+  contributing,
   live,
   placeVertex,
   polygonsIn,
@@ -293,11 +294,6 @@ export function worldCanvas(
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
 
       if (items.length === 0) return;
-
-      // A depth belongs to whoever it is written on, and a group's offsets the
-      // union of what its members produced. There is nothing there to resolve
-      // yet, so the one gesture that writes one is not offered on a group.
-      if (code === 'KeyE' && ids.some(id => world().groups.has(id))) return;
 
       const from = at(e);
 
@@ -706,7 +702,7 @@ export function worldCanvas(
               if (el && ctx) {
                 const items = resolveAt(w, at);
 
-                set = live(set, items);
+                set = live(set, contributing(w, at, items));
 
                 const played = r === null
                   ? null

@@ -95,7 +95,7 @@ function lengthOf(runs: Point[][]): number {
 
 /** The set the editor draws at a version, for the bake to be checked against. */
 function editorAt(world: World, v: VersionId): number {
-  return lengthOf(csg(resolveAt(world, v)));
+  return lengthOf(csg(world, v));
 }
 
 /**
@@ -575,7 +575,7 @@ describe('a corner coming or going across a span', () => {
   // both ends of it, sitting on the edge it grows out of at the end where it is
   // not real, which is the same shape as not being there.
   //
-  // `editorAt` goes through `csg(resolveAt(...))` rather than through the
+  // `editorAt` goes through `csg(...)` rather than through the
   // bake's own `moving`, so these are checked against the editor rather than
   // against the machinery under test.
 
