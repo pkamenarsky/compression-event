@@ -589,6 +589,48 @@ backward propagation affordable. On by default.
 Re-resolution during a drag runs on animation frame, not per mouse event, and
 touches only the dirtied chain.
 
+### Canvas: a group is one outline, and going inside it
+
+A group draws as **one outline over the union of what it holds**, in its own
+stroke, and its members are not drawn at all — no outlines, no handles. That is
+the whole of what grouping does to the eye: several boundaries go, and one
+arrives. A group at depth zero still draws this way; the CSG only cares which
+groups erode, but the hand cares about every group, because a group is one thing
+to pick and one thing to drag whatever its depth.
+
+A group holding both kinds draws twice, once per kind. There is no shape that is
+the union of a room and the pillar standing in it, and a single line around both
+would be a boundary the level does not have anywhere.
+
+**Double-clicking opens a group**, and then its members are separately pickable,
+transformable and erodeable, and a group nested inside it draws as its own
+outline — the same rule, one level down, to any depth. Everything outside the
+open group is still drawn and no longer pickable: a slip of the cursor onto the
+room next door must not quietly take the selection out of scope.
+
+Three ways back out, and each covers where the others are awkward:
+
+- **Escape** steps out one level. It needs no target, so it always works.
+  It unwinds in size order — abandon a half-drawn polygon first, then a level,
+  then the selection — so holding it lands at the top and stops.
+- **Double-clicking empty canvas** steps out one level. It is the gesture's own
+  inverse and it is where the hand already is.
+- **The breadcrumb** says where you are, and any crumb is a way out to that
+  level. It is the least-used of the three and still earns its space: a mode
+  with no visible sign that it is on is what makes isolation mode hateable, and
+  it is the only way out that is more than one step.
+
+Leaving picks the group left behind, which puts back what going in took away.
+
+Command-click is unchanged and is a different thing: it reaches past a shut
+group to the polygon for **one click**, without going anywhere. Going inside is
+a place to be; command-click is a reach.
+
+The open path is one group id, not a list. A group is inside exactly one other,
+so the id says the whole path — and a stored list could disagree with the
+structure after an ungroup two levels up. A path to a group that is no longer
+there is no path at all, and being let out by an edit is the right failure.
+
 ### Canvas: polygon states
 
 - **Inherited** — resolved from upstream, untouched here. Muted outline.

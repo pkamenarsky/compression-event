@@ -127,6 +127,7 @@ export function restored(file: Saved): EditorState {
       versions: file.world.versions.map(restoredVersion),
     },
     currentVersion: file.currentVersion,
+    inside: null,
     selection: { polygons: file.selection, vertices: [] },
     settings: file.settings,
     view: file.view,

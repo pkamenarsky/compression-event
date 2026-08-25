@@ -32,6 +32,15 @@ export const theme = {
   /** Under a picked polygon. Faint enough that two overlapping ones still read
    * as two, and that the CSG outline over the top keeps the eye. */
   pickedFill: 'rgba(91, 140, 255, 0.16)',
+  /** A shut group, drawn as one outline over its members' union. Green, since
+   * every other line on the canvas is on the grey-blue-orange axis and a group
+   * is not a kind of polygon. */
+  group: '#5fb98a',
+  groupPicked: '#8ff0bb',
+  groupFill: 'rgba(95, 185, 138, 0.10)',
+  /** Outside the group standing open: still drawn, so the level around it can
+   * be worked against, but not pickable and not competing for the eye. */
+  outside: '#4a4d57',
   vertex: '#c8cad2',
   /** The source ring under an eroded polygon: where the handles are. */
   source: '#6f7788',

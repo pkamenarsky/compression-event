@@ -353,6 +353,25 @@ export function within(world: World, id: Id): Id[] {
 }
 
 /**
+ * The groups a click is currently inside, outermost first: the path opened by
+ * double-clicking down into them.
+ *
+ * Derived from one id rather than stored as a list, because the structure is
+ * the only thing that says what a group is inside, and a stored path could
+ * disagree with it — ungrouping something two levels up would leave a route to
+ * a place that is no longer anywhere.
+ *
+ * Empty where `inside` is nothing, and empty where it names a group that has
+ * since been ungrouped or deleted. Being let out by an edit is the right
+ * failure: there is no longer a group to be in.
+ */
+export function opened(world: World, inside: GroupId | null): GroupId[] {
+  if (inside === null || !world.groups.has(inside)) return [];
+
+  return [...enclosing(world, inside).reverse(), inside];
+}
+
+/**
  * What the next thing done applies to.
  *
  * Two lists rather than one, because the two tools ask different questions and
@@ -510,6 +529,18 @@ export interface EditorState {
   currentVersion: VersionId
   /** What the next transform applies to. */
   selection: Selection
+  /**
+   * The group being edited inside, or nothing at the top level.
+   *
+   * A group draws as one outline and picks as one thing; going inside one is
+   * how its members become separately pickable, transformable and erodeable.
+   * The innermost open group is enough to say the whole path, because a group
+   * is inside exactly one other — see `opened`.
+   *
+   * Not in the file. Where the cursor happens to be standing is about this
+   * sitting, in the same way the selection is.
+   */
+  inside: GroupId | null
 
   settings: Settings
   view: View
@@ -555,6 +586,7 @@ export function initialState(world: World): EditorState {
     world,
     currentVersion: 0,
     selection: EMPTY_SELECTION,
+    inside: null,
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',

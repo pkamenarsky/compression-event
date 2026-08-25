@@ -29,6 +29,12 @@ import {
   hitPolygons,
   hitVertex,
   contributing,
+  showing,
+  swallowed,
+  reachable,
+  reaching,
+  Contributed,
+  sidedWith,
   live,
   placeVertex,
   polygonsIn,
@@ -57,9 +63,11 @@ import {
   VertexId,
   View,
   World,
+  GroupId,
   alsoPicked,
   marked,
-  outermost,
+  opened,
+  parentOf,
   within,
   resized,
   togglePicked,
@@ -75,6 +83,19 @@ const HANDLE = 9;
  * the press still counts as a click rather than a drag. See `pointerDragged`.
  */
 const SLOP = 3;
+
+/**
+ * How long after a click another one in the same place is the second half of a
+ * double-click. The platform's own interval, which is not readable from a page
+ * — 500ms is the Mac default and 350 is what most editors settle on, being
+ * short enough that two deliberate clicks on the same room are still two.
+ *
+ * Timed here rather than read off the event, because a pointer event does not
+ * carry a click count: `detail` is the click count on `mousedown` and zero on
+ * `pointerdown`, and this loop is built on pointer events so that a press,
+ * a drag and a release are one story.
+ */
+const DOUBLE_MS = 350;
 
 /**
  * Held, it turns a click on a corner into taking that corner out, the way
@@ -111,6 +132,7 @@ export function worldCanvas(
   view: Value<View>,
   tool: Value<Tool>,
   selection: Value<Selection>,
+  inside: Value<GroupId | null>,
   currentVersion: Value<VersionId>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
@@ -131,6 +153,10 @@ export function worldCanvas(
    * so it is a cache rather than state: rebuilding it would be correct and slow,
    * and this makes a redraw cost only what actually moved. */
   let set: Live = EMPTY_LIVE;
+
+  /** Where and when the last click landed, for telling the second of a pair
+   * from the first. Cleared by anything that is not a click. */
+  let last: { at: Point, when: number } | null = null;
 
   return interactive<Local>(EMPTY_LOCAL, (local, setLocal) => {
     const at = (e: PointerEvent, snap = false): Point => {
@@ -191,14 +217,24 @@ export function worldCanvas(
 
       if (end.tag !== 'done' || box === null) return;
 
-      const items = resolveAt(world(), currentVersion());
       const points = tool() === 'point';
 
+      // Corners come off what is on screen as itself; polygons come off
+      // everything, because a member is how a marquee finds the group over it.
+      const items = points ? pickable() : resolveAt(world(), currentVersion());
+
       // A marquee takes whole groups: half a group picked is a selection that
-      // no gesture could act on without taking the group apart.
+      // no gesture could act on without taking the group apart. Whole at the
+      // level standing open, that is — inside a group it takes that group's
+      // members, which is the point of having gone in.
+      const path = opened(world(), inside());
       const caught = points
         ? verticesWithinBox(items, box.a, box.b)
-        : [...new Set(withinBox(items, box.a, box.b).map(id => outermost(world(), id)))];
+        : [...new Set(
+          withinBox(items, box.a, box.b)
+            .filter(id => reachable(world(), id, inside()))
+            .map(id => reaching(world(), id, path)),
+        )];
 
       update(s => ({
         ...s,
@@ -405,7 +441,7 @@ export function worldCanvas(
      * on nothing means everywhere.
      */
     function clicked(e: PointerEvent): void {
-      const items = resolveAt(world(), currentVersion());
+      const items = pickable();
       const reach = HANDLE / view().zoom;
       const corner = hitVertex(items, at(e), reach);
       const taking = input.holding(MINUS[0]) || input.holding(MINUS[1]);
@@ -533,13 +569,80 @@ export function worldCanvas(
     }
 
     /**
-     * What is under the cursor, as the things a click would move: the outermost
-     * group each one is in, rather than the polygon itself.
+     * Double-clicking: into the group under the cursor, or out of the one
+     * standing open where there is nothing under it.
      *
-     * Command reaches past that to the polygon, which is the one gesture for
-     * editing inside a group. Grouping is for moving several things as one, so
-     * the default has to be the group; reaching a member of one is rarer and is
-     * worth a modifier rather than a mode.
+     * How to get back out is the part of this that programs disagree about.
+     * Illustrator's isolation mode leaves on Escape, on a double-click over
+     * empty canvas, and on the back arrow of a breadcrumb bar; Figma has no
+     * mode at all and steps up one level on Escape; Unity's prefab mode has
+     * only the breadcrumb. What they agree on is that going in is a
+     * double-click, so the only real question is the way back.
+     *
+     * All three of Illustrator's, because they cost nothing together and each
+     * covers where the others are awkward: Escape needs no target and always
+     * works, the double-click is the gesture's own inverse and is where the
+     * hand already is, and the breadcrumb is the only one that says where you
+     * are rather than just taking you somewhere. A mode with no visible sign
+     * that it is on is the thing that makes isolation hateable, so the bar
+     * carries its weight even though it is the least-used way out.
+     */
+    function entering(e: PointerEvent): void {
+      const w = world();
+      const path = opened(w, inside());
+
+      // Not `standingIn`: command means "past the group for one click", and
+      // going into one is the opposite of that. A double-click is asking for
+      // the group whatever else is held down.
+      const into = hitPolygons(resolveAt(w, currentVersion()), at(e))
+        .filter(id => reachable(w, id, inside()))
+        .map(id => reaching(w, id, path))
+        .find(id => w.groups.has(id));
+
+      if (into !== undefined) {
+        // The selection goes: what was picked was the group, and it is not a
+        // thing that can be picked any more from in here.
+        update(s => ({ ...s, inside: into, selection: { ...s.selection, polygons: [] } }));
+
+        return;
+      }
+
+      // Nothing under the cursor that could be gone into, so this is the way
+      // back: one level out, exactly as Escape.
+      leaving();
+    }
+
+    /**
+     * One level out, and the group left behind picked.
+     *
+     * Leaving with it selected rather than with nothing selected, because
+     * coming out of a group is nearly always followed by doing something to it
+     * — and because it puts back what going in took away.
+     */
+    function leaving(): void {
+      update(s => {
+        const at = s.inside;
+
+        if (at === null) return { ...s, selection: { ...s.selection, polygons: [] } };
+
+        return {
+          ...s,
+          inside: parentOf(s.world).get(at) ?? null,
+          selection: { ...s.selection, polygons: [at] },
+        };
+      });
+    }
+
+    /**
+     * What is under the cursor, as the things a click would move: the outermost
+     * still-shut group each one is in, rather than the polygon itself.
+     *
+     * Grouping is for moving several things as one, so the default has to be
+     * the group. Two ways past it, and they are for different things:
+     * double-clicking *opens* the group, which is a place to be and lasts —
+     * everything in it becomes separately pickable and everything outside it
+     * stops being pickable at all — while command-click reaches straight
+     * through to the polygon for one click without going anywhere.
      */
     /**
      * What each picked thing's layer holds now, which is what a gesture
@@ -559,10 +662,29 @@ export function worldCanvas(
       );
     }
 
-    function standingIn(w: World, under: PolygonId[], e: MouseEvent): Id[] {
-      if (e.metaKey || e.ctrlKey) return under;
+    /**
+     * The polygons the tools may touch: what is on screen as itself.
+     *
+     * Corners belong to polygons, and a polygon inside a shut group has none
+     * on screen. Without this the point tool would still find the handles it
+     * is not drawing, and a click on nothing would move a corner of something
+     * a group is standing for. Everything outside the group standing open goes
+     * for the same reason, having been put out of reach.
+     */
+    function pickable(): Resolved[] {
+      const w = world();
+      const path = opened(w, inside());
 
-      return [...new Set(under.map(id => outermost(w, id)))];
+      return resolveAt(w, currentVersion())
+        .filter(it => !swallowed(w, it.id, path) && reachable(w, it.id, inside()));
+    }
+
+    function standingIn(w: World, under: PolygonId[], e: MouseEvent): Id[] {
+      const here = under.filter(id => reachable(w, id, inside()));
+
+      if (e.metaKey || e.ctrlKey) return here;
+
+      return [...new Set(here.map(id => reaching(w, id, opened(w, inside()))))];
     }
 
     /**
@@ -693,12 +815,13 @@ export function worldCanvas(
               view(),
               tool(),
               selection(),
+              inside(),
               currentVersion(),
               replay(),
               bake(),
               local(),
             ] as const,
-            ([w, s, v, t, sel, at, r, b, l]) => {
+            ([w, s, v, t, sel, ins, at, r, b, l]) => {
               if (el && ctx) {
                 const items = resolveAt(w, at);
 
@@ -712,7 +835,7 @@ export function worldCanvas(
                   el,
                   ctx,
                   v,
-                  layers(w, s, v, t, sel, at, l, items, runs(set), played),
+                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played),
                 );
               }
             },
@@ -766,7 +889,12 @@ export function worldCanvas(
               yield* panning();
             }
             else if (e.code === 'Escape') {
-              setLocal({ ...local(), draft: null });
+              // One thing at a time, outermost first: abandon what is being
+              // drawn, then step out of a group, then let the selection go.
+              // Each is smaller than the last, so Escape held down unwinds to
+              // the top level and stops there.
+              if (local().draft !== null) setLocal({ ...local(), draft: null });
+              else leaving();
             }
             else if (REMOVE.includes(e.code)) {
               removing();
@@ -802,6 +930,8 @@ export function worldCanvas(
             if (decided.tag === 'lost') continue;
 
             if (decided.tag === 'drag') {
+              last = null;
+
               // While a polygon is being laid down there is nothing to select
               // and nothing to move: every click is another of its points, and
               // a drag is a click that wandered.
@@ -812,7 +942,7 @@ export function worldCanvas(
               // Anywhere else it is a marquee.
               if (tool() === 'point') {
                 const grab = hitVertex(
-                  resolveAt(world(), currentVersion()),
+                  pickable(),
                   at(e),
                   HANDLE / view().zoom,
                 );
@@ -859,7 +989,17 @@ export function worldCanvas(
               clicked(e);
             }
             else if (tool() === 'polygon') {
-              picking(e);
+              const now = performance.now();
+              const twice = last !== null
+                && now - last.when < DOUBLE_MS
+                && Math.hypot(e.clientX - last.at.x, e.clientY - last.at.y) <= SLOP;
+
+              last = twice ? null : { at: { x: e.clientX, y: e.clientY }, when: now };
+
+              // The first of the pair has already picked, and going in drops
+              // that selection again — which is what going in means anyway.
+              if (twice) entering(e);
+              else picking(e);
             }
             else if (tool() === 'path') {
               penning(e);
@@ -1099,6 +1239,7 @@ function layers(
   view: View,
   tool: Tool,
   selection: Selection,
+  inside: GroupId | null,
   current: VersionId,
   local: Local,
   items: Resolved[],
@@ -1119,8 +1260,19 @@ function layers(
   }
 
   const reached = new Set(polygonsIn(world, selection.polygons));
+  const path = opened(world, inside);
 
-  out.push(ctx => polygons(ctx, view, items, selection, reached, tool === 'point'));
+  // A shut group is one shape, and its members are not on screen at all: the
+  // whole of what grouping does to the eye is take several outlines away and
+  // leave one. What is left here is everything a shut group is not drawing for.
+  const loose = items.filter(it => !swallowed(world, it.id, path));
+
+  const reach = (id: Id) => reachable(world, id, inside);
+
+  out.push(ctx => polygons(ctx, view, loose, selection, reached, tool === 'point', reach));
+  out.push(ctx =>
+    groups(ctx, view, world, showing(world, current, items, path), new Set(selection.polygons), reach),
+  );
   out.push(ctx => outlines(ctx, view, outline));
 
   // Over the editor's own answer, so the two can be read against each other:
@@ -1193,16 +1345,19 @@ function polygons(
   view: View,
   items: Resolved[],
   selection: Selection,
-  /** The polygons the selection reaches: itself, or everything under a group.
-   * A group has no outline of its own, so what says it is picked is its
-   * members drawn as picked. */
+  /** The polygons the selection reaches: itself, or everything under an open
+   * group. A shut group draws its own outline instead — see `groups`. */
   reached: ReadonlySet<PolygonId>,
   handles: boolean,
+  /** Whether a click could pick this one, which is false for everything
+   * outside the group standing open. */
+  reach: (id: Id) => boolean,
 ): void {
   for (const it of items) {
     const picked = reached.has(it.id);
+    const here = reach(it.id);
 
-    if (it.erosion !== 0 && (picked || handles)) {
+    if (it.erosion !== 0 && here && (picked || handles)) {
       ctx.beginPath();
       trace(ctx, view, it.source);
 
@@ -1222,13 +1377,14 @@ function polygons(
     // Filled, so that what is picked reads at a glance rather than having to be
     // traced. Nonzero, which is the rule the shape was arranged under, so a
     // polygon eroded into two rooms fills both and one with a hole keeps it.
-    if (picked) {
+    if (picked && here) {
       ctx.fillStyle = theme.pickedFill;
       ctx.fill();
     }
 
-    ctx.strokeStyle = picked
-      ? theme.picked
+    ctx.strokeStyle = !here
+      ? theme.outside
+      : picked ? theme.picked
       : it.polygon.type === 'solid' ? theme.solid : theme.level;
 
     ctx.lineWidth = picked ? 2 : 0.5;
@@ -1248,6 +1404,8 @@ function polygons(
     ctx.beginPath();
 
     for (const it of items) {
+      if (!reach(it.id)) continue;
+
       it.source.forEach((p, i) => {
         if (corners.has(it.corners[i].id) !== picked) return;
 
@@ -1258,6 +1416,62 @@ function polygons(
 
     ctx.fillStyle = picked ? theme.picked : theme.vertex;
     ctx.fill();
+  }
+}
+
+/**
+ * The shut groups, each as one outline over the union of what it holds.
+ *
+ * This is the whole of what a group looks like. Its members are not drawn at
+ * all and neither are their handles, because inside a shut group there is
+ * nothing to grab: the transform belongs to the group, and the corners belong
+ * to polygons that are not on screen. Double-clicking opens it, and then the
+ * outline goes and they come back.
+ *
+ * A mixed group draws twice, once per kind, and the two outlines are the two
+ * boundaries it really has. Nothing is lost by that — the shapes are disjoint
+ * in what they mean, not necessarily in where they are — and the alternative
+ * is a single line around a room and the pillar inside it, which is a boundary
+ * the level does not have anywhere.
+ */
+function groups(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  world: World,
+  shown: Contributed[],
+  /** What is picked, as picked: a group's id is in the selection itself, not
+   * by way of the members `reached` stands for. */
+  picking: ReadonlySet<Id>,
+  reach: (id: Id) => boolean,
+): void {
+  for (const c of shown) {
+    const group = sidedWith(c.id) ?? c.id;
+
+    if (!world.groups.has(group)) continue;
+
+    const picked = picking.has(group);
+    const here = reach(group);
+
+    ctx.beginPath();
+
+    for (const ring of c.shape) {
+      trace(ctx, view, ring);
+    }
+
+    if (picked && here) {
+      ctx.fillStyle = theme.groupFill;
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = !here ? theme.outside : picked ? theme.groupPicked : theme.group;
+    ctx.lineWidth = picked ? 2 : 1;
+
+    // Long dashes, so a group reads as a group at a glance and not as a wall
+    // that happens to be green. The short dash already means `solid`, and the
+    // solid side of a group has to be tellable from both.
+    ctx.setLineDash(c.kind === 'solid' ? [2, 3] : [9, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 

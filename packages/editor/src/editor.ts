@@ -1,6 +1,6 @@
 import { Value } from '@incpt/kontinuum';
-import { VNode, effect, object, stateful } from '@incpt/kontinuum-dom';
-import { div } from '@incpt/kontinuum-dom/html';
+import { VNode, dynamic, effect, fragment, object, show, stateful, text as textNode } from '@incpt/kontinuum-dom';
+import { div, span } from '@incpt/kontinuum-dom/html';
 import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
@@ -21,7 +21,10 @@ import {
   Version,
   VersionId,
   World,
+  GroupId,
   initialState,
+  opened,
+  parentOf,
   marked,
   redone,
   undone,
@@ -64,6 +67,7 @@ export function editor(initial: World): VNode {
             s.view,
             s.tool,
             s.selection,
+            s.inside,
             s.currentVersion,
             s.replay,
             s.bake,
@@ -82,6 +86,7 @@ export function editor(initial: World): VNode {
             update,
           ),
 
+          breadcrumb(s.world, s.inside, update),
           toolbar(s.tool, update),
           versionStrip(s.world, s.currentVersion, update),
           bakeButton(state, s.world, s.bake, update),
@@ -833,6 +838,77 @@ function previewButton(showing: Value<boolean>, update: Update): VNode {
 }
 
 const BUTTON_ROW = 24 + 2 * PADDING;
+
+/**
+ * Where the cursor is standing, when it is standing inside a group.
+ *
+ * Absent at the top level rather than showing a root crumb, because the top
+ * level is the resting state and a bar that is always there is a bar nobody
+ * reads. It appearing *is* the signal that picking has been narrowed; the
+ * crumbs are only how to get back somewhere other than one step.
+ *
+ * Every crumb is a way out to that level, and the leading one is a way out
+ * altogether — which is the difference between this and Escape, and the reason
+ * it earns its space on a four-deep path.
+ */
+function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: Update): VNode {
+  const crumbs = () => opened(world(), inside());
+
+  /** Out to `to`, with nothing picked. Jumping two levels is two levels'
+   * worth of the same step Escape takes. */
+  const out = (to: GroupId | null) =>
+    update(s => ({ ...s, inside: to, selection: { ...s.selection, polygons: [] } }));
+
+  const crumb = (label: string, to: GroupId | null, last: boolean) =>
+    span(
+      {
+        style: {
+          cursor: last ? 'default' : 'pointer',
+          color: last ? theme.text : theme.muted,
+        },
+        onclick: () => !last && out(to),
+      },
+      [textNode(label)],
+    );
+
+  return show(
+    () => crumbs().length > 0,
+    div(
+      {
+        style: {
+          position: 'absolute',
+
+          // Clear of the toolbar rather than over it. Along the top edge is
+          // where a path belongs and where every program that has one puts it.
+          left: `${12 + BUTTON + 2 * PADDING + 8}px`,
+          top: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 10px',
+          borderRadius: '8px',
+          background: theme.panel,
+          border: `1px solid ${theme.border}`,
+          boxShadow: `0 6px 18px ${theme.panelShadow}`,
+          font: '12px system-ui, sans-serif',
+          color: theme.muted,
+        },
+      },
+      [
+        dynamic(crumbs, at =>
+          fragment([
+            crumb('level', null, false),
+
+            ...at.flatMap((id, i) => [
+              span({ style: { color: theme.faded } }, [textNode('\u203a')]),
+              crumb(`group ${id}`, id, i === at.length - 1),
+            ]),
+          ]),
+        ),
+      ],
+    ),
+  );
+}
 
 function start(state: Value<EditorState>, update: Update): void {
   const job = bakeAll(state().world);

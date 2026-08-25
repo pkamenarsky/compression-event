@@ -7,7 +7,11 @@ import {
   composed,
   contributing,
   grouped,
+  reachable,
+  reaching,
+  showing,
   sidedWith,
+  swallowed,
   solidSide,
   polygonsIn,
   ungrouped,
@@ -38,6 +42,7 @@ import {
   VersionId,
   World,
   emptyWorld,
+  opened,
 } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -973,5 +978,99 @@ describe('a group erodes as one shape', () => {
     // one's rather than replaced by it.
     expect(out.map(c => c.id)).toEqual([outer.id]);
     expect(shapeArea(out[0].shape)).toBeCloseTo(146 * 6 + 36 * 36, 6);
+  });
+});
+
+describe('going inside a group', () => {
+  test('a shut group draws one outline and its members draw none', () => {
+    const { world, ids, group } = pair();
+    const items = resolveAt(world, 0);
+
+    const shut = showing(world, 0, items, []);
+
+    expect(shut.map(c => c.id)).toEqual([group]);
+    expect(ids.every(id => swallowed(world, id, []))).toBe(true);
+
+    // And with the group open, the members are back and it has no outline.
+    const open = showing(world, 0, items, [group]);
+
+    expect(open.map(c => c.id).sort()).toEqual([...ids].sort());
+    expect(ids.some(id => swallowed(world, id, [group]))).toBe(false);
+  });
+
+  test('a group draws as one shape even at depth zero', () => {
+    // The CSG only cares about groups that erode. Drawing cares about every
+    // group, because a group is one thing to the hand whatever its depth.
+    const { world, group } = pair();
+
+    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id)).toHaveLength(2);
+    expect(showing(world, 0, resolveAt(world, 0), []).map(c => c.id)).toEqual([group]);
+  });
+
+  test('opening one level leaves the one inside it shut', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 10, 10)],
+      ['level', rect(20, 0, 10, 10)],
+      ['level', rect(40, 0, 10, 10)],
+    );
+
+    const inner = grouped(world, 0, [ids[0], ids[1]])!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+    const w = outer.world;
+
+    // Shut: a click anywhere reaches the outer group.
+    expect(reaching(w, ids[0], [])).toEqual(outer.id);
+
+    // Inside it: the inner group and the loose room, which is one level down.
+    const path = opened(w, outer.id);
+
+    expect(path).toEqual([outer.id]);
+    expect(reaching(w, ids[0], path)).toEqual(inner.id);
+    expect(reaching(w, ids[2], path)).toEqual(ids[2]);
+
+    // And inside that: the rooms themselves.
+    expect(opened(w, inner.id)).toEqual([outer.id, inner.id]);
+    expect(reaching(w, ids[0], opened(w, inner.id))).toEqual(ids[0]);
+  });
+
+  test('nothing outside the open group can be reached', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 10, 10)],
+      ['level', rect(20, 0, 10, 10)],
+      ['level', rect(40, 0, 10, 10)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[1]])!;
+    const w = made.world;
+
+    expect(ids.map(id => reachable(w, id, null))).toEqual([true, true, true]);
+    expect(ids.map(id => reachable(w, id, made.id))).toEqual([true, true, false]);
+  });
+
+  test('a path to a group that has been taken apart is no path at all', () => {
+    // Being let out by an edit is the right failure: there is no longer a
+    // group to be in, and a route to one would be a route to nowhere.
+    const { world, ids, group } = pair();
+
+    expect(opened(world, group)).toEqual([group]);
+    expect(opened(ungrouped(world, group)!, group)).toEqual([]);
+
+    // And it holds nothing in, rather than shutting everything out.
+    expect(reachable(ungrouped(world, group)!, ids[0], group)).toBe(true);
+  });
+
+  test('a mixed group draws one outline per kind', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const shown = showing(made.world, 0, resolveAt(made.world, 0), []);
+
+    // Two contributors under one group: there is no shape that is the union of
+    // a room and the pillar standing in it.
+    expect(shown.map(c => c.kind).sort()).toEqual(['level', 'solid']);
+    expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id, made.id]);
   });
 });

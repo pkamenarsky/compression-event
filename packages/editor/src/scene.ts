@@ -943,6 +943,85 @@ export function contributed(
   return out;
 }
 
+/**
+ * What is on screen, as things that can be picked: a closed group as one shape,
+ * an open one as whatever is inside it.
+ *
+ * This is `contributing` asked a different question. The CSG wants to know
+ * which groups are *eroding*, because that is the only thing that changes what
+ * the set is made of. Drawing wants to know which groups are *closed*, because
+ * a group is one thing to the hand whether or not it erodes — and a group at
+ * depth zero still draws as its own outline.
+ *
+ * The two answers are the same walk over the same structure, so the same
+ * function gives both. Only the question differs: `standing` here is "is this
+ * group shut?".
+ *
+ * A group's shape comes out per kind, and a group holding a room and a pillar
+ * has two of them. There is no shape that is the union of a thing and a hole
+ * in it, and drawing one outline over both would draw a boundary that is not
+ * anywhere. See `solidSide`.
+ */
+export function showing(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  /** The groups standing open, from `opened`. Everything else is shut. */
+  path: readonly GroupId[],
+): Contributed[] {
+  const depth = depths(world, v);
+  const open = new Set<Id>(path);
+
+  return contributed(world, items, id =>
+    open.has(id) ? null : { depth: depth.get(id) ?? 0 },
+  );
+}
+
+/**
+ * Whether a polygon is drawn by itself, or swallowed by a group drawing for it.
+ *
+ * Any enclosing group that is not on the open path shuts it in. It does not
+ * matter which one — the outermost shut group is what draws — because a
+ * polygon inside a shut group has no outline of its own on screen either way.
+ */
+export function swallowed(world: World, id: Id, path: readonly GroupId[]): boolean {
+  const open = new Set<Id>(path);
+
+  return enclosing(world, id).some(g => !open.has(g));
+}
+
+/**
+ * Whether a click can reach `id` at all.
+ *
+ * Everything outside the group standing open is out of reach: it is drawn, so
+ * that what is being edited can be judged against the level around it, but it
+ * cannot be picked or dragged. That is what makes going inside a group a scope
+ * rather than a hint — a slip of the cursor onto the room next door does not
+ * silently take the selection out with it.
+ */
+export function reachable(world: World, id: Id, inside: GroupId | null): boolean {
+  // A group that is no longer there holds nothing in, which is the same answer
+  // `opened` gives: undo can restore a world the open path was never in, and
+  // the way out of that is being outside rather than being nowhere.
+  if (inside === null || !world.groups.has(inside)) return true;
+
+  return enclosing(world, id).includes(inside);
+}
+
+/**
+ * What a click on `id` picks: the outermost group around it that is still shut,
+ * or `id` itself where none is.
+ *
+ * The top-level answer with nothing open, and one step deeper for every level
+ * opened — which is the whole of what going inside a group does to picking.
+ */
+export function reaching(world: World, id: Id, path: readonly GroupId[]): Id {
+  const open = new Set<Id>(path);
+  const shut = enclosing(world, id).filter(g => !open.has(g));
+
+  return shut[shut.length - 1] ?? id;
+}
+
 /** Resolved polygons as contributors, one for one. What the CSG sees wherever
  * no group is eroding, and what the bake works in. */
 export function plainly(items: readonly Resolved[]): Contributed[] {
