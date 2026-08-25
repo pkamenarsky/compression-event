@@ -868,11 +868,11 @@ describe('what a click lands on', () => {
     expect(hit(5, 50)).toEqual([]);
   });
 
-  test('a solid in one is not a hole to click through', () => {
-    // A pillar in the middle of a grouped room. What the group puts into the
-    // level has a hole where the pillar is, and a click landing in it used to
-    // fall through the group to whatever was behind — which is the level the
-    // group was put there to sit over.
+  test('a pillar in one is not a hole to click through', () => {
+    // A solid in the middle of a grouped room. What the group puts into the
+    // level has a hole where it is, and a click landing in it used to fall
+    // through the group to whatever was behind — which is the level the group
+    // was put there to sit over.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
@@ -888,6 +888,64 @@ describe('what a click lands on', () => {
 
     expect(shown.shape).toHaveLength(2);
     expect(shown.whole).toHaveLength(1);
+  });
+
+  test('but a solid reaching past the edge is a bite, and stays one', () => {
+    // Open to the outside rather than closed in by the group. Nothing of the
+    // group is drawn in it and a click in it is a click outside, which is what
+    // clicking anywhere else along that edge does.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 80, 20, 40)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(g.world, 0);
+
+    expect(hitting(g.world, 0, items, [], { x: 50, y: 90 })).toEqual([]);
+
+    // Still the group everywhere the bite is not.
+    expect(hitting(g.world, 0, items, [], { x: 20, y: 90 })).toEqual([g.id]);
+
+    const shown = occupying(g.world, 0, items, [])[0];
+
+    expect(shown.whole).toEqual(shown.shape);
+  });
+
+  test('and a courtyard the rooms left themselves is as empty as the outside', () => {
+    // Four rooms round a gap, with no solid anywhere. The hole is the group's
+    // own and filling it would make a click in the middle of a quadrangle pick
+    // the buildings.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 30)],
+      ['level', rect(0, 70, 100, 30)],
+      ['level', rect(0, 0, 30, 100)],
+      ['level', rect(70, 0, 30, 100)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(g.world, 0);
+
+    expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
+    expect(hitting(g.world, 0, items, [], { x: 15, y: 50 })).toEqual([g.id]);
+
+    const shown = occupying(g.world, 0, items, [])[0];
+
+    expect(shown.whole).toEqual(shown.shape);
+  });
+
+  test('a pillar inside a courtyarded group fills, and the courtyard does not', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 30)],
+      ['level', rect(0, 70, 100, 30)],
+      ['level', rect(0, 0, 30, 100)],
+      ['level', rect(70, 0, 30, 100)],
+      ['solid', rect(10, 10, 10, 10)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(g.world, 0);
+
+    // The pillar in the corner room fills; the courtyard stays open.
+    expect(hitting(g.world, 0, items, [], { x: 15, y: 15 })).toEqual([g.id]);
+    expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
   });
 
   test('with a group open, what is outside it cannot be clicked on', () => {

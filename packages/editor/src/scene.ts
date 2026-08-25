@@ -40,6 +40,7 @@ import {
   keeping,
   simplify,
   subtract,
+  union,
   unionAll,
 } from './geometry';
 import {
@@ -1150,18 +1151,24 @@ export interface Occupied {
   /** As it is drawn: the level side with the solid side taken out of it. */
   shape: Shape
   /**
-   * As it is picked, which is the same without the taking out.
+   * As it is picked: the same with the holes a solid left in it filled back in,
+   * and nothing else changed.
    *
-   * A solid inside a group is not a hole in the group — it is one of the things
-   * the group is made of, and a click that lands on the pillar in the middle of
-   * a grouped room means that group. Subtracting it would let the click through
-   * to whatever happens to be behind, which is the level the group was put
-   * there to sit over.
+   * A pillar in the middle of a grouped room is not a hole in the group — it is
+   * one of the things the group is made of, and a click on it means that group.
+   * Left as a hole it let the click through to whatever was behind, which is
+   * the level the group was put there to sit over.
    *
-   * The drawing keeps the subtraction, because that is what the group puts into
-   * the level and the fill under a picked one should say so. What is picked and
-   * what is filled are allowed to differ here: the fill is about the set, and
-   * the picking is about the thing.
+   * A solid that reaches past the edge is the other case and stays subtracted.
+   * What it leaves is not a hole but a bite out of the silhouette, open to the
+   * outside, and a click in it is a click outside: nothing of the group is
+   * drawn there and nothing about it says otherwise. Which of the two a solid
+   * is does not have to be asked — the arrangement already answered it. A
+   * pillar comes back as a ring wound as a hole and a bite does not.
+   *
+   * Gaps the level side left of its own are not filled. Four rooms round a
+   * courtyard are a group with a hole in it that no solid made, and the
+   * courtyard is as empty as the outside is.
    */
   whole: Shape
 }
@@ -1190,6 +1197,32 @@ export interface Occupied {
  * a group's walls cut the rooms around it too, not only its own — which is
  * what `contributed` is careful to give it. See `showing`.
  */
+/** The rings a shape's traversal wound as holes, each turned into a shape of
+ * its own. See the header of `geometry.ts` for the convention. */
+function gaps(shape: Shape): Shape {
+  return shape.filter(ring => !isCCW(ring)).map(ring => [...ring].reverse());
+}
+
+/**
+ * `shape` with the holes the solid side left in it filled, and the level side's
+ * own left alone. See `Occupied.whole`.
+ *
+ * Added onto what is drawn rather than rebuilt from its outlines, so that a
+ * room standing inside a courtyard is still a room: it is a ring of its own
+ * nested in a hole, and anything that reasoned from the outlines outward would
+ * swallow it.
+ */
+function filling(shape: Shape, level: Shape): Shape {
+  const holes = gaps(shape);
+
+  if (holes.length === 0) return shape;
+
+  const own = gaps(level);
+  const solids = own.length === 0 ? holes : subtract(holes, own);
+
+  return solids.length === 0 ? shape : union(shape, solids);
+}
+
 export function occupying(
   world: World,
   v: VersionId,
@@ -1211,14 +1244,14 @@ export function occupying(
   const out: Occupied[] = [];
 
   for (const [id, { level, solid }] of sides) {
-    out.push(level.length === 0
-      ? { id, kind: 'solid', shape: solid, whole: solid }
-      : {
-        id,
-        kind: 'level',
-        shape: solid.length === 0 ? level : subtract(level, solid),
-        whole: level,
-      });
+    if (level.length === 0) {
+      out.push({ id, kind: 'solid', shape: solid, whole: solid });
+      continue;
+    }
+
+    const shape = solid.length === 0 ? level : subtract(level, solid);
+
+    out.push({ id, kind: 'level', shape, whole: filling(shape, level) });
   }
 
   return out;
