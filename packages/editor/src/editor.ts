@@ -309,9 +309,11 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // Shift is the paste that leaves the history behind: what was copied
           // as it stands here, born here, saying nothing about any other
           // version. Plain paste brings the whole chain across.
+          // Into the group standing open, if one is: a paste lands where the
+          // author is working, and in here that is inside the group.
           const { world, ids } = e.shiftKey
-            ? stamped(s.world, s.currentVersion, s.clipboard, at)
-            : pasted(s.world, s.currentVersion, s.clipboard, at);
+            ? stamped(s.world, s.currentVersion, s.clipboard, at, s.inside)
+            : pasted(s.world, s.currentVersion, s.clipboard, at, s.inside);
 
           return marked(
             { ...s, world, selection: { ...s.selection, polygons: ids } },

@@ -803,6 +803,41 @@ later layer applies to what it produced: move it once at the start and it has
 moved at every version, keeping whatever it does in between. Inside a group the
 offset is not applied at all — what is in a group is placed by the group.
 
+### Canvas: a paste lands where the author is working
+
+With a group open, a paste goes into that group. What it does not do is arrive
+turned: a clipping's geometry is in world units, and the open group's own frame
+is already applied to everything the author is looking at while they paste, so
+the geometry comes back *through* that frame on the way in and lands where it
+was put.
+
+One frame for the whole paste, not one per level. What is inside a pasted group
+is placed by the pasted group, whose own frame at the version it lands in is
+nothing but the paste offset — so the same inverse serves all the way down.
+
+The frame is the group's own transform and then everything holding it, at that
+version only: the thing is born there, and nothing earlier ever applied to
+something that was not there. `under` answers the same question for something
+already in the world; `inward` answers it one step early, for something about to
+be built to fit.
+
+### Canvas: a shut group answers for the outline it is drawn as
+
+A shut group is one outline — its members' union, offset by its own depth — and
+that outline is what a click has to be tested against. The members are not
+eroded; the group is. Test the members and a group eroded well inward is still
+picked from anywhere inside the rings it was made of, which is a long way
+outside anything on screen.
+
+So picking walks what is drawn in draw order, asks each thing what stands for it
+— itself, or the outermost group still shut around it — and tests that thing's
+own shape. A group is asked once however many members lead to it: it is one
+shape, so the answer cannot differ.
+
+Command-click is the exception and stays as it was. It means "past the group for
+one click", so it asks the polygon, and a polygon is tested against its own ring
+because the polygon is the thing being asked for.
+
 ### Canvas: a stamp is a paste with the tail left behind
 
 Cmd+Shift+V pastes only the version it lands in: born there, saying nothing

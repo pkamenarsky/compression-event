@@ -28,6 +28,7 @@ import {
   editAt,
   hitEdge,
   hitPolygons,
+  hitting,
   hitVertex,
   contributing,
   starting,
@@ -745,7 +746,7 @@ export function worldCanvas(
      * things under me?", and if it is, the answer is the next one along.
      */
     function picking(e: PointerEvent): void {
-      const stack = standingIn(world(), hitPolygons(resolveAt(world(), currentVersion()), at(e)), e);
+      const stack = standingIn(world(), e, at(e));
 
       if (stack.length === 0) {
         // Shift means adding, and adding nothing leaves the selection alone.
@@ -824,10 +825,9 @@ export function worldCanvas(
       // Not `standingIn`: command means "past the group for one click", and
       // going into one is the opposite of that. A double-click is asking for
       // the group whatever else is held down.
-      const under = hitPolygons(resolveAt(w, currentVersion()), at(e))
-        .filter(id => reachable(w, id, inside()));
+      const under = hitting(w, currentVersion(), resolveAt(w, currentVersion()), path, at(e));
 
-      const into = under.map(id => reaching(w, id, path)).find(id => w.groups.has(id));
+      const into = under.find(id => w.groups.has(id));
 
       if (into !== undefined) {
         // The selection goes: what was picked was the group, and it is not a
@@ -898,12 +898,23 @@ export function worldCanvas(
         .filter(it => !swallowed(w, it.id, path) && reachable(w, it.id, inside()));
     }
 
-    function standingIn(w: World, under: PolygonId[], e: MouseEvent): Id[] {
-      const here = under.filter(id => reachable(w, id, inside()));
+    /**
+     * What a click at `p` would pick, topmost first.
+     *
+     * Command reaches straight through to the polygon for one click, and a
+     * polygon is tested against its own ring — it is the thing being asked
+     * for. Everything else asks `hitting`, which tests a shut group against
+     * the one outline it is drawn as.
+     */
+    function standingIn(w: World, e: MouseEvent, p: Point): Id[] {
+      const v = currentVersion();
+      const items = resolveAt(w, v);
 
-      if (e.metaKey || e.ctrlKey) return here;
+      if (e.metaKey || e.ctrlKey) {
+        return hitPolygons(items, p).filter(id => reachable(w, id, inside()));
+      }
 
-      return [...new Set(here.map(id => reaching(w, id, opened(w, inside()))))];
+      return hitting(w, v, items, opened(w, inside()), p);
     }
 
     /**
@@ -1192,11 +1203,7 @@ export function worldCanvas(
                 }
               }
               else if (tool() === 'polygon') {
-                const under = standingIn(
-                  world(),
-                  hitPolygons(resolveAt(world(), currentVersion()), at(e)),
-                  e,
-                );
+                const under = standingIn(world(), e, at(e));
 
                 if (under.length > 0) {
                   // Anything picked under the cursor means the drag is that

@@ -31,6 +31,7 @@ import {
   editAt,
   hitEdge,
   hitVertex,
+  hitting,
   pasted,
   placeVertex,
   place,
@@ -712,6 +713,32 @@ describe('copy and paste', () => {
     expect(resolveAt(after.world, 0).some(it => it.id === copy)).toEqual(false);
   });
 
+  test('a paste lands inside the group standing open, unturned', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, [ids[0]].concat(ids[1]))!;
+    const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
+
+    const clip = copied(turned, 0, [ids[0]]);
+    const after = pasted(turned, 0, clip, { x: 0, y: 400 }, g.id);
+    const copy = after.ids[0];
+
+    // In the group, and standing where it was put — not swung round by the
+    // group's turn, which the author can see is already applied to what they
+    // are looking at.
+    expect(after.world.groups.get(g.id)?.members).toContain(copy);
+
+    const put = only(after.world, 0, copy).source;
+    const was = only(turned, 0, ids[0]).source;
+
+    for (let i = 0; i < put.length; i++) {
+      expect(put[i].x).toBeCloseTo(was[i].x, 6);
+      expect(put[i].y).toBeCloseTo(was[i].y + 400, 6);
+    }
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
@@ -724,6 +751,44 @@ describe('copy and paste', () => {
     const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
 
     expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
+  });
+});
+
+describe('what a click lands on', () => {
+  test('a shut group answers for the outline it is drawn as', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const d = 20;
+    const w = moved(g.world, 0, g.id, { erosion: d });
+
+    const items = resolveAt(w, 0);
+    const hit = (x: number, y: number) => hitting(w, 0, items, [], { x, y });
+
+    // Well inside the eroded outline: the group.
+    expect(hit(50, 50)).toEqual([g.id]);
+
+    // Inside the members' rings but outside what is drawn. The members are not
+    // eroded — the group is — so asking them would pick it from out here.
+    expect(hit(5, 50)).toEqual([]);
+  });
+
+  test('with a group open, what is outside it cannot be clicked on', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(0, 200, 100, 100)],
+      ['level', rect(400, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, [ids[0], ids[1]])!;
+    const items = resolveAt(g.world, 0);
+    const path = opened(g.world, g.id);
+
+    // In here a member is pickable as itself, and the polygon outside is not
+    // pickable at all, though it is still drawn.
+    expect(hitting(g.world, 0, items, path, { x: 50, y: 50 })).toEqual([ids[0]]);
+    expect(hitting(g.world, 0, items, path, { x: 450, y: 50 })).toEqual([]);
   });
 });
 

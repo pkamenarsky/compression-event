@@ -379,6 +379,24 @@ export function under(world: World, v: VersionId, id: Id): Affine {
   return held(world, world.versions[v], id);
 }
 
+/**
+ * The frame a thing newly put inside `into` at `v` is placed by.
+ *
+ * `under` answers this for something already in the world, off its own
+ * enclosing groups. A paste has nothing to ask about yet — the thing does not
+ * exist and is about to be built to fit — so the same walk is done one step
+ * early: the group's own transform, and then everything holding the group.
+ *
+ * Born at `v`, so this version's layer is the whole of it. Nothing earlier ever
+ * applied to something that was not there.
+ */
+export function inward(world: World, v: VersionId, into: GroupId): Affine {
+  const version = world.versions[v];
+  const own = affine(version.edits.get(into)?.transform ?? EMPTY_TRANSFORM);
+
+  return compose(held(world, version, into), own);
+}
+
 /** A world-space step as the frame `m` reads it. A direction and a distance,
  * so the frame's own translation is not part of the answer. */
 export function unstep(m: Affine, dx: number, dy: number): Point {
@@ -1278,6 +1296,53 @@ export function hitPolygons(items: Resolved[], at: Point): PolygonId[] {
 }
 
 /**
+ * What a click lands on, topmost first: the things it could pick, tested
+ * against the shapes they are drawn as.
+ *
+ * A shut group is one outline — its members' union, eroded by its own depth —
+ * and that outline is what has to answer, not the members underneath it. They
+ * are not eroded; the group is. Test them and a group eroded well inward is
+ * still picked from anywhere inside the rings it was made of, which is a long
+ * way outside anything on screen.
+ *
+ * Walked in draw order and reversed, so a group answers from where its topmost
+ * member is in the stack and the reaching stays in step with what is painted
+ * over what. A group is asked once however many members lead to it: the answer
+ * cannot differ, it being one shape.
+ *
+ * Everything out of reach is skipped, which with a group open is everything
+ * outside it. It is drawn, so that it can be seen where the work is going, but
+ * it is not there to be clicked on.
+ */
+export function hitting(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+  at: Point,
+): Id[] {
+  const shut = new Map(occupying(world, v, items, path).map(o => [o.id, o.shape]));
+  const asked = new Set<Id>();
+  const out: Id[] = [];
+
+  const open = path[path.length - 1] ?? null;
+
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (!reachable(world, items[i].id, open)) continue;
+
+    const id = reaching(world, items[i].id, path);
+
+    if (asked.has(id)) continue;
+
+    asked.add(id);
+
+    if (contains(shut.get(id) ?? items[i].shape, at)) out.push(id);
+  }
+
+  return out;
+}
+
+/**
  * The nearest source vertex within `radius` world units, topmost first.
  *
  * The source ring, never the projection. The eroded outline carries no handles
@@ -1621,6 +1686,7 @@ function written(
   id: Id,
   edits: readonly [number, Edit][],
   renamed: ReadonlyMap<VertexId, VertexId>,
+  m: Affine,
   by: Point | null,
 ): World {
   let out = world;
@@ -1631,25 +1697,43 @@ function written(
     if (v + offset >= world.versions.length) break;
 
     const at = edit.transform.translation;
-    const moved = offset === 0 && by !== null;
+
+    // A world-space nudge, and this layer's translation is read in `m`.
+    const step = offset === 0 && by !== null ? unstep(m, by.x, by.y) : null;
 
     out = withEdit(out, v + offset, id, {
-      transform: moved
-        ? { ...edit.transform, translation: { x: at.x + by.x, y: at.y + by.y } }
-        : edit.transform,
-      vertices: new Map([...edit.vertices].map(([v, d]) => [renamed.get(v) ?? v, d])),
+      transform: step === null
+        ? edit.transform
+        : { ...edit.transform, translation: { x: at.x + step.x, y: at.y + step.y } },
+      vertices: new Map([...edit.vertices].map(
+        ([v, d]) => [renamed.get(v) ?? v, unstep(m, d.x, d.y)],
+      )),
     });
   }
 
   return out;
 }
 
-/** One clipping put back at `v`, and everything under it. The offset lands on
- * the outermost thing only: what is inside a group is placed by the group. */
+/**
+ * One clipping put back at `v`, and everything under it.
+ *
+ * `m` is the frame whatever is pasted will be placed by: identity at the top
+ * level, and the open group's own frame when pasting into one. A clipping's
+ * geometry is in world units, so it comes back through that frame on the way
+ * in — otherwise pasting into a turned group would turn the paste, which is not
+ * what the author is looking at while they do it.
+ *
+ * The same frame all the way down, rather than one per level: what is inside
+ * the pasted group is placed by the pasted group, whose own frame at `v` is
+ * nothing but the offset.
+ *
+ * The offset lands on the outermost thing only, for the same reason.
+ */
 function restore(
   world: World,
   v: VersionId,
   clip: Clipping,
+  m: Affine,
   by: Point | null,
 ): { world: World, id: Id } {
   if (clip.kind === 'group') {
@@ -1657,7 +1741,7 @@ function restore(
     let out = world;
 
     for (const member of clip.members) {
-      const put = restore(out, v, member, null);
+      const put = restore(out, v, member, m, null);
 
       out = put.world;
       members.push(put.id);
@@ -1669,7 +1753,7 @@ function restore(
     groups.set(id, { birth: v, members });
     out = { ...out, groups, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip.edits, new Map(), by), id };
+    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
   }
 
   const id = world.nextId;
@@ -1681,7 +1765,7 @@ function restore(
 
       return {
         id: id + 1 + i,
-        at: { ...corner.at },
+        at: unplace(m, corner.at),
         birth: v + corner.birth,
         death: corner.death === null || v + corner.death >= world.versions.length
           ? null
@@ -1699,7 +1783,7 @@ function restore(
     nextId: id + 1 + points.length,
   };
 
-  return { world: written(out, v, id, clip.edits, renamed, by), id };
+  return { world: written(out, v, id, clip.edits, renamed, m, by), id };
 }
 
 /**
@@ -1724,18 +1808,36 @@ export function pasted(
   v: VersionId,
   clips: readonly Clipping[],
   by: Point,
+  into: GroupId | null = null,
 ): { world: World, ids: Id[] } {
+  const m = into === null || !world.groups.has(into)
+    ? IDENTITY
+    : inward(world, v, into);
+
   const ids: Id[] = [];
   let out = world;
 
   for (const clip of clips) {
-    const put = restore(out, v, clip, by);
+    const put = restore(out, v, clip, m, by);
 
     out = put.world;
     ids.push(put.id);
   }
 
-  return { world: out, ids };
+  return { world: joined(out, into, ids), ids };
+}
+
+/** `ids` taken into `into`, at the end, where the last thing done goes. */
+function joined(world: World, into: GroupId | null, ids: readonly Id[]): World {
+  const group = into === null ? undefined : world.groups.get(into);
+
+  if (group === undefined || into === null) return world;
+
+  const groups = new Map(world.groups);
+
+  groups.set(into, { ...group, members: [...group.members, ...ids] });
+
+  return { ...world, groups };
 }
 
 /**
@@ -1755,6 +1857,7 @@ export function stamped(
   v: VersionId,
   clips: readonly Clipping[],
   by: Point,
+  into: GroupId | null = null,
 ): { world: World, ids: Id[] } {
   const now = (clip: Clipping): Clipping => clip.kind === 'group'
     ? { ...clip, members: clip.members.map(now), edits: clip.edits.slice(0, 1) }
@@ -1766,7 +1869,7 @@ export function stamped(
         edits: clip.edits.slice(0, 1),
       };
 
-  return pasted(world, v, clips.map(now), by);
+  return pasted(world, v, clips.map(now), by, into);
 }
 
 /** Everything with a source vertex inside the box, which is enough for a
