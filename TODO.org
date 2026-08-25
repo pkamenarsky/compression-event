@@ -1,3 +1,4 @@
 * create shape in editor
 ** n-gon shape shows slider for point count
 * unchain
+* zoom
