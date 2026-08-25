@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
-import { resolveAt } from './scene';
+import { TOP, resolveAt } from './scene';
 import { addPolygon, editAt, withEdit } from './scene';
 import { EditorState, emptyWorld, initialState } from './types';
 
@@ -9,13 +9,13 @@ function world(): EditorState {
     { x: 0, y: 0 },
     { x: 10, y: 0 },
     { x: 10, y: 10 },
-  ], 0);
+  ], 0, TOP);
 
   const b = addPolygon(a.world, 'solid', [
     { x: 4, y: 4 },
     { x: 8, y: 4 },
     { x: 8, y: 8 },
-  ], 1);
+  ], 1, TOP);
 
   const edit = editAt(b.world, 2, b.id, 0);
   const vertices = new Map(edit.vertices);

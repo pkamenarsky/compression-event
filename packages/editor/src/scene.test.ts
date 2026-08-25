@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { OpSubtract, Shape, combine, shapeArea, simplify } from './geometry';
 import {
+  TOP,
   Resolved,
   addPolygon,
   composed,
@@ -31,6 +32,7 @@ import {
   editAt,
   hitEdge,
   hitVertex,
+  landing,
   hitting,
   pasted,
   placeVertex,
@@ -64,7 +66,7 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0);
+    const added = addPolygon(world, type, points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -280,7 +282,7 @@ describe('versions', () => {
 
   test('a polygon does not exist before the version it was drawn in', () => {
     let { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
-    const added = addPolygon(world, 'level', rect(50, 0, 10, 10), 2);
+    const added = addPolygon(world, 'level', rect(50, 0, 10, 10), 2, TOP);
 
     expect(resolveAt(added.world, 1).map(it => it.id)).toEqual(ids);
     expect(resolveAt(added.world, 2).map(it => it.id)).toEqual([...ids, added.id]);
@@ -572,7 +574,7 @@ describe('copy and paste', () => {
     const eroded = transformed(world, 0, ids[0], { erosion: 12 });
 
     const clips = copied(eroded, 0, [ids[0]]);
-    const after = pasted(eroded, 0, clips, { x: 32, y: 32 });
+    const after = pasted(eroded, 0, clips, { x: 32, y: 32 }, TOP);
     const copy = only(after.world, 0, after.ids[0]);
 
     expect(copy.polygon.type).toEqual('solid');
@@ -587,11 +589,11 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const clips = copied(turned, 0, [g.id]);
-    const after = pasted(turned, 0, clips, { x: 0, y: 400 });
+    const after = pasted(turned, 0, clips, { x: 0, y: 400 }, TOP);
 
     // One thing selected, and it is a group of two, not two loose polygons.
     expect(after.ids.length).toEqual(1);
@@ -608,11 +610,11 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const d = 6;
     const before = moved(g.world, 0, g.id, { erosion: d });
 
-    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
+    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 }, TOP);
 
     // Eroded once over, not twice: the depth rode in the layer, and the
     // members' rings came across as they were drawn.
@@ -625,10 +627,10 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
-    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
+    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 }, TOP);
     const copy = after.ids[0];
 
     // Nothing at v0, ten at v1: the layer came across as a layer, so the copy
@@ -642,10 +644,10 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
-    const after = stamped(before, 1, copied(before, 1, [g.id]), { x: 0, y: 500 });
+    const after = stamped(before, 1, copied(before, 1, [g.id]), { x: 0, y: 500 }, TOP);
     const copy = after.ids[0];
 
     // It stands where it was seen at v1 — eroded — and it is not there at v0
@@ -662,10 +664,10 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2, translation: { x: 400, y: 0 } });
 
-    const after = stamped(turned, 0, copied(turned, 0, [g.id]), { x: 0, y: 400 });
+    const after = stamped(turned, 0, copied(turned, 0, [g.id]), { x: 0, y: 400 }, TOP);
 
     // The turn went into the rings, so dropping every layer left it put.
     expect(shapeArea(csg(after.world, 0)))
@@ -679,7 +681,7 @@ describe('copy and paste', () => {
 
     // Taken at v1 and put down at v3: what it did one version on it does one
     // version on from here.
-    const after = pasted(at2, 3, copied(at2, 1, [ids[0]]), { x: 0, y: 500 });
+    const after = pasted(at2, 3, copied(at2, 1, [ids[0]]), { x: 0, y: 500 }, TOP);
     const copy = after.ids[0];
 
     expect(only(after.world, 3, copy).erosion).toEqual(4);
@@ -691,7 +693,7 @@ describe('copy and paste', () => {
     const at1 = moved(world, 1, ids[0], { erosion: 7 });
 
     const last = at1.versions.length - 1;
-    const after = pasted(at1, last, copied(at1, 0, [ids[0]]), { x: 0, y: 500 });
+    const after = pasted(at1, last, copied(at1, 0, [ids[0]]), { x: 0, y: 500 }, TOP);
 
     // Copied at v0, pasted at the last version: its v1 has nowhere to land, and
     // the chain does not grow to make room.
@@ -705,7 +707,7 @@ describe('copy and paste', () => {
 
     // Copied at v1, where it stands eroded by 5 having inherited it. What lands
     // is that shape, born at v1 — v0 has nothing to do with it.
-    const after = pasted(at0, 1, copied(at0, 1, [ids[0]]), { x: 0, y: 500 });
+    const after = pasted(at0, 1, copied(at0, 1, [ids[0]]), { x: 0, y: 500 }, TOP);
     const copy = after.ids[0];
 
     expect(after.world.polygons.get(copy)?.birth).toEqual(1);
@@ -718,11 +720,11 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, [ids[0]].concat(ids[1]))!;
+    const g = grouped(world, 0, [ids[0]].concat(ids[1]), TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const clip = copied(turned, 0, [ids[0]]);
-    const after = pasted(turned, 0, clip, { x: 0, y: 400 }, g.id);
+    const after = pasted(turned, 0, clip, { x: 0, y: 400 }, landing(turned, 0, g.id));
     const copy = after.ids[0];
 
     // In the group, and standing where it was put — not swung round by the
@@ -748,9 +750,70 @@ describe('copy and paste', () => {
     const polygons = new Map(world.polygons);
     polygons.delete(ids[0]);
 
-    const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
+    const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 }, TOP);
 
     expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
+  });
+});
+
+describe('drilled into a group, everything happens in there', () => {
+  test('a polygon drawn inside one is a member of it, where it was drawn', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+    const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
+
+    const where = landing(turned, 0, g.id);
+    const put = addPolygon(turned, 'solid', rect(400, 0, 40, 40), 0, where);
+
+    expect(turned.groups.get(g.id)!.members).not.toContain(put.id);
+    expect(put.world.groups.get(g.id)!.members).toContain(put.id);
+
+    // Drawn at (400, 0) and standing at (400, 0): the group's quarter turn is
+    // already in what the author is looking at, so it is taken back out of the
+    // ring rather than applied twice.
+    const at = only(put.world, 0, put.id).source;
+
+    expect(at[0].x).toBeCloseTo(400, 6);
+    expect(at[0].y).toBeCloseTo(0, 6);
+  });
+
+  test('grouping two members makes a group in there, holding those two', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+      ['level', rect(400, 0, 100, 100)],
+    );
+    const outer = grouped(world, 0, ids, TOP)!;
+
+    const inner = grouped(
+      outer.world,
+      0,
+      [ids[0], ids[1]],
+      landing(outer.world, 0, outer.id),
+    )!;
+
+    // Nothing is claimed twice: the two went into the new group, and the new
+    // group went where they were.
+    expect(inner.world.groups.get(inner.id)!.members).toEqual([ids[0], ids[1]]);
+    expect(inner.world.groups.get(outer.id)!.members).toEqual([ids[2], inner.id]);
+  });
+
+  test('at the top level the same call groups what is picked, as picked', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+      ['level', rect(400, 0, 100, 100)],
+    );
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+
+    // Picking a member out here is picking the group over it, so grouping it
+    // with the third polygon groups the group.
+    const outer = grouped(inner.world, 0, [ids[0], ids[2]], TOP)!;
+
+    expect(outer.world.groups.get(outer.id)!.members).toEqual([inner.id, ids[2]]);
   });
 });
 
@@ -760,7 +823,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids)!;
+    const g = grouped(world, 0, ids, TOP)!;
     const d = 20;
     const w = moved(g.world, 0, g.id, { erosion: d });
 
@@ -781,7 +844,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 200, 100, 100)],
       ['level', rect(400, 0, 100, 100)],
     );
-    const g = grouped(world, 0, [ids[0], ids[1]])!;
+    const g = grouped(world, 0, [ids[0], ids[1]], TOP)!;
     const items = resolveAt(g.world, 0);
     const path = opened(g.world, g.id);
 
@@ -831,7 +894,7 @@ function pair(): { world: World, ids: PolygonId[], group: GroupId } {
     ['level', rect(20, 0, 10, 10)],
   );
 
-  const made = grouped(world, 0, ids)!;
+  const made = grouped(world, 0, ids, TOP)!;
 
   return { world: made.world, ids, group: made.id };
 }
@@ -877,12 +940,12 @@ describe('a group moves what is in it', () => {
   test('a group inside a group composes outwards', () => {
     const { world, ids, group } = pair();
     const { world: outer, ids: more } = (() => {
-      const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0);
+      const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0, TOP);
 
       return { world: added.world, ids: [added.id] };
     })();
 
-    const top = grouped(outer, 0, [group, more[0]])!;
+    const top = grouped(outer, 0, [group, more[0]], TOP)!;
 
     const w = moved(
       moved(top.world, 0, group, { translation: { x: 1, y: 0 } }),
@@ -905,7 +968,7 @@ describe('a group moves what is in it', () => {
       ['level', rect(20, 0, 10, 10)],
     );
 
-    const made = grouped(world, 2, ids)!;
+    const made = grouped(world, 2, ids, TOP)!;
 
     for (let v = 0; v < 4; v++) {
       expect(at(made.world, v as VersionId, ids[0])[0]).toEqual({ x: 0, y: 0 });
@@ -940,10 +1003,10 @@ describe('making and taking apart', () => {
   test('a group of fewer than two things is not a group', () => {
     const { world, ids } = pair();
 
-    expect(grouped(world, 0, [ids[0]])).toEqual(null);
+    expect(grouped(world, 0, [ids[0]], TOP)).toEqual(null);
 
     // Nor is grouping something with what already holds it.
-    expect(grouped(world, 0, ids)).toEqual(null);
+    expect(grouped(world, 0, ids, TOP)).toEqual(null);
   });
 
   test('members leave exactly where they stood, at every version', () => {
@@ -1015,8 +1078,8 @@ describe('making and taking apart', () => {
 
   test('a group nested inside another takes its place in the holder', () => {
     const { world, ids, group } = pair();
-    const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0);
-    const top = grouped(added.world, 0, [group, added.id])!;
+    const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0, TOP);
+    const top = grouped(added.world, 0, [group, added.id], TOP)!;
 
     const apart = ungrouped(top.world, group)!;
 
@@ -1053,7 +1116,7 @@ describe('a group erodes as one shape', () => {
       ['level', rect(80, 0, 100, 40)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
 
     return { world: made.world, ids, group: made.id };
   }
@@ -1111,7 +1174,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const w = moved(made.world, 0, made.id, { erosion: 5 });
     const out = contributing(w, 0, resolveAt(w, 0));
 
@@ -1134,7 +1197,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(80, 0, 40, 100)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const d = 10;
     const w = moved(made.world, 0, made.id, { erosion: d });
 
@@ -1153,7 +1216,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(60, 40, 60, 40)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const d = 10;
     const w = moved(made.world, 0, made.id, { erosion: d });
 
@@ -1178,8 +1241,8 @@ describe('a group erodes as one shape', () => {
       ['level', rect(400, 0, 100, 100)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]])!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
     const w = moved(outer.world, 0, inner.id, { erosion: 12 });
 
     // Handed only the far room, which is inside the transparent outer group and
@@ -1191,8 +1254,8 @@ describe('a group erodes as one shape', () => {
 
   test('a group inside an eroding group is projected first', () => {
     const { world, group: inner } = corridor();
-    const third = addPolygon(world, 'level', rect(300, 0, 40, 40), 0);
-    const outer = grouped(third.world, 0, [inner, third.id])!;
+    const third = addPolygon(world, 'level', rect(300, 0, 40, 40), 0, TOP);
+    const outer = grouped(third.world, 0, [inner, third.id], TOP)!;
 
     const w = moved(moved(outer.world, 0, inner, { erosion: 15 }), 0, outer.id, { erosion: 2 });
     const out = contributing(w, 0, resolveAt(w, 0));
@@ -1237,8 +1300,8 @@ describe('going inside a group', () => {
       ['level', rect(40, 0, 10, 10)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]])!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
     const w = outer.world;
 
     // Shut: a click anywhere reaches the outer group.
@@ -1263,7 +1326,7 @@ describe('going inside a group', () => {
       ['level', rect(40, 0, 10, 10)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]])!;
+    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
     const w = made.world;
 
     expect(ids.map(id => reachable(w, id, null))).toEqual([true, true, true]);
@@ -1295,7 +1358,7 @@ describe('going inside a group', () => {
       ['level', rect(60, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
 
     for (const v of [0, 1, 4]) {
       const out = occupying(made.world, v, resolveAt(made.world, v), []);
@@ -1316,7 +1379,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
@@ -1336,7 +1399,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 0, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
@@ -1350,7 +1413,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
 
     expect(occupying(made.world, 0, resolveAt(made.world, 0), [made.id])).toEqual([]);
   });
@@ -1361,7 +1424,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const shown = showing(made.world, 0, resolveAt(made.world, 0), []);
 
     // Two contributors under one group: there is no shape that is the union of
@@ -1382,7 +1445,7 @@ describe('a gesture writes into the frame it is read in', () => {
       ['level', rect(120, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids)!;
+    const made = grouped(world, 0, ids, TOP)!;
     const w = moved(made.world, 0, made.id, { erosion: 8 });
 
     expect(starting(w, 1, [made.id]).get(made.id)!.transform.erosion).toEqual(8);

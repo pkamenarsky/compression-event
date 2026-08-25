@@ -803,23 +803,43 @@ later layer applies to what it produced: move it once at the start and it has
 moved at every version, keeping whatever it does in between. Inside a group the
 offset is not applied at all — what is in a group is placed by the group.
 
-### Canvas: a paste lands where the author is working
+### Canvas: everything new lands where the author is standing
 
-With a group open, a paste goes into that group. What it does not do is arrive
-turned: a clipping's geometry is in world units, and the open group's own frame
-is already applied to everything the author is looking at while they paste, so
-the geometry comes back *through* that frame on the way in and lands where it
-was put.
+Drilled into a group, *everything* happens in there — drawing a polygon,
+pasting, grouping. That kept being got wrong one path at a time: paste knew
+about the open group and drawing did not; drawing was fixed and grouping still
+was not. So it is not a rule any more, it is a parameter.
 
-One frame for the whole paste, not one per level. What is inside a pasted group
-is placed by the pasted group, whose own frame at the version it lands in is
+`Landing` is where a new thing goes and the frame it will be read in, and every
+function that makes geometry takes one. It cannot be defaulted — the top level
+is `TOP`, which has to be typed — so the question is asked at the call site
+rather than remembered. One function builds it, from one input:
+
+```
+landing(world, v, inside) -> { into, frame }
+```
+
+The frame is the half that is easy to forget. A member's ring is read inside its
+group's transform, so points that came from the screen — where a click landed,
+where a clipping was seen — have to come back through it or the thing arrives
+turned. Drawing a square inside a group turned a quarter turn should leave a
+square where it was drawn, not a square rotated about the group's origin.
+
+It is the group's own transform and then everything holding it, at that version
+only: the thing is born there, and nothing earlier ever applied to something
+that was not there. `under` answers the same question for something already in
+the world; `inward` answers it one step early, for something about to be built
+to fit.
+
+One frame for a whole paste, not one per level. What is inside a pasted group is
+placed by the pasted group, whose own frame at the version it lands in is
 nothing but the paste offset — so the same inverse serves all the way down.
 
-The frame is the group's own transform and then everything holding it, at that
-version only: the thing is born there, and nothing earlier ever applied to
-something that was not there. `under` answers the same question for something
-already in the world; `inward` answers it one step early, for something about to
-be built to fit.
+Grouping reads the same way. Out here, picking a member picks the group over it,
+so grouping it with something else groups the group; in there, the members are
+picked as themselves, so grouping two of them makes a group *inside* — spliced
+into the open group's members in place of the two it took, so nothing is claimed
+twice.
 
 ### Canvas: a shut group answers for the outline it is drawn as
 
@@ -841,8 +861,13 @@ because the polygon is the thing being asked for.
 What it picks has to be *drawn*, though, and a member of a shut group is not on
 screen: the group draws instead of it. Left alone, the reach-through selects
 something invisible and the click reads as having done nothing. So a polygon the
-selection reaches inside a shut group is drawn after the group's outline, over
+selection *names* inside a shut group is drawn after the group's outline, over
 the top — it is what the next gesture will act on, and the group is not.
+
+Names, not reaches. A gesture over a picked group reaches every member, and
+drawing what it reaches would put every outline inside the group back on screen
+the moment it was clicked — which is the internal geometry that shutting a group
+exists to hide. Only the polygon that was singled out is drawn as itself.
 
 ### Canvas: a stamp is a paste with the tail left behind
 

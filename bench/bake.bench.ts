@@ -11,7 +11,7 @@
 
 import { test } from 'vitest';
 import { Span, bakeSpan, sample } from '../packages/editor/src/bake';
-import { grouped, withEdit } from '../packages/editor/src/scene';
+import { TOP, grouped, withEdit } from '../packages/editor/src/scene';
 import { EMPTY_TRANSFORM, World } from '../packages/editor/src/types';
 import { SIZES, level, version, weight } from './level';
 
@@ -64,7 +64,7 @@ test('what an eroding group adds', () => {
   const rooms = 120;
 
   const held = (w: World, ids: number[], n: number, t: Partial<typeof EMPTY_TRANSFORM>) => {
-    const made = grouped(w, 0, ids.slice(0, n));
+    const made = grouped(w, 0, ids.slice(0, n), TOP);
 
     if (made === null) throw new Error('a group needs two');
 

@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { addPolygon } from './scene';
+import { TOP, addPolygon } from './scene';
 import {
   EditorState,
   World,
@@ -27,6 +27,7 @@ function square(world: World, x: number): { world: World, id: number } {
     'level',
     [{ x, y: 0 }, { x: x + 10, y: 0 }, { x: x + 10, y: 10 }, { x, y: 10 }],
     0,
+    TOP,
   );
 }
 

@@ -19,6 +19,7 @@ import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
 import { Frame, bakeSpan, riding, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
 import {
+  TOP,
   Affine,
   addPolygon,
   addVertex,
@@ -41,7 +42,7 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0);
+    const added = addPolygon(world, type, points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -549,8 +550,8 @@ describe('the chain a vertex rides', () => {
       ['level', rect(150, 150, 120, 120)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]])!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]])!;
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
 
     const turned = withEdit(outer.world, 1, inner.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 5 },

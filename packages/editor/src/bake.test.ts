@@ -12,6 +12,7 @@ import {
   truth,
 } from './bake';
 import {
+  TOP,
   addPolygon,
   addVertex,
   csg,
@@ -41,7 +42,7 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0);
+    const added = addPolygon(world, type, points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -257,7 +258,7 @@ describe('keyframes', () => {
 
   test('a polygon born into the later version appears at the boundary', () => {
     const { world } = drawn(['level', rect(0, 0, 100, 100)]);
-    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1);
+    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
 
     const span = run(bakeSpan(added.world, 0));
 

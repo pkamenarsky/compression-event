@@ -11,7 +11,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '../packages/game/src/world';
-import { addPolygon, editAt, resolveAt, withEdit } from '../packages/editor/src/scene';
+import { TOP, addPolygon, editAt, resolveAt, withEdit } from '../packages/editor/src/scene';
 import { PolygonId, Transform, World, emptyWorld } from '../packages/editor/src/types';
 
 function seeded(from: number): () => number {
@@ -29,7 +29,7 @@ export function level(rooms: number): { world: World, ids: PolygonId[] } {
   const rnd = seeded(12345);
 
   const put = (points: Point[], type: 'level' | 'solid') => {
-    const added = addPolygon(world, type, points, 0);
+    const added = addPolygon(world, type, points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);

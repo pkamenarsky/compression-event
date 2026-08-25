@@ -61,6 +61,7 @@ import {
   VertexId,
   World,
   enclosing,
+  opened,
   outermost,
   parentOf,
   standing,
@@ -160,21 +161,23 @@ export function addPolygon(
   type: PolygonType,
   points: Point[],
   birth: VersionId,
+  where: Landing,
 ): { world: World, id: PolygonId } {
   const wound = isCCW(points) ? points : [...points].reverse();
+  const local = wound.map(p => unplace(where.frame, p));
 
   const id = world.nextId;
   const polygon: Polygon = {
     type,
     birth,
-    points: wound.map((at, i) => ({ id: id + 1 + i, at: { ...at }, birth, death: null })),
+    points: local.map((at, i) => ({ id: id + 1 + i, at, birth, death: null })),
   };
 
   const polygons = new Map(world.polygons);
   polygons.set(id, polygon);
 
   return {
-    world: { ...world, polygons, nextId: id + 1 + wound.length },
+    world: joined({ ...world, polygons, nextId: id + 1 + local.length }, where.into, [id]),
     id,
   };
 }
@@ -243,6 +246,50 @@ export function affine(t: Transform): Affine {
     tx: t.translation.x,
     ty: t.translation.y,
   };
+}
+
+/**
+ * Where a new thing goes, and the frame it will be read in.
+ *
+ * Everything that makes geometry takes one of these, and there is one place
+ * that builds it. Drilled into a group, *everything* the author does happens in
+ * there — drawing a polygon, pasting, grouping — and the way that kept being
+ * got wrong was one path at a time: paste knew about the open group, drawing
+ * did not; drawing was fixed, and grouping still was not. A parameter that
+ * cannot be left out is the fix that does not need remembering.
+ *
+ * The frame is why this is a pair rather than a group id. A member's ring is
+ * read inside its group's transform, so points that came from the screen —
+ * where a click landed, where a clipping was seen — have to come back through
+ * it or the thing arrives turned. `landing` is the only place that decides.
+ */
+export interface Landing {
+  into: GroupId | null
+  frame: Affine
+}
+
+/** The top level, where everything goes when no group is open. Named so that
+ * saying so is a decision rather than a default nobody had to make. */
+export const TOP: Landing = { into: null, frame: IDENTITY };
+
+/** Where the author is working: the group standing open, if one is. */
+export function landing(world: World, v: VersionId, inside: GroupId | null): Landing {
+  return inside === null || !world.groups.has(inside)
+    ? TOP
+    : { into: inside, frame: inward(world, v, inside) };
+}
+
+/** `ids` taken into `into`, at the end, where the last thing done goes. */
+export function joined(world: World, into: GroupId | null, ids: readonly Id[]): World {
+  const group = into === null ? undefined : world.groups.get(into);
+
+  if (group === undefined || into === null) return world;
+
+  const groups = new Map(world.groups);
+
+  groups.set(into, { ...group, members: [...group.members, ...ids] });
+
+  return { ...world, groups };
 }
 
 /** `outer` after `inner`. */
@@ -631,11 +678,17 @@ export function composed(outer: Transform, inner: Transform): Transform | null {
  * so its members are exactly where they were, which is the whole reason making
  * one is cheap and taking one apart is not.
  */
-export function grouped(world: World, v: VersionId, ids: readonly Id[]): {
-  world: World
-  id: GroupId
-} | null {
-  const tops = [...new Set(ids.map(id => outermost(world, id)))];
+export function grouped(
+  world: World,
+  v: VersionId,
+  ids: readonly Id[],
+  where: Landing,
+): { world: World, id: GroupId } | null {
+  // What each of them is picked *as*, which inside an open group is the member
+  // itself rather than the group standing over the whole thing. Grouping two
+  // members while drilled in makes a group in there, holding those two.
+  const path = opened(world, where.into);
+  const tops = [...new Set(ids.map(id => reaching(world, id, path)))];
 
   if (tops.length < 2) return null;
 
@@ -644,7 +697,20 @@ export function grouped(world: World, v: VersionId, ids: readonly Id[]): {
 
   groups.set(id, { birth: v, members: tops });
 
-  return { world: { ...world, groups, nextId: id + 1 }, id };
+  // Taken out of wherever they were, so nothing is claimed twice: the members
+  // belong to the new group now, and the new group belongs where they were.
+  const parent = where.into === null ? undefined : groups.get(where.into);
+
+  if (where.into !== null && parent !== undefined) {
+    const held = new Set<Id>(tops);
+
+    groups.set(where.into, { ...parent, members: parent.members.filter(m => !held.has(m)) });
+  }
+
+  return {
+    world: joined({ ...world, groups, nextId: id + 1 }, where.into, [id]),
+    id,
+  };
 }
 
 /**
@@ -1808,36 +1874,19 @@ export function pasted(
   v: VersionId,
   clips: readonly Clipping[],
   by: Point,
-  into: GroupId | null = null,
+  where: Landing,
 ): { world: World, ids: Id[] } {
-  const m = into === null || !world.groups.has(into)
-    ? IDENTITY
-    : inward(world, v, into);
-
   const ids: Id[] = [];
   let out = world;
 
   for (const clip of clips) {
-    const put = restore(out, v, clip, m, by);
+    const put = restore(out, v, clip, where.frame, by);
 
     out = put.world;
     ids.push(put.id);
   }
 
-  return { world: joined(out, into, ids), ids };
-}
-
-/** `ids` taken into `into`, at the end, where the last thing done goes. */
-function joined(world: World, into: GroupId | null, ids: readonly Id[]): World {
-  const group = into === null ? undefined : world.groups.get(into);
-
-  if (group === undefined || into === null) return world;
-
-  const groups = new Map(world.groups);
-
-  groups.set(into, { ...group, members: [...group.members, ...ids] });
-
-  return { ...world, groups };
+  return { world: joined(out, where.into, ids), ids };
 }
 
 /**
@@ -1857,7 +1906,7 @@ export function stamped(
   v: VersionId,
   clips: readonly Clipping[],
   by: Point,
-  into: GroupId | null = null,
+  where: Landing,
 ): { world: World, ids: Id[] } {
   const now = (clip: Clipping): Clipping => clip.kind === 'group'
     ? { ...clip, members: clip.members.map(now), edits: clip.edits.slice(0, 1) }
@@ -1869,7 +1918,7 @@ export function stamped(
         edits: clip.edits.slice(0, 1),
       };
 
-  return pasted(world, v, clips.map(now), by, into);
+  return pasted(world, v, clips.map(now), by, where);
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

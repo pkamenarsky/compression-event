@@ -8,7 +8,7 @@ import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { copied, grouped, pasted, stamped, ungrouped } from './scene';
+import { copied, grouped, landing, pasted, stamped, ungrouped } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
@@ -305,6 +305,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // see happen rather than a polygon hidden exactly under its original.
           const by = s.settings.gridSize;
           const at = { x: by, y: by };
+          const where = landing(s.world, s.currentVersion, s.inside);
 
           // Shift is the paste that leaves the history behind: what was copied
           // as it stands here, born here, saying nothing about any other
@@ -312,8 +313,8 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // Into the group standing open, if one is: a paste lands where the
           // author is working, and in here that is inside the group.
           const { world, ids } = e.shiftKey
-            ? stamped(s.world, s.currentVersion, s.clipboard, at, s.inside)
-            : pasted(s.world, s.currentVersion, s.clipboard, at, s.inside);
+            ? stamped(s.world, s.currentVersion, s.clipboard, at, where)
+            : pasted(s.world, s.currentVersion, s.clipboard, at, where);
 
           return marked(
             { ...s, world, selection: { ...s.selection, polygons: ids } },
@@ -327,7 +328,12 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
 
 /** The picked things made one, and picked as one. */
 function together(s: EditorState): EditorState {
-  const made = grouped(s.world, s.currentVersion, s.selection.polygons);
+  const made = grouped(
+    s.world,
+    s.currentVersion,
+    s.selection.polygons,
+    landing(s.world, s.currentVersion, s.inside),
+  );
 
   if (made === null) return s;
 

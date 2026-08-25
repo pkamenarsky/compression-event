@@ -23,6 +23,7 @@ import {
   Live,
   Resolved,
   addPolygon,
+  landing,
   addVertex,
   centroid,
   editAt,
@@ -473,7 +474,15 @@ export function worldCanvas(
      * that version may name it. */
     function commit(points: Point[]): void {
       update(s => {
-        const { world, id } = addPolygon(s.world, 'level', points, s.currentVersion);
+        // Into the group standing open, and read in its frame: drawing inside
+        // a group makes a member of it, exactly where the cursor put it.
+        const { world, id } = addPolygon(
+          s.world,
+          'level',
+          points,
+          s.currentVersion,
+          landing(s.world, s.currentVersion, s.inside),
+        );
 
         return marked(
           { ...s, world, selection: { ...s.selection, polygons: [id] } },
@@ -1517,7 +1526,13 @@ function layers(
   // picks has to be visible or the click reads as having done nothing. Over the
   // group's outline rather than under it: it is what the next gesture will act
   // on, and the group is not.
-  const singled = items.filter(it => swallowed(world, it.id, path) && reached.has(it.id));
+  //
+  // What the selection *names*, not what it reaches: picking a group names the
+  // group, and drawing the members it reaches would put every outline inside it
+  // back on screen the moment it was clicked — which is the internal geometry
+  // that shutting a group exists to hide.
+  const named = new Set(selection.polygons);
+  const singled = items.filter(it => named.has(it.id) && swallowed(world, it.id, path));
 
   if (singled.length > 0) {
     out.push(ctx => polygons(ctx, view, singled, selection, reached, false, () => true));

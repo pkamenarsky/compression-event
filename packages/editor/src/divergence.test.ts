@@ -21,7 +21,7 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, sample, truth } from './bake';
-import { addPolygon, addVertex, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
+import { TOP, addPolygon, addVertex, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
 import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -31,7 +31,7 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
   let world = emptyWorld();
   const ids: PolygonId[] = [];
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0);
+    const added = addPolygon(world, type, points, 0, TOP);
     world = added.world; ids.push(added.id);
   }
   return { world, ids };
@@ -44,7 +44,7 @@ function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Trans
 /** A group over these, and whatever the version does to it. Groups carry no
  * geometry, so there is no resolved depth to seed from. */
 function held(world: World, ids: Id[], v: VersionId, t: Partial<Transform>): World {
-  const made = grouped(world, 0, ids)!;
+  const made = grouped(world, 0, ids, TOP)!;
 
   return withEdit(made.world, v, made.id, {
     transform: { ...EMPTY_TRANSFORM, ...t },
@@ -188,7 +188,7 @@ test('the replay never strays far from csg(t)', () => {
       ['level', rect(150,150,120,120)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]])!;
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
     const w = withEdit(inner.world, 1, inner.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI/5 },
       vertices: new Map(),
@@ -319,7 +319,7 @@ test('the replay never strays far from csg(t)', () => {
       const ids: PolygonId[] = [];
       for (let i = 0; i < 6; i++) {
         const a = addPolygon(world, i % 3 === 2 ? 'solid' : 'level',
-          rect(-140 + dx * i, -90 + dy * (i % 3), w, h), 0);
+          rect(-140 + dx * i, -90 + dy * (i % 3), w, h), 0, TOP);
         world = a.world; ids.push(a.id);
       }
       return { world, ids };
