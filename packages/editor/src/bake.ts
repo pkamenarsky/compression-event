@@ -1057,6 +1057,80 @@ function everything(at: readonly Contributed[]): Frame {
     .sort((p, q) => p.id - q.id);
 }
 
+/**
+ * A ring cut where it can be cut the same way twice.
+ *
+ * A run that closes on itself comes back from the arrangement cut at whatever
+ * point the walk happened to start from, and that point is not a fact about the
+ * ring — two readings of the same pillar can hand it back cut at different
+ * corners. Nothing downstream minds *where* a ring is cut. What the span cannot
+ * survive is the two ends of a stretch disagreeing about it: they are paired
+ * point for point, so a ring out of phase by one drags every corner toward its
+ * neighbour, and half way across it is a square inscribed in the pillar at
+ * forty-five degrees.
+ *
+ * Cut at the lowest corner in the polygon's *own* frame, which is the frame the
+ * ring holds still in: the polygon can travel and turn across the span without
+ * the answer moving, because its own frame travels and turns with it. Only the
+ * shape changing can move it, and a shape changing that much is an event, which
+ * is a stretch boundary rather than something inside one.
+ *
+ * Open runs are left alone. Their ends are crossings with other polygons and
+ * are not a choice anybody made.
+ */
+function cutOnce(run: Run, m: Affine): Run {
+  const n = run.points.length;
+
+  if (n < 3) return run;
+
+  // Everything here is compared to a hair of the ring's own size. A ring that
+  // closes does not close *exactly*: the last point is the first one worked out
+  // a second time, by an offset at an interpolated depth, and the two answers
+  // differ in their last bits. The comparison that picks the cut needs the same
+  // slack, so that two corners a hair apart in x are settled by their y at
+  // every instant rather than swapping over as the shape moves.
+  const snap = extent(run.points) * 1e-9;
+  const first = run.points[0], last = run.points[n - 1];
+
+  if (Math.abs(first.x - last.x) > snap || Math.abs(first.y - last.y) > snap) return run;
+
+  // The repeated point counted once, and the comparison in the frame the ring
+  // is at rest in.
+  const round = n - 1;
+  const local = run.points.slice(0, round).map(p => unplace(m, p));
+
+  let k = 0;
+
+  for (let i = 1; i < round; i++) {
+    const dx = local[i].x - local[k].x;
+
+    if (dx < -snap || (Math.abs(dx) <= snap && local[i].y < local[k].y - snap)) k = i;
+  }
+
+  if (k === 0) return run;
+
+  const points: Point[] = [], corner: boolean[] = [];
+
+  for (let i = 0; i <= round; i++) {
+    points.push(run.points[(k + i) % round]);
+    corner.push(run.corner[(k + i) % round]);
+  }
+
+  return { ...run, points, corner };
+}
+
+/** How big the thing is, as the longer side of its box. */
+function extent(points: readonly Point[]): number {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+
+  for (const p of points) {
+    x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+    y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+  }
+
+  return Math.max(x1 - x0, y1 - y0, 1);
+}
+
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
   const resolved = world1(items, t);
   const at = folded(cast, resolved, t);
@@ -1080,8 +1154,8 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     if (how !== null) fade.set(it.id, how);
   }
 
-  const out = only === null ? everything(at) : share(at, only);
-
+  const out = (only === null ? everything(at) : share(at, only))
+    .map(r => cutOnce(r, frames.get(r.id)!));
 
   const frame = out.map(r => ({
     id: r.id,

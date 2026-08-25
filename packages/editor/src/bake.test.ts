@@ -201,6 +201,45 @@ describe('interpolation', () => {
   });
 });
 
+describe('a ring is cut the same way twice', () => {
+  test('the two ends of a stretch agree about where a closed ring starts', () => {
+    // A run that closes on itself comes back cut wherever the arrangement's
+    // walk began, and that is not a fact about the ring: two readings of one
+    // pillar can hand it back cut at different corners. The two ends of a
+    // stretch are paired point for point, so a ring out of phase by one drags
+    // every corner toward its neighbour — half way across, a square inscribed
+    // in the pillar at forty-five degrees.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 500, 400)],
+      ['solid', rect(-100, -100, 60, 60)],
+      ['solid', rect(100, -100, 60, 60)],
+    );
+
+    const w = transformed(world, 1, ids[1], { erosion: 8 });
+
+    for (const track of run(bakeSpan(w, 0)).tracks) {
+      for (const stretch of track.stretches) {
+        stretch.a.forEach((one, i) => {
+          const two = stretch.b[i];
+
+          if (two === undefined || two.points.length !== one.points.length) return;
+
+          const n = one.points.length;
+          const off = (k: number) => one.points.reduce((sum, p, j) => {
+            const q = two.points[(j + k) % n];
+
+            return sum + Math.hypot(p.x - q.x, p.y - q.y);
+          }, 0);
+
+          // Index for index is the best the two ends can be lined up. Any other
+          // phase fitting better means they were cut at different corners.
+          for (let k = 1; k < n; k++) expect(off(k)).toBeGreaterThanOrEqual(off(0));
+        });
+      }
+    }
+  });
+});
+
 describe('a track covers the span exactly once', () => {
   // What the shader needs and cannot work out for itself: at any instant there
   // is one stretch to draw, never none and never two. Converging on an event
