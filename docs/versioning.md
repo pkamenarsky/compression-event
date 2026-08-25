@@ -755,24 +755,52 @@ world rather than on the screen. During a pan each is handed the same answer it
 was handed before it, which is the sense in which what is being dragged stays
 put while the window travels.
 
-### Canvas: a clipping is geometry, and a group is a clipping of clippings
+### Canvas: a copy is a copy at every version
 
-A clipboard entry holds no ids. It holds the ring as it resolved at the version
-it was taken at, so a paste still works after the original has been dragged,
-deleted, or the file reloaded — which is most of what a clipboard is for.
+A clipping holds what was *written*, not what resolved: the rings as drawn, the
+structure, and every layer that says anything about them. So a copy is a copy at
+every version — paste a group that erodes at v1 and turns at v3, and the copy
+erodes at v1 and turns at v3.
 
-A group has no geometry to hold, so its clipping holds its members' clippings
-and its depth. It does not hold its transform, and does not need to: every
-member's ring is already resolved, so the group's placement is in the points.
-What that costs is the one thing a versioned transform could have said — the
-paste stands where the original stood *at the version it was copied at*, and
-says nothing about any other version. That is what a clipping is everywhere
-else here too.
+That is the only reading under which copying a group copies the group. A group
+has no geometry of its own; its transform is the whole of what it is, and that
+transform is per-version. Resolve it to one version's rings and what comes back
+is a picture of the group, not the group.
 
-The depth stays a depth rather than being baked into the rings, on a group for
-the same reason as on a polygon: erosion is a read taken over the boundary, not
-something written into any corner. Bake it and pasting an eroded group would
-erode it twice.
+Ids are reminted on paste, and reminted *together*: a vertex is named by id in
+the ring and again in every layer that displaces it, so the two are renamed in
+one pass or the displacements land on nothing.
+
+Versions are not carried. There is one chain per document and this is a
+clipboard within a document, so `v2` in the clipping is the `v2` it is pasted
+into. Crossing documents would mean saying what its versions were, and a
+clipping has nothing to say about that.
+
+The paste's offset goes onto the translation of the layer the thing is *born*
+into, rather than into the ring. That layer's translation is applied after its
+own turn and scale, so at the top level it is a world-space nudge, and every
+later layer applies to what it produced: move it once at the start and it has
+moved at every version, keeping whatever it does in between. Inside a group the
+offset is not applied at all — what is in a group is placed by the group.
+
+### Canvas: a stamp is a paste with the history left behind
+
+Cmd+Shift+V pastes what was copied *as it stands at the version on screen*: born
+there, saying nothing about any other version. For taking a shape somewhere else
+without taking its history with it — the pillar from v0's room, in v3's,
+standing still while the original erodes.
+
+It is the deep paste and then a flatten, rather than a second kind of clipping.
+Flattening writes each thing's resolved ring back as the ring it was drawn with
+and drops every layer over it. The rings come back in world units, which is what
+lets the transforms go: a member of a turned group has the turn in its points
+afterwards, so clearing the group's layers leaves it exactly where it was seen.
+
+Erosion is the one thing that cannot be written into a ring — it is a read taken
+over the boundary, not a place any corner is — so it stays a depth, on the one
+layer there now is. Anything not standing at that version is dropped rather than
+flattened: there is no ring to write for something that is not there, and a
+group left holding nothing goes with it.
 
 ### Canvas: polygon states
 

@@ -36,6 +36,7 @@ import {
   place,
   removeVertices,
   resolveAt,
+  stamped,
   unplace,
   withEdit,
 } from './scene';
@@ -569,8 +570,8 @@ describe('copy and paste', () => {
     const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
     const eroded = transformed(world, 0, ids[0], { erosion: 12 });
 
-    const clips = copied(eroded, 0, [ids[0]]);
-    const after = pasted(eroded, 0, clips, { x: 32, y: 32 });
+    const clips = copied(eroded, [ids[0]]);
+    const after = pasted(eroded, clips, { x: 32, y: 32 });
     const copy = only(after.world, 0, after.ids[0]);
 
     expect(copy.polygon.type).toEqual('solid');
@@ -588,8 +589,8 @@ describe('copy and paste', () => {
     const g = grouped(world, 0, ids)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
-    const clips = copied(turned, 0, [g.id]);
-    const after = pasted(turned, 0, clips, { x: 0, y: 400 });
+    const clips = copied(turned, [g.id]);
+    const after = pasted(turned, clips, { x: 0, y: 400 });
 
     // One thing selected, and it is a group of two, not two loose polygons.
     expect(after.ids.length).toEqual(1);
@@ -610,7 +611,7 @@ describe('copy and paste', () => {
     const d = 6;
     const before = moved(g.world, 0, g.id, { erosion: d });
 
-    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
+    const after = pasted(before, copied(before, [g.id]), { x: 0, y: 500 });
 
     // Eroded once over, not twice: the depth rode in the layer, and the
     // members' rings came across as they were drawn.
@@ -618,16 +619,68 @@ describe('copy and paste', () => {
       .toBeCloseTo(2 * shapeArea(csg(before, 0)), 6);
   });
 
+  test('a copy is a copy at every version, not at the one it was taken at', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const before = moved(g.world, 1, g.id, { erosion: 10 });
+
+    const after = pasted(before, copied(before, [g.id]), { x: 0, y: 500 });
+    const copy = after.ids[0];
+
+    // Nothing at v0, ten at v1: the layer came across as a layer, so the copy
+    // erodes down the chain exactly as the original does.
+    expect(depths(after.world, 0).get(copy) ?? 0).toEqual(0);
+    expect(depths(after.world, 1).get(copy)).toEqual(10);
+  });
+
+  test('a stamp says nothing about any version but the one it lands in', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const before = moved(g.world, 1, g.id, { erosion: 10 });
+
+    const after = stamped(before, 1, copied(before, [g.id]), { x: 0, y: 500 });
+    const copy = after.ids[0];
+
+    // It stands where it was seen at v1 — eroded — and it is not there at v0
+    // at all, having been born into v1.
+    expect(after.world.groups.get(copy)?.birth).toEqual(1);
+    expect(shapeArea(csg(after.world, 1)))
+      .toBeCloseTo(2 * shapeArea(csg(before, 1)), 6);
+    expect(shapeArea(csg(after.world, 0)))
+      .toBeCloseTo(shapeArea(csg(before, 0)), 6);
+  });
+
+  test('a stamped member keeps the placement its group gave it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2, translation: { x: 400, y: 0 } });
+
+    const after = stamped(turned, 0, copied(turned, [g.id]), { x: 0, y: 400 });
+
+    // The turn went into the rings, so dropping every layer left it put.
+    expect(shapeArea(csg(after.world, 0)))
+      .toBeCloseTo(2 * shapeArea(csg(turned, 0)), 6);
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const clips = copied(world, 0, [ids[0]]);
+    const clips = copied(world, [ids[0]]);
 
     const polygons = new Map(world.polygons);
     polygons.delete(ids[0]);
 
-    const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
+    const after = pasted({ ...world, polygons }, clips, { x: 0, y: 0 });
 
     expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
   });

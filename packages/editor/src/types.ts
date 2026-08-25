@@ -401,20 +401,24 @@ export function togglePicked(some: readonly number[], id: number): number[] {
 /**
  * Something lifted out of the world, ready to be put back.
  *
- * Geometry rather than the id it was taken from: a paste has to work after the
- * original has been changed, or deleted, or the file reloaded. A polygon's ring
- * is in world units as it resolved when it was taken, so a member of a group
- * carries the group's placement in its points and lands where it was seen.
+ * Structure and geometry as they were written, not as they resolved: the rings
+ * as drawn, and every layer that says anything about them. A copy is therefore
+ * a copy at *every* version — paste an eroding group and it erodes, paste one
+ * that turns at v3 and it turns at v3 — which is the only reading under which
+ * copying a group copies the group rather than a picture of it.
  *
- * A group is a clipping of clippings, because a group has no geometry of its
- * own to bake: what it is, is its members and a depth. The depth stays a depth
- * for the same reason it does on a polygon — it is a read taken over the union,
- * not something written into any ring. What comes back is born into whatever
- * version is on screen, which is the only kind this editor has.
+ * There are no ids in a clipping worth keeping, but there are ids in it: a
+ * vertex is named by id in the ring and again in every layer that displaces it,
+ * and those two have to keep agreeing. Paste remints both together.
+ *
+ * The versions are not carried, because there is only ever one chain: this is a
+ * clipboard within a document, and `v2` in the clipping is the same `v2` it is
+ * pasted into. A clipping that crossed documents would have to say what its
+ * versions were, and this one would have nothing to say.
  */
 export type Clipping =
-  | { kind: 'polygon', type: PolygonType, points: Point[], erosion: number }
-  | { kind: 'group', erosion: number, members: Clipping[] }
+  | { kind: 'polygon', polygon: Polygon, edits: [VersionId, Edit][] }
+  | { kind: 'group', birth: VersionId, members: Clipping[], edits: [VersionId, Edit][] }
 
 // -----------------------------------------------------------------------------
 // Undo

@@ -8,7 +8,7 @@ import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { copied, grouped, pasted, ungrouped } from './scene';
+import { copied, grouped, pasted, stamped, ungrouped } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
@@ -294,7 +294,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyC') {
         update(s => ({
           ...s,
-          clipboard: copied(s.world, s.currentVersion, s.selection.polygons),
+          clipboard: copied(s.world, s.selection.polygons),
         }));
       }
       else if (e.code === 'KeyV') {
@@ -304,12 +304,14 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // One grid step down and right, so that a paste is something you can
           // see happen rather than a polygon hidden exactly under its original.
           const by = s.settings.gridSize;
-          const { world, ids } = pasted(
-            s.world,
-            s.currentVersion,
-            s.clipboard,
-            { x: by, y: by },
-          );
+          const at = { x: by, y: by };
+
+          // Shift is the paste that leaves the history behind: what was copied
+          // as it stands here, born here, saying nothing about any other
+          // version. Plain paste brings the whole chain across.
+          const { world, ids } = e.shiftKey
+            ? stamped(s.world, s.currentVersion, s.clipboard, at)
+            : pasted(s.world, s.clipboard, at);
 
           return marked(
             { ...s, world, selection: { ...s.selection, polygons: ids } },
