@@ -1452,15 +1452,15 @@ function layers(
 
   out.push(ctx => axes(ctx, view));
 
+  const reached = new Set(polygonsIn(world, selection.polygons));
+  const path = opened(world, inside);
+
   for (const k of ghostVersions(world, current, local.previewing)) {
     const shown = resolveAt(world, k);
     const stroke = ghostColour(k - current);
 
-    out.push(ctx => ghosts(ctx, view, shown, stroke));
+    out.push(ctx => ghosts(ctx, view, world, k, path, shown, stroke));
   }
-
-  const reached = new Set(polygonsIn(world, selection.polygons));
-  const path = opened(world, inside);
 
   // A shut group is one shape, and its members are not on screen at all: the
   // whole of what grouping does to the eye is take several outlines away and
@@ -1511,16 +1511,42 @@ function ghostColour(distance: number): string {
   return distance < 0 ? theme.ghostBehind[d] : theme.ghost[d];
 }
 
+/**
+ * One other version, drawn the way this one is drawn.
+ *
+ * A ghost is the same boundary seen from another version, so it has to be the
+ * same *kind* of picture: a shut group is one outline there too, and its
+ * members are no more on screen at another version than at this one. Drawing
+ * the resolved polygons raw puts every member's outline back, and the parts
+ * that are not hidden under the boundary are exactly the seams between them —
+ * which is the internal geometry grouping exists to stop showing, arriving by
+ * the one door that was not watched.
+ *
+ * The open path is this version's, and rightly: which group is standing open
+ * is about where the author is, not about which version they are looking at.
+ * Group structure is global, so the same path means something at every one.
+ */
 function ghosts(
   ctx: CanvasRenderingContext2D,
   view: View,
+  world: World,
+  v: VersionId,
+  path: readonly GroupId[],
   items: Resolved[],
   stroke: string,
 ): void {
   ctx.beginPath();
 
   for (const it of items) {
+    if (swallowed(world, it.id, path)) continue;
+
     for (const ring of it.shape) {
+      trace(ctx, view, ring);
+    }
+  }
+
+  for (const g of occupying(world, v, items, path)) {
+    for (const ring of g.shape) {
       trace(ctx, view, ring);
     }
   }

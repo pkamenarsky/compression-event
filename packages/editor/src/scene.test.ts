@@ -1060,6 +1060,32 @@ describe('going inside a group', () => {
     expect(reachable(ungrouped(world, group)!, ids[0], group)).toBe(true);
   });
 
+  test('a ghost of another version is drawn the same way', () => {
+    // The one door that was not watched: `ghosts` predates groups and drew the
+    // resolved polygons raw, which puts every member's outline back. What is
+    // left visible of those is the seams between them, which is exactly the
+    // internal geometry grouping exists to stop showing.
+    //
+    // The reader is the same for any version, so a ghost asks the same
+    // question this version does and gets an answer of the same kind.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+
+    for (const v of [0, 1, 4]) {
+      const out = occupying(made.world, v, resolveAt(made.world, v), []);
+
+      expect(out).toHaveLength(1);
+
+      // One ring across both rooms: the seam at x = 60 is not in it.
+      expect(out[0].shape).toHaveLength(1);
+      expect(shapeArea(out[0].shape)).toBeCloseTo(160 * 100, 6);
+    }
+  });
+
   test('a group takes its own walls out of its own rooms', () => {
     // The pillar's outline is exactly the internal geometry grouping is meant
     // to stop showing, so what is drawn is one boundary with the hole in it.

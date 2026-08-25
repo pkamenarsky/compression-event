@@ -645,6 +645,16 @@ Three ways back out, and each covers where the others are awkward:
 
 Leaving picks the group left behind, which puts back what going in took away.
 
+**Every layer that draws the boundary asks the same question**, ghosts of other
+versions included. A ghost is the same boundary seen from another version, so it
+has to be the same kind of picture: a shut group is one outline there too. Drawing
+the resolved polygons raw puts every member's outline back, and the parts of
+those not hidden under the boundary are precisely the seams between them.
+
+Which group stands open is about where the author is, not which version they are
+looking at — group structure is global, so one path means something at every
+version.
+
 ### Canvas: a half-drawn polygon is a mode, and the pen holds it
 
 Laying a polygon down is **a gesture that runs**, not a click handler that
