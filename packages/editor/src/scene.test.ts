@@ -570,8 +570,8 @@ describe('copy and paste', () => {
     const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
     const eroded = transformed(world, 0, ids[0], { erosion: 12 });
 
-    const clips = copied(eroded, [ids[0]]);
-    const after = pasted(eroded, clips, { x: 32, y: 32 });
+    const clips = copied(eroded, 0, [ids[0]]);
+    const after = pasted(eroded, 0, clips, { x: 32, y: 32 });
     const copy = only(after.world, 0, after.ids[0]);
 
     expect(copy.polygon.type).toEqual('solid');
@@ -589,8 +589,8 @@ describe('copy and paste', () => {
     const g = grouped(world, 0, ids)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
-    const clips = copied(turned, [g.id]);
-    const after = pasted(turned, clips, { x: 0, y: 400 });
+    const clips = copied(turned, 0, [g.id]);
+    const after = pasted(turned, 0, clips, { x: 0, y: 400 });
 
     // One thing selected, and it is a group of two, not two loose polygons.
     expect(after.ids.length).toEqual(1);
@@ -611,7 +611,7 @@ describe('copy and paste', () => {
     const d = 6;
     const before = moved(g.world, 0, g.id, { erosion: d });
 
-    const after = pasted(before, copied(before, [g.id]), { x: 0, y: 500 });
+    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
 
     // Eroded once over, not twice: the depth rode in the layer, and the
     // members' rings came across as they were drawn.
@@ -627,7 +627,7 @@ describe('copy and paste', () => {
     const g = grouped(world, 0, ids)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
-    const after = pasted(before, copied(before, [g.id]), { x: 0, y: 500 });
+    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
     const copy = after.ids[0];
 
     // Nothing at v0, ten at v1: the layer came across as a layer, so the copy
@@ -644,7 +644,7 @@ describe('copy and paste', () => {
     const g = grouped(world, 0, ids)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
-    const after = stamped(before, 1, copied(before, [g.id]), { x: 0, y: 500 });
+    const after = stamped(before, 1, copied(before, 1, [g.id]), { x: 0, y: 500 });
     const copy = after.ids[0];
 
     // It stands where it was seen at v1 — eroded — and it is not there at v0
@@ -664,23 +664,64 @@ describe('copy and paste', () => {
     const g = grouped(world, 0, ids)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2, translation: { x: 400, y: 0 } });
 
-    const after = stamped(turned, 0, copied(turned, [g.id]), { x: 0, y: 400 });
+    const after = stamped(turned, 0, copied(turned, 0, [g.id]), { x: 0, y: 400 });
 
     // The turn went into the rings, so dropping every layer left it put.
     expect(shapeArea(csg(after.world, 0)))
       .toBeCloseTo(2 * shapeArea(csg(turned, 0)), 6);
   });
 
+  test('the layers land where they were taken from, relative to the paste', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const at1 = moved(world, 1, ids[0], { erosion: 4 });
+    const at2 = moved(at1, 2, ids[0], { erosion: 9 });
+
+    // Taken at v1 and put down at v3: what it did one version on it does one
+    // version on from here.
+    const after = pasted(at2, 3, copied(at2, 1, [ids[0]]), { x: 0, y: 500 });
+    const copy = after.ids[0];
+
+    expect(only(after.world, 3, copy).erosion).toEqual(4);
+    expect(only(after.world, 4, copy).erosion).toEqual(9);
+  });
+
+  test('what runs off the end of the chain is dropped', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const at1 = moved(world, 1, ids[0], { erosion: 7 });
+
+    const last = at1.versions.length - 1;
+    const after = pasted(at1, last, copied(at1, 0, [ids[0]]), { x: 0, y: 500 });
+
+    // Copied at v0, pasted at the last version: its v1 has nowhere to land, and
+    // the chain does not grow to make room.
+    expect(after.world.versions.length).toEqual(last + 1);
+    expect(only(after.world, last, after.ids[0]).erosion).toEqual(0);
+  });
+
+  test('nothing before the copy comes with it', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const at0 = moved(world, 0, ids[0], { erosion: 5 });
+
+    // Copied at v1, where it stands eroded by 5 having inherited it. What lands
+    // is that shape, born at v1 — v0 has nothing to do with it.
+    const after = pasted(at0, 1, copied(at0, 1, [ids[0]]), { x: 0, y: 500 });
+    const copy = after.ids[0];
+
+    expect(after.world.polygons.get(copy)?.birth).toEqual(1);
+    expect(only(after.world, 1, copy).erosion).toEqual(5);
+    expect(resolveAt(after.world, 0).some(it => it.id === copy)).toEqual(false);
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const clips = copied(world, [ids[0]]);
+    const clips = copied(world, 0, [ids[0]]);
 
     const polygons = new Map(world.polygons);
     polygons.delete(ids[0]);
 
-    const after = pasted({ ...world, polygons }, clips, { x: 0, y: 0 });
+    const after = pasted({ ...world, polygons }, 0, clips, { x: 0, y: 0 });
 
     expect(shapeArea(only(after.world, 0, after.ids[0]).shape)).toBeCloseTo(10000, 6);
   });

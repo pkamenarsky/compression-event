@@ -294,7 +294,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyC') {
         update(s => ({
           ...s,
-          clipboard: copied(s.world, s.selection.polygons),
+          clipboard: copied(s.world, s.currentVersion, s.selection.polygons),
         }));
       }
       else if (e.code === 'KeyV') {
@@ -311,7 +311,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // version. Plain paste brings the whole chain across.
           const { world, ids } = e.shiftKey
             ? stamped(s.world, s.currentVersion, s.clipboard, at)
-            : pasted(s.world, s.clipboard, at);
+            : pasted(s.world, s.currentVersion, s.clipboard, at);
 
           return marked(
             { ...s, world, selection: { ...s.selection, polygons: ids } },

@@ -1513,28 +1513,59 @@ export function removeVertices(
 // Copying
 // -----------------------------------------------------------------------------
 
-/** Every layer that says anything about `id`, in chain order. */
-function layers(world: World, id: Id): [VersionId, Edit][] {
-  return world.versions.flatMap((version, k) => {
-    const edit = version.edits.get(id);
-
-    return edit === undefined ? [] : [[k, {
-      transform: { ...edit.transform, translation: { ...edit.transform.translation } },
-      vertices: new Map([...edit.vertices].map(([v, p]) => [v, { ...p }])),
-    }] as [VersionId, Edit]];
-  });
+/** A direction as the frame `m` places it: the linear part only, so a
+ * displacement turns and stretches with the frame but does not travel. */
+function pointing(m: Affine, d: Point): Point {
+  return { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
 }
 
 /**
- * The picked things lifted out whole: their structure, their rings as drawn,
- * and every layer over them.
+ * The picked things lifted out, from the version they were taken at onward.
  *
- * No version is named here, because a copy is not taken at a version. What is
- * picked is picked at one, but what it *is* spans the chain, and a copy that
- * held only the version it was taken at would quietly throw away the rest —
- * which for a group, whose transform is the only thing it has, is most of it.
+ * Two halves. The version it was copied at becomes the geometry: rings in world
+ * units as they stood there, so the copy starts life looking exactly like what
+ * was on screen. Every version *after* it comes across as a layer, keyed by how
+ * far past the copy it was, so what the original goes on to do the copy goes on
+ * to do too — the erosion sequence is the thing worth copying, and it is not in
+ * any one version.
+ *
+ * Nothing before the copy comes at all. A copy taken at v1 that reappeared at
+ * v0 is answering a question nobody asked: the author is standing at v1 and
+ * pointing at what is there.
+ *
+ * Displacements and corners still to arrive are written in the polygon's drawn
+ * frame, which the copy no longer has — its drawn frame is the copy version's
+ * world. So they come through that frame: `place` for a corner, which is
+ * somewhere, and `pointing` for a displacement, which is only a direction.
  */
-export function copied(world: World, ids: readonly Id[]): Clipping[] {
+export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping[] {
+  const items = new Map(resolveAt(world, v).map(it => [it.id, it]));
+  const deep = depths(world, v);
+  const inherited = new Set(chain(world, v));
+
+  /** What a version's layer says, as the copy will say it. */
+  const layers = (id: Id, m: Affine | null, erosion: number): [number, Edit][] => {
+    const out: [number, Edit][] = [[0, {
+      transform: { ...EMPTY_TRANSFORM, erosion },
+      vertices: new Map(),
+    }]];
+
+    for (let k = v + 1; k < world.versions.length; k++) {
+      const edit = world.versions[k].edits.get(id);
+
+      if (edit === undefined) continue;
+
+      out.push([k - v, {
+        transform: { ...edit.transform, translation: { ...edit.transform.translation } },
+        vertices: m === null
+          ? new Map()
+          : new Map([...edit.vertices].map(([id, d]) => [id, pointing(m, d)])),
+      }]);
+    }
+
+    return out;
+  };
+
   const clip = (id: Id): Clipping[] => {
     const group = world.groups.get(id);
 
@@ -1543,21 +1574,31 @@ export function copied(world: World, ids: readonly Id[]): Clipping[] {
 
       return members.length === 0 ? [] : [{
         kind: 'group',
-        birth: group.birth,
         members,
-        edits: layers(world, id),
+        edits: layers(id, null, deep.get(id) ?? 0),
       }];
     }
 
-    const polygon = world.polygons.get(id);
+    const it = items.get(id);
 
-    return polygon === undefined ? [] : [{
+    if (it === undefined) return [];
+
+    const source = new Map(it.corners.map((corner, i) => [corner.id, it.source[i]]));
+
+    const points = it.polygon.points
+      .filter(corner => source.has(corner.id) || corner.birth > v)
+      .map(corner => ({
+        id: corner.id,
+        at: source.get(corner.id) ?? place(it.frame, [corner.at])[0],
+        birth: source.has(corner.id) ? 0 : corner.birth - v,
+        death: corner.death === null ? null : corner.death - v,
+      }));
+
+    return [{
       kind: 'polygon',
-      polygon: {
-        ...polygon,
-        points: polygon.points.map(c => ({ ...c, at: { ...c.at } })),
-      },
-      edits: layers(world, id),
+      type: it.polygon.type,
+      points,
+      edits: layers(id, it.frame, it.erosion),
     }];
   };
 
@@ -1565,53 +1606,49 @@ export function copied(world: World, ids: readonly Id[]): Clipping[] {
 }
 
 /**
- * The clipping's layers written for `id`, with its vertices renamed and the
- * paste's offset put in.
+ * The clipping's layers written for `id`, starting at `v`, with its vertices
+ * renamed and the paste's offset put in.
  *
- * The offset goes on the translation of the layer the thing is born into,
- * rather than into the ring: that layer's translation is applied after its turn
- * and its scale, so on something at the top level it is a world-space nudge,
- * and every later layer applies to what it produced. Move it once at the start
- * and it has moved at every version, keeping whatever it does in between.
+ * The offset goes on the translation of the layer the thing is born into rather
+ * than into the ring: that translation is applied after the layer's own turn
+ * and scale, so at the top level it is a world-space nudge, and every later
+ * layer applies to what it produced. Move it once at the start and it has moved
+ * at every version, keeping whatever it does in between.
  */
 function written(
   world: World,
+  v: VersionId,
   id: Id,
-  birth: VersionId,
-  edits: readonly [VersionId, Edit][],
+  edits: readonly [number, Edit][],
   renamed: ReadonlyMap<VertexId, VertexId>,
   by: Point | null,
 ): World {
-  const out = new Map(edits.map(([k, edit]): [VersionId, Edit] => [k, {
-    transform: edit.transform,
-    vertices: new Map([...edit.vertices].map(([v, p]) => [renamed.get(v) ?? v, p])),
-  }]));
+  let out = world;
 
-  if (by !== null) {
-    const edit = out.get(birth)
-      ?? { transform: EMPTY_TRANSFORM, vertices: new Map() };
+  for (const [offset, edit] of edits) {
+    // Past the end of the chain, and there is nowhere for it to go. See the
+    // note on `pasted`.
+    if (v + offset >= world.versions.length) break;
+
     const at = edit.transform.translation;
+    const moved = offset === 0 && by !== null;
 
-    out.set(birth, {
-      ...edit,
-      transform: {
-        ...edit.transform,
-        translation: { x: at.x + by.x, y: at.y + by.y },
-      },
+    out = withEdit(out, v + offset, id, {
+      transform: moved
+        ? { ...edit.transform, translation: { x: at.x + by.x, y: at.y + by.y } }
+        : edit.transform,
+      vertices: new Map([...edit.vertices].map(([v, d]) => [renamed.get(v) ?? v, d])),
     });
   }
 
-  let world_ = world;
-
-  for (const [k, edit] of out) world_ = withEdit(world_, k, id, edit);
-
-  return world_;
+  return out;
 }
 
-/** One clipping put back, and everything under it. The offset lands on the
- * outermost thing only: what is inside a group is placed by the group. */
+/** One clipping put back at `v`, and everything under it. The offset lands on
+ * the outermost thing only: what is inside a group is placed by the group. */
 function restore(
   world: World,
+  v: VersionId,
   clip: Clipping,
   by: Point | null,
 ): { world: World, id: Id } {
@@ -1620,7 +1657,7 @@ function restore(
     let out = world;
 
     for (const member of clip.members) {
-      const put = restore(out, member, null);
+      const put = restore(out, v, member, null);
 
       out = put.world;
       members.push(put.id);
@@ -1629,23 +1666,32 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: clip.birth, members });
+    groups.set(id, { birth: v, members });
     out = { ...out, groups, nextId: id + 1 };
 
-    return { world: written(out, id, clip.birth, clip.edits, new Map(), by), id };
+    return { world: written(out, v, id, clip.edits, new Map(), by), id };
   }
 
   const id = world.nextId;
   const renamed = new Map<VertexId, VertexId>();
-  const points = clip.polygon.points.map((corner, i) => {
-    renamed.set(corner.id, id + 1 + i);
+  const points = clip.points
+    .filter(corner => v + corner.birth < world.versions.length)
+    .map((corner, i) => {
+      renamed.set(corner.id, id + 1 + i);
 
-    return { ...corner, id: id + 1 + i };
-  });
+      return {
+        id: id + 1 + i,
+        at: { ...corner.at },
+        birth: v + corner.birth,
+        death: corner.death === null || v + corner.death >= world.versions.length
+          ? null
+          : v + corner.death,
+      };
+    });
 
   const polygons = new Map(world.polygons);
 
-  polygons.set(id, { ...clip.polygon, points });
+  polygons.set(id, { type: clip.type, birth: v, points });
 
   const out = {
     ...world,
@@ -1653,16 +1699,21 @@ function restore(
     nextId: id + 1 + points.length,
   };
 
-  return {
-    world: written(out, id, clip.polygon.birth, clip.edits, renamed, by),
-    id,
-  };
+  return { world: written(out, v, id, clip.edits, renamed, by), id };
 }
 
 /**
- * Clippings put back as new polygons and groups, at every version they had
- * something to say at, offset by `by` so that a paste is something you can see
- * happen.
+ * Clippings put back at `v`, offset by `by` so that a paste is something you
+ * can see happen.
+ *
+ * A copy taken at v1 and pasted at v3 has its v1 land in v3, its v2 in v4, and
+ * so on: the layers are relative to where they were taken, so what is pasted
+ * does from here what the original did from there.
+ *
+ * What runs off the end of the chain is dropped. The chain is a fixed length
+ * everywhere else — the strip draws its rows once, the bake counts its spans
+ * from the same number — so growing it here would be growing it for all of
+ * them, and that is a change about forks, not about pasting.
  *
  * The ids that come back are the top of what was pasted — a group rather than
  * the polygons under it — because that is what the selection should hold: a
@@ -1670,6 +1721,7 @@ function restore(
  */
 export function pasted(
   world: World,
+  v: VersionId,
   clips: readonly Clipping[],
   by: Point,
 ): { world: World, ids: Id[] } {
@@ -1677,7 +1729,7 @@ export function pasted(
   let out = world;
 
   for (const clip of clips) {
-    const put = restore(out, clip, by);
+    const put = restore(out, v, clip, by);
 
     out = put.world;
     ids.push(put.id);
@@ -1687,11 +1739,16 @@ export function pasted(
 }
 
 /**
- * The same, and then flattened to how it stands at `v`: one version's worth of
- * shape, born there, saying nothing about any other.
+ * The same, and only the version it lands in: one version's worth of shape,
+ * born there, saying nothing about any other.
  *
- * For taking a shape somewhere else without taking its history with it — the
- * pillar from v0's room, in v3's, standing still while the original erodes.
+ * The clipping's first layer *is* the version it was copied at, so this is the
+ * paste with the tail dropped. For taking a shape somewhere else without taking
+ * its history with it — the pillar from v0's room, in v3's, standing still
+ * while the original goes on eroding.
+ *
+ * Corners still to arrive go with the tail, and corners due to leave stop
+ * leaving. What either was for is not happening here.
  */
 export function stamped(
   world: World,
@@ -1699,95 +1756,17 @@ export function stamped(
   clips: readonly Clipping[],
   by: Point,
 ): { world: World, ids: Id[] } {
-  const put = pasted(world, clips, by);
+  const now = (clip: Clipping): Clipping => clip.kind === 'group'
+    ? { ...clip, members: clip.members.map(now), edits: clip.edits.slice(0, 1) }
+    : {
+        ...clip,
+        points: clip.points
+          .filter(c => c.birth === 0)
+          .map(c => ({ ...c, death: null })),
+        edits: clip.edits.slice(0, 1),
+      };
 
-  return { world: flattened(put.world, v, put.ids), ids: put.ids };
-}
-
-/**
- * Everything under `ids` rewritten as the geometry it resolves to at `v`, born
- * there, with every layer over it dropped.
- *
- * The rings come back in world units, which is what lets the transforms go: a
- * member of a turned group has the turn in its points afterwards, so clearing
- * the group's layers leaves it exactly where it was seen. Erosion is the one
- * thing that cannot be written into a ring — it is a read taken over the
- * boundary — so it stays a depth, on the one layer there now is.
- *
- * Anything not standing at `v` is dropped rather than flattened. There is no
- * ring to write for something that is not there, and a group left holding
- * nothing goes with them.
- */
-export function flattened(world: World, v: VersionId, ids: readonly Id[]): World {
-  const under = new Set(ids.flatMap(id => within(world, id)));
-  const items = new Map(resolveAt(world, v).map(it => [it.id, it]));
-  const deep = depths(world, v);
-
-  const polygons = new Map(world.polygons);
-  const groups = new Map(world.groups);
-  const kept = new Set<Id>();
-
-  for (const id of under) {
-    const it = items.get(id);
-
-    if (it === undefined) continue;
-
-    kept.add(id);
-    polygons.set(id, {
-      type: it.polygon.type,
-      birth: v,
-      points: it.corners.map((corner, i) => ({
-        id: corner.id,
-        at: { ...it.source[i] },
-        birth: v,
-        death: null,
-      })),
-    });
-  }
-
-  // Innermost first, so a group is asked about after the members it might have
-  // lost: a group left holding nothing is nothing.
-  for (const id of [...under].filter(id => groups.has(id)).reverse()) {
-    const members = groups.get(id)!.members.filter(m => kept.has(m));
-
-    if (members.length === 0) continue;
-
-    kept.add(id);
-    groups.set(id, { birth: v, members });
-  }
-
-  for (const id of under) {
-    if (kept.has(id)) continue;
-
-    polygons.delete(id);
-    groups.delete(id);
-  }
-
-  const versions = world.versions.map((version, k) => {
-    const edits = new Map<Id, Edit>();
-    let changed = false;
-
-    for (const [id, edit] of version.edits) {
-      if (under.has(id)) changed = true;
-      else edits.set(id, edit);
-    }
-
-    for (const id of kept) {
-      const erosion = polygons.has(id) ? items.get(id)!.erosion : deep.get(id) ?? 0;
-
-      if (k === v && erosion !== 0) {
-        edits.set(id, {
-          transform: { ...EMPTY_TRANSFORM, erosion },
-          vertices: new Map(),
-        });
-        changed = true;
-      }
-    }
-
-    return changed ? { ...version, edits } : version;
-  });
-
-  return { ...world, polygons, groups, versions };
+  return pasted(world, v, clips.map(now), by);
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

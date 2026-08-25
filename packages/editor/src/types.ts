@@ -399,26 +399,30 @@ export function togglePicked(some: readonly number[], id: number): number[] {
 }
 
 /**
- * Something lifted out of the world, ready to be put back.
+ * Something lifted out of the world, ready to be put back — from the version it
+ * was taken at onward, and nothing before that.
  *
- * Structure and geometry as they were written, not as they resolved: the rings
- * as drawn, and every layer that says anything about them. A copy is therefore
- * a copy at *every* version — paste an eroding group and it erodes, paste one
- * that turns at v3 and it turns at v3 — which is the only reading under which
- * copying a group copies the group rather than a picture of it.
+ * The copy version becomes the geometry: rings in world units as they stood
+ * there, which is why a clipping has no ids worth keeping and no transform for
+ * where it came from. Everything after it is a layer keyed by **how far past
+ * the copy** it was, so pasting somewhere else replays the same sequence from
+ * there: v1 into v3, v2 into v4, and on. The offsets always start at 0, and the
+ * layer at 0 carries the depth, which is the one thing a ring cannot hold.
  *
- * There are no ids in a clipping worth keeping, but there are ids in it: a
- * vertex is named by id in the ring and again in every layer that displaces it,
- * and those two have to keep agreeing. Paste remints both together.
+ * A vertex is named by id in the ring and again in every layer that displaces
+ * it, and those two have to keep agreeing. Paste remints them together.
  *
- * The versions are not carried, because there is only ever one chain: this is a
- * clipboard within a document, and `v2` in the clipping is the same `v2` it is
- * pasted into. A clipping that crossed documents would have to say what its
- * versions were, and this one would have nothing to say.
+ * `birth` and `death` on a corner are offsets too, so a corner the original
+ * grows at v3 the copy grows three versions after it lands.
  */
 export type Clipping =
-  | { kind: 'polygon', polygon: Polygon, edits: [VersionId, Edit][] }
-  | { kind: 'group', birth: VersionId, members: Clipping[], edits: [VersionId, Edit][] }
+  | {
+      kind: 'polygon'
+      type: PolygonType
+      points: Vertex[]
+      edits: [number, Edit][]
+    }
+  | { kind: 'group', members: Clipping[], edits: [number, Edit][] }
 
 // -----------------------------------------------------------------------------
 // Undo

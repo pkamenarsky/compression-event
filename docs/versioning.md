@@ -755,52 +755,69 @@ world rather than on the screen. During a pan each is handed the same answer it
 was handed before it, which is the sense in which what is being dragged stays
 put while the window travels.
 
-### Canvas: a copy is a copy at every version
+### Canvas: a copy is taken from a version, and lands relative to one
 
-A clipping holds what was *written*, not what resolved: the rings as drawn, the
-structure, and every layer that says anything about them. So a copy is a copy at
-every version — paste a group that erodes at v1 and turns at v3, and the copy
-erodes at v1 and turns at v3.
+A clipping has two halves. The version it was copied at becomes the geometry —
+rings in world units as they stood there — so the copy starts life looking
+exactly like what was on screen. Every version *after* it comes across as a
+layer, keyed by **how far past the copy** it was.
 
-That is the only reading under which copying a group copies the group. A group
-has no geometry of its own; its transform is the whole of what it is, and that
-transform is per-version. Resolve it to one version's rings and what comes back
-is a picture of the group, not the group.
+So a copy taken at v1 and pasted at v3 has its v1 land in v3, its v2 in v4, and
+on: what is pasted does from here what the original did from there. The erosion
+sequence is the thing worth copying, and it is not in any one version.
+
+Nothing before the copy comes at all. A copy taken at v1 that reappeared at v0
+is answering a question nobody asked — the author is standing at v1 and pointing
+at what is there. Carrying the whole chain was tried first and reads as the copy
+arriving somewhere it was never put.
+
+Corner births and deaths are offsets too, so a corner the original grows at v3
+the copy grows three versions after it lands.
+
+What runs off the end of the chain is dropped. The chain is a fixed length
+everywhere else — the strip draws its rows once, the bake counts its spans from
+the same number — so growing it here would be growing it for all of them, and
+that is a change about forks rather than about pasting.
+
+**What has to be carried through the copy version's frame.** Transforms need
+nothing: each version's own transform applies *outside* what the versions before
+it produced, so baking the copy version into the geometry and keeping the later
+layers verbatim composes to the same thing. Vertex work is the exception.
+Displacements and not-yet-born corners are written in the polygon's *drawn*
+frame, which the copy no longer has — its drawn frame is the copy version's
+world. So they come through that frame on the way out: fully for a corner, which
+is somewhere, and linear-part-only for a displacement, which is a direction.
 
 Ids are reminted on paste, and reminted *together*: a vertex is named by id in
 the ring and again in every layer that displaces it, so the two are renamed in
 one pass or the displacements land on nothing.
 
-Versions are not carried. There is one chain per document and this is a
-clipboard within a document, so `v2` in the clipping is the `v2` it is pasted
-into. Crossing documents would mean saying what its versions were, and a
-clipping has nothing to say about that.
+Versions are not carried either, only offsets. There is one chain per document
+and this is a clipboard within a document. Crossing documents would mean saying
+what its versions were, and a clipping has nothing to say about that.
 
-The paste's offset goes onto the translation of the layer the thing is *born*
+The paste's offset goes onto the translation of the layer the thing is born
 into, rather than into the ring. That layer's translation is applied after its
 own turn and scale, so at the top level it is a world-space nudge, and every
 later layer applies to what it produced: move it once at the start and it has
 moved at every version, keeping whatever it does in between. Inside a group the
 offset is not applied at all — what is in a group is placed by the group.
 
-### Canvas: a stamp is a paste with the history left behind
+### Canvas: a stamp is a paste with the tail left behind
 
-Cmd+Shift+V pastes what was copied *as it stands at the version on screen*: born
-there, saying nothing about any other version. For taking a shape somewhere else
-without taking its history with it — the pillar from v0's room, in v3's,
-standing still while the original erodes.
+Cmd+Shift+V pastes only the version it lands in: born there, saying nothing
+about any other. For taking a shape somewhere else without taking its history
+with it — the pillar from v0's room, in v3's, standing still while the original
+goes on eroding.
 
-It is the deep paste and then a flatten, rather than a second kind of clipping.
-Flattening writes each thing's resolved ring back as the ring it was drawn with
-and drops every layer over it. The rings come back in world units, which is what
-lets the transforms go: a member of a turned group has the turn in its points
-afterwards, so clearing the group's layers leaves it exactly where it was seen.
+It needs no machinery of its own. The clipping's first layer *is* the version it
+was copied at, so a stamp is the paste with everything past offset zero dropped.
+Corners still to arrive go with it, and corners due to leave stop leaving: what
+either was for is not happening here.
 
-Erosion is the one thing that cannot be written into a ring — it is a read taken
-over the boundary, not a place any corner is — so it stays a depth, on the one
-layer there now is. Anything not standing at that version is dropped rather than
-flattened: there is no ring to write for something that is not there, and a
-group left holding nothing goes with it.
+Erosion is the one thing the geometry cannot hold — it is a read taken over the
+boundary, not a place any corner is — so it rides in that first layer, which is
+why the offsets start at zero rather than at one.
 
 ### Canvas: polygon states
 
