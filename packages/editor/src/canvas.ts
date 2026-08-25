@@ -1,11 +1,11 @@
 import { Value } from '@incpt/kontinuum';
 import { VNode, effect } from '@incpt/kontinuum-dom';
 import { canvas } from '@incpt/kontinuum-dom/html';
-import { Op, select } from '@incpt/kontinuum-interaction';
+import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, replayed } from './bake';
-import { Ring } from './geometry';
+import { Ring, Shape } from './geometry';
 import {
   Input,
   SHIFT,
@@ -53,6 +53,7 @@ import {
   Point,
   Polygon,
   PolygonId,
+  PolygonType,
   Replay,
   Selection,
   Settings,
@@ -157,6 +158,17 @@ export function worldCanvas(
   /** Where and when the last click landed, for telling the second of a pair
    * from the first. Cleared by anything that is not a click. */
   let last: { at: Point, when: number } | null = null;
+
+  /**
+   * A polygon being laid down is told to stop.
+   *
+   * The pen owns its draft for as long as it runs, so nothing else may take
+   * one away — clearing the state under it would leave it waiting, and the
+   * click that came next would be swallowed as another point of a polygon that
+   * is no longer on screen. Anything that ends a draft from outside says so
+   * here and lets the gesture unwind itself.
+   */
+  const abandoned = signal<void>();
 
   return interactive<Local>(EMPTY_LOCAL, (local, setLocal) => {
     const at = (e: PointerEvent, snap = false): Point => {
@@ -398,8 +410,20 @@ export function worldCanvas(
     }
 
     /**
-     * A press with the pen up, once it is known to be a click: another point of
-     * the polygon being laid down, or the first of a new one.
+     * Laying down a polygon, from the first point to the last.
+     *
+     * A gesture that runs rather than a click handler that returns, and that
+     * is the whole of why it is written this way. A half-drawn polygon is a
+     * mode: while one is open a click is another of its points rather than a
+     * selection, Escape abandons it rather than stepping out of a group, and
+     * Cmd+Z takes back a point rather than undoing the document. Spreading
+     * those over the handlers that would otherwise own each key means every
+     * one of them asking whether a draft happens to be open, and being wrong
+     * about it is a whole polygon lost.
+     *
+     * Held here instead: for as long as this runs, it is the thing the canvas
+     * is doing. The draft still lives in the component's state because it has
+     * to be drawn, but nothing outside this creates one or takes one away.
      *
      * Drawing is its own tool, and that is the whole answer to what a click on
      * empty canvas means. Under the point tool it means letting go of what was
@@ -409,26 +433,140 @@ export function worldCanvas(
      * has P apart from V, Inkscape has the bezier tool apart from the node
      * editor.
      */
-    function penning(e: PointerEvent): void {
-      const l = local();
-      const to = at(e, true);
+    function* drawing(from: PointerEvent): Op<void> {
+      const first = at(from, true);
 
-      if (l.draft === null) {
-        setLocal({ ...l, draft: { points: [to], at: to } });
-        return;
+      setLocal({ ...local(), draft: { points: [first], at: first } });
+
+      // Cmd+Z is the pen's for as long as a polygon is open. Without this the
+      // shortcuts in `editor.ts` would undo the document under it, which is
+      // both surprising and unreachable: the points laid down so far are not
+      // in the document to be undone.
+      const release = input.claim('KeyZ');
+
+      try {
+        while (true) {
+          const next = yield* select({
+            key: input.keyDown,
+            press: pointerPressed(),
+
+            // Never resumes: it is here to keep the rubber band on the end of
+            // the cursor for as long as nothing else is happening.
+            tracking: pointerMoved(e => {
+              const d = local().draft;
+
+              if (d !== null) setLocal({ ...local(), draft: { ...d, at: at(e, true) } });
+            }),
+
+            // The tool changed out from under the pen. Anything that ends a
+            // draft from outside says so here rather than clearing it and
+            // leaving this loop to eat the next click as a point.
+            stopped: abandoned,
+
+            lost: blurred(),
+          });
+
+          if (next.tag === 'stopped' || next.tag === 'lost') return abandon();
+
+          if (next.tag === 'key') {
+            const e = next.value;
+            const command = e.metaKey || e.ctrlKey;
+
+            if (!command && e.code === 'Space') {
+              // Resumed inside the listener, so space does not also scroll.
+              // Panning mid-polygon is how the far corner is reached at all.
+              e.preventDefault();
+              yield* panning();
+            }
+            else if (!command && e.code === 'Escape') {
+              return abandon();
+            }
+            else if (command && e.code === 'KeyZ' && !e.shiftKey) {
+              e.preventDefault();
+
+              // Back past the first point is back to no polygon at all, and
+              // the next Cmd+Z — this key having been let go of — is the
+              // document's again.
+              if (!unpointed()) return;
+            }
+
+            continue;
+          }
+
+          const e = next.value;
+
+          // The chrome floating over the canvas is not somewhere to put a
+          // corner. The press that started this one was checked the same way.
+          if (e.target !== el) continue;
+
+          // A press says nothing until it is known to be a click. A drag while
+          // a polygon is being laid down is a click that wandered too far to
+          // be one: there is nothing here to select and nothing to move.
+
+          const decided = yield* select({
+            drag: pointerDragged({ x: e.clientX, y: e.clientY }, SLOP),
+            click: pointerReleased(),
+            lost: blurred(),
+          });
+
+          if (decided.tag === 'lost') return abandon();
+          if (decided.tag === 'drag') continue;
+
+          if (pointed(at(e, true))) return;
+        }
+      }
+      finally {
+        release();
+      }
+    }
+
+    /** The draft dropped, wherever it had got to. */
+    function abandon(): void {
+      setLocal({ ...local(), draft: null });
+    }
+
+    /**
+     * Another point, or the ring closed. True when the polygon is finished and
+     * the gesture is over.
+     */
+    function pointed(to: Point): boolean {
+      const d = local().draft;
+
+      if (d === null) return true;
+
+      const start = d.points[0];
+      const closing = d.points.length >= 3
+        && Math.hypot(start.x - to.x, start.y - to.y) * view().zoom <= HANDLE;
+
+      if (!closing) {
+        setLocal({ ...local(), draft: { points: [...d.points, to], at: to } });
+
+        return false;
       }
 
-      const first = l.draft.points[0];
-      const closing = l.draft.points.length >= 3
-        && Math.hypot(first.x - to.x, first.y - to.y) * view().zoom <= HANDLE;
+      commit(d.points);
+      abandon();
 
-      if (closing) {
-        commit(l.draft.points);
-        setLocal({ ...l, draft: null });
+      return true;
+    }
+
+    /**
+     * The last point taken back. False once there is nothing left to take, and
+     * then the draft is over.
+     */
+    function unpointed(): boolean {
+      const d = local().draft;
+      const points = d?.points.slice(0, -1) ?? [];
+
+      if (points.length === 0) {
+        abandon();
+
+        return false;
       }
-      else {
-        setLocal({ ...l, draft: { points: [...l.draft.points, to], at: to } });
-      }
+
+      setLocal({ ...local(), draft: { ...d!, points } });
+
+      return true;
     }
 
     /**
@@ -843,11 +981,9 @@ export function worldCanvas(
 
           // A half-drawn polygon belongs to the pen. Leaving it on screen after
           // switching away would leave it waiting for clicks that now mean
-          // something else entirely.
+          // something else entirely — so the pen is told, and drops it itself.
           effect(tool, t => {
-            if (t !== 'path' && local().draft !== null) {
-              setLocal({ ...local(), draft: null });
-            }
+            if (t !== 'path' && local().draft !== null) abandoned.emit();
           }),
         ],
       ),
@@ -859,15 +995,6 @@ export function worldCanvas(
           const started = yield* select({
             key: input.keyDown,
             press: pointerPressed(),
-
-            // Never resumes. It is here to keep the rubber band moving for as
-            // long as nothing else is going on; where the pointer is, is the
-            // input bus' business and is known whatever is running.
-            tracking: pointerMoved(e => {
-              const l = local();
-              if (l.draft !== null) setLocal({ ...l, draft: { ...l.draft, at: at(e, true) } });
-            }),
-
             lost: blurred(),
           });
 
@@ -889,12 +1016,11 @@ export function worldCanvas(
               yield* panning();
             }
             else if (e.code === 'Escape') {
-              // One thing at a time, outermost first: abandon what is being
-              // drawn, then step out of a group, then let the selection go.
-              // Each is smaller than the last, so Escape held down unwinds to
-              // the top level and stops there.
-              if (local().draft !== null) setLocal({ ...local(), draft: null });
-              else leaving();
+              // A draft would have taken this already — it owns the keyboard
+              // while it runs. What is left is stepping out of a group, and
+              // then letting the selection go: each smaller than the last, so
+              // Escape held down unwinds to the top level and stops there.
+              leaving();
             }
             else if (REMOVE.includes(e.code)) {
               removing();
@@ -931,11 +1057,6 @@ export function worldCanvas(
 
             if (decided.tag === 'drag') {
               last = null;
-
-              // While a polygon is being laid down there is nothing to select
-              // and nothing to move: every click is another of its points, and
-              // a drag is a click that wandered.
-              if (local().draft !== null) continue;
 
               // A drag that started on something is that thing being moved: a
               // corner under the point tool, a polygon under the polygon one.
@@ -1002,7 +1123,7 @@ export function worldCanvas(
               else picking(e);
             }
             else if (tool() === 'path') {
-              penning(e);
+              yield* drawing(e);
             }
           }
         }
@@ -1368,29 +1489,7 @@ function polygons(
       ctx.setLineDash([]);
     }
 
-    ctx.beginPath();
-
-    for (const ring of it.shape) {
-      trace(ctx, view, ring);
-    }
-
-    // Filled, so that what is picked reads at a glance rather than having to be
-    // traced. Nonzero, which is the rule the shape was arranged under, so a
-    // polygon eroded into two rooms fills both and one with a hole keeps it.
-    if (picked && here) {
-      ctx.fillStyle = theme.pickedFill;
-      ctx.fill();
-    }
-
-    ctx.strokeStyle = !here
-      ? theme.outside
-      : picked ? theme.picked
-      : it.polygon.type === 'solid' ? theme.solid : theme.level;
-
-    ctx.lineWidth = picked ? 2 : 0.5;
-    ctx.setLineDash(it.polygon.type === 'solid' ? [5, 3] : []);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    outlined(ctx, view, it.shape, it.polygon.type, picked, here, theme.pickedFill);
   }
 
   if (!handles) return;
@@ -1428,6 +1527,12 @@ function polygons(
  * to polygons that are not on screen. Double-clicking opens it, and then the
  * outline goes and they come back.
  *
+ * Drawn in the stroke of its kind, exactly as a polygon of that kind is. A
+ * group is not a kind of thing the level has — the game is shipped a set, and
+ * the set does not know what was grouped — so a line of its own would be a
+ * line about the editor rather than about the level. What says a group is
+ * picked is the fill under it, which is all it needs to say.
+ *
  * A mixed group draws twice, once per kind, and the two outlines are the two
  * boundaries it really has. Nothing is lost by that — the shapes are disjoint
  * in what they mean, not necessarily in where they are — and the alternative
@@ -1449,30 +1554,51 @@ function groups(
 
     if (!world.groups.has(group)) continue;
 
-    const picked = picking.has(group);
-    const here = reach(group);
-
-    ctx.beginPath();
-
-    for (const ring of c.shape) {
-      trace(ctx, view, ring);
-    }
-
-    if (picked && here) {
-      ctx.fillStyle = theme.groupFill;
-      ctx.fill();
-    }
-
-    ctx.strokeStyle = !here ? theme.outside : picked ? theme.groupPicked : theme.group;
-    ctx.lineWidth = picked ? 2 : 1;
-
-    // Long dashes, so a group reads as a group at a glance and not as a wall
-    // that happens to be green. The short dash already means `solid`, and the
-    // solid side of a group has to be tellable from both.
-    ctx.setLineDash(c.kind === 'solid' ? [2, 3] : [9, 4]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    outlined(ctx, view, c.shape, c.kind, picking.has(group), reach(group), theme.groupFill);
   }
+}
+
+/**
+ * One shape stroked the way its kind is drawn, whether it is one polygon or
+ * the union a group stands for.
+ *
+ * Filled when picked, so that what is picked reads at a glance rather than
+ * having to be traced. Nonzero, which is the rule the shape was arranged
+ * under, so a polygon eroded into two rooms fills both and one with a hole
+ * keeps it — and `fill` is the only thing that differs between a polygon and a
+ * group.
+ */
+function outlined(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  shape: Shape,
+  kind: PolygonType,
+  picked: boolean,
+  /** Whether a click could reach it, which is false for everything outside the
+   * group standing open. */
+  here: boolean,
+  fill: string,
+): void {
+  ctx.beginPath();
+
+  for (const ring of shape) {
+    trace(ctx, view, ring);
+  }
+
+  if (picked && here) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = !here
+    ? theme.outside
+    : picked ? theme.picked
+    : kind === 'solid' ? theme.solid : theme.level;
+
+  ctx.lineWidth = picked ? 2 : 0.5;
+  ctx.setLineDash(kind === 'solid' ? [5, 3] : []);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /** The set the game would see, over the top and in the one colour that says so. */

@@ -591,12 +591,18 @@ touches only the dirtied chain.
 
 ### Canvas: a group is one outline, and going inside it
 
-A group draws as **one outline over the union of what it holds**, in its own
-stroke, and its members are not drawn at all — no outlines, no handles. That is
-the whole of what grouping does to the eye: several boundaries go, and one
-arrives. A group at depth zero still draws this way; the CSG only cares which
-groups erode, but the hand cares about every group, because a group is one thing
-to pick and one thing to drag whatever its depth.
+A group draws as **one outline over the union of what it holds**, and its
+members are not drawn at all — no outlines, no handles. That is the whole of
+what grouping does to the eye: several boundaries go, and one arrives. A group
+at depth zero still draws this way; the CSG only cares which groups erode, but
+the hand cares about every group, because a group is one thing to pick and one
+thing to drag whatever its depth.
+
+The outline is in the stroke of its kind, exactly as a polygon of that kind is —
+a group gets no line of its own. The game is shipped a set, and the set does not
+know what was grouped, so a stroke that said "group" would be a line about the
+editor rather than about the level. What says a group is picked is the fill
+under it, which is all it needs to say.
 
 A group holding both kinds draws twice, once per kind. There is no shape that is
 the union of a room and the pillar standing in it, and a single line around both
@@ -621,6 +627,33 @@ Three ways back out, and each covers where the others are awkward:
   it is the only way out that is more than one step.
 
 Leaving picks the group left behind, which puts back what going in took away.
+
+### Canvas: a half-drawn polygon is a mode, and the pen holds it
+
+Laying a polygon down is **a gesture that runs**, not a click handler that
+returns. While one is open, a click is another of its points rather than a
+selection, Escape abandons it rather than stepping out of a group, and Cmd+Z
+takes back a point rather than undoing the document — which it must, because the
+points laid down so far are not in the document to be undone.
+
+Spreading that over the handlers that would otherwise own each key means every
+one of them asking whether a draft happens to be open, and being wrong about it
+costs a whole polygon. So the pen holds the loop instead: for as long as it runs,
+it is the thing the canvas is doing. Space still pans, because reaching the far
+corner needs it.
+
+The input bus is a broadcast and has no notion of an event being used up — every
+waiter is woken, and what a key means is settled by each of them agreeing to stay
+out of the others' way. That works for a fixed division (the canvas leaves
+anything with a command key on it to the document shortcuts) and stops working
+the moment the division depends on what is going on. So **a running gesture
+claims the keys it is taking**, counted rather than flagged, and the shortcuts
+skip what is claimed. Nothing else has to know a draft exists.
+
+The same rule backwards: nothing outside the pen may clear a draft. Switching
+tools *tells* the pen, which unwinds itself — clearing the state under it would
+leave it waiting, and the next click would be swallowed as a point of a polygon
+that is no longer on screen.
 
 Command-click is unchanged and is a different thing: it reaches past a shut
 group to the polygon for **one click**, without going anywhere. Going inside is

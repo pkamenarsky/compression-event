@@ -44,6 +44,24 @@ export interface Input {
    * for an ordinary key there is nobody keeping it but us.
    */
   holding: (code: string) => boolean
+  /**
+   * Take some keys for as long as the returned function has not been called.
+   *
+   * The bus is a broadcast and has no notion of an event being used up: every
+   * waiter is woken, and what a key means is settled by each of them agreeing
+   * to stay out of the others' way. That works for a fixed division — the
+   * canvas leaves anything with a command key on it to the shortcuts — and
+   * stops working the moment the division depends on what is going on, which
+   * is what a half-drawn polygon is: while one is open, Cmd+Z is the pen's and
+   * takes back a point, and the rest of the time it is the document's.
+   *
+   * So a running gesture says so, rather than everybody else having to know
+   * about it. `keyPressed` skips what is claimed; whoever claimed it is
+   * waiting on `keyDown` directly and gets it. Counted rather than a flag, so
+   * two claims on the same key cannot end with the first release freeing it.
+   */
+  claim: (...codes: string[]) => () => void
+  claimed: (code: string) => boolean
   listen: () => () => void
 }
 
@@ -53,6 +71,7 @@ export function createInput(): Input {
 
   let pointer: PointerEvent | null = null;
   const down = new Set<string>();
+  const claims = new Map<string, number>();
 
   function onKeyDown(e: KeyboardEvent) {
     down.add(e.code);
@@ -79,6 +98,24 @@ export function createInput(): Input {
     keyUp,
     pointer: () => pointer,
     holding: code => down.has(code),
+    claimed: code => (claims.get(code) ?? 0) > 0,
+
+    claim: (...codes) => {
+      for (const code of codes) claims.set(code, (claims.get(code) ?? 0) + 1);
+
+      // Written to be safe to call twice, because a gesture releasing in a
+      // `finally` may be unwinding for the second time — once for the branch
+      // and once for the interaction coming down around it.
+      let held = true;
+
+      return () => {
+        if (!held) return;
+
+        held = false;
+
+        for (const code of codes) claims.set(code, (claims.get(code) ?? 1) - 1);
+      };
+    },
 
     listen: () => {
       window.addEventListener('keydown', onKeyDown);
@@ -105,12 +142,15 @@ export function inputListener(input: Input): VNode {
  * Waits for one of `codes`, letting the rest through to whoever else is
  * waiting. Key repeats count as presses; a loop that does not want them is
  * already past this point and waiting on something else.
+ *
+ * A key a running gesture has claimed is not one of them, however plainly it
+ * is listed here. See `Input.claim`.
  */
 export function* keyPressed(input: Input, ...codes: string[]): Op<KeyboardEvent> {
   while (true) {
     const e = yield* input.keyDown;
 
-    if (codes.includes(e.code)) {
+    if (codes.includes(e.code) && !input.claimed(e.code)) {
       return e;
     }
   }
