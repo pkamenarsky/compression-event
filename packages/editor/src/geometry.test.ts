@@ -1070,6 +1070,42 @@ describe('what counts as a corner', () => {
     }
   });
 
+  test('the solid out of world-2026-08-25T20-25-12Z', () => {
+    // Two rooms overlapping with a solid triangle across the pair, to the
+    // digit. Its edges cross the rooms' walls at glancing angles — the worst
+    // about eight degrees — and every one of those crossings came back a
+    // corner.
+    //
+    // Stepping along a direction and looking to either side of it, which is
+    // what this did first, lands both samples on either side of the *solid's*
+    // edge when the two are that nearly parallel. The buried wall then reads
+    // as a boundary it is no part of, the point has four directions instead of
+    // two, and a flat wall gets a line down the middle of it.
+    const rooms = [
+      lv(0, [
+        { x: -160, y: -128 }, { x: -224, y: 64 },
+        { x: -480, y: 64 }, { x: -480, y: -288 },
+      ]),
+      lv(1, [
+        { x: -128, y: -352 }, { x: -128, y: -96 },
+        { x: -352, y: -160 }, { x: -288, y: -320 },
+      ]),
+    ];
+
+    const solid = sd(2, [
+      { x: -159.984375, y: -133.96875 },
+      { x: -351.984375, y: -37.96875 },
+      { x: -351.984375, y: -197.96875 },
+    ]);
+
+    const at = boundaryRuns(solid, rooms);
+
+    // A triangle has three corners, however many times the rooms cut its ring
+    // on the way round. Ten points came back, and seven of them are flat.
+    expect(at.flatMap(r => r.corner).filter(c => c).length).toEqual(3);
+    expect(at.flatMap(r => r.corner).length).toEqual(10);
+  });
+
   test('the pillar out of world-2026-08-25T10-05-38Z', () => {
     // The reported case, to the digit: a dilated solid inside a room, with a
     // collinear point the dilation left on its left edge. That one point is

@@ -1056,6 +1056,21 @@ function opposed(a: Point, b: Point): boolean {
   return a.x * b.x + a.y * b.y < 0 && Math.abs(a.x * b.y - a.y * b.x) <= TURNED;
 }
 
+/** An angle brought into `(0, 2pi]`, which is how far round it is from where
+ * the sweep started rather than which way it went. */
+function turned(a: number): number {
+  const at = a % (2 * Math.PI);
+
+  return at <= 0 ? at + 2 * Math.PI : at;
+}
+
+/** A direction something leaves a point in, and how much of the edge it is
+ * travelling there is left to go. */
+interface Way {
+  d: Point
+  reach: number
+}
+
 /**
  * Whether the boundary actually turns at each point of each run.
  *
@@ -1091,18 +1106,29 @@ function opposed(a: Point, b: Point): boolean {
  * exactly 180 degrees, is the boundary running straight through; anything else
  * — one, three, a hairpin doubling back — is a corner and keeps its vertical.
  *
- * The directions along the runs themselves are boundary by construction and are
- * taken for free. The rest come from the neighbours' edges lying on the point,
- * and each is put to the same test `arranged` puts a piece to: step off either
- * side of it and ask whether the two sides disagree about the answer. A step
- * just past the point rather than at a midpoint, because the neighbours' edges
- * were never cut and there is no midpoint of theirs to trust — the piece that
- * matters is the one leaving the point, and only its first hair is being asked
- * about.
+ * Every edge lying on the point offers a direction, and which of them the
+ * boundary actually goes is decided by the wedges between them: sort them round
+ * the point, ask whether the set fills the middle of each wedge, and a direction
+ * is on the boundary exactly when the two wedges it separates disagree. Which is
+ * the same rule `arranged` classifies a piece by, asked at a point where several
+ * pieces meet rather than along one.
  *
- * So the extra classification is a handful of point queries per junction, and
- * none at all along a run, rather than the arrangement of every neighbour that
- * answering this the obvious way would have cost.
+ * By the wedge rather than by stepping along each direction and looking to
+ * either side of it, which is what this did first and got wrong. Two edges can
+ * meet at a very shallow angle — eight degrees, in the case that found it — and
+ * a step to either side of one of them then lands on either side of the *other*,
+ * so the two samples disagree about a boundary that has nothing to do with the
+ * direction being asked about. Every buried wall crossing a real one at a
+ * glancing angle came back a corner. A wedge has no such trouble: its sample is
+ * in the middle of it and is therefore as far from every edge as the geometry
+ * allows.
+ *
+ * What it costs
+ * -------------
+ * Nothing at all along a run. A point that nothing else lies on has only the
+ * two directions the run itself gave it, and those are boundary by
+ * construction, so the answer is whether they are opposite and no classifying
+ * is done. Only a junction is sampled, and there are few of those.
  */
 function cornering(
   runs: readonly Point[][],
@@ -1118,23 +1144,28 @@ function cornering(
   const scale = snap / 1e-9;
   const weld = welder(snap);
 
-  // Where the boundary is already known to go, by welded point. Gathered over
-  // every run before any of them is answered, so that a ring handed back with
-  // its first point repeated at the last has both copies' neighbours under the
-  // one key, and both copies therefore answer alike.
-  const known = new Map<number, Point[]>();
+  /** `d` added to `into` unless something already points that way, keeping
+   * whichever of the two has less edge to go. */
+  const add = (into: Way[], d: Point, reach: number) => {
+    const same = into.find(w => alike(w.d, d));
 
-  const add = (into: Point[], d: Point) => {
-    if (!into.some(o => alike(o, d))) into.push(d);
+    if (same === undefined) into.push({ d, reach });
+    else same.reach = Math.min(same.reach, reach);
   };
 
-  const away = (from: Point, to: Point): Point | null => {
+  const away = (from: Point, to: Point): Way | null => {
     const dx = to.x - from.x, dy = to.y - from.y;
     const l = Math.hypot(dx, dy);
 
-    return l <= snap ? null : { x: dx / l, y: dy / l };
+    return l <= snap ? null : { d: { x: dx / l, y: dy / l }, reach: l };
   };
 
+  // Where the boundary is already known to go, by welded point: along the runs
+  // themselves, which are boundary because `arranged` kept them. Gathered over
+  // every run before any of them is answered, so that a ring handed back with
+  // its first point repeated at the last has both copies' neighbours under the
+  // one key, and both copies therefore answer alike.
+  const known = new Map<number, Way[]>();
   const ids = runs.map(run => run.map(p => weld.id(p)));
 
   ids.forEach((run, r) => run.forEach((id, i) => {
@@ -1142,9 +1173,9 @@ function cornering(
 
     for (const j of [i - 1, i + 1]) {
       const q = runs[r][j];
-      const d = q === undefined ? null : away(runs[r][i], q);
+      const w = q === undefined ? null : away(runs[r][i], q);
 
-      if (d !== null) add(at, d);
+      if (w !== null) add(at, w.d, w.reach);
     }
 
     known.set(id, at);
@@ -1166,27 +1197,14 @@ function cornering(
     ),
   })));
 
-  /** Whether the boundary leaves `p` along `d`, with `reach` of the edge it is
-   * travelling to go. The step is bounded by the edge for the same reason
-   * `arranged` bounds its own: a fixed step is only small enough where the
-   * geometry is big enough. */
-  const going = (p: Point, d: Point, reach: number): boolean => {
-    const off = Math.min(scale * 1e-7, reach * 0.25);
-    const mx = p.x + d.x * off, my = p.y + d.y * off;
-
-    const left = { x: mx - d.y * off, y: my + d.x * off };
-    const right = { x: mx + d.y * off, y: my - d.x * off };
-
-    return op(inA(left), inB(left)) !== op(inA(right), inB(right));
-  };
-
   const answered = new Map<number, boolean>();
 
   const at = (id: number, p: Point): boolean => {
     const held = answered.get(id);
     if (held !== undefined) return held;
 
-    const out = [...(known.get(id) ?? [])];
+    const mine = known.get(id) ?? [];
+    const ways: Way[] = mine.map(w => ({ ...w }));
 
     each(tree, box(p.x, p.y, p.x, p.y), i => {
       const s = segs[i];
@@ -1196,29 +1214,66 @@ function cornering(
       if (l === 0) return;
 
       const ux = dx / l, uy = dy / l;
-      const t = ((p.x - s.a.x) * ux + (p.y - s.a.y) * uy);
+      const t = (p.x - s.a.x) * ux + (p.y - s.a.y) * uy;
 
       // Off the end of it, or off to one side: not an edge lying on this point.
       if (t < -snap || t > l + snap) return;
       if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) return;
 
-      // One direction for each way there is still edge to go.
-      for (const [d, reach] of [
-        [{ x: ux, y: uy }, l - t],
-        [{ x: -ux, y: -uy }, t],
-      ] as [Point, number][]) {
-        if (reach <= snap) continue;
-        if (out.some(o => alike(o, d))) continue;
-        if (going(p, d, reach)) out.push(d);
-      }
+      // One direction for each way there is still edge to go — and only for
+      // those. An edge that ends on this point offers nothing in the direction
+      // it came from, and a direction with no length is not one.
+      if (l - t > snap) add(ways, { x: ux, y: uy }, l - t);
+      if (t > snap) add(ways, { x: -ux, y: -uy }, t);
     });
 
-    const turns = out.length !== 2 || !opposed(out[0], out[1]);
+    // Nothing lies on it but the run itself, so there is nothing to classify:
+    // the two directions it came with are the boundary, and the only question
+    // left is whether they are opposite.
+    const out = ways.length === mine.length ? mine : boundaryWays(p, ways);
+    const turns = out.length !== 2 || !opposed(out[0].d, out[1].d);
 
     answered.set(id, turns);
 
     return turns;
   };
+
+  /** Which of the directions at `p` the boundary actually goes, by the wedges
+   * between them. */
+  function boundaryWays(p: Point, ways: Way[]): Way[] {
+    const step = Math.min(scale * 1e-7, ...ways.map(w => w.reach * 0.25));
+
+    if (!(step > 0)) return ways;
+
+    const round = [...ways].sort((u, v) =>
+      Math.atan2(u.d.y, u.d.x) - Math.atan2(v.d.y, v.d.x));
+
+    // Whether the set fills the wedge that starts at each direction and runs
+    // round to the next, sampled in the middle of it — which is as far from
+    // every edge lying on `p` as there is room to be.
+    const fills = round.map((w, k) => {
+      const next = round[(k + 1) % round.length];
+
+      const a = Math.atan2(w.d.y, w.d.x);
+      const b = Math.atan2(next.d.y, next.d.x);
+
+      // Round to the next one the way the sort went, which for the last of them
+      // is round the back. One direction on its own sweeps the whole circle.
+      const across = round.length === 1 ? 2 * Math.PI : turned(b - a);
+      const mid = a + across / 2;
+
+      const s = { x: p.x + Math.cos(mid) * step, y: p.y + Math.sin(mid) * step };
+
+      return op(inA(s), inB(s));
+    });
+
+    // A direction separates two wedges, and is on the boundary exactly when
+    // they disagree about which side of it is the set. One direction on its own
+    // separates nothing: the wedge before it and the wedge after it are the
+    // same wedge, and it is not a boundary however it got here.
+    return round.filter((_unused, k) =>
+      fills[(k - 1 + fills.length) % fills.length] !== fills[k]);
+  }
 
   return ids.map((run, r) => run.map((id, i) => at(id, runs[r][i])));
 }
