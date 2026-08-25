@@ -2050,7 +2050,7 @@ function crossing(
  * level's worth of linear scans through a busy track was showing up in the
  * replay's own frame time.
  */
-function stretchAt(track: Track, t: number): Stretch | null {
+export function stretchAt(track: Track, t: number): Stretch | null {
   const all = track.stretches;
   if (all.length === 0) return null;
 
@@ -2059,7 +2059,11 @@ function stretchAt(track: Track, t: number): Stretch | null {
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
 
-    if (all[mid].t1 < t) {
+    // Half-open: a stretch holds its start and not its end, so the instant two
+    // of them share belongs to the later one. See `abutting` — every instant
+    // has an owner and none has two, which is the whole of what the shader
+    // needs and cannot work out for itself.
+    if (all[mid].t1 <= t) {
       lo = mid + 1;
     }
     else {
@@ -2067,15 +2071,8 @@ function stretchAt(track: Track, t: number): Stretch | null {
     }
   }
 
-  // `lo` is the first stretch ending at or after `t`. Either it holds `t`, or
-  // `t` is in the gap before it and the stretch behind is just as close.
-  const here = all[lo];
-  if (t >= here.t0) return here;
-
-  const back = all[lo - 1];
-  if (back === undefined) return here;
-
-  return t - back.t1 <= here.t0 - t ? back : here;
+  // The last one keeps its end, since nothing follows it to take `t` on.
+  return all[lo];
 }
 
 /**

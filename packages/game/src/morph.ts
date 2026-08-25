@@ -36,21 +36,6 @@ import { Source, Span, WallOptions, extrude, materials } from './walls';
 const WIDTH = 512;
 
 /**
- * How far outside its own stretch a vertex still draws: enough to cover the
- * rounding, and nothing like enough to reach the next stretch.
- *
- * The gaps a converged event used to leave are closed in the bake now — see
- * `abutting` — so every instant belongs to exactly one stretch and this has
- * only float32 to forgive. It used to be 1e-3, which was sized against the
- * gaps and not against the stretches: the stretches either side of an event
- * are far narrower than that, so seven of them drew at once at the start of a
- * span and the topologies from both sides of the event were on screen
- * together. One frame, at any speed, which is exactly how a stray vertical
- * around a moving polygon reads.
- */
-const SLACK = 1e-6;
-
-/**
  * Built per span rather than once, because how deep the chain of groups goes is
  * a fact about the level and the walk up it is per vertex. A bounded loop is
  * unrolled and its register cost is known; `while (slot >= 0)` would be legal
@@ -160,7 +145,23 @@ const shaderFor = (depth: number): string => /* glsl */ `
 
     // Everything outside its own stretch collapses. One buffer, one draw, and
     // the frame's worth of it that is alive is chosen here.
-    if (t < aRange.x - ${SLACK.toExponential()} || t > aRange.y + ${SLACK.toExponential()}) {
+    //
+    // Half-open, and both halves matter. A stretch holds its start and not its
+    // end, so the instant two of them share belongs to the later one and to
+    // nothing else; the gaps a converged event used to leave are closed in the
+    // bake — see \`abutting\` — so there is no instant without an owner either.
+    // The ends abut exactly, and without this rule both sides claim the instant
+    // they share and a frame landing on one draws the topology from either side
+    // of the event at once.
+    //
+    // A frame lands on one far more often than it looks. The bake cuts by
+    // halving, so its boundaries are dyadic, and a clock at a steady rate lands
+    // on dyadic instants all the time — an ease-out cubes them and they are
+    // dyadic still, pulled in where the cuts are densest. One frame of a
+    // doubled wall, which is exactly how a stray vertical reads.
+    //
+    // The last stretch keeps its end: nothing follows it to take \`t\` on.
+    if (t < aRange.x || (t >= aRange.y && aRange.y < 1.0)) {
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
       return;
     }

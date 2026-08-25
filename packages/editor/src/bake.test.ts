@@ -6,6 +6,7 @@ import {
   TOLERANCE,
   bakeAll,
   bakeSpan,
+  stretchAt,
   pruned,
   sample,
   spanAt,
@@ -235,6 +236,31 @@ describe('a track covers the span exactly once', () => {
     );
 
     covers(transformed(world, 1, ids[1], { translation: { x: 0, y: -140 } }));
+  });
+
+  test('the instant two stretches share belongs to the later one', () => {
+    // Half-open, because both readers have to agree about it and the shader
+    // decides per vertex with nothing but its own range to go on. Claimed by
+    // both, a frame landing exactly on a boundary draws the topology from
+    // either side of an event at once — and a clock lands exactly on one often,
+    // the bake's cuts being dyadic and a steady rate landing on dyadic instants.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['level', rect(0, 200, 40, 100)],
+    );
+
+    const w = transformed(world, 1, ids[1], { translation: { x: 0, y: -140 } });
+
+    for (const track of run(bakeSpan(w, 0)).tracks) {
+      for (let i = 1; i < track.stretches.length; i++) {
+        expect(stretchAt(track, track.stretches[i].t0)).toBe(track.stretches[i]);
+      }
+
+      // Except the last, which keeps its end: nothing follows it to take it on.
+      const last = track.stretches[track.stretches.length - 1];
+
+      expect(stretchAt(track, 1)).toBe(last);
+    }
   });
 });
 
