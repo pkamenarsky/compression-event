@@ -6,7 +6,9 @@ import {
   Resolved,
   addPolygon,
   composed,
+  EMPTY_LIVE,
   contributing,
+  live,
   centroid,
   grouped,
   IDENTITY,
@@ -29,6 +31,7 @@ import {
   affine,
   copied,
   csg,
+  runs,
   editAt,
   hitEdge,
   hitVertex,
@@ -1552,5 +1555,75 @@ describe('a gesture writes into the frame it is read in', () => {
     expect(centroid(after.source).x).toBeCloseTo(pivot.x, 6);
     expect(centroid(after.source).y).toBeCloseTo(pivot.y, 6);
     expect(shapeArea(after.shape)).toBeCloseTo(shapeArea(it.shape), 6);
+  });
+});
+
+/**
+ * A `floor` is drawn and nothing else.
+ *
+ * It resolves like anything else — it has geometry and the canvas draws it —
+ * but it is not in the set, so nothing unions with it, nothing is cut by it,
+ * and nothing walks into it. Retyping is the only way to make one, so the
+ * incremental set has to let go of a polygon it was already holding, which is
+ * a different path from never having had it.
+ */
+describe('a floor takes no part in the set', () => {
+  function retyped(world: World, id: PolygonId, type: PolygonType): World {
+    const polygons = new Map(world.polygons);
+
+    polygons.set(id, { ...polygons.get(id)!, type });
+
+    return { ...world, polygons };
+  }
+
+  const two = () => drawn(
+    ['level', rect(0, 0, 100, 100)],
+    ['level', rect(300, 0, 100, 100)],
+  );
+
+  test('a room retyped to one leaves the set it was in', () => {
+    const { world, ids } = two();
+    const after = retyped(world, ids[1], 'floor');
+
+    expect(csg(world, 0)).toHaveLength(2);
+    expect(csg(after, 0)).toHaveLength(1);
+  });
+
+  test('and leaves it incrementally, not only from nothing', () => {
+    // The path a retype actually takes: the set was already holding it as a
+    // room, and an update would have kept the kind it had.
+    const { world, ids } = two();
+    const after = retyped(world, ids[1], 'floor');
+
+    let set = live(EMPTY_LIVE, contributing(world, 0, resolveAt(world, 0)));
+
+    expect(runs(set)).toHaveLength(2);
+
+    set = live(set, contributing(after, 0, resolveAt(after, 0)));
+
+    expect(runs(set)).toHaveLength(1);
+    expect(runs(set)).toEqual(csg(after, 0));
+  });
+
+  test('and comes back when it is retyped again', () => {
+    const { world, ids } = two();
+    const away = retyped(world, ids[1], 'floor');
+    const back = retyped(away, ids[1], 'solid');
+
+    let set = live(EMPTY_LIVE, contributing(world, 0, resolveAt(world, 0)));
+    set = live(set, contributing(away, 0, resolveAt(away, 0)));
+    set = live(set, contributing(back, 0, resolveAt(back, 0)));
+
+    // A solid on its own takes nothing out of nothing, so the far room is gone
+    // either way — but it is in the set now, which is what a retype has to
+    // restore.
+    expect(runs(set)).toEqual(csg(back, 0));
+  });
+
+  test('it still resolves, because the canvas draws it', () => {
+    const { world, ids } = two();
+    const after = retyped(world, ids[1], 'floor');
+
+    expect(resolveAt(after, 0).map(it => it.id)).toEqual(ids);
   });
 });

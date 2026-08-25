@@ -1166,6 +1166,9 @@ export function worldCanvas(
               else if (e.code === 'Digit2') {
                 retype('solid');
               }
+              else if (e.code === 'Digit3') {
+                retype('floor');
+              }
             }
           }
           else if (started.tag === 'press' && started.value.target === el) {
@@ -1748,10 +1751,16 @@ function outlined(
   ctx.strokeStyle = !here
     ? theme.outside
     : picked ? theme.picked
-    : kind === 'solid' ? theme.solid : theme.level;
+    : kind === 'solid' ? theme.solid
+    : kind === 'floor' ? theme.floor
+    : theme.level;
 
   ctx.lineWidth = picked ? 2 : 0.5;
-  ctx.setLineDash(kind === 'solid' ? [5, 3] : []);
+
+  // A solid is dashed because it is taken away; a floor is dotted because it is
+  // not in the set at all, and the difference has to be readable at a glance
+  // from a room, which is what a plain line means.
+  ctx.setLineDash(kind === 'solid' ? [5, 3] : kind === 'floor' ? [1, 3] : []);
   ctx.stroke();
   ctx.setLineDash([]);
 }

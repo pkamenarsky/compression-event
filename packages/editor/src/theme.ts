@@ -28,6 +28,10 @@ export const theme = {
   /** The polygons as drawn, and the set the game would see. */
   level: '#7b8496',
   solid: '#b0705f',
+  /** A floor takes no part in the set — it is drawn flat underfoot and nothing
+   * else — so it is the one kind whose outline the CSG will never run along.
+   * Dark, because that is what it is drawn as in the level. */
+  floor: '#5a5560',
   picked: '#5b8cff',
   /** Under a picked polygon. Faint enough that two overlapping ones still read
    * as two, and that the CSG outline over the top keeps the eye. */
