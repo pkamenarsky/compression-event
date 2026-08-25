@@ -25,7 +25,7 @@ import {
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
-  corner,
+  corners,
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
@@ -195,12 +195,6 @@ function solvable(s: Stretch, table: Table, origin: Origin | null | undefined): 
   return one === null || two === null ? null : [one[0], one[1], two[0], two[1]];
 }
 
-/** Whether the run turns at `j`, as a factor to fade a vertical by. See
- * `corner`, which is where a run's ends are decided. */
-function cornered(points: readonly Point[], j: number): number {
-  return corner(points, j) ? 1 : 0;
-}
-
 /** Everything the shader reads, flattened. */
 export function bakedSpan(span: Span): BakedSpan {
   const slots = slotted(span.riders);
@@ -216,6 +210,14 @@ export function bakedSpan(span: Span): BakedSpan {
       // different rings, and a stretch of one track names a neighbour's.
       table.at.clear();
       tabled(s, slots, table);
+
+      // Both ends of the span, each asked of its whole boundary at once: a run
+      // end is a corner only if the run it meets there turns away. See
+      // `corners`.
+      const turning = [
+        corners(s.a.map(run => run.points)),
+        corners(s.a.map((run, i) => (s.b[i] ?? run).points)),
+      ];
 
       const runs: BakedRun[] = s.a.map((run, i) => {
         const to = s.b[i] ?? run;
@@ -236,8 +238,8 @@ export function bakedSpan(span: Span): BakedSpan {
           // its own channel: both say how much of a corner is there, and the
           // shader already carries this one from one end of the span to the
           // other. See `turns`.
-          opacityA.push(cornered(run.points, j) * (s.opacity[0][i]?.[j] ?? 1));
-          opacityB.push(cornered(to.points, j) * (s.opacity[1][i]?.[j] ?? 1));
+          opacityA.push((turning[0][i][j] ? 1 : 0) * (s.opacity[0][i]?.[j] ?? 1));
+          opacityB.push((turning[1][i][j] ? 1 : 0) * (s.opacity[1][i]?.[j] ?? 1));
           slotOf.push(slot);
           kinds.push(cross === null ? CORNER : CROSSING);
           crossings.push(...(cross ?? [-1, -1, -1, -1]));

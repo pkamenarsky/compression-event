@@ -1224,15 +1224,26 @@ it in the middle of what is now one flat wall. The wall is right; the vertical i
 not. Multiplied into the same channel because the two say the same kind of thing:
 how much of a corner is there.
 
-A run's ends are exempt. A run is one arc of a boundary that carries on into
-another polygon's run, which is not in hand, so nothing says it does not turn
-there. **A run that closes on itself is not exempt** — `boundaryRuns` gives a
-whole ring back as a run whose first point is repeated at the last, so both
-neighbours across the join are in hand and the question is answerable. Not asking
-it stands a vertical wherever the ring happened to be cut open, which for a
-dilated pillar is a point part way along a flat wall, and stands two of them,
-since the point is written down twice. See `corner`, which is where a run's ends
-are decided for both the still boundary and the baked one.
+**The question is about a point of the boundary, not a point of a run.** A run is
+one arc, open at both ends because the boundary carries on into the next run —
+but the next run *is* in hand: the caller is holding every run of this boundary
+at once, and always was. Asked run by run, an end has nothing to compare against
+and its vertical stands by default, which puts a line down the middle of a flat
+wall wherever two runs meet in a straight stretch. Two polygons that abut are
+exactly that, and it is common.
+
+So the runs are stitched back together by their endpoints before the question is
+asked. A point with two distinct neighbours is a corner if it turns between
+them; anything else keeps its vertical — a T where three runs meet is a real
+corner, and so is a hairpin that comes back the way it went. A run that closes
+on itself needs no special case: `boundaryRuns` returns a whole ring with its
+first point repeated at the last, so both neighbours across the join arrive
+under one key like any other.
+
+Ends are matched exactly. They are not two points that met and agreed; they are
+one point written down twice, by an arrangement that welded them. See `corners`,
+which answers for the whole boundary and serves both the still one and the baked
+one.
 
 ### Steps
 

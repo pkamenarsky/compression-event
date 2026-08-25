@@ -39,39 +39,55 @@ export function turns(a: Point, b: Point, c: Point): boolean {
 }
 
 /**
- * Whether a vertical standing at point `j` of a run is telling the truth.
+ * Which points of a boundary carry a vertical, run by run and point by point.
  *
- * A run is one arc of a boundary, open at both ends on purpose — the boundary
- * carries on into the next polygon's run, which is not in hand. Nothing here
- * says it does not turn there, so an end gets the benefit of the doubt and its
- * vertical stands.
+ * The question is per *point of the boundary*, not per point of a run, and that
+ * is the whole of it. A run is one arc, open at both ends because the boundary
+ * carries on into the next one — but the next one is in hand: the caller is
+ * holding every run of this boundary at once, and always was. Asked run by run,
+ * an end has no neighbour to compare against and its vertical stands by
+ * default, which puts a line down the middle of a flat wall wherever two runs
+ * happen to meet in a straight stretch. A junction between two polygons that
+ * abut is exactly that, and it is common.
  *
- * A run that closes on itself has no open end. `boundaryRuns` gives a whole
- * ring back as a run whose first point is repeated at the last, and both
- * neighbours across that join are therefore in hand: the question is
- * answerable, and answering it is what stops a vertical standing in the middle
- * of a straight wall wherever a ring happened to be cut open. A dilated pillar
- * is the case that finds this — its ring comes back whole, cut at whatever
- * point the arrangement started from, which is not usually a corner.
+ * So the runs are stitched back together by their endpoints first. A point with
+ * two distinct neighbours is a corner if it turns between them; anything else
+ * is a corner and keeps its vertical — a T where three runs meet is a real
+ * corner, and so is a hairpin that comes back the way it went.
  *
- * Both copies of the join answer alike, because two verticals stand there.
+ * A run that closes on itself falls out of the same rule: `boundaryRuns` gives
+ * a whole ring back with its first point repeated at the last, so both
+ * neighbours across the join are in hand under one key.
  *
- * The ends are compared exactly. They are not two points that met and agreed;
- * they are one point written down twice.
+ * Ends are matched exactly. They are not two points that met and agreed; they
+ * are one point written down twice, by an arrangement that welded them.
  */
-export function corner(points: readonly Point[], j: number): boolean {
-  const n = points.length;
-  const a = points[j - 1], b = points[j], c = points[j + 1];
+export function corners(runs: readonly (readonly Point[])[]): boolean[][] {
+  const key = (p: Point) => `${p.x},${p.y}`;
+  const near = new Map<string, Point[]>();
 
-  if (n > 2 && points[0].x === points[n - 1].x && points[0].y === points[n - 1].y) {
-    // Round the ring, the repeated point counted once.
-    const m = n - 1;
-    const i = j % m;
+  const beside = (p: Point, q: Point | undefined) => {
+    if (q === undefined) return;
 
-    return turns(points[(i + m - 1) % m], points[i], points[(i + 1) % m]);
+    const at = near.get(key(p)) ?? [];
+
+    if (!at.some(o => o.x === q.x && o.y === q.y)) at.push(q);
+
+    near.set(key(p), at);
+  };
+
+  for (const run of runs) {
+    for (let i = 0; i < run.length; i++) {
+      beside(run[i], run[i - 1]);
+      beside(run[i], run[i + 1]);
+    }
   }
 
-  return a === undefined || b === undefined || c === undefined || turns(a, b, c);
+  return runs.map(run => run.map(p => {
+    const at = near.get(key(p)) ?? [];
+
+    return at.length !== 2 || turns(at[0], p, at[1]);
+  }));
 }
 
 /** A stretch of consecutive points in whatever flat array of them the caller
