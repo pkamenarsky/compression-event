@@ -14,6 +14,8 @@ import { theme } from './theme';
 import {
   EditorState,
   Id,
+  EASINGS,
+  REPLAY_EASE,
   REPLAY_MS,
   Tool,
   Update,
@@ -124,13 +126,17 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
 
     const started = performance.now();
     const ms = REPLAY_MS * Math.abs(v - walk.from);
+    const curve = EASINGS[REPLAY_EASE];
 
     let frame = requestAnimationFrame(function tick() {
-      const at = Math.min(1, (performance.now() - started) / ms);
+      // The clock is linear and the walk is not. Whether it is over is a
+      // question about the clock, so it is asked of `u` rather than of the
+      // curve — a curve that touched 1 early would end the walk early.
+      const u = Math.min(1, (performance.now() - started) / ms);
 
-      update(s => ({ ...s, replay: at < 1 ? { ...walk, at } : null }));
+      update(s => ({ ...s, replay: u < 1 ? { ...walk, at: curve(u) } : null }));
 
-      if (at < 1) frame = requestAnimationFrame(tick);
+      if (u < 1) frame = requestAnimationFrame(tick);
     });
 
     return () => cancelAnimationFrame(frame);

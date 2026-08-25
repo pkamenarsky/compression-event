@@ -529,6 +529,37 @@ export interface Replay {
 /** How long one span takes to play. Slow enough to watch a room pinch in two. */
 export const REPLAY_MS = 400;
 
+/** A curve through a walk: 0 to 1, both ends pinned. */
+export type Easing = (t: number) => number;
+
+/**
+ * The curves a version switch can be played on.
+ *
+ * Applied to `at` as it is written rather than by whoever reads it, so the two
+ * views stay on one clock — the canvas draws the outline the walk passes
+ * through and the 3D view flies the same instant into the shader, and a curve
+ * applied twice or applied in one place only would pull them apart.
+ *
+ * Every one of them has to pin both ends: the walk is over when `at` reaches 1,
+ * and a curve that arrived early or late would either cut the last frames off
+ * or leave the geometry short of the version it is supposed to have landed on.
+ */
+export const EASINGS = {
+  linear: t => t,
+
+  /** Cubic. Leaves at speed and settles, which is what a switch between two
+   * arrangements wants: the change reads immediately and the arrival is soft. */
+  out: t => 1 - (1 - t) ** 3,
+
+  in: t => t ** 3,
+  inOut: t => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2),
+} satisfies Record<string, Easing>;
+
+export type Ease = keyof typeof EASINGS;
+
+/** Which curve a version switch plays on. */
+export const REPLAY_EASE: Ease = 'out';
+
 /**
  * Everything the editor is. Immutable throughout: a field that did not change
  * keeps its identity, which is what lets `object` wake only the parts that
