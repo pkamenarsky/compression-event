@@ -7,13 +7,25 @@
 //
 // - **Where are the walls right now?** `baked`, which the vertex shader reads
 //   and which nothing on the CPU has to resolve. See `baked.ts`.
-// - **What is the player standing in?** `versions`, the source polygons as each
-//   version resolves them, which collision and the out-of-bounds check run on.
+// - **What is the player standing in?** `versions`, the set at each version as
+//   closed rings, which collision and the out-of-bounds check run on.
 //
-// The second is not the first evaluated at a version boundary, and is not meant
-// to be. The outline is the CSG of the whole set; a room is a polygon. Walking
-// into a wall is a question about the room you are in, and the answer does not
-// need the union.
+// Both are the union, and neither is the other. The authored rings carry seams
+// the set does not have — two rooms overlapping is the ordinary way to author a
+// level here, and the seam between them was a wall you could see through and
+// could not walk through — so collision is on the union too, and every ring
+// here ships as `level` whatever it was made of: a `solid` has been subtracted
+// by now and is a hole, and a hole is one by the way it is wound.
+//
+// What differs is the shape they arrive in, and that is the whole reason the
+// second is a separate evaluation rather than a read of the first. A run
+// belongs to one polygon and can be kept up to date on its own, which is what
+// the editor wants of the drawing; a wall needs both its neighbours to mitre
+// against, and a ring is where they are.
+//
+// So collision snaps at version boundaries while the walls morph between them,
+// and during a transition the wall you see is a little ahead of the wall that
+// stops you. That was chosen. The seams were not.
 // -----------------------------------------------------------------------------
 
 import { BakedLevel, EMPTY_BAKED } from './baked';
@@ -66,8 +78,9 @@ export interface Path {
 
 export interface World {
   paths: Path[]
-  /** The source polygons at each version, for collision and for knowing
-   * whether the player is anywhere at all. */
+  /** The set at each version as closed rings, for collision and for knowing
+   * whether the player is anywhere at all. Not the polygons it was made of —
+   * see the header. */
   versions: Version[]
   artefacts: Artefact[]
   /** The morph between each adjacent pair of versions, as buffers. */
