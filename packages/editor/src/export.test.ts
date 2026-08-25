@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
+import { CROSSING, FRAME_STRIDE, Hulls, corners, outline, signedArea } from '@ce/game';
 import { Frame, bakeSpan, riding, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
 import {
@@ -23,10 +23,14 @@ import {
   Affine,
   addPolygon,
   addVertex,
+  EMPTY_LIVE,
   affine,
   compose,
+  contributing,
   editAt,
   grouped,
+  live,
+  sourced,
   removeVertices,
   resolveAt,
   withEdit,
@@ -610,4 +614,74 @@ describe('the chain a vertex rides', () => {
     }
   });
 
+});
+
+/**
+ * The two sources of geometry have to draw the same verticals.
+ *
+ * `still` builds its walls from the boundary the editor already keeps; the
+ * morph builds them from the bake. The editor crosses between the two at the
+ * start and the end of every transition, so a vertical either of them stands
+ * alone appears or vanishes at that crossing — see the header of `walls.ts`.
+ *
+ * This holds one against the other at the version the span starts from, which
+ * is the instant the crossing happens at.
+ */
+describe('the standing walls and the bake agree about every vertical', () => {
+  function same(world: World): void {
+    const items = contributing(world, 0, resolveAt(world, 0));
+    const standing = sourced(live(EMPTY_LIVE, items));
+
+    const flat = bakedSpan(run(bakeSpan(world, 0)));
+
+    // The A end of the first stretch of every track, which is the span's
+    // start: the same boundary `still` was handed. The still side reads world
+    // units and the bake each polygon's own frame; nothing here is transformed,
+    // so the two coincide and a run is found by the points it is made of.
+    const baked = new Map<string, number[]>();
+
+    for (const track of flat.tracks) {
+      for (const r of track.stretches[0].runs) {
+        const where: string[] = [], flags: number[] = [];
+
+        for (let i = 0; i < r.count; i++) {
+          const at = r.first + i;
+
+          where.push(`${flat.pointsA[at * 2]},${flat.pointsA[at * 2 + 1]}`);
+          flags.push(flat.opacityA[at]);
+        }
+
+        baked.set(where.join(' '), flags);
+      }
+    }
+
+    const turning = corners(standing);
+
+    standing.forEach((r, i) => {
+      const where = r.points.map(p => `${p.x},${p.y}`).join(' ');
+
+      expect([where, baked.get(where)]).toEqual([where, turning[i].map(t => (t ? 1 : 0))]);
+    });
+  }
+
+  test('two rooms abutting on a flat wall', () => {
+    same(drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+    ).world);
+  });
+
+  test('a room with a solid cutting a notch out of one wall', () => {
+    same(drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['solid', rect(60, -20, 40, 40)],
+    ).world);
+  });
+
+  test('two rooms overlapping', () => {
+    same(drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 20, 100, 60)],
+    ).world);
+  });
 });

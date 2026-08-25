@@ -39,52 +39,89 @@ export function turns(a: Point, b: Point, c: Point): boolean {
 }
 
 /**
+ * One run of the boundary, and the polygon whose edges it came off.
+ *
+ * The id is not decoration. `corners` stitches runs back together at a shared
+ * end, and it may only do that for runs of the same polygon — see there.
+ */
+export interface Run {
+  id: number
+  points: readonly Point[]
+}
+
+/**
  * Which points of a boundary carry a vertical, run by run and point by point.
  *
- * The question is per *point of the boundary*, not per point of a run, and that
- * is the whole of it. A run is one arc, open at both ends because the boundary
- * carries on into the next one — but the next one is in hand: the caller is
- * holding every run of this boundary at once, and always was. Asked run by run,
- * an end has no neighbour to compare against and its vertical stands by
+ * The question is per *point*, not per index into a run, and a run is one arc
+ * with open ends: the boundary carries on past them into another run. Asked run
+ * by run, an end has no neighbour to compare against and its vertical stands by
  * default, which puts a line down the middle of a flat wall wherever two runs
- * happen to meet in a straight stretch. A junction between two polygons that
- * abut is exactly that, and it is common.
- *
- * So the runs are stitched back together by their endpoints first. A point with
- * two distinct neighbours is a corner if it turns between them; anything else
- * is a corner and keeps its vertical — a T where three runs meet is a real
- * corner, and so is a hairpin that comes back the way it went.
+ * meet in a straight stretch. So the runs handed over are stitched back
+ * together by their endpoints first. A point with two distinct neighbours is a
+ * corner if it turns between them; anything else is a corner and keeps its
+ * vertical — a T where three runs meet is a real corner, and so is a hairpin
+ * that comes back the way it went.
  *
  * A run that closes on itself falls out of the same rule: `boundaryRuns` gives
  * a whole ring back with its first point repeated at the last, so both
- * neighbours across the join are in hand under one key.
+ * neighbours across the join are in hand under one key. A dilated pillar is the
+ * case that finds this — its ring comes back whole, cut at whatever point the
+ * arrangement started from, which is not usually a corner.
  *
- * Ends are matched exactly. They are not two points that met and agreed; they
- * are one point written down twice, by an arrangement that welded them.
+ * One polygon at a time, and that is a hard limit rather than a convenience
+ * ----------------------------------------------------------------------
+ * Runs stitch only to runs of the same polygon, which is why they arrive
+ * carrying the id they came off. Two rooms that abut make one flat wall out of
+ * two polygons' runs, and this will still stand a vertical where they meet.
+ * That is not an oversight; it is the only rule the two sources of geometry can
+ * both follow.
+ *
+ * `still` holds the whole boundary and could stitch across polygons. The morph
+ * cannot: the bake cuts a track per polygon — that is what makes it cheap, see
+ * `share` in `bake.ts` — so a stretch has one polygon's runs in hand and never
+ * a neighbour's. And even handed them it could not match the ends, because each
+ * polygon's points are kept in its own frame and a shared junction comes back
+ * as two float computations of the same place rather than one number written
+ * twice.
+ *
+ * A rule the two cannot both follow is worse than a vertical too many. The
+ * editor crosses between them at the start and end of every transition, and a
+ * line that appears for the length of a walk and goes away again is the flicker
+ * this whole module is arranged to prevent. Widening this means giving the
+ * answer to `boundaryRuns`, which is the one place that sees a polygon *and its
+ * neighbours* in one frame, and which both sources already call.
+ *
+ * Ends are matched exactly. Within one polygon they are not two points that met
+ * and agreed; they are one point written down twice, by an arrangement that
+ * welded them.
  */
-export function corners(runs: readonly (readonly Point[])[]): boolean[][] {
-  const key = (p: Point) => `${p.x},${p.y}`;
+export function corners(runs: readonly Run[]): boolean[][] {
+  const key = (id: number, p: Point) => `${id}|${p.x},${p.y}`;
   const near = new Map<string, Point[]>();
 
-  const beside = (p: Point, q: Point | undefined) => {
+  const beside = (id: number, p: Point, q: Point | undefined) => {
     if (q === undefined) return;
 
-    const at = near.get(key(p)) ?? [];
+    const k = key(id, p);
+    const at = near.get(k);
 
-    if (!at.some(o => o.x === q.x && o.y === q.y)) at.push(q);
-
-    near.set(key(p), at);
+    if (at === undefined) {
+      near.set(k, [q]);
+    }
+    else if (!at.some(o => o.x === q.x && o.y === q.y)) {
+      at.push(q);
+    }
   };
 
   for (const run of runs) {
-    for (let i = 0; i < run.length; i++) {
-      beside(run[i], run[i - 1]);
-      beside(run[i], run[i + 1]);
+    for (let i = 0; i < run.points.length; i++) {
+      beside(run.id, run.points[i], run.points[i - 1]);
+      beside(run.id, run.points[i], run.points[i + 1]);
     }
   }
 
-  return runs.map(run => run.map(p => {
-    const at = near.get(key(p)) ?? [];
+  return runs.map(run => run.points.map(p => {
+    const at = near.get(key(run.id, p)) ?? [];
 
     return at.length !== 2 || turns(at[0], p, at[1]);
   }));
@@ -93,7 +130,7 @@ export function corners(runs: readonly (readonly Point[])[]): boolean[][] {
 /** A stretch of consecutive points in whatever flat array of them the caller
  * holds. Open — a ring of the union belongs to no one polygon, and a wall was
  * never more than a consecutive pair. */
-export interface Run {
+export interface Span {
   first: number
   count: number
 }
@@ -128,7 +165,7 @@ export interface Extruded {
   index: Uint32Array
 }
 
-export function extrude(runs: Iterable<Run>): Extruded {
+export function extrude(spans: Iterable<Span>): Extruded {
   const wallPoint: number[] = [], wallHeight: number[] = [];
   const linePoint: number[] = [], lineHeight: number[] = [], lineVertical: number[] = [];
   const index: number[] = [];
@@ -144,10 +181,10 @@ export function extrude(runs: Iterable<Run>): Extruded {
     lineVertical.push(vertical);
   };
 
-  for (const run of runs) {
-    const last = run.first + run.count - 1;
+  for (const span of spans) {
+    const last = span.first + span.count - 1;
 
-    for (let i = run.first; i < last; i++) {
+    for (let i = span.first; i < last; i++) {
       const base = wallPoint.length;
 
       wall(i, 0);
@@ -163,7 +200,7 @@ export function extrude(runs: Iterable<Run>): Extruded {
       line(i + 1, 1, 0);
     }
 
-    for (let i = run.first; i <= last; i++) {
+    for (let i = span.first; i <= last; i++) {
       line(i, 0, 1);
       line(i, 1, 1);
     }

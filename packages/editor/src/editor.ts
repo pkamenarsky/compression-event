@@ -24,7 +24,6 @@ import {
   GroupId,
   initialState,
   opened,
-  parentOf,
   marked,
   redone,
   undone,
@@ -616,11 +615,16 @@ function eye(version: Value<Version>, update: Update, index: VersionId): VNode {
   const on = () => version().visible;
   const x = STRIP_WIDTH - PADDING - 18;
 
+  // Through the history like every other write to the world, because that is
+  // what the history is over: left out, an undo of the edit *before* the toggle
+  // takes the toggle back with it, which is nothing the author asked for. The
+  // bake survives it either way — a stamp compares each version's edits, and
+  // this changes none of them.
   const toggle = () => update(s => {
     const versions = [...s.world.versions];
     versions[index] = { ...versions[index], visible: !versions[index].visible };
 
-    return { ...s, world: { ...s.world, versions } };
+    return marked({ ...s, world: { ...s.world, versions } }, s.world);
   });
 
   return g(
@@ -772,18 +776,6 @@ function bakeButton(
 }
 
 /**
- * The bake, run a slice at a time so the editor goes on drawing.
- *
- * A frame's worth of work, then the progress goes into the store and the
- * browser gets its turn. Nothing guards against the world changing underneath
- * it, because nothing has to: what comes out is stamped, and a span stamped
- * against a world that has moved is simply not a span any more.
- *
- * The turn is a timeout rather than an animation frame. A frame is the better
- * pacing and the worse promise: a hidden tab stops being given them, and a bake
- * left half done because the author looked at something else is not a bake.
- */
-/**
  * The switch for the 3D view.
  *
  * Under the bake button, because that is what it depends on: a level that has
@@ -920,6 +912,18 @@ function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: 
   );
 }
 
+/**
+ * The bake, run a slice at a time so the editor goes on drawing.
+ *
+ * A frame's worth of work, then the progress goes into the store and the
+ * browser gets its turn. Nothing guards against the world changing underneath
+ * it, because nothing has to: what comes out is stamped, and a span stamped
+ * against a world that has moved is simply not a span any more.
+ *
+ * The turn is a timeout rather than an animation frame. A frame is the better
+ * pacing and the worse promise: a hidden tab stops being given them, and a bake
+ * left half done because the author looked at something else is not a bake.
+ */
 function start(state: Value<EditorState>, update: Update): void {
   const job = bakeAll(state().world);
 

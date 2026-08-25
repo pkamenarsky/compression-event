@@ -171,11 +171,12 @@ function into(node: Node, leaf: Leaf): Node {
   const combined = perimeter(merge(node.box, leaf.box));
   const inherited = combined - perimeter(node.box);
 
-  if (combined <= descent(node.left, leaf, inherited) && combined <= descent(node.right, leaf, inherited)) {
-    return join(node, leaf);
-  }
+  const left = descent(node.left, leaf, inherited);
+  const right = descent(node.right, leaf, inherited);
 
-  if (descent(node.left, leaf, inherited) <= descent(node.right, leaf, inherited)) {
+  if (combined <= left && combined <= right) return join(node, leaf);
+
+  if (left <= right) {
     return balance(join(into(node.left, leaf), node.right));
   }
   else {
@@ -313,8 +314,21 @@ function split(items: { id: number, box: AABB }[]): Node {
     y: (i.box.minY + i.box.maxY) / 2,
   }));
 
-  const xs = centres.map(c => c.x), ys = centres.map(c => c.y);
-  const wide = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+  // Walked rather than spread into `Math.max`. A build is handed one box per
+  // segment of an arrangement, and a level of ten thousand polygons is eighty
+  // thousand of them — the same order as the argument count an engine will
+  // take before a spread overflows the stack, which it does by throwing rather
+  // than by slowing down.
+  let loX = Infinity, hiX = -Infinity, loY = Infinity, hiY = -Infinity;
+
+  for (const c of centres) {
+    if (c.x < loX) loX = c.x;
+    if (c.x > hiX) hiX = c.x;
+    if (c.y < loY) loY = c.y;
+    if (c.y > hiY) hiY = c.y;
+  }
+
+  const wide = hiX - loX >= hiY - loY;
 
   centres.sort((a, b) => (wide ? a.x - b.x : a.y - b.y));
 

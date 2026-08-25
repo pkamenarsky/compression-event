@@ -8,7 +8,6 @@ import { Bake, Frame, replayed } from './bake';
 import { Ring, Shape } from './geometry';
 import {
   Input,
-  SHIFT,
   blurred,
   keyPressed,
   keyReleased,
@@ -42,8 +41,6 @@ import {
   swallowed,
   reachable,
   reaching,
-  Contributed,
-  sidedWith,
   live,
   placeVertex,
   polygonsIn,
@@ -57,7 +54,6 @@ import {
 } from './scene';
 import { theme } from './theme';
 import {
-  Edit,
   EditorState,
   Id,
   Point,

@@ -32,10 +32,8 @@
 
 import { Point } from '@ce/game/world';
 import {
-  OpSubtract,
   Ring,
   Shape,
-  combine,
   contains,
   erode,
   isCCW,
@@ -48,7 +46,6 @@ import {
   Clipping,
   EMPTY_TRANSFORM,
   Edit,
-  Group,
   GroupId,
   Id,
   Vertex,
@@ -62,7 +59,6 @@ import {
   World,
   enclosing,
   opened,
-  outermost,
   parentOf,
   standing,
   within,
@@ -73,6 +69,7 @@ import {
   edited,
   emptyWorldSet,
   outline,
+  pieces,
 } from './worldset';
 
 /** One polygon as a version left it: what edits are made against, and what is
@@ -672,7 +669,8 @@ export function composed(outer: Transform, inner: Transform): Transform | null {
  *
  * Only what is not already held: grouping something with a thing it is already
  * inside means grouping what holds it, and grouping a group with its own member
- * is not a structure — it is the same member twice.
+ * is not a structure — it is the same member twice. Drilled into a group and
+ * picking everything in it is the same refusal wearing a different hat.
  *
  * Nothing is compensated. A new group's transform is identity at every version,
  * so its members are exactly where they were, which is the whole reason making
@@ -687,10 +685,22 @@ export function grouped(
   // What each of them is picked *as*, which inside an open group is the member
   // itself rather than the group standing over the whole thing. Grouping two
   // members while drilled in makes a group in there, holding those two.
-  const path = opened(world, where.into);
+  const into = where.into;
+  const path = opened(world, into);
   const tops = [...new Set(ids.map(id => reaching(world, id, path)))];
 
   if (tops.length < 2) return null;
+
+  const held = new Set<Id>(tops);
+  const parent = into === null ? undefined : world.groups.get(into);
+
+  // Nor is a group holding exactly what the open group already holds: it is a
+  // level of nesting that says nothing, and one the author then has to get
+  // through twice to reach anything. Out at the top level the same refusal
+  // falls out of the count — everything picked inside a group reaches that
+  // group, and one thing is not a group — and drilled into it, it has to be
+  // said outright.
+  if (parent !== undefined && parent.members.every(m => held.has(m))) return null;
 
   const id = world.nextId;
   const groups = new Map(world.groups);
@@ -699,16 +709,12 @@ export function grouped(
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
-  const parent = where.into === null ? undefined : groups.get(where.into);
-
-  if (where.into !== null && parent !== undefined) {
-    const held = new Set<Id>(tops);
-
-    groups.set(where.into, { ...parent, members: parent.members.filter(m => !held.has(m)) });
+  if (into !== null && parent !== undefined) {
+    groups.set(into, { ...parent, members: parent.members.filter(m => !held.has(m)) });
   }
 
   return {
-    world: joined({ ...world, groups, nextId: id + 1 }, where.into, [id]),
+    world: joined({ ...world, groups, nextId: id + 1 }, into, [id]),
     id,
   };
 }
@@ -1292,6 +1298,17 @@ export function runs(l: Live): Point[][] {
 }
 
 /**
+ * The same runs, each carrying the polygon it came off.
+ *
+ * What the walls need and what `runs` throws away: a run stitches to the run it
+ * meets at a shared end only when one polygon owns both, because that is the
+ * only stitching the bake can also do. See `corners` in `walls.ts`.
+ */
+export function sourced(l: Live): { id: Id, points: Point[] }[] {
+  return pieces(l.set).map(p => ({ id: p.source, points: p.points }));
+}
+
+/**
  * The set brought up to date against `items`, doing only the work the
  * differences call for.
  *
@@ -1672,7 +1689,6 @@ function pointing(m: Affine, d: Point): Point {
 export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping[] {
   const items = new Map(resolveAt(world, v).map(it => [it.id, it]));
   const deep = depths(world, v);
-  const inherited = new Set(chain(world, v));
 
   /** What a version's layer says, as the copy will say it. */
   const layers = (id: Id, m: Affine | null, erosion: number): [number, Edit][] => {

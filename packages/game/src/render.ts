@@ -33,7 +33,7 @@ import * as THREE from 'three';
 import { DitherPass } from './dither';
 import { Morph, morph } from './morph';
 import { still } from './still';
-import { Source, WallOptions } from './walls';
+import { Run, Source, WallOptions } from './walls';
 import { Point, World } from './world';
 
 /** World units per editor unit: the editor's grid of 25 is one metre. */
@@ -71,10 +71,11 @@ export interface Renderer {
 
   /**
    * The boundary as it stands, in editor units, as the open runs the CSG hands
-   * over. Shown whenever no walk is in flight, and replaced as often as the
-   * caller likes — an edit is a rebuild of these buffers and nothing else.
+   * over, each with the polygon it came off. Shown whenever no walk is in
+   * flight, and replaced as often as the caller likes — an edit is a rebuild of
+   * these buffers and nothing else.
    */
-  show(runs: readonly Point[][]): void
+  show(runs: readonly Run[]): void
 
   /** The baked spans, built and held ready. An empty level drops them. */
   load(world: World): void
@@ -158,7 +159,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     }
   }
 
-  function show(runs: readonly Point[][]): void {
+  function show(runs: readonly Run[]): void {
     if (standing !== null) {
       scene.remove(standing.walls, standing.lines);
       standing.dispose();
@@ -167,7 +168,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     standing = still(runs, walls);
     scene.add(standing.walls, standing.lines);
 
-    grow(bounding(runs));
+    grow(bounding(runs.map(r => r.points)));
     reconcile(showing);
   }
 

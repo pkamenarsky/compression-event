@@ -117,18 +117,29 @@ function hullOf(
   if (Math.hypot(wb.x - wa.x, wb.y - wa.y) < 1e-12) return null;
 
   // Along the bisector rather than the edge normal, so that both walls meeting
-  // at a corner end up exactly `radius` away from it rather than pinching.
+  // at a corner end up exactly `radius` away from it rather than pinching. The
+  // scaling is what makes that exact: `withNormals` divides the unit bisector
+  // by the cosine of the half angle, so the bisector's component along either
+  // of the two edge normals is exactly one, and the moved edge is a translate
+  // of the original by `radius` however sharp the corner is.
   const ea = { x: wa.x + a.bnx * radius * side, y: wa.y + a.bny * radius * side };
   const eb = { x: wb.x + b.bnx * radius * side, y: wb.y + b.bny * radius * side };
 
-  // At a sharp enough corner the expanded edge crosses back over the original
-  // one, and the quad turns itself inside out. The triangle up to the crossing
-  // is what is left of it.
-  const crossed = meeting(wa, wb, ea, eb);
+  // Except where there was no bisector to divide. A hairpin's two edges are
+  // antiparallel and their normals cancel, so `withNormals` falls back to the
+  // edge's own normal — which is right for one of the two walls meeting there
+  // and points straight through the other. That quad crosses itself, and every
+  // way of salvaging a triangle out of it puts all three corners on one line:
+  // the crossing sits on the original edge by construction. A zero-area hull
+  // catches nothing, so the wall silently stopped stopping anyone.
+  //
+  // The rectangle the bisector would have given anywhere else is what it gets
+  // instead: both ends moved along the wall's own normal. It is short of the
+  // radius at the far corner, which is the corner a hairpin does not have.
+  const folded = meeting(wa, wb, ea, eb) !== null;
+  const out = (p: Point) => ({ x: p.x + a.enx * radius * side, y: p.y + a.eny * radius * side });
 
-  const verts: Point[] = crossed === null
-    ? [wa, wb, eb, ea]
-    : [wa, wb, { x: wa.x + crossed * (wb.x - wa.x), y: wa.y + crossed * (wb.y - wa.y) }];
+  const verts: Point[] = folded ? [wa, wb, out(wb), out(wa)] : [wa, wb, eb, ea];
 
   if (signedArea(verts) < 0) verts.reverse();
 

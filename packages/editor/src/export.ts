@@ -31,7 +31,7 @@ import {
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { IDENTITY, Resolved, resolveAt } from './scene';
-import { Id, Point, PolygonId, VersionId, World } from './types';
+import { Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -211,12 +211,14 @@ export function bakedSpan(span: Span): BakedSpan {
       table.at.clear();
       tabled(s, slots, table);
 
-      // Both ends of the span, each asked of its whole boundary at once: a run
-      // end is a corner only if the run it meets there turns away. See
-      // `corners`.
+      // Both ends of the stretch, each asked of every run in hand at once: a
+      // run end is a corner only if the run it meets there turns away. Only
+      // this polygon's runs are ever in hand — a track is one polygon's cut —
+      // and `corners` is scoped to match, so the walls the bake draws and the
+      // walls `still` draws agree about every vertical.
       const turning = [
-        corners(s.a.map(run => run.points)),
-        corners(s.a.map((run, i) => (s.b[i] ?? run).points)),
+        corners(s.a),
+        corners(s.a.map((run, i) => s.b[i] ?? run)),
       ];
 
       const runs: BakedRun[] = s.a.map((run, i) => {

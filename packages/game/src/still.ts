@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Source, WallOptions, corners, extrude, materials } from './walls';
+import { Run, Source, WallOptions, corners, extrude, materials } from './walls';
 import { Point } from './world';
 
 const vertexShader = /* glsl */ `
@@ -50,21 +50,23 @@ const vertexShader = /* glsl */ `
  *
  * The runs are flattened into one point array first, because `extrude` deals in
  * indices into exactly that and both sources have to hand it the same shape.
+ * Each one arrives with the polygon it came off, for the same reason: `corners`
+ * is asked the same question here and in the bake, and it may only be asked
+ * within one polygon. See `corners`.
  */
-export function still(runs: readonly Point[][], options: WallOptions): Source {
+export function still(runs: readonly Run[], options: WallOptions): Source {
   const points: Point[] = [];
   const spans = [];
 
   for (const run of runs) {
-    spans.push({ first: points.length, count: run.length });
-    points.push(...run);
+    spans.push({ first: points.length, count: run.points.length });
+    points.push(...run.points);
   }
 
   const shape = extrude(spans);
 
   // Per point of the flattened outline, whether a vertical standing on it is
-  // telling the truth. Asked of the whole boundary at once — see `corners`,
-  // which is where a run's ends are stitched back to their neighbours.
+  // telling the truth.
   const cornered = new Float32Array(points.length).fill(1);
   const turning = corners(runs);
 

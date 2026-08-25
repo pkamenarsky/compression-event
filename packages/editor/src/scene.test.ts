@@ -801,6 +801,33 @@ describe('drilled into a group, everything happens in there', () => {
     expect(inner.world.groups.get(outer.id)!.members).toEqual([ids[2], inner.id]);
   });
 
+  test('grouping everything in the open group is not a group', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+
+    // Out here the same picking is refused because both reach the group over
+    // them; in there it has to be refused outright, or it wraps the pair in a
+    // group of exactly the group's own extent.
+    expect(grouped(g.world, 0, ids, TOP)).toEqual(null);
+    expect(grouped(g.world, 0, ids, landing(g.world, 0, g.id))).toEqual(null);
+  });
+
+  test('grouping some of them is, and it lands in there', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+      ['level', rect(400, 0, 100, 100)],
+    );
+    const outer = grouped(world, 0, ids, TOP)!;
+    const where = landing(outer.world, 0, outer.id);
+    const inner = grouped(outer.world, 0, [ids[0], ids[1]], where)!;
+
+    expect(inner.world.groups.get(outer.id)!.members).toEqual([ids[2], inner.id]);
+  });
+
   test('at the top level the same call groups what is picked, as picked', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],

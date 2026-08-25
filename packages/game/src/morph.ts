@@ -28,8 +28,8 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { BakedSpan, CROSSING, ENTRY_STRIDE, FRAME_STRIDE } from './baked';
-import { Run, Source, WallOptions, extrude, materials } from './walls';
+import { BakedSpan, CROSSING } from './baked';
+import { Source, Span, WallOptions, extrude, materials } from './walls';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -242,8 +242,8 @@ function tabled(data: Float32Array): THREE.DataTexture {
 
 /** Every stretch of every track, one after another: a span is one buffer and
  * one draw, and which of it is alive at an instant is the shader's business. */
-function spanRuns(span: BakedSpan): Run[] {
-  const out: { run: Run, t0: number, t1: number }[] = [];
+function spanRuns(span: BakedSpan): Span[] {
+  const out: { run: Span, t0: number, t1: number }[] = [];
 
   for (const track of span.tracks) {
     for (const s of track.stretches) {

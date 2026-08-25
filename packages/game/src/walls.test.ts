@@ -13,29 +13,43 @@ describe('what counts as a corner', () => {
     // says it does not turn there.
     const run = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
 
-    expect(corners([run])).toEqual([[true, false, true]]);
+    expect(corners([{ id: 0, points: run }])).toEqual([[true, false, true]]);
   });
 
-  test('two runs meeting in a straight stretch stand no vertical', () => {
-    // The case out of world-2026-08-25T17-46-44Z: two polygons abutting, so
-    // the union's boundary is cut where they meet and carries straight on. A
-    // vertical there is a line down the middle of a flat wall.
+  test('two runs of one polygon meeting in a straight stretch stand no vertical', () => {
     const one = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
     const two = [{ x: 2, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 1 }];
 
-    expect(corners([one, two])).toEqual([
+    expect(corners([{ id: 7, points: one }, { id: 7, points: two }])).toEqual([
       [true, false, false],
       [false, true, true],
     ]);
   });
 
-  test('a T where three runs meet is a corner in all of them', () => {
+  test('two polygons meeting in a straight stretch each keep theirs', () => {
+    // The case out of world-2026-08-25T17-46-44Z, and the one this deliberately
+    // does not answer. The wall is flat and the vertical is a line down the
+    // middle of it — but the bake has one polygon's runs in hand and never a
+    // neighbour's, so a rule that stitched here would make the standing walls
+    // and the morphing ones disagree the moment a transition started. See
+    // `corners`.
+    const one = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
+    const two = [{ x: 2, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 1 }];
+
+    expect(corners([{ id: 1, points: one }, { id: 2, points: two }])).toEqual([
+      [true, false, true],
+      [true, true, true],
+    ]);
+  });
+
+  test('a T where three of one polygon\'s runs meet is a corner in all of them', () => {
     const one = [{ x: 0, y: 0 }, { x: 2, y: 0 }];
     const two = [{ x: 2, y: 0 }, { x: 4, y: 0 }];
     const three = [{ x: 2, y: 0 }, { x: 2, y: 2 }];
 
-    expect(corners([one, two, three]).map(r => r[r.length - 1] || r[0]))
-      .toEqual([true, true, true]);
+    const at = corners([one, two, three].map(points => ({ id: 3, points })));
+
+    expect(at.map(r => r[r.length - 1] || r[0])).toEqual([true, true, true]);
   });
 
   test('a run that closes on itself has no open end', () => {
@@ -52,7 +66,7 @@ describe('what counts as a corner', () => {
       { x: 1, y: 0 },
     ];
 
-    expect(corners([ring])).toEqual([[false, true, true, true, true, false]]);
+    expect(corners([{ id: 0, points: ring }])).toEqual([[false, true, true, true, true, false]]);
   });
 
   test('a ring cut at a real corner keeps its vertical', () => {
@@ -64,7 +78,7 @@ describe('what counts as a corner', () => {
       { x: 0, y: 0 },
     ];
 
-    const at = corners([ring])[0];
+    const at = corners([{ id: 0, points: ring }])[0];
 
     expect(at[0]).toBe(true);
     expect(at[at.length - 1]).toBe(true);
@@ -86,6 +100,7 @@ describe('what counts as a corner', () => {
 
     // Two verticals stood where the ring was cut, and one part way down the
     // left wall. None of the three is a corner.
-    expect(corners([ring])).toEqual([[false, true, true, true, false, true, false]]);
+    expect(corners([{ id: 0, points: ring }]))
+      .toEqual([[false, true, true, true, false, true, false]]);
   });
 });

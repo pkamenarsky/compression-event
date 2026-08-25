@@ -38,7 +38,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { Point, Renderer, SCALE, renderer } from '@ce/game';
 import { Bake, spanAt } from './bake';
 import { bakedLevel } from './export';
-import { EMPTY_LIVE, Live, contributing, live, resolveAt, runs } from './scene';
+import { EMPTY_LIVE, Live, contributing, live, resolveAt, sourced } from './scene';
 import { theme } from './theme';
 import { Replay, Update, VersionId, World } from './types';
 
@@ -245,7 +245,7 @@ function panel(
 
       set = live(set, contributing(w, v, resolveAt(w, v)));
 
-      const outline = runs(set) as Point[][];
+      const outline = sourced(set);
 
       view.show(outline);
 
@@ -592,13 +592,13 @@ function stood(orbit: Orbit, walker: Walker): void {
  * also fly the camera somewhere, so once the view has been turned or zoomed it
  * is theirs and this stops writing to it.
  */
-function framed(outline: readonly Point[][], orbit: Orbit): void {
+function framed(outline: readonly { points: readonly Point[] }[], orbit: Orbit): void {
   if (orbit.held) return;
 
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
 
   for (const run of outline) {
-    for (const p of run) {
+    for (const p of run.points) {
       minX = Math.min(minX, p.x * SCALE);
       maxX = Math.max(maxX, p.x * SCALE);
       minZ = Math.min(minZ, p.y * SCALE);

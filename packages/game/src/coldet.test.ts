@@ -11,7 +11,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Hulls, PLAYER_RADIUS } from './coldet';
-import { Point, Polygon, PolygonType, withNormals } from './world';
+import { Point, Polygon, PolygonType, signedArea, withNormals } from './world';
 
 /** Counter-clockwise, which for a `level` ring is a room. */
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -128,3 +128,48 @@ describe('somewhere to stand', () => {
     expect(hulls.standable({ x: 140, y: 50 })).toBe(true);
   });
 });
+
+/**
+ * A ring that runs out along a slit and comes straight back down it.
+ *
+ * `withNormals` has no bisector to give at the tip — the two edges are
+ * antiparallel and their normals cancel — so it hands back the edge's own
+ * normal, which points straight through the wall on the way back. The quad
+ * that made folded over, and the triangle salvaged out of it had all three
+ * corners on one line. A hull with no area catches nothing, and the slit's
+ * walls stopped stopping anyone.
+ */
+describe('a hairpin', () => {
+  const slit = ring('level', [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 50, y: 100 },
+    { x: 50, y: 30 },
+    { x: 50, y: 100 },
+    { x: 0, y: 100 },
+  ]);
+
+  test('every wall of it still has a hull with area', () => {
+    const areas = hullAreas(room(slit));
+
+    expect(areas.length).toBeGreaterThan(0);
+    expect(areas.filter(a => a < 1e-9)).toEqual([]);
+  });
+
+  test('walking into the side of the slit stops', () => {
+    // Straight at the slit's wall from the room beside it.
+    const at = room(slit).trace({ x: 30, y: 60 }, { x: 40, y: 0 });
+
+    expect(at.x).toBeLessThan(50 - PLAYER_RADIUS + 1e-2);
+  });
+});
+
+/** The area of each hull the walls came out as. Reaching inside on purpose:
+ * a hull with no area is invisible to every public answer, which is what made
+ * it worth a test of its own. */
+function hullAreas(hulls: Hulls): number[] {
+  const inside = hulls as unknown as { hulls: { verts: Point[] }[] };
+
+  return inside.hulls.map(h => Math.abs(signedArea(h.verts)));
+}
