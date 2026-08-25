@@ -1147,7 +1147,23 @@ export function showing(
 export interface Occupied {
   id: GroupId
   kind: PolygonType
+  /** As it is drawn: the level side with the solid side taken out of it. */
   shape: Shape
+  /**
+   * As it is picked, which is the same without the taking out.
+   *
+   * A solid inside a group is not a hole in the group — it is one of the things
+   * the group is made of, and a click that lands on the pillar in the middle of
+   * a grouped room means that group. Subtracting it would let the click through
+   * to whatever happens to be behind, which is the level the group was put
+   * there to sit over.
+   *
+   * The drawing keeps the subtraction, because that is what the group puts into
+   * the level and the fill under a picked one should say so. What is picked and
+   * what is filled are allowed to differ here: the fill is about the set, and
+   * the picking is about the thing.
+   */
+  whole: Shape
 }
 
 /**
@@ -1196,8 +1212,13 @@ export function occupying(
 
   for (const [id, { level, solid }] of sides) {
     out.push(level.length === 0
-      ? { id, kind: 'solid', shape: solid }
-      : { id, kind: 'level', shape: solid.length === 0 ? level : subtract(level, solid) });
+      ? { id, kind: 'solid', shape: solid, whole: solid }
+      : {
+        id,
+        kind: 'level',
+        shape: solid.length === 0 ? level : subtract(level, solid),
+        whole: level,
+      });
   }
 
   return out;
@@ -1407,7 +1428,8 @@ export function hitting(
   path: readonly GroupId[],
   at: Point,
 ): Id[] {
-  const shut = new Map(occupying(world, v, items, path).map(o => [o.id, o.shape]));
+  // What it covers rather than what it puts into the level: see `Occupied`.
+  const shut = new Map(occupying(world, v, items, path).map(o => [o.id, o.whole]));
   const asked = new Set<Id>();
   const out: Id[] = [];
 

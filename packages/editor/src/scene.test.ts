@@ -868,6 +868,28 @@ describe('what a click lands on', () => {
     expect(hit(5, 50)).toEqual([]);
   });
 
+  test('a solid in one is not a hole to click through', () => {
+    // A pillar in the middle of a grouped room. What the group puts into the
+    // level has a hole where the pillar is, and a click landing in it used to
+    // fall through the group to whatever was behind — which is the level the
+    // group was put there to sit over.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+    const g = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(g.world, 0);
+
+    expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([g.id]);
+
+    // And the hole is still in what is drawn, which is what the fill under a
+    // picked group follows: an outer ring and a hole, against one ring whole.
+    const shown = occupying(g.world, 0, items, [])[0];
+
+    expect(shown.shape).toHaveLength(2);
+    expect(shown.whole).toHaveLength(1);
+  });
+
   test('with a group open, what is outside it cannot be clicked on', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
