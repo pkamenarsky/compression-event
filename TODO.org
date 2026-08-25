@@ -1,4 +1,17 @@
-* create shape in editor
+* shape button
+** rect
 ** n-gon shape shows slider for point count
+** polyline
+* shape button/rect should be selected first
 * unchain
 * zoom
+* visible versions can be a strip instead of individual lines
+** button: all versions/next version/all subsequent versions/strip
+* effects
+** chamfer etc
+* settings view
+** grid size
+** snap to grid
+
+* marketing
+** https://www.youtube.com/watch?v=90ImoX_e8nE
