@@ -1624,7 +1624,7 @@ function* cutTrack(
     yield done;
   }
 
-  return { stretches: out, worst, evaluations };
+  return { stretches: abutting(out), worst, evaluations };
 
   function keep(s: Stretch): void {
     const last = out[out.length - 1];
@@ -1636,6 +1636,49 @@ function* cutTrack(
 
     out.push(s);
   }
+}
+
+/**
+ * The gaps between one stretch and the next closed, each side taking half.
+ *
+ * Converging on an event leaves a hair of a gap: the search stops once the two
+ * sides are near enough, and what is between them belongs to neither. Something
+ * has to be drawn there, and the choice is where to make it.
+ *
+ * Making it here is the only place it can be made *once*. Left open, every
+ * reader has to decide for itself what an uncovered instant means, and the two
+ * readers disagreed: the CPU took the nearer side, and the shader let both
+ * sides draw across a fixed window. A fixed window is the part that cannot
+ * work — the gaps are as small as the search made them, but the stretches
+ * beside an event are smaller still, so the window swallowed whole stretches
+ * and drew the topology from either side of the event at once. One frame of a
+ * doubled wall, with a vertical standing where the boundary had not reached
+ * yet, at the start of every animation however long it ran.
+ *
+ * Closed, every instant belongs to exactly one stretch, and both readers agree
+ * because there is nothing left to decide. The cost is that a stretch is
+ * interpolated over a window wider than the one it was measured over, by half
+ * a gap — smaller than the tolerance the gap was converged to.
+ *
+ * An instant carries the geometry *at* a discontinuity and has no width to
+ * interpolate over: growing it holds that geometry across the gap, which is
+ * what it was put there for.
+ */
+function abutting(stretches: readonly Stretch[]): Stretch[] {
+  const out = stretches.map(s => ({ ...s }));
+
+  for (let i = 1; i < out.length; i++) {
+    const gap = out[i].t0 - out[i - 1].t1;
+
+    if (gap <= 0) continue;
+
+    const mid = out[i - 1].t1 + gap / 2;
+
+    out[i - 1].t1 = mid;
+    out[i].t0 = mid;
+  }
+
+  return out;
 }
 
 // -----------------------------------------------------------------------------

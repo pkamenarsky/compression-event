@@ -36,15 +36,19 @@ import { Source, Span, WallOptions, extrude, materials } from './walls';
 const WIDTH = 512;
 
 /**
- * How far outside its own stretch a vertex still draws.
+ * How far outside its own stretch a vertex still draws: enough to cover the
+ * rounding, and nothing like enough to reach the next stretch.
  *
- * Adjacent stretches leave a hair of a gap where a topology event was converged
- * on, and something has to happen in it. The CPU reader takes the nearer side;
- * this lets both sides draw across it, which for a gap the bake has already
- * narrowed below 1e-4 is a doubled wall for well under a frame, and the
- * alternative is a hole.
+ * The gaps a converged event used to leave are closed in the bake now — see
+ * `abutting` — so every instant belongs to exactly one stretch and this has
+ * only float32 to forgive. It used to be 1e-3, which was sized against the
+ * gaps and not against the stretches: the stretches either side of an event
+ * are far narrower than that, so seven of them drew at once at the start of a
+ * span and the topologies from both sides of the event were on screen
+ * together. One frame, at any speed, which is exactly how a stray vertical
+ * around a moving polygon reads.
  */
-const SLACK = 1e-3;
+const SLACK = 1e-6;
 
 /**
  * Built per span rather than once, because how deep the chain of groups goes is

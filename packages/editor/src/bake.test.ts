@@ -200,6 +200,44 @@ describe('interpolation', () => {
   });
 });
 
+describe('a track covers the span exactly once', () => {
+  // What the shader needs and cannot work out for itself: at any instant there
+  // is one stretch to draw, never none and never two. Converging on an event
+  // leaves a hair of a gap; `abutting` closes it, because a fixed window in the
+  // shader cannot — the stretches beside an event are narrower than any window
+  // wide enough to cover the gaps, so it drew both sides of the event at once.
+  const covers = (world: World) => {
+    const span = run(bakeSpan(world, 0));
+
+    for (const track of span.tracks) {
+      expect(track.stretches[0].t0).toBe(0);
+      expect(track.stretches[track.stretches.length - 1].t1).toBe(1);
+
+      for (let i = 1; i < track.stretches.length; i++) {
+        expect(track.stretches[i].t0).toBe(track.stretches[i - 1].t1);
+      }
+    }
+  };
+
+  test('two polygons meeting exactly, one of them eroding away from it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+    );
+
+    covers(transformed(world, 1, ids[0], { erosion: 20 }));
+  });
+
+  test('one polygon sliding into another', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['level', rect(0, 200, 40, 100)],
+    );
+
+    covers(transformed(world, 1, ids[1], { translation: { x: 0, y: -140 } }));
+  });
+});
+
 describe('keyframes', () => {
   test('a room pinching in two is cut where the neck closes', () => {
     // Two rooms joined by a neck 40 across, so it pinches at a depth of 20 —
@@ -242,7 +280,15 @@ describe('keyframes', () => {
 
     const w = transformed(world, 1, ids[0], { erosion: 20 });
 
-    expect(run(bakeSpan(w, 0)).tracks[0].stretches[0].t1).toBe(0);
+    const first = run(bakeSpan(w, 0)).tracks[0].stretches[0];
+
+    // An instant at the start, holding the touching geometry. It carries as far
+    // as the middle of the gap the convergence left, rather than having no
+    // width at all — see `abutting` — and either end of it is the same
+    // geometry, which is what makes it an instant.
+    expect(first.t0).toBe(0);
+    expect(first.t1).toBeLessThan(1e-4);
+    expect(first.a).toBe(first.b);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
