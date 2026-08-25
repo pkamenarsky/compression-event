@@ -1069,54 +1069,113 @@ function everything(at: readonly Contributed[]): Frame {
  * neighbour, and half way across it is a square inscribed in the pillar at
  * forty-five degrees.
  *
- * Cut at the lowest corner in the polygon's *own* frame, which is the frame the
- * ring holds still in: the polygon can travel and turn across the span without
- * the answer moving, because its own frame travels and turns with it. Only the
- * shape changing can move it, and a shape changing that much is an event, which
- * is a stretch boundary rather than something inside one.
+ * Cut at the lowest corner *by identity*: a closed ring is one contributor's
+ * own boundary, so every point of it is a vertex of that contributor's
+ * projection, and which vertex is an integer that does not move as the shape
+ * erodes or turns. Integers give a strict total order — one winner, whatever
+ * order the ring is walked in, which is the whole of what is being asked for.
+ * The same assumption the rest of the bake runs on: a projection's vertices are
+ * index for index at both ends of a stretch, and a vertex arriving or leaving
+ * is an event, which is a stretch boundary rather than something inside one.
+ *
+ * Geometry is the fallback, for a ring the lookup cannot place — a point on a
+ * neighbour's edge that is not a corner of its own, or a ring that visits one
+ * vertex twice, which is what a pinch looks like at the instant it pinches.
+ * Then it is the lowest corner by position, which is worth being clear about:
+ * it is *not* robust in the way the identity is. Two corners can swap over in x
+ * as a shape deforms, and a ring can be symmetric enough that the choice comes
+ * down to the last bits. It is a fallback because the case it covers is one
+ * where nothing better is available, not because it is good.
  *
  * Open runs are left alone. Their ends are crossings with other polygons and
  * are not a choice anybody made.
  */
-function cutOnce(run: Run, m: Affine): Run {
+export function cutOnce(run: Run, shape: Shape | undefined, snap: number, m: Affine): Run {
   const n = run.points.length;
 
   if (n < 3) return run;
 
-  // Everything here is compared to a hair of the ring's own size. A ring that
-  // closes does not close *exactly*: the last point is the first one worked out
-  // a second time, by an offset at an interpolated depth, and the two answers
-  // differ in their last bits. The comparison that picks the cut needs the same
-  // slack, so that two corners a hair apart in x are settled by their y at
-  // every instant rather than swapping over as the shape moves.
-  const snap = extent(run.points) * 1e-9;
+  // A ring that closes does not close *exactly*: the last point is the first
+  // one worked out a second time, by an offset at an interpolated depth, and
+  // the two answers differ in their last bits.
   const first = run.points[0], last = run.points[n - 1];
 
   if (Math.abs(first.x - last.x) > snap || Math.abs(first.y - last.y) > snap) return run;
 
-  // The repeated point counted once, and the comparison in the frame the ring
-  // is at rest in.
+  // The repeated point counted once.
   const round = n - 1;
-  const local = run.points.slice(0, round).map(p => unplace(m, p));
-
-  let k = 0;
-
-  for (let i = 1; i < round; i++) {
-    const dx = local[i].x - local[k].x;
-
-    if (dx < -snap || (Math.abs(dx) <= snap && local[i].y < local[k].y - snap)) k = i;
-  }
+  const points = run.points.slice(0, round);
+  const k = named(points, shape, snap) ?? placed(points.map(p => unplace(m, p)), snap);
 
   if (k === 0) return run;
 
-  const points: Point[] = [], corner: boolean[] = [];
+  const out: Point[] = [], corner: boolean[] = [];
 
   for (let i = 0; i <= round; i++) {
-    points.push(run.points[(k + i) % round]);
+    out.push(run.points[(k + i) % round]);
     corner.push(run.corner[(k + i) % round]);
   }
 
-  return { ...run, points, corner };
+  return { ...run, points: out, corner };
+}
+
+/**
+ * Which point stands on the lowest vertex of the shape it came out of, or
+ * nothing where they cannot all be placed on one.
+ *
+ * Nothing, too, where two of them land on the same vertex: the ring visits it
+ * twice and there is no way to tell the two apart that does not come back to
+ * the order they were walked in, which is the thing being decided.
+ */
+function named(points: readonly Point[], shape: Shape | undefined, snap: number): number | null {
+  if (shape === undefined) return null;
+
+  let best = -1, at = { ring: Infinity, index: Infinity };
+  let twice = false;
+
+  for (let i = 0; i < points.length; i++) {
+    const on = corner(shape, points[i], snap);
+
+    if (on === null) return null;
+
+    if (on.ring < at.ring || (on.ring === at.ring && on.index < at.index)) {
+      best = i;
+      at = on;
+      twice = false;
+    }
+    else if (on.ring === at.ring && on.index === at.index) {
+      twice = true;
+    }
+  }
+
+  return twice ? null : best;
+}
+
+/**
+ * Which point is lowest by position: smallest x, and where several share it,
+ * smallest y.
+ *
+ * Two passes rather than a running minimum, so that the answer does not depend
+ * on where the walk began — a comparison with a tolerance in it is not
+ * transitive, and a running minimum over one would settle a three-way tie
+ * differently depending on which of the three it met first, which is exactly
+ * the phase this is here to take out.
+ */
+function placed(local: readonly Point[], snap: number): number {
+  let low = Infinity;
+
+  for (const p of local) low = Math.min(low, p.x);
+
+  let best = 0, y = Infinity;
+
+  for (let i = 0; i < local.length; i++) {
+    if (local[i].x <= low + snap && local[i].y < y) {
+      best = i;
+      y = local[i].y;
+    }
+  }
+
+  return best;
 }
 
 /** How big the thing is, as the longer side of its box. */
@@ -1154,8 +1213,11 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     if (how !== null) fade.set(it.id, how);
   }
 
+  // The same slack the origins are read with, and read off the same shapes.
+  const snap = near(world);
+
   const out = (only === null ? everything(at) : share(at, only))
-    .map(r => cutOnce(r, frames.get(r.id)!));
+    .map(r => cutOnce(r, world.get(r.id), snap, frames.get(r.id)!));
 
   const frame = out.map(r => ({
     id: r.id,
