@@ -1,9 +1,9 @@
 * version management
 * shape button
+** (!) should be selected first
 ** rect
 ** n-gon shape shows slider for point count
 ** polyline
-* shape button/rect should be selected first
 * unchain
 * zoom
 * visible versions can be a strip instead of individual lines

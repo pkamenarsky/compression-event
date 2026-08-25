@@ -1512,6 +1512,17 @@ function layers(
   out.push(ctx =>
     groups(ctx, view, occupying(world, current, items, path), new Set(selection.polygons), reach),
   );
+
+  // Command-click reaches past a group to one polygon inside it, and what it
+  // picks has to be visible or the click reads as having done nothing. Over the
+  // group's outline rather than under it: it is what the next gesture will act
+  // on, and the group is not.
+  const singled = items.filter(it => swallowed(world, it.id, path) && reached.has(it.id));
+
+  if (singled.length > 0) {
+    out.push(ctx => polygons(ctx, view, singled, selection, reached, false, () => true));
+  }
+
   out.push(ctx => outlines(ctx, view, outline));
 
   // Over the editor's own answer, so the two can be read against each other:

@@ -838,6 +838,12 @@ Command-click is the exception and stays as it was. It means "past the group for
 one click", so it asks the polygon, and a polygon is tested against its own ring
 because the polygon is the thing being asked for.
 
+What it picks has to be *drawn*, though, and a member of a shut group is not on
+screen: the group draws instead of it. Left alone, the reach-through selects
+something invisible and the click reads as having done nothing. So a polygon the
+selection reaches inside a shut group is drawn after the group's outline, over
+the top — it is what the next gesture will act on, and the group is not.
+
 ### Canvas: a stamp is a paste with the tail left behind
 
 Cmd+Shift+V pastes only the version it lands in: born there, saying nothing
