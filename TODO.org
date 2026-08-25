@@ -1,3 +1,4 @@
+* version management
 * shape button
 ** rect
 ** n-gon shape shows slider for point count
