@@ -41,6 +41,7 @@ import {
   isCCW,
   keeping,
   simplify,
+  subtract,
   unionAll,
 } from './geometry';
 import {
@@ -975,6 +976,66 @@ export function showing(
   return contributed(world, items, id =>
     open.has(id) ? null : { depth: depth.get(id) ?? 0 },
   );
+}
+
+/** One shut group as it is drawn: its whole contribution, as one boundary. */
+export interface Occupied {
+  id: GroupId
+  kind: PolygonType
+  shape: Shape
+}
+
+/**
+ * What each shut group occupies, as the one outline that says so.
+ *
+ * A group resolves internally. Its level union with its solid union taken out
+ * is what it puts into the level, and it is one boundary with nothing inside
+ * it — which is the whole of what shutting a group is supposed to do to the
+ * eye. Drawing the two sides separately puts the pillar's own outline back on
+ * screen, and a pillar inside a room is exactly the internal geometry that
+ * grouping was meant to stop showing.
+ *
+ * It is the same principle as eroding: a group erodes as one shape, so a group
+ * resolves as one shape. What happens *between* its members is its own
+ * business; what happens between it and the rest of the level is not, and is
+ * left to the CSG outline over the top, exactly as it is for a lone polygon —
+ * whose outline is also drawn whole, whatever cuts it.
+ *
+ * A group with nothing but walls in it has no level side to take them out of,
+ * and is drawn as the walls. A group must be visible: it is the thing being
+ * picked and dragged, and one made of pillars is still a thing.
+ *
+ * This is a question only drawing asks. The CSG needs the two sides apart —
+ * a group's walls cut the rooms around it too, not only its own — which is
+ * what `contributed` is careful to give it. See `showing`.
+ */
+export function occupying(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+): Occupied[] {
+  const sides = new Map<GroupId, { level: Shape, solid: Shape }>();
+
+  for (const c of showing(world, v, items, path)) {
+    const id = sidedWith(c.id) ?? c.id;
+
+    if (!world.groups.has(id)) continue;
+
+    const side = sides.get(id) ?? { level: [], solid: [] };
+
+    sides.set(id, { ...side, [c.kind]: c.shape });
+  }
+
+  const out: Occupied[] = [];
+
+  for (const [id, { level, solid }] of sides) {
+    out.push(level.length === 0
+      ? { id, kind: 'solid', shape: solid }
+      : { id, kind: 'level', shape: solid.length === 0 ? level : subtract(level, solid) });
+  }
+
+  return out;
 }
 
 /**

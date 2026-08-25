@@ -8,7 +8,7 @@ import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { copied, grouped, pasted, resolveAt, ungrouped } from './scene';
+import { copied, grouped, pasted, polygonsIn, resolveAt, ungrouped } from './scene';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
@@ -292,9 +292,15 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
         update(e.shiftKey ? apart : together);
       }
       else if (e.code === 'KeyC') {
+        // Through the groups: a copy of what is picked has to be a copy of
+        // what is drawn, and a group draws its members. Without this, copying
+        // a group copies nothing at all and says nothing about it.
         update(s => ({
           ...s,
-          clipboard: copied(resolveAt(s.world, s.currentVersion), s.selection.polygons),
+          clipboard: copied(
+            resolveAt(s.world, s.currentVersion),
+            polygonsIn(s.world, s.selection.polygons),
+          ),
         }));
       }
       else if (e.code === 'KeyV') {

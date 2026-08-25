@@ -10,6 +10,7 @@ import {
   Input,
   SHIFT,
   blurred,
+  keyPressed,
   keyReleased,
   pan,
   pointerDragged,
@@ -29,7 +30,8 @@ import {
   hitPolygons,
   hitVertex,
   contributing,
-  showing,
+  occupying,
+  Occupied,
   swallowed,
   reachable,
   reaching,
@@ -49,6 +51,7 @@ import {
 import { theme } from './theme';
 import {
   Edit,
+  EditorState,
   Id,
   Point,
   Polygon,
@@ -221,6 +224,7 @@ export function worldCanvas(
       const end = yield* select({
         dragging: pointerMoved(e => setLocal({ ...local(), marquee: { a, b: at(e) } })),
         done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
       });
 
@@ -288,7 +292,7 @@ export function worldCanvas(
 
       setLocal({ ...local(), previewing: true });
 
-      yield* select({
+      const end = yield* select({
         dragging: pointerMoved(e => {
           const to = at(e, true);
           const dx = to.x - anchor.from.x, dy = to.y - anchor.from.y;
@@ -317,11 +321,12 @@ export function worldCanvas(
           });
         }),
         done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
       });
 
       setLocal({ ...local(), previewing: false });
-      update(s => marked(s, was));
+      update(s => settled(s, was, end.tag === 'cancel'));
     }
 
     /**
@@ -357,7 +362,7 @@ export function worldCanvas(
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
 
-      yield* select({
+      const end = yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
 
@@ -375,12 +380,13 @@ export function worldCanvas(
           });
         }),
         done: keyReleased(input, code),
+        cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
       });
 
       setLocal({ ...local(), previewing: false });
       cursor('');
-      update(s => marked(s, was));
+      update(s => settled(s, was, end.tag === 'cancel'));
     }
 
     function retype(type: Polygon['type']): void {
@@ -732,10 +738,10 @@ export function worldCanvas(
       // Not `standingIn`: command means "past the group for one click", and
       // going into one is the opposite of that. A double-click is asking for
       // the group whatever else is held down.
-      const into = hitPolygons(resolveAt(w, currentVersion()), at(e))
-        .filter(id => reachable(w, id, inside()))
-        .map(id => reaching(w, id, path))
-        .find(id => w.groups.has(id));
+      const under = hitPolygons(resolveAt(w, currentVersion()), at(e))
+        .filter(id => reachable(w, id, inside()));
+
+      const into = under.map(id => reaching(w, id, path)).find(id => w.groups.has(id));
 
       if (into !== undefined) {
         // The selection goes: what was picked was the group, and it is not a
@@ -745,8 +751,15 @@ export function worldCanvas(
         return;
       }
 
-      // Nothing under the cursor that could be gone into, so this is the way
-      // back: one level out, exactly as Escape.
+      // Something is under the cursor and it is not a group — a polygon in the
+      // group already open, most of the time. There is nowhere further in, and
+      // going *out* would be the opposite of what the gesture means: it is
+      // asking to get closer to what it is over. The first click has already
+      // picked it, so this does nothing.
+      if (under.length > 0) return;
+
+      // Empty canvas, so this is the way back: one level out, exactly as
+      // Escape.
       leaving();
     }
 
@@ -851,7 +864,7 @@ export function worldCanvas(
       cursor('move');
       setLocal({ ...local(), previewing: true });
 
-      yield* select({
+      const end = yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
           const g = settings();
@@ -880,12 +893,31 @@ export function worldCanvas(
           });
         }),
         done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
       });
 
       setLocal({ ...local(), previewing: false });
       cursor('');
-      update(s => marked(s, was));
+      update(s => settled(s, was, end.tag === 'cancel'));
+    }
+
+    /**
+     * A gesture over: what it did kept and written into the history, or put
+     * back as if it had never run.
+     *
+     * Cancelling restores rather than undoing. The world it puts back is the
+     * one the gesture started from, which is not necessarily the top of the
+     * history — an undo taken during a drag would be a strange thing to do and
+     * is still not a reason to lose it — and it leaves nothing behind to undo,
+     * because from the author's side nothing happened.
+     *
+     * Blurring is not cancelling. What is on screen when the window goes is
+     * what the hand last asked for, and throwing it away because a
+     * notification stole the focus loses work that was never in doubt.
+     */
+    function settled(s: EditorState, was: World, cancelled: boolean): EditorState {
+      return cancelled ? { ...s, world: was } : marked(s, was);
     }
 
     /** The picked corners taken out, or the picked polygons under the other
@@ -1000,6 +1032,10 @@ export function worldCanvas(
 
           if (started.tag === 'key') {
             const e = started.value;
+
+            // Two clicks with a transform between them are two clicks. The
+            // pair is only a pair if nothing happened in the gap.
+            last = null;
 
             // Someone is standing in the level. W and S are theirs, and a
             // scale started under a full-window 3D view would be invisible.
@@ -1392,7 +1428,7 @@ function layers(
 
   out.push(ctx => polygons(ctx, view, loose, selection, reached, tool === 'point', reach));
   out.push(ctx =>
-    groups(ctx, view, world, showing(world, current, items, path), new Set(selection.polygons), reach),
+    groups(ctx, view, occupying(world, current, items, path), new Set(selection.polygons), reach),
   );
   out.push(ctx => outlines(ctx, view, outline));
 
@@ -1519,7 +1555,7 @@ function polygons(
 }
 
 /**
- * The shut groups, each as one outline over the union of what it holds.
+ * The shut groups, each as the one outline it occupies.
  *
  * This is the whole of what a group looks like. Its members are not drawn at
  * all and neither are their handles, because inside a shut group there is
@@ -1532,29 +1568,18 @@ function polygons(
  * the set does not know what was grouped — so a line of its own would be a
  * line about the editor rather than about the level. What says a group is
  * picked is the fill under it, which is all it needs to say.
- *
- * A mixed group draws twice, once per kind, and the two outlines are the two
- * boundaries it really has. Nothing is lost by that — the shapes are disjoint
- * in what they mean, not necessarily in where they are — and the alternative
- * is a single line around a room and the pillar inside it, which is a boundary
- * the level does not have anywhere.
  */
 function groups(
   ctx: CanvasRenderingContext2D,
   view: View,
-  world: World,
-  shown: Contributed[],
+  shown: Occupied[],
   /** What is picked, as picked: a group's id is in the selection itself, not
    * by way of the members `reached` stands for. */
   picking: ReadonlySet<Id>,
   reach: (id: Id) => boolean,
 ): void {
-  for (const c of shown) {
-    const group = sidedWith(c.id) ?? c.id;
-
-    if (!world.groups.has(group)) continue;
-
-    outlined(ctx, view, c.shape, c.kind, picking.has(group), reach(group), theme.groupFill);
+  for (const g of shown) {
+    outlined(ctx, view, g.shape, g.kind, picking.has(g.id), reach(g.id), theme.groupFill);
   }
 }
 

@@ -604,6 +604,23 @@ know what was grouped, so a stroke that said "group" would be a line about the
 editor rather than about the level. What says a group is picked is the fill
 under it, which is all it needs to say.
 
+**A group resolves internally.** What is drawn is its level union with its solid
+union taken out: one boundary, with the holes its own walls make already in it.
+Drawing the two sides apart puts the pillar's own outline back on screen, and a
+pillar inside a room is exactly the internal geometry grouping was meant to stop
+showing. It is the same principle as eroding — a group erodes as one shape, so it
+resolves as one shape. What happens *between* its members is its own business;
+what happens between it and the rest of the level is not, and is left to the CSG
+outline over the top, exactly as it is for a lone polygon, whose outline is also
+drawn whole whatever cuts it.
+
+A group with nothing but walls in it has no level side to take them out of, and
+is drawn as the walls: a group must be visible, being the thing picked and
+dragged, and one made of pillars is still a thing.
+
+This is a question only drawing asks. The CSG needs the two sides apart, because
+a group's walls cut the rooms around it and not only its own.
+
 A group holding both kinds draws twice, once per kind. There is no shape that is
 the union of a room and the pillar standing in it, and a single line around both
 would be a boundary the level does not have anywhere.
@@ -663,6 +680,22 @@ The open path is one group id, not a list. A group is inside exactly one other,
 so the id says the whole path — and a stored list could disagree with the
 structure after an ungroup two levels up. A path to a group that is no longer
 there is no path at all, and being let out by an edit is the right failure.
+
+### Canvas: every gesture can be cancelled
+
+Escape, held by whichever gesture is running, puts the world back where the
+gesture found it and leaves **nothing to undo** — from the author's side nothing
+happened. That is restoring, not undoing: the world it puts back is the one the
+gesture started from, which need not be the top of the history.
+
+Cancelling is not the same as losing focus. What is on screen when the window
+goes is what the hand last asked for, so a blur commits; throwing the work away
+because a notification stole the focus would lose something that was never in
+doubt.
+
+Precedence follows from who is running rather than from a table: a gesture holds
+Escape while it runs, so it gets it; otherwise the canvas steps out of a group;
+otherwise the selection is let go. Each is smaller than the last.
 
 ### Canvas: polygon states
 

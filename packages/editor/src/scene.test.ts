@@ -7,6 +7,7 @@ import {
   composed,
   contributing,
   grouped,
+  occupying,
   reachable,
   reaching,
   showing,
@@ -1059,7 +1060,54 @@ describe('going inside a group', () => {
     expect(reachable(ungrouped(world, group)!, ids[0], group)).toBe(true);
   });
 
-  test('a mixed group draws one outline per kind', () => {
+  test('a group takes its own walls out of its own rooms', () => {
+    // The pillar's outline is exactly the internal geometry grouping is meant
+    // to stop showing, so what is drawn is one boundary with the hole in it.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toEqual(made.id);
+    expect(out[0].kind).toEqual('level');
+
+    // Two rings — the room and the hole — and no third outline anywhere.
+    expect(out[0].shape).toHaveLength(2);
+    expect(shapeArea(out[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+  });
+
+  test('a group of nothing but walls is drawn as the walls', () => {
+    // There is no level side to take them out of, and a group has to be
+    // visible: it is the thing being picked and dragged.
+    const { world, ids } = drawn(
+      ['solid', rect(0, 0, 20, 20)],
+      ['solid', rect(40, 0, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toEqual('solid');
+    expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
+  });
+
+  test('an open group occupies nothing: its members draw for themselves', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+
+    expect(occupying(made.world, 0, resolveAt(made.world, 0), [made.id])).toEqual([]);
+  });
+
+  test('the two sides stay apart for the CSG, which needs them apart', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
