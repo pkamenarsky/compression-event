@@ -25,7 +25,7 @@ import {
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
-  turns,
+  corner,
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
@@ -195,18 +195,10 @@ function solvable(s: Stretch, table: Table, origin: Origin | null | undefined): 
   return one === null || two === null ? null : [one[0], one[1], two[0], two[1]];
 }
 
-/**
- * Whether the run turns at `j`, as a factor to fade a vertical by.
- *
- * The ends of a run are open — the boundary carries on into another run, and
- * nothing here says it does not turn — so only the inside of one is asked.
- */
+/** Whether the run turns at `j`, as a factor to fade a vertical by. See
+ * `corner`, which is where a run's ends are decided. */
 function cornered(points: readonly Point[], j: number): number {
-  const a = points[j - 1], b = points[j], c = points[j + 1];
-
-  if (a === undefined || b === undefined || c === undefined) return 1;
-
-  return turns(a, b, c) ? 1 : 0;
+  return corner(points, j) ? 1 : 0;
 }
 
 /** Everything the shader reads, flattened. */

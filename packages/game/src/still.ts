@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Source, WallOptions, extrude, materials, turns } from './walls';
+import { Source, WallOptions, corner, extrude, materials } from './walls';
 import { Point } from './world';
 
 const vertexShader = /* glsl */ `
@@ -63,13 +63,14 @@ export function still(runs: readonly Point[][], options: WallOptions): Source {
   const shape = extrude(spans);
 
   // Per point of the flattened outline, whether a vertical standing on it is
-  // telling the truth. The ends of a run are open — nothing says the boundary
-  // does not turn there — so only the inside of one is asked.
+  // telling the truth. See `corner`, which is where the run's ends are decided.
   const cornered = new Float32Array(points.length).fill(1);
 
   for (const span of spans) {
-    for (let i = span.first + 1; i < span.first + span.count - 1; i++) {
-      if (!turns(points[i - 1], points[i], points[i + 1])) cornered[i] = 0;
+    const run = points.slice(span.first, span.first + span.count);
+
+    for (let i = 0; i < span.count; i++) {
+      if (!corner(run, i)) cornered[span.first + i] = 0;
     }
   }
 

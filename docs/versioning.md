@@ -697,6 +697,19 @@ Precedence follows from who is running rather than from a table: a gesture holds
 Escape while it runs, so it gets it; otherwise the canvas steps out of a group;
 otherwise the selection is let go. Each is smaller than the last.
 
+### Canvas: space pans mid-gesture
+
+Space pans during a marquee, a corner drag, a polygon drag and a modal
+transform, not only between them. Reaching the far corner of a room bigger than
+the window is not something to have to do before starting.
+
+The running gesture needs no telling and recomputes nothing. Panning moves the
+view by the cursor's own step, so **the world point under the cursor does not
+move at all** — and every gesture here works from where the cursor is in the
+world rather than on the screen. During a pan each is handed the same answer it
+was handed before it, which is the sense in which what is being dragged stays
+put while the window travels.
+
 ### Canvas: polygon states
 
 - **Inherited** — resolved from upstream, untouched here. Muted outline.
@@ -1027,6 +1040,24 @@ a two-ring shape without an event to do it at.
 Ring merges and splits need no special case: they are events, so they get a
 keyframe, and on the merged side the passage's vertices sit on the wall as a
 zero-width bridge until the event opens them.
+
+The same channel carries a second thing: **a point the boundary runs straight
+through is not a corner**, and the vertical standing on it is a claim that there
+is one. The CSG leaves a point wherever two edges met, and a union running
+through one — two polygons overlapping, a solid cutting across the pair — leaves
+it in the middle of what is now one flat wall. The wall is right; the vertical is
+not. Multiplied into the same channel because the two say the same kind of thing:
+how much of a corner is there.
+
+A run's ends are exempt. A run is one arc of a boundary that carries on into
+another polygon's run, which is not in hand, so nothing says it does not turn
+there. **A run that closes on itself is not exempt** — `boundaryRuns` gives a
+whole ring back as a run whose first point is repeated at the last, so both
+neighbours across the join are in hand and the question is answerable. Not asking
+it stands a vertical wherever the ring happened to be cut open, which for a
+dilated pillar is a point part way along a flat wall, and stands two of them,
+since the point is written down twice. See `corner`, which is where a run's ends
+are decided for both the still boundary and the baked one.
 
 ### Steps
 

@@ -71,6 +71,7 @@ import {
   alsoPicked,
   marked,
   opened,
+  panBy,
   parentOf,
   within,
   resized,
@@ -208,6 +209,44 @@ export function worldCanvas(
     }
 
     /**
+     * Panning folded into a gesture that is already running: it moves the view
+     * while space is held, and is not there otherwise. Never resumes, so it is
+     * raced alongside whatever the gesture is really waiting for.
+     *
+     * Reaching the far corner of a room bigger than the window is not
+     * something to have to do before starting. It comes up in the middle of a
+     * marquee that has to reach past the edge, and in the middle of dragging
+     * something to a place the window is not currently showing.
+     *
+     * The gesture needs no telling and recomputes nothing. Panning moves the
+     * view by the cursor's own step, so the world point under the cursor does
+     * not move at all — and every gesture here works from where the cursor is
+     * in the world. During a pan they are each being handed the same answer
+     * they were handed before it, which is the sense in which the polygon
+     * stays put while the window travels.
+     */
+    function alongside(): Op<never> {
+      let last: Point | null = null;
+
+      return pointerMoved(e => {
+        if (!input.holding('Space')) {
+          last = null;
+
+          return;
+        }
+
+        const to = { x: e.clientX, y: e.clientY };
+        const from = last;
+
+        last = to;
+
+        if (from !== null) {
+          update(s => ({ ...s, view: panBy(s.view, to.x - from.x, to.y - from.y) }));
+        }
+      });
+    }
+
+    /**
      * The box, in world units so it stays over what it was drawn over, and
      * whatever it has caught when the button comes back up.
      *
@@ -223,6 +262,7 @@ export function worldCanvas(
 
       const end = yield* select({
         dragging: pointerMoved(e => setLocal({ ...local(), marquee: { a, b: at(e) } })),
+        panning: alongside(),
         done: pointerReleased(),
         cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
@@ -320,6 +360,7 @@ export function worldCanvas(
             return { ...s, world };
           });
         }),
+        panning: alongside(),
         done: pointerReleased(),
         cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
@@ -379,6 +420,7 @@ export function worldCanvas(
             return { ...s, world };
           });
         }),
+        panning: alongside(),
         done: keyReleased(input, code),
         cancel: keyPressed(input, 'Escape'),
         lost: blurred(),
@@ -892,6 +934,7 @@ export function worldCanvas(
             return { ...st, world };
           });
         }),
+        panning: alongside(),
         done: pointerReleased(),
         cancel: keyPressed(input, 'Escape'),
         lost: blurred(),

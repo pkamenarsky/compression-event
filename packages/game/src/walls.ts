@@ -38,6 +38,42 @@ export function turns(a: Point, b: Point, c: Point): boolean {
   return len === 0 || Math.abs(ux * vy - uy * vx) > len * TURNED;
 }
 
+/**
+ * Whether a vertical standing at point `j` of a run is telling the truth.
+ *
+ * A run is one arc of a boundary, open at both ends on purpose — the boundary
+ * carries on into the next polygon's run, which is not in hand. Nothing here
+ * says it does not turn there, so an end gets the benefit of the doubt and its
+ * vertical stands.
+ *
+ * A run that closes on itself has no open end. `boundaryRuns` gives a whole
+ * ring back as a run whose first point is repeated at the last, and both
+ * neighbours across that join are therefore in hand: the question is
+ * answerable, and answering it is what stops a vertical standing in the middle
+ * of a straight wall wherever a ring happened to be cut open. A dilated pillar
+ * is the case that finds this — its ring comes back whole, cut at whatever
+ * point the arrangement started from, which is not usually a corner.
+ *
+ * Both copies of the join answer alike, because two verticals stand there.
+ *
+ * The ends are compared exactly. They are not two points that met and agreed;
+ * they are one point written down twice.
+ */
+export function corner(points: readonly Point[], j: number): boolean {
+  const n = points.length;
+  const a = points[j - 1], b = points[j], c = points[j + 1];
+
+  if (n > 2 && points[0].x === points[n - 1].x && points[0].y === points[n - 1].y) {
+    // Round the ring, the repeated point counted once.
+    const m = n - 1;
+    const i = j % m;
+
+    return turns(points[(i + m - 1) % m], points[i], points[(i + 1) % m]);
+  }
+
+  return a === undefined || b === undefined || c === undefined || turns(a, b, c);
+}
+
 /** A stretch of consecutive points in whatever flat array of them the caller
  * holds. Open — a ring of the union belongs to no one polygon, and a wall was
  * never more than a consecutive pair. */
