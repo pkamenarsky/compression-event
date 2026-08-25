@@ -569,7 +569,7 @@ describe('copy and paste', () => {
     const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
     const eroded = transformed(world, 0, ids[0], { erosion: 12 });
 
-    const clips = copied(resolveAt(eroded, 0), [ids[0]]);
+    const clips = copied(eroded, 0, [ids[0]]);
     const after = pasted(eroded, 0, clips, { x: 32, y: 32 });
     const copy = only(after.world, 0, after.ids[0]);
 
@@ -580,11 +580,49 @@ describe('copy and paste', () => {
     expect(copy.source[0]).toEqual({ x: 32, y: 32 });
   });
 
+  test('a group comes back a group, with its members where they were seen', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
+
+    const clips = copied(turned, 0, [g.id]);
+    const after = pasted(turned, 0, clips, { x: 0, y: 400 });
+
+    // One thing selected, and it is a group of two, not two loose polygons.
+    expect(after.ids.length).toEqual(1);
+
+    const copy = after.world.groups.get(after.ids[0]);
+
+    expect(copy?.members.length).toEqual(2);
+    expect(shapeArea(csg(after.world, 0)))
+      .toBeCloseTo(2 * shapeArea(csg(turned, 0)), 6);
+  });
+
+  test("a group's depth comes with it, as a depth", () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = grouped(world, 0, ids)!;
+    const d = 6;
+    const before = moved(g.world, 0, g.id, { erosion: d });
+
+    const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 });
+
+    // Eroded once over, not twice: the depth rode in the layer, and the
+    // members' rings came across as they were drawn.
+    expect(shapeArea(csg(after.world, 0)))
+      .toBeCloseTo(2 * shapeArea(csg(before, 0)), 6);
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const clips = copied(resolveAt(world, 0), [ids[0]]);
+    const clips = copied(world, 0, [ids[0]]);
 
     const polygons = new Map(world.polygons);
     polygons.delete(ids[0]);

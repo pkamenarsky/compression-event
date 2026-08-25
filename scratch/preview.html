@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>morph preview</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; color: #eee; overflow: hidden; }
+    #view { position: absolute; inset: 0; }
+    #hud { position: absolute; left: 8px; top: 8px; font: 12px ui-monospace, monospace; z-index: 2; }
+  </style>
+</head>
+<body>
+  <div id="view"></div>
+  <div id="hud">loading</div>
+  <script type="module" src="/scratch/preview.ts"></script>
+</body>
+</html>

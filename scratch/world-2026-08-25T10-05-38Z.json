@@ -1,0 +1,232 @@
+{
+  "format": 5,
+  "tool": "polygon",
+  "currentVersion": 0,
+  "selection": [],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": -710,
+    "y": -405,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 18,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": 32,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 0,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -224,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -256,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        5,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 6,
+              "at": {
+                "x": -192,
+                "y": -288
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 7,
+              "at": {
+                "x": 128,
+                "y": -320
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 160,
+                "y": 0
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": -160,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 10,
+              "at": {
+                "x": -160,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        12,
+        {
+          "type": "solid",
+          "birth": 0,
+          "points": [
+            {
+              "id": 13,
+              "at": {
+                "x": 32,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 14,
+              "at": {
+                "x": 32,
+                "y": -128
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 15,
+              "at": {
+                "x": -64,
+                "y": -128
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 16,
+              "at": {
+                "x": -64,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [
+      [
+        17,
+        {
+          "birth": 0,
+          "members": [
+            5,
+            0,
+            12
+          ]
+        }
+      ]
+    ],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": [
+          [
+            12,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": -31.453125
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}

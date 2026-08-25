@@ -399,18 +399,22 @@ export function togglePicked(some: readonly number[], id: number): number[] {
 }
 
 /**
- * A polygon lifted out of the world, ready to be put back.
+ * Something lifted out of the world, ready to be put back.
  *
- * Its ring in world units as it resolved when it was taken, rather than the id
- * it was taken from: a paste has to work after the original has been changed,
- * or deleted, or the file reloaded. What comes back is a new polygon born into
- * whatever version is on screen, which is the only kind this editor has.
+ * Geometry rather than the id it was taken from: a paste has to work after the
+ * original has been changed, or deleted, or the file reloaded. A polygon's ring
+ * is in world units as it resolved when it was taken, so a member of a group
+ * carries the group's placement in its points and lands where it was seen.
+ *
+ * A group is a clipping of clippings, because a group has no geometry of its
+ * own to bake: what it is, is its members and a depth. The depth stays a depth
+ * for the same reason it does on a polygon — it is a read taken over the union,
+ * not something written into any ring. What comes back is born into whatever
+ * version is on screen, which is the only kind this editor has.
  */
-export interface Clipping {
-  type: PolygonType
-  points: Point[]
-  erosion: number
-}
+export type Clipping =
+  | { kind: 'polygon', type: PolygonType, points: Point[], erosion: number }
+  | { kind: 'group', erosion: number, members: Clipping[] }
 
 // -----------------------------------------------------------------------------
 // Undo

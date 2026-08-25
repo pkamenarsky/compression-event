@@ -755,6 +755,25 @@ world rather than on the screen. During a pan each is handed the same answer it
 was handed before it, which is the sense in which what is being dragged stays
 put while the window travels.
 
+### Canvas: a clipping is geometry, and a group is a clipping of clippings
+
+A clipboard entry holds no ids. It holds the ring as it resolved at the version
+it was taken at, so a paste still works after the original has been dragged,
+deleted, or the file reloaded — which is most of what a clipboard is for.
+
+A group has no geometry to hold, so its clipping holds its members' clippings
+and its depth. It does not hold its transform, and does not need to: every
+member's ring is already resolved, so the group's placement is in the points.
+What that costs is the one thing a versioned transform could have said — the
+paste stands where the original stood *at the version it was copied at*, and
+says nothing about any other version. That is what a clipping is everywhere
+else here too.
+
+The depth stays a depth rather than being baked into the rings, on a group for
+the same reason as on a polygon: erosion is a read taken over the boundary, not
+something written into any corner. Bake it and pasting an eroded group would
+erode it twice.
+
 ### Canvas: polygon states
 
 - **Inherited** — resolved from upstream, untouched here. Muted outline.

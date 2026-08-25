@@ -1,0 +1,139 @@
+{
+  "format": 4,
+  "tool": "point",
+  "currentVersion": 1,
+  "selection": [
+    0
+  ],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": -671.24609375,
+    "y": -260.21875,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 6,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": 128,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 5,
+              "at": {
+                "x": 128,
+                "y": -21.73046875
+              },
+              "birth": 1,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 128,
+                "y": 128
+              },
+              "birth": 0,
+              "death": 1
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -256,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -192,
+                "y": -128
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  5,
+                  {
+                    "x": 160,
+                    "y": -10.26953125
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}
