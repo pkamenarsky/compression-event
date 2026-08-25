@@ -89,13 +89,6 @@ describe('which side of a ring is material', () => {
     expect(at.x).toBeLessThan(40 - PLAYER_RADIUS + 1e-2);
   });
 
-  test('a solid is the same thing said the other way', () => {
-    const pillar = ring('solid', rect(40, 40, 20, 20));
-    const at = room(ROOM, pillar).trace({ x: 20, y: 50 }, { x: 100, y: 0 });
-
-    expect(at.x).toBeGreaterThan(40 - PLAYER_RADIUS - 1e-2);
-    expect(at.x).toBeLessThan(40 - PLAYER_RADIUS + 1e-2);
-  });
 });
 
 describe('somewhere to stand', () => {
@@ -107,18 +100,20 @@ describe('somewhere to stand', () => {
     expect(hulls.standable({ x: 0.1, y: 50 })).toBe(false);
   });
 
-  test('is not inside a solid', () => {
-    const hulls = room(ROOM, ring('solid', rect(40, 40, 20, 20)));
-
-    expect(hulls.standable({ x: 50, y: 50 })).toBe(false);
-    expect(hulls.standable({ x: 20, y: 20 })).toBe(true);
-  });
-
   test('is not inside a hole, which nothing had to be told is a hole', () => {
     const hulls = room(ROOM, hole('level', rect(40, 40, 20, 20)));
 
     expect(hulls.standable({ x: 50, y: 50 })).toBe(false);
     expect(hulls.standable({ x: 20, y: 20 })).toBe(true);
+  });
+
+  test('a floor is not a wall and is not somewhere to stand by itself', () => {
+    // `versionOf` sends floors along so that something can draw them. They are
+    // not in the union and nothing here builds a hull off one.
+    const hulls = room(ROOM, ring('floor', rect(200, 200, 50, 50)));
+
+    expect(hulls.standable({ x: 220, y: 220 })).toBe(false);
+    expect(hulls.trace({ x: 210, y: 220 }, { x: 30, y: 0 })).toEqual({ x: 240, y: 220 });
   });
 
   test('two rooms overlapping is still one place to stand', () => {

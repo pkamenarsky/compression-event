@@ -11,120 +11,44 @@
 // left to differ is the one thing that genuinely does: where a vertex is. The
 // still one reads it off an attribute; the morph one rebuilds it from the frame
 // and entry tables at an instant. See `still.ts` and `morph.ts`.
+//
+// Anything neither of them can work out alike is worked out for them, upstream,
+// and arrives as data. Whether there is a corner at a point is the one of
+// those: it is a question about a polygon *and its neighbours*, `still` holds
+// the whole boundary and the morph holds one polygon's cut of it, and the two
+// would answer differently every time two rooms abut. So the CSG answers it
+// once and it rides in on the run. See `Run`, and `cornering` in the editor's
+// `geometry.ts`.
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
 import { bayerGLSL } from './dither';
 import { Point } from './world';
 
-/** How far off straight a corner has to be to count as one, as the sine of
- * the angle it turns through. */
-const TURNED = 1e-6;
-
 /**
- * Whether the boundary actually turns at `b`.
+ * One run of the boundary, with the corner question already answered.
  *
- * The CSG leaves a point wherever two edges met, and where a union runs
- * through one — two polygons overlapping, or a solid one cutting across the
- * pair — the point it leaves sits in the middle of what is now one flat wall.
- * The wall is right. The vertical standing on it is a claim that there is a
- * corner there, and there is not.
- */
-export function turns(a: Point, b: Point, c: Point): boolean {
-  const ux = b.x - a.x, uy = b.y - a.y;
-  const vx = c.x - b.x, vy = c.y - b.y;
-  const len = Math.hypot(ux, uy) * Math.hypot(vx, vy);
-
-  return len === 0 || Math.abs(ux * vy - uy * vx) > len * TURNED;
-}
-
-/**
- * One run of the boundary, and the polygon whose edges it came off.
+ * `corner[i]` says whether the boundary actually turns at `points[i]`, which is
+ * whether the vertical the extrusion stands there is telling the truth. The CSG
+ * leaves a point wherever two edges met, and where the set runs straight
+ * through one — two rooms overlapping, a solid cutting across the pair, two
+ * rooms abutting so that one flat wall is made of two polygons' runs — the
+ * point it leaves sits in the middle of what is now one flat wall. The wall is
+ * right; a line drawn down the middle of it is not.
  *
- * The id is not decoration. `corners` stitches runs back together at a shared
- * end, and it may only do that for runs of the same polygon — see there.
+ * Answered upstream rather than here, and that is the whole point: the question
+ * is about a polygon *and its neighbours*, and the only place that ever sees
+ * both is where the boundary is computed. See `cornering` in the editor's
+ * `geometry.ts`. Asked here it could only be answered from the runs in hand,
+ * and the two sources do not hold the same ones — `still` gets the whole
+ * boundary and the morph gets one polygon's cut of it — so the two would
+ * disagree at every junction between two polygons, and the disagreement would
+ * show as a line flickering on at the start of every transition and off at the
+ * end. See the header above.
  */
 export interface Run {
-  id: number
   points: readonly Point[]
-}
-
-/**
- * Which points of a boundary carry a vertical, run by run and point by point.
- *
- * The question is per *point*, not per index into a run, and a run is one arc
- * with open ends: the boundary carries on past them into another run. Asked run
- * by run, an end has no neighbour to compare against and its vertical stands by
- * default, which puts a line down the middle of a flat wall wherever two runs
- * meet in a straight stretch. So the runs handed over are stitched back
- * together by their endpoints first. A point with two distinct neighbours is a
- * corner if it turns between them; anything else is a corner and keeps its
- * vertical — a T where three runs meet is a real corner, and so is a hairpin
- * that comes back the way it went.
- *
- * A run that closes on itself falls out of the same rule: `boundaryRuns` gives
- * a whole ring back with its first point repeated at the last, so both
- * neighbours across the join are in hand under one key. A dilated pillar is the
- * case that finds this — its ring comes back whole, cut at whatever point the
- * arrangement started from, which is not usually a corner.
- *
- * One polygon at a time, and that is a hard limit rather than a convenience
- * ----------------------------------------------------------------------
- * Runs stitch only to runs of the same polygon, which is why they arrive
- * carrying the id they came off. Two rooms that abut make one flat wall out of
- * two polygons' runs, and this will still stand a vertical where they meet.
- * That is not an oversight; it is the only rule the two sources of geometry can
- * both follow.
- *
- * `still` holds the whole boundary and could stitch across polygons. The morph
- * cannot: the bake cuts a track per polygon — that is what makes it cheap, see
- * `share` in `bake.ts` — so a stretch has one polygon's runs in hand and never
- * a neighbour's. And even handed them it could not match the ends, because each
- * polygon's points are kept in its own frame and a shared junction comes back
- * as two float computations of the same place rather than one number written
- * twice.
- *
- * A rule the two cannot both follow is worse than a vertical too many. The
- * editor crosses between them at the start and end of every transition, and a
- * line that appears for the length of a walk and goes away again is the flicker
- * this whole module is arranged to prevent. Widening this means giving the
- * answer to `boundaryRuns`, which is the one place that sees a polygon *and its
- * neighbours* in one frame, and which both sources already call.
- *
- * Ends are matched exactly. Within one polygon they are not two points that met
- * and agreed; they are one point written down twice, by an arrangement that
- * welded them.
- */
-export function corners(runs: readonly Run[]): boolean[][] {
-  const key = (id: number, p: Point) => `${id}|${p.x},${p.y}`;
-  const near = new Map<string, Point[]>();
-
-  const beside = (id: number, p: Point, q: Point | undefined) => {
-    if (q === undefined) return;
-
-    const k = key(id, p);
-    const at = near.get(k);
-
-    if (at === undefined) {
-      near.set(k, [q]);
-    }
-    else if (!at.some(o => o.x === q.x && o.y === q.y)) {
-      at.push(q);
-    }
-  };
-
-  for (const run of runs) {
-    for (let i = 0; i < run.points.length; i++) {
-      beside(run.id, run.points[i], run.points[i - 1]);
-      beside(run.id, run.points[i], run.points[i + 1]);
-    }
-  }
-
-  return runs.map(run => run.points.map(p => {
-    const at = near.get(key(run.id, p)) ?? [];
-
-    return at.length !== 2 || turns(at[0], p, at[1]);
-  }));
+  corner: readonly boolean[]
 }
 
 /** A stretch of consecutive points in whatever flat array of them the caller

@@ -852,8 +852,8 @@ const lv = (id: number, r: Ring): Member => member(id, 'level', r);
 const sd = (id: number, r: Ring): Member => member(id, 'solid', r);
 
 /** Total length of a set of open runs. */
-const runLength = (runs: Point[][]) =>
-  runs.reduce((t, r) => t + r.slice(1).reduce(
+const runLength = (runs: readonly { points: Point[] }[]) =>
+  runs.reduce((t, { points: r }) => t + r.slice(1).reduce(
     (u, p, i) => u + Math.hypot(p.x - r[i].x, p.y - r[i].y), 0), 0);
 
 const perimeter = (r: Ring) =>
@@ -997,5 +997,92 @@ describe('a crossing reached by two routes is one point', () => {
     }
 
     expect(wrong).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Which points carry a vertical
+//
+// These moved here from `walls.test.ts` when the answer did. A corner is a
+// question about the boundary, and the boundary is a question about a polygon
+// and the ones it overlap — so it is answered where both are in hand, and every
+// caller gets the same answer rather than the best one its own share of the
+// runs could support. See `cornering`.
+// -----------------------------------------------------------------------------
+
+/** The flags for one member's share, run by run. */
+const cornersOf = (m: Member, others: Member[] = []) =>
+  boundaryRuns(m, others).map(r => r.corner);
+
+describe('what counts as a corner', () => {
+  test('a lone room turns at every point of it', () => {
+    // Its ring comes back whole, cut at one of its own corners and with that
+    // corner written down twice. Both copies are the corner it is.
+    expect(cornersOf(lv(0, rect(0, 0, 10, 10)))).toEqual([[true, true, true, true, true]]);
+  });
+
+  test('a redundant point along a flat wall is not one', () => {
+    // What a dilation leaves behind: a vertex half way down an edge that the
+    // boundary runs straight through. A vertical there is a line drawn down
+    // the middle of a flat wall.
+    const pillar = sd(1, [
+      { x: 60, y: 40 }, { x: 60, y: 60 }, { x: 40, y: 60 },
+      { x: 40, y: 50 }, { x: 40, y: 40 },
+    ]);
+
+    expect(cornersOf(pillar, [lv(0, rect(0, 0, 100, 100))]))
+      .toEqual([[true, true, true, false, true, true]]);
+  });
+
+  test('two rooms abutting stand no vertical where they meet', () => {
+    // The case out of world-2026-08-25T17-46-44Z. One flat wall made of two
+    // polygons\' runs, and the join is not a corner — which neither of them
+    // could tell on its own. Each answers the same about the shared ends,
+    // which is the whole reason this is asked here rather than of the runs.
+    const a = lv(0, rect(0, 0, 100, 100));
+    const b = lv(1, rect(100, 0, 100, 100));
+
+    expect(cornersOf(a, [b])).toEqual([[false, true, true, false]]);
+    expect(cornersOf(b, [a])).toEqual([[false, true, true, false]]);
+  });
+
+  test('and one does where the wall really turns', () => {
+    // The same pair with the second room shallower, so one join is a step and
+    // the other is still flat. The two ends of the one run answer differently.
+    const a = lv(0, rect(0, 0, 100, 100));
+    const b = lv(1, rect(100, 0, 100, 60));
+
+    // From (100, 60) — where the step is — round to (100, 0), where it is not.
+    expect(cornersOf(a, [b])).toEqual([[true, true, true, true, false]]);
+  });
+
+  test('a T where three runs meet is a corner in all of them', () => {
+    // A corridor off the side of a room: the boundary branches where it joins,
+    // and a branch is a corner however flat the wall through it is.
+    const room = lv(0, rect(0, 0, 100, 100));
+    const spur = lv(1, rect(100, 20, 60, 40));
+
+    for (const [m, others] of [[room, [spur]], [spur, [room]]] as [Member, Member[]][]) {
+      const ends = boundaryRuns(m, others)
+        .map(r => [r.corner[0], r.corner[r.corner.length - 1]]);
+
+      expect(ends.flat()).toEqual(ends.flat().map(() => true));
+    }
+  });
+
+  test('the pillar out of world-2026-08-25T10-05-38Z', () => {
+    // The reported case, to the digit: a dilated solid inside a room, with a
+    // collinear point the dilation left on its left edge. That one point is
+    // the only one of the six that is not a corner.
+    const pillar = sd(1, [
+      { x: 63.453125, y: -96.546875 },
+      { x: 63.453125, y: -223.453125 },
+      { x: -95.453125, y: -223.453125 },
+      { x: -95.453125, y: -174.16145833333331 },
+      { x: -95.453125, y: -96.546875 },
+    ]);
+
+    expect(cornersOf(pillar, [lv(0, rect(-200, -300, 400, 400))]))
+      .toEqual([[true, true, true, false, true, true]]);
   });
 });

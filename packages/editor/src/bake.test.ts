@@ -91,7 +91,7 @@ function length(frame: Frame): number {
 }
 
 function lengthOf(runs: Point[][]): number {
-  return length(runs.map(points => ({ id: 0, points })));
+  return length(runs.map(points => ({ id: 0, points, corner: points.map(() => true) })));
 }
 
 /** The set the editor draws at a version, for the bake to be checked against. */

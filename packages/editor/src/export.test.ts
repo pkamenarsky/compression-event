@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { CROSSING, FRAME_STRIDE, Hulls, corners, outline, signedArea } from '@ce/game';
+import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
 import { Frame, bakeSpan, riding, sample, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
 import {
@@ -625,7 +625,11 @@ describe('the chain a vertex rides', () => {
  * alone appears or vanishes at that crossing — see the header of `walls.ts`.
  *
  * This holds one against the other at the version the span starts from, which
- * is the instant the crossing happens at.
+ * is the instant the crossing happens at. Both get the answer from
+ * `boundaryRuns`, but by different routes — the editor's side through the whole
+ * incremental set, the bake's through one polygon's share of it — and the two
+ * have to arrive at the same place. The abutting pair is the case that says so:
+ * neither polygon could answer for the join out of its own runs.
  */
 describe('the standing walls and the bake agree about every vertical', () => {
   function same(world: World): void {
@@ -655,12 +659,11 @@ describe('the standing walls and the bake agree about every vertical', () => {
       }
     }
 
-    const turning = corners(standing);
-
-    standing.forEach((r, i) => {
+    standing.forEach(r => {
       const where = r.points.map(p => `${p.x},${p.y}`).join(' ');
 
-      expect([where, baked.get(where)]).toEqual([where, turning[i].map(t => (t ? 1 : 0))]);
+      expect([where, baked.get(where)])
+        .toEqual([where, r.corner.map(t => (t ? 1 : 0))]);
     });
   }
 

@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Run, Source, WallOptions, corners, extrude, materials } from './walls';
+import { Run, Source, WallOptions, extrude, materials } from './walls';
 import { Point } from './world';
 
 const vertexShader = /* glsl */ `
@@ -50,9 +50,9 @@ const vertexShader = /* glsl */ `
  *
  * The runs are flattened into one point array first, because `extrude` deals in
  * indices into exactly that and both sources have to hand it the same shape.
- * Each one arrives with the polygon it came off, for the same reason: `corners`
- * is asked the same question here and in the bake, and it may only be asked
- * within one polygon. See `corners`.
+ * Each one arrives with the corner question already answered, for the same
+ * reason: the morph is handed the same answer through the bake, and the two
+ * have to draw the same walls. See `Run`.
  */
 export function still(runs: readonly Run[], options: WallOptions): Source {
   const points: Point[] = [];
@@ -66,13 +66,14 @@ export function still(runs: readonly Run[], options: WallOptions): Source {
   const shape = extrude(spans);
 
   // Per point of the flattened outline, whether a vertical standing on it is
-  // telling the truth.
+  // telling the truth. Decided where the boundary was computed and carried on
+  // the run — see `Run` — so that the morph, which is handed the same answer
+  // through the bake, draws the same verticals.
   const cornered = new Float32Array(points.length).fill(1);
-  const turning = corners(runs);
 
   spans.forEach((span, r) => {
     for (let i = 0; i < span.count; i++) {
-      if (!turning[r][i]) cornered[span.first + i] = 0;
+      if (!runs[r].corner[i]) cornered[span.first + i] = 0;
     }
   });
 

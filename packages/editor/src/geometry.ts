@@ -952,6 +952,17 @@ function covers(side: Side, p: Point): boolean {
   return w !== 0;
 }
 
+export interface BoundaryRun {
+  points: Point[]
+  /**
+   * Per point of `points`: whether the boundary actually turns there, which is
+   * whether a vertical standing on it is telling the truth. See `cornering`,
+   * and see the header of `walls.ts` for why the answer belongs here rather
+   * than with whoever draws the wall.
+   */
+  corner: boolean[]
+}
+
 /**
  * The parts of `subject`'s edges that lie on the boundary of the set the
  * members make — every `level` unioned, every `solid` taken back out — as open
@@ -980,7 +991,7 @@ export function boundaryRuns(
   subject: Member,
   others: readonly Member[],
   on?: Ground,
-): Point[][] {
+): BoundaryRun[] {
   const all = [subject, ...others];
   const a: Shape = [], b: Shape = [];
   const ranks: number[][] = [[], []];
@@ -1012,16 +1023,204 @@ export function boundaryRuns(
   const snap = scaleOf(raw) * 1e-9;
   const shared = on ?? ground(all);
 
-  return runs(
-    arranged(
-      p => covers(shared.level, p),
-      p => covers(shared.solid, p),
-      OpSubtract,
-      split([...ours, ...rest], snap, ours.length),
-      snap,
-    ),
+  const inLevel = (p: Point) => covers(shared.level, p);
+  const inSolid = (p: Point) => covers(shared.solid, p);
+
+  const made = runs(
+    arranged(inLevel, inSolid, OpSubtract, split([...ours, ...rest], snap, ours.length), snap),
     snap,
   );
+
+  // Against everything taking part rather than against `ours`: which way the
+  // boundary carries on past the end of a run is exactly the question the
+  // neighbours are here to answer.
+  const turning = cornering(made, raw, inLevel, inSolid, OpSubtract, snap);
+
+  return made.map((points, i) => ({ points, corner: turning[i] }));
+}
+
+/**
+ * How far off straight the boundary has to turn at a point for a corner to be
+ * there, as the sine of the angle it turns through.
+ */
+const TURNED = 1e-6;
+
+/** Whether two unit directions point the same way, to within `TURNED`. */
+function alike(a: Point, b: Point): boolean {
+  return a.x * b.x + a.y * b.y > 0 && Math.abs(a.x * b.y - a.y * b.x) <= TURNED;
+}
+
+/** And whether they point exactly against each other, which is the boundary
+ * running straight through. */
+function opposed(a: Point, b: Point): boolean {
+  return a.x * b.x + a.y * b.y < 0 && Math.abs(a.x * b.y - a.y * b.x) <= TURNED;
+}
+
+/**
+ * Whether the boundary actually turns at each point of each run.
+ *
+ * The walls are extruded from these runs and a vertical is drawn at every point
+ * of them, which is a claim that there is a corner there. The CSG leaves a point
+ * wherever two edges met, and where the set runs straight through one — two
+ * rooms overlapping, a solid cutting across the pair, a ring cut open by the
+ * arrangement — the point it leaves sits in the middle of what is now one flat
+ * wall. The wall is right; the vertical is not.
+ *
+ * Why this is answered here rather than by whoever draws the walls
+ * ---------------------------------------------------------------
+ * Because this is the only place that sees a polygon *and its neighbours* in
+ * one frame, and the question needs both.
+ *
+ * A run is one arc, open at both ends, and the boundary carries on past them
+ * into a run belonging to some other polygon. Asked of the runs alone, an end
+ * has nothing to compare against and its vertical stands by default — a line
+ * down the middle of a flat wall wherever two rooms abut, which is the ordinary
+ * way to author a level here. Asked of *all* the runs, it comes out right, but
+ * only for the caller that holds all of them: `worldset` does and the bake does
+ * not, because the bake cuts a track per polygon and that is what makes it
+ * cheap. Two callers with two answers is a vertical that appears for the length
+ * of a transition and goes away again — see the header of `walls.ts`, where the
+ * two must draw the same walls or the crossing between them flickers.
+ *
+ * Both of them call this, with the same subject and the same neighbourhood, so
+ * both get the same answer.
+ *
+ * How
+ * ---
+ * By asking which directions the boundary leaves a point in. Exactly two, at
+ * exactly 180 degrees, is the boundary running straight through; anything else
+ * — one, three, a hairpin doubling back — is a corner and keeps its vertical.
+ *
+ * The directions along the runs themselves are boundary by construction and are
+ * taken for free. The rest come from the neighbours' edges lying on the point,
+ * and each is put to the same test `arranged` puts a piece to: step off either
+ * side of it and ask whether the two sides disagree about the answer. A step
+ * just past the point rather than at a midpoint, because the neighbours' edges
+ * were never cut and there is no midpoint of theirs to trust — the piece that
+ * matters is the one leaving the point, and only its first hair is being asked
+ * about.
+ *
+ * So the extra classification is a handful of point queries per junction, and
+ * none at all along a run, rather than the arrangement of every neighbour that
+ * answering this the obvious way would have cost.
+ */
+function cornering(
+  runs: readonly Point[][],
+  segs: readonly Seg[],
+  inA: (p: Point) => boolean,
+  inB: (p: Point) => boolean,
+  op: Op,
+  snap: number,
+): boolean[][] {
+  if (runs.length === 0) return [];
+
+  // `snap` was scaled off the input the same way, so this recovers it.
+  const scale = snap / 1e-9;
+  const weld = welder(snap);
+
+  // Where the boundary is already known to go, by welded point. Gathered over
+  // every run before any of them is answered, so that a ring handed back with
+  // its first point repeated at the last has both copies' neighbours under the
+  // one key, and both copies therefore answer alike.
+  const known = new Map<number, Point[]>();
+
+  const add = (into: Point[], d: Point) => {
+    if (!into.some(o => alike(o, d))) into.push(d);
+  };
+
+  const away = (from: Point, to: Point): Point | null => {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const l = Math.hypot(dx, dy);
+
+    return l <= snap ? null : { x: dx / l, y: dy / l };
+  };
+
+  const ids = runs.map(run => run.map(p => weld.id(p)));
+
+  ids.forEach((run, r) => run.forEach((id, i) => {
+    const at = known.get(id) ?? [];
+
+    for (const j of [i - 1, i + 1]) {
+      const q = runs[r][j];
+      const d = q === undefined ? null : away(runs[r][i], q);
+
+      if (d !== null) add(at, d);
+    }
+
+    known.set(id, at);
+  }));
+
+  // Everything the neighbourhood could put on a point, found by where it is.
+  // The boxes are grown by `snap` because a neighbour's edge only has to come
+  // within that of a point to be lying on it.
+  const tree = build(segs.map((s, id) => ({
+    id,
+    box: expand(
+      box(
+        Math.min(s.a.x, s.b.x),
+        Math.min(s.a.y, s.b.y),
+        Math.max(s.a.x, s.b.x),
+        Math.max(s.a.y, s.b.y),
+      ),
+      snap,
+    ),
+  })));
+
+  /** Whether the boundary leaves `p` along `d`, with `reach` of the edge it is
+   * travelling to go. The step is bounded by the edge for the same reason
+   * `arranged` bounds its own: a fixed step is only small enough where the
+   * geometry is big enough. */
+  const going = (p: Point, d: Point, reach: number): boolean => {
+    const off = Math.min(scale * 1e-7, reach * 0.25);
+    const mx = p.x + d.x * off, my = p.y + d.y * off;
+
+    const left = { x: mx - d.y * off, y: my + d.x * off };
+    const right = { x: mx + d.y * off, y: my - d.x * off };
+
+    return op(inA(left), inB(left)) !== op(inA(right), inB(right));
+  };
+
+  const answered = new Map<number, boolean>();
+
+  const at = (id: number, p: Point): boolean => {
+    const held = answered.get(id);
+    if (held !== undefined) return held;
+
+    const out = [...(known.get(id) ?? [])];
+
+    each(tree, box(p.x, p.y, p.x, p.y), i => {
+      const s = segs[i];
+      const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
+      const l = Math.hypot(dx, dy);
+
+      if (l === 0) return;
+
+      const ux = dx / l, uy = dy / l;
+      const t = ((p.x - s.a.x) * ux + (p.y - s.a.y) * uy);
+
+      // Off the end of it, or off to one side: not an edge lying on this point.
+      if (t < -snap || t > l + snap) return;
+      if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) return;
+
+      // One direction for each way there is still edge to go.
+      for (const [d, reach] of [
+        [{ x: ux, y: uy }, l - t],
+        [{ x: -ux, y: -uy }, t],
+      ] as [Point, number][]) {
+        if (reach <= snap) continue;
+        if (out.some(o => alike(o, d))) continue;
+        if (going(p, d, reach)) out.push(d);
+      }
+    });
+
+    const turns = out.length !== 2 || !opposed(out[0], out[1]);
+
+    answered.set(id, turns);
+
+    return turns;
+  };
+
+  return ids.map((run, r) => run.map((id, i) => at(id, runs[r][i])));
 }
 
 /**

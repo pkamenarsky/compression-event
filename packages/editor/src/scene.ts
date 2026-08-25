@@ -1298,14 +1298,17 @@ export function runs(l: Live): Point[][] {
 }
 
 /**
- * The same runs, each carrying the polygon it came off.
+ * The same runs, each carrying whether the boundary turns at each of its
+ * points.
  *
- * What the walls need and what `runs` throws away: a run stitches to the run it
- * meets at a shared end only when one polygon owns both, because that is the
- * only stitching the bake can also do. See `corners` in `walls.ts`.
+ * What the walls need and what `runs` throws away. The answer comes off the
+ * CSG rather than off the runs, because it is a question about a polygon and
+ * its neighbours — see `cornering` in `geometry.ts` — and the bake is handed
+ * the very same answer, so the walls standing still and the walls in flight
+ * agree about every vertical.
  */
-export function sourced(l: Live): { id: Id, points: Point[] }[] {
-  return pieces(l.set).map(p => ({ id: p.source, points: p.points }));
+export function sourced(l: Live): { points: Point[], corner: boolean[] }[] {
+  return pieces(l.set).map(p => ({ points: p.points, corner: p.corner }));
 }
 
 /**

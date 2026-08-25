@@ -54,18 +54,13 @@ interface Hull {
  * Which way a ring's walls are expanded.
  *
  * `withNormals` points a ring's normals away from the region it encloses in the
- * counter-clockwise sense, whichever way round it happens to be wound. What
- * that region *is* is the type's business: a `level` ring encloses somewhere to
- * stand and a `solid` one encloses something to bump into, and either can be
- * inverted by being a hole in the other.
- *
- * So the walls move toward the walkable side, which is along the normal for a
- * solid and against it for a level, flipped again where the ring is a hole.
+ * counter-clockwise sense, whichever way round it happens to be wound. Every
+ * ring that gets here encloses somewhere to stand, so the walls move against
+ * the normal — and a hole, wound against the room it is in, has that flipped
+ * for it by the winding without anything having to know it is a hole.
  */
 function sideOf(polygon: Polygon): number {
-  const ccw = signedArea(polygon.points) > 0 ? 1 : -1;
-
-  return (polygon.type === 'level' ? -1 : 1) * ccw;
+  return signedArea(polygon.points) > 0 ? -1 : 1;
 }
 
 function planesOf(verts: Point[]): { nx: number, ny: number, d: number }[] {
@@ -206,9 +201,11 @@ const TOGETHER = 0.01;
 /**
  * One version's walls, expanded and ready to be walked into.
  *
- * The rings are the union's, so there is one kind of them and a hole is a hole
- * because of the way it is wound rather than because of what it was authored
- * as. `sideOf` is the whole of that.
+ * The rings are the union's, so there is one kind of them: `level`. A solid was
+ * taken back out where the union was worked out, and what it left behind is a
+ * hole wound against the room it is in — so nothing here has to be told that a
+ * solid is a solid, or that a hole is a hole. `sideOf` is the whole of that,
+ * and `floor` rings come along only so that something can draw them.
  */
 export class Hulls {
   private hulls: Hull[] = [];
@@ -219,7 +216,7 @@ export class Hulls {
     radius = PLAYER_RADIUS,
   ) {
     for (const polygon of polygons) {
-      if (polygon.type !== 'level' && polygon.type !== 'solid') continue;
+      if (polygon.type !== 'level') continue;
       if (polygon.points.length < 3) continue;
 
       const side = sideOf(polygon);
@@ -240,28 +237,26 @@ export class Hulls {
   }
 
   /**
-   * Somewhere to stand: not inside a wall, not inside anything solid, and
-   * inside some room.
+   * Somewhere to stand: not inside a wall, and inside some room.
    *
-   * The three questions are asked of the source rings rather than of the
-   * union, and holes are handled by the winding rather than by being listed:
-   * a hole is wound against its outer ring, so the nonzero rule takes it out
-   * without anything here having to know which is which.
+   * Two questions rather than three, because being inside something solid is
+   * not a separate one: a solid is a hole in the union, wound against the room
+   * it is in, so the nonzero rule takes it back out without anything here
+   * having to know which ring is which.
    */
   standable(at: Point): boolean {
     if (this.insideAny(at)) return false;
-    if (this.winding(at, 'solid') !== 0) return false;
 
-    return this.winding(at, 'level') !== 0;
+    return this.winding(at) !== 0;
   }
 
-  /** How many times the rings of one type wind round the point. */
-  private winding(at: Point, type: Polygon['type']): number {
+  /** How many times the rooms wind round the point. */
+  private winding(at: Point): number {
     const x = at.x / this.scale, y = at.y / this.scale;
     let turns = 0;
 
     for (const polygon of this.polygons) {
-      if (polygon.type !== type) continue;
+      if (polygon.type !== 'level') continue;
 
       const points = polygon.points;
 

@@ -96,6 +96,10 @@ export interface Piece {
   /** The polygon this came off. */
   source: Id
   points: Point[]
+  /** Per point of `points`: whether the boundary actually turns there. Out of
+   * `boundaryRuns`, which is the only place that sees this polygon and its
+   * neighbours at once — see `cornering` in `geometry.ts`. */
+  corner: boolean[]
 }
 
 /**
@@ -338,10 +342,11 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
   const on = ground(taking.values());
 
   for (const { subject, others } of work) {
-    const mine = boundaryRuns(subject, others, on).map(points => ({
+    const mine = boundaryRuns(subject, others, on).map(r => ({
       id: nextPiece++,
       source: subject.id,
-      points,
+      points: r.points,
+      corner: r.corner,
     }));
 
     next.runs.set(subject.id, mine);

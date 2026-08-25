@@ -154,6 +154,13 @@ import { pieces } from './worldset';
 export interface Run {
   id: PolygonId
   points: Point[]
+  /**
+   * Per point: whether the boundary actually turns there, out of
+   * `boundaryRuns`. It rides along rather than being worked out again at the
+   * end, because it is a question about a polygon *and its neighbours* and only
+   * the CSG ever sees both. See `cornering` in `geometry.ts`.
+   */
+  corner: boolean[]
 }
 
 /** The set at one instant, ordered so that two evaluations can be compared and
@@ -1035,7 +1042,7 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
 
   return boundaryRuns(subject, others, ground([subject, ...others]))
-    .map(points => ({ id: only, points }));
+    .map(r => ({ id: only, points: r.points, corner: r.corner }));
 }
 
 /** Everybody's share at once, through the full set. The yardstick's path, and
@@ -1046,7 +1053,7 @@ function everything(at: readonly Contributed[]): Frame {
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
   return pieces(live(EMPTY_LIVE, at).set)
-    .map(p => ({ id: p.source, points: p.points }))
+    .map(p => ({ id: p.source, points: p.points, corner: p.corner }))
     .sort((p, q) => p.id - q.id);
 }
 
@@ -1079,6 +1086,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
   const frame = out.map(r => ({
     id: r.id,
     points: r.points.map(q => unplace(frames.get(r.id)!, q)),
+    corner: r.corner,
   }));
 
   return { frame, table, world, out, fade, t };
@@ -1482,10 +1490,20 @@ function stretchOf(a: Taken, b: Taken): Stretch {
   };
 }
 
-/** How solid each output point is, from the projection vertex it stands on. A
- * crossing is a corner by construction and is always drawn. */
+/**
+ * How solid each output point is: the projection vertex it stands on, and
+ * whether there is a corner there at all.
+ *
+ * Both say how much of a corner is there and both are lerped across the
+ * stretch, so they are one number rather than two channels — a vertex emerging
+ * fades in over the run it emerges through, and a corner straightening out
+ * fades the same way. A crossing is a corner by construction and is always
+ * drawn.
+ */
 function faded(taken: Taken, os: (Origin | null)[][]): number[][] {
   return taken.out.map((run, r) => run.points.map((_unused, i) => {
+    if (!run.corner[i]) return 0;
+
     const o = os[r]?.[i];
 
     if (o === null || o === undefined || o.kind !== 'vertex') return 1;
@@ -1933,6 +1951,7 @@ function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
 
     return {
       id: run.id,
+      corner: run.corner,
       points: run.points.map((p, j) => {
         const solved = crossing(origins[j], ends);
 

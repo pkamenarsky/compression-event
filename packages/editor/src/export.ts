@@ -25,7 +25,6 @@ import {
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
-  corners,
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
@@ -211,16 +210,6 @@ export function bakedSpan(span: Span): BakedSpan {
       table.at.clear();
       tabled(s, slots, table);
 
-      // Both ends of the stretch, each asked of every run in hand at once: a
-      // run end is a corner only if the run it meets there turns away. Only
-      // this polygon's runs are ever in hand — a track is one polygon's cut —
-      // and `corners` is scoped to match, so the walls the bake draws and the
-      // walls `still` draws agree about every vertical.
-      const turning = [
-        corners(s.a),
-        corners(s.a.map((run, i) => s.b[i] ?? run)),
-      ];
-
       const runs: BakedRun[] = s.a.map((run, i) => {
         const to = s.b[i] ?? run;
         const origins = s.origins[i] ?? [];
@@ -234,14 +223,13 @@ export function bakedSpan(span: Span): BakedSpan {
           pointsA.push(p.x, p.y);
           pointsB.push(q.x, q.y);
 
-          // A point the boundary runs straight through is not a corner, and
-          // the vertical the extrusion stands on it would be a line drawn down
-          // the middle of a flat wall. Folded into the fade rather than given
-          // its own channel: both say how much of a corner is there, and the
-          // shader already carries this one from one end of the span to the
-          // other. See `turns`.
-          opacityA.push((turning[0][i][j] ? 1 : 0) * (s.opacity[0][i]?.[j] ?? 1));
-          opacityB.push((turning[1][i][j] ? 1 : 0) * (s.opacity[1][i]?.[j] ?? 1));
+          // How much of a corner is there, at each end of the stretch, for the
+          // shader to carry across. Whether the boundary turns here at all is
+          // already in it — see `faded` — because that and a vertex emerging
+          // say the same thing about the same vertical, and one channel lerps
+          // as well as two.
+          opacityA.push(s.opacity[0][i]?.[j] ?? 1);
+          opacityB.push(s.opacity[1][i]?.[j] ?? 1);
           slotOf.push(slot);
           kinds.push(cross === null ? CORNER : CROSSING);
           crossings.push(...(cross ?? [-1, -1, -1, -1]));
