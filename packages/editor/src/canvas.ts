@@ -30,6 +30,11 @@ import {
   hitPolygons,
   hitVertex,
   contributing,
+  starting,
+  under,
+  unplace,
+  unstep,
+  IDENTITY,
   occupying,
   Occupied,
   swallowed,
@@ -394,7 +399,7 @@ export function worldCanvas(
       // The layer as it stood when the key went down. A transform written into
       // this version replaces whatever it held, so the gesture recomputes from
       // here rather than composing onto its own last frame.
-      const anchors = anchored(world(), v, ids);
+      const anchors = starting(world(), v, ids);
 
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself.
@@ -403,6 +408,18 @@ export function worldCanvas(
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
 
+      // The frame each of them reads its own transform in. Not one frame for
+      // all: a selection can hold a polygon inside a turned group and another
+      // outside it, and each answers in its own.
+      //
+      // Erosion takes the cursor as it comes. It is a depth rather than a
+      // place — not in the frame at all — and a drag that erodes has to mean
+      // the same thing whichever way a group has been turned, which is exactly
+      // what taking it back through a rotation would stop it doing.
+      const frames = new Map(
+        [...anchors.keys()].map(id => [id, code === 'KeyE' ? IDENTITY : under(was, v, id)]),
+      );
+
       const end = yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
@@ -410,10 +427,17 @@ export function worldCanvas(
           update(s => {
             let world = s.world;
 
-            for (const [id, was] of anchors) {
+            for (const [id, edit] of anchors) {
+              const m = frames.get(id)!;
+
               world = withEdit(world, v, id, {
-                ...was,
-                transform: mode(was.transform, pivot, from, to),
+                ...edit,
+                transform: mode(
+                  edit.transform,
+                  unplace(m, pivot),
+                  unplace(m, from),
+                  unplace(m, to),
+                ),
               });
             }
 
@@ -755,6 +779,26 @@ export function worldCanvas(
     }
 
     /**
+     * Whether this click is the second of a pair, and remembering it if it is
+     * the first.
+     *
+     * Timed here because a pointer event does not carry a click count:
+     * `detail` is the click count on `mousedown` and zero on `pointerdown`,
+     * and this loop is built on pointer events so that a press, a drag and a
+     * release are one story.
+     */
+    function twice(e: PointerEvent): boolean {
+      const now = performance.now();
+      const pair = last !== null
+        && now - last.when < DOUBLE_MS
+        && Math.hypot(e.clientX - last.at.x, e.clientY - last.at.y) <= SLOP;
+
+      last = pair ? null : { at: { x: e.clientX, y: e.clientY }, when: now };
+
+      return pair;
+    }
+
+    /**
      * Double-clicking: into the group under the cursor, or out of the one
      * standing open where there is nothing under it.
      *
@@ -838,24 +882,6 @@ export function worldCanvas(
      * through to the polygon for one click without going anywhere.
      */
     /**
-     * What each picked thing's layer holds now, which is what a gesture
-     * recomputes from every frame rather than composing onto its own last one.
-     *
-     * Keyed by what was picked rather than by what is drawn: picking a group
-     * writes one transform to the group, not one to each of its members, and
-     * that is the whole of what a group is for.
-     */
-    function anchored(w: World, v: VersionId, ids: readonly Id[]): Map<Id, Edit> {
-      const depths = new Map(resolveAt(w, v).map(it => [it.id, it.erosion]));
-
-      return new Map(
-        ids
-          .filter(id => w.polygons.has(id) || w.groups.has(id))
-          .map(id => [id, editAt(w, v, id, depths.get(id) ?? 0)]),
-      );
-    }
-
-    /**
      * The polygons the tools may touch: what is on screen as itself.
      *
      * Corners belong to polygons, and a polygon inside a shut group has none
@@ -899,9 +925,11 @@ export function worldCanvas(
       const ids = selection().polygons;
       const start = at(from);
 
-      const anchors = anchored(was, v, ids);
+      const anchors = starting(was, v, ids);
 
       if (anchors.size === 0) return;
+
+      const frames = new Map([...anchors.keys()].map(id => [id, under(was, v, id)]));
 
       cursor('move');
       setLocal({ ...local(), previewing: true });
@@ -919,13 +947,19 @@ export function worldCanvas(
             let world = st.world;
 
             for (const [id, edit] of anchors) {
+              // The step as this one's own frame reads it. Snapped in world
+              // units, because the grid is on screen and that is where the
+              // hand is aiming — then taken back, so a group turned a quarter
+              // turn does not send its contents sideways.
+              const step = unstep(frames.get(id)!, dx, dy);
+
               world = withEdit(world, v, id, {
                 ...edit,
                 transform: {
                   ...edit.transform,
                   translation: {
-                    x: edit.transform.translation.x + dx,
-                    y: edit.transform.translation.y + dy,
+                    x: edit.transform.translation.x + step.x,
+                    y: edit.transform.translation.y + step.y,
                   },
                 },
               });
@@ -1186,19 +1220,17 @@ export function worldCanvas(
               yield* marqueeing(e, e.shiftKey);
             }
             else if (tool() === 'point') {
-              clicked(e);
+              // Going in and out of a group is about where you are, not about
+              // what you are editing. Corners belong to polygons, and reaching
+              // the ones inside a group needs the same way in from here as it
+              // does from the other tool.
+              if (twice(e)) entering(e);
+              else clicked(e);
             }
             else if (tool() === 'polygon') {
-              const now = performance.now();
-              const twice = last !== null
-                && now - last.when < DOUBLE_MS
-                && Math.hypot(e.clientX - last.at.x, e.clientY - last.at.y) <= SLOP;
-
-              last = twice ? null : { at: { x: e.clientX, y: e.clientY }, when: now };
-
               // The first of the pair has already picked, and going in drops
               // that selection again — which is what going in means anyway.
-              if (twice) entering(e);
+              if (twice(e)) entering(e);
               else picking(e);
             }
             else if (tool() === 'path') {
@@ -1459,7 +1491,7 @@ function layers(
     const shown = resolveAt(world, k);
     const stroke = ghostColour(k - current);
 
-    out.push(ctx => ghosts(ctx, view, world, k, path, shown, stroke));
+    out.push(ctx => ghosts(ctx, view, world, k, shown, stroke));
   }
 
   // A shut group is one shape, and its members are not on screen at all: the
@@ -1512,40 +1544,40 @@ function ghostColour(distance: number): string {
 }
 
 /**
- * One other version, drawn the way this one is drawn.
+ * One other version, drawn as groups.
  *
  * A ghost is the same boundary seen from another version, so it has to be the
- * same *kind* of picture: a shut group is one outline there too, and its
- * members are no more on screen at another version than at this one. Drawing
- * the resolved polygons raw puts every member's outline back, and the parts
- * that are not hidden under the boundary are exactly the seams between them —
- * which is the internal geometry grouping exists to stop showing, arriving by
- * the one door that was not watched.
+ * same *kind* of picture: a group is one outline there too. Drawing the
+ * resolved polygons raw puts every member's outline back, and the parts of
+ * those not hidden under the boundary are exactly the seams between them —
+ * which is the internal geometry grouping exists to stop showing.
  *
- * The open path is this version's, and rightly: which group is standing open
- * is about where the author is, not about which version they are looking at.
- * Group structure is global, so the same path means something at every one.
+ * Every group, though, and not only the ones shut at this moment: a ghost does
+ * not take the open path. Going inside a group is about what is being edited,
+ * and a ghost is not being edited — it is the reference the edit is judged
+ * against, and what makes it worth having while standing inside a group is
+ * seeing where the whole group sits at the other versions, which is what
+ * drilling in would otherwise take away.
  */
 function ghosts(
   ctx: CanvasRenderingContext2D,
   view: View,
   world: World,
   v: VersionId,
-  path: readonly GroupId[],
   items: Resolved[],
   stroke: string,
 ): void {
   ctx.beginPath();
 
   for (const it of items) {
-    if (swallowed(world, it.id, path)) continue;
+    if (swallowed(world, it.id, [])) continue;
 
     for (const ring of it.shape) {
       trace(ctx, view, ring);
     }
   }
 
-  for (const g of occupying(world, v, items, path)) {
+  for (const g of occupying(world, v, items, [])) {
     for (const ring of g.shape) {
       trace(ctx, view, ring);
     }

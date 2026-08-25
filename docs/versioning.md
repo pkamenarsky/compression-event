@@ -380,6 +380,22 @@ everywhere else. So **leaving writes a compensating transform into every version
 where the group transform is non-identity**, as one atomic undo entry. Joining is
 the same operation inverted. Both are heavier than they look.
 
+**A group's walls erode the other way, and that is not a choice.** What a group
+puts into the level is `level - solid`, and eroding the group as one shape pulls
+*that* boundary in by `d` — which around a hole means the hole getting bigger.
+Exactly:
+
+```
+erode(A - B, d) = erode(A, d) - erode(B, -d)
+```
+
+since eroding a complement is dilating it. The two sides have to be kept apart
+for the CSG, a group's walls cutting the rooms around it and not only its own, so
+the identity is what lets them be eroded apart and still come out as though they
+had been eroded together. Erode a group by `d` and every wall of it comes in by
+`d`, the pillars' included; shrink a pillar along with its room and the gap
+between them never narrows, which is the whole thing erosion is for.
+
 **Erosion is not compensated, and leaving does not take the group's depth.** A
 polygon owns one erosion depth, membership does not touch it, and a group's
 depth is the group's. Leaving a group with a non-zero depth therefore changes
@@ -625,6 +641,20 @@ A group holding both kinds draws twice, once per kind. There is no shape that is
 the union of a room and the pillar standing in it, and a single line around both
 would be a boundary the level does not have anywhere.
 
+A gesture writes a transform into **the frame that transform is read in**, which
+for anything inside a group is not world units. Resolve applies a thing's own
+transform first and its groups' transforms after, so a translation of `(10, 0)`
+on a polygon inside a group turned a quarter turn moves it ten units down the
+screen. The cursor therefore goes back through `under` before any mode sees it:
+otherwise a polygon inside a turned group spins about a point nowhere near
+itself, and drags sideways when pulled forward. Erosion is the exception, being a
+depth rather than a place — a drag that erodes means the same thing whichever way
+a group has been turned.
+
+For the same reason a group's depth has to be seeded from `depths` and not from
+the polygon reader, which has never heard of groups: without it the first thing
+written into a later version throws away the erosion its base had.
+
 **Double-clicking opens a group**, and then its members are separately pickable,
 transformable and erodeable, and a group nested inside it draws as its own
 outline — the same rule, one level down, to any depth. Everything outside the
@@ -632,6 +662,9 @@ open group is still drawn and no longer pickable: a slip of the cursor onto the
 room next door must not quietly take the selection out of scope.
 
 Three ways back out, and each covers where the others are awkward:
+
+Both tools drill: going in and out of a group is about where you are, not about
+what you are editing, and reaching the corners inside one needs the same way in.
 
 - **Escape** steps out one level. It needs no target, so it always works.
   It unwinds in size order — abandon a half-drawn polygon first, then a level,
@@ -647,13 +680,15 @@ Leaving picks the group left behind, which puts back what going in took away.
 
 **Every layer that draws the boundary asks the same question**, ghosts of other
 versions included. A ghost is the same boundary seen from another version, so it
-has to be the same kind of picture: a shut group is one outline there too. Drawing
-the resolved polygons raw puts every member's outline back, and the parts of
-those not hidden under the boundary are precisely the seams between them.
+has to be the same kind of picture: a group is one outline there too. Drawing the
+resolved polygons raw puts every member's outline back, and the parts of those
+not hidden under the boundary are precisely the seams between them.
 
-Which group stands open is about where the author is, not which version they are
-looking at — group structure is global, so one path means something at every
-version.
+A ghost draws **every** group as a group, and does not take the open path. Going
+inside one is about what is being edited; a ghost is not being edited. It is the
+reference the edit is judged against, and while standing inside a group what
+makes it worth having is seeing where the whole group sits at the other
+versions — which is exactly what drilling in would otherwise take away.
 
 ### Canvas: a half-drawn polygon is a mode, and the pen holds it
 

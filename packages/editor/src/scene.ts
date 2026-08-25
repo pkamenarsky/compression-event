@@ -356,6 +356,39 @@ function held(world: World, version: Version, id: Id): Affine {
 }
 
 /**
+ * The frame a thing's own transform at version `v` is read in.
+ *
+ * Resolve applies a layer in two stages: the thing's own transform first, and
+ * then the transforms of the groups holding it, at that same version. So what
+ * a polygon's own transform does happens *inside* whatever its groups are
+ * doing, and its numbers are not in world units — a translation of (10, 0) on
+ * a polygon inside a group turned a quarter turn moves it ten units *down* the
+ * screen.
+ *
+ * Anything writing a transform from a gesture therefore has to take the cursor
+ * back through this first, or it is answering a question asked in world units
+ * with a number that will be read in another frame entirely. The pivot of a
+ * rotation is the case that shows it worst: left alone, a polygon inside a
+ * turned group spins about a point that is nowhere near it.
+ *
+ * Only this version's groups, and that is not an oversight. A group's turn at
+ * an earlier version is already inside the space this one's own transform acts
+ * on, because that is the order `resolveAt` composed them in.
+ */
+export function under(world: World, v: VersionId, id: Id): Affine {
+  return held(world, world.versions[v], id);
+}
+
+/** A world-space step as the frame `m` reads it. A direction and a distance,
+ * so the frame's own translation is not part of the answer. */
+export function unstep(m: Affine, dx: number, dy: number): Point {
+  const o = unplace(m, { x: 0, y: 0 });
+  const p = unplace(m, { x: dx, y: dy });
+
+  return { x: p.x - o.x, y: p.y - o.y };
+}
+
+/**
  * A group's own frame at a version: its layer at every stage of the chain, and
  * every group holding it, in the order resolve applies them.
  *
@@ -477,6 +510,34 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 export function editAt(world: World, v: VersionId, id: Id, erosion: number): Edit {
   return world.versions[v].edits.get(id)
     ?? { transform: { ...EMPTY_TRANSFORM, erosion }, vertices: new Map() };
+}
+
+/**
+ * What each of `ids` holds at version `v`, as the edit a gesture starts from.
+ *
+ * Every gesture recomputes from here rather than composing onto its own last
+ * frame, so it cannot drift and letting go leaves exactly what is on screen.
+ *
+ * Keyed by what was picked rather than by what is drawn: picking a group
+ * writes one transform to the group, not one to each of its members, and that
+ * is the whole of what a group is for.
+ *
+ * Two readers, because there are two kinds of thing here and neither knows
+ * about the other. `resolveAt` answers for polygons, having geometry to answer
+ * with; a group's depth is only ever a number on a layer, and `depths` is what
+ * walks the chain for it. Asking the polygon reader about a group gets nothing
+ * back, and then the first thing written into a later version — a turn, a
+ * nudge — throws away the erosion its base had.
+ */
+export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id, Edit> {
+  const mine = new Map<Id, number>(resolveAt(world, v).map(it => [it.id, it.erosion]));
+  const theirs = depths(world, v);
+
+  return new Map(
+    ids
+      .filter(id => world.polygons.has(id) || world.groups.has(id))
+      .map(id => [id, editAt(world, v, id, mine.get(id) ?? theirs.get(id) ?? 0)]),
+  );
 }
 
 export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World {
@@ -883,7 +944,21 @@ export function contributed(
 
     const all = unionAll(group.members.map(m => offer(m, kind)));
     const d = standing(id)?.depth ?? 0;
-    const out = d === 0 || all.length === 0 ? all : erode(all, d);
+
+    // The walls go the other way, and this is not a choice — it is what
+    // eroding the group as one shape *means*. What the group puts into the
+    // level is `level - solid`, and pulling that boundary in by `d` pulls it
+    // in around the holes too, which is the holes getting bigger:
+    //
+    //   erode(A - B, d) = erode(A, d) - erode(B, -d)
+    //
+    // exactly, since eroding a complement is dilating. The two sides have to
+    // be kept apart for the CSG — a group's walls cut the rooms around it, not
+    // only its own — so the identity is what lets them be eroded apart and
+    // still come out as though they had been eroded together. A pillar shrunk
+    // along with its room leaves a gap that never narrows.
+    const depth = kind === 'solid' ? -d : d;
+    const out = depth === 0 || all.length === 0 ? all : erode(all, depth);
 
     held?.set(key, out);
 

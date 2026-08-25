@@ -6,8 +6,14 @@ import {
   addPolygon,
   composed,
   contributing,
+  centroid,
   grouped,
+  IDENTITY,
+  depths,
   occupying,
+  starting,
+  under,
+  unstep,
   reachable,
   reaching,
   showing,
@@ -914,11 +920,30 @@ describe('a group erodes as one shape', () => {
 
     expect(out.map(c => c.kind).sort()).toEqual(['level', 'solid']);
 
-    // Each union pulls back by the depth in its own sense, which is what the
-    // same depth on each of them separately would have done — the group only
-    // changes what the offset is taken on.
+    // The room pulls in and the pillar pushes out. Eroding the group as one
+    // shape pulls in the boundary of `level - solid`, and the boundary of a
+    // hole pulled inward is the hole getting bigger.
     expect(shapeArea(out.find(c => c.kind === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
-    expect(shapeArea(out.find(c => c.kind === 'solid')!.shape)).toBeCloseTo(10 * 10, 6);
+    expect(shapeArea(out.find(c => c.kind === 'solid')!.shape)).toBeCloseTo(30 * 30, 6);
+  });
+
+  test('what the group is eroded by is the width of what it walls off', () => {
+    // The point of the sign, in the only terms that matter: erode a group by
+    // `d` and every wall of it comes in by `d`, the pillar's included. Shrink
+    // the pillar along with the room and the gap between them never narrows,
+    // which is the whole thing erosion is for.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['solid', rect(80, 0, 40, 100)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const d = 10;
+    const w = moved(made.world, 0, made.id, { erosion: d });
+
+    // Two corridors, 80 wide before the erosion and 80 - 2d after: the room's
+    // outer wall came in by d and the pillar's came in by d to meet it.
+    expect(shapeArea(csg(w, 0))).toBeCloseTo(2 * (80 - 2 * d) * (100 - 2 * d), 6);
   });
 
   test('a group holding both kinds contributes to both sides of the set', () => {
@@ -940,10 +965,10 @@ describe('a group erodes as one shape', () => {
     expect(out.map(c => c.id)).toEqual([made.id, solidSide(made.id)]);
     expect(sidedWith(solidSide(made.id))).toEqual(made.id);
 
-    // And the set is what those two say it is: the room pulled in by the depth
-    // with the pillar, also pulled in, taken back out of it.
+    // And the set is what those two say it is: the room pulled in by the depth,
+    // with the pillar — pushed out by it — taken back out of that.
     expect(shapeArea(csg(w, 0)))
-      .toBeCloseTo((200 - 2 * d) * (120 - 2 * d) - (60 - 2 * d) * (40 - 2 * d), 6);
+      .toBeCloseTo((200 - 2 * d) * (120 - 2 * d) - (60 + 2 * d) * (40 + 2 * d), 6);
   });
 
   test('a group nothing in hand belongs to is not answered for', () => {
@@ -1146,5 +1171,99 @@ describe('going inside a group', () => {
     // a room and the pillar standing in it.
     expect(shown.map(c => c.kind).sort()).toEqual(['level', 'solid']);
     expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id, made.id]);
+  });
+});
+
+describe('a gesture writes into the frame it is read in', () => {
+  test("a group's depth survives the first thing written at a later version", () => {
+    // Eroded at v0, turned at v1. The turn writes a whole layer, and the
+    // erosion has to be seeded into it from what the base already resolved to
+    // or it goes to zero — a group's depth being on a layer rather than on
+    // geometry, the polygon reader has never heard of it.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(120, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids)!;
+    const w = moved(made.world, 0, made.id, { erosion: 8 });
+
+    expect(starting(w, 1, [made.id]).get(made.id)!.transform.erosion).toEqual(8);
+
+    // And having written the turn, it is still there.
+    const turned = withEdit(w, 1, made.id, {
+      ...starting(w, 1, [made.id]).get(made.id)!,
+      transform: { ...starting(w, 1, [made.id]).get(made.id)!.transform, rotation: 0.5 },
+    });
+
+    expect(depths(turned, 1).get(made.id)).toEqual(8);
+  });
+
+  test('a polygon at the top level is read in world units', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
+
+    expect(under(world, 0, ids[0])).toEqual(IDENTITY);
+  });
+
+  test("a polygon inside a turned group is not", () => {
+    // Its own transform happens *inside* what the group is doing, so a pivot
+    // in world units names a point the polygon's own layer has never heard of.
+    const { world, ids, group } = pair();
+    const angle = Math.PI / 2;
+    const w = moved(world, 0, group, { rotation: angle });
+
+    const m = under(w, 0, ids[0]);
+
+    // A quarter turn: world (1, 0) is (0, -1) as this frame reads it.
+    const p = unplace(m, { x: 1, y: 0 });
+
+    expect(p.x).toBeCloseTo(0, 9);
+    expect(p.y).toBeCloseTo(-1, 9);
+
+    // A step is the same question without the frame's own translation in it.
+    const shifted = moved(w, 0, group, { rotation: angle, translation: { x: 500, y: 500 } });
+    const step = unstep(under(shifted, 0, ids[0]), 1, 0);
+
+    expect(step.x).toBeCloseTo(0, 9);
+    expect(step.y).toBeCloseTo(-1, 9);
+  });
+
+  test('turning a polygon inside a turned group turns it about itself', () => {
+    // The reported bug: left in world units, the polygon spins about a point
+    // that is nowhere near it. Here the pivot is its own centre, so a half
+    // turn about it leaves the ring where it was.
+    const { world, ids, group } = pair();
+    const w = moved(world, 0, group, { rotation: Math.PI / 3 });
+
+    const it = only(w, 0, ids[0]);
+    const pivot = centroid(it.source);
+    const m = under(w, 0, ids[0]);
+
+    const edit = starting(w, 0, [ids[0]]).get(ids[0])!;
+    const local = unplace(m, pivot);
+    const c = Math.cos(Math.PI), sn = Math.sin(Math.PI);
+
+    // A half turn about the pivot, written the way `turned` writes it.
+    const dx = edit.transform.translation.x - local.x;
+    const dy = edit.transform.translation.y - local.y;
+
+    const spun = withEdit(w, 0, ids[0], {
+      ...edit,
+      transform: {
+        ...edit.transform,
+        rotation: edit.transform.rotation + Math.PI,
+        translation: {
+          x: local.x + c * dx - sn * dy,
+          y: local.y + sn * dx + c * dy,
+        },
+      },
+    });
+
+    // Half a turn about its own centre: a rectangle lands back on itself.
+    const after = only(spun, 0, ids[0]);
+
+    expect(centroid(after.source).x).toBeCloseTo(pivot.x, 6);
+    expect(centroid(after.source).y).toBeCloseTo(pivot.y, 6);
+    expect(shapeArea(after.shape)).toBeCloseTo(shapeArea(it.shape), 6);
   });
 });
