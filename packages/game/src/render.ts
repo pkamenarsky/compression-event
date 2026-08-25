@@ -34,7 +34,7 @@ import { DitherPass } from './dither';
 import { Morph, morph } from './morph';
 import { still } from './still';
 import { Run, Source, WallOptions } from './walls';
-import { Point, World } from './world';
+import { Floor, Point, World } from './world';
 
 /** World units per editor unit: the editor's grid of 25 is one metre. */
 export const SCALE = 1 / 25;
@@ -46,11 +46,19 @@ const WALL_COLOR = 0xfdebeb;
 const LINE_COLOR = 0x000000;
 const FLOOR_COLOR = 0xbbbbbb;
 
+/** What an authored floor is drawn in. Black on the ground's grey, which is
+ * the same two the walls and their lines are. */
+const SHAPE_COLOR = 0x000000;
+
 /**
  * The floor sits a hair below zero so that anything standing exactly on the
  * ground plane draws over it whatever order the scene happens to be in.
  */
 const FLOOR_Y = -0.01;
+
+/** An authored floor sits between the ground and everything standing on it:
+ * over the tiles it covers, under the walls that stand on them. */
+const SHAPE_Y = FLOOR_Y / 2;
 
 export interface RendererOptions {
   /** Off leaves the scene undithered, which is worth having in the editor
@@ -76,6 +84,20 @@ export interface Renderer {
    * these buffers and nothing else.
    */
   show(runs: readonly Run[]): void
+
+  /**
+   * The floors as they stand, in editor units, drawn flat on the ground.
+   *
+   * Their own call rather than part of `show`, for two reasons. They are not
+   * the boundary and do not come out of the CSG — an author draws one and it is
+   * that shape, whatever is standing on it. And `show` is hidden for the length
+   * of a walk while the morph has the walls; the ground is not, because the
+   * ground does not stop being there because the walls are moving.
+   *
+   * So they snap at a version boundary rather than morphing across it, which is
+   * what collision does too.
+   */
+  floors(rings: readonly Floor[]): void
 
   /** The baked spans, built and held ready. An empty level drops them. */
   load(world: World): void
@@ -128,6 +150,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   let standing: Source | null = null;
   let morphs: Morph[] = [];
   let ground: THREE.Object3D[] = [];
+  let shapes: THREE.Mesh | null = null;
   let box: Bounds | null = null;
 
   /** Which morph is in the scene, and whether it rather than `standing` is
@@ -170,6 +193,30 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     grow(bounding(runs.map(r => r.points)));
     reconcile(showing);
+  }
+
+  function floors(rings: readonly Floor[]): void {
+    if (shapes !== null) {
+      scene.remove(shapes);
+      shapes.geometry.dispose();
+      (shapes.material as THREE.Material).dispose();
+      shapes = null;
+    }
+
+    if (rings.length === 0) return;
+
+    shapes = new THREE.Mesh(filled(rings), new THREE.MeshBasicMaterial({
+      color: SHAPE_COLOR,
+      side: THREE.DoubleSide,
+    }));
+
+    // Laid down flat, the same turn the ground takes: a shape is authored in
+    // the editor's x and y, and the second of those is the world's z.
+    shapes.rotation.x = -Math.PI / 2;
+    shapes.position.y = SHAPE_Y;
+
+    scene.add(shapes);
+    grow(bounding(rings.map(r => r.points)));
   }
 
   function drop(): void {
@@ -282,6 +329,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     camera,
     scene,
     show,
+    floors,
     load,
     walk,
 
@@ -299,6 +347,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     dispose(): void {
       watching.disconnect();
       drop();
+      floors([]);
 
       if (standing !== null) {
         scene.remove(standing.walls, standing.lines);
@@ -373,6 +422,29 @@ const EMPTY_BOUNDS: Bounds = {
   maxX: TILE_SIZE,
   maxZ: TILE_SIZE,
 };
+
+/**
+ * The authored floors as one filled geometry.
+ *
+ * One mesh for all of them rather than one apiece: they are a single flat
+ * colour and never move independently, so there is nothing a draw call each
+ * would buy. `ShapeGeometry` triangulates, which a ring drawn by hand needs —
+ * nothing says an authored floor is convex.
+ *
+ * Each ring is its own shape rather than a hole in another. A floor is drawn
+ * and nothing else, so two overlapping ones are just black twice.
+ *
+ * Exported for the one thing about it worth pinning: the turn from the plane a
+ * shape is built in to the plane it is drawn in. Everything else here is
+ * three.js.
+ */
+export function filled(rings: readonly Floor[]): THREE.BufferGeometry {
+  return new THREE.ShapeGeometry(rings.map(r => new THREE.Shape(
+    // The editor's y is the world's z, and the mesh is turned to lay it flat —
+    // so the shape is built in the plane it will be turned out of.
+    r.points.map(p => new THREE.Vector2(p.x * SCALE, -p.y * SCALE)),
+  )));
+}
 
 function floor(b: Bounds | null): THREE.Object3D[] {
   const box = b ?? EMPTY_BOUNDS;

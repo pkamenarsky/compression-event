@@ -37,7 +37,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 
 import { Point, Renderer, SCALE, renderer } from '@ce/game';
 import { Bake, spanAt } from './bake';
-import { bakedLevel } from './export';
+import { bakedLevel, floorsAt } from './export';
 import { EMPTY_LIVE, Live, contributing, live, resolveAt, sourced } from './scene';
 import { theme } from './theme';
 import { Replay, Update, VersionId, World } from './types';
@@ -239,7 +239,8 @@ function panel(
     };
 
     /** The boundary at the version on screen, which is what is drawn whenever
-     * nothing is in flight. */
+     * nothing is in flight — and the floors under it, which are drawn whatever
+     * is in flight. */
     const shown = (w: World, v: VersionId): void => {
       if (view === null) return;
 
@@ -248,6 +249,11 @@ function panel(
       const outline = sourced(set);
 
       view.show(outline);
+
+      // Off the resolved polygons rather than out of `versionOf`, which would
+      // union the whole level to answer a question the union has nothing to do
+      // with. They snap at a version boundary; nothing morphs a floor.
+      view.floors(floorsAt(w, v));
 
       if (!afoot()) framed(outline, orbit);
 

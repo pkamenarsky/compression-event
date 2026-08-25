@@ -303,7 +303,6 @@ describe('a seam between two rooms is not a wall', () => {
     const version = versionOf(overlapping, 0);
 
     expect(version.polygons.length).toBe(1);
-    expect(version.polygons[0].type).toBe('level');
   });
 
   test('the player walks across it', () => {
@@ -366,16 +365,35 @@ describe('floors come along without taking part', () => {
   ).world;
 
   test('kept, and kept apart', () => {
-    const polygons = versionOf(withFloor, 0).polygons;
+    const version = versionOf(withFloor, 0);
 
-    expect(polygons.filter(p => p.type === 'floor').length).toBe(1);
-    expect(polygons.filter(p => p.type === 'level').length).toBe(1);
+    // In a list of its own rather than a ring the collision would have to know
+    // to skip. The room is the only thing in the set.
+    expect(version.polygons.length).toBe(1);
+    expect(version.floors.length).toBe(1);
+  });
+
+  test('a floor carries points and nothing else', () => {
+    // No normals: they are for deciding which side of a ring is material, and
+    // a shape that is only ever filled has no such side.
+    const floor = versionOf(withFloor, 0).floors[0];
+
+    expect(floor.points.map(p => ({ x: p.x, y: p.y })))
+      .toEqual(floor.points.map(p => ({ ...p })));
   });
 
   test('and nothing walks into one', () => {
     const at = hullsAt(withFloor, 0).trace({ x: 20, y: 80 }, { x: 60, y: 0 });
 
     expect(at.x).toBeCloseTo(80, 6);
+  });
+
+  test('a level that is only floors is nothing to walk in', () => {
+    const only = drawn(['floor', rect(0, 0, 100, 100)]).world;
+    const version = versionOf(only, 0);
+
+    expect(version.polygons).toEqual([]);
+    expect(version.floors.length).toBe(1);
   });
 });
 

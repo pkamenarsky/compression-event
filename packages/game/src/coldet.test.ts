@@ -11,20 +11,21 @@
 
 import { describe, expect, test } from 'vitest';
 import { Hulls, PLAYER_RADIUS } from './coldet';
-import { Point, Polygon, PolygonType, signedArea, withNormals } from './world';
+import { Point, Polygon, signedArea, withNormals } from './world';
 
-/** Counter-clockwise, which for a `level` ring is a room. */
+/** Counter-clockwise, which is a room: every ring that reaches here is one, or
+ * a hole in one. */
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-function ring(type: PolygonType, points: Point[]): Polygon {
-  return { type, points: withNormals(points) };
+function ring(points: Point[]): Polygon {
+  return { points: withNormals(points) };
 }
 
 /** The same ring the other way round: a hole, where its outer ring is a room. */
-function hole(type: PolygonType, points: Point[]): Polygon {
-  return ring(type, [...points].reverse());
+function hole(points: Point[]): Polygon {
+  return ring([...points].reverse());
 }
 
 /** World units per editor unit. One, so that every number below is both. */
@@ -34,7 +35,7 @@ function room(...polygons: Polygon[]): Hulls {
   return new Hulls(polygons, SCALE);
 }
 
-const ROOM = ring('level', rect(0, 0, 100, 100));
+const ROOM = ring(rect(0, 0, 100, 100));
 
 describe('a move into a wall', () => {
   test('stops a radius short of it', () => {
@@ -79,7 +80,7 @@ describe('which side of a ring is material', () => {
   });
 
   test('a hole in a room stops the player outside it', () => {
-    const pillar = hole('level', rect(40, 40, 20, 20));
+    const pillar = hole(rect(40, 40, 20, 20));
     const hulls = room(ROOM, pillar);
 
     // Walking at the pillar from the room stops a radius short of its face.
@@ -101,23 +102,14 @@ describe('somewhere to stand', () => {
   });
 
   test('is not inside a hole, which nothing had to be told is a hole', () => {
-    const hulls = room(ROOM, hole('level', rect(40, 40, 20, 20)));
+    const hulls = room(ROOM, hole(rect(40, 40, 20, 20)));
 
     expect(hulls.standable({ x: 50, y: 50 })).toBe(false);
     expect(hulls.standable({ x: 20, y: 20 })).toBe(true);
   });
 
-  test('a floor is not a wall and is not somewhere to stand by itself', () => {
-    // `versionOf` sends floors along so that something can draw them. They are
-    // not in the union and nothing here builds a hull off one.
-    const hulls = room(ROOM, ring('floor', rect(200, 200, 50, 50)));
-
-    expect(hulls.standable({ x: 220, y: 220 })).toBe(false);
-    expect(hulls.trace({ x: 210, y: 220 }, { x: 30, y: 0 })).toEqual({ x: 240, y: 220 });
-  });
-
   test('two rooms overlapping is still one place to stand', () => {
-    const hulls = room(ROOM, ring('level', rect(60, 20, 100, 60)));
+    const hulls = room(ROOM, ring(rect(60, 20, 100, 60)));
 
     expect(hulls.standable({ x: 80, y: 50 })).toBe(true);
     expect(hulls.standable({ x: 140, y: 50 })).toBe(true);
@@ -135,7 +127,7 @@ describe('somewhere to stand', () => {
  * walls stopped stopping anyone.
  */
 describe('a hairpin', () => {
-  const slit = ring('level', [
+  const slit = ring([
     { x: 0, y: 0 },
     { x: 100, y: 0 },
     { x: 100, y: 100 },

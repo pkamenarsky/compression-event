@@ -22,6 +22,7 @@ import {
   CROSSING,
   ENTRY_STRIDE,
   FRAME_STRIDE,
+  Floor,
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
@@ -343,22 +344,36 @@ export function versionOf(world: World, v: VersionId): GameVersion {
   for (const ring of unionAt(world, v)) {
     const points = withNormals(ring);
 
-    if (points.length >= 3) polygons.push({ type: 'level', points });
+    if (points.length >= 3) polygons.push({ points });
   }
 
-  // Floors are not in the set — `worldset` takes only `level` and `solid` — and
-  // are not walls either. They come along so that something can draw them.
+  return { polygons, floors: floorsAt(world, v) };
+}
+
+/**
+ * The floors at a version: drawn flat underfoot, and taking part in nothing.
+ *
+ * Not in the set — `worldset` takes only `level` and `solid` — and not walls
+ * either, so they come along in a list of their own rather than as rings the
+ * collision would have to know to skip. Points and nothing else: normals are
+ * for deciding which side of a ring is material, and a shape that is only ever
+ * filled has no such side.
+ *
+ * Its own function because the 3D view wants them without wanting the union,
+ * and the union is the expensive half of `versionOf`.
+ */
+export function floorsAt(world: World, v: VersionId): Floor[] {
+  const out: Floor[] = [];
+
   for (const it of resolveAt(world, v)) {
     if (it.polygon.type !== 'floor') continue;
 
     for (const ring of it.shape) {
-      const points = withNormals(ring);
-
-      if (points.length >= 3) polygons.push({ type: 'floor', points });
+      if (ring.length >= 3) out.push({ points: ring });
     }
   }
 
-  return { polygons };
+  return out;
 }
 
 /**

@@ -30,6 +30,15 @@
 
 import { BakedLevel, EMPTY_BAKED } from './baked';
 
+/**
+ * What an author can draw, which is not what the game is handed.
+ *
+ * A `level` is somewhere to stand, a `solid` is something taken back out of it,
+ * and a `floor` is neither — it is drawn and nothing else. The first two are
+ * resolved into one set before they get here and arrive as untagged rings; the
+ * third arrives in a list of its own. So this describes the editor's side of
+ * the agreement, and nothing shipped carries it.
+ */
 export type PolygonType = 'level' | 'solid' | 'floor';
 
 export type ArtefactType = 'key' | 'exit' | 'delay' | 'decompress' | 'anchor' | 'compass' | 'start';
@@ -49,17 +58,34 @@ export interface PolygonPoint {
 }
 
 /**
- * One ring, wound and normalled.
+ * One ring of the set, wound and normalled: something to walk into.
  *
  * A ring rather than a polygon, deliberately: an eroded polygon resolves to
  * several — a room pinched into two by its own walls closing is two rings, and
  * a room with something taken out of it has a hole. They come out as separate
  * entries here, wound the way the projection wound them, and everything reading
  * this takes the winding off the signed area rather than assuming it.
+ *
+ * Untagged, and that is the point. Every ring in the list is the same kind of
+ * thing — a `level` was unioned and a `solid` was subtracted long before this,
+ * and what a `solid` left behind is a hole, which is one by the way it is
+ * wound. There is nothing left for a tag to distinguish.
  */
 export interface Polygon {
-  type: PolygonType
   points: PolygonPoint[]
+}
+
+/**
+ * One floor: a shape drawn flat on the ground, and nothing else.
+ *
+ * Its own list rather than a tag on the one above, because it is not the same
+ * kind of thing and every reader of that list would have to know to skip it. It
+ * takes no part in the set, nothing walks into it, and nothing needs to know
+ * which side of it is material — so it carries no normals either. A ring of
+ * points, filled, is the whole of it.
+ */
+export interface Floor {
+  points: Point[]
 }
 
 export interface Artefact {
@@ -69,7 +95,10 @@ export interface Artefact {
 }
 
 export interface Version {
+  /** The set as closed rings: what stops the player. */
   polygons: Polygon[]
+  /** What is drawn flat underfoot, taking no part in any of that. */
+  floors: Floor[]
 }
 
 export interface Path {

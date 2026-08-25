@@ -204,8 +204,10 @@ const TOGETHER = 0.01;
  * The rings are the union's, so there is one kind of them: `level`. A solid was
  * taken back out where the union was worked out, and what it left behind is a
  * hole wound against the room it is in — so nothing here has to be told that a
- * solid is a solid, or that a hole is a hole. `sideOf` is the whole of that,
- * and `floor` rings come along only so that something can draw them.
+ * solid is a solid, or that a hole is a hole. `sideOf` is the whole of that.
+ *
+ * Every ring handed over is one of them. Floors are drawn rather than walked
+ * into and travel in a list of their own, so there is nothing here to skip.
  */
 export class Hulls {
   private hulls: Hull[] = [];
@@ -216,7 +218,6 @@ export class Hulls {
     radius = PLAYER_RADIUS,
   ) {
     for (const polygon of polygons) {
-      if (polygon.type !== 'level') continue;
       if (polygon.points.length < 3) continue;
 
       const side = sideOf(polygon);
@@ -256,8 +257,6 @@ export class Hulls {
     let turns = 0;
 
     for (const polygon of this.polygons) {
-      if (polygon.type !== 'level') continue;
-
       const points = polygon.points;
 
       for (let i = 0; i < points.length; i++) {
