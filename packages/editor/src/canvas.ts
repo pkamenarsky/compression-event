@@ -1716,17 +1716,12 @@ function groups(
 
     outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.groupFill);
 
-    // Under the group's own outline and with none of its own: a floor inside a
-    // shut group is internal geometry like anything else in there, and all
-    // that is left of it is what it paints the ground with.
-    if (here && g.floor.length !== 0) {
-      ctx.beginPath();
-
-      for (const ring of g.floor) {
-        trace(ctx, view, ring);
-      }
-
-      shaded(ctx, 'floor');
+    // Drawn as the floor it is, and never as picked: the group's own outline
+    // has already said that, and saying it twice puts a second heavy line
+    // inside the first. The edge is here because the stipple needs one — a
+    // pattern with nothing to stop it frays wherever the shape ends.
+    if (g.floor.length !== 0) {
+      outlined(ctx, view, g.floor, 'floor', false, here, theme.groupFill);
     }
   }
 }
