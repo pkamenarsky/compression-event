@@ -30,6 +30,10 @@ export interface Hud {
   /** The line naming what is within reach, or nothing. */
   note(text: string | null): void
 
+  /** A line in the corner for whoever is looking into something, or nothing.
+   * Never on unless it is asked for. */
+  stat(text: string | null): void
+
   /** The end: black, and no way out of it. */
   black(): void
 
@@ -55,6 +59,7 @@ export function hud(host: HTMLElement): Hud {
   const line = document.createElement('div');
   const under = document.createElement('div');
   const near = document.createElement('div');
+  const corner = document.createElement('div');
 
   sheet(screen, `
     position: absolute; inset: 0;
@@ -84,8 +89,14 @@ export function hud(host: HTMLElement): Hud {
     opacity: 0; transition: opacity 0.2s;
   `);
 
+  sheet(corner, `
+    position: absolute; left: 8px; top: 8px;
+    color: #7f7; font: 11px ui-monospace, monospace; white-space: pre;
+    z-index: 9; pointer-events: none; display: none;
+  `);
+
   screen.append(line, under);
-  host.append(near, screen);
+  host.append(near, corner, screen);
 
   return {
     say(text: string, ms: number, beneath = ''): Promise<void> {
@@ -128,6 +139,12 @@ export function hud(host: HTMLElement): Hud {
       near.style.opacity = text === null ? '0' : '1';
     },
 
+    stat(text: string | null): void {
+      corner.style.display = text === null ? 'none' : 'block';
+
+      if (text !== null) corner.textContent = text;
+    },
+
     black(): void {
       line.textContent = '';
       under.textContent = '';
@@ -143,6 +160,7 @@ export function hud(host: HTMLElement): Hud {
       waiting?.();
       screen.remove();
       near.remove();
+      corner.remove();
     },
   };
 }

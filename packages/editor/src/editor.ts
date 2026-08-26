@@ -307,7 +307,7 @@ function started(s: EditorState): void {
 
   // No title screen: Cmd+Enter is the gesture that asked for it, and the
   // level is already there.
-  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, leave }), host };
+  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, debug: true, leave }), host };
 }
 
 /**

@@ -128,6 +128,15 @@ export interface PlayOptions {
   title?: boolean
 
   /**
+   * A line in the corner saying what the loop thinks is going on: which
+   * version is in force, what is in flight, and what last moved it.
+   *
+   * For when the level does something and it is not clear whether the level or
+   * the game said so. Off unless asked for.
+   */
+  debug?: boolean
+
+  /**
    * Someone leaving: Escape, or letting go of the pointer they had taken.
    *
    * Whoever put the game on screen is the one who can take it off again, so
@@ -174,6 +183,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** Which two versions the shift in flight runs between. */
   let leg = { from: 0, to: 0 };
+
+  /** What last moved the version, for the corner line. */
+  let why = 'start';
 
   /** What has been picked up, and which artefacts are gone because of it. */
   const carrying = new Set<ArtefactType>();
@@ -255,6 +267,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     shifting = null;
     clock = HOLD;
 
+    why = 'restart';
     carrying.clear();
     gone.clear();
     spawn();
@@ -270,8 +283,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * compressing and not yet the point at which it has. A span that was never
    * baked has no picture, so it snaps.
    */
-  const compress = (to: number): void => {
+  const compress = (to: number, reason = 'clock'): void => {
     if (to < 0 || to >= world.versions.length) return;
+
+    why = `${reason} ${version}->${to}`;
 
     // A beat that ran over keeps its overshoot, so the beats do not creep by a
     // frame apiece; one cut short by a pickup gets a whole one, which is what
@@ -394,7 +409,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
         gone.add(index);
         playSoundFor(pickup, 1);
-        compress(version - 1);
+        compress(version - 1, 'decompress');
         break;
 
       case 'key':
@@ -452,6 +467,22 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     last = now;
     frame = requestAnimationFrame(tick);
 
+    // The next frame is asked for first, so a throw in here does not stop the
+    // loop — which means a throw in here would otherwise repeat silently
+    // forever, leaving whatever was last drawn on screen and nothing to say
+    // why. One is enough to know.
+    try {
+      body(dt);
+    }
+    catch (e) {
+      running = false;
+      say.stat(`stopped: ${String(e)}`);
+      console.error(e);
+    }
+  });
+
+  function body(dt: number): void {
+
     // The scene is still drawn while a message is up — it is what the message
     // is over.
     if (running && !say.busy()) {
@@ -502,7 +533,15 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     crowd.update(dt, view.camera);
     view.render();
-  });
+
+    if (options.debug === true) {
+      const flight = shifting === null
+        ? 'still'
+        : `${leg.from}->${leg.to} ${(shifting / SHIFT).toFixed(2)}`;
+
+      say.stat(`v${version}/${world.versions.length - 1}  ${flight}  clock ${clock.toFixed(1)}  spans ${spans}  ${why}`);
+    }
+  }
 
   // ── The keyboard and the pointer ──
 
