@@ -41,7 +41,7 @@ import { BakedLevel, EMPTY_BAKED } from './baked';
  */
 export type PolygonType = 'level' | 'solid' | 'floor';
 
-export type ArtefactType = 'key' | 'exit' | 'delay' | 'decompress' | 'anchor' | 'compass' | 'start';
+export type ArtefactType = 'start' | 'exit' | 'key' | 'delay' | 'decompress' | 'anchor' | 'compass';
 
 export interface Point {
   x: number
