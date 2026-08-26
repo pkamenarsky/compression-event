@@ -1,0 +1,256 @@
+{
+  "format": 5,
+  "tool": "polygon",
+  "currentVersion": 1,
+  "selection": [
+    11
+  ],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": -710,
+    "y": -405,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 16,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": 64,
+                "y": -256
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 64,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -32,
+                "y": 0
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -256,
+                "y": -32
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 5,
+              "at": {
+                "x": -256,
+                "y": -256
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        6,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 7,
+              "at": {
+                "x": 32,
+                "y": -256
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 384,
+                "y": -256
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": 384,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 10,
+              "at": {
+                "x": 32,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        11,
+        {
+          "type": "solid",
+          "birth": 0,
+          "points": [
+            {
+              "id": 12,
+              "at": {
+                "x": 64,
+                "y": -32
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 13,
+              "at": {
+                "x": 64,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 14,
+              "at": {
+                "x": 32,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 15,
+              "at": {
+                "x": 32,
+                "y": -32
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": [
+          [
+            11,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": -224
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  14,
+                  {
+                    "x": 0,
+                    "y": 64
+                  }
+                ],
+                [
+                  13,
+                  {
+                    "x": 0,
+                    "y": 64
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            11,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0.93359375,
+                  "y": 96.7109375
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}
