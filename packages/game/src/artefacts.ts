@@ -385,18 +385,18 @@ function body(type: ArtefactType): Body {
     case 'key':
       return assembled(
         [piece(pyramid(0.9, 1.15))],
-        { y: 1.1, shade: { w: 1.1, d: 1.1, round: false }, motion: 'spin', bobs: true, overhead: false },
+        { y: 1.6, shade: { w: 1.1, d: 1.1, round: false }, motion: 'spin', bobs: true, overhead: false },
       );
 
     case 'delay':
       return assembled(
-        [piece(new THREE.DodecahedronGeometry(0.7))],
+        [piece(new THREE.DodecahedronGeometry(0.5))],
         { y: 1.5, shade: { w: 1.2, d: 1.2, round: true }, motion: 'spin', bobs: true, overhead: false },
       );
 
     case 'decompress':
       return assembled(
-        inward(0.45, 0.5, 0.9),
+        inward(0.35, 0.5, 0.7),
         { y: 1.5, shade: { w: 1.4, d: 1.4, round: false }, motion: 'spin', bobs: true, overhead: false },
       );
 
@@ -406,7 +406,7 @@ function body(type: ArtefactType): Body {
     // it is only there when the level is being looked down on.
     case 'start':
       return assembled(
-        [piece(pyramid(0.28, 2.2), new THREE.Matrix4().makeRotationZ(Math.PI))],
+        [piece(pyramid(0.58, 2.2), new THREE.Matrix4().makeRotationZ(Math.PI))],
         { y: 1.15, shade: null, motion: 'still', bobs: false, overhead: true },
       );
 
