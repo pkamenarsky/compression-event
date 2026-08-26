@@ -9,6 +9,7 @@ import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
 import { copied, grouped, landing, pasted, stamped, ungrouped } from './scene';
+import { shipped } from './export';
 import { download, upload } from './save';
 import { theme } from './theme';
 import {
@@ -57,6 +58,7 @@ export function editor(initial: World): VNode {
         [
           inputListener(input),
           saving(state, input, update),
+          playing(state, input),
           shortcuts(state, input, update),
 
           replaying(s.currentVersion, state, update),
@@ -235,6 +237,56 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
       }
     }
   });
+}
+
+/**
+ * Cmd+Enter hands the level to the game and stands in it.
+ *
+ * A window rather than a view inside the editor, because the game takes the
+ * whole page: the pointer, the keyboard and the screen. Leaving it is closing
+ * it, and the editor is still sitting there with everything where it was.
+ */
+function playing(state: Value<EditorState>, input: Input): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(input, 'Enter');
+
+      if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
+
+      e.preventDefault();
+      started(state());
+    }
+  });
+}
+
+/**
+ * The level, posted to a window opened for it.
+ *
+ * Posted rather than written somewhere both can read: a structured clone
+ * carries a typed array as a typed array, so the bake crosses whole and
+ * neither side serialises anything. It is the new window that asks — one that
+ * has only just been opened has no listener yet, and a message posted into it
+ * would be gone — so this waits to be spoken to and answers once.
+ *
+ * The window is opened before the world is worked out, because a browser
+ * grants the popup to the keypress and not to what happens afterwards.
+ */
+function started(s: EditorState): void {
+  const page = window.open('/game.html', '_blank');
+
+  if (page === null) return;
+
+  const world = shipped(s.world, s.bake);
+
+  const heard = (e: MessageEvent): void => {
+    if (e.origin !== window.location.origin || e.source !== page) return;
+    if ((e.data as { ce?: string } | null)?.ce !== 'ready') return;
+
+    window.removeEventListener('message', heard);
+    page.postMessage(world, window.location.origin);
+  };
+
+  window.addEventListener('message', heard);
 }
 
 /**

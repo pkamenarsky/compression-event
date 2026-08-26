@@ -23,6 +23,7 @@ import {
   ENTRY_STRIDE,
   FRAME_STRIDE,
   Floor,
+  Artefact as GameArtefact,
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
@@ -30,7 +31,7 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { IDENTITY, Resolved, resolveAt } from './scene';
+import { IDENTITY, Resolved, placeAt, resolveAt } from './scene';
 import { Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
@@ -384,16 +385,32 @@ export function floorsAt(world: World, v: VersionId): Floor[] {
 }
 
 /**
+ * Every artefact, and where each one stands at every version.
+ *
+ * Resolved here rather than shipped as layers, because the game has no
+ * versions to resolve *through* — what it is handed is flat, and an artefact's
+ * place at a version is a point. What is lost is the arc between two of them,
+ * which the game does not draw: see `Artefact`.
+ */
+function artefactsShipped(world: World): GameArtefact[] {
+  return [...world.artefacts.keys()]
+    .sort((a, b) => a - b)
+    .map(id => ({
+      type: world.artefacts.get(id)!.type,
+      places: world.versions.map((_unused, v) => placeAt(world, id, v)),
+    }));
+}
+
+/**
  * The world as the game gets it.
  *
- * Artefacts and paths come out empty: the editor has a tool for the first and
- * nothing behind it, and has never had the second. The fields are here so that
- * the day it does, nothing downstream has to change. See `docs/game.md`.
+ * Paths come out empty: the editor has never had them. The field is here so
+ * that the day it does, nothing downstream has to change. See `docs/game.md`.
  */
 export function shipped(world: World, bake: Bake): GameWorld {
   return {
     paths: [],
-    artefacts: [],
+    artefacts: artefactsShipped(world),
     versions: world.versions.map((_unused, v) => versionOf(world, v)),
     baked: bakedLevel(bake, world),
   };

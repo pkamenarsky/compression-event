@@ -88,10 +88,22 @@ export interface Floor {
   points: Point[]
 }
 
+/**
+ * One artefact, and where it stands at every version.
+ *
+ * A place per version rather than one place, because an artefact is carried by
+ * whatever holds it: a key in a room that turns turns with it. Nothing in
+ * between them is shipped. The walls morph and an artefact does not — it moves
+ * at the instant collision does, which is the same instant and for the same
+ * reason: what is in flight is a picture, and where a thing *is* only changes
+ * when the version does. See the header.
+ *
+ * Null where it does not exist yet: a version before the one that introduced
+ * it cannot name it.
+ */
 export interface Artefact {
-  x: number
-  y: number
   type: ArtefactType
+  places: (Point | null)[]
 }
 
 export interface Version {

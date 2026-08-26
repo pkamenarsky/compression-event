@@ -1,0 +1,488 @@
+// -----------------------------------------------------------------------------
+// The game
+//
+// The jam build's loop, carried over onto the new world: stand in a level that
+// compresses on a timer, find the key, reach the exit before there is nowhere
+// left to stand. What changed underneath it is that a version transition is now
+// a morph rather than a cut, and that the level arrives from the editor rather
+// than from a file of its own.
+//
+// Two clocks, deliberately apart
+// -----------------------------------
+// The walls *move* over the length of a shift, and the walls that *stop* the
+// player change at the end of it, in one step. That is the agreement in
+// `world.ts`: collision runs on the set at a version, the morph is a picture of
+// getting from one to the next, and a picture is not somewhere to stand. So for
+// the length of a shift the wall on screen is a little ahead of the wall that
+// stops you, which is what the jam build had between its snaps too.
+//
+// Artefacts move on the second clock, with collision, for the same reason: an
+// artefact is a place, and where a thing is only changes when the version does.
+// -----------------------------------------------------------------------------
+
+import { Standing, artefacts } from './artefacts';
+import { Hulls } from './coldet';
+import { Hud, hud } from './hud';
+import { SCALE, renderer } from './render';
+import {
+  SoundHandle,
+  drone,
+  error,
+  levelComplete,
+  pickup,
+  playSound,
+  playSoundFor,
+  versionShift,
+} from './sound';
+import { Run } from './walls';
+import { ArtefactType, Point, World } from './world';
+
+/** Eye height, in world units. */
+const EYE = 1.6;
+
+/** How fast the player would go with nothing in the way, and how sharply that
+ * speed is reached and lost. */
+const SPEED = 10;
+const GRIP = 30;
+const DRAG = 8;
+
+/** Seconds a version stands before the next one arrives, and how long the
+ * arriving takes. The first is the pressure the whole game is made of; the
+ * second is only how long the picture takes. */
+const HOLD = 5;
+const SHIFT = 1;
+
+/** How near a thing has to be to be named, and to be taken. */
+const NAMED = 3.5;
+const TAKEN = 1.5;
+
+/** Turn per pixel of mouse. */
+const LOOK = 0.002;
+
+export interface Game {
+  dispose(): void
+}
+
+/** An artefact within reach, and how far. */
+interface Near {
+  index: number
+  type: ArtefactType
+  away: number
+}
+
+export function play(host: HTMLElement, world: World): Game {
+  const view = renderer(host, { dither: true });
+  const crowd = artefacts(view.scene);
+  const say = hud(host);
+
+  // Nobody is looking down on it: this is the view from inside.
+  crowd.overhead(false);
+  view.load(world);
+
+  /** One set of walls per version, built once. A level has a handful of them
+   * and the player crosses every one. */
+  const walls = world.versions.map(v => new Hulls(v.polygons, SCALE));
+
+  const spans = world.baked.spans.length;
+
+  /** Where the player is and which way they are facing, in world units. */
+  const player = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
+
+  /** Which version stops the player and holds the artefacts. During a shift
+   * this is still the one being left — see the header. */
+  let version = 0;
+
+  /** How far into a shift, in seconds, or null while one is standing. */
+  let shifting: number | null = null;
+
+  /** Seconds left of the version standing. */
+  let clock = HOLD;
+
+  /** Which two versions the shift in flight runs between. */
+  let leg = { from: 0, to: 0 };
+
+  /** What has been picked up, and which artefacts are gone because of it. */
+  const carrying = new Set<ArtefactType>();
+  const gone = new Set<number>();
+
+  const down = new Set<string>();
+
+  let ambient: SoundHandle | null = null;
+  let coming: SoundHandle | null = null;
+  let running = false;
+
+  /** The escalation that says a shift is on its way. Restarted whenever the
+   * clock is, and stopped outright when there is nothing to escalate to. */
+  const escalate = (on = true): void => {
+    coming?.stop();
+    coming = on ? playSoundFor(versionShift(), HOLD) : null;
+  };
+
+  /** The version on screen, standing still. */
+  const drawn = (v: number): void => {
+    view.walk(null);
+    view.show(runs(world, v), world.versions[v]?.floors ?? []);
+  };
+
+  /** Everything that follows from being at a version: the walls drawn, the
+   * artefacts placed. Called after every way of getting to one. */
+  const arrived = (): void => {
+    drawn(version);
+    placed();
+  };
+
+  const placed = (): void => {
+    const all: Standing[] = [];
+
+    world.artefacts.forEach((it, i) => {
+      const at = it.places[version];
+
+      if (at === null || at === undefined || gone.has(i)) return;
+
+      all.push({ id: i, type: it.type, x: at.x, y: at.y });
+    });
+
+    crowd.show(all);
+  };
+
+  const spawn = (): void => {
+    const start = world.artefacts.find(it => it.type === 'start')?.places[0];
+
+    player.x = (start?.x ?? 0) * SCALE;
+    player.z = (start?.y ?? 0) * SCALE;
+    player.vx = 0;
+    player.vz = 0;
+    player.yaw = 0;
+  };
+
+  const restart = (): void => {
+    version = 0;
+    shifting = null;
+    clock = HOLD;
+
+    carrying.clear();
+    gone.clear();
+    spawn();
+    arrived();
+    escalate();
+  };
+
+  /**
+   * The next version arriving.
+   *
+   * The picture starts here and the walls that stop the player change when it
+   * finishes, so this is the point at which the level is committed to
+   * compressing and not yet the point at which it has. A span that was never
+   * baked has no picture, so it snaps.
+   */
+  const compress = (to: number): void => {
+    if (to < 0 || to >= world.versions.length) return;
+
+    clock = HOLD;
+
+    // Backwards or forwards, a shift is a walk from where the level is to
+    // where it is going, and the bake reads it the same way either round. What
+    // there is no picture of — an unbaked span, or a jump of more than one —
+    // arrives all at once.
+    if (spans === 0 || Math.abs(to - version) !== 1) {
+      shifting = null;
+      version = to;
+      arrived();
+    }
+    else {
+      leg = { from: version, to };
+      shifting = 0;
+    }
+
+    // Somewhere that stops existing is the level closing over the player, and
+    // it is worth hearing before it is worth seeing. Nothing escalates towards
+    // a version the player will not survive to see.
+    const room = walls[to]?.standable({ x: player.x, y: player.z }) ?? true;
+
+    escalate(room);
+
+    if (!room) playSoundFor(error, 1);
+  };
+
+  const walked = (): void => {
+    if (shifting === null) return;
+
+    const t = Math.min(shifting / SHIFT, 1);
+    const at = leg.from + (leg.to - leg.from) * t;
+
+    view.walk(Math.min(Math.max(at / spans, 0), 1));
+  };
+
+  /** One frame of standing in it. */
+  const stepped = (dt: number): void => {
+    const ahead = (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0);
+    const across = (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0);
+
+    let wx = 0, wz = 0;
+
+    if (ahead !== 0 || across !== 0) {
+      const l = Math.hypot(ahead, across);
+      const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+
+      wx = (sin * ahead + cos * across) / l * SPEED;
+      wz = (-cos * ahead + sin * across) / l * SPEED;
+    }
+
+    // Towards the speed asked for while a key is down, and away from any speed
+    // at all once it is let go. Both exponential, so neither depends on how
+    // often this is called.
+    if (wx !== 0 || wz !== 0) {
+      const k = 1 - Math.exp(-GRIP * dt);
+
+      player.vx += (wx - player.vx) * k;
+      player.vz += (wz - player.vz) * k;
+    }
+    else {
+      const k = Math.exp(-DRAG * dt);
+
+      player.vx *= k;
+      player.vz *= k;
+    }
+
+    const was = { x: player.x, y: player.z };
+    const now = walls[version]?.trace(was, { x: player.vx * dt, y: player.vz * dt }) ?? was;
+
+    player.x = now.x;
+    player.z = now.y;
+  };
+
+  /** The nearest thing worth naming, or nothing near enough. */
+  const nearest = (): Near | null => {
+    let out: Near | null = null;
+
+    for (let i = 0; i < world.artefacts.length; i++) {
+      const it = world.artefacts[i];
+      const at = it.places[version];
+
+      // The start is a mark on the floor rather than a thing to walk up to.
+      if (at === null || at === undefined || gone.has(i) || it.type === 'start') continue;
+
+      const away = Math.hypot(player.x - at.x * SCALE, player.z - at.y * SCALE);
+
+      if (out === null || away < out.away) out = { index: i, type: it.type, away };
+    }
+
+    return out === null || out.away > NAMED ? null : out;
+  };
+
+  const lost = async (): Promise<void> => {
+    if (say.busy()) return;
+
+    say.note(null);
+    await say.say('PULL YOURSELF TOGETHER', 3000);
+    restart();
+  };
+
+  const took = async (index: number, type: ArtefactType): Promise<void> => {
+    if (say.busy()) return;
+
+    switch (type) {
+      // More time before the next one, which is the whole of it.
+      case 'delay':
+        gone.add(index);
+        clock = HOLD;
+        placed();
+        escalate();
+        playSoundFor(pickup, 1);
+        break;
+
+      // Back the way the level came, which is the only way back there is.
+      case 'decompress':
+        if (version === 0) break;
+
+        gone.add(index);
+        playSoundFor(pickup, 1);
+        compress(version - 1);
+        break;
+
+      case 'key':
+        gone.add(index);
+        carrying.add('key');
+        placed();
+        playSoundFor(pickup, 1);
+        break;
+
+      case 'exit':
+        if (!carrying.has('key')) break;
+
+        running = false;
+        say.note(null);
+        escalate(false);
+        ambient?.stop();
+        ambient = null;
+        playSoundFor(levelComplete(), 3);
+
+        await say.say('DIRECTIVE FULFILLED', 5000);
+        await say.say('forgetful-functor.itch.io', 0, '@pkamenarsky');
+        say.black();
+        break;
+
+      default:
+        break;
+    }
+  };
+
+  const named = (type: ArtefactType): string => {
+    switch (type) {
+      case 'delay': return 'DELAY COMPRESSION';
+      case 'decompress': return 'DECOMPRESS';
+      case 'key': return 'KEY';
+      case 'exit': return carrying.has('key') ? 'EXIT' : 'EXIT: FIND KEY';
+      default: return type.toUpperCase();
+    }
+  };
+
+  // ── The loop ──
+
+  let last = performance.now();
+
+  let frame = requestAnimationFrame(function tick(now: number): void {
+    // Capped: a tab left in the background would otherwise come back and put
+    // the player through a wall in one step.
+    const dt = Math.min(0.1, (now - last) / 1000);
+
+    last = now;
+    frame = requestAnimationFrame(tick);
+
+    // The scene is still drawn while a message is up — it is what the message
+    // is over.
+    if (running && !say.busy()) {
+      stepped(dt);
+
+      if (shifting !== null) {
+        shifting += dt;
+
+        // The end of the picture is the moment the level *is* the next
+        // version: the walls that stop the player and the places the
+        // artefacts stand both change here, together, in one step.
+        if (shifting >= SHIFT) {
+          shifting = null;
+          version = leg.to;
+          arrived();
+        }
+        else {
+          walked();
+        }
+      }
+      else {
+        clock -= dt;
+
+        if (clock <= 0) {
+          if (version + 1 < world.versions.length) compress(version + 1);
+          else clock = HOLD;
+        }
+      }
+
+      const found = nearest();
+
+      say.note(found === null ? null : named(found.type));
+
+      if (found !== null && found.away <= TAKEN) void took(found.index, found.type);
+
+      if (!(walls[version]?.standable({ x: player.x, y: player.z }) ?? true)) void lost();
+    }
+
+    view.camera.position.set(player.x, EYE, player.z);
+    view.camera.lookAt(
+      player.x + Math.sin(player.yaw),
+      EYE,
+      player.z - Math.cos(player.yaw),
+    );
+
+    crowd.update(dt, view.camera);
+    view.render();
+  });
+
+  // ── The keyboard and the pointer ──
+
+  const canvas = host.querySelector('canvas');
+
+  const grab = (): void => {
+    if (document.pointerLockElement !== canvas) void (canvas as HTMLCanvasElement | null)?.requestPointerLock?.();
+  };
+
+  const pressed = (e: KeyboardEvent): void => {
+    down.add(e.code);
+  };
+
+  const released = (e: KeyboardEvent): void => {
+    down.delete(e.code);
+  };
+
+  const moved = (e: MouseEvent): void => {
+    if (document.pointerLockElement === canvas) player.yaw += e.movementX * LOOK;
+  };
+
+  // A window that loses the focus keeps whatever was held down forever.
+  const blurred = (): void => down.clear();
+
+  host.addEventListener('click', grab);
+  window.addEventListener('keydown', pressed);
+  window.addEventListener('keyup', released);
+  window.addEventListener('blur', blurred);
+  document.addEventListener('mousemove', moved);
+
+  // ── Getting going ──
+
+  void (async () => {
+    // The click that dismisses this is also what lets the audio start and what
+    // takes the pointer: a browser grants all three to a gesture and none of
+    // them to a page that merely loaded.
+    await say.say('COMPRESSION EVENT', 0, 'CLICK TO START');
+
+    ambient = playSound(drone);
+
+    restart();
+    grab();
+
+    running = true;
+  })();
+
+  return {
+    dispose(): void {
+      cancelAnimationFrame(frame);
+
+      host.removeEventListener('click', grab);
+      window.removeEventListener('keydown', pressed);
+      window.removeEventListener('keyup', released);
+      window.removeEventListener('blur', blurred);
+      document.removeEventListener('mousemove', moved);
+
+      ambient?.stop();
+      coming?.stop();
+      say.dispose();
+      crowd.dispose();
+      view.dispose();
+    },
+  };
+}
+
+/**
+ * A version's rings as the wall builder wants them: open runs of points.
+ *
+ * A ring is closed by repeating its first point, because a wall is a
+ * consecutive pair and the pair joining the last corner to the first is a wall
+ * like any other. Every corner is a real one — these are the union's own rings
+ * rather than one polygon's share of an outline — so every one of them gets its
+ * vertical line.
+ */
+function runs(world: World, v: number): Run[] {
+  const version = world.versions[v];
+
+  if (version === undefined) return [];
+
+  return version.polygons
+    .filter(p => p.points.length >= 3)
+    .map(p => {
+      const points: Point[] = p.points.map(q => ({ x: q.x, y: q.y }));
+
+      points.push(points[0]);
+
+      return { points, corner: points.map(() => true) };
+    });
+}
