@@ -1,10 +1,11 @@
 * paths
 * artifacts
-* shape button
+* create button
 ** (!) should be selected first
 ** rect
 ** n-gon shape shows slider for point count
 ** polyline
+** also artifacts? would make sense
 * zoom
 * settings view
 ** grid size
