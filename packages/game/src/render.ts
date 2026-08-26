@@ -94,8 +94,10 @@ export interface Renderer {
    * of a walk while the morph has the walls; the ground is not, because the
    * ground does not stop being there because the walls are moving.
    *
-   * So they snap at a version boundary rather than morphing across it, which is
-   * what collision does too.
+   * They stand still, and the span's own fill takes over for the length of a
+   * walk — the two are cut from the same projection at the same depth, so they
+   * agree at the ends of the span by construction. Collision still snaps: a
+   * floor stops nothing, so there is nothing there to walk into.
    */
   floors(rings: readonly Floor[]): void
 
@@ -145,6 +147,8 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     wallHeight: WALL_HEIGHT,
     wallColor: WALL_COLOR,
     lineColor: LINE_COLOR,
+    fillColor: SHAPE_COLOR,
+    fillHeight: SHAPE_Y,
   };
 
   let standing: Source | null = null;
@@ -165,21 +169,26 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     if (want !== showing) {
       const was = morphs[showing];
 
-      if (was !== undefined) scene.remove(was.walls, was.lines);
+      if (was !== undefined) scene.remove(was.walls, was.lines, was.fill);
 
       const now = morphs[want];
 
-      if (now !== undefined) scene.add(now.walls, now.lines);
+      if (now !== undefined) scene.add(now.walls, now.lines, now.fill);
 
       showing = want;
     }
 
-    if (standing !== null) {
-      const wanted = !walking || morphs[showing] === undefined;
+    // The floors morph with everything else, so the pair of them swap the way
+    // the walls do: what `floors` laid down stands still, and the span's own
+    // fill has it for the length of a walk.
+    const wanted = !walking || morphs[showing] === undefined;
 
+    if (standing !== null) {
       standing.walls.visible = wanted;
       standing.lines.visible = wanted;
     }
+
+    if (shapes !== null) shapes.visible = wanted;
   }
 
   function show(runs: readonly Run[]): void {
@@ -203,7 +212,10 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       shapes = null;
     }
 
-    if (rings.length === 0) return;
+    if (rings.length === 0) {
+      reconcile(showing);
+      return;
+    }
 
     shapes = new THREE.Mesh(filled(rings), new THREE.MeshBasicMaterial({
       color: SHAPE_COLOR,
@@ -217,11 +229,12 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     scene.add(shapes);
     grow(bounding(rings.map(r => r.points)));
+    reconcile(showing);
   }
 
   function drop(): void {
     for (const m of morphs) {
-      scene.remove(m.walls, m.lines);
+      scene.remove(m.walls, m.lines, m.fill);
       m.dispose();
     }
 

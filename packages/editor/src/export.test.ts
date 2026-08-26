@@ -359,10 +359,12 @@ describe('a solid becomes a hole, and a hole is one by its winding', () => {
 });
 
 describe('floors come along without taking part', () => {
-  const withFloor = drawn(
+  const drawing = drawn(
     ['level', rect(0, 0, 200, 200)],
     ['floor', rect(50, 50, 60, 60)],
-  ).world;
+  );
+
+  const withFloor = drawing.world;
 
   test('kept, and kept apart', () => {
     const version = versionOf(withFloor, 0);
@@ -394,6 +396,36 @@ describe('floors come along without taking part', () => {
 
     expect(version.polygons).toEqual([]);
     expect(version.floors.length).toBe(1);
+  });
+
+  test('but it morphs across a span, and says so in the buffers', () => {
+    // Taking no part in the set is not the same as standing still. The floor
+    // rides its own chain like everything else; what the flag says is what is
+    // built on the points at the other end — a fill rather than walls.
+    const moved = transformed(withFloor, 1, drawing.ids[1], {
+      translation: { x: 40, y: 25 },
+      rotation: 0.4,
+    });
+
+    const flat = bakedSpan(run(bakeSpan(moved, 0)));
+    const fills = flat.tracks.filter(t => t.fill);
+
+    expect(fills.length).toBe(1);
+    expect(flat.tracks.filter(t => !t.fill).length).toBe(1);
+
+    // Closed, and every point a corner of its own outline — a floor is under
+    // the walls, never cut by them.
+    for (const s of fills[0].stretches) {
+      for (const r of s.runs) {
+        expect(r.count).toBeGreaterThan(3);
+
+        for (let i = r.first; i < r.first + r.count; i++) {
+          expect(flat.kinds[i]).not.toEqual(CROSSING);
+        }
+      }
+    }
+
+    expect(agrees(moved, 0)).toBeLessThan(SLACK);
   });
 });
 

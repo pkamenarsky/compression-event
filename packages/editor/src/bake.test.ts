@@ -1067,6 +1067,112 @@ describe('a corner coming or going across a span', () => {
   });
 });
 
+describe('a floor morphs like everything else, taking part in nothing', () => {
+  // A floor is in no set — `worldset` takes only `level` and `solid` — so its
+  // boundary is its own projection and nothing else. What it is not is static:
+  // it slides, turns and erodes with the version it belongs to, and the walls
+  // standing on it move with it. So it gets a track like anything else, cut to
+  // the same measure and read by the same lerp; only what is built on the
+  // points differs.
+
+  function floored(): { world: World, room: PolygonId, floor: PolygonId } {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-50, -50, 100, 100)],
+    );
+
+    const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
+    const edit = editAt(world, 1, ids[1], it.erosion);
+
+    return {
+      world: withEdit(world, 1, ids[1], {
+        ...edit,
+        transform: {
+          ...edit.transform,
+          translation: { x: 120, y: 40 },
+          rotation: 0.7,
+        },
+      }),
+      room: ids[0],
+      floor: ids[1],
+    };
+  }
+
+  test('it has a track of its own, marked as a fill', () => {
+    const { world, floor } = floored();
+    const span = run(bakeSpan(world, 0));
+    const track = span.tracks.find(t => t.id === floor)!;
+
+    expect(track).toBeDefined();
+    expect(track.fill).toBe(true);
+    expect(span.tracks.find(t => t.id !== floor)!.fill).toBe(false);
+  });
+
+  test('and its runs are closed rings rather than open arcs', () => {
+    const { world, floor } = floored();
+    const span = run(bakeSpan(world, 0));
+    const s = span.tracks.find(t => t.id === floor)!.stretches[0];
+
+    for (const r of s.a) {
+      const first = r.points[0], last = r.points[r.points.length - 1];
+
+      expect(r.points.length).toBeGreaterThan(3);
+      expect(last.x).toBeCloseTo(first.x, 9);
+      expect(last.y).toBeCloseTo(first.y, 9);
+    }
+  });
+
+  test('a turn goes round its pivot, exactly, all the way across', () => {
+    // Nothing cuts it and nothing crosses it, so there is no tolerance in this
+    // at all: the replay is the resolved geometry to the last digit.
+    const { world, floor } = floored();
+    const span = run(bakeSpan(world, 0));
+
+    for (const t of [0, 0.1, 0.25, 0.5, 0.75, 1]) {
+      const mine = sample(span, t).filter(r => r.id === floor);
+      const real = truth(world, 0, t).filter(r => r.id === floor);
+
+      expect(mine.length).toEqual(real.length);
+
+      mine.forEach((r, i) => r.points.forEach((p, j) => {
+        expect(p.x).toBeCloseTo(real[i].points[j].x, 9);
+        expect(p.y).toBeCloseTo(real[i].points[j].y, 9);
+      }));
+    }
+  });
+
+  test('a wall sweeping across it does not cut it', () => {
+    // The whole of "takes no part". A bar dragged over the floor is an event
+    // for every room it touches and none at all for this.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['solid', rect(-300, -20, 40, 40)],
+      ['floor', rect(-50, -50, 100, 100)],
+    );
+
+    const span = run(bakeSpan(transformed(world, 1, ids[1], {
+      translation: { x: 600, y: 0 },
+    }), 0));
+
+    expect(span.tracks.find(t => t.id === ids[2])!.stretches.length).toEqual(1);
+  });
+
+  test('and a group eroding around it does not swallow it', () => {
+    // An eroding group stands in front of its members' union, and a floor is
+    // in no union. So it stays its own subject at its own depth, which is
+    // exactly what `floorsAt` draws standing still.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-50, -50, 100, 100)],
+    );
+
+    const held = grouped(world, 0, ids, TOP)!;
+    const span = run(bakeSpan(transformed(held.world, 1, held.id, { erosion: 20 }), 0));
+
+    expect(span.tracks.find(t => t.id === ids[1])?.fill).toBe(true);
+  });
+});
+
 describe('a corner that was always there but flat at one end', () => {
   // The other way a corner arrives, and the one that was missed. Put a vertex
   // on an edge and leave it there, and it belongs to both versions — nothing is

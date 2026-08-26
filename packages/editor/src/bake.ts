@@ -316,6 +316,16 @@ export interface Stretch {
  */
 export interface Track {
   id: PolygonId
+  /**
+   * A floor: drawn filled and flat underfoot rather than as walls.
+   *
+   * A floor is in no set — `worldset` takes only `level` and `solid` — so its
+   * boundary is its own projection and nothing else, and its runs are closed
+   * rings rather than the open arcs a share of the outline comes in. Everything
+   * else about a track is the same, which is the point: it rides the same
+   * frame, it is cut by the same measure, and it interpolates by the same lerp.
+   */
+  fill: boolean
   stretches: Stretch[]
   /** By `t`, ascending. Never an interval — see above. */
   jumps: Stretch[]
@@ -1054,13 +1064,33 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
 }
 
 
-/** Everything the span's tracks are cut for: a polygon that nothing holds, and
- * an eroding group in place of all of its members. */
-function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
+/** One track's worth of the span: what it is cut for, and what it is cut
+ * from. */
+interface Subject {
+  id: Id
+  mine: Moving[]
+  /** See `Track.fill`. */
+  fill: boolean
+}
+
+/** Everything the span's tracks are cut for: a polygon that nothing holds, an
+ * eroding group in place of all of its members, and every floor as itself. */
+function subjects(cast: Cast): Subject[] {
   const out = new Map<Id, Moving[]>();
   const kinds = new Map<Id, Set<PolygonType>>();
+  const all: Subject[] = [];
 
   for (const m of cast.items) {
+    // A floor is in no set, so there is no union for a group to stand in front
+    // of and nothing for it to be folded into. It is baked as itself at its own
+    // depth, which is exactly what `floorsAt` draws standing still — so the
+    // still and the morph agree at the ends of the span by construction rather
+    // than by two paths happening to arrive at the same answer.
+    if (m.at.polygon.type === 'floor') {
+      all.push({ id: m.at.id, mine: [m], fill: true });
+      continue;
+    }
+
     // The outermost group that erodes, or the polygon itself. Everything
     // between them is transparent and hands its members on.
     const up = enclosing(cast.world, m.at.id).filter(g => cast.eroding.has(g));
@@ -1070,19 +1100,17 @@ function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
     (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(m.at.polygon.type);
   }
 
-  const all: { id: Id, mine: Moving[] }[] = [];
-
   for (const [id, mine] of out) {
     if (!cast.eroding.has(id)) {
-      all.push({ id, mine });
+      all.push({ id, mine, fill: false });
       continue;
     }
 
     // A group that holds both kinds contributes to both sides of the set, and
     // each side is its own boundary and its own track. They are cut over the
     // same members and ride the same frame; only the classification differs.
-    if (kinds.get(id)?.has('level')) all.push({ id, mine });
-    if (kinds.get(id)?.has('solid')) all.push({ id: sideOf(id, 'solid'), mine });
+    if (kinds.get(id)?.has('level')) all.push({ id, mine, fill: false });
+    if (kinds.get(id)?.has('solid')) all.push({ id: sideOf(id, 'solid'), mine, fill: false });
   }
 
   return all;
@@ -1119,6 +1147,10 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const members: Member[] = [];
   let subject: Member | null = null;
 
+  const mine = at.find(it => it.id === only);
+
+  if (mine !== undefined && mine.kind === 'floor') return filling(mine);
+
   for (const it of at) {
     const m = memberOf(it);
 
@@ -1137,6 +1169,34 @@ function share(at: readonly Contributed[], only: Id): Frame {
     .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence }));
 }
 
+/**
+ * A floor's share: its own rings, and nothing to do with anybody else's.
+ *
+ * Closed, because a ring of the union belongs to no one polygon and is handed
+ * back as open arcs, while a floor's ring is a floor's ring the whole way
+ * round. Repeating the first point is how `boundaryRuns` says so too, and it
+ * is what `extrude` and the fill both read.
+ *
+ * Every point is a corner of its own outline, so nothing here is ever a
+ * crossing: a floor overlapping a wall is drawn under it, not cut by it.
+ */
+function filling(it: Contributed): Frame {
+  return it.shape
+    .filter(ring => ring.length >= 3)
+    .map((ring, r) => ({
+      id: it.id,
+      points: [...ring, ring[0]],
+      corner: ring.map(() => true).concat(true),
+      whence: ring
+        .map((_unused, i) => named(it.id, r, i))
+        .concat(named(it.id, r, 0)),
+    }));
+}
+
+function named(id: Id, ring: number, index: number): Origin {
+  return { kind: 'vertex', at: { id, ring, index } };
+}
+
 /** Everybody's share at once, through the full set. The yardstick's path, and
  * what the editor's own drawing goes through. */
 function everything(at: readonly Contributed[]): Frame {
@@ -1144,9 +1204,14 @@ function everything(at: readonly Contributed[]): Frame {
   // runs back in whatever order the entries happen to sit in, which an edit
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
-  return pieces(live(EMPTY_LIVE, at).set)
-    .map(p => ({ id: p.source, points: p.points, corner: p.corner, whence: p.whence }))
-    .sort((p, q) => p.id - q.id);
+  // Floors are not in the set at all, so they are put back beside it rather
+  // than read out of it. Sorting by id afterwards lands each one where its own
+  // track put it, which is the order `sample` reads them in.
+  return [
+    ...pieces(live(EMPTY_LIVE, at).set)
+      .map(p => ({ id: p.source, points: p.points, corner: p.corner, whence: p.whence })),
+    ...at.filter(it => it.kind === 'floor').flatMap(filling),
+  ].sort((p, q) => p.id - q.id);
 }
 
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
@@ -1243,11 +1308,18 @@ function expandBox(a: AABB, m: number): AABB {
  * question about the whole group: its members are never split across two
  * neighbourhoods, or a track would be cut against half of itself.
  */
-function neighbourhoods(all: { id: Id, mine: Moving[] }[]): Moving[][] {
+function neighbourhoods(all: Subject[]): Moving[][] {
   const boxes = all.map(s => s.mine.map(reach).reduce(merge));
-  const tree: Tree = build(boxes.map((box, id) => ({ id, box })));
+
+  // Floors are in neither half of it: nothing of theirs can bury a boundary and
+  // no boundary can cut them, so they neither look nor are looked at.
+  const tree: Tree = build(
+    boxes.flatMap((box, id) => all[id].fill ? [] : [{ id, box }]),
+  );
 
   return all.map((s, i) => {
+    if (s.fill) return s.mine;
+
     const near = search(tree, boxes[i]).filter(j => j !== i);
 
     return [...s.mine, ...near.flatMap(j => all[j].mine)];
@@ -2017,7 +2089,7 @@ export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
  * is in world units with the motion in it, and a layer applied here would be
  * that motion applied twice.
  */
-function ridden(cast: Cast, all: { id: Id, mine: Moving[] }[]): Map<Id, Rider> {
+function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
   const own = new Map(cast.items.map(m => [m.at.id, m]));
 
   return new Map(all.map(s => {
@@ -2049,7 +2121,7 @@ export interface Ready {
   from: VersionId
   cast: Cast
   /** What the tracks are cut for, and what a job names them by. */
-  items: { id: Id, mine: Moving[] }[]
+  items: Subject[]
   near: Moving[][]
   riders: Map<Id, Rider>
   /** Milliseconds it took, which is the fixed cost of putting a thread on this
@@ -2097,7 +2169,7 @@ export function* cutSome(
 
   for (let k = 0; k < which.length; k++) {
     const i = which[k];
-    const id = at.items[i].id;
+    const { id, fill } = at.items[i];
 
     const cut = yield* weighted(
       cutTrack(at.cast, at.near[i], id, at.riders, tol),
@@ -2105,7 +2177,7 @@ export function* cutSome(
       1 / which.length,
     );
 
-    tracks.push({ id, stretches: cut.stretches, jumps: cut.jumps });
+    tracks.push({ id, fill, stretches: cut.stretches, jumps: cut.jumps });
 
     worst = Math.max(worst, cut.worst);
     evaluations += cut.evaluations;

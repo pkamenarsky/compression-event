@@ -82,7 +82,13 @@ export function still(runs: readonly Run[], options: WallOptions): Source {
     uWallHeight: { value: options.wallHeight },
   };
 
-  const { wall, line } = materials(vertexShader, options, uniforms);
+  // A still has no fill of its own: the floors at a version are drawn by
+  // whoever asked for them, out of geometry that is already known, and this is
+  // the boundary. The material is made all the same and let go of here, rather
+  // than `materials` growing a switch for the one caller that does not want it.
+  const { wall, line, fill } = materials(vertexShader, options, uniforms);
+
+  fill.dispose();
 
   const geometry = (
     point: Int32Array,

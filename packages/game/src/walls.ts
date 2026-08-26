@@ -208,15 +208,32 @@ export interface WallOptions {
   wallHeight: number
   wallColor: THREE.ColorRepresentation
   lineColor: THREE.ColorRepresentation
+  /** What an authored floor is filled with. */
+  fillColor: THREE.ColorRepresentation
+  /** Where a filled floor lies, in world units: over the ground and under the
+   * walls standing on it. */
+  fillHeight: number
 }
 
-/** The pair of materials a source draws with: its own vertex shader, the
- * shared fragment ones, and whatever uniforms it needs on top of the colours. */
+export const fillFragment = /* glsl */ `
+  uniform vec3 uFillColor;
+
+  ${VARYINGS}
+
+  layout(location = 0) out vec4 fragColor;
+
+  void main() {
+    fragColor = vec4(uFillColor, 1.0);
+  }
+`;
+
+/** The materials a source draws with: its own vertex shader, the shared
+ * fragment ones, and whatever uniforms it needs on top of the colours. */
 export function materials(
   vertexShader: string,
   options: WallOptions,
   uniforms: Record<string, { value: unknown }>,
-): { wall: THREE.ShaderMaterial, line: THREE.ShaderMaterial } {
+): { wall: THREE.ShaderMaterial, line: THREE.ShaderMaterial, fill: THREE.ShaderMaterial } {
   const wall = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader,
@@ -241,7 +258,18 @@ export function materials(
     depthWrite: false,
   });
 
-  return { wall, line };
+  // Flat and unlit, laid on the ground under everything that stands on it. It
+  // is a shape rather than a surface: nothing about which way it faces means
+  // anything, so nothing shades it.
+  const fill = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader,
+    fragmentShader: fillFragment,
+    uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
+    side: THREE.DoubleSide,
+  });
+
+  return { wall, line, fill };
 }
 
 /** What both sources give the renderer: two meshes and a way to be rid of

@@ -129,6 +129,17 @@ export interface BakedStretch {
  * that holds for no length of time cannot be drawn for a frame.
  */
 export interface BakedTrack {
+  /**
+   * A floor: drawn filled and flat underfoot rather than as walls.
+   *
+   * A floor takes no part in the set, so its runs are closed rings — first
+   * point repeated — rather than the open arcs a share of the outline comes
+   * in, and nothing in them is ever a `CROSSING`. Everything else about a
+   * track is the same, which is the point: it rides the same frame, it is cut
+   * to the same measure, and it moves by the same lerp. Only what is built on
+   * top of the points differs, and that is the reader's business.
+   */
+  fill: boolean
   stretches: BakedStretch[]
   /** By `t`, ascending. Always `t0 === t1`. */
   jumps: BakedStretch[]
@@ -344,6 +355,10 @@ export function stretchAt(track: BakedTrack, t: number): BakedStretch | null {
  *
  * The yardstick the shader is written against, and the only thing in here that
  * costs anything: the game itself never calls it.
+ *
+ * Every track, floors included — the shader reads them out of the same buffers
+ * by the same arithmetic, and what this is for is checking that arithmetic. A
+ * fill track's runs are closed rings; see `BakedTrack.fill`.
  */
 export function outline(span: BakedSpan, t: number): Point[][] {
   const out: Point[][] = [];

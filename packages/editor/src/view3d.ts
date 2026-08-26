@@ -238,9 +238,9 @@ function panel(
       placed();
     };
 
-    /** The boundary at the version on screen, which is what is drawn whenever
-     * nothing is in flight — and the floors under it, which are drawn whatever
-     * is in flight. */
+    /** The boundary at the version on screen, and the floors under it: what is
+     * drawn whenever nothing is in flight. The span's own buffers have both for
+     * the length of a walk. */
     const shown = (w: World, v: VersionId): void => {
       if (view === null) return;
 
@@ -252,7 +252,8 @@ function panel(
 
       // Off the resolved polygons rather than out of `versionOf`, which would
       // union the whole level to answer a question the union has nothing to do
-      // with. They snap at a version boundary; nothing morphs a floor.
+      // with. Which is also how the bake takes them — see `subjects` — so the
+      // still and the morph draw the same floors.
       view.floors(floorsAt(w, v));
 
       if (!afoot()) framed(outline, orbit);

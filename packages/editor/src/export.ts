@@ -245,6 +245,7 @@ export function bakedSpan(span: Span): BakedSpan {
   };
 
   const tracks: BakedTrack[] = span.tracks.map(track => ({
+    fill: track.fill,
     stretches: track.stretches.map(flatten),
     jumps: track.jumps.map(flatten),
   }));

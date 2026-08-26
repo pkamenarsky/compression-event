@@ -264,6 +264,19 @@ test('the replay never strays far from csg(t)', () => {
     check('a bar sweeping a room it never touches at either end',
       transformed(world, 1, ids[0], { rotation: Math.PI })); }
   {
+    // A floor under a room, both of them moving. It is in no set, so nothing
+    // cuts it and it cuts nothing — but it rides its own chain and has to land
+    // where the CSG puts it at every instant, same as anything else.
+    const { world, ids } = drawn(
+      ['level', rect(-200,-200,400,400)],
+      ['solid', rect(-40,-40,80,80)],
+      ['floor', rect(-120,-90,180,140)],
+    );
+    const turning = transformed(world, 1, ids[1], { rotation: 0.9 });
+
+    check('a floor under a room, both turning',
+      transformed(turning, 1, ids[2], { translation: { x: 70, y: -30 }, rotation: -1.2 })); }
+  {
     // A corner that arrives at the far end of the span. It has to be there at
     // the near end too, sitting on the edge it grows out of, or the two rings
     // have nothing to interpolate between.
