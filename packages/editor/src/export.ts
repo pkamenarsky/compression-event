@@ -204,43 +204,49 @@ export function bakedSpan(span: Span): BakedSpan {
   const slotOf: number[] = [], kinds: number[] = [], crossings: number[] = [];
   const opacityA: number[] = [], opacityB: number[] = [];
 
-  const tracks: BakedTrack[] = span.tracks.map(track => ({
-    stretches: track.stretches.map((s): BakedStretch => {
-      // Per stretch, because the tables are: two stretches of one track name
-      // different rings, and a stretch of one track names a neighbour's.
-      table.at.clear();
-      tabled(s, slots, table);
+  // One stretch, flattened into the shared buffers. Jumps go through it too:
+  // they are geometry at an instant rather than an interval, but they are the
+  // same geometry, written the same way.
+  const flatten = (s: Stretch): BakedStretch => {
+    // Per stretch, because the tables are: two stretches of one track name
+    // different rings, and a stretch of one track names a neighbour's.
+    table.at.clear();
+    tabled(s, slots, table);
 
-      const runs: BakedRun[] = s.a.map((run, i) => {
-        const to = s.b[i] ?? run;
-        const origins = s.origins[i] ?? [];
-        const slot = slots.get(run.id) ?? 0;
-        const first = slotOf.length;
+    const runs: BakedRun[] = s.a.map((run, i) => {
+      const to = s.b[i] ?? run;
+      const origins = s.origins[i] ?? [];
+      const slot = slots.get(run.id) ?? 0;
+      const first = slotOf.length;
 
-        run.points.forEach((p, j) => {
-          const q = to.points[j] ?? p;
-          const cross = solvable(s, table, origins[j]);
+      run.points.forEach((p, j) => {
+        const q = to.points[j] ?? p;
+        const cross = solvable(s, table, origins[j]);
 
-          pointsA.push(p.x, p.y);
-          pointsB.push(q.x, q.y);
+        pointsA.push(p.x, p.y);
+        pointsB.push(q.x, q.y);
 
-          // How much of a corner is there, at each end of the stretch, for the
-          // shader to carry across. Whether the boundary turns here at all is
-          // already in it — see `faded` — because that and a vertex emerging
-          // say the same thing about the same vertical, and one channel lerps
-          // as well as two.
-          opacityA.push(s.opacity[0][i]?.[j] ?? 1);
-          opacityB.push(s.opacity[1][i]?.[j] ?? 1);
-          slotOf.push(slot);
-          kinds.push(cross === null ? CORNER : CROSSING);
-          crossings.push(...(cross ?? [-1, -1, -1, -1]));
-        });
-
-        return { first, count: run.points.length };
+        // How much of a corner is there, at each end of the stretch, for the
+        // shader to carry across. Whether the boundary turns here at all is
+        // already in it — see `faded` — because that and a vertex emerging
+        // say the same thing about the same vertical, and one channel lerps
+        // as well as two.
+        opacityA.push(s.opacity[0][i]?.[j] ?? 1);
+        opacityB.push(s.opacity[1][i]?.[j] ?? 1);
+        slotOf.push(slot);
+        kinds.push(cross === null ? CORNER : CROSSING);
+        crossings.push(...(cross ?? [-1, -1, -1, -1]));
       });
 
-      return { t0: s.t0, t1: s.t1, runs };
-    }),
+      return { first, count: run.points.length };
+    });
+
+    return { t0: s.t0, t1: s.t1, runs };
+  };
+
+  const tracks: BakedTrack[] = span.tracks.map(track => ({
+    stretches: track.stretches.map(flatten),
+    jumps: track.jumps.map(flatten),
   }));
 
   return {

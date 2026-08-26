@@ -102,9 +102,10 @@ export interface BakedRun {
  * A stretch of `t` across which nothing discrete happens to one polygon.
  *
  * `t0` and `t1` are positions within the span, 0 at the earlier version and 1
- * at the later one. Adjacent stretches in a track may leave a hair of a gap
- * between them: that is a topology event, converged on from both sides, and the
- * reader takes whichever side is nearer.
+ * at the later one. Adjacent stretches abut exactly and the track's stretches
+ * cover the whole span, so every instant has one owner and no instant has two.
+ *
+ * A jump is written the same way with `t0 === t1` — see `BakedTrack`.
  */
 export interface BakedStretch {
   t0: number
@@ -113,14 +114,24 @@ export interface BakedStretch {
 }
 
 /**
- * One polygon's own cut of the span, in order and covering all of it.
+ * One polygon's own cut of the span.
  *
  * Tracks are cut independently, against the handful of polygons each one
  * overlaps, so two rooms at opposite ends of a level share no keyframes. That
  * is what keeps a span from growing with the square of the level.
+ *
+ * `stretches` is an ordered cover: they abut exactly and every instant of the
+ * span lies in one of them. `jumps` are the geometry *at* the instants where
+ * the arrangement changes, which is true at a point and at neither side of it,
+ * so they are not in the cover and only an exact instant reaches them. That is
+ * what the span begins and ends on, and it is what the shader is not handed —
+ * the morph buffers are built from `stretches` alone, because an arrangement
+ * that holds for no length of time cannot be drawn for a frame.
  */
 export interface BakedTrack {
   stretches: BakedStretch[]
+  /** By `t`, ascending. Always `t0 === t1`. */
+  jumps: BakedStretch[]
 }
 
 /** Everything between two adjacent versions. */
@@ -293,15 +304,20 @@ function crossingAt(span: BakedSpan, at: number, t: number, u: number): Point | 
 }
 
 /**
- * The stretch holding `t`, or the nearer of the two around it when `t` has
- * landed in an event's own bracket.
+ * The stretch holding `t`, or the jump sitting exactly on it.
  *
  * A search rather than a scan: this is asked once per polygon per frame, and a
  * level's worth of linear walks through busy tracks showed up in the frame time
  * of the editor's replay.
  */
 export function stretchAt(track: BakedTrack, t: number): BakedStretch | null {
+  // A jump answers for its own instant and nothing else.
+  for (const j of track.jumps) {
+    if (j.t0 === t) return j;
+  }
+
   const all = track.stretches;
+
   if (all.length === 0) return null;
 
   let lo = 0, hi = all.length - 1;
@@ -309,7 +325,10 @@ export function stretchAt(track: BakedTrack, t: number): BakedStretch | null {
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
 
-    if (all[mid].t1 < t) {
+    // Half-open, the same rule the shader uses: a stretch holds its start and
+    // not its end. The cover is exact, so this needs no fallback — there is no
+    // gap for `t` to land in and no side to prefer.
+    if (all[mid].t1 <= t) {
       lo = mid + 1;
     }
     else {
@@ -317,13 +336,7 @@ export function stretchAt(track: BakedTrack, t: number): BakedStretch | null {
     }
   }
 
-  const here = all[lo];
-  if (t >= here.t0) return here;
-
-  const back = all[lo - 1];
-  if (back === undefined) return here;
-
-  return t - back.t1 <= here.t0 - t ? back : here;
+  return all[lo];
 }
 
 /**

@@ -16,7 +16,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
-import { Frame, bakeSpan, riding, sample, truth } from './bake';
+import { Frame, bakeSpan, riding, sample, stretchAt, truth } from './bake';
 import { bakedSpan, versionOf } from './export';
 import {
   TOP,
@@ -433,18 +433,23 @@ describe('a corner that is not there does not draw a line', () => {
   });
 
   test('and it is exactly gone at the version that took it out', () => {
-    const span = run(bakeSpan(dying().world, 0));
-    const last = span.tracks[0].stretches[span.tracks[0].stretches.length - 1];
+    const track = run(bakeSpan(dying().world, 0)).tracks[0];
 
-    // The far end of the last stretch is v1 itself, where the corner is gone.
-    expect(last.t1).toBeCloseTo(1, 9);
-    expect(Math.min(...last.opacity[1].flat())).toBeCloseTo(0, 9);
+    // Asked for the ends themselves rather than for the first and last
+    // stretches, because the two are not always the same thing: where the
+    // corner goes exactly at a version, that version is a jump, and a jump is
+    // not in the cover. `stretchAt` is what the reader asks either way.
+    const end = stretchAt(track, 1)!;
 
-    // And the near end of the first is v0, where it is real.
-    const first = span.tracks[0].stretches[0];
+    expect(Math.min(...end.opacity[1].flat())).toBeCloseTo(0, 9);
 
-    expect(first.t0).toBeCloseTo(0, 9);
-    expect(Math.min(...first.opacity[0].flat())).toBeCloseTo(1, 9);
+    const start = stretchAt(track, 0)!;
+
+    expect(Math.min(...start.opacity[0].flat())).toBeCloseTo(1, 9);
+
+    // And the cover really does run end to end.
+    expect(track.stretches[0].t0).toBeCloseTo(0, 9);
+    expect(track.stretches[track.stretches.length - 1].t1).toBeCloseTo(1, 9);
   });
 
   test('a room whose corners never change fades nothing', () => {

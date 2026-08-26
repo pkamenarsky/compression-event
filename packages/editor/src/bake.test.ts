@@ -280,6 +280,59 @@ describe('two readings of one ring, lined up', () => {
   });
 });
 
+describe('a track covers its span exactly, and a jump owns no interval', () => {
+  // The invariant that was not stateable while the two lived in one list. A
+  // stretch is an interval holding one arrangement; a jump is the geometry at
+  // the instant an arrangement changes, true at a point and at neither side of
+  // it. Mixed together, the cover had to be closed over the jumps to leave no
+  // instant unowned, which gave each jump half the gap to its neighbours — and
+  // an arrangement true for no length of time was then drawn for the length of
+  // a frame. Kept apart, both halves are plain: the stretches tile [0, 1] and
+  // the jumps are points.
+  const holds = (world: World) => {
+    const span = run(bakeSpan(world, 0));
+
+    expect(span.tracks.length).toBeGreaterThan(0);
+
+    for (const track of span.tracks) {
+      const all = track.stretches;
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all[0].t0).toBe(0);
+      expect(all[all.length - 1].t1).toBe(1);
+
+      for (const s of all) expect(s.t1).toBeGreaterThan(s.t0);
+
+      for (let i = 1; i < all.length; i++) expect(all[i].t0).toBe(all[i - 1].t1);
+
+      for (const j of track.jumps) {
+        expect(j.t1).toBe(j.t0);
+
+        // Reachable only by its own instant. Anything else lands in the cover.
+        expect(stretchAt(track, j.t0)).toBe(j);
+      }
+    }
+  };
+
+  test('two rooms drawn edge to edge, one of them eroding', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+    );
+
+    holds(transformed(world, 1, ids[0], { erosion: 20 }));
+  });
+
+  test('a pillar turning inside a room that is eroding', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 300, 200)],
+      ['solid', rect(120, 80, 60, 60)],
+    );
+
+    holds(transformed(transformed(world, 1, ids[0], { erosion: 20 }), 1, ids[1], { rotation: 1.1 }));
+  });
+});
+
 describe('the two ends of a stretch are the same arrangement', () => {
   // The invariant the whole span rests on. A stretch is interpolated by pairing
   // its two ends run for run and point for point, so those pairs have to be the
@@ -564,13 +617,21 @@ describe('keyframes', () => {
 
     const w = transformed(world, 1, ids[0], { erosion: 20 });
 
-    const first = run(bakeSpan(w, 0)).tracks[0].stretches[0];
+    const track = run(bakeSpan(w, 0)).tracks[0];
 
-    // Cut at the very start, so that the version before the event is the one
-    // rendering the touching geometry. How narrow that first stretch is, is the
-    // convergence's business; that it is there at all is the keyframe.
-    expect(first.t0).toBe(0);
-    expect(first.t1).toBeLessThan(1e-4);
+    // The touching geometry is a jump at the very start: true at `t = 0` and at
+    // no instant after it, which is what a jump is for. It used to be a narrow
+    // first stretch instead, and a stretch is an interval — so the arrangement
+    // that holds for an instant was drawn for the whole of the first frame of
+    // every walk, which is a wall standing on a junction that has already come
+    // apart.
+    expect(track.jumps[0].t0).toBe(0);
+    expect(track.jumps[0].t1).toBe(0);
+
+    // And the cover starts there all the same, held by the stretch that follows
+    // it: no instant of the span is unowned.
+    expect(track.stretches[0].t0).toBe(0);
+    expect(track.stretches[0].t1).toBeGreaterThan(0);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 

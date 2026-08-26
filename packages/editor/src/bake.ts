@@ -296,10 +296,29 @@ export interface Stretch {
   opacity: [number[][], number[][]]
 }
 
-/** One polygon's own cut of the span, in order and covering all of it. */
+/**
+ * One polygon's own cut of the span.
+ *
+ * Two lists, because a cut produces two kinds of thing and only one of them is
+ * an interval. `stretches` is an ordered cover of the whole span: every instant
+ * lies in exactly one of them, they abut exactly, and each holds one
+ * arrangement from end to end. `jumps` are the discontinuities — the geometry
+ * *at* an instant where the arrangement changes, which belongs to no interval
+ * because it is true at a point and nowhere either side of it.
+ *
+ * They used to be one list, and that is what made this hard to see. A jump sat
+ * in the cover with no width, `abutting` gave it half the gap to its
+ * neighbours to keep the cover closed, and from then on it was an interval
+ * holding an arrangement true only at its left end. A walk beginning at a jump
+ * drew that arrangement for its whole first frame. Kept apart, a jump can only
+ * be reached by asking for its exact instant, which is the only question it can
+ * answer.
+ */
 export interface Track {
   id: PolygonId
   stretches: Stretch[]
+  /** By `t`, ascending. Never an interval — see above. */
+  jumps: Stretch[]
 }
 
 /** Everything between two adjacent versions. */
@@ -1716,6 +1735,7 @@ function instant(a: Taken): Stretch {
 
 interface Cut {
   stretches: Stretch[]
+  jumps: Stretch[]
   /** The worst the check ever measured, over the whole track. */
   worst: number
   evaluations: number
@@ -1820,7 +1840,7 @@ function* cutTrack(
     yield done;
   }
 
-  return { stretches: abutting(out), worst, evaluations };
+  return { stretches: abutting(out.filter(wide)), jumps: out.filter(s => !wide(s)), worst, evaluations };
 
   function keep(s: Stretch): void {
     const last = out[out.length - 1];
@@ -1874,7 +1894,19 @@ function abutting(stretches: readonly Stretch[]): Stretch[] {
     out[i].t0 = mid;
   }
 
+  // The ends of the span belong to the cover too. What sat between them and it
+  // was a jump, and a jump owns no interval.
+  if (out.length > 0) {
+    out[0].t0 = 0;
+    out[out.length - 1].t1 = 1;
+  }
+
   return out;
+}
+
+/** An interval, rather than the geometry at a single instant. */
+function wide(s: Stretch): boolean {
+  return s.t1 > s.t0;
 }
 
 // -----------------------------------------------------------------------------
@@ -2010,7 +2042,7 @@ export function* cutSome(
       1 / which.length,
     );
 
-    tracks.push({ id, stretches: cut.stretches });
+    tracks.push({ id, stretches: cut.stretches, jumps: cut.jumps });
 
     worst = Math.max(worst, cut.worst);
     evaluations += cut.evaluations;
@@ -2248,7 +2280,17 @@ function crossing(
  * replay's own frame time.
  */
 export function stretchAt(track: Track, t: number): Stretch | null {
+  // A jump answers for its own instant and for nothing else. Asked for exactly
+  // the instant an arrangement changes, that is the arrangement to draw — it is
+  // what the editor draws standing still at that version, and it is what the
+  // span has to begin and end on. Asked for any other instant it has nothing to
+  // say, which is why it is not in the cover.
+  for (const j of track.jumps) {
+    if (j.t0 === t) return j;
+  }
+
   const all = track.stretches;
+
   if (all.length === 0) return null;
 
   let lo = 0, hi = all.length - 1;
@@ -2257,9 +2299,8 @@ export function stretchAt(track: Track, t: number): Stretch | null {
     const mid = (lo + hi) >> 1;
 
     // Half-open: a stretch holds its start and not its end, so the instant two
-    // of them share belongs to the later one. See `abutting` — every instant
-    // has an owner and none has two, which is the whole of what the shader
-    // needs and cannot work out for itself.
+    // of them share belongs to the later one. The cover is exact — see
+    // `abutting` — so every instant has an owner and none has two.
     if (all[mid].t1 <= t) {
       lo = mid + 1;
     }
