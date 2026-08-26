@@ -61,8 +61,9 @@ const FLOOR_Y = -0.01;
 const SHAPE_Y = FLOOR_Y / 2;
 
 export interface RendererOptions {
-  /** Off leaves the scene undithered, which is worth having in the editor
-   * where the point is to read the geometry rather than to be somewhere. */
+  /** Where it starts. Off leaves the scene undithered, which is worth having
+   * in the editor where the point is to read the geometry rather than to be
+   * somewhere; `dither` turns it over afterwards. */
   dither?: boolean
   /** Device pixels per CSS pixel. The jam build pinned this to 1 and the look
    * depends on it: the dither pattern is in pixels. */
@@ -106,6 +107,15 @@ export interface Renderer {
   /** Which two versions a position sits between, for anything that wants the
    * source polygons. */
   between(u: number): [number, number]
+
+  /**
+   * Whether the screen-space dither is on.
+   *
+   * The look belongs to being *in* the level: from above, the pattern is a
+   * texture over geometry someone is trying to read, and the editor's panel
+   * turns it on at the moment it becomes somewhere to stand.
+   */
+  dither(on: boolean): void
 
   resize(): void
   render(): void
@@ -303,6 +313,10 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     show,
     load,
     walk,
+
+    dither(on: boolean): void {
+      dither.enabled = on;
+    },
 
     between(u: number): [number, number] {
       const { span } = at(u);

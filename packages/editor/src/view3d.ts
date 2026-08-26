@@ -180,6 +180,10 @@ function panel(
       // three places that change it: this runs after every one of them.
       crowd?.overhead(!afoot());
 
+      // The dither is what being in the level looks like. From above it is a
+      // pattern over geometry someone is trying to read.
+      view.dither(afoot());
+
       if (afoot()) {
         view.camera.position.set(walker.x, EYE, walker.z);
         view.camera.lookAt(
