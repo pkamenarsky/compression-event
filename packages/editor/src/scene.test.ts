@@ -13,7 +13,6 @@ import {
   grouped,
   IDENTITY,
   depths,
-  bounding,
   occupying,
   starting,
   under,
@@ -933,49 +932,6 @@ describe('what a click lands on', () => {
     expect(hitting(g.world, 0, items, [], { x: 150, y: 150 })).toEqual([]);
   });
 
-  test('but what a moving floor is clipped to keeps the pillar', () => {
-    // `bounding` is the same question `occupying` answers, minus the solids.
-    // A floor is drawn flat under a pillar rather than stopping at its edge,
-    // and the still drawing only takes the pillar out because a shut group
-    // draws no pillar of its own to put back over it. A replay has one.
-    const { world, ids } = drawn(
-      ['level', rect(0, 0, 100, 100)],
-      ['solid', rect(40, 40, 20, 20)],
-      ['floor', rect(0, 0, 100, 100)],
-    );
-    const g = grouped(world, 0, ids, TOP)!;
-    const items = resolveAt(g.world, 0);
-    const at = bounding(g.world, 0, items, []);
-
-    expect(shapeArea(at.get(g.id)!)).toBeCloseTo(100 * 100, 6);
-    expect(occupying(g.world, 0, items, [])[0].shape).toHaveLength(2);
-    expect(at.get(g.id)!).toHaveLength(1);
-  });
-
-  test('and a floor loose in the world is clipped to nothing at all', () => {
-    // Nothing to be inside of. The clip is per group, so a floor belonging to
-    // none of them is drawn whole, which is what it was drawn as.
-    const { world } = drawn(
-      ['level', rect(0, 0, 100, 100)],
-      ['floor', rect(50, 50, 200, 200)],
-    );
-
-    expect(bounding(world, 0, resolveAt(world, 0), [])).toEqual(new Map());
-  });
-
-  test('a group standing open is not clipped against either', () => {
-    // Drilled in, its members are on screen as themselves and the group is not
-    // drawing for them. There is no group outline to be inside of, and the
-    // floor being edited is the one thing that must not be cut short.
-    const { world, ids } = drawn(
-      ['level', rect(0, 0, 100, 100)],
-      ['floor', rect(50, 50, 200, 200)],
-    );
-    const g = grouped(world, 0, ids, TOP)!;
-
-    expect(bounding(g.world, 0, resolveAt(g.world, 0), [g.id])).toEqual(new Map());
-  });
-
   test('a floor stops at the hole a pillar left, as the group does', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
@@ -989,11 +945,6 @@ describe('what a click lands on', () => {
     // A shut group draws no pillar over the gap, so floor stippled across it
     // would say there is floor where a click falls straight through.
     expect(shapeArea(intersect(shown.shape, shown.floor))).toBeCloseTo(100 * 100 - 20 * 20, 6);
-
-    // Which is the one place this parts company with a replay's clip: that one
-    // runs a moving floor under a pillar, because a replay draws the pillar.
-    expect(shapeArea(bounding(g.world, 0, resolveAt(g.world, 0), []).get(g.id)!))
-      .toBeCloseTo(100 * 100, 6);
   });
 
   test('and a courtyard the rooms left themselves is as empty as the outside', () => {

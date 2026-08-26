@@ -36,7 +36,6 @@ import {
   unplace,
   unstep,
   IDENTITY,
-  bounding,
   occupying,
   Occupied,
   swallowed,
@@ -165,8 +164,12 @@ export function worldCanvas(
   let set: Live = EMPTY_LIVE;
 
   /**
-   * The version a replay is walking towards, resolved: what the animated floors
-   * are clipped against.
+   * The version a replay is walking towards, resolved: where each shut group
+   * stands there, which is what the animated floors are clipped against.
+   *
+   * The same shape the group is drawn as, from the same place it comes from —
+   * a replay draws no pillar inside a shut group any more than the still
+   * drawing does, so a floor stops at the hole one leaves in both.
    *
    * Kept because a replay redraws every frame and the version it is walking
    * towards does not move while it does — resolving it per frame would resolve
@@ -177,7 +180,9 @@ export function worldCanvas(
   const bounds = (w: World, to: VersionId, ins: GroupId | null): Map<GroupId, Shape> => {
     if (held !== null && held.world === w && held.to === to && held.inside === ins) return held.at;
 
-    const at = bounding(w, to, resolveAt(w, to), opened(w, ins));
+    const at = new Map(
+      occupying(w, to, resolveAt(w, to), opened(w, ins)).map(g => [g.id, g.shape]),
+    );
 
     held = { world: w, to, inside: ins, at };
 
@@ -1516,8 +1521,8 @@ function layers(
   items: Resolved[],
   outline: Point[][],
   played: Frame | null,
-  /** Where each shut group's level reaches at the version the replay is walking
-   * towards, from `bounding`. Null when nothing is playing. */
+  /** Where each shut group stands at the version the replay is walking
+   * towards, from `occupying`. Null when nothing is playing. */
   clip: Map<GroupId, Shape> | null,
 ): Layer[] {
   const out: Layer[] = [];
@@ -1573,7 +1578,7 @@ function layers(
    * What an animated floor is drawn inside, or null for one belonging to no
    * group.
    *
-   * The innermost enclosing group that has an answer: `bounding` folds a shut
+   * The innermost enclosing group that has an answer: `occupying` folds a shut
    * group's members into the outermost shut one, so at most one of the chain is
    * in there and finding it from the inside out finds it.
    */
@@ -1964,7 +1969,9 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
  * It grows into place, which reads as a floor being laid rather than as one
  * poking out, and the destination is the frame both of them are heading for.
  *
- * Solids are not taken out: a floor is drawn under a pillar, not around it.
+ * The same shape the group is drawn as, pillars and all: a replay draws no
+ * pillar inside a shut group either, so a floor stippled across the hole one
+ * leaves would say there is floor where a click falls straight through.
  */
 function replay(
   ctx: CanvasRenderingContext2D,
