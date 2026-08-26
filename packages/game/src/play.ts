@@ -4,8 +4,12 @@
 // The jam build's loop, carried over onto the new world: stand in a level that
 // compresses on a timer, find the key, reach the exit before there is nowhere
 // left to stand. What changed underneath it is that a version transition is now
-// a morph rather than a cut, and that the level arrives from the editor rather
-// than from a file of its own.
+// a morph rather than a cut.
+//
+// A function over an element, the way `renderer` is, and for the same reason:
+// the editor is a caller like any other. It hands over a box and the world it
+// is holding and gets back something it can throw away, and the game itself
+// neither knows nor cares that there is an editor behind it.
 //
 // Two clocks, deliberately apart
 // -----------------------------------
@@ -63,6 +67,17 @@ export interface Game {
   dispose(): void
 }
 
+export interface PlayOptions {
+  /**
+   * Someone leaving: Escape, or letting go of the pointer they had taken.
+   *
+   * Whoever put the game on screen is the one who can take it off again, so
+   * this says that it happened rather than doing anything about it. Standing
+   * alone on a page of its own there is nowhere to go, and nobody passes one.
+   */
+  leave?: () => void
+}
+
 /** An artefact within reach, and how far. */
 interface Near {
   index: number
@@ -70,7 +85,7 @@ interface Near {
   away: number
 }
 
-export function play(host: HTMLElement, world: World): Game {
+export function play(host: HTMLElement, world: World, options: PlayOptions = {}): Game {
   const view = renderer(host, { dither: true });
   const crowd = artefacts(view.scene);
   const say = hud(host);
@@ -406,7 +421,17 @@ export function play(host: HTMLElement, world: World): Game {
     if (document.pointerLockElement !== canvas) void (canvas as HTMLCanvasElement | null)?.requestPointerLock?.();
   };
 
+  /** Whether the pointer was ever actually taken. Escape drops it without a
+   * key reaching anyone, so losing a lock that was held is someone leaving —
+   * never having had one is a refusal, and leaves the game up to be clicked. */
+  let caught = false;
+
   const pressed = (e: KeyboardEvent): void => {
+    if (e.code === 'Escape') {
+      options.leave?.();
+      return;
+    }
+
     down.add(e.code);
   };
 
@@ -421,7 +446,13 @@ export function play(host: HTMLElement, world: World): Game {
   // A window that loses the focus keeps whatever was held down forever.
   const blurred = (): void => down.clear();
 
+  const locked = (): void => {
+    if (document.pointerLockElement === canvas) caught = true;
+    else if (caught) options.leave?.();
+  };
+
   host.addEventListener('click', grab);
+  document.addEventListener('pointerlockchange', locked);
   window.addEventListener('keydown', pressed);
   window.addEventListener('keyup', released);
   window.addEventListener('blur', blurred);
@@ -448,6 +479,7 @@ export function play(host: HTMLElement, world: World): Game {
       cancelAnimationFrame(frame);
 
       host.removeEventListener('click', grab);
+      document.removeEventListener('pointerlockchange', locked);
       window.removeEventListener('keydown', pressed);
       window.removeEventListener('keyup', released);
       window.removeEventListener('blur', blurred);
