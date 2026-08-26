@@ -348,9 +348,22 @@ function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): voi
  * machinery for turning a self-crossing loop into loops that do not is already
  * in this path for the offset, and having it here while forbidding it on the
  * input would be an invariant enforced for its own sake.
+ *
+ * At every depth, including none. A ring is cut where it starts, and which
+ * vertex that is has to be a fact about the ring rather than about the path it
+ * came down — the bake names a point by where it sits in the ring it came out
+ * of, and compares those names across two instants. `simplify` settles the
+ * winding, and where a ring starts follows from its winding: hand a clockwise
+ * ring through and it comes back the other way round, which moves every index
+ * by one. Skipping it at depth zero is what used to happen, so a shape that
+ * had not started eroding was cut one corner away from the same shape a moment
+ * later, and the two were interpolated corner-to-neighbour: a square turning
+ * into a diamond inscribed in itself.
  */
 export function project(source: Ring, erosion: number): Shape {
-  return erosion === 0 ? [source] : erode(simplify([source]), erosion);
+  const simple = simplify([source]);
+
+  return erosion === 0 ? simple : erode(simple, erosion);
 }
 
 /**

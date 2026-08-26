@@ -30,6 +30,30 @@ export type Ring = Point[];
 /** A shape is any number of rings, filled by the nonzero winding rule. */
 export type Shape = Ring[];
 
+declare const walked: unique symbol;
+
+/**
+ * A shape the arrangement has been through: every ring wound its way round, and
+ * therefore cut where it cuts them.
+ *
+ * Where a ring starts is not free. A ring closes on itself, so the only thing
+ * fixing its first point is the walk that produced it — and the walk goes round
+ * the way the winding says. Hand the same square in clockwise and it comes back
+ * counter-clockwise, which moves every index along by one.
+ *
+ * The bake leans on this. It names a point by where it sits in the ring it came
+ * out of and compares those names across two instants, so a ring cut one way at
+ * one instant and another way a moment later is two names for one corner and
+ * one name for two — which is drawn as a square collapsing into a diamond
+ * inscribed in itself.
+ *
+ * So it is a type rather than a comment. Only the arrangement makes one, and
+ * `erode` takes one, so a shape cannot reach a depth of zero down one path and
+ * a depth of anything else down another and come out cut differently. The way
+ * in is `simplify`, which is free for a shape that is already simple.
+ */
+export type Cut = Shape & { readonly [walked]: true };
+
 /** Which of the two operands a point is in, and what that means for the answer. */
 export type Op = (a: boolean, b: boolean) => boolean;
 
@@ -82,7 +106,7 @@ export function positive(f: Field, p: Point): boolean {
 // Public operations
 // -----------------------------------------------------------------------------
 
-export function union(a: Shape, b: Shape): Shape {
+export function union(a: Shape, b: Shape): Cut {
   return combine(a, b, OpUnion);
 }
 
@@ -100,10 +124,14 @@ export function union(a: Shape, b: Shape): Shape {
  * order they arrive in, coincident pieces classify alike, and the loser is
  * dropped without being built.
  */
-export function unionAll(shapes: readonly Shape[]): Shape {
+export function unionAll(shapes: readonly Shape[]): Cut {
   const live = shapes.filter(s => s.length !== 0);
 
-  if (live.length <= 1) return live[0] ?? [];
+  // Not `return live[0]`: one shape still has to come back cut the way the
+  // arrangement cuts it, or a group of one member is cut differently from the
+  // same group once something joins it. `simplify` is the cheap way in.
+  if (live.length === 0) return [] as unknown as Cut;
+  if (live.length === 1) return simplify(live[0]);
 
   const rings: Shape = [];
   const ranks: number[] = [];
@@ -122,21 +150,23 @@ export function unionAll(shapes: readonly Shape[]): Shape {
   // the same reading `covers` gives a neighbourhood's level side.
   const on = ground(live.map((shape, id) => ({ id, kind: 'level' as const, shape })));
 
+  // The arrangement's own output, which is what `Cut` means. This and
+  // `combine` are the only two places one is made.
   return chain(
     arranged(p => covers(on.level, p), () => false, OpUnion, split(raw, snap), snap),
     snap,
-  ).rings;
+  ).rings as Cut;
 }
 
-export function subtract(a: Shape, b: Shape): Shape {
+export function subtract(a: Shape, b: Shape): Cut {
   return combine(a, b, OpSubtract);
 }
 
-export function intersect(a: Shape, b: Shape): Shape {
+export function intersect(a: Shape, b: Shape): Cut {
   return combine(a, b, OpIntersect);
 }
 
-export function xor(a: Shape, b: Shape): Shape {
+export function xor(a: Shape, b: Shape): Cut {
   return combine(a, b, OpXor);
 }
 
@@ -145,7 +175,7 @@ export function xor(a: Shape, b: Shape): Shape {
  * rings that neither cross themselves nor each other, covering exactly the area
  * the nonzero rule gave the input.
  */
-export function simplify(a: Shape): Shape {
+export function simplify(a: Shape): Cut {
   return combine(a, [], inA => inA);
 }
 
@@ -177,7 +207,7 @@ export function simplify(a: Shape): Shape {
  * on the other side and adding it. The input has to be simple; `simplify` is
  * what the caller has already run to make it so.
  */
-export function erode(shape: Shape, depth: number): Shape {
+export function erode(shape: Cut, depth: number): Cut {
   if (depth === 0) return shape;
 
   const swept = band(shape, depth);
@@ -283,7 +313,7 @@ function ccw(ring: Ring): Ring {
 }
 
 /** One self-intersecting loop as a set of loops that are not. */
-export function decompose(ring: Ring): Shape {
+export function decompose(ring: Ring): Cut {
   return simplify([ring]);
 }
 
@@ -754,8 +784,8 @@ function addParam(ts: Param[], t: number, tag: Tag): void {
 // -----------------------------------------------------------------------------
 
 /** Any of the above, and the only thing that actually does the work. */
-export function combine(a: Shape, b: Shape, op: Op, fill: Fill = fieldContains): Shape {
-  return combineTagged(a, b, op, fill).rings;
+export function combine(a: Shape, b: Shape, op: Op, fill: Fill = fieldContains): Cut {
+  return combineTagged(a, b, op, fill).rings as Cut;
 }
 
 /**
