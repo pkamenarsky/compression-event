@@ -214,12 +214,25 @@ function panel(
      * transition over a span that was never baked is also nothing at all, and
      * snaps.
      */
+    /**
+     * Whether there is anything to play.
+     *
+     * `spans` counts the spans that have been baked and still stand, from the
+     * first — `bakedLevel` stops at the first one that has not — so versions 0
+     * to `spans` are the ones with a picture between them. A walk reaching past
+     * that has none, and playing it anyway put the clamped end of the last span
+     * on screen at both ends of the transition, which reads as the level
+     * blinking out and back.
+     */
+    const playing = (r: Replay | null): r is Replay =>
+      r !== null && Math.max(r.from, r.to) <= spans;
+
     const walked = (r: Replay | null): void => {
       if (view === null) return;
 
       peopled(untracked(world), untracked(current), r);
 
-      if (r === null || spans === 0) {
+      if (!playing(r)) {
         view.walk(null);
         return;
       }
@@ -244,9 +257,9 @@ function panel(
     const peopled = (w: World, v: VersionId, r: Replay | null): void => {
       if (crowd === null) return;
 
-      const shown = r === null || spans === 0
-        ? artefactsAt(w, v)
-        : artefactsDuring(w, r.from, r.to, r.at);
+      const shown = playing(r)
+        ? artefactsDuring(w, r.from, r.to, r.at)
+        : artefactsAt(w, v);
 
       crowd.show(shown.map(it => ({ id: it.id, type: it.type, x: it.at.x, y: it.at.y })));
     };

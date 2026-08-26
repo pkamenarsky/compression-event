@@ -201,6 +201,12 @@ function clamped(v: number): VersionId {
 function switched(s: EditorState, to: VersionId): EditorState {
   if (s.currentVersion === to) return s;
 
+  // Nothing to play is not a walk. An edit invalidates every span after it, and
+  // a transition declared over one that no longer stands leaves both views
+  // trying to draw an instant that has no geometry — which reads as everything
+  // between the two versions blinking out and back.
+  if (!playable(s, to)) return { ...s, currentVersion: to, replay: null };
+
   return {
     ...s,
     currentVersion: to,
@@ -238,6 +244,19 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
       }
     }
   });
+}
+
+/** Whether every span between here and there has been baked and still stands.
+ * `spanAt` decides, against the world in front of it, so an edit takes the
+ * transition away without anything having to be told. */
+function playable(s: EditorState, to: VersionId): boolean {
+  const lo = Math.min(s.currentVersion, to), hi = Math.max(s.currentVersion, to);
+
+  for (let from = lo; from < hi; from++) {
+    if (spanAt(s.bake, s.world, from) === null) return false;
+  }
+
+  return true;
 }
 
 /**
