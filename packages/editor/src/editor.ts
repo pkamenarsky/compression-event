@@ -301,7 +301,9 @@ function started(s: EditorState): void {
     host.remove();
   };
 
-  game = play(host, shipped(s.world, s.bake), { leave });
+  // No title screen: Cmd+Enter is the gesture that asked for it, and the
+  // level is already there.
+  game = play(host, shipped(s.world, s.bake), { title: false, leave });
 }
 
 /**

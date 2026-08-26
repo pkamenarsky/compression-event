@@ -35,7 +35,7 @@ import { Value, untracked } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
-import { Artefacts, EYE, Point, Renderer, SCALE, WALK_SPEED, artefacts, renderer } from '@ce/game';
+import { Artefacts, EYE, Point, Renderer, SCALE, WALK_SPEED, artefacts, renderer, urged } from '@ce/game';
 import { Bake, artefactsDuring, spanAt } from './bake';
 import { bakedLevel, floorsAt } from './export';
 import { EMPTY_LIVE, Live, artefactsAt, contributing, live, resolveAt, sourced } from './scene';
@@ -52,6 +52,10 @@ interface Walker {
   x: number
   z: number
   angle: number
+  /** Carried between frames, so that setting off and stopping have the weight
+   * they have in the game. */
+  vx: number
+  vz: number
 }
 
 interface Orbit {
@@ -147,7 +151,7 @@ function panel(
 
   /** Where whoever is inside it is standing, and what they are holding down.
    * Both are read every frame and neither is state anything else looks at. */
-  const walker: Walker = { x: 0, z: 0, angle: 0 };
+  const walker: Walker = { x: 0, z: 0, angle: 0, vx: 0, vz: 0 };
   const held = new Set<string>();
 
   /**
@@ -279,13 +283,26 @@ function panel(
       const ahead = (held.has('KeyW') ? 1 : 0) - (held.has('KeyS') ? 1 : 0);
       const across = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
 
+      let want = { x: 0, y: 0 };
+
       if (ahead !== 0 || across !== 0) {
         const l = Math.hypot(ahead, across);
         const sin = Math.sin(walker.angle), cos = Math.cos(walker.angle);
 
-        walker.x += (sin * ahead + cos * across) / l * WALK_SPEED * dt;
-        walker.z += (-cos * ahead + sin * across) / l * WALK_SPEED * dt;
+        want = {
+          x: (sin * ahead + cos * across) / l * WALK_SPEED,
+          y: (-cos * ahead + sin * across) / l * WALK_SPEED,
+        };
       }
+
+      // The game's own acceleration, so that setting off and stopping feel the
+      // same here as they do in it.
+      const sped = urged({ x: walker.vx, y: walker.vz }, want, dt);
+
+      walker.vx = sped.x;
+      walker.vz = sped.y;
+      walker.x += walker.vx * dt;
+      walker.z += walker.vz * dt;
 
       placed();
     };
@@ -650,6 +667,8 @@ function stood(orbit: Orbit, walker: Walker): void {
   walker.x = orbit.x;
   walker.z = orbit.z;
   walker.angle = 0;
+  walker.vx = 0;
+  walker.vz = 0;
 }
 
 /**

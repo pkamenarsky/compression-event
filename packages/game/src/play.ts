@@ -60,6 +60,27 @@ const GRIP = 30;
 const DRAG = 8;
 
 /**
+ * One frame of a velocity chasing the speed the keys are asking for: towards
+ * it while something is held, and away from any speed at all once it is let
+ * go.
+ *
+ * Both exponential, so neither depends on how often it is called. Shared
+ * rather than the two constants alone, because the curve is as much of the
+ * feel as the numbers are and two copies of it would drift apart.
+ */
+export function urged(v: Point, want: Point, dt: number): Point {
+  if (want.x === 0 && want.y === 0) {
+    const k = Math.exp(-DRAG * dt);
+
+    return { x: v.x * k, y: v.y * k };
+  }
+
+  const k = 1 - Math.exp(-GRIP * dt);
+
+  return { x: v.x + (want.x - v.x) * k, y: v.y + (want.y - v.y) * k };
+}
+
+/**
  * Seconds from one version arriving to the next, which is the pressure the
  * whole game is made of.
  *
@@ -87,6 +108,16 @@ export interface Game {
 }
 
 export interface PlayOptions {
+  /**
+   * Whether to open on the title screen. On by default, which is what a page
+   * of its own wants.
+   *
+   * Off when the editor stands the game up: the level is already there behind
+   * it and the gesture that asked for it has already happened, so a screen
+   * saying to click to start is a door where there was no wall.
+   */
+  title?: boolean
+
   /**
    * Someone leaving: Escape, or letting go of the pointer they had taken.
    *
@@ -232,9 +263,13 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     // Backwards or forwards, a shift is a walk from where the level is to
     // where it is going, and the bake reads it the same way either round. What
-    // there is no picture of — an unbaked span, or a jump of more than one —
-    // arrives all at once.
-    if (spans === 0 || Math.abs(to - version) !== 1) {
+    // there is no picture of — a jump of more than one version, or a span that
+    // was never baked — arrives all at once. Asking whether the level has *any*
+    // spans is not the same question: a bake that stopped short leaves the
+    // early ones playable and the late ones not, and playing one of those
+    // clamps to the end of the last span there is and shows an earlier version
+    // for the length of the shift.
+    if (Math.abs(to - version) !== 1 || world.baked.spans[Math.min(version, to)] === undefined) {
       shifting = null;
       version = to;
       arrived();
@@ -279,21 +314,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       wz = (-cos * ahead + sin * across) / l * WALK_SPEED;
     }
 
-    // Towards the speed asked for while a key is down, and away from any speed
-    // at all once it is let go. Both exponential, so neither depends on how
-    // often this is called.
-    if (wx !== 0 || wz !== 0) {
-      const k = 1 - Math.exp(-GRIP * dt);
+    const sped = urged({ x: player.vx, y: player.vz }, { x: wx, y: wz }, dt);
 
-      player.vx += (wx - player.vx) * k;
-      player.vz += (wz - player.vz) * k;
-    }
-    else {
-      const k = Math.exp(-DRAG * dt);
-
-      player.vx *= k;
-      player.vz *= k;
-    }
+    player.vx = sped.x;
+    player.vz = sped.y;
 
     const was = { x: player.x, y: player.z };
     const now = walls[version]?.trace(was, { x: player.vx * dt, y: player.vz * dt }) ?? was;
@@ -424,9 +448,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
           walked();
         }
       }
+      // The last version compressing has nowhere to compress to, and a level
+      // that has run out is not a level that stops: it is the one beat the
+      // player cannot be anywhere for.
       else if (clock <= 0) {
         if (version + 1 < world.versions.length) compress(version + 1);
-        else clock = HOLD;
+        else void lost();
       }
 
       const found = nearest();
@@ -499,8 +526,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   void (async () => {
     // The click that dismisses this is also what lets the audio start and what
     // takes the pointer: a browser grants all three to a gesture and none of
-    // them to a page that merely loaded.
-    await say.say('COMPRESSION EVENT', 0, 'CLICK TO START');
+    // them to a page that merely loaded. Without the title screen there has
+    // been a gesture already — whatever asked for the game — and this runs
+    // inside it.
+    if (options.title ?? true) await say.say('COMPRESSION EVENT', 0, 'CLICK TO START');
 
     ambient = playSound(drone);
 
