@@ -1451,8 +1451,8 @@ function names(o: Origin): string {
 }
 
 /**
- * How far to turn `b` so that its names line up with `a`'s: two readings of one
- * ring, paired corner for corner.
+ * How far to turn `b` so that it lines up with `a`: two readings of one ring,
+ * paired corner for corner.
  *
  * **Where a ring starts is not a fact about the ring.** It closes on itself, so
  * the arrangement hands it back cut wherever the walk began, and two readings
@@ -1461,41 +1461,53 @@ function names(o: Origin): string {
  * dragged toward its neighbour, and half way across the stretch the pillar is a
  * square inscribed in itself at forty-five degrees.
  *
- * Nothing about *one* reading can settle this. A corner's position moves as the
- * shape erodes; the index of a vertex is an array position the offsetter hands
- * out and reorders freely. Both were tried and both flipped. What settles it is
- * that a point of the boundary has a name — this crossing of those two edges,
- * that corner of that outline — and two readings agree about a point exactly
- * when they agree about its name.
+ * Names cannot settle it, though they look as if they should. A name carries an
+ * index, and that index is a position in the ring as the arrangement handed it
+ * over — so when the arrangement re-cuts the ring, the names travel with the
+ * cut. Both readings then say `index 0` about different corners, agree with
+ * each other perfectly, and are both wrong. That is what this used to do.
  *
- * Nothing at all where they cannot be lined up. That is not a phase to be
- * recovered from: it means the arrangement itself changed, which is an event,
- * and the stretch should not have spanned it.
+ * What settles it is that the two ends of a stretch are the same shape a moment
+ * apart. These points are kept in the polygon's own frame, so nothing rigid
+ * moves them: only erosion does, continuously, and a stretch is cut short of
+ * any event. So the true rotation costs a few microns and every other rotation
+ * costs an edge, which is the whole width of the pillar. Names are kept for the
+ * ties, where two rotations really are equally close.
  */
-function phase(a: readonly Origin[], b: readonly Origin[]): number | null {
-  const n = a.length - 1;
+function phase(a: Turnable, b: Turnable): number | null {
+  const n = a.points.length - 1;
 
-  if (n < 1 || b.length !== a.length) return null;
+  if (n < 1 || b.points.length !== a.points.length) return null;
 
-  const mine = a.slice(0, n).map(names);
-  const theirs = b.slice(0, n).map(names);
+  let best = 0, cost = Infinity, agree = -1;
 
   for (let k = 0; k < n; k++) {
-    let all = true;
+    let far = 0, same = 0;
 
-    for (let j = 0; j < n && all; j++) all = mine[j] === theirs[(j + k) % n];
+    for (let j = 0; j < n; j++) {
+      const p = a.points[j], q = b.points[(j + k) % n];
 
-    if (all) return k;
+      far += (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+
+      if (names(a.whence[j]) === names(b.whence[(j + k) % n])) same++;
+    }
+
+    if (far < cost || (far === cost && same > agree)) {
+      best = k; cost = far; agree = same;
+    }
   }
 
-  return null;
+  return best;
+}
+
+interface Turnable {
+  points: Point[]
+  corner: boolean[]
+  whence: Origin[]
 }
 
 /** A ring walked from `k` instead of from 0, its repeated last point kept. */
-function turned<A extends { points: Point[], corner: boolean[], whence: Origin[] }>(
-  run: A,
-  k: number,
-): A {
+function turned<A extends Turnable>(run: A, k: number): A {
   const n = run.points.length - 1;
 
   if (k === 0 || n < 2) return run;
@@ -1558,7 +1570,7 @@ export function lined(to: Frame, from: Frame): Frame {
     moved = moved || at !== i;
 
     const run = from[at];
-    const k = closes(run) && closes(want) ? phase(want.whence, run.whence) : 0;
+    const k = closes(run) && closes(want) ? phase(want, run) : 0;
 
     if (k === null) return null;
     if (k !== 0) moved = true;

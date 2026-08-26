@@ -286,14 +286,19 @@ describe('the two ends of a stretch are the same arrangement', () => {
   // same run and the same point — the same corner of the same outline, or the
   // same two edges crossing.
   //
-  // Nothing about one reading can be trusted to line them up: a ring closes on
+  // Nothing about one reading can be trusted to line them up. A ring closes on
   // itself, so the arrangement hands it back cut wherever the walk began, and
-  // it hands the runs themselves back in whatever order they came out. Both
-  // were tried as canonical keys and both flipped. The names settle it.
-  const named = (o: Origin) => o.kind === 'vertex'
-    ? `v${o.at.id}.${o.at.ring}.${o.at.index}`
-    : `x${o.a.id}.${o.a.ring}.${o.a.index}|${o.b.id}.${o.b.ring}.${o.b.index}`;
-
+  // it hands the runs themselves back in whatever order they came out. Names
+  // look like they settle it and do not: a name carries the index the ring was
+  // handed over with, so when the arrangement re-cuts the ring the names move
+  // with the cut, and both readings then call different corners `index 0` in
+  // perfect agreement.
+  //
+  // What is left is the shape. The two ends are one ring a moment apart, kept
+  // in the polygon's own frame where nothing rigid moves it, so the right
+  // pairing is the close one and every other pairing is an edge away. That is
+  // what is asserted: turning either end by any amount at all can only make the
+  // two ends agree less well than they already do.
   const holds = (world: World) => {
     let pairs = 0;
 
@@ -302,12 +307,30 @@ describe('the two ends of a stretch are the same arrangement', () => {
         stretch.a.forEach((one, i) => {
           const two = stretch.b[i];
 
-          if (two === undefined) return;
+          if (two === undefined || two.points.length !== one.points.length) return;
+
+          expect(two.id).toEqual(one.id);
+
+          // Open runs have two ends and cannot be turned; only rings can.
+          const n = one.points.length - 1;
+          if (n < 3) return;
+          if (one.points[0].x !== one.points[n].x) return;
 
           pairs++;
 
-          expect(two.id).toEqual(one.id);
-          expect(two.whence.map(named)).toEqual(one.whence.map(named));
+          const apart = (k: number) => {
+            let far = 0;
+
+            for (let j = 0; j < n; j++) {
+              const p = one.points[j], q = two.points[(j + k) % n];
+
+              far += (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+            }
+
+            return far;
+          };
+
+          for (let k = 1; k < n; k++) expect(apart(0)).toBeLessThanOrEqual(apart(k));
         });
       }
     }
@@ -352,44 +375,59 @@ describe('the two ends of a stretch are the same arrangement', () => {
   });
 });
 
-describe('the replay never leaves the truth, point for point by name', () => {
+describe('the replay never leaves the truth, as a shape', () => {
   // The end-to-end version of the invariant above, and the one that says what
   // the author actually sees. A stretch pairs its two ends and interpolates
   // between them; if the pairing is wrong the interpolation is somewhere else
   // entirely, and the shape it draws half way across a stretch is the tell —
   // a pillar paired one corner along becomes a square inscribed in itself at
-  // forty-five degrees.
+  // forty-five degrees, whose corners sit at the middles of the real edges.
   //
-  // Measured against the CSG at the same instant, pairing points by name. That
-  // is the whole point of naming them: a distance is only meaningful between
-  // two points that are supposed to be the same point.
-  const named = (o: Origin) => o.kind === 'vertex'
-    ? `v${o.at.id}.${o.at.ring}.${o.at.index}`
-    : `x${o.a.id}.${o.a.ring}.${o.a.index}|${o.b.id}.${o.b.ring}.${o.b.index}`;
-
+  // Measured as a point set, both ways round, because a name cannot be used as
+  // an oracle here: the truth's own names turn with the arrangement's cut, so a
+  // replay that is exactly right can still be a corner off by name. Distance
+  // does not care, and the diamond is half an edge away from every real corner,
+  // which is far past `TOLERANCE`.
+  //
+  // The instants crowd towards zero deliberately. A span's first stretch can be
+  // a ten-thousandth of it wide, and a walk played backwards arrives there — it
+  // ends at `t = 0`, easing in through 1e-6, 1e-5, 1e-4. Evenly spaced instants
+  // step straight over the whole of it, which is how this survived a suite that
+  // sampled twenty-three of them.
   const follows = (world: World, from: VersionId) => {
     const span = run(bakeSpan(world, from));
     let checked = 0;
 
-    for (let k = 1; k < 24; k++) {
-      const t = k / 24;
-      const where = new Map<string, Point>();
+    const ts = [0, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01];
 
-      for (const piece of truth(world, from, t)) {
-        piece.whence.forEach((o, j) => where.set(named(o), piece.points[j]));
-      }
+    for (let k = 1; k < 24; k++) ts.push(k / 24);
 
-      for (const piece of sample(span, t)) {
-        piece.whence.forEach((o, j) => {
-          const q = where.get(named(o));
+    for (const t of ts) {
+      const there: Point[] = [];
 
-          if (q === undefined) return;
+      for (const piece of truth(world, from, t)) there.push(...piece.points);
 
-          checked++;
-          expect(Math.hypot(piece.points[j].x - q.x, piece.points[j].y - q.y))
-            .toBeLessThan(TOLERANCE);
-        });
-      }
+      const here: Point[] = [];
+
+      for (const piece of sample(span, t)) here.push(...piece.points);
+
+      const stray = (from: Point[], to: Point[]) => {
+        let worst = 0;
+
+        for (const p of from) {
+          let near = Infinity;
+
+          for (const q of to) near = Math.min(near, Math.hypot(p.x - q.x, p.y - q.y));
+
+          worst = Math.max(worst, near);
+        }
+
+        return worst;
+      };
+
+      checked++;
+      expect(stray(here, there)).toBeLessThan(TOLERANCE);
+      expect(stray(there, here)).toBeLessThan(TOLERANCE);
     }
 
     expect(checked).toBeGreaterThan(0);
