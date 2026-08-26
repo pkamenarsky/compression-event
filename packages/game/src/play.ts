@@ -20,8 +20,13 @@
 // the length of a shift the wall on screen is a little ahead of the wall that
 // stops you, which is what the jam build had between its snaps too.
 //
-// Artefacts move on the second clock, with collision, for the same reason: an
-// artefact is a place, and where a thing is only changes when the version does.
+// An artefact is drawn on the first clock and *is* somewhere on the second: it
+// slides from where it stood to where it will stand while the walls do, and it
+// becomes pickable at the new place when they arrive. Straight there, which is
+// the one place the game settles for less than the editor: it has the two
+// places and not the layers between them, and a dozen artefacts sliding for a
+// second is not worth a slot per artefact per span in the buffers to make the
+// turns come out as arcs.
 // -----------------------------------------------------------------------------
 
 import { Standing, artefacts } from './artefacts';
@@ -143,16 +148,30 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * artefacts placed. Called after every way of getting to one. */
   const arrived = (): void => {
     drawn(version);
-    placed();
+    placed(version, version, 0);
   };
 
-  const placed = (): void => {
+  /**
+   * Where every artefact is drawn, part way from one version to another.
+   *
+   * One that only exists at one end of the shift stands still at the place it
+   * has: something arriving has nowhere to arrive from, and something on its
+   * way out has nowhere to go.
+   */
+  const placed = (from: number, to: number, t: number): void => {
     const all: Standing[] = [];
 
     world.artefacts.forEach((it, i) => {
-      const at = it.places[version];
+      if (gone.has(i)) return;
 
-      if (at === null || at === undefined || gone.has(i)) return;
+      const a = it.places[from] ?? null;
+      const b = it.places[to] ?? null;
+
+      if (a === null && b === null) return;
+
+      const at = a === null ? b!
+        : b === null ? a
+        : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 
       all.push({ id: i, type: it.type, x: at.x, y: at.y });
     });
@@ -226,6 +245,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     const at = leg.from + (leg.to - leg.from) * t;
 
     view.walk(Math.min(Math.max(at / spans, 0), 1));
+    placed(leg.from, leg.to, t);
   };
 
   /** One frame of standing in it. */
@@ -301,7 +321,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       case 'delay':
         gone.add(index);
         clock = HOLD;
-        placed();
+        placed(version, version, 0);
         escalate();
         playSoundFor(pickup, 1);
         break;
@@ -318,7 +338,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       case 'key':
         gone.add(index);
         carrying.add('key');
-        placed();
+        placed(version, version, 0);
         playSoundFor(pickup, 1);
         break;
 

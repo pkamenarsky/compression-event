@@ -92,11 +92,11 @@ export interface Floor {
  * One artefact, and where it stands at every version.
  *
  * A place per version rather than one place, because an artefact is carried by
- * whatever holds it: a key in a room that turns turns with it. Nothing in
- * between them is shipped. The walls morph and an artefact does not — it moves
- * at the instant collision does, which is the same instant and for the same
- * reason: what is in flight is a picture, and where a thing *is* only changes
- * when the version does. See the header.
+ * whatever holds it: a key in a room that turns turns with it. Only the places
+ * are shipped and not the layers between them, so what the game draws during a
+ * transition is a straight line between two of them — where the editor, which
+ * has the layers, draws the arc. A dozen artefacts sliding for a second is not
+ * worth carrying the frame table twice over.
  *
  * Null where it does not exist yet: a version before the one that introduced
  * it cannot name it.
