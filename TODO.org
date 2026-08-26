@@ -1,3 +1,7 @@
+* selection of overlapping vertices
+* locking of polygons? unlock works then with cmd + click
+* paths
+* artifacts
 * shape button
 ** (!) should be selected first
 ** rect
@@ -13,6 +17,29 @@
 ** grid size
 ** snap to grid
 * version management
+* shortcuts
+  c - create shape; cr - rect; cn - n-gon; cp - polyline
+  p - points; + - add points; - delete points; click - select; drag - marquee; shift+selection gesture - add to selection
+  t - select; tt - translate; tr - rotate; ts - scale; te - erode; gg/cmd+g - group; gu/cmd-shift-g - ungroup; click - select group; cmd+click - select poly; drag - marquee; shift+selection gesture - add to selection
+  v - versions; vn/arrow down (global) - next; vp/arrow up (global) - prev
+  e - effects; ec - chamfer; en - noise
+  p - paths; same as in points mode
+  a - artifacts
+  bb - bake
+* UI
+  pressing ? overlays tooltips on everything that is visible
+
+  statusbar
+  above that - group breadcrumbs, if any
+  above that - baking progressbar if any
+
+  bake button where?
+  3d view button where?
+
+  version strip where?
+
+  delink button where?
 
 * marketing
 ** https://www.youtube.com/watch?v=90ImoX_e8nE
+
