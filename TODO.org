@@ -1,3 +1,4 @@
+* fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
 * baking of `floor` polys
 * selection of overlapping vertices
