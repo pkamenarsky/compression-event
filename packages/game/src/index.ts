@@ -1,3 +1,4 @@
+export * from './artefacts';
 export * from './baked';
 export * from './coldet';
 export * from './morph';

@@ -35,10 +35,10 @@ import { Value, untracked } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
-import { Point, Renderer, SCALE, renderer } from '@ce/game';
-import { Bake, spanAt } from './bake';
+import { Artefacts, Point, Renderer, SCALE, artefacts, renderer } from '@ce/game';
+import { Bake, artefactsDuring, spanAt } from './bake';
 import { bakedLevel, floorsAt } from './export';
-import { EMPTY_LIVE, Live, contributing, live, resolveAt, sourced } from './scene';
+import { EMPTY_LIVE, Live, artefactsAt, contributing, live, resolveAt, sourced } from './scene';
 import { theme } from './theme';
 import { Replay, Update, VersionId, World } from './types';
 
@@ -119,6 +119,10 @@ function panel(
 ): VNode {
   let host: HTMLDivElement | undefined;
   let view: Renderer | null = null;
+
+  /** The artefacts in the scene, which the renderer knows nothing about: it
+   * draws the level and lends out the scene, and this puts things in it. */
+  let crowd: Artefacts | null = null;
 
   /** How many spans the renderer currently holds. The walk is measured against
    * this rather than against the chain's length: a half-baked level should show
@@ -204,6 +208,8 @@ function panel(
     const walked = (r: Replay | null): void => {
       if (view === null) return;
 
+      peopled(untracked(world), untracked(current), r);
+
       if (r === null || spans === 0) {
         view.walk(null);
         return;
@@ -212,6 +218,28 @@ function panel(
       const at = r.from + (r.to - r.from) * r.at;
 
       view.walk(Math.min(Math.max(at / spans, 0), 1));
+    };
+
+    /**
+     * Where the artefacts are, which is the one thing in the view worked out on
+     * the CPU.
+     *
+     * It could ride the bake like everything else — an artefact is a slot in
+     * the frame table and a point in it — but there are a handful of them and
+     * a level's worth of walls, and the arithmetic that would go into the
+     * shader is the arithmetic that is already written here. Where a walk has
+     * no bake to play, they stand at the version on screen: a diamond flying
+     * alone past walls that have not moved is a glitch rather than a walk, and
+     * that is the same rule the canvas keeps.
+     */
+    const peopled = (w: World, v: VersionId, r: Replay | null): void => {
+      if (crowd === null) return;
+
+      const shown = r === null || spans === 0
+        ? artefactsAt(w, v)
+        : artefactsDuring(w, r.from, r.to, r.at);
+
+      crowd.show(shown.map(it => ({ id: it.id, type: it.type, x: it.at.x, y: it.at.y })));
     };
 
     /**
@@ -253,6 +281,7 @@ function panel(
       // nothing to do with. Which is also how the bake takes them — see
       // `subjects` — so the still and the morph draw the same floors.
       view.show(outline, floorsAt(w, v));
+      peopled(w, v, untracked(replay));
 
       if (!afoot()) framed(outline, orbit);
 
@@ -373,6 +402,9 @@ function panel(
           if (host === undefined) return;
 
           view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
+          crowd = artefacts(view.scene);
+
+          peopled(untracked(world), untracked(current), untracked(replay));
 
           let last = performance.now();
 
@@ -385,12 +417,18 @@ function panel(
 
             if (roaming()) stepped(dt);
 
+            // Every frame, walk or no walk: turning and bobbing is what an
+            // artefact does while nothing at all is happening.
+            if (view !== null) crowd?.update(dt, view.camera);
+
             view?.render();
             frame = requestAnimationFrame(tick);
           });
 
           return () => {
             cancelAnimationFrame(frame);
+            crowd?.dispose();
+            crowd = null;
             view?.dispose();
             view = null;
             set = EMPTY_LIVE;
