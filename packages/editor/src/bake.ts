@@ -1408,7 +1408,49 @@ const MARGIN = 0.5;
 
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
-  return signature(a.frame) === signature(b.frame);
+  return signature(a.frame) === signature(b.frame) && explained(a, b);
+}
+
+/**
+ * Whether every point that turns — or stops turning — between these two
+ * readings has something to fade over.
+ *
+ * Corner-ness is drawn: a wall stands a vertical where the boundary turns. It
+ * is deliberately not an event, because a vertex emerging over a span is a
+ * move, and `fading` gives it a value at each end for the line to fade
+ * between. That is the case this is careful to keep.
+ *
+ * What it will not accept is a corner that changes with no fade behind it,
+ * which `fading` cannot produce: it covers vertices that die between the span's
+ * two ends, and a corner can also come and go because a *neighbour* moved —
+ * two rooms flush against each other at one version and apart at the next make
+ * a junction that exists at a single instant. Nothing interpolates that, so the
+ * two ends of a stretch holding it differ by a whole unit of opacity, and the
+ * line is fully drawn for the width of the stretch and gone after it. Called an
+ * event instead, the cut pins it and keeps the two instants either side, and
+ * half-open ownership draws neither.
+ */
+function explained(a: Taken, b: Taken): boolean {
+  const plan = lining(a.frame, b.frame);
+
+  if (plan === null) return false;
+
+  const there = following(b.frame, plan);
+
+  const covered = (o: Origin): boolean => {
+    if (o.kind !== 'vertex') return false;
+
+    const where = (it: Taken) => it.fade.get(o.at.id)?.[o.at.ring]?.[o.at.index];
+
+    return where(a) !== undefined || where(b) !== undefined;
+  };
+
+  return a.frame.every((run, r) => {
+    const other = there[r];
+
+    return other !== undefined && run.corner.every((c, i) =>
+      c === other.corner[i] || covered(run.whence[i]));
+  });
 }
 
 /**
