@@ -1067,6 +1067,86 @@ describe('a corner coming or going across a span', () => {
   });
 });
 
+describe('a corner that was always there but flat at one end', () => {
+  // The other way a corner arrives, and the one that was missed. Put a vertex
+  // on an edge and leave it there, and it belongs to both versions — nothing is
+  // born and nothing dies — but the arrangement drops it at the end where it is
+  // exactly collinear and keeps it everywhere else. So the ring changes length
+  // the instant anything moves, and a vertical stands up out of a flat wall for
+  // the frame at that end of the span. See `straightened`.
+  //
+  // Three of them on one wall with the middle one dragged off it is the level
+  // that found it: the two that never move are corners of the notch's mouth at
+  // the far end and are straight at the near one, so all three arrive together.
+
+  function notched(): { world: World, id: PolygonId, moved: Id } {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+    let out = world;
+
+    // Along the bottom edge, in the order they sit in the ring.
+    for (const x of [50, 0, -50]) {
+      const it = resolveAt(out, 0).find(r => r.id === ids[0])!;
+
+      out = addVertex(out, 0, it, 0, { x, y: -100 }).world;
+    }
+
+    const at = resolveAt(out, 1).find(r => r.id === ids[0])!;
+    const middle = at.corners.find(c => c.at.x === 0 && c.at.y === -100)!;
+    const edit = editAt(out, 1, ids[0], at.erosion);
+    const vertices = new Map(edit.vertices);
+
+    vertices.set(middle.id, { x: 0, y: 80 });
+
+    return {
+      world: withEdit(out, 1, ids[0], { ...edit, vertices }),
+      id: ids[0],
+      moved: middle.id,
+    };
+  }
+
+  test('all three stand in the ring at both ends, so it is one stretch', () => {
+    const { world } = notched();
+    const span = run(bakeSpan(world, 0));
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+
+    const at = (t: number) => sample(span, t).reduce((n, r) => n + r.points.length, 0);
+
+    expect(at(0)).toEqual(at(1));
+    expect(at(0)).toEqual(at(0.5));
+  });
+
+  test('and their lines fade in over the span rather than snapping on', () => {
+    const { world } = notched();
+    const span = run(bakeSpan(world, 0));
+    const track = span.tracks[0];
+    const s = track.stretches[0];
+
+    // The three on the bottom wall, by where they stand at the near end.
+    const flat: [number, number][] = [];
+
+    s.a.forEach((r, i) => r.points.forEach((p, j) => {
+      if (Math.abs(p.y + 100) < 1e-6 && Math.abs(p.x) < 99) flat.push([i, j]);
+    }));
+
+    expect(flat.length).toEqual(3);
+
+    for (const [i, j] of flat) {
+      expect(s.opacity[0][i][j]).toBeCloseTo(0, 9);
+      expect(s.opacity[1][i][j]).toBeCloseTo(1, 9);
+    }
+  });
+
+  test('and the span still draws what the editor draws at both ends', () => {
+    const { world } = notched();
+    const span = run(bakeSpan(world, 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(world, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(world, 1), 6);
+  });
+});
+
 describe('a corner arriving right beside one that is leaving', () => {
   /**
    * The case that broke: the two are neighbours in the ring, so the corner

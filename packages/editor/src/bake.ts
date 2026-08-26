@@ -499,7 +499,7 @@ function spanning(
   // Same count as both ends means the same corners as both ends: each is a
   // subset of the union, so equal sizes make all three the same set.
   if (corners.length === was.corners.length && corners.length === now.corners.length) {
-    return { corners, local: [was.local, now.local], dead };
+    return straightened(corners, [was.local, now.local], dead);
   }
 
   const n = corners.length;
@@ -544,7 +544,70 @@ function spanning(
     }
   });
 
+  return straightened(corners, local, dead);
+}
+
+/**
+ * `dead` widened to the corners the arrangement is going to drop anyway.
+ *
+ * A corner that is exactly collinear with its neighbours is not in the
+ * projection — `cornersOnly` takes it out — and for everything downstream that
+ * is the same thing as not being there. A corner flat at one end of the span
+ * and turning at the other therefore arrives exactly as one that is born does:
+ * the ring changes length part way through, and a vertical stands up out of a
+ * flat wall the instant it stops being exactly straight. Which is what it did —
+ * three authored points sitting on a wall, one of them dragged off it, and all
+ * three lines flashing on for the frame at the near end of the span.
+ *
+ * So they are marked dead where they are flat, and the machinery `spanning`
+ * already has does the rest: `invented` asks for them back so the ring keeps
+ * its length, and `fading` fades their lines in over the run they emerge
+ * through. Erosion moves edges parallel, so exactly collinear in the source is
+ * exactly collinear in the projection, and the source is what is in hand here.
+ *
+ * Only where it *changes*. A corner flat at both ends is dropped at both ends
+ * and at every instant between, and saying it is dead would ask for it back at
+ * the two ends alone — a ring one point longer at the ends than in the middle,
+ * which is the one thing this is all for. Existence wins where it has already
+ * spoken, for the same reason.
+ */
+function straightened(
+  corners: Vertex[],
+  local: [Ring, Ring],
+  dead: [boolean[], boolean[]],
+): { corners: Vertex[], local: [Ring, Ring], dead: [boolean[], boolean[]] } {
+  const snap: [number, number] = [near1(local[0]), near1(local[1])];
+
+  for (let i = 0; i < corners.length; i++) {
+    if (dead[0][i] || dead[1][i]) continue;
+
+    const was = flat(local[0], i, snap[0]), now = flat(local[1], i, snap[1]);
+
+    if (was !== now) dead[was ? 0 : 1][i] = true;
+  }
+
   return { corners, local, dead };
+}
+
+/** The arrangement's own tolerance, off one ring. See `near`. */
+function near1(ring: Ring): number {
+  let extent = 1;
+
+  for (const p of ring) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+
+  return extent * 1e-9;
+}
+
+/** Whether the ring runs straight through a corner: `cornersOnly`'s question,
+ * asked of the source rather than of the projection. */
+function flat(ring: Ring, i: number, snap: number): boolean {
+  const n = ring.length;
+  const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+  const ux = b.x - a.x, uy = b.y - a.y;
+  const vx = c.x - b.x, vy = c.y - b.y;
+  const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+  return reach === 0 || Math.abs(ux * vy - uy * vx) / reach <= snap;
 }
 
 const ORIGIN: Point = { x: 0, y: 0 };
