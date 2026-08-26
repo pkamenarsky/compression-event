@@ -1,7 +1,3 @@
-* fix the 3d view - super bad ergonomics right now
-* make it more clear when drilled into group
-* selection of overlapping vertices
-* locking of polygons? unlock works then with cmd + click
 * paths
 * artifacts
 * shape button
@@ -9,15 +5,22 @@
 ** rect
 ** n-gon shape shows slider for point count
 ** polyline
-* unchain
 * zoom
+* settings view
+** grid size
+** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
+
 * visible versions can be a strip instead of individual lines
 ** button: all versions/next version/all subsequent versions/strip
 * effects
 ** chamfer etc
-* settings view
-** grid size
-** snap to grid
+
+* "show floor polygons"
+* fix the 3d view - super bad ergonomics right now
+* make it more clear when drilled into group
+* selection of overlapping vertices
+* locking of polygons? unlock works then with cmd + click
+* unchain
 * version management
 * shortcuts
   c - create shape; cr - rect; cn - n-gon; cp - polyline
