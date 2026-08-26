@@ -32,7 +32,7 @@ import {
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { IDENTITY, Resolved, placeAt, resolveAt } from './scene';
-import { Id, PolygonId, VersionId, World } from './types';
+import { ArtefactId, Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -196,8 +196,15 @@ function solvable(s: Stretch, table: Table, origin: Origin | null | undefined): 
   return one === null || two === null ? null : [one[0], one[1], two[0], two[1]];
 }
 
-/** Everything the shader reads, flattened. */
-export function bakedSpan(span: Span): BakedSpan {
+/**
+ * Everything the shader reads, flattened.
+ *
+ * `carrying` names the artefacts the shipped world will hold, in the order it
+ * will hold them, so that the span can say where each one's frame sits. They
+ * are already in the frame table — `ridersOf` puts them there — and this is
+ * only the index back to them.
+ */
+export function bakedSpan(span: Span, carrying: readonly ArtefactId[] = []): BakedSpan {
   const slots = slotted(span.riders);
   const table: Table = { at: new Map(), floats: [] };
 
@@ -264,6 +271,7 @@ export function bakedSpan(span: Span): BakedSpan {
     kinds: new Uint8Array(kinds),
     crossings: new Int32Array(crossings),
     tracks,
+    artefacts: new Int32Array(carrying.map(id => slots.get(id) ?? -1)),
   };
 }
 
@@ -281,12 +289,13 @@ export function bakedSpan(span: Span): BakedSpan {
  */
 export function bakedLevel(bake: Bake, world: World): BakedLevel {
   const spans = [];
+  const carrying = shipping(world);
 
   for (let from = 0; from + 1 < world.versions.length; from++) {
     const span = spanAt(bake, world, from);
     if (span === null) break;
 
-    spans.push(bakedSpan(span));
+    spans.push(bakedSpan(span, carrying));
   }
 
   return { spans };
@@ -385,20 +394,30 @@ export function floorsAt(world: World, v: VersionId): Floor[] {
 }
 
 /**
- * Every artefact, and where each one stands at every version.
+ * Every artefact: its own point, and where it stands at every version.
  *
- * Resolved here rather than shipped as layers, because the game has no
- * versions to resolve *through* — what it is handed is flat, and an artefact's
- * place at a version is a point. What is lost is the arc between two of them,
- * which the game does not draw: see `Artefact`.
+ * The places are resolved here because the game has no versions to resolve
+ * through — what it is handed is flat, and an artefact's place *at* a version
+ * is a point. Between two of them it rides the span's frame table, which is
+ * why its own point comes too.
  */
-function artefactsShipped(world: World): GameArtefact[] {
-  return [...world.artefacts.keys()]
-    .sort((a, b) => a - b)
-    .map(id => ({
-      type: world.artefacts.get(id)!.type,
+export function artefactsShipped(world: World): GameArtefact[] {
+  return shipping(world).map(id => {
+    const it = world.artefacts.get(id)!;
+
+    return {
+      type: it.type,
+      at: it.at,
       places: world.versions.map((_unused, v) => placeAt(world, id, v)),
-    }));
+    };
+  });
+}
+
+/** The artefacts in the order they are shipped, which is the order every span
+ * names its slots in. By id, because it has to be something and nothing else
+ * about an artefact is stable. */
+function shipping(world: World): ArtefactId[] {
+  return [...world.artefacts.keys()].sort((a, b) => a - b);
 }
 
 /**

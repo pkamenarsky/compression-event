@@ -2122,8 +2122,51 @@ export interface Slice {
  */
 export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
   const cast = casting(world, from);
+  const out = ridden(cast, subjects(cast));
 
-  return ridden(cast, subjects(cast));
+  for (const [id, rider] of carried(world, from)) out.set(id, rider);
+
+  return out;
+}
+
+/**
+ * What each artefact rides, which is what a polygon rides.
+ *
+ * An artefact has no geometry and so no track, and it is in here for one
+ * reason: a slot in the frame table. Everything that carries a wall carries
+ * whatever is standing in it, so a key on the floor of a room that turns goes
+ * round with the room rather than taking the chord — and it does so by riding
+ * the same chain, eased the same way, rather than by a second answer to a
+ * question the frame table already answers.
+ *
+ * Newborn the same way a polygon is: an artefact the later version introduces
+ * arrives where it is put, rather than flying in from wherever the identity
+ * would have left it.
+ */
+function carried(world: World, from: VersionId): Map<Id, Rider> {
+  const next = world.versions[from + 1];
+  const out = new Map<Id, Rider>();
+
+  if (next === undefined) return out;
+
+  for (const [id, it] of world.artefacts) {
+    // Nothing before the version that introduced it may name it, so one the
+    // span has never heard of is not in the span at all.
+    if (it.birth > from + 1) continue;
+
+    const born = it.birth <= from;
+
+    out.set(id, {
+      base: groupFrame(world, born ? from : from + 1, id),
+      layer: born ? next.edits.get(id)?.transform ?? EMPTY_TRANSFORM : EMPTY_TRANSFORM,
+      holders: born
+        ? enclosing(world, id)
+          .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM }))
+        : [],
+    });
+  }
+
+  return out;
 }
 
 /**

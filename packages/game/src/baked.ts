@@ -197,6 +197,18 @@ export interface BakedSpan {
 
   /** One per polygon, in the order their runs come back out in. */
   tracks: BakedTrack[]
+
+  /**
+   * Per artefact, in the order the world holds them, the frame slot it rides —
+   * or -1 where this span does not carry it.
+   *
+   * An artefact has no geometry and no track, so it is in the buffers as a
+   * slot and nothing else: its own point goes through `frameAt` exactly as a
+   * corner does. That is the whole of why it comes round a turn on the arc
+   * rather than the chord, without anything reading this knowing what a turn
+   * is.
+   */
+  artefacts: Int32Array
 }
 
 /** Every span of one level, in version order and covering all of them. */
@@ -310,6 +322,11 @@ export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
     tx: a * bx + c * by + tx,
     ty: b * bx + d * by + ty,
   };
+}
+
+/** A point in a slot's own frame, taken out to the world at one instant. */
+export function placeAt(span: BakedSpan, slot: number, at: Point, t: number): Point {
+  return place(frameAt(span, slot, t), at.x, at.y);
 }
 
 function place(m: Affine, x: number, y: number): Point {

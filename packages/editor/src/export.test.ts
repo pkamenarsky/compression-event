@@ -15,12 +15,13 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { CROSSING, FRAME_STRIDE, Hulls, outline, signedArea } from '@ce/game';
-import { Frame, bakeSpan, riding, sample, stretchAt, truth } from './bake';
-import { bakedSpan, versionOf } from './export';
+import { BakedSpan, CROSSING, FRAME_STRIDE, Hulls, outline, placeAt, signedArea } from '@ce/game';
+import { Frame, artefactsDuring, bakeSpan, riding, sample, stretchAt, truth } from './bake';
+import { artefactsShipped, bakedSpan, versionOf } from './export';
 import {
   TOP,
   Affine,
+  addArtefact,
   addPolygon,
   addVertex,
   EMPTY_LIVE,
@@ -35,7 +36,7 @@ import {
   resolveAt,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import { ArtefactId, EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -228,6 +229,79 @@ describe('a flattened span replays as its span does', () => {
 /** Nothing about either end of a span is approximate, so the only thing being
  * allowed for is that the buffers are single precision. */
 const EXACT = 1e-3;
+
+describe('an artefact rides the frame table like everything else', () => {
+  /** A key put exactly on a corner of a room, and the room made to move. */
+  function corner(layer: Partial<Transform>): { world: World, key: ArtefactId } {
+    const at = { x: 200, y: 0 };
+    const drew = addPolygon(emptyWorld(), 'level', [{ x: 0, y: 0 }, at, { x: 200, y: 200 }], 0, TOP);
+    const put = addArtefact(drew.world, 'key', at, 0, TOP);
+    const made = grouped(put.world, 0, [drew.id, put.id], TOP)!;
+
+    return { world: moved(made.world, 1, made.id, layer), key: put.id };
+  }
+
+  /** Instants strictly inside the span: both ends agree however it is read. */
+  const INSIDE = [0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9];
+
+  function shipped(world: World, key: ArtefactId): { flat: BakedSpan, at: Point, places: (Point | null)[] } {
+    const flat = bakedSpan(run(bakeSpan(world, 0)), [key]);
+    const all = artefactsShipped(world);
+
+    return { flat, at: all[0].at, places: all[0].places };
+  }
+
+  test('a key on a corner is on that corner at every instant of the span', () => {
+    const { world, key } = corner({
+      rotation: Math.PI / 3,
+      translation: { x: 40, y: -25 },
+      scale: { x: 1.4, y: 0.8 },
+    });
+
+    const { flat, at } = shipped(world, key);
+
+    for (const t of INSIDE) {
+      const here = placeAt(flat, flat.artefacts[0], at, t);
+      const wall = outline(flat, t).flat();
+      const near = Math.min(...wall.map(p => Math.hypot(p.x - here.x, p.y - here.y)));
+
+      expect(near).toBeLessThan(SLACK);
+    }
+  });
+
+  test('and the buffers put it where the editor draws it', () => {
+    const { world, key } = corner({ rotation: -0.9, translation: { x: 15, y: 60 } });
+    const { flat, at } = shipped(world, key);
+
+    for (const t of INSIDE) {
+      const here = placeAt(flat, flat.artefacts[0], at, t);
+      const there = artefactsDuring(world, 0, 1, t)[0].at;
+
+      expect(here.x).toBeCloseTo(there.x, 3);
+      expect(here.y).toBeCloseTo(there.y, 3);
+    }
+  });
+
+  test('the arc is not the chord, which is the whole reason the slot is there', () => {
+    const { world, key } = corner({ rotation: Math.PI / 2 });
+    const { flat, at, places } = shipped(world, key);
+
+    const here = placeAt(flat, flat.artefacts[0], at, 0.5);
+    const a = places[0]!, b = places[1]!;
+    const chord = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+
+    expect(Math.hypot(here.x - chord.x, here.y - chord.y)).toBeGreaterThan(10);
+  });
+
+  test('one the span has never heard of gets no slot in it', () => {
+    const drew = addPolygon(emptyWorld(), 'level', rect(0, 0, 200, 160), 0, TOP);
+    const put = addArtefact(drew.world, 'key', { x: 40, y: 40 }, 2, TOP);
+
+    const flat = bakedSpan(run(bakeSpan(put.world, 0)), [put.id]);
+
+    expect([...flat.artefacts]).toEqual([-1]);
+  });
+});
 
 describe('a span begins and ends on what the editor draws', () => {
   const cases: [string, () => World][] = [

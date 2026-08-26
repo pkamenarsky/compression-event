@@ -21,15 +21,15 @@
 // stops you, which is what the jam build had between its snaps too.
 //
 // An artefact is drawn on the first clock and *is* somewhere on the second: it
-// slides from where it stood to where it will stand while the walls do, and it
-// becomes pickable at the new place when they arrive. Straight there, which is
-// the one place the game settles for less than the editor: it has the two
-// places and not the layers between them, and a dozen artefacts sliding for a
-// second is not worth a slot per artefact per span in the buffers to make the
-// turns come out as arcs.
+// travels from where it stood to where it will stand while the walls do, and
+// it becomes pickable at the new place when they arrive. It travels the way
+// the walls travel, riding its slot in the span's frame table, so a key on the
+// floor of a room that turns comes round on the arc with the room rather than
+// cutting across the middle of it.
 // -----------------------------------------------------------------------------
 
 import { Standing, artefacts } from './artefacts';
+import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
 import { SCALE, renderer } from './render';
@@ -44,7 +44,7 @@ import {
   versionShift,
 } from './sound';
 import { Run } from './walls';
-import { ArtefactType, Point, World } from './world';
+import { Artefact, ArtefactType, Point, World } from './world';
 
 /** Eye height, in world units. */
 const EYE = 1.6;
@@ -161,17 +161,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const placed = (from: number, to: number, t: number): void => {
     const all: Standing[] = [];
 
+    // A shift is one span read forwards or backwards, so the span is the
+    // earlier of the two versions whichever way the level is going.
+    const span = from === to ? undefined : world.baked.spans[Math.min(from, to)];
+
     world.artefacts.forEach((it, i) => {
       if (gone.has(i)) return;
 
-      const a = it.places[from] ?? null;
-      const b = it.places[to] ?? null;
+      const at = riding(span, i, it, from, to, t);
 
-      if (a === null && b === null) return;
-
-      const at = a === null ? b!
-        : b === null ? a
-        : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      if (at === null) return;
 
       all.push({ id: i, type: it.type, x: at.x, y: at.y });
     });
@@ -512,6 +511,42 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       view.dispose();
     },
   };
+}
+
+/**
+ * Where one artefact is, part way through a shift.
+ *
+ * Off the frame table where the span has a slot for it, which is the same
+ * arithmetic every corner of every wall goes through and is therefore right
+ * about turns for free. Where it has none — an unbaked span, or a jump of more
+ * than one version — there are still two places, and a straight line between
+ * them is better than a jump.
+ *
+ * One that exists at only one end stands still at the place it has: something
+ * arriving has nowhere to arrive from, and something on its way out has
+ * nowhere to go.
+ */
+function riding(
+  span: BakedSpan | undefined,
+  index: number,
+  it: Artefact,
+  from: number,
+  to: number,
+  t: number,
+): Point | null {
+  const a = it.places[from] ?? null;
+  const b = it.places[to] ?? null;
+
+  if (a === null || b === null) return a ?? b;
+  if (from === to) return a;
+
+  const slot = span?.artefacts[index] ?? -1;
+
+  // The span runs from the earlier version to the later one, so a shift the
+  // other way is the same span read backwards.
+  return slot < 0
+    ? { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+    : placeAt(span!, slot, it.at, to > from ? t : 1 - t);
 }
 
 /**

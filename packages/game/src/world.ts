@@ -92,17 +92,19 @@ export interface Floor {
  * One artefact, and where it stands at every version.
  *
  * A place per version rather than one place, because an artefact is carried by
- * whatever holds it: a key in a room that turns turns with it. Only the places
- * are shipped and not the layers between them, so what the game draws during a
- * transition is a straight line between two of them — where the editor, which
- * has the layers, draws the arc. A dozen artefacts sliding for a second is not
- * worth carrying the frame table twice over.
+ * whatever holds it: a key in a room that turns turns with it. `places` is
+ * where it stands *at* a version, which is what collision and pickup ask
+ * about; between two of them it rides the span's frame table off `at`, like
+ * every corner of every wall. See `BakedSpan.artefacts`.
  *
  * Null where it does not exist yet: a version before the one that introduced
  * it cannot name it.
  */
 export interface Artefact {
   type: ArtefactType
+  /** In its own frame, before any version's transform: the point the frame
+   * table is read against. */
+  at: Point
   places: (Point | null)[]
 }
 
