@@ -1256,6 +1256,34 @@ export function occupying(
 }
 
 /**
+ * How far each shut group's level reaches, by group.
+ *
+ * `occupying` answers nearly the same question and takes the solid side out of
+ * it, because a shut group draws no pillar of its own and a click in the hole
+ * one leaves has to fall through. This does not, because its one caller clips
+ * an animated floor to it and a floor runs *under* a pillar rather than
+ * stopping at it — see `replay` in the canvas.
+ */
+export function bounding(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+): Map<GroupId, Shape> {
+  const out = new Map<GroupId, Shape>();
+
+  for (const c of showing(world, v, items, path)) {
+    if (c.kind !== 'level') continue;
+
+    const id = sidedWith(c.id) ?? c.id;
+
+    if (world.groups.has(id)) out.set(id, c.shape);
+  }
+
+  return out;
+}
+
+/**
  * Whether a polygon is drawn by itself, or swallowed by a group drawing for it.
  *
  * Any enclosing group that is not on the open path shuts it in. It does not

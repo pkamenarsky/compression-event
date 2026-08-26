@@ -36,6 +36,7 @@ import {
   unplace,
   unstep,
   IDENTITY,
+  bounding,
   occupying,
   Occupied,
   swallowed,
@@ -72,6 +73,7 @@ import {
   World,
   GroupId,
   alsoPicked,
+  enclosing,
   marked,
   opened,
   panBy,
@@ -161,6 +163,26 @@ export function worldCanvas(
    * so it is a cache rather than state: rebuilding it would be correct and slow,
    * and this makes a redraw cost only what actually moved. */
   let set: Live = EMPTY_LIVE;
+
+  /**
+   * The version a replay is walking towards, resolved: what the animated floors
+   * are clipped against.
+   *
+   * Kept because a replay redraws every frame and the version it is walking
+   * towards does not move while it does — resolving it per frame would resolve
+   * one still world sixty times a second to draw the same shape.
+   */
+  let held: { world: World, to: VersionId, inside: GroupId | null, at: Map<GroupId, Shape> } | null = null;
+
+  const bounds = (w: World, to: VersionId, ins: GroupId | null): Map<GroupId, Shape> => {
+    if (held !== null && held.world === w && held.to === to && held.inside === ins) return held.at;
+
+    const at = bounding(w, to, resolveAt(w, to), opened(w, ins));
+
+    held = { world: w, to, inside: ins, at };
+
+    return at;
+  };
 
   /** Where and when the last click landed, for telling the second of a pair
    * from the first. Cleared by anything that is not a click. */
@@ -1094,11 +1116,13 @@ export function worldCanvas(
                   ? null
                   : replayed(b, w, r.from, r.to, r.at);
 
+                const clip = r === null ? null : bounds(w, r.to, ins);
+
                 draw(
                   el,
                   ctx,
                   v,
-                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played),
+                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played, clip),
                 );
               }
             },
@@ -1492,6 +1516,9 @@ function layers(
   items: Resolved[],
   outline: Point[][],
   played: Frame | null,
+  /** Where each shut group's level reaches at the version the replay is walking
+   * towards, from `bounding`. Null when nothing is playing. */
+  clip: Map<GroupId, Shape> | null,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -1542,7 +1569,27 @@ function layers(
   // Over the editor's own answer, so the two can be read against each other:
   // where they agree the thin line sits inside the thick one, and where the
   // bake is part way between two versions it is visibly somewhere else.
-  if (played !== null) out.push(ctx => replay(ctx, view, played));
+  /**
+   * What an animated floor is drawn inside, or null for one belonging to no
+   * group.
+   *
+   * The innermost enclosing group that has an answer: `bounding` folds a shut
+   * group's members into the outermost shut one, so at most one of the chain is
+   * in there and finding it from the inside out finds it.
+   */
+  const inner = (id: Id): Shape | null => {
+    if (clip === null) return null;
+
+    for (const g of enclosing(world, id)) {
+      const shape = clip.get(g);
+
+      if (shape !== undefined) return shape;
+    }
+
+    return null;
+  };
+
+  if (played !== null) out.push(ctx => replay(ctx, view, played, inner));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
@@ -1886,8 +1933,32 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
  * gets the line an unselected floor gets standing still, so that a moving one
  * reads as the same shape it was drawn as rather than as a piece of outline in
  * the one colour that means outline.
+ *
+ * A floor in a group is clipped to where that group's level reaches at the
+ * version being walked towards — which is already on screen, still, the whole
+ * time the walk plays. A floor sliding or turning inside its group has no
+ * reason to stay inside the walls it belongs to, and one that leaves them
+ * reads as floor laid down outside the room. Clipping is what the still
+ * drawing already does with `Occupied.floor`, so this is the moving version of
+ * an answer the canvas gives everywhere else.
+ *
+ * Against the destination rather than against the instant: the instant's own
+ * level is not a shape the replay has — it is runs, in pieces, and putting them
+ * back together is the boolean the bake exists to avoid. The cost is that a
+ * floor is cut against where its room ends up rather than where the room is,
+ * so at the start of a long walk it is clipped by walls that have not arrived.
+ * It grows into place, which reads as a floor being laid rather than as one
+ * poking out, and the destination is the frame both of them are heading for.
+ *
+ * Solids are not taken out: a floor is drawn under a pillar, not around it.
  */
-function replay(ctx: CanvasRenderingContext2D, view: View, frame: Frame): void {
+function replay(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  frame: Frame,
+  /** What an animated floor is drawn inside, by polygon. */
+  inner: (id: Id) => Shape | null,
+): void {
   if (frame.length === 0) return;
 
   const stroke = (runs: Frame, colour: string, width: number): void => {
@@ -1912,7 +1983,53 @@ function replay(ctx: CanvasRenderingContext2D, view: View, frame: Frame): void {
 
   // The floors first, so the set draws over them where they meet — which is
   // the order they stand in, and the order the 3D view draws them in too.
-  stroke(frame.filter(r => r.fill), theme.level, 0.5);
+  //
+  // Grouped by what they are clipped to rather than drawn one at a time, so
+  // that a group's floors are one path under one clip: several floors in a
+  // room is the ordinary case, and the clip is the same shape for all of them.
+  const loose: Frame = [];
+  const inside = new Map<Shape, Frame>();
+
+  for (const run of frame) {
+    if (!run.fill) continue;
+
+    const shape = inner(run.id);
+
+    if (shape === null || shape.length === 0) {
+      loose.push(run);
+      continue;
+    }
+
+    const mine = inside.get(shape) ?? [];
+
+    mine.push(run);
+    inside.set(shape, mine);
+  }
+
+  stroke(loose, theme.level, 0.5);
+
+  for (const [shape, runs] of inside) {
+    ctx.save();
+    ctx.beginPath();
+
+    for (const ring of shape) {
+      ring.forEach((p, i) => {
+        const q = toScreen(view, p);
+
+        if (i === 0) ctx.moveTo(q.x, q.y);
+        else ctx.lineTo(q.x, q.y);
+      });
+
+      ctx.closePath();
+    }
+
+    // Even-odd, because a shape's holes are rings like any other and the
+    // winding they were built with is not something to lean on here.
+    ctx.clip('evenodd');
+    stroke(runs, theme.level, 0.5);
+    ctx.restore();
+  }
+
   stroke(frame.filter(r => !r.fill), theme.replay, 1.25);
 }
 
