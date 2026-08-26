@@ -59,7 +59,7 @@
 import { PolygonType } from '@ce/game/world';
 import { AABB, Tree, emptyTree, ofRings } from './aabb';
 import * as aabb from './aabb';
-import { Member, Point, Shape, boundaryRuns, ground, simplify } from './geometry';
+import { Member, Point, Shape, Whither, boundaryRuns, ground, simplify } from './geometry';
 
 export type Id = number;
 
@@ -100,6 +100,9 @@ export interface Piece {
    * `boundaryRuns`, which is the only place that sees this polygon and its
    * neighbours at once — see `cornering` in `geometry.ts`. */
   corner: boolean[]
+  /** Per point of `points`: what it is, named rather than measured. See
+   * `Whither` in `geometry.ts`; the bake pairs two readings by these. */
+  whence: Whither[]
 }
 
 /**
@@ -347,6 +350,7 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
       source: subject.id,
       points: r.points,
       corner: r.corner,
+      whence: r.whence,
     }));
 
     next.runs.set(subject.id, mine);

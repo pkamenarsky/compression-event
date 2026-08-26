@@ -2,20 +2,22 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import {
   Frame,
+  Origin,
   Span,
   TOLERANCE,
   bakeAll,
   bakeSpan,
   lined,
-  stretchAt,
   pruned,
   sample,
   spanAt,
+  stretchAt,
   truth,
 } from './bake';
 import {
   TOP,
   addPolygon,
+  grouped,
   addVertex,
   csg,
   editAt,
@@ -27,6 +29,7 @@ import {
   EMPTY_BAKE,
 } from './bake';
 import {
+  Id,
   PolygonId,
   PolygonType,
   Transform,
@@ -56,11 +59,12 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
 function transformed(
   world: World,
   v: VersionId,
-  id: PolygonId,
+  id: Id,
   t: Partial<Transform>,
 ): World {
-  const it = resolveAt(world, v).find(r => r.id === id)!;
-  const edit = editAt(world, v, id, it.erosion);
+  // A group has no geometry to read a depth off, and none to inherit either.
+  const it = resolveAt(world, v).find(r => r.id === id);
+  const edit = editAt(world, v, id, it?.erosion ?? 0);
 
   return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
 }
@@ -93,7 +97,12 @@ function length(frame: Frame): number {
 }
 
 function lengthOf(runs: Point[][]): number {
-  return length(runs.map(points => ({ id: 0, points, corner: points.map(() => true) })));
+  return length(runs.map(points => ({
+    id: 0,
+    points,
+    corner: points.map(() => true),
+    whence: points.map((_p, i) => ({ kind: 'vertex' as const, at: { id: 0, ring: 0, index: i } })),
+  })));
 }
 
 /** The set the editor draws at a version, for the bake to be checked against. */
@@ -203,109 +212,143 @@ describe('interpolation', () => {
 });
 
 describe('two readings of one ring, lined up', () => {
-  const ring = (points: Point[]) => ({
-    id: 0,
-    points: [...points, points[0]],
-    corner: points.map(() => true).concat([true]),
-  });
+  // A ring of `n` corners of one polygon, walked from `k`. The names are what
+  // pairs them, so they are the whole of what the fixture has to get right: the
+  // point positions could be anything at all.
+  const ring = (n: number, k: number, id = 0) => {
+    const at = (i: number) => (i + k) % n;
 
-  const from = (points: Point[], k: number) =>
-    points.map((_p, i) => points[(i + k) % points.length]);
-
-  const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    return {
+      id,
+      points: Array.from({ length: n + 1 }, (_p, i) => ({ x: at(i), y: 0 })),
+      corner: Array.from({ length: n + 1 }, () => true),
+      whence: Array.from({ length: n + 1 }, (_p, i) =>
+        ({ kind: 'vertex' as const, at: { id, ring: 0, index: at(i) } })),
+    };
+  };
 
   test('a ring walked from another corner is turned back', () => {
-    // The reported case, exactly: the same pillar, not moved at all, handed
-    // back cut one corner along.
+    // The reported case: the same pillar, not moved at all, handed back cut one
+    // corner along. Every walk of it comes back in the order the other end has.
     for (let k = 0; k < 4; k++) {
-      expect(lined([ring(square)], [ring(from(square, k))])[0].points)
-        .toEqual(ring(square).points);
+      expect(lined([ring(4, 0)], [ring(4, k)])[0].whence).toEqual(ring(4, 0).whence);
     }
   });
 
-  test('a ring eroded inside another pairs corner to nearest corner', () => {
-    // What the diamond was: paired one along, every corner reaches past its
-    // counterpart to the next one round, which is further by construction.
-    const inner = [{ x: 3, y: 3 }, { x: 7, y: 3 }, { x: 7, y: 7 }, { x: 3, y: 7 }];
+  test('the positions have nothing to do with it', () => {
+    // Which is the point of naming them. The two readings here are a long way
+    // apart — the shape eroded, or the polygon travelled — and they still pair
+    // corner for corner.
+    const far = ring(4, 3);
 
-    for (let k = 0; k < 4; k++) {
-      expect(lined([ring(square)], [ring(from(inner, k))])[0].points)
-        .toEqual(ring(inner).points);
-    }
+    far.points = far.points.map(p => ({ x: p.x * 100 + 5000, y: 7000 }));
+
+    const back = lined([ring(4, 0)], [far])[0];
+
+    expect(back.whence).toEqual(ring(4, 0).whence);
+    expect(back.points[0]).toEqual({ x: 5000, y: 7000 });
   });
 
-  test('a ring eroded away to a point is settled by the directions', () => {
-    // Every pairing is the same distance here, so distance cannot answer it.
-    // Offsetting leaves the directions of the edges exactly alone, and they
-    // can: turned by one, all four are ninety degrees out.
-    const dot = [
-      { x: 5 - 1e-7, y: 5 - 1e-7 },
-      { x: 5 + 1e-7, y: 5 - 1e-7 },
-      { x: 5 + 1e-7, y: 5 + 1e-7 },
-      { x: 5 - 1e-7, y: 5 + 1e-7 },
-    ];
+  test('runs are paired by name too, not by where they sit', () => {
+    // A polygon's boundary can be several runs, and at an event the arrangement
+    // reorders them. Paired by position, two pieces from opposite ends of the
+    // level end up interpolating into each other.
+    const one = ring(4, 0, 7), two = ring(3, 0, 7);
 
-    for (let k = 0; k < 4; k++) {
-      expect(lined([ring(square)], [ring(from(dot, k))])[0].points)
-        .toEqual(ring(dot).points);
-    }
+    const back = lined([one, two], [two, one]);
+
+    expect(back[0].whence).toEqual(one.whence);
+    expect(back[1].whence).toEqual(two.whence);
   });
 
-  test('an open run is left where it was cut', () => {
+  test('a reading that cannot be lined up is left alone', () => {
+    // No counterpart means the arrangement changed, which is an event: not a
+    // phase to be recovered from, and a stretch that spans one should have been
+    // cut rather than fixed up here.
+    const other = ring(4, 0, 9);
+    const from = [other];
+
+    expect(lined([ring(4, 0, 7)], from)).toBe(from);
+  });
+
+  test('an open run keeps the order it came in', () => {
     // Its ends are crossings with other polygons, so there is no choice in
     // where it starts and nothing to line up.
-    const open = { id: 0, points: square, corner: square.map(() => true) };
-    const other = { id: 0, points: from(square, 2), corner: square.map(() => true) };
+    const open = { ...ring(4, 0), whence: ring(4, 0).whence.slice(0, 4), points: ring(4, 0).points.slice(0, 4), corner: [true, true, true, true] };
 
-    expect(lined([open], [other])[0]).toBe(other);
-  });
-
-  test('rings that do not answer to each other are left alone', () => {
-    // Different lengths, or a different polygon: nothing to pair.
-    const short = { id: 0, points: square.slice(0, 3), corner: [true, true, true] };
-
-    expect(lined([ring(square)], [short])[0]).toBe(short);
-    expect(lined([ring(square)], [{ ...ring(square), id: 1 }])[0].points)
-      .toEqual(ring(square).points);
+    expect(lined([open], [open])[0].whence).toEqual(open.whence);
   });
 });
 
-describe('a ring is cut the same way twice', () => {
-  test('the two ends of a stretch agree about where a closed ring starts', () => {
-    // A run that closes on itself comes back cut wherever the arrangement's
-    // walk began, and that is not a fact about the ring: two readings of one
-    // pillar can hand it back cut at different corners. The two ends of a
-    // stretch are paired point for point, so a ring out of phase by one drags
-    // every corner toward its neighbour — half way across, a square inscribed
-    // in the pillar at forty-five degrees.
+describe('the two ends of a stretch are the same arrangement', () => {
+  // The invariant the whole span rests on. A stretch is interpolated by pairing
+  // its two ends run for run and point for point, so those pairs have to be the
+  // same run and the same point — the same corner of the same outline, or the
+  // same two edges crossing.
+  //
+  // Nothing about one reading can be trusted to line them up: a ring closes on
+  // itself, so the arrangement hands it back cut wherever the walk began, and
+  // it hands the runs themselves back in whatever order they came out. Both
+  // were tried as canonical keys and both flipped. The names settle it.
+  const named = (o: Origin) => o.kind === 'vertex'
+    ? `v${o.at.id}.${o.at.ring}.${o.at.index}`
+    : `x${o.a.id}.${o.a.ring}.${o.a.index}|${o.b.id}.${o.b.ring}.${o.b.index}`;
+
+  const holds = (world: World) => {
+    let pairs = 0;
+
+    for (const track of run(bakeSpan(world, 0)).tracks) {
+      for (const stretch of track.stretches) {
+        stretch.a.forEach((one, i) => {
+          const two = stretch.b[i];
+
+          if (two === undefined) return;
+
+          pairs++;
+
+          expect(two.id).toEqual(one.id);
+          expect(two.whence.map(named)).toEqual(one.whence.map(named));
+        });
+      }
+    }
+
+    // A test that asserted nothing would pass this too.
+    expect(pairs).toBeGreaterThan(0);
+  };
+
+  test('a room with pillars in it, one of them eroding', () => {
+    // Closed rings, which is where the phase can differ: a pillar's boundary is
+    // its own whole outline, cut wherever the walk started.
     const { world, ids } = drawn(
       ['level', rect(-200, -200, 500, 400)],
       ['solid', rect(-100, -100, 60, 60)],
       ['solid', rect(100, -100, 60, 60)],
     );
 
-    const w = transformed(world, 1, ids[1], { erosion: 8 });
+    holds(transformed(world, 1, ids[1], { erosion: 8 }));
+  });
 
-    for (const track of run(bakeSpan(w, 0)).tracks) {
-      for (const stretch of track.stretches) {
-        stretch.a.forEach((one, i) => {
-          const two = stretch.b[i];
+  test('a polygon sliding into another, which reorders the runs', () => {
+    // Where the run *order* changes: the arrangement puts a polygon's pieces
+    // back in whatever order it walked them, and an event reorders them.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['level', rect(0, 200, 40, 100)],
+    );
 
-          if (two === undefined || two.points.length !== one.points.length) return;
+    holds(transformed(world, 1, ids[1], { translation: { x: 0, y: -140 } }));
+  });
 
-          const n = one.points.length;
-          const off = (k: number) => one.points.reduce((sum, p, j) => {
-            const q = two.points[(j + k) % n];
+  test('a group eroding round a pillar that is turning inside it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['solid', rect(-60, -60, 120, 120)],
+    );
 
-            return sum + Math.hypot(p.x - q.x, p.y - q.y);
-          }, 0);
+    const made = grouped(world, 0, ids, TOP)!;
+    const turned = transformed(made.world, 1, ids[1], { rotation: 0.7 });
 
-          // Index for index is the best the two ends can be lined up. Any other
-          // phase fitting better means they were cut at different corners.
-          for (let k = 1; k < n; k++) expect(off(k)).toBeGreaterThanOrEqual(off(0));
-        });
-      }
-    }
+    holds(transformed(turned, 1, made.id, { erosion: 20 }));
   });
 });
 
@@ -416,13 +459,11 @@ describe('keyframes', () => {
 
     const first = run(bakeSpan(w, 0)).tracks[0].stretches[0];
 
-    // An instant at the start, holding the touching geometry. It carries as far
-    // as the middle of the gap the convergence left, rather than having no
-    // width at all — see `abutting` — and either end of it is the same
-    // geometry, which is what makes it an instant.
+    // Cut at the very start, so that the version before the event is the one
+    // rendering the touching geometry. How narrow that first stretch is, is the
+    // convergence's business; that it is there at all is the keyframe.
     expect(first.t0).toBe(0);
     expect(first.t1).toBeLessThan(1e-4);
-    expect(first.a).toBe(first.b);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 

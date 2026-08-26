@@ -952,6 +952,37 @@ function covers(side: Side, p: Point): boolean {
   return w !== 0;
 }
 
+/**
+ * Where an output point came from, in the members' own terms: whose ring, which
+ * ring of theirs, and which vertex or edge of it.
+ *
+ * `Tag` says the same thing about the operands a boolean was handed, which is
+ * an accident of how the call was assembled. This says it about the level, and
+ * is the same answer wherever the polygons were put in the argument list.
+ */
+export interface Whence {
+  id: number
+  ring: number
+  index: number
+}
+
+/**
+ * Why a boundary point is where it is, named rather than measured.
+ *
+ * A point of the boundary is one of exactly two things: a corner of one
+ * member's own outline, or the crossing of two members' edges. Both name only
+ * the input, so two readings taken at two instants agree about a point exactly
+ * when they agree about its name — and disagree only when the arrangement
+ * really has changed, which is an event and not something to be recovered from.
+ *
+ * This is the thing the bake used to work out again by hand, hunting each point
+ * for a vertex or an edge near it. Near is a tolerance, and a tolerance in
+ * something this load-bearing is a bug with a schedule.
+ */
+export type Whither =
+  | { kind: 'vertex', at: Whence }
+  | { kind: 'cross', a: Whence, b: Whence }
+
 export interface BoundaryRun {
   points: Point[]
   /**
@@ -961,6 +992,8 @@ export interface BoundaryRun {
    * than with whoever draws the wall.
    */
   corner: boolean[]
+  /** Per point of `points`: what it is, in the members' own terms. */
+  whence: Whither[]
 }
 
 /**
@@ -998,6 +1031,10 @@ export function boundaryRuns(
 
   let rank = 0, mine = -1;
 
+  // Which member each ring of each operand came off, so that what the
+  // arrangement names in its own terms can be handed back in the level's.
+  const whose: { id: number, ring: number }[][] = [[], []];
+
   for (const kind of ['level', 'solid'] as const) {
     const which = kind === 'level' ? 0 : 1;
     const into = which === 0 ? a : b;
@@ -1005,10 +1042,11 @@ export function boundaryRuns(
     for (const m of all.filter(x => x.kind === kind).sort((p, q) => p.id - q.id)) {
       if (m.id === subject.id) mine = rank;
 
-      for (const ring of m.shape) {
+      m.shape.forEach((ring, r) => {
         into.push(ring);
         ranks[which].push(rank);
-      }
+        whose[which].push({ id: m.id, ring: r });
+      });
 
       rank++;
     }
@@ -1034,9 +1072,21 @@ export function boundaryRuns(
   // Against everything taking part rather than against `ours`: which way the
   // boundary carries on past the end of a run is exactly the question the
   // neighbours are here to answer.
-  const turning = cornering(made, raw, inLevel, inSolid, OpSubtract, snap);
+  const turning = cornering(made.map(r => r.points), raw, inLevel, inSolid, OpSubtract, snap);
 
-  return made.map((points, i) => ({ points, corner: turning[i] }));
+  const named = (ref: SourceRef): Whence => {
+    const from = whose[ref.shape][ref.ring];
+
+    return { id: from.id, ring: from.ring, index: ref.index };
+  };
+
+  return made.map((run, i) => ({
+    points: run.points,
+    corner: turning[i],
+    whence: run.tags.map(tag => tag.kind === 'vertex'
+      ? { kind: 'vertex' as const, at: named(tag.at) }
+      : { kind: 'cross' as const, a: named(tag.a), b: named(tag.b) }),
+  }));
 }
 
 /**
@@ -1283,7 +1333,7 @@ function cornering(
  * them. Where a run does close on itself the loop is returned with its first
  * point repeated at the end, so that every edge is present either way.
  */
-function runs(segs: Seg[], snap: number): Point[][] {
+function runs(segs: Seg[], snap: number): { points: Point[], tags: Tag[] }[] {
   const weld = welder(snap);
   const next = new Map<number, number[]>();
   const incoming = new Map<number, number>();
@@ -1296,15 +1346,17 @@ function runs(segs: Seg[], snap: number): Point[][] {
   });
 
   const used = segs.map(() => false);
-  const out: Point[][] = [];
+  const out: { points: Point[], tags: Tag[] }[] = [];
 
   const walk = (start: number) => {
-    const run: Point[] = [segs[start].a];
+    const points: Point[] = [segs[start].a];
+    const tags: Tag[] = [segs[start].ta];
     let e = start;
 
     while (true) {
       used[e] = true;
-      run.push(segs[e].b);
+      points.push(segs[e].b);
+      tags.push(segs[e].tb);
 
       const on = next.get(weld.id(segs[e].b));
       const step = on?.find(i => !used[i]);
@@ -1317,7 +1369,7 @@ function runs(segs: Seg[], snap: number): Point[][] {
       e = step;
     }
 
-    out.push(run);
+    out.push({ points, tags });
   };
 
   // Open runs first, from their loose ends, so a run is never entered halfway.

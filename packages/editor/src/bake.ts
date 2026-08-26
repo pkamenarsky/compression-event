@@ -155,6 +155,16 @@ export interface Run {
   id: PolygonId
   points: Point[]
   /**
+   * Per point: what it is, out of the arrangement that made it — a corner of
+   * somebody's outline, or the crossing of two edges, named by whose.
+   *
+   * This is what pairs two readings. It arrives with the boundary rather than
+   * being worked out again from the geometry, which is the whole point: a name
+   * is exact where a measurement needs a tolerance, and two readings agree
+   * about a point exactly when they agree about its name.
+   */
+  whence: Origin[]
+  /**
    * Per point: whether the boundary actually turns there, out of
    * `boundaryRuns`. It rides along rather than being worked out again at the
    * end, because it is a question about a polygon *and its neighbours* and only
@@ -1042,7 +1052,7 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
 
   return boundaryRuns(subject, others, ground([subject, ...others]))
-    .map(r => ({ id: only, points: r.points, corner: r.corner }));
+    .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence }));
 }
 
 /** Everybody's share at once, through the full set. The yardstick's path, and
@@ -1053,7 +1063,7 @@ function everything(at: readonly Contributed[]): Frame {
   // reorders; within one polygon the order is the boundary's own and is stable
   // for as long as the combinatorics are — which is exactly a stretch.
   return pieces(live(EMPTY_LIVE, at).set)
-    .map(p => ({ id: p.source, points: p.points, corner: p.corner }))
+    .map(p => ({ id: p.source, points: p.points, corner: p.corner, whence: p.whence }))
     .sort((p, q) => p.id - q.id);
 }
 
@@ -1086,6 +1096,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     id: r.id,
     points: r.points.map(q => unplace(frames.get(r.id)!, q)),
     corner: r.corner,
+    whence: r.whence,
   }));
 
   return { frame, table, world, out, fade, t };
@@ -1162,12 +1173,28 @@ function neighbourhoods(all: { id: Id, mine: Moving[] }[]): Moving[][] {
 }
 
 /**
- * What has to hold for the shader to interpolate: the same polygons owning the
- * same number of runs, each of the same length. Positions are free to move —
- * that is what interpolation is for — and everything discrete is in here.
+ * What has to hold for the shader to interpolate: the same arrangement, named.
+ *
+ * Positions are free to move — that is what interpolation is for — and
+ * everything discrete is in here. Every point of the boundary says which corner
+ * of whose outline it is, or which two edges cross there, so the whole
+ * combinatorial state of the level is the set of those names, and a stretch is
+ * exactly a run of instants over which the set does not change.
+ *
+ * Counting runs and their lengths was the old test, and it is a proxy that a
+ * coincidence gets past: two arrangements can have the same shape of arrays
+ * while naming different geometry, and then a stretch spans an event it was
+ * meant to be cut at and interpolates one piece of boundary into another from
+ * the far side of the level. Sorted, because which order the runs came back in
+ * is the thing a signature must not be sensitive to — `lined` puts them in
+ * order afterwards, and cannot be asked to do it before the two are known to be
+ * the same arrangement at all.
  */
 function signature(frame: Frame): string {
-  return frame.map(r => `${r.id}.${r.points.length}`).join(' ');
+  return frame
+    .map(r => `${r.id}:${[...new Set(r.whence.map(names))].sort().join(',')}`)
+    .sort()
+    .join(' ');
 }
 
 // -----------------------------------------------------------------------------
@@ -1175,22 +1202,23 @@ function signature(frame: Frame): string {
 //
 // The CSG hands back positions, and a position is not enough: a crossing has to
 // be recomputed at every instant from the two edges that make it, or it slides
-// wrongly whenever one polygon turns relative to another. What is missing is
-// provenance, and rather than thread tags out through `geometry.ts` and
-// `worldset.ts` — which would have to survive the ring being re-indexed by
-// every erosion — it is read back off the geometry here, where it is wanted and
-// where the cost of looking does not matter.
+// wrongly whenever one polygon turns relative to another.
 //
-// The reading is unambiguous. A run point is either one of its own polygon's
-// eroded corners, or it lies on one of that polygon's edges and on an edge of
-// exactly one other polygon. Ties are impossible in anything but degenerate
-// geometry, and a degenerate instant is an event, so the stretch does not
-// contain one.
+// So it hands back names as well. Every point the arrangement produces is one
+// of exactly two things — a corner of somebody's outline, or the crossing of
+// two edges — and `boundaryRuns` says which, in the members' own terms. See
+// `Whither` in `geometry.ts`.
 //
-// It is done at both ends and kept only where the two agree, which is a real
-// check rather than a formality: the stretch is *supposed* to hold the
-// arrangement constant, so a point that comes from different edges at the two
-// ends is a stretch that should have been split.
+// This used to be read back off the geometry here instead, by hunting each
+// point for a vertex or an edge near it. It worked, and everything built on it
+// inherited a tolerance and an ordering that no reading could pin down: which
+// corner a ring starts at, which run of a polygon is which, whether two
+// readings are the same arrangement at all. All three are name comparisons now.
+//
+// The two ends are still checked against each other, and it is a real check
+// rather than a formality: the stretch is *supposed* to hold the arrangement
+// constant, so a point that comes from different edges at the two ends is a
+// stretch that should have been split.
 // -----------------------------------------------------------------------------
 
 /** How close counts as on. Relative, so a world measured in thousands is not
@@ -1270,43 +1298,6 @@ function sameRef(p: Ref, q: Ref): boolean {
   return p.id === q.id && p.ring === q.ring && p.index === q.index;
 }
 
-/** Every run point read back against the shapes it came out of. */
-function origins(taken: Taken): (Origin | null)[][] {
-  const snap = near(taken.world);
-
-  return taken.out.map(run => run.points.map(p => {
-    const world = taken.world.get(run.id);
-    if (world === undefined) return null;
-
-    const mine = corner(world, p, snap);
-    if (mine !== null) return { kind: 'vertex', at: { id: run.id, ...mine } };
-
-    const on = lying(world, p, snap);
-    if (on === null) return null;
-
-    let found: Ref | null = null;
-
-    for (const [id, shape] of taken.world) {
-      if (id === run.id) continue;
-
-      const hit = lying(shape, p, snap);
-
-      // Two answers is no answer: a point on two other polygons at once is a
-      // degeneracy, and a degeneracy is an event this stretch is not supposed
-      // to contain.
-      if (hit !== null) {
-        if (found !== null) return null;
-
-        found = { id, ...hit };
-      }
-    }
-
-    return found === null
-      ? null
-      : { kind: 'cross', a: { id: run.id, ...on }, b: found };
-  }));
-}
-
 /** Which corner of the shape this is, if it is one. */
 function corner(shape: Shape, p: Point, snap: number): { ring: number, index: number } | null {
   for (let r = 0; r < shape.length; r++) {
@@ -1322,30 +1313,6 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
   return null;
 }
 
-/** Which edge of the shape this sits on, if it sits on one. */
-function lying(shape: Shape, p: Point, snap: number): { ring: number, index: number } | null {
-  for (let r = 0; r < shape.length; r++) {
-    const ring = shape[r];
-
-    for (let i = 0; i < ring.length; i++) {
-      const a = ring[i], b = ring[(i + 1) % ring.length];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const l = Math.hypot(dx, dy);
-
-      if (l === 0) continue;
-
-      const side = ((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
-      if (Math.abs(side) > snap) continue;
-
-      const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
-      if (along < -snap || along > l + snap) continue;
-
-      return { ring: r, index: i };
-    }
-  }
-
-  return null;
-}
 
 // -----------------------------------------------------------------------------
 // Cutting the span
@@ -1475,164 +1442,150 @@ function apart(guess: Frame, actual: Frame): number {
   return worst;
 }
 
+/** One name, as a string, so that two of them can be compared and a set of
+ * them can be looked up. */
+function names(o: Origin): string {
+  const ref = (r: Ref) => `${r.id}.${r.ring}.${r.index}`;
+
+  return o.kind === 'vertex' ? `v${ref(o.at)}` : `x${ref(o.a)}|${ref(o.b)}`;
+}
+
 /**
- * How far to turn `b` so that it lines up with `a`: two readings of one ring,
- * paired corner for corner.
+ * How far to turn `b` so that its names line up with `a`'s: two readings of one
+ * ring, paired corner for corner.
  *
  * **Where a ring starts is not a fact about the ring.** It closes on itself, so
  * the arrangement hands it back cut wherever the walk began, and two readings
  * of a pillar that has not moved at all can come back cut at different corners
- * — the same four points, rotated by one. Paired point for point as they came,
- * every corner is dragged toward its neighbour and half way across the stretch
- * the pillar is a square inscribed in itself at forty-five degrees.
+ * — the same points, rotated by one. Paired as they came, every corner is
+ * dragged toward its neighbour, and half way across the stretch the pillar is a
+ * square inscribed in itself at forty-five degrees.
  *
- * Two ways to fix that, and only one of them works. The first is to cut every
- * ring canonically — lowest corner, lowest vertex index, anything — so that two
- * readings agree by construction. Every version of that key is a fact about
- * *one* reading, and there is nothing in a reading that is both stable and
- * unique: the position of a corner moves as the shape erodes, and the index of
- * a vertex is an array position handed out by the offsetter, which reorders its
- * own output freely. A key that can flip is a key that will.
+ * Nothing about *one* reading can settle this. A corner's position moves as the
+ * shape erodes; the index of a vertex is an array position the offsetter hands
+ * out and reorders freely. Both were tried and both flipped. What settles it is
+ * that a point of the boundary has a name — this crossing of those two edges,
+ * that corner of that outline — and two readings agree about a point exactly
+ * when they agree about its name.
  *
- * The second is this: do not canonicalise anything, and pair the two readings
- * *against each other*, which is the only place the question can actually be
- * answered. Both are in hand, so ask which turn lines them up.
- *
- * By the directions of the edges first, which is the part that is exact:
- * offsetting a ring leaves every edge pointing exactly where it pointed, so the
- * turn that lines the two up scores zero and any other scores the angle it is
- * out by. Erosion is most of what happens inside a stretch, and this does not
- * care how deep it went.
- *
- * By distance second, for a ring whose directions repeat — a cross, a
- * staircase — where several turns score zero and only position tells them
- * apart. Read in the frame the ring is kept in, the polygon's own, so that its
- * travel and its turn are not in the numbers: two concentric rings pair closest
- * corner to closest corner, and turned by one every corner reaches past its
- * counterpart to the next one along, which is further by construction.
- *
- * Where both tie, the pairings it is choosing between draw the same geometry,
- * and there is nothing left to get wrong.
+ * Nothing at all where they cannot be lined up. That is not a phase to be
+ * recovered from: it means the arrangement itself changed, which is an event,
+ * and the stretch should not have spanned it.
  */
-function phase(a: readonly Point[], b: readonly Point[]): number {
+function phase(a: readonly Origin[], b: readonly Origin[]): number | null {
   const n = a.length - 1;
 
-  if (n < 2 || b.length !== a.length) return 0;
+  if (n < 1 || b.length !== a.length) return null;
 
-  const way = (ring: readonly Point[], j: number): Point => {
-    const p = ring[j], q = ring[(j + 1) % n];
-    const dx = q.x - p.x, dy = q.y - p.y;
-    const l = Math.hypot(dx, dy);
-
-    return l === 0 ? { x: 0, y: 0 } : { x: dx / l, y: dy / l };
-  };
-
-  let best = 0, along = Infinity, near = Infinity;
+  const mine = a.slice(0, n).map(names);
+  const theirs = b.slice(0, n).map(names);
 
   for (let k = 0; k < n; k++) {
-    let turn = 0, far = 0;
+    let all = true;
 
-    for (let j = 0; j < n; j++) {
-      const p = a[j], q = b[(j + k) % n];
-      const u = way(a, j), v = way(b, (j + k) % n);
+    for (let j = 0; j < n && all; j++) all = mine[j] === theirs[(j + k) % n];
 
-      turn += 1 - (u.x * v.x + u.y * v.y);
-      far += Math.hypot(p.x - q.x, p.y - q.y);
-    }
-
-    // Directions first, and they are exact: the correct turn scores zero
-    // whenever the two readings differ by an offset, whatever the depth. A hair
-    // of slack, because zero here is a sum of dot products and arrives as a few
-    // parts in 1e16.
-    if (turn < along - 1e-9 || (turn < along + 1e-9 && far < near)) {
-      best = k;
-      along = Math.min(along, turn);
-      near = far;
-    }
+    if (all) return k;
   }
 
-  return best;
+  return null;
 }
 
 /** A ring walked from `k` instead of from 0, its repeated last point kept. */
-function turned<A extends { points: Point[], corner: boolean[] }>(run: A, k: number): A {
+function turned<A extends { points: Point[], corner: boolean[], whence: Origin[] }>(
+  run: A,
+  k: number,
+): A {
   const n = run.points.length - 1;
 
   if (k === 0 || n < 2) return run;
 
-  const points: Point[] = [], corner: boolean[] = [];
+  const points: Point[] = [], corner: boolean[] = [], whence: Origin[] = [];
 
   for (let i = 0; i <= n; i++) {
     points.push(run.points[(k + i) % n]);
     corner.push(run.corner[(k + i) % n]);
+    whence.push(run.whence[(k + i) % n]);
   }
 
-  return { ...run, points, corner };
+  return { ...run, points, corner, whence };
 }
 
-/** Whether a run closes on itself, to within a hair of its own size. */
-function closes(points: readonly Point[]): boolean {
-  const n = points.length;
+/** Whether a run closes on itself. Its names say so: the last point is the
+ * first one, written down twice. */
+function closes(run: { whence: readonly Origin[] }): boolean {
+  const n = run.whence.length;
 
-  if (n < 3) return false;
-
-  let extent = 1;
-
-  for (const p of points) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
-
-  const snap = extent * 1e-9;
-
-  return Math.abs(points[0].x - points[n - 1].x) <= snap
-    && Math.abs(points[0].y - points[n - 1].y) <= snap;
+  return n > 2 && names(run.whence[0]) === names(run.whence[n - 1]);
 }
 
 /**
- * One reading turned to line up with another, ring by ring.
+ * One reading read in another's order.
  *
- * Open runs are left alone: their ends are crossings with other polygons, so
- * there is no choice in where they start and nothing to line up.
+ * Two things are lined up here, and both used to be left to the order the two
+ * readings happened to come back in. Which run answers to which: a polygon's
+ * boundary can be several runs, and at an event the arrangement reorders them,
+ * so pairing them by position pairs pieces from opposite ends of the level.
+ * And where within a run: see `phase`.
+ *
+ * A run that cannot be found is left where it was. It has no counterpart, which
+ * means the arrangement changed — an event, and a stretch that spans one is a
+ * stretch that should have been cut.
  */
 export function lined(to: Frame, from: Frame): Frame {
-  if (to.length !== from.length) return from;
+  // What a run *is*: whose boundary, and which points of the arrangement it
+  // visits. A set rather than a list, because the order is the thing in
+  // question — and a ring's first point is written down twice, which a list
+  // would count and a set does not.
+  const which = (run: Run) =>
+    `${run.id}:${[...new Set(run.whence.map(names))].sort().join(',')}`;
 
-  return from.map((run, i) => {
-    const like = to[i];
+  const spare = new Map<string, number>();
 
-    if (like === undefined || like.id !== run.id) return run;
-    if (like.points.length !== run.points.length) return run;
-    if (!closes(run.points) || !closes(like.points)) return run;
-
-    return turned(run, phase(like.points, run.points));
-  });
-}
-
-/** The same reading, its runs turned to line up with `to`. Both of a Taken's
- * two views of its runs go together, or the frames and the world drift apart. */
-function alike(to: Taken, taken: Taken): Taken {
-  const frame = lined(to.frame, taken.frame);
-
-  if (frame.every((run, i) => run === taken.frame[i])) return taken;
-
-  // The same turn on the world-space copy: `phase` was decided in the frame,
-  // which is where a rigid motion is not in the way, and `out` is the same runs
-  // seen from outside.
-  const out = taken.out.map((run, i) => {
-    const k = taken.frame[i] === undefined
-      ? 0
-      : taken.frame[i].points.indexOf(frame[i].points[0]);
-
-    return k <= 0 ? run : turned(run, k);
+  from.forEach((run, i) => {
+    if (!spare.has(which(run))) spare.set(which(run), i);
   });
 
-  return { ...taken, frame, out };
+  const taken = new Set<number>();
+  let moved = to.length !== from.length;
+
+  const out = to.map((want, i) => {
+    const at = spare.get(which(want));
+
+    if (at === undefined || taken.has(at)) return null;
+
+    taken.add(at);
+    moved = moved || at !== i;
+
+    const run = from[at];
+    const k = closes(run) && closes(want) ? phase(want.whence, run.whence) : 0;
+
+    if (k === null) return null;
+    if (k !== 0) moved = true;
+
+    return turned(run, k);
+  });
+
+  // All or nothing: a frame half in one order and half in another is worse than
+  // one honestly left alone, and the caller reads a length that does not match
+  // as the arrangement having moved on.
+  if (out.some(run => run === null)) return from;
+
+  return moved ? out as Frame : from;
 }
 
 function stretchOf(a: Taken, b: Taken): Stretch {
   // The far end read in the near end's order. Nothing else in the span pairs
-  // two readings, and this is the only place both are in hand.
-  const to = alike(a, b);
+  // two readings, and this is the only place both are in hand. Both of a
+  // Taken's views of its runs go together, or the frames and the world drift
+  // apart.
+  const frame = lined(a.frame, b.frame);
+  const to: Taken = frame === b.frame
+    ? b
+    : { ...b, frame, out: lined(a.out, b.out) };
 
-  const one = origins(a), two = origins(to);
+  // Straight off the runs. The arrangement named every point when it made it.
+  const one = a.out.map(r => r.whence), two = to.out.map(r => r.whence);
   const reconciled = agreed(one, two);
 
   return {
@@ -2155,6 +2108,7 @@ function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
     return {
       id: run.id,
       corner: run.corner,
+      whence: run.whence,
       points: run.points.map((p, j) => {
         const solved = crossing(origins[j], ends);
 
