@@ -78,28 +78,17 @@ export interface Renderer {
   readonly scene: THREE.Scene
 
   /**
-   * The boundary as it stands, in editor units, as the open runs the CSG hands
-   * over, each with the polygon it came off. Shown whenever no walk is in
-   * flight, and replaced as often as the caller likes — an edit is a rebuild of
-   * these buffers and nothing else.
-   */
-  show(runs: readonly Run[]): void
-
-  /**
-   * The floors as they stand, in editor units, drawn flat on the ground.
+   * The level as it stands, in editor units: the boundary as the open runs the
+   * CSG hands over, each with the polygon it came off, and the authored floors
+   * as the rings they were drawn as.
    *
-   * Their own call rather than part of `show`, for two reasons. They are not
-   * the boundary and do not come out of the CSG — an author draws one and it is
-   * that shape, whatever is standing on it. And `show` is hidden for the length
-   * of a walk while the morph has the walls; the ground is not, because the
-   * ground does not stop being there because the walls are moving.
-   *
-   * They stand still, and the span's own fill takes over for the length of a
-   * walk — the two are cut from the same projection at the same depth, so they
-   * agree at the ends of the span by construction. Collision still snaps: a
-   * floor stops nothing, so there is nothing there to walk into.
+   * Both together, because both are replaced together and both are hidden
+   * together — a span carries walls and floors in one set of buffers and takes
+   * the view for the length of a walk. Shown whenever no walk is in flight, and
+   * replaced as often as the caller likes: an edit is a rebuild of these
+   * buffers and nothing else.
    */
-  floors(rings: readonly Floor[]): void
+  show(runs: readonly Run[], floors: readonly Floor[]): void
 
   /** The baked spans, built and held ready. An empty level drops them. */
   load(world: World): void
@@ -154,7 +143,6 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   let standing: Source | null = null;
   let morphs: Morph[] = [];
   let ground: THREE.Object3D[] = [];
-  let shapes: THREE.Mesh | null = null;
   let box: Bounds | null = null;
 
   /** Which morph is in the scene, and whether it rather than `standing` is
@@ -178,57 +166,28 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       showing = want;
     }
 
-    // The floors morph with everything else, so the pair of them swap the way
-    // the walls do: what `floors` laid down stands still, and the span's own
-    // fill has it for the length of a walk.
-    const wanted = !walking || morphs[showing] === undefined;
-
+    // Walls, lines and floors all swap together: the span draws every one of
+    // them for the length of a walk, and standing still draws every one of
+    // them again.
     if (standing !== null) {
+      const wanted = !walking || morphs[showing] === undefined;
+
       standing.walls.visible = wanted;
       standing.lines.visible = wanted;
+      standing.fill.visible = wanted;
     }
-
-    if (shapes !== null) shapes.visible = wanted;
   }
 
-  function show(runs: readonly Run[]): void {
+  function show(runs: readonly Run[], floors: readonly Floor[]): void {
     if (standing !== null) {
-      scene.remove(standing.walls, standing.lines);
+      scene.remove(standing.walls, standing.lines, standing.fill);
       standing.dispose();
     }
 
-    standing = still(runs, walls);
-    scene.add(standing.walls, standing.lines);
+    standing = still(runs, floors, walls);
+    scene.add(standing.walls, standing.lines, standing.fill);
 
-    grow(bounding(runs.map(r => r.points)));
-    reconcile(showing);
-  }
-
-  function floors(rings: readonly Floor[]): void {
-    if (shapes !== null) {
-      scene.remove(shapes);
-      shapes.geometry.dispose();
-      (shapes.material as THREE.Material).dispose();
-      shapes = null;
-    }
-
-    if (rings.length === 0) {
-      reconcile(showing);
-      return;
-    }
-
-    shapes = new THREE.Mesh(filled(rings), new THREE.MeshBasicMaterial({
-      color: SHAPE_COLOR,
-      side: THREE.DoubleSide,
-    }));
-
-    // Laid down flat, the same turn the ground takes: a shape is authored in
-    // the editor's x and y, and the second of those is the world's z.
-    shapes.rotation.x = -Math.PI / 2;
-    shapes.position.y = SHAPE_Y;
-
-    scene.add(shapes);
-    grow(bounding(rings.map(r => r.points)));
+    grow(bounding([...runs.map(r => r.points), ...floors.map(f => f.points)]));
     reconcile(showing);
   }
 
@@ -342,7 +301,6 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     camera,
     scene,
     show,
-    floors,
     load,
     walk,
 
@@ -360,10 +318,9 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     dispose(): void {
       watching.disconnect();
       drop();
-      floors([]);
 
       if (standing !== null) {
-        scene.remove(standing.walls, standing.lines);
+        scene.remove(standing.walls, standing.lines, standing.fill);
         standing.dispose();
       }
 
@@ -435,29 +392,6 @@ const EMPTY_BOUNDS: Bounds = {
   maxX: TILE_SIZE,
   maxZ: TILE_SIZE,
 };
-
-/**
- * The authored floors as one filled geometry.
- *
- * One mesh for all of them rather than one apiece: they are a single flat
- * colour and never move independently, so there is nothing a draw call each
- * would buy. `ShapeGeometry` triangulates, which a ring drawn by hand needs —
- * nothing says an authored floor is convex.
- *
- * Each ring is its own shape rather than a hole in another. A floor is drawn
- * and nothing else, so two overlapping ones are just black twice.
- *
- * Exported for the one thing about it worth pinning: the turn from the plane a
- * shape is built in to the plane it is drawn in. Everything else here is
- * three.js.
- */
-export function filled(rings: readonly Floor[]): THREE.BufferGeometry {
-  return new THREE.ShapeGeometry(rings.map(r => new THREE.Shape(
-    // The editor's y is the world's z, and the mesh is turned to lay it flat —
-    // so the shape is built in the plane it will be turned out of.
-    r.points.map(p => new THREE.Vector2(p.x * SCALE, -p.y * SCALE)),
-  )));
-}
 
 function floor(b: Bounds | null): THREE.Object3D[] {
   const box = b ?? EMPTY_BOUNDS;

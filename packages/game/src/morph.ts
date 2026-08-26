@@ -29,7 +29,7 @@
 
 import * as THREE from 'three';
 import { BakedSpan, CROSSING } from './baked';
-import { Source, Span, WallOptions, extrude, materials } from './walls';
+import { Source, Span, WallOptions, extrude, fan, materials } from './walls';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -217,9 +217,6 @@ export interface MorphUniforms extends Record<string, { value: unknown }> {
 
 /** A span, ready to draw: the meshes and the one number that moves. */
 export interface Morph extends Source {
-  /** The authored floors, filled and laid flat. Empty where the span has
-   * none, which is most of them. */
-  fill: THREE.Mesh
   /** Where in the span, 0 at the earlier version and 1 at the later one. */
   seek(t: number): void
 }
@@ -263,46 +260,6 @@ function spanRuns(span: BakedSpan): { walls: Span[], fills: Span[] } {
   }
 
   return { walls, fills };
-}
-
-/**
- * A floor's triangles, as indices into the span's points.
- *
- * Triangulated once per stretch rather than per frame, which is the same bet
- * `extrude` makes and rests on the same guarantee: a stretch is exactly a run
- * of instants over which the ring's combinatorics do not change, so a fan cut
- * at one end of it is a fan at every instant of it. The vertices then move in
- * the shader like everything else.
- *
- * Off the near end's points, in the polygon's own frame — an affine frame takes
- * triangles to triangles, so which end and which frame it is measured in makes
- * no difference to the cutting.
- *
- * The runs are closed rings, so the repeated last point is dropped: it is the
- * first, and a contour handed the same point twice has a zero-length edge.
- */
-function triangles(span: BakedSpan, runs: readonly Span[]): Int32Array {
-  const out: number[] = [];
-
-  for (const run of runs) {
-    const n = run.count - 1;
-
-    if (n < 3) continue;
-
-    const contour: THREE.Vector2[] = [];
-
-    for (let i = 0; i < n; i++) {
-      const p = run.first + i;
-
-      contour.push(new THREE.Vector2(span.pointsA[p * 2], span.pointsA[p * 2 + 1]));
-    }
-
-    for (const face of THREE.ShapeUtils.triangulateShape(contour, [])) {
-      for (const i of face) out.push(run.first + i);
-    }
-  }
-
-  return new Int32Array(out);
 }
 
 /** The stretch each point belongs to, so a vertex can be told whether it is
@@ -392,7 +349,10 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     return g;
   };
 
-  const face = triangles(span, runs.fills);
+  // Off the near end's points, in the polygon's own frame — an affine frame
+  // takes triangles to triangles, so which end and which frame the cut is
+  // measured in makes no difference to it.
+  const face = fan(runs.fills, i => ({ x: span.pointsA[i * 2], y: span.pointsA[i * 2 + 1] }));
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);

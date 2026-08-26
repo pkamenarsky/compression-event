@@ -15,8 +15,8 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Run, Source, WallOptions, extrude, materials } from './walls';
-import { Point } from './world';
+import { Run, Source, WallOptions, extrude, fan, materials } from './walls';
+import { Floor, Point } from './world';
 
 const vertexShader = /* glsl */ `
   uniform float uScale;
@@ -46,24 +46,46 @@ const vertexShader = /* glsl */ `
 `;
 
 /**
- * Walls standing on a set of open boundary runs, in editor units.
+ * The level as it stands, in editor units: walls on a set of open boundary
+ * runs, and the authored floors filled flat underneath them.
  *
- * The runs are flattened into one point array first, because `extrude` deals in
- * indices into exactly that and both sources have to hand it the same shape.
- * Each one arrives with the corner question already answered, for the same
- * reason: the morph is handed the same answer through the bake, and the two
- * have to draw the same walls. See `Run`.
+ * Both, and out of one array of points, because that is what makes this the
+ * same drawing as the morph rather than a second one that resembles it. A span
+ * carries walls and floors in one buffer and gates them by stretch; this
+ * carries them in one array and cuts them with the same `extrude` and the same
+ * `fan`. The two must agree exactly at a version boundary — see the header of
+ * `walls.ts` — and agreeing is easier when there is nothing to agree about.
+ *
+ * The runs arrive with the corner question already answered, for the same
+ * reason: the morph is handed that answer through the bake. See `Run`.
+ *
+ * The floor rings are closed here, because `extrude` and `fan` both read a ring
+ * as a run whose last point is its first, and the bake's floor runs come that
+ * way already.
  */
-export function still(runs: readonly Run[], options: WallOptions): Source {
+export function still(
+  runs: readonly Run[],
+  floors: readonly Floor[],
+  options: WallOptions,
+): Source {
   const points: Point[] = [];
   const spans = [];
+  const rings = [];
 
   for (const run of runs) {
     spans.push({ first: points.length, count: run.points.length });
     points.push(...run.points);
   }
 
+  for (const floor of floors) {
+    if (floor.points.length < 3) continue;
+
+    rings.push({ first: points.length, count: floor.points.length + 1 });
+    points.push(...floor.points, floor.points[0]);
+  }
+
   const shape = extrude(spans);
+  const face = fan(rings, i => points[i]);
 
   // Per point of the flattened outline, whether a vertical standing on it is
   // telling the truth. Decided where the boundary was computed and carried on
@@ -82,13 +104,7 @@ export function still(runs: readonly Run[], options: WallOptions): Source {
     uWallHeight: { value: options.wallHeight },
   };
 
-  // A still has no fill of its own: the floors at a version are drawn by
-  // whoever asked for them, out of geometry that is already known, and this is
-  // the boundary. The material is made all the same and let go of here, rather
-  // than `materials` growing a switch for the one caller that does not want it.
   const { wall, line, fill } = materials(vertexShader, options, uniforms);
-
-  fill.dispose();
 
   const geometry = (
     point: Int32Array,
@@ -122,24 +138,34 @@ export function still(runs: readonly Run[], options: WallOptions): Source {
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
+  const fillGeometry = geometry(face, new Float32Array(face.length), null, null);
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
+  const filled = new THREE.Mesh(fillGeometry, fill);
+
+  // The shader puts the fill on the ground plane; this is the hair of clearance
+  // that keeps it over the tiles and under the walls standing on it.
+  filled.position.y = options.fillHeight;
 
   // The heights are applied in the shader, so the box `position` describes is
   // flat and a frustum test against it would drop walls that are on screen.
   walls.frustumCulled = false;
   lines.frustumCulled = false;
+  filled.frustumCulled = false;
 
   return {
     walls,
     lines,
+    fill: filled,
 
     dispose(): void {
       wallGeometry.dispose();
       lineGeometry.dispose();
+      fillGeometry.dispose();
       wall.dispose();
       line.dispose();
+      fill.dispose();
     },
   };
 }

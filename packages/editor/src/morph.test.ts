@@ -13,10 +13,10 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { morph } from '@ce/game';
+import { morph, still } from '@ce/game';
 import { WallOptions } from '@ce/game';
 import { bakeSpan } from './bake';
-import { bakedSpan } from './export';
+import { bakedSpan, floorsAt } from './export';
 import { TOP, addPolygon, editAt, resolveAt, withEdit } from './scene';
 import { PolygonId, PolygonType, VersionId, World, emptyWorld } from './types';
 
@@ -139,5 +139,103 @@ describe('the meshes a span builds', () => {
     }
 
     it.dispose();
+  });
+});
+
+/**
+ * The two sources of geometry have to fill the same floors.
+ *
+ * The walls have their own version of this — see the foot of `export.test.ts`
+ * — and the reasoning is the same. `still` fills the floors the editor already
+ * has; the morph fills the ones the bake cut. The view crosses between them at
+ * the start and the end of every transition, so a floor either of them draws
+ * alone flashes on or off at that crossing.
+ *
+ * They cannot be compared vertex for vertex — one holds a ring in world units
+ * and the other holds a stretch's two ends in the polygon's own frame — so
+ * this compares what is actually the same question: how many triangles, and
+ * over what area.
+ */
+describe('the standing floors and the bake fill the same ground', () => {
+  /** The triangles of a fill mesh, in the two axes the ground has. A still
+   * holds them in `position`, which is x and z with the height between; the
+   * morph holds a pair per point and works the height out in the shader. */
+  function ground(mesh: { geometry: { getAttribute(name: string): {
+    count: number
+    getX(i: number): number
+    getY(i: number): number
+    getZ(i: number): number
+  } } }, name: string, flat: boolean): Point[] {
+    const g = mesh.geometry.getAttribute(name);
+    const out: Point[] = [];
+
+    for (let i = 0; i < g.count; i++) {
+      out.push({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
+    }
+
+    return out;
+  }
+
+  function area(points: readonly Point[]): number {
+    let out = 0;
+
+    for (let i = 0; i + 2 < points.length; i += 3) {
+      const a = points[i], b = points[i + 1], c = points[i + 2];
+
+      out += Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+    }
+
+    return out;
+  }
+
+  function same(world: World): void {
+    const one = still([], floorsAt(world, 0), OPTIONS);
+    const two = morph(bakedSpan(run(bakeSpan(world, 0))), OPTIONS);
+
+    const here = ground(one.fill, 'position', false);
+    const there = ground(two.fill, 'aPointA', true);
+
+    expect(there.length).toEqual(here.length);
+    expect(here.length).toBeGreaterThan(0);
+    expect(area(there)).toBeCloseTo(area(here), 6);
+
+    // And on the same plane, or one draws over the other.
+    expect(two.fill.position.y).toBeCloseTo(one.fill.position.y, 9);
+
+    one.dispose();
+    two.dispose();
+  }
+
+  test('a plain floor', () => {
+    same(drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-50, -50, 100, 100)],
+    ).world);
+  });
+
+  test('two of them, one concave', () => {
+    same(drawn(
+      ['level', rect(-300, -300, 600, 600)],
+      ['floor', rect(-200, -200, 100, 100)],
+      ['floor', [
+        { x: 0, y: 0 }, { x: 160, y: 0 }, { x: 160, y: 40 },
+        { x: 60, y: 40 }, { x: 60, y: 150 }, { x: 0, y: 150 },
+      ]],
+    ).world);
+  });
+
+  test('and one eroded, which changes its ring', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-300, -300, 600, 600)],
+      ['floor', rect(-100, -100, 200, 200)],
+    );
+
+    const it = resolveAt(world, 0).find(r => r.id === ids[1])!;
+    const edit = editAt(world, 0, ids[1], it.erosion);
+
+    same(withEdit(world, 0, ids[1], {
+      ...edit,
+      transform: { ...edit.transform, erosion: 25 },
+    }));
   });
 });

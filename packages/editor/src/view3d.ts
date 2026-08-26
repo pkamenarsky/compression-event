@@ -248,13 +248,11 @@ function panel(
 
       const outline = sourced(set);
 
-      view.show(outline);
-
-      // Off the resolved polygons rather than out of `versionOf`, which would
-      // union the whole level to answer a question the union has nothing to do
-      // with. Which is also how the bake takes them — see `subjects` — so the
-      // still and the morph draw the same floors.
-      view.floors(floorsAt(w, v));
+      // The floors off the resolved polygons rather than out of `versionOf`,
+      // which would union the whole level to answer a question the union has
+      // nothing to do with. Which is also how the bake takes them — see
+      // `subjects` — so the still and the morph draw the same floors.
+      view.show(outline, floorsAt(w, v));
 
       if (!afoot()) framed(outline, orbit);
 

@@ -202,6 +202,51 @@ export const lineFragment = /* glsl */ `
   }
 `;
 
+/**
+ * The triangles a set of closed rings fills with, as indices into whatever flat
+ * array of points the caller holds.
+ *
+ * The other half of `extrude`, and the same bargain: indices rather than
+ * positions, because the two sources disagree about what a position is and
+ * agree exactly about this. A still reads its points out of an array it just
+ * built; a morph has two of them and a frame, and works out where a vertex is
+ * per frame in the shader. Cut once, either way — for the morph that rests on a
+ * stretch being exactly a run of instants over which the ring's combinatorics
+ * do not change, so a fan cut at one end of it is a fan at every instant of it.
+ *
+ * Rings, so the last point is the first and is dropped: a contour handed the
+ * same point twice has a zero-length edge and the triangulator has nothing to
+ * do with it.
+ *
+ * Each ring on its own. A floor with a hole in it is not something either
+ * source can produce today — a floor is its own shape, whatever is standing on
+ * it — and inventing the contour-to-hole matching for a case that cannot arise
+ * would be guessing at what it should look like.
+ */
+export function fan(spans: Iterable<Span>, at: (i: number) => Point): Int32Array {
+  const out: number[] = [];
+
+  for (const span of spans) {
+    const n = span.count - 1;
+
+    if (n < 3) continue;
+
+    const contour: THREE.Vector2[] = [];
+
+    for (let i = 0; i < n; i++) {
+      const p = at(span.first + i);
+
+      contour.push(new THREE.Vector2(p.x, p.y));
+    }
+
+    for (const face of THREE.ShapeUtils.triangulateShape(contour, [])) {
+      for (const i of face) out.push(span.first + i);
+    }
+  }
+
+  return new Int32Array(out);
+}
+
 export interface WallOptions {
   /** World units per editor unit. */
   scale: number
@@ -272,10 +317,13 @@ export function materials(
   return { wall, line, fill };
 }
 
-/** What both sources give the renderer: two meshes and a way to be rid of
+/** What both sources give the renderer: the meshes and a way to be rid of
  * them. */
 export interface Source {
   walls: THREE.Mesh
   lines: THREE.LineSegments
+  /** The authored floors, filled and laid flat. Empty where there are none,
+   * which is most levels. */
+  fill: THREE.Mesh
   dispose(): void
 }
