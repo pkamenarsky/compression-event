@@ -1,5 +1,4 @@
 * paths
-* artifacts
 * create button
 ** (!) should be selected first
 ** rect
@@ -7,7 +6,7 @@
 ** polyline
 ** also artifacts? would make sense
 * zoom
-* settings view
+* settings
 ** grid size
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
 
@@ -23,6 +22,7 @@
 * locking of polygons? unlock works then with cmd + click
 * unchain
 * version management
+
 * shortcuts
   c - create shape; cr - rect; cn - n-gon; cp - polyline
   p - points; + - add points; - delete points; click - select; drag - marquee; shift+selection gesture - add to selection

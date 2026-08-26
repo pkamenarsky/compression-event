@@ -1,0 +1,545 @@
+{
+  "format": 7,
+  "tool": "polygon",
+  "currentVersion": 4,
+  "selection": [],
+  "artefacts": [
+    31
+  ],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": 77.2421875,
+    "y": -225.8671875,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 33,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -64,
+                "y": -256
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 128,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": 96,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -192,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 5,
+              "at": {
+                "x": -320,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 6,
+              "at": {
+                "x": -224,
+                "y": -224
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        7,
+        {
+          "type": "solid",
+          "birth": 0,
+          "points": [
+            {
+              "id": 8,
+              "at": {
+                "x": -32,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": 0,
+                "y": -96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 10,
+              "at": {
+                "x": -32,
+                "y": -32
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 11,
+              "at": {
+                "x": -128,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 12,
+              "at": {
+                "x": -128,
+                "y": -128
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        14,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 16,
+              "at": {
+                "x": 192,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 23,
+              "at": {
+                "x": 574.231454118603,
+                "y": -160
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 17,
+              "at": {
+                "x": 672,
+                "y": -160
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 18,
+              "at": {
+                "x": 672,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 22,
+              "at": {
+                "x": 502.7979573979475,
+                "y": -64
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 19,
+              "at": {
+                "x": 192,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        25,
+        {
+          "type": "level",
+          "birth": 2,
+          "points": [
+            {
+              "id": 26,
+              "at": {
+                "x": 992,
+                "y": -96
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 27,
+              "at": {
+                "x": 1056,
+                "y": 0
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 28,
+              "at": {
+                "x": 864,
+                "y": 192
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 29,
+              "at": {
+                "x": 768,
+                "y": 192
+              },
+              "birth": 2,
+              "death": null
+            },
+            {
+              "id": 30,
+              "at": {
+                "x": 736,
+                "y": 64
+              },
+              "birth": 2,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [
+      [
+        13,
+        {
+          "birth": 0,
+          "members": [
+            0,
+            7
+          ]
+        }
+      ],
+      [
+        32,
+        {
+          "birth": 3,
+          "members": [
+            14,
+            25
+          ]
+        }
+      ]
+    ],
+    "artefacts": [
+      [
+        21,
+        {
+          "type": "start",
+          "birth": 0,
+          "at": {
+            "x": -224,
+            "y": -96
+          }
+        }
+      ],
+      [
+        24,
+        {
+          "type": "key",
+          "birth": 2,
+          "at": {
+            "x": 736,
+            "y": -96
+          }
+        }
+      ],
+      [
+        31,
+        {
+          "type": "exit",
+          "birth": 2,
+          "at": {
+            "x": 800,
+            "y": 192
+          }
+        }
+      ]
+    ],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            13,
+            {
+              "transform": {
+                "translation": {
+                  "x": 40.31398311789536,
+                  "y": -64.01143290940847
+                },
+                "rotation": -0.6102873104862683,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            7,
+            {
+              "transform": {
+                "translation": {
+                  "x": -132.53499508058303,
+                  "y": -3.1832210788132613
+                },
+                "rotation": 1.2240319066818164,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            14,
+            {
+              "transform": {
+                "translation": {
+                  "x": -94.74609375,
+                  "y": 1.109375
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": [
+          [
+            14,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  18,
+                  {
+                    "x": 254.74609375,
+                    "y": 62.890625
+                  }
+                ],
+                [
+                  17,
+                  {
+                    "x": 254.74609375,
+                    "y": -33.109375
+                  }
+                ],
+                [
+                  22,
+                  {
+                    "x": 167.94813635205242,
+                    "y": 94.890625
+                  }
+                ],
+                [
+                  23,
+                  {
+                    "x": 96.51463963139702,
+                    "y": 30.890625
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            25,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0.27734375,
+                  "y": 68.48828125
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            31,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": [
+          [
+            25,
+            {
+              "transform": {
+                "translation": {
+                  "x": 576.87149055026,
+                  "y": 979.7861133089575
+                },
+                "rotation": -1.4008354099201519,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            31,
+            {
+              "transform": {
+                "translation": {
+                  "x": 576.87149055026,
+                  "y": 947.7861133089575
+                },
+                "rotation": -1.4008354099201519,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": [
+          [
+            32,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 31.390625
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      }
+    ]
+  }
+}
