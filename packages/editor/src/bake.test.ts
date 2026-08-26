@@ -352,6 +352,75 @@ describe('the two ends of a stretch are the same arrangement', () => {
   });
 });
 
+describe('the replay never leaves the truth, point for point by name', () => {
+  // The end-to-end version of the invariant above, and the one that says what
+  // the author actually sees. A stretch pairs its two ends and interpolates
+  // between them; if the pairing is wrong the interpolation is somewhere else
+  // entirely, and the shape it draws half way across a stretch is the tell —
+  // a pillar paired one corner along becomes a square inscribed in itself at
+  // forty-five degrees.
+  //
+  // Measured against the CSG at the same instant, pairing points by name. That
+  // is the whole point of naming them: a distance is only meaningful between
+  // two points that are supposed to be the same point.
+  const named = (o: Origin) => o.kind === 'vertex'
+    ? `v${o.at.id}.${o.at.ring}.${o.at.index}`
+    : `x${o.a.id}.${o.a.ring}.${o.a.index}|${o.b.id}.${o.b.ring}.${o.b.index}`;
+
+  const follows = (world: World, from: VersionId) => {
+    const span = run(bakeSpan(world, from));
+    let checked = 0;
+
+    for (let k = 1; k < 24; k++) {
+      const t = k / 24;
+      const where = new Map<string, Point>();
+
+      for (const piece of truth(world, from, t)) {
+        piece.whence.forEach((o, j) => where.set(named(o), piece.points[j]));
+      }
+
+      for (const piece of sample(span, t)) {
+        piece.whence.forEach((o, j) => {
+          const q = where.get(named(o));
+
+          if (q === undefined) return;
+
+          checked++;
+          expect(Math.hypot(piece.points[j].x - q.x, piece.points[j].y - q.y))
+            .toBeLessThan(TOLERANCE);
+        });
+      }
+    }
+
+    expect(checked).toBeGreaterThan(0);
+  };
+
+  test('a group of pillars in a room, the group eroding', () => {
+    // The reported shape: four pillars whose rings are their own whole
+    // outlines, so every one of them is cut wherever the walk began.
+    const { world, ids } = drawn(
+      ['level', rect(-300, -200, 600, 400)],
+      ['solid', rect(-200, -120, 80, 80)],
+      ['solid', rect(120, -120, 80, 80)],
+      ['solid', rect(-200, 40, 80, 80)],
+      ['solid', rect(120, 40, 80, 80)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+
+    follows(transformed(made.world, 1, made.id, { erosion: 24 }), 0);
+  });
+
+  test('a polygon sliding into a wall it ends up touching', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, 0, 400, 100)],
+      ['level', rect(-40, 200, 80, 120)],
+    );
+
+    follows(transformed(world, 1, ids[1], { translation: { x: 0, y: -160 } }), 0);
+  });
+});
+
 describe('a track covers the span exactly once', () => {
   // What the shader needs and cannot work out for itself: at any instant there
   // is one stretch to draw, never none and never two. Converging on an event
