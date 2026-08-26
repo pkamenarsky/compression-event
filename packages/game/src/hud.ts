@@ -20,6 +20,10 @@ export interface Hud {
    * A full-screen message, resolving after `ms` — or, where that is zero, when
    * it is clicked. A click dismisses it either way, which is what makes the
    * title screen the gesture that also grants the audio and the pointer.
+   *
+   * Disposing resolves whatever is waiting, so nothing is left holding a
+   * promise that will never settle. Whoever was waiting has to check that it
+   * is still wanted — see `Game.dispose`.
    */
   say(text: string, ms: number, under?: string): Promise<void>
 
@@ -37,6 +41,11 @@ export interface Hud {
 
 export function hud(host: HTMLElement): Hud {
   loaded();
+
+  /** How to end the message that is up, if one is. Held so that disposing can
+   * end it: a timeout and a click listener both outlive the element they were
+   * put up for. */
+  let waiting: (() => void) | null = null;
 
   const sheet = (el: HTMLElement, css: string): void => {
     el.style.cssText = css;
@@ -87,23 +96,29 @@ export function hud(host: HTMLElement): Hud {
       screen.style.background = 'rgba(0, 0, 0, 0.85)';
 
       return new Promise<void>(resolve => {
-        let done = false;
+        let timer = 0;
 
         const over = (): void => {
-          if (done) return;
+          if (waiting === null) return;
 
-          done = true;
+          waiting = null;
+          clearTimeout(timer);
           screen.style.display = 'none';
           document.removeEventListener('click', over);
           resolve();
         };
+
+        // A second message over the first would leave the first's waiter
+        // holding a promise nothing will settle. There is only ever one.
+        waiting?.();
+        waiting = over;
 
         // On the document rather than on the overlay: with the pointer locked
         // a click goes to the canvas, and a message nobody can dismiss is a
         // game nobody can start.
         document.addEventListener('click', over);
 
-        if (ms > 0) setTimeout(over, ms);
+        if (ms > 0) timer = setTimeout(over, ms) as unknown as number;
       });
     },
 
@@ -125,6 +140,7 @@ export function hud(host: HTMLElement): Hud {
     },
 
     dispose(): void {
+      waiting?.();
       screen.remove();
       near.remove();
     },

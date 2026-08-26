@@ -285,25 +285,29 @@ function playing(state: Value<EditorState>, input: Input): VNode {
 }
 
 /** The game, on a sheet over everything, until whoever is in it leaves. */
+let afoot: { game: Game, host: HTMLElement } | null = null;
+
 function started(s: EditorState): void {
+  // One at a time. A second Cmd+Enter used to lay another game over the first
+  // and leave it running underneath — its loop, its keyboard, its drone.
+  if (afoot !== null) return;
+
   const host = document.createElement('div');
 
   host.style.cssText = 'position: fixed; inset: 0; z-index: 100; background: #000;';
   document.body.append(host);
 
-  let game: Game | null = null;
-
   const leave = (): void => {
-    if (game === null) return;
+    if (afoot === null || afoot.host !== host) return;
 
-    game.dispose();
-    game = null;
+    afoot.game.dispose();
+    afoot = null;
     host.remove();
   };
 
   // No title screen: Cmd+Enter is the gesture that asked for it, and the
   // level is already there.
-  game = play(host, shipped(s.world, s.bake), { title: false, leave });
+  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, leave }), host };
 }
 
 /**

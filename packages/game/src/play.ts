@@ -104,6 +104,15 @@ const TAKEN = 1.5;
 const LOOK = 0.002;
 
 export interface Game {
+  /**
+   * Take it down: the loop, the listeners, the sounds and the scene.
+   *
+   * After this nothing the game had in flight runs. A message being waited on
+   * resolves so that whoever was waiting is not left holding it, and every
+   * such waiter checks on the way back that the game it belonged to is still
+   * there — a level that had ended was restarting itself behind a window
+   * nobody could see any more, ambient drone and all.
+   */
   dispose(): void
 }
 
@@ -172,9 +181,17 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   const down = new Set<string>();
 
+  /** Where the artefacts are on screen this frame. What is drawn and what can
+   * be reached are the same list, deliberately — see `nearest`. */
+  let shown: Standing[] = [];
+
   let ambient: SoundHandle | null = null;
   let coming: SoundHandle | null = null;
   let running = false;
+
+  /** Whether this game is still the one on screen. Everything that resumes
+   * after an `await` asks, because between the two it may not be. */
+  let live = true;
 
   /** The escalation that says a shift is on its way. Restarted whenever the
    * clock is, and stopped outright when there is nothing to escalate to. */
@@ -204,11 +221,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * way out has nowhere to go.
    */
   const placed = (from: number, to: number, t: number): void => {
-    const all: Standing[] = [];
-
     // A shift is one span read forwards or backwards, so the span is the
     // earlier of the two versions whichever way the level is going.
     const span = from === to ? undefined : world.baked.spans[Math.min(from, to)];
+
+    shown = [];
 
     world.artefacts.forEach((it, i) => {
       if (gone.has(i)) return;
@@ -217,10 +234,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
       if (at === null) return;
 
-      all.push({ id: i, type: it.type, x: at.x, y: at.y });
+      shown.push({ id: i, type: it.type, x: at.x, y: at.y });
     });
 
-    crowd.show(all);
+    crowd.show(shown);
   };
 
   const spawn = (): void => {
@@ -326,20 +343,24 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     player.z = now.y;
   };
 
-  /** The nearest thing worth naming, or nothing near enough. */
+  /**
+   * The nearest thing worth naming, or nothing near enough.
+   *
+   * Off where things are *drawn*, not off the version in force. During a shift
+   * those differ, and reaching for something that is not where you can see it
+   * is not a game — worse, an artefact whose new place lands on the player is
+   * taken the instant the shift ends, having never been walked to.
+   */
   const nearest = (): Near | null => {
     let out: Near | null = null;
 
-    for (let i = 0; i < world.artefacts.length; i++) {
-      const it = world.artefacts[i];
-      const at = it.places[version];
-
+    for (const it of shown) {
       // The start is a mark on the floor rather than a thing to walk up to.
-      if (at === null || at === undefined || gone.has(i) || it.type === 'start') continue;
+      if (it.type === 'start') continue;
 
-      const away = Math.hypot(player.x - at.x * SCALE, player.z - at.y * SCALE);
+      const away = Math.hypot(player.x - it.x * SCALE, player.z - it.y * SCALE);
 
-      if (out === null || away < out.away) out = { index: i, type: it.type, away };
+      if (out === null || away < out.away) out = { index: it.id, type: it.type, away };
     }
 
     return out === null || out.away > NAMED ? null : out;
@@ -350,7 +371,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     say.note(null);
     await say.say('PULL YOURSELF TOGETHER', 3000);
-    restart();
+
+    if (live) restart();
   };
 
   const took = async (index: number, type: ArtefactType): Promise<void> => {
@@ -393,7 +415,13 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         playSoundFor(levelComplete(), 3);
 
         await say.say('DIRECTIVE FULFILLED', 5000);
+
+        if (!live) break;
+
         await say.say('forgetful-functor.itch.io', 0, '@pkamenarsky');
+
+        if (!live) break;
+
         say.black();
         break;
 
@@ -531,6 +559,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // inside it.
     if (options.title ?? true) await say.say('COMPRESSION EVENT', 0, 'CLICK TO START');
 
+    if (!live) return;
+
     ambient = playSound(drone);
 
     restart();
@@ -541,7 +571,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   return {
     dispose(): void {
+      live = false;
+      running = false;
+
       cancelAnimationFrame(frame);
+
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
 
       host.removeEventListener('click', grab);
       document.removeEventListener('pointerlockchange', locked);
