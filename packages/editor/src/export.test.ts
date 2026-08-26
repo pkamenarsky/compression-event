@@ -230,6 +230,66 @@ describe('a flattened span replays as its span does', () => {
  * allowed for is that the buffers are single precision. */
 const EXACT = 1e-3;
 
+describe('the shipped set is the set the editor draws', () => {
+  /** The extent of a set, for saying that one is inside another. */
+  function box(polygons: readonly { points: readonly Point[] }[]): [number, number, number, number] {
+    const all = polygons.flatMap(p => [...p.points]);
+
+    return [
+      Math.min(...all.map(p => p.x)), Math.min(...all.map(p => p.y)),
+      Math.max(...all.map(p => p.x)), Math.max(...all.map(p => p.y)),
+    ];
+  }
+
+  // A group erodes as one shape rather than member by member, so its depth is
+  // not any polygon's own. A version whose only edit is a group erosion was
+  // therefore invisible to a reading that asked each polygon what it was doing:
+  // the set came out identical to the version before, and the game stood in the
+  // previous level under the next one's name while the morph played the right
+  // one.
+  test('a version whose only edit is a group erosion is its own version', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 160)],
+      ['level', rect(180, 40, 200, 160)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const w = moved(made.world, 1, made.id, { erosion: 30 });
+
+    const before = versionOf(w, 0).polygons;
+    const after = versionOf(w, 1).polygons;
+
+    expect(before.length).toBeGreaterThan(0);
+    expect(after.length).toBeGreaterThan(0);
+
+    const [ax, ay, bx, by] = box(before);
+    const [cx, cy, dx, dy] = box(after);
+
+    // Pulled in on every side by the depth, which is the whole of what the
+    // version says.
+    expect(cx).toBeCloseTo(ax + 30, 3);
+    expect(cy).toBeCloseTo(ay + 30, 3);
+    expect(dx).toBeCloseTo(bx - 30, 3);
+    expect(dy).toBeCloseTo(by - 30, 3);
+  });
+
+  test('and the walls the player meets are that set, not the one before', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 400, 400)],
+      ['level', rect(380, 120, 200, 160)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const w = moved(made.world, 1, made.id, { erosion: 60 });
+
+    // A spot inside the room and inside the band the erosion takes back.
+    const at = { x: 20, y: 200 };
+
+    expect(hullsAt(w, 0).standable(at)).toBe(true);
+    expect(hullsAt(w, 1).standable(at)).toBe(false);
+  });
+});
+
 describe('an artefact rides the frame table like everything else', () => {
   /** A key put exactly on a corner of a room, and the room made to move. */
   function corner(layer: Partial<Transform>): { world: World, key: ArtefactId } {

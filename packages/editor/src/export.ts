@@ -31,7 +31,7 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { IDENTITY, Resolved, placeAt, resolveAt } from './scene';
+import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
 import { ArtefactId, Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
@@ -302,13 +302,13 @@ export function bakedLevel(bake: Bake, world: World): BakedLevel {
 }
 
 /**
- * A polygon as the set wants to see it. The same reasoning `worldset` and the
- * bake both use, and it has to be the same or the three would not agree: a ring
- * that came out of an erosion is an arrangement already and simplifying it
+ * A contributor as the set wants to see it. The same reasoning `worldset` and
+ * the bake both use, and it has to be the same or the three would not agree: a
+ * ring that came out of an erosion is an arrangement already and simplifying it
  * again would be work with nothing to do.
  */
-function shapeOf(it: Resolved): Shape {
-  return it.erosion === 0 ? simplify(it.shape) : it.shape;
+function shapeOf(it: Contributed): Shape {
+  return it.simple ? it.shape : simplify(it.shape);
 }
 
 /**
@@ -329,9 +329,15 @@ function shapeOf(it: Resolved): Shape {
 export function unionAt(world: World, v: VersionId): Shape {
   let level: Shape = [], solid: Shape = [];
 
-  for (const it of resolveAt(world, v)) {
-    if (it.polygon.type === 'level') level = union(level, shapeOf(it));
-    else if (it.polygon.type === 'solid') solid = union(solid, shapeOf(it));
+  // Through `contributing`, which is what makes this the same set the editor
+  // draws rather than a second one that usually agrees. A group with a depth on
+  // it stands in for its members and hands over its union offset inward, and a
+  // version whose only edit is a group erosion was a version this could not see
+  // at all: it read each polygon's own erosion, found none, and shipped the
+  // version before it under the next version's name.
+  for (const it of contributing(world, v, resolveAt(world, v))) {
+    if (it.kind === 'level') level = union(level, shapeOf(it));
+    else if (it.kind === 'solid') solid = union(solid, shapeOf(it));
   }
 
   if (level.length === 0) return [];
