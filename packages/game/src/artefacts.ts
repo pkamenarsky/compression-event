@@ -6,8 +6,8 @@
 // What changed on the way over is the bookkeeping. There the four kinds were
 // four factories with fifteen options each, and each one owned its meshes, its
 // materials, its shadow and its own copy of the same rotate-and-bob; here a
-// kind is a *body* — two geometries and three numbers — and everything built on
-// top of it is written once.
+// kind is a *body* — two geometries and a handful of switches — and everything
+// built on top of it is written once.
 //
 // Nothing in here knows where an artefact is over time. It is handed a list of
 // places and reconciles the scene to it, so the same code serves a level
@@ -37,6 +37,18 @@ export interface Artefacts {
   /** The artefacts that should be in the scene, and where. Anything not in
    * the list goes. */
   show(all: readonly Standing[]): void
+
+  /**
+   * Whether the level is being looked down on rather than stood in.
+   *
+   * Some kinds are drawn from above and nowhere else: the start is a mark on
+   * the floor saying where the player comes in, and standing at it and finding
+   * it hanging in front of one's face would be strange. The same distinction
+   * is what the game will want when it has a player to put there — the editor
+   * is simply the first caller to need it.
+   */
+  overhead(on: boolean): void
+
   /** Turn and bob. `dt` in seconds. */
   update(dt: number, camera: THREE.Camera): void
   dispose(): void
@@ -58,16 +70,15 @@ export function artefacts(scene: THREE.Scene): Artefacts {
   const fill = new THREE.MeshBasicMaterial({ color: FILL, side: THREE.DoubleSide });
   const edge = new THREE.LineBasicMaterial({ color: EDGE });
 
-  // One unit disc for every shadow there will ever be, scaled per artefact.
-  // The kinds differ only in how wide the patch is, and a plane is a plane.
+  // One unit patch for every shadow there will ever be, scaled per artefact.
+  // Two materials rather than one, because the fade has to know the shape it
+  // is fading out of: a round thing over a square of shadow, or a square one
+  // over a disc, both read as a mistake.
   const patch = new THREE.PlaneGeometry(2, 2);
-  const shade = new THREE.ShaderMaterial({
-    vertexShader: shadowVertex,
-    fragmentShader: shadowFragment,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    transparent: false,
-  });
+  const shades = {
+    round: shadow(roundShadow),
+    boxy: shadow(boxyShadow),
+  };
 
   /** Built the first time a kind is asked for, and shared by every artefact of
    * that kind after. */
@@ -88,13 +99,19 @@ export function artefacts(scene: THREE.Scene): Artefacts {
     type: ArtefactType
     /** The solid and its edges together, so that one turn moves both. */
     group: THREE.Group
-    shadow: THREE.Mesh
+    /** Null where the kind casts none. */
+    shadow: THREE.Mesh | null
     /** Its own, so that a room full of them is not a room of one metronome. */
     phase: number
   }
 
   const held = new Map<number, Held>();
+
   let elapsed = 0;
+  let above = true;
+
+  /** Whether a kind is drawn at all from where the level is being looked at. */
+  const drawn = (it: Held): boolean => above || !bodyOf(it.type).overhead;
 
   const build = (type: ArtefactType): Held => {
     const it = bodyOf(type);
@@ -102,20 +119,37 @@ export function artefacts(scene: THREE.Scene): Artefacts {
 
     group.add(new THREE.Mesh(it.solid, fill));
     group.add(new THREE.LineSegments(it.edges, edge));
+    group.position.y = it.y;
 
-    const shadow = new THREE.Mesh(patch, shade);
+    let patched: THREE.Mesh | null = null;
 
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.scale.set(it.shade, it.shade, 1);
-    shadow.renderOrder = 1;
+    if (it.shade !== null) {
+      patched = new THREE.Mesh(patch, shades[it.shade.round ? 'round' : 'boxy']);
 
-    scene.add(group, shadow);
+      patched.rotation.x = -Math.PI / 2;
+      patched.scale.set(it.shade.w, it.shade.d, 1);
+      patched.renderOrder = 1;
 
-    return { type, group, shadow, phase: Math.random() * Math.PI * 2 };
+      scene.add(patched);
+    }
+
+    scene.add(group);
+
+    return { type, group, shadow: patched, phase: Math.random() * Math.PI * 2 };
   };
 
   const drop = (it: Held): void => {
-    scene.remove(it.group, it.shadow);
+    scene.remove(it.group);
+
+    if (it.shadow !== null) scene.remove(it.shadow);
+  };
+
+  const dressed = (it: Held): void => {
+    const on = drawn(it);
+
+    it.group.visible = on;
+
+    if (it.shadow !== null) it.shadow.visible = on;
   };
 
   return {
@@ -137,13 +171,14 @@ export function artefacts(scene: THREE.Scene): Artefacts {
         if (it === undefined) {
           it = build(p.type);
           held.set(p.id, it);
+          dressed(it);
         }
 
         const x = p.x * SCALE, z = p.y * SCALE;
 
         it.group.position.x = x;
         it.group.position.z = z;
-        it.shadow.position.set(x, SHADOW_Y, z);
+        it.shadow?.position.set(x, SHADOW_Y, z);
       }
 
       for (const [id, it] of held) {
@@ -154,21 +189,41 @@ export function artefacts(scene: THREE.Scene): Artefacts {
       }
     },
 
+    overhead(on: boolean): void {
+      if (on === above) return;
+
+      above = on;
+
+      for (const it of held.values()) dressed(it);
+    },
+
     update(dt: number, camera: THREE.Camera): void {
       elapsed += dt;
 
       for (const it of held.values()) {
-        const height = bodyOf(it.type);
+        if (!it.group.visible) continue;
 
-        it.group.position.y = height.y + Math.sin(elapsed * BOB_SPEED + it.phase) * BOB;
+        const kind = bodyOf(it.type);
+
+        it.group.position.y = kind.bobs
+          ? kind.y + Math.sin(elapsed * BOB_SPEED + it.phase) * BOB
+          : kind.y;
 
         // A flat kind has nothing to turn — turning a disc about its own axis
         // is a still picture — so it faces whoever is looking instead.
-        if (height.flat) {
+        if (kind.motion === 'face') {
           it.group.quaternion.copy(camera.quaternion);
         }
-        else {
-          it.group.rotation.y = elapsed * SPIN + it.phase;
+        else if (kind.motion === 'spin') {
+          const yaw = elapsed * SPIN + it.phase;
+
+          it.group.rotation.y = yaw;
+
+          // The shadow of a square thing is square, and a square that stayed
+          // put under one that turned would read as two objects.
+          if (it.shadow !== null && kind.shade !== null && !kind.shade.round) {
+            it.shadow.rotation.z = yaw;
+          }
         }
       }
     },
@@ -185,7 +240,8 @@ export function artefacts(scene: THREE.Scene): Artefacts {
 
       bodies.clear();
       patch.dispose();
-      shade.dispose();
+      shades.round.dispose();
+      shades.boxy.dispose();
       fill.dispose();
       edge.dispose();
     },
@@ -195,21 +251,39 @@ export function artefacts(scene: THREE.Scene): Artefacts {
 // -----------------------------------------------------------------------------
 // Bodies
 //
-// What a kind of artefact looks like, and nothing about where it is or what it
-// is doing. Every one is the same two geometries — a solid and the lines along
-// its edges — so that the spinning, the bobbing and the shadow are written
-// once and a new kind is a shape and three numbers.
+// What a kind of artefact looks like, and nothing about where it is. Every one
+// is the same two geometries — a solid and the lines along its edges — so that
+// the spinning, the bobbing and the shadow are written once and a new kind is
+// a shape and a handful of switches.
 // -----------------------------------------------------------------------------
 
 interface Body {
   solid: THREE.BufferGeometry
   edges: THREE.BufferGeometry
-  /** How high its middle floats, before the bob. */
+  /** How high its middle floats. */
   y: number
-  /** Half-width of the patch of shadow under it. */
-  shade: number
-  /** Flat, and therefore turned to face the camera rather than spun. */
-  flat: boolean
+  /** The patch of shadow under it, in world units, or nothing where it casts
+   * none. */
+  shade: Shade | null
+  /** `spin` turns about the vertical, `face` turns to whoever is looking, and
+   * `still` does neither. */
+  motion: 'spin' | 'face' | 'still'
+  bobs: boolean
+  /** Only drawn looking down on the level. See `Artefacts.overhead`. */
+  overhead: boolean
+}
+
+/** Half-width and half-depth of a shadow, and whether it fades out of a disc
+ * or a rectangle. */
+interface Shade {
+  w: number
+  d: number
+  round: boolean
+}
+
+interface Piece {
+  solid: THREE.BufferGeometry
+  edges: THREE.BufferGeometry
 }
 
 /**
@@ -228,11 +302,6 @@ function piece(geometry: THREE.BufferGeometry, m?: THREE.Matrix4): Piece {
   geometry.dispose();
 
   return { solid, edges };
-}
-
-interface Piece {
-  solid: THREE.BufferGeometry
-  edges: THREE.BufferGeometry
 }
 
 /** The pieces' positions end to end in one buffer. Both halves are plain
@@ -261,23 +330,31 @@ function merged(all: readonly THREE.BufferGeometry[]): THREE.BufferGeometry {
   return geometry;
 }
 
-function assembled(pieces: readonly Piece[], y: number, shade: number, flat = false): Body {
+function assembled(pieces: readonly Piece[], rest: Omit<Body, 'solid' | 'edges'>): Body {
   return {
     solid: merged(pieces.map(p => p.solid)),
     edges: merged(pieces.map(p => p.edges)),
-    y,
-    shade,
-    flat,
+    ...rest,
   };
+}
+
+/** A square pyramid: a cone of four sides, turned so that its base lies square
+ * with the axes rather than as a diamond across them, which is what lets every
+ * rectangular shadow be axis-aligned. */
+function pyramid(radius: number, height: number): THREE.BufferGeometry {
+  const it = new THREE.ConeGeometry(radius, height, 4);
+
+  it.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 4));
+
+  return it;
 }
 
 /**
  * The four pyramids of the decompress artefact, each tipped over so its point
  * is at the middle of the formation.
  *
- * A cone of four sides is a square pyramid, apex up and the origin at half its
- * height; a quarter turn about the axis across from the direction it is being
- * moved lays it on its side pointing back the way it came.
+ * A quarter turn about the axis across from the direction one is moved lays it
+ * on its side pointing back the way it came.
  */
 function inward(spread: number, radius: number, height: number): Piece[] {
   const out: Piece[] = [];
@@ -289,7 +366,7 @@ function inward(spread: number, radius: number, height: number): Piece[] {
       .multiply(new THREE.Matrix4().makeRotationY(-angle))
       .multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
 
-    out.push(piece(new THREE.ConeGeometry(radius, height, 4), m));
+    out.push(piece(pyramid(radius, height), m));
   }
 
   return out;
@@ -297,38 +374,77 @@ function inward(spread: number, radius: number, height: number): Piece[] {
 
 function body(type: ArtefactType): Body {
   switch (type) {
-    // The way out: a black disc facing whoever is looking at it, and the one
-    // kind that is a hole rather than a thing.
+    // The way out: a black disc facing whoever is looking at it, hanging
+    // still. It is a hole rather than a thing, and a hole does not bob.
     case 'exit':
-      return assembled([piece(new THREE.CircleGeometry(1.6, 32))], 2.0, 1.6, true);
+      return assembled(
+        [piece(new THREE.CircleGeometry(1.6, 32))],
+        { y: 2.0, shade: { w: 2.4, d: 2.4, round: true }, motion: 'face', bobs: false, overhead: false },
+      );
 
     case 'key':
-      return assembled([piece(new THREE.ConeGeometry(0.9, 1.15, 4))], 1.1, 1.2);
+      return assembled(
+        [piece(pyramid(0.9, 1.15))],
+        { y: 1.1, shade: { w: 1.1, d: 1.1, round: false }, motion: 'spin', bobs: true, overhead: false },
+      );
 
     case 'delay':
-      return assembled([piece(new THREE.DodecahedronGeometry(0.7))], 1.5, 1.2);
+      return assembled(
+        [piece(new THREE.DodecahedronGeometry(0.7))],
+        { y: 1.5, shade: { w: 1.2, d: 1.2, round: true }, motion: 'spin', bobs: true, overhead: false },
+      );
 
     case 'decompress':
-      return assembled(inward(0.45, 0.5, 0.9), 1.5, 1.4);
+      return assembled(
+        inward(0.45, 0.5, 0.9),
+        { y: 1.5, shade: { w: 1.4, d: 1.4, round: false }, motion: 'spin', bobs: true, overhead: false },
+      );
 
+    // Where the player comes in: a tall narrow spike balanced on its point,
+    // which is an arrow at the spot rather than an object in the room. Nothing
+    // to pick up, so nothing turns, nothing bobs, and it casts no shadow — and
+    // it is only there when the level is being looked down on.
     case 'start':
-      return assembled([piece(new THREE.TetrahedronGeometry(0.7))], 0.9, 1.0);
+      return assembled(
+        [piece(pyramid(0.28, 2.2), new THREE.Matrix4().makeRotationZ(Math.PI))],
+        { y: 1.15, shade: null, motion: 'still', bobs: false, overhead: true },
+      );
 
     case 'anchor':
-      return assembled([piece(new THREE.BoxGeometry(0.9, 0.9, 0.9))], 0.9, 1.1);
+      return assembled(
+        [piece(new THREE.BoxGeometry(0.9, 0.9, 0.9))],
+        { y: 0.9, shade: { w: 1.1, d: 1.1, round: false }, motion: 'spin', bobs: true, overhead: false },
+      );
 
     case 'compass':
-      return assembled([piece(new THREE.OctahedronGeometry(0.8))], 1.5, 1.2);
+      return assembled(
+        [piece(new THREE.OctahedronGeometry(0.8))],
+        { y: 1.5, shade: { w: 1.2, d: 1.2, round: true }, motion: 'spin', bobs: true, overhead: false },
+      );
   }
 }
 
 // -----------------------------------------------------------------------------
 // The shadow
 //
-// A disc on the ground that fades out towards its edge, with the fade dithered
+// A patch on the ground that fades out towards its edge, with the fade dithered
 // rather than blended: the whole look is opaque pixels in a pattern, and an
 // alpha ramp under a floating object is the one place a soft edge would show.
+//
+// Two of them, and they differ only in what "towards its edge" means — the
+// distance from the middle, or the further of the two axes. A round thing over
+// a square of shadow reads as a mistake, and so does the other way round.
 // -----------------------------------------------------------------------------
+
+function shadow(fragment: string): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: shadowVertex,
+    fragmentShader: fragment,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    transparent: false,
+  });
+}
 
 const shadowVertex = /* glsl */ `
   varying vec2 vUv;
@@ -339,17 +455,37 @@ const shadowVertex = /* glsl */ `
   }
 `;
 
-const shadowFragment = /* glsl */ `
-  varying vec2 vUv;
-
-  ${bayerGLSL}
-
-  void main() {
-    float d = distance(vUv, vec2(0.5)) * 2.0;
-
+/** Everything a fade of `d` — 0 in the middle, 1 at the edge — has in common,
+ * whatever shape the edge is. */
+const fade = /* glsl */ `
+  void cast(float d) {
     if (d > 1.0) discard;
     if (1.0 - smoothstep(0.0, 1.0, d) < bayerDither(gl_FragCoord.xy)) discard;
 
     gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+  }
+`;
+
+const roundShadow = /* glsl */ `
+  varying vec2 vUv;
+
+  ${bayerGLSL}
+  ${fade}
+
+  void main() {
+    cast(distance(vUv, vec2(0.5)) * 2.0);
+  }
+`;
+
+const boxyShadow = /* glsl */ `
+  varying vec2 vUv;
+
+  ${bayerGLSL}
+  ${fade}
+
+  void main() {
+    vec2 off = abs(vUv - vec2(0.5)) * 2.0;
+
+    cast(max(off.x, off.y));
   }
 `;

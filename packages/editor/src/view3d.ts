@@ -175,6 +175,11 @@ function panel(
     const placed = (): void => {
       if (view === null) return;
 
+      // Which way the level is being looked at, which decides what is worth
+      // drawing as well as from where. Said here rather than at each of the
+      // three places that change it: this runs after every one of them.
+      crowd?.overhead(!afoot());
+
       if (afoot()) {
         view.camera.position.set(walker.x, EYE, walker.z);
         view.camera.lookAt(
