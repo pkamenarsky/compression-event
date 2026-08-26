@@ -1,3 +1,4 @@
+* start view direction
 * paths
 * create button
 ** (!) should be selected first
