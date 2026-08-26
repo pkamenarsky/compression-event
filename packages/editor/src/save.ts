@@ -15,6 +15,7 @@ import {
   Artefact,
   ArtefactId,
   EMPTY_HISTORY,
+  EMPTY_TRANSFORM,
   Edit,
   EditorState,
   Group,
@@ -33,6 +34,12 @@ import {
 } from './types';
 
 /**
+ * 7: an artefact is a point and a kind, and what has happened to it since is a
+ * transform in the versions like everything else's. A format-6 file holds a
+ * move per version instead, which is the same sequence of places said the long
+ * way round, so it converts exactly: the first move is where it was put, and
+ * every later one is a translation in that version's layer.
+ *
  * 6: the world has artefacts. A format-5 file has none, which is a world with
  * nothing placed in it — so it reads as one, and writes itself back out saying
  * so.
@@ -54,7 +61,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 6;
+export const FORMAT = 7;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -86,8 +93,9 @@ export interface Saved {
 export interface SavedArtefact {
   type: Artefact['type']
   birth: VersionId
-  /** What each version moves it by, not where it is. See `Artefact`. */
-  at: [VersionId, Point][]
+  /** Its own point, before any version's transform. A format-6 file has a list
+   * of per-version moves here instead — see `FORMAT`. */
+  at: Point | [VersionId, Point][]
 }
 
 /** A version with its two maps written out as entries. */
@@ -117,7 +125,7 @@ export function saved(state: EditorState): Saved {
       polygons: [...state.world.polygons],
       groups: [...state.world.groups],
       artefacts: [...state.world.artefacts].map(
-        ([id, a]) => [id, { type: a.type, birth: a.birth, at: [...a.at] }],
+        ([id, a]) => [id, { type: a.type, birth: a.birth, at: a.at }],
       ),
       versions: state.world.versions.map(savedVersion),
     },
@@ -141,17 +149,20 @@ export function restored(file: Saved): EditorState {
     throw new Error(`state file is format ${file.format}, and this reads ${OLDEST} to ${FORMAT}`);
   }
 
+  const versions = file.world.versions.map(restoredVersion);
+  const artefacts = new Map<ArtefactId, Artefact>();
+
+  for (const [id, a] of file.world.artefacts ?? []) {
+    artefacts.set(id, { type: a.type, birth: a.birth, at: settling(a, id, versions) });
+  }
+
   return {
     world: {
       polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
       groups: new Map(file.world.groups ?? []),
-      artefacts: new Map(
-        (file.world.artefacts ?? []).map(
-          ([id, a]) => [id, { type: a.type, birth: a.birth, at: new Map(a.at) }],
-        ),
-      ),
+      artefacts,
       nextId: file.world.nextId,
-      versions: file.world.versions.map(restoredVersion),
+      versions,
     },
     currentVersion: file.currentVersion,
     inside: null,
@@ -176,6 +187,41 @@ export function restored(file: Saved): EditorState {
     history: EMPTY_HISTORY,
     clipboard: [],
   };
+}
+
+/**
+ * An artefact's own point, given a file that may say it the format-6 way.
+ *
+ * There it was a move per version against where the versions before left it, so
+ * the first is the place and each of the rest is a translation that version was
+ * making. Which is what a transform's translation is, so they go into the
+ * layers `versions` already holds and nothing about the file is guessed at.
+ *
+ * The versions are written into rather than rebuilt: an artefact had no layer
+ * of its own in a format-6 file, so there is nothing there to conflict with.
+ */
+function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point {
+  if (!Array.isArray(a.at)) return a.at;
+
+  let out: Point = { x: 0, y: 0 };
+
+  for (const [v, move] of a.at) {
+    if (v === a.birth) {
+      out = move;
+      continue;
+    }
+
+    const edits = new Map(versions[v].edits);
+
+    edits.set(id, {
+      transform: { ...EMPTY_TRANSFORM, translation: move },
+      vertices: new Map(),
+    });
+
+    versions[v] = { ...versions[v], edits };
+  }
+
+  return out;
 }
 
 /**

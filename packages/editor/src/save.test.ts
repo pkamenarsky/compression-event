@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
-import { TOP, resolveAt } from './scene';
-import { addArtefact, addPolygon, editAt, movedArtefacts, withEdit } from './scene';
-import { EditorState, emptyWorld, initialState } from './types';
+import { resolveAt } from './scene';
+import { TOP, addArtefact, addPolygon, editAt, placeAt, withEdit } from './scene';
+import { EMPTY_TRANSFORM, EditorState, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
   const a = addPolygon(emptyWorld(), 'level', [
@@ -105,8 +105,11 @@ describe('save', () => {
 
   test('artefacts survive the trip, places and all, and a format-5 file has none', () => {
     const before = world();
-    const one = addArtefact(before.world, 'key', { x: 5, y: 6 }, 0);
-    const moved = movedArtefacts(one.world, [one.id], 2, { x: 45, y: 54 });
+    const one = addArtefact(before.world, 'key', { x: 5, y: 6 }, 0, TOP);
+    const moved = withEdit(one.world, 2, one.id, {
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 45, y: 54 } },
+      vertices: new Map(),
+    });
 
     const placed: EditorState = {
       ...before,
@@ -117,12 +120,13 @@ describe('save', () => {
     const after = restored(JSON.parse(JSON.stringify(saved(placed))));
     const back = after.world.artefacts.get(one.id)!;
 
-    // A map, not the pairs it went out as: the places are keyed by version and
-    // reading one is a lookup, not a scan.
-    expect(back.at).toBeInstanceOf(Map);
     expect(back.type).toEqual('key');
     expect(back.birth).toEqual(0);
-    expect([...back.at]).toEqual([[0, { x: 5, y: 6 }], [2, { x: 45, y: 54 }]]);
+    expect(back.at).toEqual({ x: 5, y: 6 });
+
+    // What it goes on to do is in the versions, where everything else's is.
+    expect(after.world.versions[2].edits.get(one.id)!.transform.translation)
+      .toEqual({ x: 45, y: 54 });
     expect(after.selection.artefacts).toEqual([one.id]);
 
     const file = saved(placed);
@@ -137,6 +141,43 @@ describe('save', () => {
 
     expect(opened.world.artefacts.size).toEqual(0);
     expect(opened.selection.artefacts).toEqual([]);
+  });
+
+  test('a format-6 file says the same places the long way round', () => {
+    // There an artefact held a move per version. The first is where it was put
+    // and each of the rest is a translation that version was making, which is
+    // what a transform's translation is — so it converts exactly rather than
+    // being approximated or dropped.
+    const before = world();
+    const one = addArtefact(before.world, 'exit', { x: 0, y: 0 }, 0, TOP);
+    const file = saved({ ...before, world: one.world });
+
+    const old = {
+      ...file,
+      format: 6,
+      world: {
+        ...file.world,
+        artefacts: [[one.id, {
+          type: 'exit',
+          birth: 1,
+          at: [[1, { x: 10, y: 0 }], [3, { x: 5, y: 5 }]],
+        }]],
+      },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+    const back = after.world.artefacts.get(one.id)!;
+
+    expect(back.birth).toEqual(1);
+    expect(back.at).toEqual({ x: 10, y: 0 });
+    expect(after.world.versions[1].edits.get(one.id)).toBeUndefined();
+    expect(after.world.versions[3].edits.get(one.id)!.transform.translation)
+      .toEqual({ x: 5, y: 5 });
+
+    // Which is the same sequence of places it was saying before.
+    expect(placeAt(after.world, one.id, 0)).toBeNull();
+    expect(placeAt(after.world, one.id, 2)).toEqual({ x: 10, y: 0 });
+    expect(placeAt(after.world, one.id, 4)).toEqual({ x: 15, y: 5 });
   });
 
   test('a format-3 file opens, with every corner standing throughout', () => {

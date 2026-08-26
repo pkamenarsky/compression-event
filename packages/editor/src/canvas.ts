@@ -42,13 +42,11 @@ import {
   placeAt,
   addArtefact,
   artefactsAt,
+  artefactsIn,
   artefactsDuring,
   artefactsWithinBox,
   hitArtefact,
   occupying,
-  startingArtefacts,
-  withMove,
-  movedArtefacts,
   removeArtefacts,
   retypeArtefacts,
   Occupied,
@@ -445,28 +443,26 @@ export function worldCanvas(
      * on screen.
      */
     function* transforming(code: string, mode: Mode): Op<void> {
-      const ids = selection().polygons;
       const e = input.pointer();
       const v = currentVersion();
       const was = world();
 
       if (e === null) return;
 
+      // Erosion is a depth, and a point has no thickness to take one out of.
+      // So an artefact sits out that one gesture rather than being handed a
+      // key that means nothing to it — every other transform means what it
+      // means to anything else.
+      const standing = code === 'KeyE' ? [] : selection().artefacts;
+      const ids = [...selection().polygons, ...standing];
+
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
 
-      // Erosion is a depth, and an artefact has no thickness to take one out
-      // of. So it sits out that one gesture rather than being moved by a key
-      // that means nothing to it.
-      const standing = code === 'KeyE'
-        ? new Map<ArtefactId, Point>()
-        : startingArtefacts(world(), v, selection().artefacts);
+      const mine = new Set(artefactsIn(world(), ids));
+      const places = artefactsAt(world(), v).filter(it => mine.has(it.id)).map(it => it.at);
 
-      const places = new Map(
-        [...standing.keys()].map(id => [id, placeAt(world(), id, v)!]),
-      );
-
-      if (items.length === 0 && standing.size === 0) return;
+      if (items.length === 0 && places.length === 0) return;
 
       const from = at(e);
 
@@ -479,7 +475,7 @@ export function worldCanvas(
       // rather than each about itself. Artefacts are in it: a lone one turning
       // about itself would sit perfectly still, and a room turning about a
       // centre its own key was left out of would leave the key behind.
-      const pivot = centroid([...items.flatMap(it => it.source), ...places.values()]);
+      const pivot = centroid([...items.flatMap(it => it.source), ...places]);
 
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
@@ -514,28 +510,6 @@ export function worldCanvas(
                   unplace(m, from),
                   unplace(m, to),
                 ),
-              });
-            }
-
-            // The same gesture, read as somewhere to be rather than as
-            // something done. An artefact has no shape for a rotation to turn
-            // or a squash to squash, so what the transform does to its *point*
-            // is the whole of what it can mean — take the place the key went
-            // down on through the gesture's own map, and the move is what
-            // that came to.
-            //
-            // Which makes the family closed for free: whatever composition of
-            // turns and squashes the polygons end up with, the artefact ends
-            // up somewhere, and somewhere is all a move has to say.
-            const m = affine(mode(EMPTY_TRANSFORM, pivot, from, to));
-
-            for (const [id, start] of standing) {
-              const p = places.get(id)!;
-              const q = place(m, [p])[0];
-
-              world = withMove(world, v, id, {
-                x: start.x + q.x - p.x,
-                y: start.y + q.y - p.y,
               });
             }
 
@@ -584,7 +558,13 @@ export function worldCanvas(
      */
     function placing(e: PointerEvent): void {
       update(s => {
-        const { world, id } = addArtefact(s.world, ARTEFACTS[0], at(e, true), s.currentVersion);
+        const { world, id } = addArtefact(
+          s.world,
+          ARTEFACTS[0],
+          at(e, true),
+          s.currentVersion,
+          landing(s.world, s.currentVersion, s.inside),
+        );
 
         return marked(
           { ...s, world, selection: { ...s.selection, artefacts: [id] } },
@@ -1092,13 +1072,12 @@ export function worldCanvas(
     function* draggingSelection(from: PointerEvent): Op<void> {
       const v = currentVersion();
       const was = world();
-      const ids = selection().polygons;
+      const ids = [...selection().polygons, ...selection().artefacts];
       const start = at(from);
 
       const anchors = starting(was, v, ids);
-      const held = startingArtefacts(was, v, selection().artefacts);
 
-      if (anchors.size === 0 && held.size === 0) return;
+      if (anchors.size === 0) return;
 
       const frames = new Map([...anchors.keys()].map(id => [id, under(was, v, id)]));
 
@@ -1136,14 +1115,6 @@ export function worldCanvas(
               });
             }
 
-            // In world units and nowhere else. An artefact is not inside
-            // anything, so there is no frame to take the step back through —
-            // which is the whole of the simplification, and the whole of what
-            // it costs when the group around it turns.
-            for (const [id, start] of held) {
-              world = withMove(world, v, id, { x: start.x + dx, y: start.y + dy });
-            }
-
             return { ...st, world };
           });
         }),
@@ -1178,14 +1149,23 @@ export function worldCanvas(
 
     /** The picked corners taken out, or the picked polygons under the other
      * tool. One key, and what it removes is whatever the tool is about. */
-    /** The artefact under the cursor, if the click is close enough to one to be
-     * about it. Screen units, like the diamond it is aiming at. */
-    function grabbing(e: PointerEvent): ArtefactId | null {
-      return hitArtefact(
-        artefactsAt(world(), currentVersion()),
-        at(e),
-        HANDLE / view().zoom,
-      );
+    /**
+     * The artefact under the cursor, if the click is close enough to one to be
+     * about it. Screen units, like the diamond it is aiming at.
+     *
+     * Only the ones a click can reach, the same rule polygons follow: one
+     * inside a shut group is drawn — it has to be, since the group's outline
+     * says nothing about it — but picking it is picking the group, and getting
+     * at it means going in. `all` asks the other question, which is whether
+     * there is anything here at all: putting a second artefact on top of one
+     * you cannot see is not what a click on it means either.
+     */
+    function grabbing(e: PointerEvent, all = false): ArtefactId | null {
+      const path = opened(world(), inside());
+      const shown = artefactsAt(world(), currentVersion())
+        .filter(it => all || !swallowed(world(), it.id, path));
+
+      return hitArtefact(shown, at(e), HANDLE / view().zoom);
     }
 
     function removing(): void {
@@ -1227,15 +1207,22 @@ export function worldCanvas(
         // A group goes with what was in it: picking one is picking the rooms
         // under it, and deleting it while they stayed would be a selection
         // that deleted less than it drew.
+        // A group goes with what was in it, artefacts included: they are
+        // members like anything else, and leaving one behind would leave a key
+        // hanging in the air where its room was.
         const gone = new Set(s.selection.polygons.flatMap(id => within(s.world, id)));
         const polygons = new Map(world.polygons);
+        const artefacts = new Map(world.artefacts);
 
-        for (const id of gone) polygons.delete(id);
+        for (const id of gone) {
+          polygons.delete(id);
+          artefacts.delete(id);
+        }
 
         return marked(
           {
             ...s,
-            world: without({ ...world, polygons }, gone),
+            world: without({ ...world, polygons, artefacts }, gone),
             selection: { ...s.selection, polygons: [], artefacts: [] },
           },
           s.world,
@@ -1481,7 +1468,7 @@ export function worldCanvas(
               // draft to abandon and nothing to step into, so those are the
               // whole of what a click here can mean.
               if (on !== null) pickingArtefact(e, on);
-              else if (!e.shiftKey) placing(e);
+              else if (!e.shiftKey && grabbing(e, true) === null) placing(e);
             }
           }
         }
@@ -1819,6 +1806,7 @@ function layers(
       ? artefactsAt(world, current)
       : artefactsDuring(world, walk.from, walk.to, walk.at),
     new Set(selection.artefacts),
+    id => reachable(world, id, inside),
   ));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
@@ -2185,6 +2173,9 @@ function artefacts(
   view: View,
   shown: readonly Placed[],
   picked: ReadonlySet<ArtefactId>,
+  /** Whether a click could reach it, which is false for everything outside the
+   * group standing open. The same fading the outlines get. */
+  reach: (id: ArtefactId) => boolean,
 ): void {
   ctx.lineJoin = 'round';
   ctx.textAlign = 'center';
@@ -2194,12 +2185,13 @@ function artefacts(
   for (const it of shown) {
     const q = toScreen(view, it.at);
     const here = picked.has(it.id);
-    const colour = here ? theme.picked : theme.artefact;
+    const near = reach(it.id);
+    const colour = !near ? theme.outside : here ? theme.picked : theme.artefact;
 
     ctx.beginPath();
     diamond(ctx, q);
 
-    ctx.fillStyle = here ? theme.pickedFill : theme.canvas;
+    ctx.fillStyle = here && near ? theme.pickedFill : theme.canvas;
     ctx.fill();
 
     // The facets, which are what make it read as the icon rather than as a
@@ -2213,10 +2205,10 @@ function artefacts(
     ctx.lineTo(q.x, q.y - TOP);
 
     ctx.strokeStyle = colour;
-    ctx.lineWidth = here ? 1.5 : 1;
+    ctx.lineWidth = here && near ? 1.5 : 1;
     ctx.stroke();
 
-    ctx.fillStyle = here ? theme.picked : theme.muted;
+    ctx.fillStyle = !near ? theme.outside : here ? theme.picked : theme.muted;
     ctx.fillText(it.type, q.x, q.y + BOTTOM + 3);
   }
 }

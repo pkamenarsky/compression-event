@@ -344,17 +344,24 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
 
 /** The picked things made one, and picked as one. */
 function together(s: EditorState): EditorState {
+  // Artefacts are members like anything else: a room and the key in it is the
+  // group worth having, and holding them together is what makes the key go
+  // where the room goes.
   const made = grouped(
     s.world,
     s.currentVersion,
-    s.selection.polygons,
+    [...s.selection.polygons, ...s.selection.artefacts],
     landing(s.world, s.currentVersion, s.inside),
   );
 
   if (made === null) return s;
 
   return marked(
-    { ...s, world: made.world, selection: { ...s.selection, polygons: [made.id] } },
+    {
+      ...s,
+      world: made.world,
+      selection: { ...s.selection, polygons: [made.id], artefacts: [] },
+    },
     s.world,
   );
 }
@@ -386,7 +393,23 @@ function apart(s: EditorState): EditorState {
     picked.push(...group.members);
   }
 
-  return marked({ ...s, world, selection: { ...s.selection, polygons: picked } }, s.world);
+  // What came out goes back to the list it belongs in, since a group's members
+  // are of both kinds and the selection is not.
+  return marked(
+    {
+      ...s,
+      world,
+      selection: {
+        ...s.selection,
+        polygons: picked.filter(id => !world.artefacts.has(id)),
+        artefacts: [
+          ...s.selection.artefacts,
+          ...picked.filter(id => world.artefacts.has(id)),
+        ],
+      },
+    },
+    s.world,
+  );
 }
 
 // -----------------------------------------------------------------------------

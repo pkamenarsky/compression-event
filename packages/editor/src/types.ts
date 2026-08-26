@@ -147,14 +147,9 @@ export type GroupId = number;
 export type VertexId = number;
 export type ArtefactId = number;
 
-/** Whatever a version's layer can carry a transform for. One counter, so the
- * two never collide and a map over both is well defined.
- *
- * An artefact is not one of them. It has an id from the same counter, so it can
- * never be mistaken for a polygon, but nothing writes a transform for it — a
- * point has no shape to turn and its versions are the places themselves. See
- * `Artefact`. */
-export type Id = PolygonId | GroupId;
+/** Whatever a version's layer can carry a transform for. One counter, so no
+ * two ever collide and a map over all of them is well defined. */
+export type Id = PolygonId | GroupId | ArtefactId;
 export type VersionId = number;
 
 /**
@@ -275,36 +270,29 @@ export interface Group {
 }
 
 /**
- * A place in the world with a kind, moved from version to version.
+ * A place in the world with a kind: where it was put, and nothing else.
  *
- * Attached to nothing, deliberately. Written into a polygon it would have to
- * turn with one, and written into a group it would need a frame to be expressed
- * in and a rule for what happens when the group is eroded out from under it.
- * None of that is worth having before there is a level that wants it, so an
- * artefact is a point in world units at each version and a straight line
- * between them — which is wrong in exactly one way, visibly, and correctable by
- * dragging.
+ * What has happened to it since belongs to the versions, exactly as it does for
+ * a polygon — an artefact carries no transform of its own, because there is no
+ * version at which it would be the right one. So `at` is the point as it was
+ * dropped, in the artefact's own frame, and where it *is* at a version is that
+ * point taken through every transform down the chain.
  *
- * `at` is a layer like every other, and holds *movement* rather than position —
- * what this version did to it, against where the versions before left it. So
- * the entry at its birth is where it was put, read as a move from the origin,
- * and a version with nothing to say leaves it where it was.
+ * The same layer a polygon gets, which is the whole of the design: a version's
+ * transform is what that version does, so a move written at v1 is carried by
+ * every version after it rather than overruled by them, an artefact inside a
+ * group goes where the group goes, and a turn about a pivot is a turn about a
+ * pivot however many of them one version writes in a row.
  *
- * Movement rather than position because that is what every other layer here
- * holds: a version's transform is what that version does, and an artefact
- * dragged at v1 has to leave v0 alone for the same reason a polygon turned at
- * v1 does. Positions would say the opposite — a version that had never been
- * touched would still be asserting a place, and inserting a move upstream
- * would be overruled by every version downstream of it rather than carried.
- *
- * Which is why `birth` is a field: with zero meaning *stay*, an absent entry
- * can no longer be what says an artefact is not there yet.
+ * Erosion is the one part of a transform that means nothing here. A point has
+ * no thickness to take a depth out of, and the gestures leave it alone.
  */
 export interface Artefact {
   type: ArtefactType
-  /** The version whose layer put it there. Nothing before it may name it. */
+  /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
-  at: Map<VersionId, Point>
+  /** In its own frame, before any version's transform. */
+  at: Point
 }
 
 export interface World {
@@ -476,16 +464,10 @@ export type Clipping =
       edits: [number, Edit][]
     }
   | { kind: 'group', members: Clipping[], edits: [number, Edit][] }
-  /**
-   * An artefact, the same way round: `at[0]` is where it stood at the copy
-   * version, in world units, and the rest are the moves it had still to make,
-   * keyed by how far past the copy they were.
-   *
-   * The tail needs no frame and no offset. A move is a direction rather than a
-   * place, so pasting somewhere else leaves every one of them saying what it
-   * said — which is the whole convenience of having stored moves.
-   */
-  | { kind: 'artefact', type: ArtefactType, at: [number, Point][] }
+  /** An artefact, the same way round as a polygon: where it stood at the copy
+   * version in world units, and every layer after it keyed by how far past the
+   * copy it was. */
+  | { kind: 'artefact', type: ArtefactType, at: Point, edits: [number, Edit][] }
 
 // -----------------------------------------------------------------------------
 // Undo

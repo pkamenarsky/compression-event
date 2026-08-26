@@ -200,68 +200,17 @@ export interface Placed {
 /**
  * Where an artefact stands at a version, or nothing if it is not there yet.
  *
- * Every move down the chain, added up. A version that says nothing adds
- * nothing, which is what makes an untouched version leave it where it was —
- * the same thing an untouched version does to a polygon.
+ * Its own point taken through every transform down the chain, which is the same
+ * walk `resolveAt` does for a polygon's ring and is already written: an
+ * artefact is in the version's layers like anything else, so `groupFrame`
+ * answers for it without knowing what it is.
  */
 export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | null {
   const it = world.artefacts.get(id);
 
-  if (it === undefined) return null;
+  if (it === undefined || !chain(world, v).includes(it.birth)) return null;
 
-  const from = chain(world, v);
-
-  if (!from.includes(it.birth)) return null;
-
-  let x = 0, y = 0;
-
-  for (const k of from) {
-    const d = it.at.get(k);
-
-    if (d !== undefined) {
-      x += d.x;
-      y += d.y;
-    }
-  }
-
-  return { x, y };
-}
-
-/**
- * What each of them holds at this version, which is where a gesture starts
- * from.
- *
- * The layer as it stands, not the place: a drag recomputes from here and the
- * move it writes replaces this one rather than composing onto it, the same way
- * `starting` hands over a transform for a polygon drag to recompute from.
- */
-export function startingArtefacts(
-  world: World,
-  v: VersionId,
-  ids: readonly ArtefactId[],
-): Map<ArtefactId, Point> {
-  const out = new Map<ArtefactId, Point>();
-
-  for (const id of ids) {
-    if (placeAt(world, id, v) === null) continue;
-
-    out.set(id, world.artefacts.get(id)?.at.get(v) ?? { x: 0, y: 0 });
-  }
-
-  return out;
-}
-
-/** One artefact's move at one version, written. */
-export function withMove(world: World, v: VersionId, id: ArtefactId, d: Point): World {
-  const it = world.artefacts.get(id);
-
-  if (it === undefined) return world;
-
-  const artefacts = new Map(world.artefacts);
-
-  artefacts.set(id, { ...it, at: new Map(it.at).set(v, d) });
-
-  return { ...world, artefacts };
+  return place(groupFrame(world, v, id), [it.at])[0];
 }
 
 /** Everything standing at a version, in id order. */
@@ -325,42 +274,29 @@ export function artefactsDuring(
   return out.sort((a2, b2) => a2.id - b2.id);
 }
 
-/** Born into the version it was put in, where it was put — read as a move from
- * the origin, which is what every later version's move is against. */
+/**
+ * Born into the version it was put in, where the cursor put it.
+ *
+ * Read in the landing's frame, like a drawn polygon: dropping one inside a
+ * group standing open makes a member of that group, exactly where it was
+ * dropped rather than wherever the group's own transform would have sent it.
+ */
 export function addArtefact(
   world: World,
   type: ArtefactType,
   at: Point,
   v: VersionId,
+  where: Landing,
 ): { world: World, id: ArtefactId } {
   const id = world.nextId;
   const artefacts = new Map(world.artefacts);
 
-  artefacts.set(id, { type, birth: v, at: new Map([[v, at]]) });
+  artefacts.set(id, { type, birth: v, at: unplace(where.frame, at) });
 
-  return { world: { ...world, artefacts, nextId: id + 1 }, id };
-}
-
-/**
- * Moved, at this version and every later one that does not move it again.
- *
- * Written into the version being edited rather than the one it was born at,
- * which is what makes a drag at v3 leave v0 alone — the same thing a transform
- * does, by the same reasoning, and the whole of why moves are a map.
- */
-export function movedArtefacts(
-  world: World,
-  ids: readonly ArtefactId[],
-  v: VersionId,
-  by: Point,
-): World {
-  let out = world;
-
-  for (const [id, was] of startingArtefacts(world, v, ids)) {
-    out = withMove(out, v, id, { x: was.x + by.x, y: was.y + by.y });
-  }
-
-  return out;
+  return {
+    world: joined({ ...world, artefacts, nextId: id + 1 }, where.into, [id]),
+    id,
+  };
 }
 
 export function retypeArtefacts(
@@ -844,8 +780,15 @@ export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id
 
   return new Map(
     ids
-      .filter(id => world.polygons.has(id) || world.groups.has(id))
-      .map(id => [id, editAt(world, v, id, mine.get(id) ?? theirs.get(id) ?? 0)]),
+      .filter(id => world.polygons.has(id) || world.groups.has(id) || world.artefacts.has(id))
+      // An artefact has no depth of its own and inherits nobody's: erosion is
+      // the one part of a transform that means nothing to a point, and reading
+      // its group's depth onto it would write a number nothing would ever
+      // take back off.
+      .map(id => [
+        id,
+        editAt(world, v, id, world.artefacts.has(id) ? 0 : mine.get(id) ?? theirs.get(id) ?? 0),
+      ]),
   );
 }
 
@@ -1065,6 +1008,20 @@ export function polygonsIn(world: World, ids: readonly Id[]): PolygonId[] {
   for (const id of ids) {
     for (const m of within(world, id)) {
       if (world.polygons.has(m)) out.add(m);
+    }
+  }
+
+  return [...out];
+}
+
+/** The same, for artefacts: what a gesture over a selection actually moves,
+ * including the ones inside a group it names. */
+export function artefactsIn(world: World, ids: readonly Id[]): ArtefactId[] {
+  const out = new Set<ArtefactId>();
+
+  for (const id of ids) {
+    for (const m of within(world, id)) {
+      if (world.artefacts.has(m)) out.add(m);
     }
   }
 
@@ -2010,17 +1967,11 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
     if (thing !== undefined) {
       const here = placeAt(world, id, v);
 
-      if (here === null) return [];
-
-      const at: [number, Point][] = [[0, here]];
-
-      for (let k = v + 1; k < world.versions.length; k++) {
-        const move = thing.at.get(k);
-
-        if (move !== undefined) at.push([k - v, { ...move }]);
-      }
-
-      return [{ kind: 'artefact', type: thing.type, at }];
+      // Its layers come across the way a group's do — a transform and nothing
+      // else. There is no ring under it to displace and no depth to inherit.
+      return here === null
+        ? []
+        : [{ kind: 'artefact', type: thing.type, at: here, edits: layers(id, null, 0) }];
     }
 
     const group = world.groups.get(id);
@@ -2128,27 +2079,14 @@ function restore(
   by: Point | null,
 ): { world: World, id: Id } {
   if (clip.kind === 'artefact') {
-    const [, here] = clip.at[0];
-    const put = addArtefact(
-      world,
-      clip.type,
-      by === null ? here : { x: here.x + by.x, y: here.y + by.y },
-      v,
-    );
+    const id = world.nextId;
+    const artefacts = new Map(world.artefacts);
 
-    let out = put.world;
+    artefacts.set(id, { type: clip.type, birth: v, at: unplace(m, clip.at) });
 
-    // Not through `m`. An artefact is in no group and its moves are in world
-    // units at every version, so a paste into a turned group turns nothing
-    // about it — which is the same simplification everywhere else here, seen
-    // from the other side.
-    for (const [offset, move] of clip.at.slice(1)) {
-      if (v + offset >= world.versions.length) break;
+    const out = { ...world, artefacts, nextId: id + 1 };
 
-      out = withMove(out, v + offset, put.id, move);
-    }
-
-    return { world: out, id: put.id };
+    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
   }
 
   if (clip.kind === 'group') {
@@ -2234,13 +2172,13 @@ export function pasted(
 
     out = put.world;
 
-    // Kept apart, because only one of the two can be joined into the group
-    // standing open, and because the selection holds them in separate lists.
+    // Kept apart only because the selection holds them in separate lists.
+    // Both go into the group standing open, both being members of one.
     if (clip.kind === 'artefact') artefacts.push(put.id);
     else ids.push(put.id);
   }
 
-  return { world: joined(out, where.into, ids), ids, artefacts };
+  return { world: joined(out, where.into, [...ids, ...artefacts]), ids, artefacts };
 }
 
 /**
@@ -2263,7 +2201,7 @@ export function stamped(
   where: Landing,
 ): { world: World, ids: Id[], artefacts: ArtefactId[] } {
   const now = (clip: Clipping): Clipping => clip.kind === 'artefact'
-    ? { ...clip, at: clip.at.slice(0, 1) }
+    ? { ...clip, edits: clip.edits.slice(0, 1) }
     : clip.kind === 'group'
     ? { ...clip, members: clip.members.map(now), edits: clip.edits.slice(0, 1) }
     : {
