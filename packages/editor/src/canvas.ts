@@ -1280,7 +1280,13 @@ export function worldCanvas(
                   el,
                   ctx,
                   v,
-                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played, clip, r),
+                  layers(
+                    w, s, v, t, sel, ins, at, l, items, runs(set), played, clip,
+                    // An artefact flying on its own, with the walls it belongs
+                    // to standing still because their span has not been baked
+                    // yet, reads as a glitch rather than as a walk.
+                    played === null ? null : r,
+                  ),
                 );
               }
             },
@@ -1714,7 +1720,8 @@ function layers(
    * towards, from `occupying`. Null when nothing is playing. */
   clip: Map<GroupId, Shape> | null,
   /** The walk in progress, for the things drawn from the world rather than
-   * from the bake. Null when nothing is playing. */
+   * from the bake. Null when nothing is playing, and null too when the walk
+   * has no bake to play, so that nothing animates alone. */
   walk: Replay | null,
 ): Layer[] {
   const out: Layer[] = [];
