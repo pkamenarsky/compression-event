@@ -35,7 +35,7 @@ import {
   resolveAt,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -58,6 +58,14 @@ function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: Polygon
 function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Transform>): World {
   const it = resolveAt(world, v).find(r => r.id === id)!;
   const edit = editAt(world, v, id, it.erosion);
+
+  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+}
+
+/** A layer on anything at all, group or polygon. `transformed` reads the
+ * polygon's own erosion back first, which a group does not have. */
+function moved(world: World, v: VersionId, id: Id, t: Partial<Transform>): World {
+  const edit = editAt(world, v, id, 0);
 
   return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
 }
@@ -154,6 +162,37 @@ describe('a flattened span replays as its span does', () => {
     );
 
     expect(agrees(transformed(world, 1, ids[1], { rotation: 1.1 }), 0)).toBeLessThan(SLACK);
+  });
+
+  // The one case where a slot's own frame is not the whole answer: the group's
+  // layer is in flight too, and it is a link further up the chain rather than
+  // anything in the polygon's own row of the table.
+  test('a room inside a group that turns', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 160)],
+      ['level', rect(220, 40, 120, 120)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+
+    expect(agrees(moved(made.world, 1, made.id, { rotation: 0.7 }), 0)).toBeLessThan(SLACK);
+  });
+
+  test('a room in a group inside a group, both turning', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 160)],
+      ['level', rect(220, 40, 120, 120)],
+      ['level', rect(60, 220, 140, 100)],
+    );
+
+    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
+
+    let w = moved(outer.world, 1, inner.id, { rotation: 0.5 });
+
+    w = moved(w, 1, outer.id, { rotation: -0.4, translation: { x: 30, y: 10 } });
+
+    expect(agrees(w, 0)).toBeLessThan(SLACK);
   });
 
   test('several rooms joining as they erode', () => {

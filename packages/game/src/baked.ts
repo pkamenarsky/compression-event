@@ -237,8 +237,43 @@ function mix(u: number, v: number, t: number): number {
 }
 
 /**
- * A polygon's frame at one instant: the layer it is in the middle of receiving,
- * eased from identity to itself, composed onto the chain it already stood in.
+ * The frame a point actually rides: its own slot's, and every group holding
+ * it, each eased on its own terms and multiplied.
+ *
+ * The chain stays a chain rather than arriving as one composed matrix, because
+ * composing two layers gives a general matrix and a general matrix lerped
+ * entrywise slews through a shear — a group turning round a polygon that is
+ * itself turning would collapse through its own middle on the way. Exactly
+ * what `resolveAt` walks one stage at a time, and exactly what the shader's
+ * `frameAt` does.
+ */
+export function frameAt(span: BakedSpan, slot: number, t: number): Affine {
+  let m = linkAt(span, slot, t);
+  let up = span.frames[slot * FRAME_STRIDE + 14];
+
+  while (up >= 0) {
+    m = onto(linkAt(span, up, t), m);
+    up = span.frames[up * FRAME_STRIDE + 14];
+  }
+
+  return m;
+}
+
+/** `outer` after `inner`, which is `compose` in the editor. */
+function onto(outer: Affine, inner: Affine): Affine {
+  return {
+    a: outer.a * inner.a + outer.c * inner.b,
+    b: outer.b * inner.a + outer.d * inner.b,
+    c: outer.a * inner.c + outer.c * inner.d,
+    d: outer.b * inner.c + outer.d * inner.d,
+    tx: outer.a * inner.tx + outer.c * inner.ty + outer.tx,
+    ty: outer.b * inner.tx + outer.d * inner.ty + outer.ty,
+  };
+}
+
+/**
+ * One link of that chain: the layer this slot is in the middle of receiving,
+ * eased from identity to itself, composed onto the frame it already stood in.
  *
  * Rotation and scale ease on their own terms; the translation is then whatever
  * holds the fixed point still. Easing it in a straight line instead is what
@@ -246,7 +281,7 @@ function mix(u: number, v: number, t: number): number {
  * translation a turn leaves behind is its pivot carried round a circle and a
  * chord is not a circle.
  */
-export function frameAt(span: BakedSpan, slot: number, t: number): Affine {
+export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
   const f = span.frames, o = slot * FRAME_STRIDE;
 
   const rotation = f[o + 8] * t;
