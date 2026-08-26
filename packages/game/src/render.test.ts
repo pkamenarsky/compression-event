@@ -30,14 +30,25 @@ const OPTIONS: WallOptions = {
   fillHeight: -0.005,
 };
 
-/** The fill's vertices, back in the two axes the ground has. The shader takes
- * `position` to world units; this is the plane it is authored in. */
+/**
+ * The fill's triangle corners, back in the two axes the ground has.
+ *
+ * Through the index buffer, because that is where the triangulation is: the
+ * vertices are the ring as drawn, and which of them make triangles is the
+ * answer under test. The shader takes `position` to world units; this is the
+ * plane it is authored in.
+ */
 function laid(points: readonly Point[][]): Point[] {
   const it = still([], points.map(p => ({ points: p })), OPTIONS);
   const p = it.fill.geometry.getAttribute('position');
+  const index = it.fill.geometry.getIndex()!;
   const out: Point[] = [];
 
-  for (let i = 0; i < p.count; i++) out.push({ x: p.getX(i), y: p.getZ(i) });
+  for (let i = 0; i < index.count; i++) {
+    const v = index.getX(i);
+
+    out.push({ x: p.getX(v), y: p.getZ(v) });
+  }
 
   it.dispose();
 
@@ -102,6 +113,7 @@ describe('an authored floor', () => {
       OPTIONS,
     );
 
+    expect(it.fill.geometry.getIndex()!.count).toEqual(0);
     expect(it.fill.geometry.getAttribute('position').count).toEqual(0);
     expect(it.walls.geometry.getAttribute('position').count).toBeGreaterThan(0);
 

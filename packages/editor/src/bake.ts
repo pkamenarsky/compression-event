@@ -1049,7 +1049,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
     cast.folds.set(t, held);
   }
 
-  return contributed(
+  const all = contributed(
     cast.world,
     at,
 
@@ -1069,6 +1069,30 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
     },
     held,
   );
+
+  // An eroding group stands in front of its members and hands over one union
+  // per side, floors included — which is right for the canvas, where a shut
+  // group is drawn as the one outline that says what it occupies, and wrong
+  // here. A floor is in no set, so there is nothing for a union of them to be
+  // the boundary *of*; it is baked as itself at its own depth, which is what
+  // `floorsAt` draws standing still and therefore what the still and the morph
+  // have to agree on. See `subjects`.
+  const mine = all.filter(it => it.kind !== 'floor');
+
+  for (const it of at) {
+    if (it.polygon.type !== 'floor') continue;
+
+    mine.push({
+      id: it.id,
+      kind: 'floor',
+      shape: it.shape,
+      frame: it.frame,
+      simple: it.erosion !== 0,
+      keep: it.keep,
+    });
+  }
+
+  return mine;
 }
 
 

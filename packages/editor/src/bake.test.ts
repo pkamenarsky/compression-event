@@ -29,6 +29,7 @@ import {
   EMPTY_BAKE,
 } from './bake';
 import {
+  EMPTY_TRANSFORM,
   Id,
   PolygonId,
   PolygonType,
@@ -1177,6 +1178,53 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
     expect(span.tracks.find(t => t.id === ids[2])!.stretches.length).toEqual(1);
   });
 
+  test('every layer a polygon has reaches it: its own, and its groups', () => {
+    // The whole of "versioned like everything else". A floor is drawn rather
+    // than built, and nothing else about it is special: it takes a transform,
+    // it takes an erosion, it rides the groups holding it, and every one of
+    // those is in flight across the span like anywhere else.
+    const { world, ids } = drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', rect(-120, -80, 240, 160)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+
+    // The group turns and erodes; the floor slides and erodes inside it.
+    const turning = withEdit(made.world, 1, made.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: 0.8, erosion: 12 },
+      vertices: new Map(),
+    });
+
+    const it = resolveAt(turning, 1).find(r => r.id === ids[1])!;
+    const edit = editAt(turning, 1, ids[1], it.erosion);
+
+    const moved = withEdit(turning, 1, ids[1], {
+      ...edit,
+      transform: {
+        ...edit.transform,
+        translation: { x: 60, y: -40 },
+        rotation: -0.5,
+        erosion: 18,
+      },
+    });
+
+    const span = run(bakeSpan(moved, 0));
+
+    for (const t of [0, 0.2, 0.5, 0.8, 1]) {
+      const mine = sample(span, t).filter(r => r.fill);
+      const real = truth(moved, 0, t).filter(r => r.id === ids[1]);
+
+      expect(mine.length).toEqual(real.length);
+      expect(mine.length).toBeGreaterThan(0);
+
+      mine.forEach((r, i) => r.points.forEach((p, j) => {
+        expect(p.x).toBeCloseTo(real[i].points[j].x, 9);
+        expect(p.y).toBeCloseTo(real[i].points[j].y, 9);
+      }));
+    }
+  });
+
   test('and a group eroding around it does not swallow it', () => {
     // An eroding group stands in front of its members' union, and a floor is
     // in no union. So it stays its own subject at its own depth, which is
@@ -1187,9 +1235,21 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
     );
 
     const held = grouped(world, 0, ids, TOP)!;
-    const span = run(bakeSpan(transformed(held.world, 1, held.id, { erosion: 20 }), 0));
+    const eroding = transformed(held.world, 1, held.id, { erosion: 20 });
+    const span = run(bakeSpan(eroding, 0));
+    const track = span.tracks.find(t => t.id === ids[1]);
 
-    expect(span.tracks.find(t => t.id === ids[1])?.fill).toBe(true);
+    expect(track?.fill).toBe(true);
+
+    // And it is still *there*. The track existing says nothing: the group used
+    // to hand over one union per side, floors included, and the floor's own
+    // track came back empty at every instant while looking perfectly healthy.
+    for (const t of [0, 0.5, 1]) {
+      const mine = sample(span, t).filter(r => r.id === ids[1]);
+
+      expect(mine.length).toBeGreaterThan(0);
+      expect(length(mine)).toBeCloseTo(length(truth(eroding, 0, t).filter(r => r.id === ids[1])), 9);
+    }
   });
 });
 

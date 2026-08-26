@@ -208,11 +208,21 @@ export const lineFragment = /* glsl */ `
  *
  * The other half of `extrude`, and the same bargain: indices rather than
  * positions, because the two sources disagree about what a position is and
- * agree exactly about this. A still reads its points out of an array it just
- * built; a morph has two of them and a frame, and works out where a vertex is
- * per frame in the shader. Cut once, either way — for the morph that rests on a
- * stretch being exactly a run of instants over which the ring's combinatorics
- * do not change, so a fan cut at one end of it is a fan at every instant of it.
+ * agree exactly about this.
+ *
+ * Unlike `extrude`, this is not answered once and kept. A wall is the quad
+ * between two consecutive points and stays that quad however they move; which
+ * diagonals cut a ring into triangles is a question about where the points
+ * *are*. A vertex convex at one end of a stretch can be reflex at the other,
+ * and then the cut taken at the near end has triangles lying outside the shape
+ * and a bite missing from it — which is what it did, and what it looked like
+ * was a triangle vanishing as the transition ran out.
+ *
+ * A stretch fixes a ring's combinatorics; it does not fix its geometry. So a
+ * still cuts once, because it does not move, and a morph cuts every frame off
+ * the points at that instant. It is a handful of small rings and an ear clip is
+ * quadratic in the small: the level's walls are the expensive half and they are
+ * still answered once.
  *
  * Rings, so the last point is the first and is dropped: a contour handed the
  * same point twice has a zero-length edge and the triangulator has nothing to

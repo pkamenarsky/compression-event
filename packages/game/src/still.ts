@@ -85,7 +85,20 @@ export function still(
   }
 
   const shape = extrude(spans);
-  const face = fan(rings, i => points[i]);
+
+  // A vertex per point of every floor and an index buffer over them, which is
+  // the layout the morph's fill has — it recuts that index buffer every frame
+  // and this does not, because this does not move. See `fan`.
+  const mine: number[] = [];
+  const where = [];
+
+  for (const ring of rings) {
+    where.push({ first: mine.length, count: ring.count });
+
+    for (let i = 0; i < ring.count; i++) mine.push(ring.first + i);
+  }
+
+  const face = fan(where, i => points[mine[i]]);
 
   // Per point of the flattened outline, whether a vertical standing on it is
   // telling the truth. Decided where the boundary was computed and carried on
@@ -138,7 +151,12 @@ export function still(
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
-  const fillGeometry = geometry(face, new Float32Array(face.length), null, null);
+  const fillGeometry = geometry(
+    new Int32Array(mine),
+    new Float32Array(mine.length),
+    null,
+    new Uint32Array(face),
+  );
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);

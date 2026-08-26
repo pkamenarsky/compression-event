@@ -30,6 +30,7 @@
 import * as THREE from 'three';
 import { BakedSpan, CROSSING } from './baked';
 import { Source, Span, WallOptions, extrude, fan, materials } from './walls';
+import { Point } from './world';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -349,14 +350,25 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     return g;
   };
 
-  // Off the near end's points, in the polygon's own frame — an affine frame
-  // takes triangles to triangles, so which end and which frame the cut is
-  // measured in makes no difference to it.
-  const face = fan(runs.fills, i => ({ x: span.pointsA[i * 2], y: span.pointsA[i * 2 + 1] }));
+  // A vertex per point of every floor, in run order, and an index buffer that
+  // is recut every frame — see `fan`. `where` is the run each one belongs to,
+  // renumbered from zero so what comes back indexes these vertices rather than
+  // the span's points.
+  const mine: number[] = [];
+  const where: Span[] = [];
+
+  for (const run of runs.fills) {
+    where.push({ first: mine.length, count: run.count });
+
+    for (let i = 0; i < run.count; i++) mine.push(run.first + i);
+  }
+
+  const most = where.reduce((n, r) => n + Math.max(0, r.count - 3) * 3, 0);
+  const face = new Uint32Array(most);
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
-  const fillGeometry = geometry(face, new Float32Array(face.length), null, null);
+  const fillGeometry = geometry(new Int32Array(mine), new Float32Array(mine.length), null, face);
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
@@ -372,15 +384,64 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   lines.frustumCulled = false;
   floors.frustumCulled = false;
 
+  /**
+   * Where one of those vertices stands at `t`, in its own polygon's frame.
+   *
+   * The frame is left off deliberately: a triangulation is a question about
+   * which diagonals lie inside the ring, and an affine map takes the answer to
+   * the answer. So the cut is taken in the frame the points are kept in, and
+   * the shader puts them where they go.
+   */
+  const at = (i: number): Point => {
+    const p = mine[i];
+    const a = range[p * 2], b = range[p * 2 + 1];
+    const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+
+    return {
+      x: span.pointsA[p * 2] + (span.pointsB[p * 2] - span.pointsA[p * 2]) * u,
+      y: span.pointsA[p * 2 + 1] + (span.pointsB[p * 2 + 1] - span.pointsA[p * 2 + 1]) * u,
+    };
+  };
+
+  /** The same gate the shader draws by, asked of a whole run: a stretch holds
+   * its start and not its end, and the last one keeps both. */
+  const alive = (run: Span): boolean => {
+    const a = range[mine[run.first] * 2], b = range[mine[run.first] * 2 + 1];
+
+    return t >= a && (t < b || b >= 1);
+  };
+
+  let t = 0;
+  let count = 0;
+
+  const recut = (): void => {
+    const cut = fan(where.filter(alive), at);
+
+    face.set(cut);
+    count = cut.length;
+
+    fillGeometry.getIndex()!.needsUpdate = true;
+    fillGeometry.setDrawRange(0, count);
+  };
+
+  recut();
+
   return {
     walls,
     lines,
     fill: floors,
 
-    seek(t: number): void {
-      wall.uniforms.uTime.value = t;
-      line.uniforms.uTime.value = t;
-      fill.uniforms.uTime.value = t;
+    seek(to: number): void {
+      wall.uniforms.uTime.value = to;
+      line.uniforms.uTime.value = to;
+      fill.uniforms.uTime.value = to;
+
+      t = to;
+
+      // The walls are answered once and the shader moves them; the floors have
+      // to be cut again, because which triangles fill a ring depends on where
+      // its points are and they have just moved.
+      if (where.length !== 0) recut();
     },
 
     dispose(): void {
