@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { artefactsDuring, bakeAll, replayed } from './bake';
 import { Point } from '@ce/game/world';
 
 import {
@@ -6,7 +7,6 @@ import {
   addArtefact,
   addPolygon,
   artefactsAt,
-  artefactsDuring,
   artefactsIn,
   artefactsWithinBox,
   copied,
@@ -225,6 +225,25 @@ describe('a group takes one with it, because it is a member like any other', () 
   });
 });
 
+/** A key in a room, with the room's group turning a quarter turn at v1. */
+function turningRoom(): { world: World, artefact: number, group: number } {
+  const drawn = addPolygon(emptyWorld(), 'level', [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 200 },
+  ], 0, TOP);
+
+  const put = addArtefact(drawn.world, 'key', { x: 100, y: 0 }, 0, TOP);
+  const made = grouped(put.world, 0, [drawn.id, put.id], TOP)!;
+
+  const world = withEdit(made.world, 1, made.id, {
+    transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
+    vertices: new Map(),
+  });
+
+  return { world, artefact: put.id, group: made.id };
+}
+
 describe('a walk moves them on the walls’ clock', () => {
   test('half way across one span is half way between the two places', () => {
     const { world, id } = dropped(0, 0, 0);
@@ -257,10 +276,10 @@ describe('a walk moves them on the walls’ clock', () => {
     expect(artefactsDuring(shifted, 1, 0, 1)[0].at.x).toBeCloseTo(0, 9);
   });
 
-  test('a turning group carries one across the chord, not along the arc', () => {
-    // Which is what it costs to interpolate places rather than transforms, and
-    // is the same thing the walls' own straight lines cost between corners.
-    // Named here so it is a decision rather than a surprise.
+  test('a turn goes round the arc, not across the chord', () => {
+    // The layer is eased, not the place. Half a half-turn about the origin is
+    // a quarter turn — (10, 0) to (0, 10) — where lerping the two ends would
+    // have sent it through the origin and out the other side.
     const { world, id } = dropped(0, 10, 0);
     const turned = withEdit(world, 1, id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI },
@@ -268,7 +287,64 @@ describe('a walk moves them on the walls’ clock', () => {
     });
 
     expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.x).toBeCloseTo(0, 9);
-    expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.y).toBeCloseTo(0, 9);
+    expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.y).toBeCloseTo(10, 9);
+  });
+
+  test('and a group turning carries it round with the room, in step', () => {
+    // The whole reason this is not a lerp: the key and the wall it sits by are
+    // being moved by the same layer, so they have to be eased the same way or
+    // the key cuts the corner while the room goes round.
+    const { world, artefact, group } = turningRoom();
+
+    const half = artefactsDuring(world, 0, 1, 0.5)[0].at;
+
+    // A quarter of the way round from (100, 0), about the origin.
+    expect(half.x).toBeCloseTo(Math.SQRT1_2 * 100, 9);
+    expect(half.y).toBeCloseTo(Math.SQRT1_2 * 100, 9);
+  });
+
+  test('a turn about a pivot swings about that pivot the whole way', () => {
+    // `easing` holds the pivot still rather than easing the translation in a
+    // straight line, which is what stops a turning thing swinging out on a
+    // great arc and coming back. The walls get this; so does a key among them.
+    const { world, id } = dropped(0, 2, 0);
+    const turn = { x: 1, y: 0 };
+    const spun = withEdit(world, 1, id, {
+      transform: {
+        ...EMPTY_TRANSFORM,
+        rotation: Math.PI,
+        translation: { x: 2 * turn.x, y: 2 * turn.y },
+      },
+      vertices: new Map(),
+    });
+
+    // Half way is a quarter turn about (1, 0): (2, 0) goes to (1, 1).
+    const half = artefactsDuring(spun, 0, 1, 0.5)[0].at;
+
+    expect(half.x).toBeCloseTo(1, 9);
+    expect(half.y).toBeCloseTo(1, 9);
+
+    // And every instant is exactly one unit from the pivot, which is what
+    // going round rather than across means.
+    for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+      const p = artefactsDuring(spun, 0, 1, u)[0].at;
+
+      expect(Math.hypot(p.x - turn.x, p.y - turn.y)).toBeCloseTo(1, 9);
+    }
+  });
+
+  test('walked backwards it retraces the same arc', () => {
+    const { world, artefact } = turningRoom();
+
+    for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+      const there = artefactsDuring(world, 0, 1, u)[0].at;
+      const back = artefactsDuring(world, 1, 0, 1 - u)[0].at;
+
+      expect(back.x).toBeCloseTo(there.x, 9);
+      expect(back.y).toBeCloseTo(there.y, 9);
+    }
+
+    expect(artefactsDuring(world, 1, 0, 1)[0].id).toEqual(artefact);
   });
 
   test('one that is not there yet appears where it is put, not sliding in', () => {
@@ -394,6 +470,61 @@ describe('copying one takes what it goes on to do', () => {
       const put = pasted(made.world, 0, copied(made.world, 0, [made.id]), { x: 0, y: 0 }, TOP);
 
       expect(put.world.artefacts.get(put.artefacts[0])!.type).toEqual(type);
+    }
+  });
+});
+
+describe('and it keeps step with the walls it stands among', () => {
+  /** The bake, built the way the editor builds it. */
+  function baked(world: World) {
+    const g = bakeAll(world);
+
+    let step = g.next();
+
+    while (!step.done) step = g.next();
+
+    return { spans: step.value, progress: null };
+  }
+
+  test('a key on a corner is on that corner at every instant of the walk', () => {
+    // The real requirement, and the one a lerp failed: the two are moved by
+    // one layer, so what the shader does to the wall and what the canvas does
+    // to the key have to be the same thing. Anything else and the key slides
+    // off the corner it was placed on, worst in the middle of the turn.
+    const corner = { x: 200, y: 0 };
+
+    const drawn = addPolygon(emptyWorld(), 'level', [
+      { x: 0, y: 0 },
+      corner,
+      { x: 200, y: 200 },
+    ], 0, TOP);
+
+    const put = addArtefact(drawn.world, 'anchor', corner, 0, TOP);
+    const made = grouped(put.world, 0, [drawn.id, put.id], TOP)!;
+
+    const world = withEdit(made.world, 1, made.id, {
+      transform: {
+        ...EMPTY_TRANSFORM,
+        rotation: Math.PI / 3,
+        translation: { x: 40, y: -25 },
+        scale: { x: 1.4, y: 0.8 },
+      },
+      vertices: new Map(),
+    });
+
+    const bake = baked(world);
+
+    for (const u of [0, 0.2, 0.4, 0.5, 0.6, 0.8, 1]) {
+      const here = artefactsDuring(world, 0, 1, u)[0].at;
+      const wall = replayed(bake, world, 0, 1, u)!;
+
+      // The nearest point the outline has to it, which should be the corner
+      // itself — the walls are drawn from the buffers and this from the world,
+      // so agreeing at all is the thing being checked.
+      const near = Math.min(...wall.flatMap(r =>
+        r.points.map(p => Math.hypot(p.x - here.x, p.y - here.y))));
+
+      expect(near).toBeCloseTo(0, 6);
     }
   });
 });

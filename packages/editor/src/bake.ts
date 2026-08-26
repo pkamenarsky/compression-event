@@ -98,12 +98,16 @@ import {
   Contributed,
   EMPTY_LIVE,
   IDENTITY,
+  Placed,
   Resolved,
   affine,
+  artefactsAt,
+  chain,
   compose,
   contributed,
   depths,
   groupFrame,
+  placeAt,
   sidedWith,
   sideOf,
   live,
@@ -114,6 +118,7 @@ import {
   resolveAt,
 } from './scene';
 import {
+  ArtefactId,
   EMPTY_TRANSFORM,
   GroupId,
   Id,
@@ -2502,6 +2507,84 @@ export function stretchAt(track: Track, t: number): Stretch | null {
  * point of watching this is to see what the bake says, and quietly resolving
  * the version instead would show something the game will never get.
  */
+/**
+ * Every artefact part way through a walk, in the frame the versions put it in.
+ *
+ * Here rather than beside `artefactsAt` because it is `replayed`'s question,
+ * and it has to be answered `replayed`'s way: one leg per version crossed, so
+ * the walk is over versions rather than over distance and a key does not
+ * arrive in a room ahead of the room.
+ *
+ * The layer is eased, not the place. A leg differs from its neighbour by
+ * exactly one version's worth of transforms — its own and every group holding
+ * it — so easing those on is what a turning group does to everything else it
+ * holds, and interpolating the two ends instead would carry a turning artefact
+ * across the chord while the room it is in went round the arc.
+ *
+ * One that is not there yet is not slid in from anywhere: it appears where it
+ * is first put, since there is nowhere for it to come from.
+ */
+export function artefactsDuring(
+  world: World,
+  from: VersionId,
+  to: VersionId,
+  u: number,
+): Placed[] {
+  const n = Math.abs(to - from);
+
+  if (n === 0) return artefactsAt(world, to);
+
+  const x = Math.min(Math.max(u, 0), 1) * n;
+  const i = Math.min(Math.floor(x), n - 1);
+  const step = to > from ? 1 : -1;
+  const rest = x - i;
+
+  const a = from + step * i, b = a + step;
+
+  // The later of the two, whose layer is the one being eased on or off. Going
+  // forward it arrives over the leg; going back it leaves over it, which is
+  // the same easing read from the other end.
+  const late = Math.max(a, b);
+  const t = step > 0 ? rest : 1 - rest;
+
+  const out: Placed[] = [];
+
+  for (const [id, it] of world.artefacts) {
+    const there = placeAt(world, id, a), then = placeAt(world, id, b);
+
+    if (there === null && then === null) continue;
+
+    const at = there === null ? then!
+      : then === null ? there
+      : place(easedFrame(world, id, late, t), [it.at])[0];
+
+    out.push({ id, type: it.type, at });
+  }
+
+  return out.sort((p, q) => p.id - q.id);
+}
+
+/** `groupFrame`, with one version's layers part way on. */
+function easedFrame(world: World, id: ArtefactId, late: VersionId, t: number): Affine {
+  const up = enclosing(world, id);
+  let m = IDENTITY;
+
+  for (const k of chain(world, late)) {
+    const edits = world.versions[k].edits;
+    const lay = (of: Id): Transform => {
+      const own = edits.get(of)?.transform ?? EMPTY_TRANSFORM;
+
+      return k === late ? easing(own, t) : own;
+    };
+
+    m = compose(affine(lay(id)), m);
+
+    for (const g of up) m = compose(affine(lay(g)), m);
+  }
+
+  return m;
+}
+
 export function replayed(
   bake: Bake,
   world: World,

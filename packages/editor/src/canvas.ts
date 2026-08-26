@@ -4,7 +4,7 @@ import { canvas } from '@incpt/kontinuum-dom/html';
 import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
-import { Bake, Frame, replayed } from './bake';
+import { Bake, Frame, artefactsDuring, replayed } from './bake';
 import { Ring, Shape } from './geometry';
 import {
   Input,
@@ -43,7 +43,6 @@ import {
   addArtefact,
   artefactsAt,
   artefactsIn,
-  artefactsDuring,
   artefactsWithinBox,
   hitArtefact,
   occupying,

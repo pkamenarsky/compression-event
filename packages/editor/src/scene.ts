@@ -227,54 +227,6 @@ export function artefactsAt(world: World, v: VersionId): Placed[] {
 }
 
 /**
- * Everything standing part way through a walk from one version to another.
- *
- * Straight lines, and one leg per version crossed: the walk is over versions
- * rather than over distance, so an artefact that moves a long way at one
- * version and not at all at the next spends the same time doing each. That is
- * what the walls do — `replayed` cuts `u` the same way — and the two have to
- * agree or a key would arrive in a room ahead of the room.
- *
- * One that is not yet there at one end is not drawn at that end: it appears
- * where it is first put rather than sliding in from wherever it will be.
- */
-export function artefactsDuring(
-  world: World,
-  from: VersionId,
-  to: VersionId,
-  u: number,
-): Placed[] {
-  const n = Math.abs(to - from);
-
-  if (n === 0) return artefactsAt(world, to);
-
-  const x = Math.min(Math.max(u, 0), 1) * n;
-  const i = Math.min(Math.floor(x), n - 1);
-  const step = to > from ? 1 : -1;
-  const rest = x - i;
-
-  const a = from + step * i, b = from + step * (i + 1);
-  const out: Placed[] = [];
-
-  for (const [id, it] of world.artefacts) {
-    const p = placeAt(world, id, a), q = placeAt(world, id, b);
-
-    if (p === null && q === null) continue;
-    if (p === null) out.push({ id, type: it.type, at: q! });
-    else if (q === null) out.push({ id, type: it.type, at: p });
-    else {
-      out.push({
-        id,
-        type: it.type,
-        at: { x: p.x + (q.x - p.x) * rest, y: p.y + (q.y - p.y) * rest },
-      });
-    }
-  }
-
-  return out.sort((a2, b2) => a2.id - b2.id);
-}
-
-/**
  * Born into the version it was put in, where the cursor put it.
  *
  * Read in the landing's frame, like a drawn polygon: dropping one inside a
