@@ -1532,7 +1532,8 @@ function closes(run: { whence: readonly Origin[] }): boolean {
 }
 
 /**
- * One reading read in another's order.
+ * How to read one reading in another's order: for each run of `to`, which run
+ * of `from` answers to it and how far that run has to be turned.
  *
  * Two things are lined up here, and both used to be left to the order the two
  * readings happened to come back in. Which run answers to which: a polygon's
@@ -1540,11 +1541,22 @@ function closes(run: { whence: readonly Origin[] }): boolean {
  * so pairing them by position pairs pieces from opposite ends of the level.
  * And where within a run: see `phase`.
  *
- * A run that cannot be found is left where it was. It has no counterpart, which
- * means the arrangement changed — an event, and a stretch that spans one is a
- * stretch that should have been cut.
+ * Null where any run cannot be found. All or nothing: a frame half in one order
+ * and half in another is worse than one honestly left alone, and the caller
+ * reads a length that does not match as the arrangement having moved on. A run
+ * with no counterpart means the arrangement changed — an event, and a stretch
+ * that spans one is a stretch that should have been cut.
+ *
+ * The plan is worked out once and applied to every view a reading has of its
+ * own runs. Working it out again per view is what this used to do, and the two
+ * answers are not the same answer: the same ring in the polygon's frame and in
+ * the world's is the same ring, but the runs are matched by name and turned by
+ * distance, and neither is obliged to break a tie the same way twice. The
+ * views then disagree about which run is which — and since the points are
+ * drawn from one and the corner flags read from another, a wall gets a line
+ * standing at a corner it does not have.
  */
-export function lined(to: Frame, from: Frame): Frame {
+function lining(to: Frame, from: Frame): { at: number, k: number }[] | null {
   // What a run *is*: whose boundary, and which points of the arrangement it
   // visits. A set rather than a list, because the order is the thing in
   // question — and a ring's first point is written down twice, which a list
@@ -1559,31 +1571,42 @@ export function lined(to: Frame, from: Frame): Frame {
   });
 
   const taken = new Set<number>();
-  let moved = to.length !== from.length;
+  const plan: { at: number, k: number }[] = [];
 
-  const out = to.map((want, i) => {
+  for (const want of to) {
     const at = spare.get(which(want));
 
     if (at === undefined || taken.has(at)) return null;
 
     taken.add(at);
-    moved = moved || at !== i;
 
     const run = from[at];
     const k = closes(run) && closes(want) ? phase(want, run) : 0;
 
     if (k === null) return null;
-    if (k !== 0) moved = true;
 
-    return turned(run, k);
-  });
+    plan.push({ at, k });
+  }
 
-  // All or nothing: a frame half in one order and half in another is worse than
-  // one honestly left alone, and the caller reads a length that does not match
-  // as the arrangement having moved on.
-  if (out.some(run => run === null)) return from;
+  return plan;
+}
 
-  return moved ? out as Frame : from;
+/** A reading put in the order a plan asks for. The same `from` back when the
+ * plan asks for nothing, so a caller can tell that nothing moved. */
+function following(from: Frame, plan: { at: number, k: number }[]): Frame {
+  if (plan.every(({ at, k }, i) => at === i && k === 0)) return from;
+
+  return plan.map(({ at, k }) => turned(from[at], k));
+}
+
+/**
+ * One reading read in another's order. See `lining` — this is that plan, worked
+ * out and applied in one go, for a caller with only one view to line up.
+ */
+export function lined(to: Frame, from: Frame): Frame {
+  const plan = lining(to, from);
+
+  return plan === null ? from : following(from, plan);
 }
 
 function stretchOf(a: Taken, b: Taken): Stretch {
@@ -1591,10 +1614,15 @@ function stretchOf(a: Taken, b: Taken): Stretch {
   // two readings, and this is the only place both are in hand. Both of a
   // Taken's views of its runs go together, or the frames and the world drift
   // apart.
-  const frame = lined(a.frame, b.frame);
+  // Worked out on the frames and applied to both, so the two views of one
+  // reading stay the same runs in the same order. `frame` is what gets drawn
+  // and `out` is what the corner flags and the fade are read off; line them
+  // separately and a point can be a corner in one and not in the other.
+  const plan = lining(a.frame, b.frame);
+  const frame = plan === null ? b.frame : following(b.frame, plan);
   const to: Taken = frame === b.frame
     ? b
-    : { ...b, frame, out: lined(a.out, b.out) };
+    : { ...b, frame, out: following(b.out, plan!) };
 
   // Straight off the runs. The arrangement named every point when it made it.
   const one = a.out.map(r => r.whence), two = to.out.map(r => r.whence);
@@ -1636,6 +1664,7 @@ function faded(taken: Taken, os: (Origin | null)[][]): number[][] {
     return taken.fade.get(o.at.id)?.[o.at.ring]?.[o.at.index] ?? 1;
   }));
 }
+
 
 /** A stretch of no width, carrying one instant exactly. Either side of a gap
  * needs one, so that the geometry at the discontinuity itself is not lost. */
