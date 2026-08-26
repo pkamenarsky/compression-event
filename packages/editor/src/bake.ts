@@ -1057,139 +1057,6 @@ function everything(at: readonly Contributed[]): Frame {
     .sort((p, q) => p.id - q.id);
 }
 
-/**
- * A ring cut where it can be cut the same way twice.
- *
- * A run that closes on itself comes back from the arrangement cut at whatever
- * point the walk happened to start from, and that point is not a fact about the
- * ring — two readings of the same pillar can hand it back cut at different
- * corners. Nothing downstream minds *where* a ring is cut. What the span cannot
- * survive is the two ends of a stretch disagreeing about it: they are paired
- * point for point, so a ring out of phase by one drags every corner toward its
- * neighbour, and half way across it is a square inscribed in the pillar at
- * forty-five degrees.
- *
- * Cut at the lowest corner *by identity*: a closed ring is one contributor's
- * own boundary, so every point of it is a vertex of that contributor's
- * projection, and which vertex is an integer that does not move as the shape
- * erodes or turns. Integers give a strict total order — one winner, whatever
- * order the ring is walked in, which is the whole of what is being asked for.
- * The same assumption the rest of the bake runs on: a projection's vertices are
- * index for index at both ends of a stretch, and a vertex arriving or leaving
- * is an event, which is a stretch boundary rather than something inside one.
- *
- * Geometry is the fallback, for a ring the lookup cannot place — a point on a
- * neighbour's edge that is not a corner of its own, or a ring that visits one
- * vertex twice, which is what a pinch looks like at the instant it pinches.
- * Then it is the lowest corner by position, which is worth being clear about:
- * it is *not* robust in the way the identity is. Two corners can swap over in x
- * as a shape deforms, and a ring can be symmetric enough that the choice comes
- * down to the last bits. It is a fallback because the case it covers is one
- * where nothing better is available, not because it is good.
- *
- * Open runs are left alone. Their ends are crossings with other polygons and
- * are not a choice anybody made.
- */
-export function cutOnce(run: Run, shape: Shape | undefined, snap: number, m: Affine): Run {
-  const n = run.points.length;
-
-  if (n < 3) return run;
-
-  // A ring that closes does not close *exactly*: the last point is the first
-  // one worked out a second time, by an offset at an interpolated depth, and
-  // the two answers differ in their last bits.
-  const first = run.points[0], last = run.points[n - 1];
-
-  if (Math.abs(first.x - last.x) > snap || Math.abs(first.y - last.y) > snap) return run;
-
-  // The repeated point counted once.
-  const round = n - 1;
-  const points = run.points.slice(0, round);
-  const k = named(points, shape, snap) ?? placed(points.map(p => unplace(m, p)), snap);
-
-  if (k === 0) return run;
-
-  const out: Point[] = [], corner: boolean[] = [];
-
-  for (let i = 0; i <= round; i++) {
-    out.push(run.points[(k + i) % round]);
-    corner.push(run.corner[(k + i) % round]);
-  }
-
-  return { ...run, points: out, corner };
-}
-
-/**
- * Which point stands on the lowest vertex of the shape it came out of, or
- * nothing where they cannot all be placed on one.
- *
- * Nothing, too, where two of them land on the same vertex: the ring visits it
- * twice and there is no way to tell the two apart that does not come back to
- * the order they were walked in, which is the thing being decided.
- */
-function named(points: readonly Point[], shape: Shape | undefined, snap: number): number | null {
-  if (shape === undefined) return null;
-
-  let best = -1, at = { ring: Infinity, index: Infinity };
-  let twice = false;
-
-  for (let i = 0; i < points.length; i++) {
-    const on = corner(shape, points[i], snap);
-
-    if (on === null) return null;
-
-    if (on.ring < at.ring || (on.ring === at.ring && on.index < at.index)) {
-      best = i;
-      at = on;
-      twice = false;
-    }
-    else if (on.ring === at.ring && on.index === at.index) {
-      twice = true;
-    }
-  }
-
-  return twice ? null : best;
-}
-
-/**
- * Which point is lowest by position: smallest x, and where several share it,
- * smallest y.
- *
- * Two passes rather than a running minimum, so that the answer does not depend
- * on where the walk began — a comparison with a tolerance in it is not
- * transitive, and a running minimum over one would settle a three-way tie
- * differently depending on which of the three it met first, which is exactly
- * the phase this is here to take out.
- */
-function placed(local: readonly Point[], snap: number): number {
-  let low = Infinity;
-
-  for (const p of local) low = Math.min(low, p.x);
-
-  let best = 0, y = Infinity;
-
-  for (let i = 0; i < local.length; i++) {
-    if (local[i].x <= low + snap && local[i].y < y) {
-      best = i;
-      y = local[i].y;
-    }
-  }
-
-  return best;
-}
-
-/** How big the thing is, as the longer side of its box. */
-function extent(points: readonly Point[]): number {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-
-  for (const p of points) {
-    x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
-    y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
-  }
-
-  return Math.max(x1 - x0, y1 - y0, 1);
-}
-
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
   const resolved = world1(items, t);
   const at = folded(cast, resolved, t);
@@ -1213,11 +1080,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     if (how !== null) fade.set(it.id, how);
   }
 
-  // The same slack the origins are read with, and read off the same shapes.
-  const snap = near(world);
-
-  const out = (only === null ? everything(at) : share(at, only))
-    .map(r => cutOnce(r, world.get(r.id), snap, frames.get(r.id)!));
+  const out = only === null ? everything(at) : share(at, only);
 
   const frame = out.map(r => ({
     id: r.id,
@@ -1589,10 +1452,15 @@ function comparable(a: Taken, b: Taken): boolean {
 function apart(guess: Frame, actual: Frame): number {
   if (guess.length !== actual.length) return Infinity;
 
+  // Where a ring starts is not part of the question. The two are the same
+  // boundary at the same instant, read twice; how far apart they are is asked
+  // of the corners, not of whichever one the walk happened to begin at.
+  const lined_ = lined(guess, actual);
+
   let worst = 0;
 
   for (let r = 0; r < guess.length; r++) {
-    const p = guess[r], q = actual[r];
+    const p = guess[r], q = lined_[r];
 
     if (p.id !== q.id || p.points.length !== q.points.length) return Infinity;
 
@@ -1607,22 +1475,178 @@ function apart(guess: Frame, actual: Frame): number {
   return worst;
 }
 
+/**
+ * How far to turn `b` so that it lines up with `a`: two readings of one ring,
+ * paired corner for corner.
+ *
+ * **Where a ring starts is not a fact about the ring.** It closes on itself, so
+ * the arrangement hands it back cut wherever the walk began, and two readings
+ * of a pillar that has not moved at all can come back cut at different corners
+ * — the same four points, rotated by one. Paired point for point as they came,
+ * every corner is dragged toward its neighbour and half way across the stretch
+ * the pillar is a square inscribed in itself at forty-five degrees.
+ *
+ * Two ways to fix that, and only one of them works. The first is to cut every
+ * ring canonically — lowest corner, lowest vertex index, anything — so that two
+ * readings agree by construction. Every version of that key is a fact about
+ * *one* reading, and there is nothing in a reading that is both stable and
+ * unique: the position of a corner moves as the shape erodes, and the index of
+ * a vertex is an array position handed out by the offsetter, which reorders its
+ * own output freely. A key that can flip is a key that will.
+ *
+ * The second is this: do not canonicalise anything, and pair the two readings
+ * *against each other*, which is the only place the question can actually be
+ * answered. Both are in hand, so ask which turn lines them up.
+ *
+ * By the directions of the edges first, which is the part that is exact:
+ * offsetting a ring leaves every edge pointing exactly where it pointed, so the
+ * turn that lines the two up scores zero and any other scores the angle it is
+ * out by. Erosion is most of what happens inside a stretch, and this does not
+ * care how deep it went.
+ *
+ * By distance second, for a ring whose directions repeat — a cross, a
+ * staircase — where several turns score zero and only position tells them
+ * apart. Read in the frame the ring is kept in, the polygon's own, so that its
+ * travel and its turn are not in the numbers: two concentric rings pair closest
+ * corner to closest corner, and turned by one every corner reaches past its
+ * counterpart to the next one along, which is further by construction.
+ *
+ * Where both tie, the pairings it is choosing between draw the same geometry,
+ * and there is nothing left to get wrong.
+ */
+function phase(a: readonly Point[], b: readonly Point[]): number {
+  const n = a.length - 1;
+
+  if (n < 2 || b.length !== a.length) return 0;
+
+  const way = (ring: readonly Point[], j: number): Point => {
+    const p = ring[j], q = ring[(j + 1) % n];
+    const dx = q.x - p.x, dy = q.y - p.y;
+    const l = Math.hypot(dx, dy);
+
+    return l === 0 ? { x: 0, y: 0 } : { x: dx / l, y: dy / l };
+  };
+
+  let best = 0, along = Infinity, near = Infinity;
+
+  for (let k = 0; k < n; k++) {
+    let turn = 0, far = 0;
+
+    for (let j = 0; j < n; j++) {
+      const p = a[j], q = b[(j + k) % n];
+      const u = way(a, j), v = way(b, (j + k) % n);
+
+      turn += 1 - (u.x * v.x + u.y * v.y);
+      far += Math.hypot(p.x - q.x, p.y - q.y);
+    }
+
+    // Directions first, and they are exact: the correct turn scores zero
+    // whenever the two readings differ by an offset, whatever the depth. A hair
+    // of slack, because zero here is a sum of dot products and arrives as a few
+    // parts in 1e16.
+    if (turn < along - 1e-9 || (turn < along + 1e-9 && far < near)) {
+      best = k;
+      along = Math.min(along, turn);
+      near = far;
+    }
+  }
+
+  return best;
+}
+
+/** A ring walked from `k` instead of from 0, its repeated last point kept. */
+function turned<A extends { points: Point[], corner: boolean[] }>(run: A, k: number): A {
+  const n = run.points.length - 1;
+
+  if (k === 0 || n < 2) return run;
+
+  const points: Point[] = [], corner: boolean[] = [];
+
+  for (let i = 0; i <= n; i++) {
+    points.push(run.points[(k + i) % n]);
+    corner.push(run.corner[(k + i) % n]);
+  }
+
+  return { ...run, points, corner };
+}
+
+/** Whether a run closes on itself, to within a hair of its own size. */
+function closes(points: readonly Point[]): boolean {
+  const n = points.length;
+
+  if (n < 3) return false;
+
+  let extent = 1;
+
+  for (const p of points) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = extent * 1e-9;
+
+  return Math.abs(points[0].x - points[n - 1].x) <= snap
+    && Math.abs(points[0].y - points[n - 1].y) <= snap;
+}
+
+/**
+ * One reading turned to line up with another, ring by ring.
+ *
+ * Open runs are left alone: their ends are crossings with other polygons, so
+ * there is no choice in where they start and nothing to line up.
+ */
+export function lined(to: Frame, from: Frame): Frame {
+  if (to.length !== from.length) return from;
+
+  return from.map((run, i) => {
+    const like = to[i];
+
+    if (like === undefined || like.id !== run.id) return run;
+    if (like.points.length !== run.points.length) return run;
+    if (!closes(run.points) || !closes(like.points)) return run;
+
+    return turned(run, phase(like.points, run.points));
+  });
+}
+
+/** The same reading, its runs turned to line up with `to`. Both of a Taken's
+ * two views of its runs go together, or the frames and the world drift apart. */
+function alike(to: Taken, taken: Taken): Taken {
+  const frame = lined(to.frame, taken.frame);
+
+  if (frame.every((run, i) => run === taken.frame[i])) return taken;
+
+  // The same turn on the world-space copy: `phase` was decided in the frame,
+  // which is where a rigid motion is not in the way, and `out` is the same runs
+  // seen from outside.
+  const out = taken.out.map((run, i) => {
+    const k = taken.frame[i] === undefined
+      ? 0
+      : taken.frame[i].points.indexOf(frame[i].points[0]);
+
+    return k <= 0 ? run : turned(run, k);
+  });
+
+  return { ...taken, frame, out };
+}
+
 function stretchOf(a: Taken, b: Taken): Stretch {
-  const one = origins(a), two = origins(b);
+  // The far end read in the near end's order. Nothing else in the span pairs
+  // two readings, and this is the only place both are in hand.
+  const to = alike(a, b);
+
+  const one = origins(a), two = origins(to);
   const reconciled = agreed(one, two);
 
   return {
     t0: a.t,
     t1: b.t,
     a: a.frame,
-    b: b.frame,
-    table: table(a.table, b.table, reconciled),
+    b: to.frame,
+    table: table(a.table, to.table, reconciled),
     origins: reconciled,
 
     // Each end's own reading, rather than the reconciled one: a point the two
     // ends disagree about the provenance of still has an opacity at each of
     // them, and it is the fade that would be lost by insisting they agree.
-    opacity: [faded(a, one), faded(b, two)],
+    opacity: [faded(a, one), faded(to, two)],
   };
 }
 

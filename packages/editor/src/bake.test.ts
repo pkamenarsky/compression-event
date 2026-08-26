@@ -6,7 +6,7 @@ import {
   TOLERANCE,
   bakeAll,
   bakeSpan,
-  cutOnce,
+  lined,
   stretchAt,
   pruned,
   sample,
@@ -14,7 +14,6 @@ import {
   truth,
 } from './bake';
 import {
-  IDENTITY,
   TOP,
   addPolygon,
   addVertex,
@@ -203,89 +202,71 @@ describe('interpolation', () => {
   });
 });
 
-describe('where a closed ring is cut', () => {
+describe('two readings of one ring, lined up', () => {
   const ring = (points: Point[]) => ({
     id: 0,
     points: [...points, points[0]],
     corner: points.map(() => true).concat([true]),
   });
 
-  const turned = (points: Point[], k: number) =>
+  const from = (points: Point[], k: number) =>
     points.map((_p, i) => points[(i + k) % points.length]);
 
   const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
 
-  test('every rotation of one ring is cut at the same corner', () => {
-    // The point of the whole exercise: two readings of one pillar can hand it
-    // back cut anywhere, and they have to come out cut alike.
-    const cut = square.map((_p, k) => cutOnce(ring(turned(square, k)), [square], 1e-9, IDENTITY));
-
-    for (const one of cut) expect(one.points).toEqual(cut[0].points);
+  test('a ring walked from another corner is turned back', () => {
+    // The reported case, exactly: the same pillar, not moved at all, handed
+    // back cut one corner along.
+    for (let k = 0; k < 4; k++) {
+      expect(lined([ring(square)], [ring(from(square, k))])[0].points)
+        .toEqual(ring(square).points);
+    }
   });
 
-  test('corners sharing an x, or a y, do not make it ambiguous', () => {
-    // Every corner of an axis-aligned square shares an x with one neighbour and
-    // a y with the other. Identity settles it: which vertex of the shape a
-    // point is, is an integer, and integers have one least element.
-    const cut = square.map((_p, k) => cutOnce(ring(turned(square, k)), [square], 1e-9, IDENTITY));
+  test('a ring eroded inside another pairs corner to nearest corner', () => {
+    // What the diamond was: paired one along, every corner reaches past its
+    // counterpart to the next one round, which is further by construction.
+    const inner = [{ x: 3, y: 3 }, { x: 7, y: 3 }, { x: 7, y: 7 }, { x: 3, y: 7 }];
 
-    expect(cut[0].points[0]).toEqual(square[0]);
+    for (let k = 0; k < 4; k++) {
+      expect(lined([ring(square)], [ring(from(inner, k))])[0].points)
+        .toEqual(ring(inner).points);
+    }
   });
 
-  test('without a shape to name them, position still cannot depend on the walk', () => {
-    // The fallback. Weaker — two corners can swap over in x as a shape deforms
-    // — but at one instant it is at least the same answer whichever corner the
-    // ring was handed back cut at.
-    const cut = square.map((_p, k) => cutOnce(ring(turned(square, k)), undefined, 1e-9, IDENTITY));
-
-    for (const one of cut) expect(one.points).toEqual(cut[0].points);
-  });
-
-  test('a ring that visits one vertex twice is left to the fallback', () => {
-    // What a pinch looks like at the instant it pinches. Two points are the
-    // same vertex, so identity cannot separate them, and asking which came
-    // first is asking about the walk again.
-    const pinched = [
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 5, y: 5 },
-      { x: 10, y: 10 },
-      { x: 0, y: 10 },
-      { x: 5, y: 5 },
+  test('a ring eroded away to a point is settled by the directions', () => {
+    // Every pairing is the same distance here, so distance cannot answer it.
+    // Offsetting leaves the directions of the edges exactly alone, and they
+    // can: turned by one, all four are ninety degrees out.
+    const dot = [
+      { x: 5 - 1e-7, y: 5 - 1e-7 },
+      { x: 5 + 1e-7, y: 5 - 1e-7 },
+      { x: 5 + 1e-7, y: 5 + 1e-7 },
+      { x: 5 - 1e-7, y: 5 + 1e-7 },
     ];
 
-    const cut = cutOnce(ring(pinched), [pinched], 1e-9, IDENTITY);
-
-    // Still a ring: as long as it comes back closed and whole, the fallback has
-    // done its job.
-    expect(cut.points.length).toEqual(pinched.length + 1);
-    expect(cut.points[0]).toEqual(cut.points[cut.points.length - 1]);
+    for (let k = 0; k < 4; k++) {
+      expect(lined([ring(square)], [ring(from(dot, k))])[0].points)
+        .toEqual(ring(dot).points);
+    }
   });
 
   test('an open run is left where it was cut', () => {
-    // Its ends are crossings with other polygons, which nobody chose.
+    // Its ends are crossings with other polygons, so there is no choice in
+    // where it starts and nothing to line up.
     const open = { id: 0, points: square, corner: square.map(() => true) };
+    const other = { id: 0, points: from(square, 2), corner: square.map(() => true) };
 
-    expect(cutOnce(open, [square], 1e-9, IDENTITY).points).toBe(square);
+    expect(lined([open], [other])[0]).toBe(other);
   });
 
-  test('a ring that closes to the last bits still counts as closed', () => {
-    // It never closes exactly: the last point is the first one worked out a
-    // second time, by an offset at an interpolated depth, and the two answers
-    // differ in their last bits. Held to an exact match, none of this runs at
-    // all — which is worse than not having it, because the ends of a stretch
-    // land on round numbers and pass while the instants between them do not.
-    const off = turned(square, 2);
-    const shy = { x: off[0].x + 1e-13, y: off[0].y - 1e-13 };
+  test('rings that do not answer to each other are left alone', () => {
+    // Different lengths, or a different polygon: nothing to pair.
+    const short = { id: 0, points: square.slice(0, 3), corner: [true, true, true] };
 
-    const cut = cutOnce(
-      { id: 0, points: [...off, shy], corner: [...off, shy].map(() => true) },
-      [square],
-      1e-9,
-      IDENTITY,
-    );
-
-    expect(cut.points[0]).toEqual(square[0]);
+    expect(lined([ring(square)], [short])[0]).toBe(short);
+    expect(lined([ring(square)], [{ ...ring(square), id: 1 }])[0].points)
+      .toEqual(ring(square).points);
   });
 });
 

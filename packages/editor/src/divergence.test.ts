@@ -20,7 +20,7 @@
 
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Frame, Span, TOLERANCE, bakeSpan, sample, truth } from './bake';
+import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
 import { TOP, addPolygon, addVertex, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
 import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
 
@@ -55,8 +55,13 @@ function held(world: World, ids: Id[], v: VersionId, t: Partial<Transform>): Wor
 function run<T>(g: Generator<number, T, void>): T { let s = g.next(); while (!s.done) s = g.next(); return s.value; }
 
 /** The worst any point of the replay sits from the point csg(t) puts there. */
-function apart(a: Frame, b: Frame): number {
-  if (a.length !== b.length) return Infinity;
+function apart(a: Frame, raw: Frame): number {
+  if (a.length !== raw.length) return Infinity;
+
+  // Where a ring starts is not part of the question: the two are the same
+  // boundary at the same instant, read twice. See `lined`.
+  const b = lined(a, raw);
+
   let w = 0;
   for (let r = 0; r < a.length; r++) {
     if (a[r].id !== b[r].id || a[r].points.length !== b[r].points.length) return Infinity;
