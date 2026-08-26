@@ -285,14 +285,25 @@ export interface Group {
  * between them — which is wrong in exactly one way, visibly, and correctable by
  * dragging.
  *
- * `at` is a layer like every other: a version that says nothing about it
- * inherits its place from its base, and one that does overrides it from there
- * on. So an artefact exists at a version when some version in that chain has
- * put it somewhere, which is what its birth is — there is no separate field
- * saying so, because the two could then disagree.
+ * `at` is a layer like every other, and holds *movement* rather than position —
+ * what this version did to it, against where the versions before left it. So
+ * the entry at its birth is where it was put, read as a move from the origin,
+ * and a version with nothing to say leaves it where it was.
+ *
+ * Movement rather than position because that is what every other layer here
+ * holds: a version's transform is what that version does, and an artefact
+ * dragged at v1 has to leave v0 alone for the same reason a polygon turned at
+ * v1 does. Positions would say the opposite — a version that had never been
+ * touched would still be asserting a place, and inserting a move upstream
+ * would be overruled by every version downstream of it rather than carried.
+ *
+ * Which is why `birth` is a field: with zero meaning *stay*, an absent entry
+ * can no longer be what says an artefact is not there yet.
  */
 export interface Artefact {
   type: ArtefactType
+  /** The version whose layer put it there. Nothing before it may name it. */
+  birth: VersionId
   at: Map<VersionId, Point>
 }
 
@@ -465,6 +476,16 @@ export type Clipping =
       edits: [number, Edit][]
     }
   | { kind: 'group', members: Clipping[], edits: [number, Edit][] }
+  /**
+   * An artefact, the same way round: `at[0]` is where it stood at the copy
+   * version, in world units, and the rest are the moves it had still to make,
+   * keyed by how far past the copy they were.
+   *
+   * The tail needs no frame and no offset. A move is a direction rather than a
+   * place, so pasting somewhere else leaves every one of them saying what it
+   * said — which is the whole convenience of having stored moves.
+   */
+  | { kind: 'artefact', type: ArtefactType, at: [number, Point][] }
 
 // -----------------------------------------------------------------------------
 // Undo

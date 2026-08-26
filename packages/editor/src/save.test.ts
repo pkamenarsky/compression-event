@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
 import { TOP, resolveAt } from './scene';
-import { addArtefact, addPolygon, editAt, placeArtefact, withEdit } from './scene';
+import { addArtefact, addPolygon, editAt, movedArtefacts, withEdit } from './scene';
 import { EditorState, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
@@ -106,7 +106,7 @@ describe('save', () => {
   test('artefacts survive the trip, places and all, and a format-5 file has none', () => {
     const before = world();
     const one = addArtefact(before.world, 'key', { x: 5, y: 6 }, 0);
-    const moved = placeArtefact(one.world, [one.id], 2, () => ({ x: 50, y: 60 }));
+    const moved = movedArtefacts(one.world, [one.id], 2, { x: 45, y: 54 });
 
     const placed: EditorState = {
       ...before,
@@ -121,7 +121,8 @@ describe('save', () => {
     // reading one is a lookup, not a scan.
     expect(back.at).toBeInstanceOf(Map);
     expect(back.type).toEqual('key');
-    expect([...back.at]).toEqual([[0, { x: 5, y: 6 }], [2, { x: 50, y: 60 }]]);
+    expect(back.birth).toEqual(0);
+    expect([...back.at]).toEqual([[0, { x: 5, y: 6 }], [2, { x: 45, y: 54 }]]);
     expect(after.selection.artefacts).toEqual([one.id]);
 
     const file = saved(placed);

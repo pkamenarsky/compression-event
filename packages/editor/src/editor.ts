@@ -306,7 +306,11 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyC') {
         update(s => ({
           ...s,
-          clipboard: copied(s.world, s.currentVersion, s.selection.polygons),
+          clipboard: copied(
+            s.world,
+            s.currentVersion,
+            [...s.selection.polygons, ...s.selection.artefacts],
+          ),
         }));
       }
       else if (e.code === 'KeyV') {
@@ -324,12 +328,12 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // version. Plain paste brings the whole chain across.
           // Into the group standing open, if one is: a paste lands where the
           // author is working, and in here that is inside the group.
-          const { world, ids } = e.shiftKey
+          const { world, ids, artefacts } = e.shiftKey
             ? stamped(s.world, s.currentVersion, s.clipboard, at, where)
             : pasted(s.world, s.currentVersion, s.clipboard, at, where);
 
           return marked(
-            { ...s, world, selection: { ...s.selection, polygons: ids } },
+            { ...s, world, selection: { ...s.selection, polygons: ids, artefacts } },
             s.world,
           );
         });

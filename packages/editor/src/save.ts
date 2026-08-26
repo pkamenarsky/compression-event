@@ -85,6 +85,8 @@ export interface Saved {
 
 export interface SavedArtefact {
   type: Artefact['type']
+  birth: VersionId
+  /** What each version moves it by, not where it is. See `Artefact`. */
   at: [VersionId, Point][]
 }
 
@@ -114,7 +116,9 @@ export function saved(state: EditorState): Saved {
       nextId: state.world.nextId,
       polygons: [...state.world.polygons],
       groups: [...state.world.groups],
-      artefacts: [...state.world.artefacts].map(([id, a]) => [id, { type: a.type, at: [...a.at] }]),
+      artefacts: [...state.world.artefacts].map(
+        ([id, a]) => [id, { type: a.type, birth: a.birth, at: [...a.at] }],
+      ),
       versions: state.world.versions.map(savedVersion),
     },
   };
@@ -142,7 +146,9 @@ export function restored(file: Saved): EditorState {
       polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
       groups: new Map(file.world.groups ?? []),
       artefacts: new Map(
-        (file.world.artefacts ?? []).map(([id, a]) => [id, { type: a.type, at: new Map(a.at) }]),
+        (file.world.artefacts ?? []).map(
+          ([id, a]) => [id, { type: a.type, birth: a.birth, at: new Map(a.at) }],
+        ),
       ),
       nextId: file.world.nextId,
       versions: file.world.versions.map(restoredVersion),

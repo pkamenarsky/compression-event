@@ -37,13 +37,18 @@ import {
   unstep,
   IDENTITY,
   Placed,
+  affine,
+  place,
+  placeAt,
   addArtefact,
   artefactsAt,
   artefactsDuring,
   artefactsWithinBox,
   hitArtefact,
   occupying,
-  placeArtefact,
+  startingArtefacts,
+  withMove,
+  movedArtefacts,
   removeArtefacts,
   retypeArtefacts,
   Occupied,
@@ -65,6 +70,7 @@ import { theme } from './theme';
 import {
   ARTEFACTS,
   ArtefactId,
+  EMPTY_TRANSFORM,
   ArtefactType,
   EditorState,
   Id,
@@ -315,7 +321,9 @@ export function worldCanvas(
 
       if (end.tag !== 'done' || box === null) return;
 
-      if (tool() === 'artefact') {
+      // Artefacts come off both tools that can hold them, so a box drawn round
+      // a room takes what is standing in it as well as the room.
+      if (tool() === 'artefact' || tool() === 'polygon') {
         const caught = artefactsWithinBox(
           artefactsAt(world(), currentVersion()),
           box.a,
@@ -330,7 +338,7 @@ export function worldCanvas(
           },
         }));
 
-        return;
+        if (tool() === 'artefact') return;
       }
 
       const points = tool() === 'point';
@@ -442,12 +450,23 @@ export function worldCanvas(
       const v = currentVersion();
       const was = world();
 
-      if (ids.length === 0 || e === null) return;
+      if (e === null) return;
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
 
-      if (items.length === 0) return;
+      // Erosion is a depth, and an artefact has no thickness to take one out
+      // of. So it sits out that one gesture rather than being moved by a key
+      // that means nothing to it.
+      const standing = code === 'KeyE'
+        ? new Map<ArtefactId, Point>()
+        : startingArtefacts(world(), v, selection().artefacts);
+
+      const places = new Map(
+        [...standing.keys()].map(id => [id, placeAt(world(), id, v)!]),
+      );
+
+      if (items.length === 0 && standing.size === 0) return;
 
       const from = at(e);
 
@@ -457,8 +476,10 @@ export function worldCanvas(
       const anchors = starting(world(), v, ids);
 
       // One pivot for the whole selection, so several polygons turn together
-      // rather than each about itself.
-      const pivot = centroid(items.flatMap(it => it.source));
+      // rather than each about itself. Artefacts are in it: a lone one turning
+      // about itself would sit perfectly still, and a room turning about a
+      // centre its own key was left out of would leave the key behind.
+      const pivot = centroid([...items.flatMap(it => it.source), ...places.values()]);
 
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
@@ -493,6 +514,28 @@ export function worldCanvas(
                   unplace(m, from),
                   unplace(m, to),
                 ),
+              });
+            }
+
+            // The same gesture, read as somewhere to be rather than as
+            // something done. An artefact has no shape for a rotation to turn
+            // or a squash to squash, so what the transform does to its *point*
+            // is the whole of what it can mean — take the place the key went
+            // down on through the gesture's own map, and the move is what
+            // that came to.
+            //
+            // Which makes the family closed for free: whatever composition of
+            // turns and squashes the polygons end up with, the artefact ends
+            // up somewhere, and somewhere is all a move has to say.
+            const m = affine(mode(EMPTY_TRANSFORM, pivot, from, to));
+
+            for (const [id, start] of standing) {
+              const p = places.get(id)!;
+              const q = place(m, [p])[0];
+
+              world = withMove(world, v, id, {
+                x: start.x + q.x - p.x,
+                y: start.y + q.y - p.y,
               });
             }
 
@@ -553,57 +596,10 @@ export function worldCanvas(
     function pickingArtefact(e: PointerEvent, id: ArtefactId): void {
       update(s => ({
         ...s,
-        selection: {
-          ...s.selection,
-          artefacts: e.shiftKey ? togglePicked(s.selection.artefacts, id) : [id],
-        },
+        selection: e.shiftKey
+          ? { ...s.selection, artefacts: togglePicked(s.selection.artefacts, id) }
+          : { ...s.selection, polygons: [], artefacts: [id] },
       }));
-    }
-
-    /**
-     * The picked artefacts follow the cursor.
-     *
-     * Every move is computed from where they stood when the drag began rather
-     * than from the frame before, so the gesture cannot drift and letting go
-     * leaves exactly what is on screen. The place is written into the version
-     * being edited, so a drag at v3 leaves v0 where it was.
-     */
-    function* draggingArtefacts(grabbed: ArtefactId, ids: readonly ArtefactId[]): Op<void> {
-      const v = currentVersion();
-      const was = world();
-      const held = new Map(
-        artefactsAt(was, v).filter(it => ids.includes(it.id)).map(it => [it.id, it.at]),
-      );
-
-      const anchor = held.get(grabbed);
-
-      if (anchor === undefined) return;
-
-      setLocal({ ...local(), previewing: true });
-
-      const end = yield* select({
-        dragging: pointerMoved(e => {
-          const to = at(e, true);
-          const dx = to.x - anchor.x, dy = to.y - anchor.y;
-
-          update(s => {
-            let world = was;
-
-            for (const [id, start] of held) {
-              world = placeArtefact(world, [id], v, () => ({ x: start.x + dx, y: start.y + dy }));
-            }
-
-            return { ...s, world };
-          });
-        }),
-        panning: alongside(),
-        done: pointerReleased(),
-        cancel: keyPressed(input, 'Escape'),
-        lost: blurred(),
-      });
-
-      setLocal({ ...local(), previewing: false });
-      update(s => settled(s, was, end.tag === 'cancel'));
     }
 
     /** A polygon is born into the version it was drawn in, and nothing before
@@ -891,12 +887,21 @@ export function worldCanvas(
      * things under me?", and if it is, the answer is the next one along.
      */
     function picking(e: PointerEvent): void {
+      // Over everything, so picked first — the same order they are drawn in,
+      // which is the order a click reads them in.
+      const on = grabbing(e);
+
+      if (on !== null) {
+        pickingArtefact(e, on);
+        return;
+      }
+
       const stack = standingIn(world(), e, at(e));
 
       if (stack.length === 0) {
         // Shift means adding, and adding nothing leaves the selection alone.
         if (!e.shiftKey) {
-          update(s => ({ ...s, selection: { ...s.selection, polygons: [] } }));
+          update(s => ({ ...s, selection: { ...s.selection, polygons: [], artefacts: [] } }));
         }
 
         return;
@@ -920,7 +925,7 @@ export function worldCanvas(
         const on = picked.length === 1 ? stack.indexOf(picked[0]) : -1;
         const next = on < 0 ? 0 : (on + 1) % stack.length;
 
-        return { ...s, selection: { ...s.selection, polygons: [stack[next]] } };
+        return { ...s, selection: { ...s.selection, polygons: [stack[next]], artefacts: [] } };
       });
     }
 
@@ -1075,15 +1080,25 @@ export function worldCanvas(
      * that ought to land on the grid, and snapping any particular corner of it
      * would drag the rest out of whatever alignment they had.
      */
-    function* draggingPolygons(from: PointerEvent): Op<void> {
+    /**
+     * The picked things follow the cursor: polygons, artefacts, or both.
+     *
+     * One gesture for the two of them because a selection can hold both, and
+     * two gestures would have to agree about the step anyway. They read it
+     * differently at the end — a polygon's translation is in its own frame and
+     * an artefact's move is in the world's — but the step they are agreeing
+     * about is the one on screen.
+     */
+    function* draggingSelection(from: PointerEvent): Op<void> {
       const v = currentVersion();
       const was = world();
       const ids = selection().polygons;
       const start = at(from);
 
       const anchors = starting(was, v, ids);
+      const held = startingArtefacts(was, v, selection().artefacts);
 
-      if (anchors.size === 0) return;
+      if (anchors.size === 0 && held.size === 0) return;
 
       const frames = new Map([...anchors.keys()].map(id => [id, under(was, v, id)]));
 
@@ -1121,6 +1136,14 @@ export function worldCanvas(
               });
             }
 
+            // In world units and nowhere else. An artefact is not inside
+            // anything, so there is no frame to take the step back through —
+            // which is the whole of the simplification, and the whole of what
+            // it costs when the group around it turns.
+            for (const [id, start] of held) {
+              world = withMove(world, v, id, { x: start.x + dx, y: start.y + dy });
+            }
+
             return { ...st, world };
           });
         }),
@@ -1155,6 +1178,16 @@ export function worldCanvas(
 
     /** The picked corners taken out, or the picked polygons under the other
      * tool. One key, and what it removes is whatever the tool is about. */
+    /** The artefact under the cursor, if the click is close enough to one to be
+     * about it. Screen units, like the diamond it is aiming at. */
+    function grabbing(e: PointerEvent): ArtefactId | null {
+      return hitArtefact(
+        artefactsAt(world(), currentVersion()),
+        at(e),
+        HANDLE / view().zoom,
+      );
+    }
+
     function removing(): void {
       update(s => {
         if (tool() === 'artefact') {
@@ -1181,21 +1214,29 @@ export function worldCanvas(
           );
         }
 
-        if (s.selection.polygons.length === 0) return s;
+        const world = s.selection.artefacts.length === 0
+          ? s.world
+          : removeArtefacts(s.world, s.selection.artefacts);
+
+        if (s.selection.polygons.length === 0) {
+          return world === s.world
+            ? s
+            : marked({ ...s, world, selection: { ...s.selection, artefacts: [] } }, s.world);
+        }
 
         // A group goes with what was in it: picking one is picking the rooms
         // under it, and deleting it while they stayed would be a selection
         // that deleted less than it drew.
         const gone = new Set(s.selection.polygons.flatMap(id => within(s.world, id)));
-        const polygons = new Map(s.world.polygons);
+        const polygons = new Map(world.polygons);
 
         for (const id of gone) polygons.delete(id);
 
         return marked(
           {
             ...s,
-            world: without({ ...s.world, polygons }, gone),
-            selection: { ...s.selection, polygons: [] },
+            world: without({ ...world, polygons }, gone),
+            selection: { ...s.selection, polygons: [], artefacts: [] },
           },
           s.world,
         );
@@ -1370,21 +1411,28 @@ export function worldCanvas(
                   continue;
                 }
               }
-              else if (tool() === 'artefact') {
-                const shown = artefactsAt(world(), currentVersion());
-                const grab = hitArtefact(shown, at(e), HANDLE / view().zoom);
+              else if (tool() === 'artefact' || tool() === 'polygon') {
+                // Artefacts first under both tools, because they are drawn over
+                // everything and a handle you can see is a handle you can grab.
+                const grab = grabbing(e);
 
                 if (grab !== null) {
-                  const picked = selection().artefacts.includes(grab)
-                    ? selection().artefacts
-                    : [grab];
+                  // Grabbing one already picked drags the whole selection,
+                  // polygons included. Grabbing one that is not takes it alone,
+                  // the way grabbing an unpicked polygon does.
+                  if (!selection().artefacts.includes(grab)) {
+                    update(s => ({
+                      ...s,
+                      selection: { ...s.selection, polygons: [], artefacts: [grab] },
+                    }));
+                  }
 
-                  update(s => ({ ...s, selection: { ...s.selection, artefacts: picked } }));
-                  yield* draggingArtefacts(grab, picked);
+                  yield* draggingSelection(e);
                   continue;
                 }
               }
-              else if (tool() === 'polygon') {
+
+              if (tool() === 'polygon') {
                 const under = standingIn(world(), e, at(e));
 
                 if (under.length > 0) {
@@ -1397,11 +1445,11 @@ export function worldCanvas(
                   if (!under.some(id => selection().polygons.includes(id))) {
                     update(s => ({
                       ...s,
-                      selection: { ...s.selection, polygons: [under[0]] },
+                      selection: { ...s.selection, polygons: [under[0]], artefacts: [] },
                     }));
                   }
 
-                  yield* draggingPolygons(e);
+                  yield* draggingSelection(e);
                   continue;
                 }
               }
@@ -1426,12 +1474,12 @@ export function worldCanvas(
               yield* drawing(e);
             }
             else if (tool() === 'artefact') {
-              const shown = artefactsAt(world(), currentVersion());
-              const on = hitArtefact(shown, at(e), HANDLE / view().zoom);
+              const on = grabbing(e);
 
-              // A click on nothing puts one there. There is no draft to
-              // abandon and nothing to step into, so the tool has one gesture
-              // and it is the one that makes something.
+              // A click on nothing puts one there; a click on one is about
+              // that one, and never a second stacked on top of it. There is no
+              // draft to abandon and nothing to step into, so those are the
+              // whole of what a click here can mean.
               if (on !== null) pickingArtefact(e, on);
               else if (!e.shiftKey) placing(e);
             }
@@ -1844,6 +1892,11 @@ function ghosts(
     }
   }
 
+  // The outline only, and no label: a ghost says where something was, and
+  // seven kinds written twice over is not that. Into the same path as the
+  // rings, so one stroke draws the whole of what this version was.
+  for (const it of artefactsAt(world, v)) diamond(ctx, toScreen(view, it.at));
+
   ctx.strokeStyle = stroke;
   ctx.lineWidth = 1;
   ctx.stroke();
@@ -2144,11 +2197,7 @@ function artefacts(
     const colour = here ? theme.picked : theme.artefact;
 
     ctx.beginPath();
-    ctx.moveTo(q.x, q.y - TOP);
-    ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
-    ctx.lineTo(q.x, q.y + BOTTOM);
-    ctx.lineTo(q.x - WAIST, q.y - SHOULDER);
-    ctx.closePath();
+    diamond(ctx, q);
 
     ctx.fillStyle = here ? theme.pickedFill : theme.canvas;
     ctx.fill();
@@ -2170,6 +2219,16 @@ function artefacts(
     ctx.fillStyle = here ? theme.picked : theme.muted;
     ctx.fillText(it.type, q.x, q.y + BOTTOM + 3);
   }
+}
+
+/** The outline, as a subpath. Its own function because a ghost draws it and
+ * nothing else, in among the rings of the version it belongs to. */
+function diamond(ctx: CanvasRenderingContext2D, q: Point): void {
+  ctx.moveTo(q.x, q.y - TOP);
+  ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
+  ctx.lineTo(q.x, q.y + BOTTOM);
+  ctx.lineTo(q.x - WAIST, q.y - SHOULDER);
+  ctx.closePath();
 }
 
 /** The diamond, in screen pixels from its own point. `SHOULDER` is where the
