@@ -25,13 +25,25 @@ export const theme = {
     'rgba(205, 95, 95, 0.13)',
   ],
 
-  /** The polygons as drawn, and the set the game would see. */
+  /**
+   * The polygons as drawn, and the set the game would see.
+   *
+   * One line for every kind of polygon. The stroke has two things of its own
+   * to say — whether a shape is picked, and whether it can be reached at all —
+   * and a third meaning stacked on it made all three harder to read. So the
+   * kind is a fill instead, and these are what the two kinds that have one are
+   * filled with.
+   */
   level: '#7b8496',
-  solid: '#b0705f',
-  /** A floor takes no part in the set — it is drawn flat underfoot and nothing
-   * else — so it is the one kind whose outline the CSG will never run along.
-   * Dark, because that is what it is drawn as in the level. */
-  floor: '#5a5560',
+  /** A solid is hatched: it is material taken away, and hatching says which
+   * side of the line the material is on, which a ring alone never did. Faint,
+   * because a pillar should not out-shout the room it stands in. */
+  solidHatch: 'rgba(176, 112, 95, 0.42)',
+  /** A floor is stippled: it is in no set at all, drawn flat underfoot and
+   * nothing else. Read against `solidHatch` rather than against the canvas —
+   * the two are the whole of what says which kind a shape is, so they differ
+   * in texture before they differ in colour. */
+  floorDots: 'rgba(150, 142, 160, 0.55)',
   picked: '#5b8cff',
   /** Under a picked polygon. Faint enough that two overlapping ones still read
    * as two, and that the CSG outline over the top keeps the eye. */

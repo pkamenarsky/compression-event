@@ -105,7 +105,7 @@ import {
   depths,
   groupFrame,
   sidedWith,
-  solidSide,
+  sideOf,
   live,
   place,
   project,
@@ -1019,7 +1019,7 @@ function subjects(cast: Cast): { id: Id, mine: Moving[] }[] {
     // each side is its own boundary and its own track. They are cut over the
     // same members and ride the same frame; only the classification differs.
     if (kinds.get(id)?.has('level')) all.push({ id, mine });
-    if (kinds.get(id)?.has('solid')) all.push({ id: solidSide(id), mine });
+    if (kinds.get(id)?.has('solid')) all.push({ id: sideOf(id, 'solid'), mine });
   }
 
   return all;

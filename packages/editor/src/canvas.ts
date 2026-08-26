@@ -1712,8 +1712,103 @@ function groups(
   reach: (id: Id) => boolean,
 ): void {
   for (const g of shown) {
-    outlined(ctx, view, g.shape, g.kind, picking.has(g.id), reach(g.id), theme.groupFill);
+    const here = reach(g.id);
+
+    outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.groupFill);
+
+    // Under the group's own outline and with none of its own: a floor inside a
+    // shut group is internal geometry like anything else in there, and all
+    // that is left of it is what it paints the ground with.
+    if (here && g.floor.length !== 0) {
+      ctx.beginPath();
+
+      for (const ring of g.floor) {
+        trace(ctx, view, ring);
+      }
+
+      shaded(ctx, 'floor');
+    }
   }
+}
+
+/**
+ * What each kind is painted with, in screen space and built once.
+ *
+ * A stroke can only say one thing at a time, and it is already saying whether
+ * a shape is picked and whether it can be reached at all. So the kind is said
+ * by the fill instead: a solid is hatched because it is material taken away,
+ * a floor is dotted because it is not in the set at all, and a room is left
+ * plain because it is the ordinary case. Every kind then strokes alike.
+ *
+ * Texture rather than geometry, so it does not zoom with the level: a pattern
+ * the view's transform stretched would go from hatching to stripes on the way
+ * in, and the whole point of it is to look the same everywhere.
+ */
+const patterns = new Map<PolygonType, CanvasPattern | null>();
+
+function patterned(kind: PolygonType): CanvasPattern | null {
+  const known = patterns.get(kind);
+
+  if (known !== undefined) return known;
+
+  const step = 6;
+  const tile = document.createElement('canvas');
+
+  tile.width = step;
+  tile.height = step;
+
+  const on = tile.getContext('2d');
+
+  if (on === null) {
+    patterns.set(kind, null);
+
+    return null;
+  }
+
+  if (kind === 'solid') {
+    on.strokeStyle = theme.solidHatch;
+    on.lineWidth = 1;
+
+    // Three strokes for one diagonal: the two either side of it are what the
+    // corners of the tile cut off the middle one, so the line carries on
+    // across the seam instead of stopping at it.
+    on.beginPath();
+
+    for (const at of [-step, 0, step]) {
+      on.moveTo(at, step);
+      on.lineTo(at + step, 0);
+    }
+
+    on.stroke();
+  }
+  else {
+    // One dot a tile, in the middle of it, so nothing lands on a seam and the
+    // grid stays even however the pattern falls on the shape.
+    on.fillStyle = theme.floorDots;
+    on.beginPath();
+    on.arc(step / 2, step / 2, 1, 0, 2 * Math.PI);
+    on.fill();
+  }
+
+  const made = on.createPattern(tile, 'repeat');
+
+  patterns.set(kind, made);
+
+  return made;
+}
+
+/** Fills `shape` with what its kind is painted with, if its kind is painted
+ * with anything. The path is the caller's: it is traced once and used for the
+ * fill, the picked fill over it and the stroke over that. */
+function shaded(ctx: CanvasRenderingContext2D, kind: PolygonType): void {
+  if (kind === 'level') return;
+
+  const pattern = patterned(kind);
+
+  if (pattern === null) return;
+
+  ctx.fillStyle = pattern;
+  ctx.fill();
 }
 
 /**
@@ -1743,26 +1838,19 @@ function outlined(
     trace(ctx, view, ring);
   }
 
+  if (here) shaded(ctx, kind);
+
   if (picked && here) {
     ctx.fillStyle = fill;
     ctx.fill();
   }
 
-  ctx.strokeStyle = !here
-    ? theme.outside
-    : picked ? theme.picked
-    : kind === 'solid' ? theme.solid
-    : kind === 'floor' ? theme.floor
-    : theme.level;
-
+  // The same line for every kind: the fill says which kind it is, and the
+  // stroke is left free to say the two things only it can — whether this is
+  // picked, and whether it can be reached at all.
+  ctx.strokeStyle = !here ? theme.outside : picked ? theme.picked : theme.level;
   ctx.lineWidth = picked ? 2 : 0.5;
-
-  // A solid is dashed because it is taken away; a floor is dotted because it is
-  // not in the set at all, and the difference has to be readable at a glance
-  // from a room, which is what a plain line means.
-  ctx.setLineDash(kind === 'solid' ? [5, 3] : kind === 'floor' ? [1, 3] : []);
   ctx.stroke();
-  ctx.setLineDash([]);
 }
 
 /** The set the game would see, over the top and in the one colour that says so. */

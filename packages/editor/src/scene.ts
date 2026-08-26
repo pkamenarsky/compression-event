@@ -36,11 +36,11 @@ import {
   Shape,
   contains,
   erode,
+  intersect,
   isCCW,
   keeping,
   simplify,
   subtract,
-  union,
   unionAll,
 } from './geometry';
 import {
@@ -968,25 +968,32 @@ export function contributing(
  * would change what the boundary is *made of* half way through a stretch,
  * which no interpolation describes.
  */
+/** The three sides a group can contribute to, in the order `sideOf` numbers
+ * them. `level` keeps the group's own id; the others are given one. */
+const SIDES: readonly PolygonType[] = ['level', 'solid', 'floor'];
+
 /**
- * The id a group's solid side goes by.
+ * The id one side of a group goes by.
  *
  * A group holding a room and a pillar contributes to both sides of the set, and
  * one id names one contributor: the level union and the solid union have
  * different boundaries, take different tracks, and are told apart everywhere
- * downstream by nothing but this number. So the solid side gets one of its own.
+ * downstream by nothing but this number. So every side but `level` gets one of
+ * its own, and `level` keeps the group's.
  *
  * Negative, because ids come from a counter that only counts up, so nothing
  * authored can ever collide with one — and reversible, so what it belongs to
  * can always be read back.
  */
-export function solidSide(id: GroupId): Id {
-  return -(id + 1);
+export function sideOf(id: GroupId, kind: PolygonType): Id {
+  const at = SIDES.indexOf(kind);
+
+  return at <= 0 ? id : -(id * SIDES.length + at);
 }
 
-/** Whose solid side that is, or nothing where the id is an ordinary one. */
+/** Whose side that is, or nothing where the id is an ordinary one. */
 export function sidedWith(id: Id): GroupId | null {
-  return id < 0 ? -id - 1 : null;
+  return id < 0 ? Math.floor(-id / SIDES.length) : null;
 }
 
 export interface Standing {
@@ -1089,12 +1096,12 @@ export function contributed(
 
     if (world.groups.get(id) === undefined || how === null) return;
 
-    for (const kind of ['level', 'solid'] as const) {
+    for (const kind of SIDES) {
       const shape = offer(id, kind);
 
       if (shape.length !== 0) {
         out.push({
-          id: kind === 'solid' ? solidSide(id) : id,
+          id: sideOf(id, kind),
           kind,
           shape,
           frame: how.frame ?? IDENTITY,
@@ -1161,29 +1168,25 @@ export function showing(
 export interface Occupied {
   id: GroupId
   kind: PolygonType
-  /** As it is drawn: the level side with the solid side taken out of it. */
+  /**
+   * The level side with the solid side taken out of it: what the group puts
+   * into the level, and the whole of what a click on it can land on.
+   *
+   * A shut group draws no solid of its own — a pillar's outline is exactly the
+   * internal geometry that shutting it was meant to put away — so there is
+   * nothing on screen to click in the hole one leaves, and the click falls
+   * through, as a click on anything not drawn does.
+   */
   shape: Shape
   /**
-   * As it is picked: the same with the holes a solid left in it filled back in,
-   * and nothing else changed.
+   * The floor under it: the group's floor union, clipped to `shape`.
    *
-   * A pillar in the middle of a grouped room is not a hole in the group — it is
-   * one of the things the group is made of, and a click on it means that group.
-   * Left as a hole it let the click through to whatever was behind, which is
-   * the level the group was put there to sit over.
-   *
-   * A solid that reaches past the edge is the other case and stays subtracted.
-   * What it leaves is not a hole but a bite out of the silhouette, open to the
-   * outside, and a click in it is a click outside: nothing of the group is
-   * drawn there and nothing about it says otherwise. Which of the two a solid
-   * is does not have to be asked — the arrangement already answered it. A
-   * pillar comes back as a ring wound as a hole and a bite does not.
-   *
-   * Gaps the level side left of its own are not filled. Four rooms round a
-   * courtyard are a group with a hole in it that no solid made, and the
-   * courtyard is as empty as the outside is.
+   * Clipped because a floor is drawn *inside* the level, flat underfoot, and a
+   * group's floor running out past the walls it belongs to would draw floor
+   * where the group is not. Nothing is picked by it — it is inside `shape`
+   * by construction — it is only what the group is painted with.
    */
-  whole: Shape
+  floor: Shape
 }
 
 /**
@@ -1210,61 +1213,43 @@ export interface Occupied {
  * a group's walls cut the rooms around it too, not only its own — which is
  * what `contributed` is careful to give it. See `showing`.
  */
-/** The rings a shape's traversal wound as holes, each turned into a shape of
- * its own. See the header of `geometry.ts` for the convention. */
-function gaps(shape: Shape): Shape {
-  return shape.filter(ring => !isCCW(ring)).map(ring => [...ring].reverse());
-}
-
-/**
- * `shape` with the holes the solid side left in it filled, and the level side's
- * own left alone. See `Occupied.whole`.
- *
- * Added onto what is drawn rather than rebuilt from its outlines, so that a
- * room standing inside a courtyard is still a room: it is a ring of its own
- * nested in a hole, and anything that reasoned from the outlines outward would
- * swallow it.
- */
-function filling(shape: Shape, level: Shape): Shape {
-  const holes = gaps(shape);
-
-  if (holes.length === 0) return shape;
-
-  const own = gaps(level);
-  const solids = own.length === 0 ? holes : subtract(holes, own);
-
-  return solids.length === 0 ? shape : union(shape, solids);
-}
-
 export function occupying(
   world: World,
   v: VersionId,
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Occupied[] {
-  const sides = new Map<GroupId, { level: Shape, solid: Shape }>();
+  const sides = new Map<GroupId, Map<PolygonType, Shape>>();
 
   for (const c of showing(world, v, items, path)) {
     const id = sidedWith(c.id) ?? c.id;
 
     if (!world.groups.has(id)) continue;
 
-    const side = sides.get(id) ?? { level: [], solid: [] };
+    const side = sides.get(id) ?? new Map<PolygonType, Shape>();
 
-    sides.set(id, { ...side, [c.kind]: c.shape });
+    side.set(c.kind, c.shape);
+    sides.set(id, side);
   }
 
   const out: Occupied[] = [];
 
-  for (const [id, { level, solid }] of sides) {
+  const under = (shape: Shape, floor: Shape): Shape =>
+    shape.length === 0 || floor.length === 0 ? [] : intersect(shape, floor);
+
+  for (const [id, side] of sides) {
+    const level = side.get('level') ?? [];
+    const solid = side.get('solid') ?? [];
+    const floor = side.get('floor') ?? [];
+
     if (level.length === 0) {
-      out.push({ id, kind: 'solid', shape: solid, whole: solid });
+      out.push({ id, kind: 'solid', shape: solid, floor: under(solid, floor) });
       continue;
     }
 
     const shape = solid.length === 0 ? level : subtract(level, solid);
 
-    out.push({ id, kind: 'level', shape, whole: filling(shape, level) });
+    out.push({ id, kind: 'level', shape, floor: under(shape, floor) });
   }
 
   return out;
@@ -1474,8 +1459,7 @@ export function hitting(
   path: readonly GroupId[],
   at: Point,
 ): Id[] {
-  // What it covers rather than what it puts into the level: see `Occupied`.
-  const shut = new Map(occupying(world, v, items, path).map(o => [o.id, o.whole]));
+  const shut = new Map(occupying(world, v, items, path).map(o => [o.id, o.shape]));
   const asked = new Set<Id>();
   const out: Id[] = [];
 
