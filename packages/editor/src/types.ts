@@ -1,7 +1,18 @@
-import { Point, PolygonType } from '@ce/game/world';
+import { ArtefactType, Point, PolygonType } from '@ce/game/world';
 import type { Bake } from './bake';
 
-export type { Point, PolygonType };
+export type { ArtefactType, Point, PolygonType };
+
+/** The kinds, in the order the number keys pick them. */
+export const ARTEFACTS: ArtefactType[] = [
+  'start',
+  'exit',
+  'key',
+  'delay',
+  'decompress',
+  'anchor',
+  'compass',
+];
 
 // -----------------------------------------------------------------------------
 // Settings — what the editor does, rather than what the world is
@@ -134,9 +145,15 @@ export const EMPTY_TRANSFORM: Transform = {
 export type PolygonId = number;
 export type GroupId = number;
 export type VertexId = number;
+export type ArtefactId = number;
 
 /** Whatever a version's layer can carry a transform for. One counter, so the
- * two never collide and a map over both is well defined. */
+ * two never collide and a map over both is well defined.
+ *
+ * An artefact is not one of them. It has an id from the same counter, so it can
+ * never be mistaken for a polygon, but nothing writes a transform for it — a
+ * point has no shape to turn and its versions are the places themselves. See
+ * `Artefact`. */
 export type Id = PolygonId | GroupId;
 export type VersionId = number;
 
@@ -257,9 +274,32 @@ export interface Group {
   members: Id[]
 }
 
+/**
+ * A place in the world with a kind, moved from version to version.
+ *
+ * Attached to nothing, deliberately. Written into a polygon it would have to
+ * turn with one, and written into a group it would need a frame to be expressed
+ * in and a rule for what happens when the group is eroded out from under it.
+ * None of that is worth having before there is a level that wants it, so an
+ * artefact is a point in world units at each version and a straight line
+ * between them — which is wrong in exactly one way, visibly, and correctable by
+ * dragging.
+ *
+ * `at` is a layer like every other: a version that says nothing about it
+ * inherits its place from its base, and one that does overrides it from there
+ * on. So an artefact exists at a version when some version in that chain has
+ * put it somewhere, which is what its birth is — there is no separate field
+ * saying so, because the two could then disagree.
+ */
+export interface Artefact {
+  type: ArtefactType
+  at: Map<VersionId, Point>
+}
+
 export interface World {
   polygons: Map<PolygonId, Polygon>
   groups: Map<GroupId, Group>
+  artefacts: Map<ArtefactId, Artefact>
   /** One counter for every kind of id. */
   nextId: number
   versions: Version[]
@@ -273,6 +313,7 @@ export function emptyWorld(): World {
   return {
     polygons: new Map(),
     groups: new Map(),
+    artefacts: new Map(),
     nextId: 0,
 
     versions: Array.from({ length: VERSIONS }, (_unused, i) => ({
@@ -381,9 +422,10 @@ export function opened(world: World, inside: GroupId | null): GroupId[] {
 export interface Selection {
   polygons: PolygonId[]
   vertices: VertexId[]
+  artefacts: ArtefactId[]
 }
 
-export const EMPTY_SELECTION: Selection = { polygons: [], vertices: [] };
+export const EMPTY_SELECTION: Selection = { polygons: [], vertices: [], artefacts: [] };
 
 /** `more` added to `some`, keeping what was already there and its order. */
 export function alsoPicked(some: readonly number[], more: readonly number[]): number[] {
@@ -506,6 +548,7 @@ function settled(s: EditorState): EditorState {
         id => s.world.polygons.has(id) || s.world.groups.has(id),
       ),
       vertices: s.selection.vertices.filter(id => corners.has(id)),
+      artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
     },
   };
 }

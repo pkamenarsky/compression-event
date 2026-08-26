@@ -44,6 +44,10 @@ export const theme = {
    * the two are the whole of what says which kind a shape is, so they differ
    * in texture before they differ in colour. */
   floorDots: 'rgba(150, 142, 160, 0.55)',
+  /** An artefact. Not a kind of shape, so none of the polygon strokes would be
+   * right for it — and nothing else in the level is this colour, which is what
+   * a handful of small things scattered over a drawing needs. */
+  artefact: '#6ec9b7',
   picked: '#5b8cff',
   /** Under a picked polygon. Faint enough that two overlapping ones still read
    * as two, and that the CSG outline over the top keeps the eye. */

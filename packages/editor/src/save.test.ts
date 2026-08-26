@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { FORMAT, restored, saved } from './save';
 import { TOP, resolveAt } from './scene';
-import { addPolygon, editAt, withEdit } from './scene';
+import { addArtefact, addPolygon, editAt, placeArtefact, withEdit } from './scene';
 import { EditorState, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
@@ -34,7 +34,7 @@ function world(): EditorState {
 
   return {
     ...initialState(w),
-    selection: { polygons: [b.id], vertices: [] },
+    selection: { polygons: [b.id], vertices: [], artefacts: [] },
     tool: 'polygon',
     currentVersion: 2,
   };
@@ -101,6 +101,41 @@ describe('save', () => {
 
     expect(restored(JSON.parse(JSON.stringify(old)) as typeof file).world.groups.size)
       .toEqual(0);
+  });
+
+  test('artefacts survive the trip, places and all, and a format-5 file has none', () => {
+    const before = world();
+    const one = addArtefact(before.world, 'key', { x: 5, y: 6 }, 0);
+    const moved = placeArtefact(one.world, [one.id], 2, () => ({ x: 50, y: 60 }));
+
+    const placed: EditorState = {
+      ...before,
+      world: moved,
+      selection: { ...before.selection, artefacts: [one.id] },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(saved(placed))));
+    const back = after.world.artefacts.get(one.id)!;
+
+    // A map, not the pairs it went out as: the places are keyed by version and
+    // reading one is a lookup, not a scan.
+    expect(back.at).toBeInstanceOf(Map);
+    expect(back.type).toEqual('key');
+    expect([...back.at]).toEqual([[0, { x: 5, y: 6 }], [2, { x: 50, y: 60 }]]);
+    expect(after.selection.artefacts).toEqual([one.id]);
+
+    const file = saved(placed);
+    const old = {
+      ...file,
+      format: 5,
+      artefacts: undefined,
+      world: { ...file.world, artefacts: undefined },
+    };
+
+    const opened = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    expect(opened.world.artefacts.size).toEqual(0);
+    expect(opened.selection.artefacts).toEqual([]);
   });
 
   test('a format-3 file opens, with every corner standing throughout', () => {

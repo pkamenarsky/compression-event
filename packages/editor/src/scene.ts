@@ -43,6 +43,8 @@ import {
   unionAll,
 } from './geometry';
 import {
+  ArtefactId,
+  ArtefactType,
   Clipping,
   EMPTY_TRANSFORM,
   Edit,
@@ -177,6 +179,195 @@ export function addPolygon(
     world: joined({ ...world, polygons, nextId: id + 1 + local.length }, where.into, [id]),
     id,
   };
+}
+
+// -----------------------------------------------------------------------------
+// Artefacts
+//
+// A polygon is a shape with a history of what has been done to it; an artefact
+// is a place, and the history is the places. So none of the machinery above
+// applies to one — no frame, no projection, no set — and all of it here is a
+// read of `Artefact.at` against a chain.
+// -----------------------------------------------------------------------------
+
+/** One artefact as a version left it. */
+export interface Placed {
+  id: ArtefactId
+  type: ArtefactType
+  at: Point
+}
+
+/**
+ * Where an artefact stands at a version, or nothing if it is not there yet.
+ *
+ * The last version in the chain that says anything about it, which is the same
+ * rule a transform follows, except that a place replaces rather than composes:
+ * there is no identity point to layer against and nowhere sensible for two
+ * versions' answers to meet.
+ */
+export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | null {
+  const it = world.artefacts.get(id);
+
+  if (it === undefined) return null;
+
+  let out: Point | null = null;
+
+  for (const k of chain(world, v)) out = it.at.get(k) ?? out;
+
+  return out;
+}
+
+/** Everything standing at a version, in id order. */
+export function artefactsAt(world: World, v: VersionId): Placed[] {
+  const out: Placed[] = [];
+
+  for (const [id, it] of world.artefacts) {
+    const at = placeAt(world, id, v);
+
+    if (at !== null) out.push({ id, type: it.type, at });
+  }
+
+  return out.sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Everything standing part way through a walk from one version to another.
+ *
+ * Straight lines, and one leg per version crossed: the walk is over versions
+ * rather than over distance, so an artefact that moves a long way at one
+ * version and not at all at the next spends the same time doing each. That is
+ * what the walls do — `replayed` cuts `u` the same way — and the two have to
+ * agree or a key would arrive in a room ahead of the room.
+ *
+ * One that is not yet there at one end is not drawn at that end: it appears
+ * where it is first put rather than sliding in from wherever it will be.
+ */
+export function artefactsDuring(
+  world: World,
+  from: VersionId,
+  to: VersionId,
+  u: number,
+): Placed[] {
+  const n = Math.abs(to - from);
+
+  if (n === 0) return artefactsAt(world, to);
+
+  const x = Math.min(Math.max(u, 0), 1) * n;
+  const i = Math.min(Math.floor(x), n - 1);
+  const step = to > from ? 1 : -1;
+  const rest = x - i;
+
+  const a = from + step * i, b = from + step * (i + 1);
+  const out: Placed[] = [];
+
+  for (const [id, it] of world.artefacts) {
+    const p = placeAt(world, id, a), q = placeAt(world, id, b);
+
+    if (p === null && q === null) continue;
+    if (p === null) out.push({ id, type: it.type, at: q! });
+    else if (q === null) out.push({ id, type: it.type, at: p });
+    else {
+      out.push({
+        id,
+        type: it.type,
+        at: { x: p.x + (q.x - p.x) * rest, y: p.y + (q.y - p.y) * rest },
+      });
+    }
+  }
+
+  return out.sort((a2, b2) => a2.id - b2.id);
+}
+
+export function addArtefact(
+  world: World,
+  type: ArtefactType,
+  at: Point,
+  v: VersionId,
+): { world: World, id: ArtefactId } {
+  const id = world.nextId;
+  const artefacts = new Map(world.artefacts);
+
+  artefacts.set(id, { type, at: new Map([[v, at]]) });
+
+  return { world: { ...world, artefacts, nextId: id + 1 }, id };
+}
+
+/**
+ * Put one somewhere, at this version and every later one that has not said
+ * otherwise.
+ *
+ * Written into the version being edited rather than the one it was born at,
+ * which is what makes a drag at v3 leave v0 alone — the same thing a vertex
+ * edit does, by the same reasoning, and the whole of why places are a map.
+ */
+export function placeArtefact(
+  world: World,
+  ids: readonly ArtefactId[],
+  v: VersionId,
+  move: (was: Point) => Point,
+): World {
+  const artefacts = new Map(world.artefacts);
+
+  for (const id of ids) {
+    const it = world.artefacts.get(id);
+    const was = placeAt(world, id, v);
+
+    if (it === undefined || was === null) continue;
+
+    artefacts.set(id, { ...it, at: new Map(it.at).set(v, move(was)) });
+  }
+
+  return { ...world, artefacts };
+}
+
+export function retypeArtefacts(
+  world: World,
+  ids: readonly ArtefactId[],
+  type: ArtefactType,
+): World {
+  const artefacts = new Map(world.artefacts);
+
+  for (const id of ids) {
+    const it = world.artefacts.get(id);
+
+    if (it !== undefined) artefacts.set(id, { ...it, type });
+  }
+
+  return { ...world, artefacts };
+}
+
+/**
+ * Gone from the world, at every version.
+ *
+ * Not from this one onward: there is no way to say an artefact has stopped, the
+ * same way there is none for a polygon, and inventing one here would be a
+ * second kind of absence for `placeAt` to tell apart from not-yet-placed.
+ */
+export function removeArtefacts(world: World, ids: readonly ArtefactId[]): World {
+  const artefacts = new Map(world.artefacts);
+
+  for (const id of ids) artefacts.delete(id);
+
+  return { ...world, artefacts };
+}
+
+/** The topmost one within `reach` of a point, or nothing. Later ids first, so
+ * the one drawn on top is the one picked. */
+export function hitArtefact(shown: readonly Placed[], p: Point, reach: number): ArtefactId | null {
+  for (let i = shown.length - 1; i >= 0; i--) {
+    if (Math.hypot(shown[i].at.x - p.x, shown[i].at.y - p.y) <= reach) return shown[i].id;
+  }
+
+  return null;
+}
+
+export function artefactsWithinBox(shown: readonly Placed[], a: Point, b: Point): ArtefactId[] {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+
+  return shown
+    .filter(it => it.at.x >= x0 && it.at.x <= x1 && it.at.y >= y0 && it.at.y <= y1)
+    .map(it => it.id);
 }
 
 // -----------------------------------------------------------------------------

@@ -12,6 +12,8 @@
 // -----------------------------------------------------------------------------
 
 import {
+  Artefact,
+  ArtefactId,
   EMPTY_HISTORY,
   Edit,
   EditorState,
@@ -31,6 +33,10 @@ import {
 } from './types';
 
 /**
+ * 6: the world has artefacts. A format-5 file has none, which is a world with
+ * nothing placed in it — so it reads as one, and writes itself back out saying
+ * so.
+ *
  * 5: polygons can be grouped, and a version's edits are keyed by anything a
  * transform can be written for rather than by polygons alone. A format-4 file
  * has no groups and every edit in it names a polygon, so it reads as a world
@@ -48,7 +54,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 5;
+export const FORMAT = 6;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -60,6 +66,8 @@ export interface Saved {
   /** The picked polygons. Corners are not written: which of them were picked
    * is about the gesture in progress rather than about the world. */
   selection: PolygonId[]
+  /** The picked artefacts. Absent before format 6. */
+  artefacts?: ArtefactId[]
   settings: Settings
   view: View
   world: {
@@ -68,8 +76,16 @@ export interface Saved {
     polygons: [PolygonId, Polygon][]
     /** Absent before format 5, where there were none. */
     groups?: [GroupId, Group][]
+    /** Absent before format 6, where there were none. Each one's places go out
+     * as entries for the same reason a version's edits do. */
+    artefacts?: [ArtefactId, SavedArtefact][]
     versions: SavedVersion[]
   }
+}
+
+export interface SavedArtefact {
+  type: Artefact['type']
+  at: [VersionId, Point][]
 }
 
 /** A version with its two maps written out as entries. */
@@ -91,12 +107,14 @@ export function saved(state: EditorState): Saved {
     tool: state.tool,
     currentVersion: state.currentVersion,
     selection: state.selection.polygons,
+    artefacts: state.selection.artefacts,
     settings: state.settings,
     view: state.view,
     world: {
       nextId: state.world.nextId,
       polygons: [...state.world.polygons],
       groups: [...state.world.groups],
+      artefacts: [...state.world.artefacts].map(([id, a]) => [id, { type: a.type, at: [...a.at] }]),
       versions: state.world.versions.map(savedVersion),
     },
   };
@@ -123,12 +141,15 @@ export function restored(file: Saved): EditorState {
     world: {
       polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
       groups: new Map(file.world.groups ?? []),
+      artefacts: new Map(
+        (file.world.artefacts ?? []).map(([id, a]) => [id, { type: a.type, at: new Map(a.at) }]),
+      ),
       nextId: file.world.nextId,
       versions: file.world.versions.map(restoredVersion),
     },
     currentVersion: file.currentVersion,
     inside: null,
-    selection: { polygons: file.selection, vertices: [] },
+    selection: { polygons: file.selection, vertices: [], artefacts: file.artefacts ?? [] },
     settings: file.settings,
     view: file.view,
     tool: file.tool,

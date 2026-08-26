@@ -36,7 +36,16 @@ import {
   unplace,
   unstep,
   IDENTITY,
+  Placed,
+  addArtefact,
+  artefactsAt,
+  artefactsDuring,
+  artefactsWithinBox,
+  hitArtefact,
   occupying,
+  placeArtefact,
+  removeArtefacts,
+  retypeArtefacts,
   Occupied,
   swallowed,
   reachable,
@@ -54,6 +63,9 @@ import {
 } from './scene';
 import { theme } from './theme';
 import {
+  ARTEFACTS,
+  ArtefactId,
+  ArtefactType,
   EditorState,
   Id,
   Point,
@@ -303,6 +315,24 @@ export function worldCanvas(
 
       if (end.tag !== 'done' || box === null) return;
 
+      if (tool() === 'artefact') {
+        const caught = artefactsWithinBox(
+          artefactsAt(world(), currentVersion()),
+          box.a,
+          box.b,
+        );
+
+        update(s => ({
+          ...s,
+          selection: {
+            ...s.selection,
+            artefacts: alsoPicked(adding ? s.selection.artefacts : [], caught),
+          },
+        }));
+
+        return;
+      }
+
       const points = tool() === 'point';
 
       // Corners come off what is on screen as itself; polygons come off
@@ -491,6 +521,89 @@ export function worldCanvas(
 
         return marked({ ...s, world: { ...s.world, polygons } }, s.world);
       });
+    }
+
+    function retypeArtefact(type: ArtefactType): void {
+      update(s => s.selection.artefacts.length === 0
+        ? s
+        : marked(
+          { ...s, world: retypeArtefacts(s.world, s.selection.artefacts, type) },
+          s.world,
+        ));
+    }
+
+    /**
+     * A click on empty canvas under the artefact tool puts one there.
+     *
+     * Born into the version on screen, like a polygon, and of the first kind
+     * there is — the number keys retype it, and one that was never going to be
+     * a start is one keystroke from being whatever it is.
+     */
+    function placing(e: PointerEvent): void {
+      update(s => {
+        const { world, id } = addArtefact(s.world, ARTEFACTS[0], at(e, true), s.currentVersion);
+
+        return marked(
+          { ...s, world, selection: { ...s.selection, artefacts: [id] } },
+          s.world,
+        );
+      });
+    }
+
+    function pickingArtefact(e: PointerEvent, id: ArtefactId): void {
+      update(s => ({
+        ...s,
+        selection: {
+          ...s.selection,
+          artefacts: e.shiftKey ? togglePicked(s.selection.artefacts, id) : [id],
+        },
+      }));
+    }
+
+    /**
+     * The picked artefacts follow the cursor.
+     *
+     * Every move is computed from where they stood when the drag began rather
+     * than from the frame before, so the gesture cannot drift and letting go
+     * leaves exactly what is on screen. The place is written into the version
+     * being edited, so a drag at v3 leaves v0 where it was.
+     */
+    function* draggingArtefacts(grabbed: ArtefactId, ids: readonly ArtefactId[]): Op<void> {
+      const v = currentVersion();
+      const was = world();
+      const held = new Map(
+        artefactsAt(was, v).filter(it => ids.includes(it.id)).map(it => [it.id, it.at]),
+      );
+
+      const anchor = held.get(grabbed);
+
+      if (anchor === undefined) return;
+
+      setLocal({ ...local(), previewing: true });
+
+      const end = yield* select({
+        dragging: pointerMoved(e => {
+          const to = at(e, true);
+          const dx = to.x - anchor.x, dy = to.y - anchor.y;
+
+          update(s => {
+            let world = was;
+
+            for (const [id, start] of held) {
+              world = placeArtefact(world, [id], v, () => ({ x: start.x + dx, y: start.y + dy }));
+            }
+
+            return { ...s, world };
+          });
+        }),
+        panning: alongside(),
+        done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
+        lost: blurred(),
+      });
+
+      setLocal({ ...local(), previewing: false });
+      update(s => settled(s, was, end.tag === 'cancel'));
     }
 
     /** A polygon is born into the version it was drawn in, and nothing before
@@ -1044,6 +1157,19 @@ export function worldCanvas(
      * tool. One key, and what it removes is whatever the tool is about. */
     function removing(): void {
       update(s => {
+        if (tool() === 'artefact') {
+          if (s.selection.artefacts.length === 0) return s;
+
+          return marked(
+            {
+              ...s,
+              world: removeArtefacts(s.world, s.selection.artefacts),
+              selection: { ...s.selection, artefacts: [] },
+            },
+            s.world,
+          );
+        }
+
         if (tool() === 'point') {
           return marked(
             {
@@ -1127,7 +1253,7 @@ export function worldCanvas(
                   el,
                   ctx,
                   v,
-                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played, clip),
+                  layers(w, s, v, t, sel, ins, at, l, items, runs(set), played, clip, r),
                 );
               }
             },
@@ -1199,6 +1325,11 @@ export function worldCanvas(
                 retype('floor');
               }
             }
+            else if (tool() === 'artefact') {
+              const n = Number(e.code.match(/^Digit([1-9])$/)?.[1] ?? NaN);
+
+              if (n >= 1 && n <= ARTEFACTS.length) retypeArtefact(ARTEFACTS[n - 1]);
+            }
           }
           else if (started.tag === 'press' && started.value.target === el) {
             const e = started.value;
@@ -1236,6 +1367,20 @@ export function worldCanvas(
 
                   update(s => ({ ...s, selection: { ...s.selection, vertices: picked } }));
                   yield* draggingVertices(grab.vertex, picked);
+                  continue;
+                }
+              }
+              else if (tool() === 'artefact') {
+                const shown = artefactsAt(world(), currentVersion());
+                const grab = hitArtefact(shown, at(e), HANDLE / view().zoom);
+
+                if (grab !== null) {
+                  const picked = selection().artefacts.includes(grab)
+                    ? selection().artefacts
+                    : [grab];
+
+                  update(s => ({ ...s, selection: { ...s.selection, artefacts: picked } }));
+                  yield* draggingArtefacts(grab, picked);
                   continue;
                 }
               }
@@ -1279,6 +1424,16 @@ export function worldCanvas(
             }
             else if (tool() === 'path') {
               yield* drawing(e);
+            }
+            else if (tool() === 'artefact') {
+              const shown = artefactsAt(world(), currentVersion());
+              const on = hitArtefact(shown, at(e), HANDLE / view().zoom);
+
+              // A click on nothing puts one there. There is no draft to
+              // abandon and nothing to step into, so the tool has one gesture
+              // and it is the one that makes something.
+              if (on !== null) pickingArtefact(e, on);
+              else if (!e.shiftKey) placing(e);
             }
           }
         }
@@ -1524,6 +1679,9 @@ function layers(
   /** Where each shut group stands at the version the replay is walking
    * towards, from `occupying`. Null when nothing is playing. */
   clip: Map<GroupId, Shape> | null,
+  /** The walk in progress, for the things drawn from the world rather than
+   * from the bake. Null when nothing is playing. */
+  walk: Replay | null,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -1595,6 +1753,25 @@ function layers(
   };
 
   if (played !== null) out.push(ctx => replay(ctx, view, played, inner));
+
+  // Over everything the level is made of, because an artefact is a thing in a
+  // room rather than part of one, and under the two gestures that are still
+  // running, because those are about what is being done rather than about what
+  // is there.
+  //
+  // While a walk plays these are the only ones drawn. Everywhere else the
+  // replay goes over the editor's own answer so the two can be read against
+  // each other, but there is no second answer here to read against: an
+  // artefact has no bake, and drawing the version on screen underneath would
+  // put a still diamond at the destination of every flying one.
+  out.push(ctx => artefacts(
+    ctx,
+    view,
+    walk === null
+      ? artefactsAt(world, current)
+      : artefactsDuring(world, walk.from, walk.to, walk.at),
+    new Set(selection.artefacts),
+  ));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
@@ -1937,6 +2114,72 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
   ctx.lineJoin = 'round';
   ctx.stroke();
 }
+
+/**
+ * The artefacts, as diamonds with their kind written under them.
+ *
+ * In screen units, like the corner handles and for the same reason: an artefact
+ * is a place rather than an extent, and one drawn in world units would be a
+ * speck at one zoom and fill the room at another. The diamond is the tool's own
+ * icon at drawing size, so what the button shows is what lands.
+ *
+ * The label is how a level with seven kinds in it is read at all. There is no
+ * room for seven distinguishable glyphs at this size, and a colour per kind
+ * would spend the one thing the diamond has left to say — whether it is picked.
+ */
+function artefacts(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  shown: readonly Placed[],
+  picked: ReadonlySet<ArtefactId>,
+): void {
+  ctx.lineJoin = 'round';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+
+  for (const it of shown) {
+    const q = toScreen(view, it.at);
+    const here = picked.has(it.id);
+    const colour = here ? theme.picked : theme.artefact;
+
+    ctx.beginPath();
+    ctx.moveTo(q.x, q.y - TOP);
+    ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
+    ctx.lineTo(q.x, q.y + BOTTOM);
+    ctx.lineTo(q.x - WAIST, q.y - SHOULDER);
+    ctx.closePath();
+
+    ctx.fillStyle = here ? theme.pickedFill : theme.canvas;
+    ctx.fill();
+
+    // The facets, which are what make it read as the icon rather than as a
+    // lozenge. Added to the same path after the fill, so one stroke draws the
+    // outline and the facets together and they cannot disagree about weight.
+    ctx.moveTo(q.x - WAIST, q.y - SHOULDER);
+    ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
+    ctx.moveTo(q.x - FACET, q.y - SHOULDER);
+    ctx.lineTo(q.x, q.y + BOTTOM);
+    ctx.lineTo(q.x + FACET, q.y - SHOULDER);
+    ctx.lineTo(q.x, q.y - TOP);
+
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = here ? 1.5 : 1;
+    ctx.stroke();
+
+    ctx.fillStyle = here ? theme.picked : theme.muted;
+    ctx.fillText(it.type, q.x, q.y + BOTTOM + 3);
+  }
+}
+
+/** The diamond, in screen pixels from its own point. `SHOULDER` is where the
+ * facets meet the outline, which is above the middle: the crown is short and
+ * the pavilion is long, as a cut stone is. */
+const TOP = 9;
+const SHOULDER = 2.5;
+const BOTTOM = 9;
+const WAIST = 8;
+const FACET = 3.5;
 
 /**
  * The bake, played back: the same runs, drawn from the buffers rather than from

@@ -251,13 +251,16 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
  * at the corners, `v` to get at whole polygons, `p` to draw a new one. Drawing
  * being its own tool is what lets a click on empty canvas mean letting go under
  * the other two, rather than having to guess between that and starting a shape.
+ *
+ * `i` is nobody's. Illustrator has no tool for dropping a thing into a level,
+ * and the letters that would read as one are taken.
  */
 function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
       const e = yield* keyPressed(
         input,
-        'KeyA', 'KeyV', 'KeyP', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
+        'KeyA', 'KeyV', 'KeyP', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
       );
 
       const command = e.metaKey || e.ctrlKey;
@@ -270,11 +273,15 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
         if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
         else if (e.code === 'KeyV') update(s => ({ ...s, tool: 'polygon' }));
         else if (e.code === 'KeyP') update(s => ({ ...s, tool: 'path' }));
+        else if (e.code === 'KeyI') update(s => ({ ...s, tool: 'artefact' }));
 
         continue;
       }
 
       if (e.code === 'KeyP') continue;
+
+      // Cmd+I is the browser's, and there is nothing here it would mean.
+      if (e.code === 'KeyI') continue;
 
       // Cmd+A is select-all, which this does not have; leave it to the browser
       // rather than swallowing it into a tool switch.
