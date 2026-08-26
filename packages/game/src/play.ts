@@ -168,6 +168,26 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   const spans = world.baked.spans.length;
 
+  /**
+   * A short fingerprint of one version's set: how many rings, how many points,
+   * and where the first one is.
+   *
+   * For telling two versions apart from inside the game. A version nobody put
+   * an edit in is the one before it unchanged, and it is worth being able to
+   * see that rather than infer it.
+   */
+  const signature = (v: number): string => {
+    const it = world.versions[v];
+
+    if (it === undefined) return 'missing';
+
+    const points = it.polygons.reduce((n, p) => n + p.points.length, 0);
+    const first = it.polygons[0]?.points[0];
+
+    return `${it.polygons.length}r/${points}p`
+      + (first === undefined ? '' : `@${first.x.toFixed(0)},${first.y.toFixed(0)}`);
+  };
+
   /** Where the player is and which way they are facing, in world units. */
   const player = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
 
@@ -539,7 +559,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         ? 'still'
         : `${leg.from}->${leg.to} ${(shifting / SHIFT).toFixed(2)}`;
 
-      say.stat(`v${version}/${world.versions.length - 1}  ${flight}  clock ${clock.toFixed(1)}  spans ${spans}  ${why}`);
+      say.stat(
+        `v${version}/${world.versions.length - 1}  ${signature(version)}  ${flight}`
+        + `  clock ${clock.toFixed(1)}  spans ${spans}  ${why}`,
+      );
     }
   }
 
@@ -589,6 +612,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   document.addEventListener('mousemove', moved);
 
   // ── Getting going ──
+
+  // Every version's fingerprint, once, so that a level playing the same
+  // geometry twice can be told from a game drawing the wrong one.
+  if (options.debug === true) {
+    console.log(world.versions.map((_unused, v) => `v${v} ${signature(v)}`).join('\n'));
+  }
 
   void (async () => {
     // The click that dismisses this is also what lets the audio start and what
