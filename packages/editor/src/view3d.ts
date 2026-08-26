@@ -35,7 +35,7 @@ import { Value, untracked } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
-import { Artefacts, Point, Renderer, SCALE, artefacts, renderer } from '@ce/game';
+import { Artefacts, EYE, Point, Renderer, SCALE, WALK_SPEED, artefacts, renderer } from '@ce/game';
 import { Bake, artefactsDuring, spanAt } from './bake';
 import { bakedLevel, floorsAt } from './export';
 import { EMPTY_LIVE, Live, artefactsAt, contributing, live, resolveAt, sourced } from './scene';
@@ -78,11 +78,13 @@ const FOV = 60 * Math.PI / 180;
  */
 const MARGIN = 1.25;
 
-/** Eye height, in world units, and how fast someone walks in them. There is no
- * collision: the walls are there to be read, and being stopped by one while
- * trying to see behind it is not what this is for. */
-const EYE = 1.6;
-const SPEED = 5;
+/**
+ * How someone stands in the level and how fast they cross it: the game's own
+ * numbers, so that walking the panel and walking the game are the same person
+ * moving. There is no collision here — the walls are there to be read, and
+ * being stopped by one while trying to see behind it is not what this is for,
+ * which is the one thing about it that differs.
+ */
 
 /** World units per pixel dragged, walking in the panel. A drag from the top of
  * it to the bottom crosses a couple of rooms. */
@@ -281,8 +283,8 @@ function panel(
         const l = Math.hypot(ahead, across);
         const sin = Math.sin(walker.angle), cos = Math.cos(walker.angle);
 
-        walker.x += (sin * ahead + cos * across) / l * SPEED * dt;
-        walker.z += (-cos * ahead + sin * across) / l * SPEED * dt;
+        walker.x += (sin * ahead + cos * across) / l * WALK_SPEED * dt;
+        walker.z += (-cos * ahead + sin * across) / l * WALK_SPEED * dt;
       }
 
       placed();

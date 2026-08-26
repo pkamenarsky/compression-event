@@ -47,12 +47,15 @@ import {
 import { Run } from './walls';
 import { Artefact, ArtefactType, Point, World } from './world';
 
-/** Eye height, in world units. */
-const EYE = 1.6;
+/** Eye height, in world units. Exported because standing in the level is
+ * standing in the level, wherever the walking is being done from. */
+export const EYE = 1.6;
 
-/** How fast the player would go with nothing in the way, and how sharply that
- * speed is reached and lost. */
-const SPEED = 10;
+/** How fast the player would go with nothing in the way, in world units per
+ * second. */
+export const WALK_SPEED = 10;
+
+/** How sharply that speed is reached and lost. */
 const GRIP = 30;
 const DRAG = 8;
 
@@ -272,8 +275,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       const l = Math.hypot(ahead, across);
       const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
 
-      wx = (sin * ahead + cos * across) / l * SPEED;
-      wz = (-cos * ahead + sin * across) / l * SPEED;
+      wx = (sin * ahead + cos * across) / l * WALK_SPEED;
+      wz = (-cos * ahead + sin * across) / l * WALK_SPEED;
     }
 
     // Towards the speed asked for while a key is down, and away from any speed
