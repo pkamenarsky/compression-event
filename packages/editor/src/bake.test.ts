@@ -102,6 +102,7 @@ function lengthOf(runs: Point[][]): number {
     points,
     corner: points.map(() => true),
     whence: points.map((_p, i) => ({ kind: 'vertex' as const, at: { id: 0, ring: 0, index: i } })),
+    fill: false,
   })));
 }
 
@@ -224,6 +225,7 @@ describe('two readings of one ring, lined up', () => {
       corner: Array.from({ length: n + 1 }, () => true),
       whence: Array.from({ length: n + 1 }, (_p, i) =>
         ({ kind: 'vertex' as const, at: { id, ring: 0, index: at(i) } })),
+      fill: false,
     };
   };
 
@@ -1138,6 +1140,24 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
         expect(p.x).toBeCloseTo(real[i].points[j].x, 9);
         expect(p.y).toBeCloseTo(real[i].points[j].y, 9);
       }));
+    }
+  });
+
+  test('and every run of it says it is a fill, so the canvas can tell', () => {
+    // What the replay reads. A floor moves across a span like everything else,
+    // but the bright line the replay draws is the *set*, and a floor is in no
+    // set: drawn in it, it would be claiming to be a piece of outline. It gets
+    // the line an unselected floor gets standing still instead.
+    const { world, floor } = floored();
+    const span = run(bakeSpan(world, 0));
+
+    for (const t of [0, 0.5, 1]) {
+      const frame = sample(span, t);
+
+      expect(frame.filter(r => r.fill).every(r => r.id === floor)).toBe(true);
+      expect(frame.filter(r => r.id === floor).every(r => r.fill)).toBe(true);
+      expect(frame.some(r => r.fill)).toBe(true);
+      expect(frame.some(r => !r.fill)).toBe(true);
     }
   });
 

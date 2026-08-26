@@ -1873,31 +1873,47 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
 }
 
 /**
- * The bake, played back: the same open runs, thinner and brighter, drawn from
- * the buffers rather than from the world.
+ * The bake, played back: the same runs, drawn from the buffers rather than from
+ * the world.
  *
  * Nothing about this consults the version on screen. That is the entire point —
  * if it disagrees with the outline underneath it at the moment it arrives, the
  * bake and the editor disagree, and it is the bake the game will get.
+ *
+ * Two lines, because there are two kinds of run and they mean different things.
+ * The set is thinner and brighter than the editor's own answer sitting under
+ * it, so the two can be told apart where they differ. A floor is in no set: it
+ * gets the line an unselected floor gets standing still, so that a moving one
+ * reads as the same shape it was drawn as rather than as a piece of outline in
+ * the one colour that means outline.
  */
 function replay(ctx: CanvasRenderingContext2D, view: View, frame: Frame): void {
   if (frame.length === 0) return;
 
-  ctx.beginPath();
+  const stroke = (runs: Frame, colour: string, width: number): void => {
+    if (runs.length === 0) return;
 
-  for (const run of frame) {
-    run.points.forEach((p, i) => {
-      const q = toScreen(view, p);
+    ctx.beginPath();
 
-      if (i === 0) ctx.moveTo(q.x, q.y);
-      else ctx.lineTo(q.x, q.y);
-    });
-  }
+    for (const run of runs) {
+      run.points.forEach((p, i) => {
+        const q = toScreen(view, p);
 
-  ctx.strokeStyle = theme.replay;
-  ctx.lineWidth = 1.25;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
+        if (i === 0) ctx.moveTo(q.x, q.y);
+        else ctx.lineTo(q.x, q.y);
+      });
+    }
+
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  };
+
+  // The floors first, so the set draws over them where they meet — which is
+  // the order they stand in, and the order the 3D view draws them in too.
+  stroke(frame.filter(r => r.fill), theme.level, 0.5);
+  stroke(frame.filter(r => !r.fill), theme.replay, 1.25);
 }
 
 /** What has been laid down so far, and the band out to the cursor. */

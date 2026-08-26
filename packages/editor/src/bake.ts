@@ -171,6 +171,14 @@ export interface Run {
    * the CSG ever sees both. See `cornering` in `geometry.ts`.
    */
   corner: boolean[]
+  /**
+   * A floor's ring rather than a share of the outline. See `Track.fill`.
+   *
+   * It rides on the run for the same reason the corner flags do: what to build
+   * on a set of points is not something a reader should be working out again
+   * from the ids, and the one place that knows is the one that made them.
+   */
+  fill: boolean
 }
 
 /** The set at one instant, ordered so that two evaluations can be compared and
@@ -1166,7 +1174,7 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
 
   return boundaryRuns(subject, others, ground([subject, ...others]))
-    .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence }));
+    .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence, fill: false }));
 }
 
 /**
@@ -1185,6 +1193,7 @@ function filling(it: Contributed): Frame {
     .filter(ring => ring.length >= 3)
     .map((ring, r) => ({
       id: it.id,
+      fill: true,
       points: [...ring, ring[0]],
       corner: ring.map(() => true).concat(true),
       whence: ring
@@ -1209,7 +1218,13 @@ function everything(at: readonly Contributed[]): Frame {
   // track put it, which is the order `sample` reads them in.
   return [
     ...pieces(live(EMPTY_LIVE, at).set)
-      .map(p => ({ id: p.source, points: p.points, corner: p.corner, whence: p.whence })),
+      .map(p => ({
+        id: p.source,
+        points: p.points,
+        corner: p.corner,
+        whence: p.whence,
+        fill: false,
+      })),
     ...at.filter(it => it.kind === 'floor').flatMap(filling),
   ].sort((p, q) => p.id - q.id);
 }
@@ -1244,6 +1259,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     points: r.points.map(q => unplace(frames.get(r.id)!, q)),
     corner: r.corner,
     whence: r.whence,
+    fill: r.fill,
   }));
 
   return { frame, table, world, out, fade, t };
@@ -2359,6 +2375,7 @@ function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
       id: run.id,
       corner: run.corner,
       whence: run.whence,
+      fill: run.fill,
       points: run.points.map((p, j) => {
         const solved = crossing(origins[j], ends);
 
