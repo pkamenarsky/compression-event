@@ -33,6 +33,7 @@ import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
 import { SCALE, renderer } from './render';
+import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
 import {
   SoundHandle,
   drone,
@@ -55,11 +56,21 @@ const SPEED = 10;
 const GRIP = 30;
 const DRAG = 8;
 
-/** Seconds a version stands before the next one arrives, and how long the
- * arriving takes. The first is the pressure the whole game is made of; the
- * second is only how long the picture takes. */
+/**
+ * Seconds from one version arriving to the next, which is the pressure the
+ * whole game is made of.
+ *
+ * The whole beat, the shift included — not the standing-still part of it. A
+ * clock that stopped for the length of every shift would make the first beat
+ * shorter than all the others and put the escalation leading up to one a shift
+ * out of step with it, growing worse the longer the level ran.
+ */
 const HOLD = 5;
-const SHIFT = 1;
+
+/** How long the arriving takes, and on what curve: the editor's, because it is
+ * one motion and it should look the same from either side of it. */
+const SHIFT = REPLAY_MS / 1000;
+const CURVE = EASINGS[REPLAY_EASE];
 
 /** How near a thing has to be to be named, and to be taken. */
 const NAMED = 3.5;
@@ -211,7 +222,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const compress = (to: number): void => {
     if (to < 0 || to >= world.versions.length) return;
 
-    clock = HOLD;
+    // A beat that ran over keeps its overshoot, so the beats do not creep by a
+    // frame apiece; one cut short by a pickup gets a whole one, which is what
+    // being cut short by a pickup is for.
+    clock = HOLD + Math.min(0, clock);
 
     // Backwards or forwards, a shift is a walk from where the level is to
     // where it is going, and the bake reads it the same way either round. What
@@ -240,7 +254,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const walked = (): void => {
     if (shifting === null) return;
 
-    const t = Math.min(shifting / SHIFT, 1);
+    const t = CURVE(Math.min(shifting / SHIFT, 1));
     const at = leg.from + (leg.to - leg.from) * t;
 
     view.walk(Math.min(Math.max(at / spans, 0), 1));
@@ -388,6 +402,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     if (running && !say.busy()) {
       stepped(dt);
 
+      // Through the shift as well, so that the beat is `HOLD` and not `HOLD`
+      // plus however long the picture happens to take.
+      clock -= dt;
+
       if (shifting !== null) {
         shifting += dt;
 
@@ -403,13 +421,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
           walked();
         }
       }
-      else {
-        clock -= dt;
-
-        if (clock <= 0) {
-          if (version + 1 < world.versions.length) compress(version + 1);
-          else clock = HOLD;
-        }
+      else if (clock <= 0) {
+        if (version + 1 < world.versions.length) compress(version + 1);
+        else clock = HOLD;
       }
 
       const found = nearest();

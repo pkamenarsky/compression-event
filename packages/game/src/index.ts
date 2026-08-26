@@ -6,4 +6,5 @@ export * from './play';
 export * from './still';
 export * from './walls';
 export * from './render';
+export * from './replay';
 export * from './world';
