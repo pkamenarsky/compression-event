@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { OpSubtract, Shape, combine, contains, shapeArea, simplify } from './geometry';
+import { OpSubtract, Shape, combine, contains, intersect, shapeArea, simplify } from './geometry';
 import {
   TOP,
   Resolved,
@@ -920,9 +920,13 @@ describe('what a click lands on', () => {
     const items = resolveAt(g.world, 0);
     const shown = occupying(g.world, 0, items, [])[0];
 
-    // The overlap, and nothing of the 200 units of floor outside the room.
-    expect(shapeArea(shown.floor)).toBeCloseTo(50 * 50, 6);
+    // Handed over whole, because the canvas clips it to `shape` for free.
+    expect(shapeArea(shown.floor)).toBeCloseTo(200 * 200, 6);
     expect(shapeArea(shown.shape)).toBeCloseTo(100 * 100, 6);
+
+    // The overlap, and nothing of the 200 units of floor outside the room:
+    // what the two of them say together, and what ends up drawn.
+    expect(shapeArea(intersect(shown.shape, shown.floor))).toBeCloseTo(50 * 50, 6);
 
     // And it is paint, so it picks nothing the group does not pick anyway.
     expect(hitting(g.world, 0, items, [], { x: 75, y: 75 })).toEqual([g.id]);
@@ -981,7 +985,15 @@ describe('what a click lands on', () => {
     const g = grouped(world, 0, ids, TOP)!;
     const shown = occupying(g.world, 0, resolveAt(g.world, 0), [])[0];
 
-    expect(shapeArea(shown.floor)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+    // The hole is `shape`'s, so the floor keeps it by being drawn inside it.
+    // A shut group draws no pillar over the gap, so floor stippled across it
+    // would say there is floor where a click falls straight through.
+    expect(shapeArea(intersect(shown.shape, shown.floor))).toBeCloseTo(100 * 100 - 20 * 20, 6);
+
+    // Which is the one place this parts company with a replay's clip: that one
+    // runs a moving floor under a pillar, because a replay draws the pillar.
+    expect(shapeArea(bounding(g.world, 0, resolveAt(g.world, 0), []).get(g.id)!))
+      .toBeCloseTo(100 * 100, 6);
   });
 
   test('and a courtyard the rooms left themselves is as empty as the outside', () => {

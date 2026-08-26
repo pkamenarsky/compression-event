@@ -36,7 +36,6 @@ import {
   Shape,
   contains,
   erode,
-  intersect,
   isCCW,
   keeping,
   simplify,
@@ -1179,12 +1178,15 @@ export interface Occupied {
    */
   shape: Shape
   /**
-   * The floor under it: the group's floor union, clipped to `shape`.
+   * The group's floor union, whole.
    *
-   * Clipped because a floor is drawn *inside* the level, flat underfoot, and a
-   * group's floor running out past the walls it belongs to would draw floor
-   * where the group is not. Nothing is picked by it — it is inside `shape`
-   * by construction — it is only what the group is painted with.
+   * It has to end up drawn inside `shape` — a floor running out past the walls
+   * it belongs to would put floor where the group is not — but it is handed
+   * over uncut, because the one thing that wants it is painting it and a
+   * canvas clips for free. Intersecting here would be a boolean per redraw to
+   * work out a boundary nothing asks a question about: nothing is picked by a
+   * floor, and where it is cut short the group's own outline is already drawn
+   * along the cut.
    */
   floor: Shape
 }
@@ -1234,22 +1236,22 @@ export function occupying(
 
   const out: Occupied[] = [];
 
-  const under = (shape: Shape, floor: Shape): Shape =>
-    shape.length === 0 || floor.length === 0 ? [] : intersect(shape, floor);
-
   for (const [id, side] of sides) {
     const level = side.get('level') ?? [];
     const solid = side.get('solid') ?? [];
     const floor = side.get('floor') ?? [];
 
     if (level.length === 0) {
-      out.push({ id, kind: 'solid', shape: solid, floor: under(solid, floor) });
+      out.push({ id, kind: 'solid', shape: solid, floor });
       continue;
     }
 
-    const shape = solid.length === 0 ? level : subtract(level, solid);
-
-    out.push({ id, kind: 'level', shape, floor: under(shape, floor) });
+    out.push({
+      id,
+      kind: 'level',
+      shape: solid.length === 0 ? level : subtract(level, solid),
+      floor,
+    });
   }
 
   return out;

@@ -1767,8 +1767,22 @@ function groups(
     // has already said that, and saying it twice puts a second heavy line
     // inside the first. The edge is here because the stipple needs one — a
     // pattern with nothing to stop it frays wherever the shape ends.
+    //
+    // Clipped rather than cut: a floor is drawn inside the group and the group
+    // has just drawn its own outline along every edge the cut would follow, so
+    // the boolean that used to work that boundary out was paying to redraw a
+    // line already on screen. It cost the line underneath, too — the floor's
+    // own 0.5 stroke ran back over a picked group's heavy one wherever the two
+    // agreed, and a clipped edge has no stroke to do it with.
     if (g.floor.length !== 0) {
+      ctx.save();
+      ctx.beginPath();
+
+      for (const ring of g.shape) trace(ctx, view, ring);
+
+      ctx.clip('evenodd');
       outlined(ctx, view, g.floor, 'floor', false, here, theme.groupFill);
+      ctx.restore();
     }
   }
 }
