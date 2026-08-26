@@ -458,7 +458,7 @@ const shadowVertex = /* glsl */ `
 /** Everything a fade of `d` — 0 in the middle, 1 at the edge — has in common,
  * whatever shape the edge is. */
 const fade = /* glsl */ `
-  void cast(float d) {
+  void shed(float d) {
     if (d > 1.0) discard;
     if (1.0 - smoothstep(0.0, 1.0, d) < bayerDither(gl_FragCoord.xy)) discard;
 
@@ -473,7 +473,7 @@ const roundShadow = /* glsl */ `
   ${fade}
 
   void main() {
-    cast(distance(vUv, vec2(0.5)) * 2.0);
+    shed(distance(vUv, vec2(0.5)) * 2.0);
   }
 `;
 
@@ -486,6 +486,6 @@ const boxyShadow = /* glsl */ `
   void main() {
     vec2 off = abs(vUv - vec2(0.5)) * 2.0;
 
-    cast(max(off.x, off.y));
+    shed(max(off.x, off.y));
   }
 `;
