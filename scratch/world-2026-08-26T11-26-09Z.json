@@ -1,0 +1,365 @@
+{
+  "format": 5,
+  "tool": "point",
+  "currentVersion": 1,
+  "selection": [],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": -584.8671875,
+    "y": -468.671875,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 21,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": 32,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 32,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 20,
+              "at": {
+                "x": -78.41756465517241,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 19,
+              "at": {
+                "x": -87.45177801724138,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 18,
+              "at": {
+                "x": -99.93696120689654,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -288,
+                "y": 64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -320,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 15,
+              "at": {
+                "x": -232.41783405172413,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 16,
+              "at": {
+                "x": -223.90113146551724,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 17,
+              "at": {
+                "x": -213.85533405172413,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": [
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  3,
+                  {
+                    "x": -32,
+                    "y": 0
+                  }
+                ],
+                [
+                  2,
+                  {
+                    "x": 576,
+                    "y": 0
+                  }
+                ],
+                [
+                  1,
+                  {
+                    "x": 576,
+                    "y": 0
+                  }
+                ],
+                [
+                  15,
+                  {
+                    "x": 143.31627155172413,
+                    "y": 0
+                  }
+                ],
+                [
+                  16,
+                  {
+                    "x": 157.25269396551724,
+                    "y": 0
+                  }
+                ],
+                [
+                  17,
+                  {
+                    "x": 173.69127155172413,
+                    "y": 0
+                  }
+                ],
+                [
+                  18,
+                  {
+                    "x": 325.3197737068965,
+                    "y": 0
+                  }
+                ],
+                [
+                  19,
+                  {
+                    "x": 349.0416217672414,
+                    "y": 0
+                  }
+                ],
+                [
+                  20,
+                  {
+                    "x": 366.20662715517244,
+                    "y": 0
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": 320,
+                  "y": 384
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            5,
+            {
+              "transform": {
+                "translation": {
+                  "x": -0.09375,
+                  "y": 90.75390625
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": -0.09375,
+                  "y": 90.75390625
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  16,
+                  {
+                    "x": 2.6484375,
+                    "y": 160
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": [
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": -0.36328125,
+                  "y": -214.94140625
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  19,
+                  {
+                    "x": -5.58984375,
+                    "y": -160
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}
