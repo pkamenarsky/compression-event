@@ -103,7 +103,7 @@ export interface View {
 export const defaultView: View = {
   x: 0,
   y: 0,
-  zoom: 1,
+  zoom: 0.25,
   width: 0,
   height: 0,
   dpr: 1,
