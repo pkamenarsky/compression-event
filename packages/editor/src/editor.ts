@@ -25,6 +25,8 @@ import {
   Version,
   VersionId,
   World,
+  Figure,
+  FIGURES,
   GroupId,
   coarser,
   finer,
@@ -72,6 +74,7 @@ export function editor(initial: World): VNode {
             s.settings,
             s.view,
             s.tool,
+            s.figure,
             s.selection,
             s.inside,
             s.currentVersion,
@@ -94,6 +97,7 @@ export function editor(initial: World): VNode {
 
           breadcrumb(s.world, s.inside, update),
           toolbar(s.tool, update),
+          figureBar(s.tool, s.figure, update),
           versionStrip(s.world, s.currentVersion, update),
           bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
@@ -588,6 +592,72 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
+/**
+ * What the create tool draws, in a row beside it while it is up.
+ *
+ * Beside rather than under: it is a second question about the same tool, and a
+ * column of seven buttons where four of them only sometimes mean anything is a
+ * column that has to be read every time. Out of the way entirely when another
+ * tool is up, since then there is no question to answer.
+ */
+const FIGURE_ICONS: Record<Figure, VNode[]> = {
+  rect: [rect({ x: 3.5, y: 5.5, width: 17, height: 13 })],
+
+  ngon: [path({ d: 'M12 3 L20.6 8 V17 L12 21.5 L3.4 17 V8 Z' })],
+
+  // The pen's own icon, since the polyline is what the tool did before there
+  // was anything to choose between.
+  polyline: [
+    path({ d: 'M3.5 18.5 L9 8 L15 15 L20.5 5.5' }),
+    rect({ x: 1.5, y: 16.5, width: 4, height: 4 }),
+    rect({ x: 18.5, y: 3.5, width: 4, height: 4 }),
+  ],
+};
+
+function figureBar(tool: Value<Tool>, figure: Value<Figure>, update: Update): VNode {
+  const width = FIGURES.length * BUTTON + (FIGURES.length - 1) * GAP + 2 * PADDING;
+  const height = BUTTON + 2 * PADDING;
+
+  // Level with the create button, which is where the question it answers is
+  // being asked from.
+  const row = TOOLS.findIndex(spec => spec.id === 'create');
+
+  return show(
+    () => tool() === 'create',
+    svg(
+      {
+        width,
+        height,
+        viewBox: `0 0 ${width} ${height}`,
+        style: {
+          position: 'absolute',
+          left: `${12 + BUTTON + 2 * PADDING + 8}px`,
+          top: `${12 + row * (BUTTON + GAP)}px`,
+          filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
+        },
+      },
+      [
+        rect({
+          x: 0.5,
+          y: 0.5,
+          width: width - 1,
+          height: height - 1,
+          rx: 8,
+          fill: theme.panel,
+          stroke: theme.border,
+        }),
+
+        ...FIGURES.map((id, index) => button(
+          FIGURE_ICONS[id],
+          { x: PADDING + index * (BUTTON + GAP), y: PADDING },
+          () => figure() === id,
+          () => update(s => ({ ...s, figure: id })),
+        )),
+      ],
+    ),
+  );
+}
+
 /** The tools, stacked the way Illustrator stacks them. */
 function toolbar(tool: Value<Tool>, update: Update): VNode {
   const width = BUTTON + 2 * PADDING;
@@ -627,14 +697,28 @@ function toolButton(
   tool: Value<Tool>,
   update: Update,
 ): VNode {
-  const active = () => tool() === spec.id;
-  const y = PADDING + index * (BUTTON + GAP);
+  return button(
+    spec.icon,
+    { x: PADDING, y: PADDING + index * (BUTTON + GAP) },
+    () => tool() === spec.id,
+    () => update(s => ({ ...s, tool: spec.id })),
+  );
+}
 
+/** One square button with a 24×24 icon in it, filled when it is the one that
+ * is on. Both bars are made of these, which is what makes the second read as
+ * more of the first rather than as another piece of chrome. */
+function button(
+  icon: VNode[],
+  at: { x: number, y: number },
+  active: () => boolean,
+  onclick: () => void,
+): VNode {
   return g(
     {
-      transform: `translate(${PADDING}, ${y})`,
+      transform: `translate(${at.x}, ${at.y})`,
       style: { cursor: 'pointer' },
-      onclick: () => update(s => ({ ...s, tool: spec.id })),
+      onclick,
     },
     [
       rect({
@@ -653,7 +737,7 @@ function toolButton(
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
         },
-        spec.icon,
+        icon,
       ),
     ],
   );

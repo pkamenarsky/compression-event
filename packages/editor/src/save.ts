@@ -26,6 +26,7 @@ import {
   Polygon,
   PolygonId,
   Settings,
+  Figure,
   Tool,
   Transform,
   Version,
@@ -36,6 +37,10 @@ import {
 } from './types';
 
 /**
+ * 10: the create tool draws a rectangle, an n-gon or a polyline, and which of
+ * them goes in the file beside the tool. A format-9 file has no shape in it,
+ * which is the polyline: it was the only thing that tool could draw.
+ *
  * 9: there is no setting for whether to snap. Everything the editor does lands
  * on the grid and Ctrl held is what says otherwise, so a file that carried a
  * `snapToGrid` of either value reads the same way: with the grid on and the
@@ -73,7 +78,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 9;
+export const FORMAT = 10;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -81,6 +86,8 @@ const OLDEST = 3;
 export interface Saved {
   format: number
   tool: Tool
+  /** Absent before format 10, where the create tool drew polylines only. */
+  figure?: Figure
   currentVersion: VersionId
   /** The picked polygons. Corners are not written: which of them were picked
    * is about the gesture in progress rather than about the world. */
@@ -129,6 +136,7 @@ export function saved(state: EditorState): Saved {
   return {
     format: FORMAT,
     tool: state.tool,
+    figure: state.figure,
     currentVersion: state.currentVersion,
     selection: state.selection.polygons,
     artefacts: state.selection.artefacts,
@@ -190,6 +198,7 @@ export function restored(file: Saved): EditorState {
     // A format-7 file's `path` was the pen, which is now `create`. Nothing
     // else about the tools has ever been renamed.
     tool: (file.tool as string) === 'path' && file.format < 8 ? 'create' : file.tool,
+    figure: file.figure ?? 'polyline',
 
     // None of these are in the file: a transition that is not running, whether
     // a panel is open, and whether someone is standing inside it. Opening a

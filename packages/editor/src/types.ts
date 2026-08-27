@@ -56,6 +56,24 @@ export function toStep(n: number, step: number): number {
 
 export type Tool = 'point' | 'create' | 'artefact' | 'polygon' | 'path';
 
+/**
+ * What the create tool draws.
+ *
+ * A tool rather than four, because they all answer the same question — what
+ * new shape goes here — and a toolbar that spends a row on each would be a
+ * toolbar about shapes rather than about what one is doing. The kind is picked
+ * beside the tool once it is up, the way a brush picks its size.
+ */
+export type Figure = 'polyline' | 'rect' | 'ngon';
+
+export const FIGURES: Figure[] = ['rect', 'ngon', 'polyline'];
+
+/** Sides an n-gon can have. Three is the fewest that closes; past a couple of
+ * dozen the corners are inside a pixel of each other and it is a circle drawn
+ * the expensive way. */
+export const NGON_MIN = 3;
+export const NGON_MAX = 24;
+
 // -----------------------------------------------------------------------------
 // View — the window onto the world
 //
@@ -696,6 +714,8 @@ export interface EditorState {
   settings: Settings
   view: View
   tool: Tool
+  /** What the create tool draws, which is only about that tool. */
+  figure: Figure
 
   /** A version switch being watched go by, rather than jumped. Null between
    * them, which is nearly always. */
@@ -741,6 +761,7 @@ export function initialState(world: World): EditorState {
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
+    figure: 'polyline',
     replay: null,
     preview: false,
     roaming: false,

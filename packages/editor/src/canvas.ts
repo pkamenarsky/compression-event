@@ -5,7 +5,7 @@ import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, artefactsDuring, replayed } from './bake';
-import { Ring, Shape } from './geometry';
+import { Ring, Shape, ngon } from './geometry';
 import {
   Input,
   blurred,
@@ -76,6 +76,9 @@ import { theme } from './theme';
 import {
   ARTEFACTS,
   ArtefactId,
+  FIGURES,
+  NGON_MAX,
+  NGON_MIN,
   EMPTY_TRANSFORM,
   ArtefactType,
   EditorState,
@@ -89,6 +92,7 @@ import {
   Replay,
   Selection,
   Settings,
+  Figure,
   zoomedAt,
   Tool,
   Transform,
@@ -158,6 +162,7 @@ export function worldCanvas(
   settings: Value<Settings>,
   view: Value<View>,
   tool: Value<Tool>,
+  figure: Value<Figure>,
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
   currentVersion: Value<VersionId>,
@@ -487,6 +492,10 @@ export function worldCanvas(
 
       const from = at(e);
 
+      // Where the drag started on screen, for the one gesture that is about
+      // how far the hand has gone rather than about where it has got to.
+      const down = { x: e.clientX, y: e.clientY };
+
       // The layer as it stood when the key went down. A transform written into
       // this version replaces whatever it held, so the gesture recomputes from
       // here rather than composing onto its own last frame.
@@ -521,17 +530,15 @@ export function worldCanvas(
        * Where the cursor is taken to be, which is the whole of how these
        * gestures snap.
        *
-       * One place rather than one rule per transform, because every one of
-       * them is a reading of two points about a pivot: land the second of them
-       * somewhere the grid allows and the transform lands there with it. What
-       * "somewhere the grid allows" means is the one thing that differs — a
-       * move is a step of whole cells, a turn is five degrees, an erosion is a
-       * cell of depth, and a squash is the cursor itself on a grid dot.
+       * One place rather than one rule per transform, because a move, a turn
+       * and an erosion are all a reading of two points about a pivot: land the
+       * second of them somewhere the grid allows and the transform lands there
+       * with it. What "somewhere the grid allows" means is the one thing that
+       * differs — a move is a step of whole cells, a turn is five degrees, an
+       * erosion is a cell of depth.
        *
-       * A squash is the loose one, and honestly so: the corners land on the
-       * grid only when the pivot is already on it. What it buys either way is
-       * that the same drag is the same factor twice running, which free-hand
-       * scaling never was.
+       * A scale is not in here at all. It reads the drag rather than the
+       * cursor, and where the cursor happens to be says nothing about it.
        */
       const locked = axisLock(() => SLOP / view().zoom);
 
@@ -552,6 +559,22 @@ export function worldCanvas(
             : { x: from.x + toStep(step.x, g), y: from.y + toStep(step.y, g) };
         }
 
+        // A depth, read off whichever way the hand went furthest. Both, since
+        // a depth is one number and a hand pulling at a diagonal has not said
+        // which of its two components it meant — so the bigger one is taken as
+        // the one it meant, and the other is drift.
+        //
+        // Down and left eat into the shape, up and right give it back, which
+        // is one rule with the scale: right and up make the thing bigger,
+        // left and down make it smaller, whichever gesture is being used to
+        // say so.
+        if (code === 'KeyE') {
+          const d = { x: from.x - to.x, y: to.y - from.y };
+          const deep = Math.abs(d.x) >= Math.abs(d.y) ? d.x : d.y;
+
+          return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
+        }
+
         if (free(e)) return to;
 
         // Five degrees ordinarily and forty-five with Alt: the second is the
@@ -559,17 +582,57 @@ export function worldCanvas(
         // enough to aim anything else with.
         if (code === 'KeyR') return turnedAbout(pivot, from, to, e.altKey ? EIGHTH : TURN);
 
-        // A depth, read off the vertical alone, so only that is quantised: the
-        // sideways drift of a hand pulling downward is not part of what was
-        // asked for and never was.
-        if (code === 'KeyE') return { x: to.x, y: from.y + toStep(to.y - from.y, g) };
-
         return onGrid(to, g);
+      };
+
+      /**
+       * What a scale multiplies by, out of how far the drag has gone on screen.
+       *
+       * Not out of where the cursor is against the pivot, which is what this
+       * was and what made it unusable: that reading is a quotient of two
+       * distances, so grabbing anywhere near the pivot divides by nearly
+       * nothing and the room is suddenly a mile wide. Nothing about the drag
+       * says that is what was asked for — it is the arithmetic failing, at
+       * exactly the place a hand is most likely to start from.
+       *
+       * A drag is a distance, and what a scale wants is a factor, so the one
+       * becomes the other through an exponent: no drag is 1:1, `DOUBLING`
+       * pixels either way is twice or half, and twice that is four times or a
+       * quarter. Symmetric, unbounded in both directions and never singular —
+       * the same pixels always mean the same factor, wherever the hand
+       * happened to start.
+       *
+       * Right and up grow, left and down shrink — the same rule the erosion
+       * reads its depth by. Up rather than down for the vertical, because a
+       * thing being made bigger is a thing being raised, and every slider and
+       * every handle in every editor agrees about that.
+       */
+      const scaling = (e: PointerEvent): Point => {
+        const d = { x: e.clientX - down.x, y: down.y - e.clientY };
+        const by = (n: number): number => Math.pow(2, n / DOUBLING);
+
+        // One factor for both axes with Alt, off whichever way the hand went
+        // furthest. Without it the two axes are independent, which is the
+        // reading worth having: a room made wider and shallower is one gesture
+        // rather than two.
+        const f = e.altKey
+          ? by(Math.abs(d.x) >= Math.abs(d.y) ? d.x : d.y)
+          : null;
+
+        const out = f === null ? { x: by(d.x), y: by(d.y) } : { x: f, y: f };
+
+        // Eighths, which is where the factors worth having live: a half, three
+        // quarters, one and a half, twice. Below an eighth is a shape squashed
+        // to nothing, and it stops there rather than passing through zero.
+        return free(e)
+          ? out
+          : { x: Math.max(STEP, toStep(out.x, STEP)), y: Math.max(STEP, toStep(out.y, STEP)) };
       };
 
       const end = yield* select({
         moving: pointerMoved(e => {
           const to = aim(e);
+          const factor = scaling(e);
 
           update(s => {
             let world = s.world;
@@ -579,13 +642,13 @@ export function worldCanvas(
 
               world = withEdit(world, v, id, {
                 ...edit,
-                transform: mode(
-                  edit.transform,
-                  unplace(m, pivot),
-                  unplace(m, from),
-                  unplace(m, to),
-                  e.altKey,
-                ),
+                transform: mode(edit.transform, {
+                  pivot: unplace(m, pivot),
+                  from: unplace(m, from),
+                  to: unplace(m, to),
+                  alt: e.altKey,
+                  factor,
+                }),
               });
             }
 
@@ -677,6 +740,90 @@ export function worldCanvas(
           s.world,
         );
       });
+    }
+
+    /**
+     * A rectangle, dragged from one corner to the other.
+     *
+     * A drag rather than a sequence of clicks, because a rectangle is two
+     * points and a drag is the gesture that says two points at once. The
+     * corners snap like anything else, which is most of why the tool is worth
+     * having: four right angles on the grid, in one movement.
+     */
+    function* rectangling(from: PointerEvent): Op<void> {
+      const a = at(from, true);
+
+      const end = yield* forming(e => {
+        const b = at(e, true);
+
+        if (a.x === b.x || a.y === b.y) return null;
+
+        return {
+          ring: [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }],
+          label: `${Math.round(Math.abs(b.x - a.x))} × ${Math.round(Math.abs(b.y - a.y))}`,
+        };
+      });
+
+      if (end !== null) commit(end.ring);
+    }
+
+    /**
+     * A regular polygon, dragged out from its centre.
+     *
+     * Two numbers off the one drag, on the two axes: rightward is how big, and
+     * upward is how many sides. Not a radius and an angle, which is the other
+     * way a drag could say this — the angle would be spent saying something
+     * nobody wants said continuously, and the count would then have nowhere to
+     * come from but the keyboard.
+     *
+     * Leftward and downward mean the same as rightward and upward, so a hand
+     * that started the drag going the wrong way is not stuck: it is the size
+     * of the movement that is being read, not its direction.
+     */
+    function* ngoning(from: PointerEvent): Op<void> {
+      const centre = at(from, true);
+      const down = { x: from.clientX, y: from.clientY };
+
+      const end = yield* forming(e => {
+        const g = settings().gridSize;
+        const wide = Math.abs(at(e).x - centre.x);
+        const radius = free(e) ? wide : Math.max(g, toStep(wide, g));
+        const sides = Math.min(
+          NGON_MAX,
+          Math.max(NGON_MIN, NGON_MIN + Math.round(Math.abs(down.y - e.clientY) / PER_SIDE)),
+        );
+
+        return radius <= 0
+          ? null
+          : { ring: ngon(centre, radius, sides), label: `${sides} · r ${Math.round(radius)}` };
+      });
+
+      if (end !== null) commit(end.ring);
+    }
+
+    /**
+     * The body of a drag that shapes a polygon: `shape` says what is under the
+     * cursor now, the canvas draws it, and letting go commits whatever was
+     * last drawn.
+     *
+     * One gesture for the two of them because the difference between them is
+     * exactly one function, and everything else — the preview, the escape, the
+     * panning mid-drag, the nothing-yet case — is not about which shape it is.
+     */
+    function* forming(shape: (e: PointerEvent) => Forming | null): Op<Forming | null> {
+      const end = yield* select({
+        moving: pointerMoved(e => setLocal({ ...local(), forming: shape(e) })),
+        panning: alongside(),
+        done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
+        lost: blurred(),
+      });
+
+      const made = local().forming;
+
+      setLocal({ ...local(), forming: null });
+
+      return end.tag === 'done' ? made : null;
     }
 
     /**
@@ -1646,6 +1793,12 @@ export function worldCanvas(
           // A half-drawn polygon belongs to the pen. Leaving it on screen after
           // switching away would leave it waiting for clicks that now mean
           // something else entirely — so the pen is told, and drops it itself.
+          // The same for the figure: a polyline half laid down when the tool
+          // is told to draw rectangles is a draft nothing will ever finish.
+          effect(figure, f => {
+            if (f !== 'polyline' && local().draft !== null) abandoned.emit();
+          }),
+
           effect(tool, t => {
             if (t !== 'create' && local().draft !== null) abandoned.emit();
             if (t !== 'path' && local().laying !== null) abandoned.emit();
@@ -1722,6 +1875,15 @@ export function worldCanvas(
 
               if (n >= 1 && n <= ARTEFACTS.length) retypeArtefact(ARTEFACTS[n - 1]);
             }
+            else if (tool() === 'create') {
+              // The same digits the other two tools use for the same kind of
+              // question, in the order the buttons are drawn in.
+              const n = Number(e.code.match(/^Digit([1-9])$/)?.[1] ?? NaN);
+
+              if (n >= 1 && n <= FIGURES.length) {
+                update(s => ({ ...s, figure: FIGURES[n - 1] }));
+              }
+            }
           }
           else if (started.tag === 'press' && started.value.target === el) {
             const e = started.value;
@@ -1745,6 +1907,17 @@ export function worldCanvas(
               // A drag that started on something is that thing being moved: a
               // corner under the point tool, a polygon under the polygon one.
               // Anywhere else it is a marquee.
+              // A rectangle and an n-gon are one drag each: the whole of what
+              // they are is where it started and where it got to. The polyline
+              // is the odd one out and takes clicks, which is why it is the
+              // one that owns the click branch below.
+              if (tool() === 'create') {
+                if (figure() === 'rect') yield* rectangling(e);
+                else if (figure() === 'ngon') yield* ngoning(e);
+
+                continue;
+              }
+
               if (tool() === 'point' || tool() === 'path') {
                 // A path point before a corner, the same way a click reads
                 // them: what is drawn on top is what the hand is aiming at.
@@ -1833,7 +2006,7 @@ export function worldCanvas(
               if (twice(e)) entering(e);
               else picking(e);
             }
-            else if (tool() === 'create') {
+            else if (tool() === 'create' && figure() === 'polyline') {
               yield* drawing(e);
             }
             else if (tool() === 'path') {
@@ -1873,6 +2046,19 @@ interface Draft {
 }
 
 /**
+ * A shape being dragged out, and what it currently comes to.
+ *
+ * The label is not decoration. Both of these gestures read something off an
+ * axis that has nothing on it to read against — how many sides, how far across
+ * — and a number by the cursor is the whole of what says which of them the
+ * hand is moving.
+ */
+interface Forming {
+  ring: Ring
+  label: string
+}
+
+/**
  * A measuring path being laid down.
  *
  * `id` is the path it will be written back to, which is null for a new one and
@@ -1890,6 +2076,9 @@ interface Local {
   draft: Draft | null
   /** The open measuring path, if one is being laid down. */
   laying: Walk | null
+  /** The rectangle or n-gon under the cursor mid-drag, before it is committed.
+   * A ring rather than a shape: what is being drawn is one outline. */
+  forming: Forming | null
   /** The picked point of a committed path, which is what Backspace takes. Not
    * in the document's selection: a path is not part of the level, and nothing
    * else in the editor has anything to say about one. */
@@ -1909,6 +2098,7 @@ const EMPTY_LOCAL: Local = {
   marquee: null,
   draft: null,
   laying: null,
+  forming: null,
   onPath: null,
   previewing: false,
 };
@@ -1919,15 +2109,31 @@ const EMPTY_LOCAL: Local = {
 
 /** `was` is the transform as it stood when the key went down, so that every
  * move recomputes from there rather than from the last frame. */
-type Mode = (
-  was: Transform,
-  pivot: Point,
-  from: Point,
-  to: Point,
+type Mode = (was: Transform, drag: Aimed) => Transform;
+
+/** The gesture as the transforms read it, in the frame of whatever is being
+ * transformed. */
+interface Aimed {
+  pivot: Point
+  /** Where the cursor was when the key went down, and where it is taken to be
+   * now — already held to an axis, a five-degree step or a cell of depth,
+   * whichever this gesture snaps to. */
+  from: Point
+  to: Point
   /** Whether Alt is held, which is a different reading of the same drag rather
    * than a constraint on it: a scale that was two factors becomes one. */
-  alt: boolean,
-) => Transform;
+  alt: boolean
+  /** What a scale multiplies by, per axis, out of the length of the drag
+   * rather than out of these points. See `scaling`. */
+  factor: Point
+}
+
+/** Screen pixels of drag that double a scale, or halve it going the other way.
+ * About a thumb's width of trackpad. */
+const DOUBLING = 150;
+
+/** What a scale's factor lands on. */
+const STEP = 1 / 8;
 
 /**
  * The same transform, turned by `angle` about `pivot`.
@@ -2011,12 +2217,8 @@ const TURN = Math.PI / 36;
  * only angle most of a level is ever turned by. */
 const EIGHTH = Math.PI / 4;
 
-function ratio(was: number, now: number): number {
-  return Math.abs(was) < 1e-6 || Math.abs(now) < 1e-6 ? 1 : now / was;
-}
-
 const TRANSFORMS: Record<string, Mode> = {
-  KeyT: (t, _pivot, from, to) => ({
+  KeyT: (t, { from, to }) => ({
     ...t,
     translation: {
       x: t.translation.x + to.x - from.x,
@@ -2024,47 +2226,25 @@ const TRANSFORMS: Record<string, Mode> = {
     },
   }),
 
-  KeyR: (t, pivot, from, to) => turned(
+  KeyR: (t, { pivot, from, to }) => turned(
     t,
     pivot,
     Math.atan2(to.y - pivot.y, to.x - pivot.x)
       - Math.atan2(from.y - pivot.y, from.x - pivot.x),
   ),
 
-  /**
-   * Both axes, each from its own share of the drag, and one factor for both
-   * with Alt.
-   *
-   * The free reading is the useful one by a long way — a room is made wider
-   * and shallower in one gesture rather than two — and the price is that a
-   * drag along one axis alone leaves the other alone, so a scale that meant to
-   * be uniform has to be aimed. Alt is that, said explicitly.
-   */
-  KeyS: (t, pivot, from, to, alt) => {
-    if (!alt) {
-      return squashed(
-        t,
-        pivot,
-        ratio(from.x - pivot.x, to.x - pivot.x),
-        ratio(from.y - pivot.y, to.y - pivot.y),
-      );
-    }
-
-    const f = ratio(
-      Math.hypot(from.x - pivot.x, from.y - pivot.y),
-      Math.hypot(to.x - pivot.x, to.y - pivot.y),
-    );
-
-    return squashed(t, pivot, f, f);
-  },
+  /** Both axes, each from its own share of the drag — one factor for both
+   * where Alt has already made them one. Where the factors come from is
+   * `scaling`, which is where the whole of the feel of this lives. */
+  KeyS: (t, { pivot, factor }) => squashed(t, pivot, factor.x, factor.y),
 
   // One axis and nothing else, whatever the drag does on the other. `s` reads
   // both, so these are how one of them is said on its own without having to
   // hold the hand still.
-  KeyX: (t, pivot, from, to) => squashed(t, pivot, ratio(from.x - pivot.x, to.x - pivot.x), 1),
-  KeyY: (t, pivot, from, to) => squashed(t, pivot, 1, ratio(from.y - pivot.y, to.y - pivot.y)),
+  KeyX: (t, { pivot, factor }) => squashed(t, pivot, factor.x, 1),
+  KeyY: (t, { pivot, factor }) => squashed(t, pivot, 1, factor.y),
 
-  KeyE: (t, _pivot, from, to) => ({
+  KeyE: (t, { from, to }) => ({
     ...t,
     erosion: t.erosion + to.y - from.y,
   }),
@@ -2141,6 +2321,9 @@ function axisLock(slop: () => number): (e: { altKey: boolean }, d: Point) => Poi
     return axis === 'x' ? { x: d.x, y: 0 } : { x: 0, y: d.y };
   };
 }
+
+/** Screen pixels of upward drag that add a side to an n-gon. */
+const PER_SIDE = 22;
 
 /** How much of a zoom one pixel of wheel is worth, as an exponent. A notch of
  * a mouse wheel is about 100 of them, which comes to a fifth either way. */
@@ -2365,6 +2548,7 @@ function layers(
 
   if (local.laying !== null) out.push(ctx => laying(ctx, view, local.laying!));
 
+  if (local.forming !== null) out.push(ctx => formed(ctx, view, local.forming!));
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
 
@@ -3089,6 +3273,41 @@ function tape(
  * line at a glance rather than as a dotted one, which is what the fill under a
  * floor already is. */
 const DASH = [6, 4];
+
+/**
+ * The rectangle or n-gon under the cursor, before it is anything.
+ *
+ * Closed, unlike the pen's draft, because it is a whole shape at every moment
+ * of the drag rather than a shape being accumulated: there is nothing here
+ * that is not decided yet except how far the hand goes next. Drawn in the
+ * pen's own colour, since it is the same tool saying the same thing.
+ */
+function formed(ctx: CanvasRenderingContext2D, view: View, it: Forming): void {
+  const points = it.ring.map(p => toScreen(view, p));
+
+  ctx.beginPath();
+  points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+
+  ctx.strokeStyle = theme.draft;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  ctx.beginPath();
+  for (const p of points) {
+    ctx.rect(Math.round(p.x) - 2.5, Math.round(p.y) - 2.5, 5, 5);
+  }
+  ctx.fillStyle = theme.draft;
+  ctx.fill();
+
+  // Over the first corner, which is where the drag started and so the one
+  // place on the shape the cursor is certainly not covering.
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.fillText(it.label, points[0].x + 8, points[0].y - 6);
+}
 
 function marquee(ctx: CanvasRenderingContext2D, view: View, m: Marquee): void {
   const a = toScreen(view, m.a), b = toScreen(view, m.b);

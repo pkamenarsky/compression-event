@@ -130,6 +130,10 @@ describe('save', () => {
 
     expect(back.world.paths.size).toBe(0);
     expect(back.tool).toBe('create');
+
+    // And that tool drew one thing, which is what a file with no figure in it
+    // is saying.
+    expect(back.figure).toBe('polyline');
   });
 
   test('artefacts survive the trip, places and all, and a format-5 file has none', () => {

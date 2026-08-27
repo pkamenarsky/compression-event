@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 import {
   Member,
+  ngon,
   Op,
   OpIntersect,
   OpSubtract,
@@ -1253,5 +1254,39 @@ describe('what counts as a corner', () => {
 
     expect(cornersOf(pillar, [lv(0, rect(-200, -300, 400, 400))]))
       .toEqual([[true, true, true, false, true, true]]);
+  });
+});
+
+
+describe('n-gons', () => {
+  test('every corner is the radius from the centre', () => {
+    for (const sides of [3, 5, 4, 12]) {
+      for (const p of ngon({ x: 10, y: -4 }, 25, sides)) {
+        expect(Math.hypot(p.x - 10, p.y + 4)).toBeCloseTo(25);
+      }
+    }
+  });
+
+  test('a triangle points straight up', () => {
+    const [top] = ngon({ x: 0, y: 0 }, 10, 3);
+
+    expect(top.x).toBeCloseTo(0);
+    expect(top.y).toBeCloseTo(-10);
+  });
+
+  test('a square is a square, on the axes of its centre', () => {
+    const square = ngon({ x: 0, y: 0 }, Math.SQRT2, 4);
+
+    for (const p of square) {
+      expect(Math.abs(p.x)).toBeCloseTo(1);
+      expect(Math.abs(p.y)).toBeCloseTo(1);
+    }
+  });
+
+  test('the corners go round once, in one direction', () => {
+    const ring = ngon({ x: 0, y: 0 }, 10, 6);
+
+    expect(ring).toHaveLength(6);
+    expect(new Set(ring.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`)).size).toBe(6);
   });
 });

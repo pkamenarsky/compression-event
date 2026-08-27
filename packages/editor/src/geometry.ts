@@ -1910,3 +1910,26 @@ function norm(t: number): number {
 
   return x;
 }
+
+// -----------------------------------------------------------------------------
+// Rings that are made rather than drawn
+// -----------------------------------------------------------------------------
+
+/**
+ * A regular polygon: `sides` corners on a circle, the first one straight up.
+ *
+ * Straight up so that a triangle points the way a triangle is drawn, and with
+ * a further eighth of a turn at four sides so that a square is a square rather
+ * than a diamond — at four, and only at four, the corners of a ring starting
+ * at the top land on the diagonals, and a level is built out of squares that
+ * sit on the grid their centre sits on.
+ */
+export function ngon(centre: Point, radius: number, sides: number): Ring {
+  const turn = sides === 4 ? -Math.PI / 4 : 0;
+
+  return Array.from({ length: sides }, (_unused, i) => {
+    const a = -Math.PI / 2 + turn + (i * 2 * Math.PI) / sides;
+
+    return { x: centre.x + radius * Math.cos(a), y: centre.y + radius * Math.sin(a) };
+  });
+}
