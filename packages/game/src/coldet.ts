@@ -31,7 +31,7 @@
 //
 // Everything else is Quake 2's: expand each wall by the player's radius so the
 // player is a point, trace the point against the convex hulls that produces,
-// stop at the first, and slide along it unless two of them arrive at once.
+// stop at the first, turn along it, and trace again with what is left.
 // -----------------------------------------------------------------------------
 
 import { Point, Polygon, PolygonPoint, signedArea } from './world';
@@ -44,10 +44,6 @@ interface Hull {
   /** Counter-clockwise, so the plane normals come out pointing outward. */
   verts: Point[]
   planes: { nx: number, ny: number, d: number }[]
-  /** The original wall's outward normal, which is what a slide is taken
-   * against and what tells two hulls of one wall apart from a corner. */
-  wallNx: number
-  wallNy: number
 }
 
 /**
@@ -141,7 +137,7 @@ function hullOf(
   const planes = planesOf(verts);
   if (planes.length < 3) return null;
 
-  return { verts, planes, wallNx: a.enx, wallNy: a.eny };
+  return { verts, planes };
 }
 
 /** What a trace against one hull found: where it went in, where it would come
@@ -192,11 +188,38 @@ function hit(c: Crossed): boolean {
  * start inside it. */
 const GAP = 1e-4;
 
-/** Two hulls whose walls point the same way are one wall, not a corner. */
-const SAME_WALL = 0.99;
+/** How many times one move may be turned before what is left of it is given
+ * up on. Quake 2's number, for Quake 2's reason: a move that is still finding
+ * new walls after four of them is in a place no amount of turning gets it out
+ * of. */
+const BUMPS = 4;
 
-/** Hits this much of the move apart are the same instant. */
-const TOGETHER = 0.01;
+/** Two planes this alike are one plane, and a long wall's hulls share theirs. */
+const SAME_PLANE = 0.999;
+
+/**
+ * The move turned to run along one of the planes it has met without running
+ * into any of the others, or nothing when there is no such direction.
+ *
+ * Every plane is tried rather than the last one hit, which is the whole of why
+ * a corner is not the same thing as two walls. Sliding along the wall in front
+ * may drive the player into the wall beside them, and sliding along that one
+ * may drive them back into the first — and then there is nowhere to go and the
+ * corner is real. But most pairs are not that: a slot in a wall too narrow to
+ * walk into is met as two walls and a mitre, and one of the three has a slide
+ * that clears all of them. Taking the first plane's answer and stopping if it
+ * failed was what caught the player on the lip of one.
+ */
+function along(move: Point, planes: readonly { nx: number, ny: number }[]): Point | null {
+  for (const plane of planes) {
+    const into = move.x * plane.nx + move.y * plane.ny;
+    const slid = { x: move.x - into * plane.nx, y: move.y - into * plane.ny };
+
+    if (planes.every(other => slid.x * other.nx + slid.y * other.ny >= 0)) return slid;
+  }
+
+  return null;
+}
 
 /**
  * One version's walls, expanded and ready to be walked into.
@@ -275,70 +298,61 @@ export class Hulls {
   }
 
   /**
-   * A move, stopped and slid.
+   * A move, stopped and turned along whatever it meets — Quake 2's slide move,
+   * in two dimensions.
    *
-   * Everything is traced, not just the first thing in the way: two walls
-   * arriving at the same instant is a corner and stops the player dead, where
-   * sliding along either one of them would walk through the other.
+   * A move is traced, cut short at the first thing in the way, turned to run
+   * along it, and then traced *again* with what is left, up to `BUMPS` times.
+   * The second trace is the point: sliding along one wall is how the player
+   * reaches the next one, and a slide that merely stopped at the next one made
+   * every second wall a full stop. Each wall met is kept, and the turn has to
+   * clear all of them at once — see `along`.
+   *
+   * It ends where it is when a turn runs out of directions, or when the
+   * direction left points back the way the move came. That last test is the
+   * one that says a corner is a corner: not that two walls were touched, but
+   * that between them there is nothing forward left to do.
    */
   trace(start: Point, move: Point): Point {
-    const length = Math.hypot(move.x, move.y);
-    if (length < 1e-8) return { ...start };
+    const planes: { nx: number, ny: number }[] = [];
 
-    const end = { x: start.x + move.x, y: start.y + move.y };
-    const hits = [];
+    let at = { ...start };
+    let left = { ...move };
 
-    for (const hull of this.hulls) {
-      const crossed = traced(start, end, hull);
+    for (let bump = 0; bump < BUMPS; bump++) {
+      const length = Math.hypot(left.x, left.y);
+      if (length < 1e-8) break;
 
-      if (hit(crossed)) {
-        hits.push({ frac: crossed.enter, ...crossed, wall: hull });
+      const end = { x: at.x + left.x, y: at.y + left.y };
+      let first: Crossed | null = null;
+
+      for (const hull of this.hulls) {
+        const crossed = traced(at, end, hull);
+
+        if (hit(crossed) && (first === null || crossed.enter < first.enter)) first = crossed;
       }
+
+      if (first === null) return end;
+
+      const safe = Math.max(0, first.enter - GAP / length);
+      const plane = { nx: first.nx, ny: first.ny };
+
+      at = { x: at.x + left.x * safe, y: at.y + left.y * safe };
+      left = { x: left.x * (1 - first.enter), y: left.y * (1 - first.enter) };
+
+      // A long wall is one hull per edge and they share a face, so the same
+      // plane arrives under two names. Kept once, or the list fills with
+      // copies of a wall the player is simply walking along.
+      if (!planes.some(p => p.nx * plane.nx + p.ny * plane.ny > SAME_PLANE)) planes.push(plane);
+
+      const turned = along(left, planes);
+
+      if (turned === null) break;
+      if (turned.x * move.x + turned.y * move.y <= 0) break;
+
+      left = turned;
     }
 
-    if (hits.length === 0) return end;
-
-    hits.sort((a, b) => a.frac - b.frac);
-
-    const first = hits[0];
-    const safe = Math.max(0, first.frac - GAP / length);
-    const stopped = { x: start.x + move.x * safe, y: start.y + move.y * safe };
-
-    // Two hulls off one wall are not two walls: a long wall is one hull per
-    // edge, and crossing where they meet would otherwise read as a corner.
-    const walls: typeof hits = [];
-
-    for (const h of hits) {
-      if (h.frac - first.frac >= TOGETHER) break;
-
-      const known = walls.some(w =>
-        h.wall.wallNx * w.wall.wallNx + h.wall.wallNy * w.wall.wallNy > SAME_WALL);
-
-      if (!known) walls.push(h);
-    }
-
-    if (walls.length >= 2) return stopped;
-
-    const rest = { x: move.x * (1 - first.frac), y: move.y * (1 - first.frac) };
-    const into = rest.x * first.nx + rest.y * first.ny;
-    const slide = { x: rest.x - into * first.nx, y: rest.y - into * first.ny };
-
-    const along = Math.hypot(slide.x, slide.y);
-    if (along < 1e-8) return stopped;
-
-    // The slide is traced too: sliding along one wall is how the player
-    // reaches the next one.
-    const to = { x: stopped.x + slide.x, y: stopped.y + slide.y };
-    let frac = 1;
-
-    for (const hull of this.hulls) {
-      const crossed = traced(stopped, to, hull);
-
-      if (hit(crossed) && crossed.enter < frac) frac = crossed.enter;
-    }
-
-    const safely = Math.max(0, frac - GAP / along);
-
-    return { x: stopped.x + slide.x * safely, y: stopped.y + slide.y * safely };
+    return at;
   }
 }

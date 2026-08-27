@@ -152,6 +152,69 @@ describe('a hairpin', () => {
   });
 });
 
+describe('a slot too narrow to walk into', () => {
+  /** A room with a notch cut into the middle of its top wall. */
+  function notched(width: number): Polygon {
+    return ring([
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 },
+      { x: 50 + width / 2, y: 100 }, { x: 50 + width / 2, y: 120 },
+      { x: 50 - width / 2, y: 120 }, { x: 50 - width / 2, y: 100 },
+      { x: 0, y: 100 },
+    ]);
+  }
+
+  /**
+   * Walking one way a step at a time, the way the game does it, until the
+   * player stops moving or the walk runs long.
+   *
+   * Running long is not a failure: a step nearly into the wall keeps only the
+   * sliver of itself that runs along it, so the steepest approaches genuinely
+   * crawl. What is asked is where a walk that *stopped* stopped.
+   */
+  function walked(hulls: Hulls, from: Point, dx: number, dy: number): { at: Point, stuck: boolean } {
+    let at = from;
+
+    for (let i = 0; i < 2000; i++) {
+      const was = at;
+
+      at = hulls.trace(at, { x: dx, y: dy });
+
+      if (!hulls.standable(at)) return { at, stuck: true };
+      if (Math.hypot(at.x - was.x, at.y - was.y) < 1e-7) return { at, stuck: true };
+    }
+
+    return { at, stuck: false };
+  }
+
+  /**
+   * The lip of a slot is two walls and a mitre, met within a hair of each
+   * other, and stopping because two of them arrived at once caught the player
+   * on it — at some angles, which is the worst way to have it.
+   *
+   * Every angle, then, and every width the player cannot fit through: the
+   * walk has to end at the far wall and never anywhere near the slot.
+   */
+  test('does not catch a player sliding past it', () => {
+    const caught: string[] = [];
+
+    for (let width = 0.1; width < 2 * PLAYER_RADIUS; width += 0.1) {
+      const hulls = room(notched(width));
+
+      for (let deg = 1; deg < 90; deg += 1) {
+        const r = deg * Math.PI / 180;
+        const { at, stuck } = walked(hulls, { x: 45, y: 90 }, Math.cos(r) / 6, Math.sin(r) / 6);
+
+        // The far wall is the one thing entitled to end this walk.
+        if (!stuck || at.x > 100 - PLAYER_RADIUS - 1) continue;
+
+        caught.push(`${width.toFixed(1)} wide at ${deg}°: (${at.x.toFixed(2)}, ${at.y.toFixed(2)})`);
+      }
+    }
+
+    expect(caught).toEqual([]);
+  });
+});
+
 /** The area of each hull the walls came out as. Reaching inside on purpose:
  * a hull with no area is invisible to every public answer, which is what made
  * it worth a test of its own. */
