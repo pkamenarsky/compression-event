@@ -89,6 +89,7 @@ import {
   Replay,
   Selection,
   Settings,
+  zoomedAt,
   Tool,
   Transform,
   Update,
@@ -99,6 +100,8 @@ import {
   GroupId,
   alsoPicked,
   enclosing,
+  onGrid,
+  toStep,
   marked,
   opened,
   panBy,
@@ -131,17 +134,6 @@ const SLOP = 3;
  * a drag and a release are one story.
  */
 const DOUBLE_MS = 350;
-
-/**
- * Held, it turns a click on a corner into taking that corner out, the way
- * Illustrator's delete-anchor tool does.
- *
- * Deliberately not also a key that removes the picked corners on its own. It
- * was, briefly, and the two meanings ate each other: pressing it deleted the
- * selection, and then the very click that was meant to delete one corner landed
- * on the bare edge left behind and inserted a new one.
- */
-const MINUS = ['Minus', 'NumpadSubtract'];
 
 /** Takes the picked corners out, or the picked polygons under the other tool. */
 const REMOVE = ['Backspace', 'Delete'];
@@ -231,6 +223,15 @@ export function worldCanvas(
   const abandoned = signal<void>();
 
   return interactive<Local>(EMPTY_LOCAL, (local, setLocal) => {
+    /**
+     * Where in the world a pointer event is, on the grid unless it says not to.
+     *
+     * `snap` is whether this reading is a place something will be put, as
+     * against a place something is being looked for: a corner goes on the
+     * grid, and a click hunting for the corner already there has to be read
+     * where the cursor actually is or it would find whatever is nearest the
+     * grid dot instead.
+     */
     const at = (e: PointerEvent, snap = false): Point => {
       const box = el?.getBoundingClientRect();
       const p = toWorld(view(), {
@@ -238,15 +239,18 @@ export function worldCanvas(
         y: e.clientY - (box?.top ?? 0),
       });
 
-      const s = settings();
-
-      return snap && s.snapToGrid
-        ? {
-          x: Math.round(p.x / s.gridSize) * s.gridSize,
-          y: Math.round(p.y / s.gridSize) * s.gridSize,
-        }
-        : p;
+      return snap && !free(e) ? onGrid(p, settings().gridSize) : p;
     };
+
+    /**
+     * Whether the hand is asking for this one not to snap.
+     *
+     * Read off the event rather than off `input.holding`, so it is the state
+     * of the key at the moment of the move being answered: taking Ctrl during
+     * a drag frees it from there on and letting go puts it back, without the
+     * gesture having to watch for either.
+     */
+    const free = (e: { ctrlKey: boolean }): boolean => e.ctrlKey;
 
     // -------------------------------------------------------------------------
     // Gestures
@@ -510,9 +514,48 @@ export function worldCanvas(
         [...anchors.keys()].map(id => [id, code === 'KeyE' ? IDENTITY : under(was, v, id)]),
       );
 
+      /**
+       * Where the cursor is taken to be, which is the whole of how these
+       * gestures snap.
+       *
+       * One place rather than one rule per transform, because every one of
+       * them is a reading of two points about a pivot: land the second of them
+       * somewhere the grid allows and the transform lands there with it. What
+       * "somewhere the grid allows" means is the one thing that differs — a
+       * move is a step of whole cells, a turn is five degrees, an erosion is a
+       * cell of depth, and a squash is the cursor itself on a grid dot.
+       *
+       * A squash is the loose one, and honestly so: the corners land on the
+       * grid only when the pivot is already on it. What it buys either way is
+       * that the same drag is the same factor twice running, which free-hand
+       * scaling never was.
+       */
+      const aim = (e: PointerEvent): Point => {
+        const to = at(e);
+        const g = settings().gridSize;
+
+        if (free(e)) return to;
+
+        if (code === 'KeyR') return turnedAbout(pivot, from, to, TURN);
+
+        // A depth, read off the vertical alone, so only that is quantised: the
+        // sideways drift of a hand pulling downward is not part of what was
+        // asked for and never was.
+        if (code === 'KeyE') return { x: to.x, y: from.y + toStep(to.y - from.y, g) };
+
+        // The step, not the place: a selection has no one point that ought to
+        // land on the grid, and snapping any particular corner of it would
+        // drag the rest out of whatever alignment they had.
+        if (code === 'KeyT') {
+          return { x: from.x + toStep(to.x - from.x, g), y: from.y + toStep(to.y - from.y, g) };
+        }
+
+        return onGrid(to, g);
+      };
+
       const end = yield* select({
         moving: pointerMoved(e => {
-          const to = at(e);
+          const to = aim(e);
 
           update(s => {
             let world = s.world;
@@ -864,8 +907,8 @@ export function worldCanvas(
     }
 
     /**
-     * A click read against the paths, and what it did: picking a point,
-     * adding one to a leg, or taking one away with minus held.
+     * A click read against the paths, and what it did: picking a point, or
+     * adding one to a leg.
      *
      * Both tools that touch a path read a click the same way, and this is the
      * whole of what they share. A point beats a leg, because every point lies
@@ -878,33 +921,22 @@ export function worldCanvas(
     function pathPicked(e: PointerEvent, resumable: boolean): boolean {
       const reach = HANDLE / view().zoom;
       const on = hitPathPoint(world().paths, at(e), reach);
-      const taking = input.holding(MINUS[0]) || input.holding(MINUS[1]);
 
       if (on !== null) {
         // The one the paths tool carries the walk on from. Left alone here, so
         // that it can.
         const last = on.index === world().paths.get(on.id)!.points.length - 1;
 
-        if (resumable && last && !taking) return false;
+        if (resumable && last) return false;
 
-        if (taking) {
-          removePathPoint(on);
-        }
-        else {
-          // Picking one lets the corners go, the same way picking a corner
-          // lets this go: Backspace means one thing, and what it means is
-          // whatever the last click was about.
-          setLocal({ ...local(), onPath: on });
-          update(s => ({ ...s, selection: { ...s.selection, vertices: [] } }));
-        }
+        // Picking one lets the corners go, the same way picking a corner lets
+        // this go: Backspace means one thing, and what it means is whatever
+        // the last click was about.
+        setLocal({ ...local(), onPath: on });
+        update(s => ({ ...s, selection: { ...s.selection, vertices: [] } }));
 
         return true;
       }
-
-      // Held, minus only ever takes points away — the same rule the corners
-      // follow, and for the same reason: a click that missed by a pixel adding
-      // one instead is the opposite of what was asked for.
-      if (taking) return false;
 
       const leg = hitPathEdge(world().paths, at(e), reach);
 
@@ -1072,33 +1104,11 @@ export function worldCanvas(
       const items = pickable();
       const reach = HANDLE / view().zoom;
       const corner = hitVertex(items, at(e), reach);
-      const taking = input.holding(MINUS[0]) || input.holding(MINUS[1]);
 
       // A path point before a polygon's corner, because a path is drawn over
       // the level and what is on top is what a click on it means. Its legs
       // come after the corners rather than before — see below.
       if (corner === null && pathPointAt(e) !== null && pathPicked(e, false)) return;
-
-      // Held, minus only ever takes corners away. Letting it fall through to
-      // the edge would mean a click that missed the corner by a pixel added one
-      // instead of removing one, which is the opposite of what was asked for.
-      if (taking) {
-        if (corner === null) return;
-
-        update(s => marked(
-          {
-            ...s,
-            world: removeVertices(s.world, s.currentVersion, [corner.vertex]),
-            selection: {
-              ...s.selection,
-              vertices: s.selection.vertices.filter(id => id !== corner.vertex),
-            },
-          },
-          s.world,
-        ));
-
-        return;
-      }
 
       if (corner !== null) {
         // Whatever path point was picked is not any more. One Backspace, and
@@ -1400,11 +1410,10 @@ export function worldCanvas(
       const end = yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
-          const g = settings();
-          const step = g.snapToGrid ? g.gridSize : 0;
+          const step = free(e) ? 0 : settings().gridSize;
 
-          const dx = step === 0 ? to.x - start.x : Math.round((to.x - start.x) / step) * step;
-          const dy = step === 0 ? to.y - start.y : Math.round((to.y - start.y) / step) * step;
+          const dx = step === 0 ? to.x - start.x : toStep(to.x - start.x, step);
+          const dy = step === 0 ? to.y - start.y : toStep(to.y - start.y, step);
 
           update(st => {
             let world = st.world;
@@ -1572,6 +1581,8 @@ export function worldCanvas(
         },
         [
           effect(() => el && observeSize(el, update)),
+          effect(() => el && wheeling(el, update)),
+          effect(() => el && noMenu(el)),
 
           effect(
             () => [
@@ -1949,6 +1960,27 @@ function squashed(t: Transform, pivot: Point, fx: number, fy: number): Transform
 /** How far the cursor is from the pivot now against where it started, as a
  * factor. Nothing is scaled by a gesture that started on the pivot, and a zero
  * axis is refused: it is not invertible. */
+/**
+ * `to` turned about the pivot so that the angle it makes with `from` is a
+ * whole number of `step`s.
+ *
+ * Done to the point rather than to the angle inside the rotation, so that the
+ * one rule about where the cursor is taken to be covers this too and the
+ * transforms themselves stay the plain readings they are.
+ */
+function turnedAbout(pivot: Point, from: Point, to: Point, step: number): Point {
+  const was = Math.atan2(from.y - pivot.y, from.x - pivot.x);
+  const now = Math.atan2(to.y - pivot.y, to.x - pivot.x);
+  const angle = was + toStep(now - was, step);
+  const reach = Math.hypot(to.x - pivot.x, to.y - pivot.y);
+
+  return { x: pivot.x + reach * Math.cos(angle), y: pivot.y + reach * Math.sin(angle) };
+}
+
+/** What a turn lands on: five degrees, which is 72 of them round the circle
+ * and every angle a level is built out of. */
+const TURN = Math.PI / 36;
+
 function ratio(was: number, now: number): number {
   return Math.abs(was) < 1e-6 || Math.abs(now) < 1e-6 ? 1 : now / was;
 }
@@ -1991,6 +2023,60 @@ const TRANSFORMS: Record<string, Mode> = {
 };
 
 // -----------------------------------------------------------------------------
+
+/**
+ * The wheel zooms, about the cursor.
+ *
+ * Not passive, because it has to take the page's own zoom and scroll away from
+ * it: a trackpad pinch arrives here as a wheel event with the command flag set,
+ * and left alone the browser would scale the whole editor instead of the
+ * drawing in it.
+ *
+ * The exponent is what makes it feel even. A zoom is a multiplication, so a
+ * notch has to be a factor rather than an amount — the same notch takes you
+ * from 1 to 1.1 and from 10 to 11 — and reading the delta through `exp` is
+ * that, with the sign and the size of the notch coming out of it for free.
+ * Line-mode deltas are counted in lines and pixel-mode ones in pixels, which
+ * is a factor of about sixteen between two wheels that meant the same thing.
+ */
+function wheeling(el: HTMLCanvasElement, update: Update): () => void {
+  const onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+
+    const box = el.getBoundingClientRect();
+    const lines = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+    const by = Math.exp(-e.deltaY * lines * WHEEL);
+
+    update(s => ({
+      ...s,
+      view: zoomedAt(s.view, by, { x: e.clientX - box.left, y: e.clientY - box.top }),
+    }));
+  };
+
+  el.addEventListener('wheel', onWheel, { passive: false });
+
+  return () => el.removeEventListener('wheel', onWheel);
+}
+
+/** How much of a zoom one pixel of wheel is worth, as an exponent. A notch of
+ * a mouse wheel is about 100 of them, which comes to a fifth either way. */
+const WHEEL = 0.002;
+
+/**
+ * No context menu over the canvas.
+ *
+ * Ctrl is the key that frees a gesture from the grid, and on a Mac Ctrl and
+ * the button together are a right click: without this, the one modifier every
+ * transform reads would open a menu over the drawing halfway through the drag.
+ * There is nothing on that menu this editor puts there anyway.
+ */
+function noMenu(el: HTMLCanvasElement): () => void {
+  const onMenu = (e: MouseEvent): void => e.preventDefault();
+
+  el.addEventListener('contextmenu', onMenu);
+
+  return () => el.removeEventListener('contextmenu', onMenu);
+}
 
 /** How big the canvas got is an update like any other, so the draw wakes for it. */
 function observeSize(el: HTMLCanvasElement, update: Update): () => void {

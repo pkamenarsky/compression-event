@@ -1,5 +1,23 @@
 import { describe, expect, test } from 'vitest';
-import { EASINGS, Group, Id, World, emptyWorld, enclosing, outermost, parentOf, within } from './types';
+import {
+  EASINGS,
+  Group,
+  Id,
+  World,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  coarser,
+  defaultView,
+  emptyWorld,
+  enclosing,
+  finer,
+  onGrid,
+  outermost,
+  parentOf,
+  toStep,
+  within,
+  zoomedAt,
+} from './types';
 
 /** A world with nothing in it but structure: the helpers read `groups` and
  * `groups` only, and giving them polygons to hold would say otherwise. */
@@ -88,5 +106,40 @@ describe('the curve a version switch plays on', () => {
 
     // Slower at the end than at the start, which is the whole of what it is.
     expect(EASINGS.out(1) - EASINGS.out(0.9)).toBeLessThan(EASINGS.out(0.1) - EASINGS.out(0));
+  });
+});
+
+
+describe('the grid', () => {
+  test('a point lands on the nearest dot', () => {
+    expect(onGrid({ x: 17, y: -17 }, 10)).toEqual({ x: 20, y: -20 });
+  });
+
+  test('a step lands on a whole number of cells', () => {
+    expect(toStep(74, 32)).toBe(64);
+    expect(toStep(-74, 32)).toBe(-64);
+  });
+
+  test('finer and coarser halve and double, and stop', () => {
+    expect(coarser(finer(32))).toBe(32);
+    expect(finer(1)).toBe(1);
+    expect(coarser(1024)).toBe(1024);
+  });
+});
+
+describe('zooming about a point', () => {
+  const view = { ...defaultView, width: 800, height: 600, zoom: 1, x: 100, y: 50 };
+
+  test('the world point under the cursor does not move', () => {
+    const on = { x: 320, y: 240 };
+    const after = zoomedAt(view, 2.5, on);
+
+    expect(after.x + on.x / after.zoom).toBeCloseTo(view.x + on.x / view.zoom);
+    expect(after.y + on.y / after.zoom).toBeCloseTo(view.y + on.y / view.zoom);
+  });
+
+  test('it stops at both ends', () => {
+    expect(zoomedAt(view, 1e6, { x: 0, y: 0 }).zoom).toBe(ZOOM_MAX);
+    expect(zoomedAt(view, 1e-6, { x: 0, y: 0 }).zoom).toBe(ZOOM_MIN);
   });
 });

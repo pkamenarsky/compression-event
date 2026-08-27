@@ -26,6 +26,8 @@ import {
   VersionId,
   World,
   GroupId,
+  coarser,
+  finer,
   initialState,
   opened,
   marked,
@@ -350,6 +352,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       const e = yield* keyPressed(
         input,
         'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
+        'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
       const command = e.metaKey || e.ctrlKey;
@@ -359,7 +362,17 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       if (state().roaming && !command) continue;
 
       if (!command) {
-        if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
+        // The grid, finer and coarser. A document key rather than a canvas
+        // one: what the grid is set to is a property of the drawing, and every
+        // tool snaps to it — so it is reachable whatever is picked and
+        // whatever gesture is not running.
+        if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+          update(s => gridded(s, finer(s.settings.gridSize)));
+        }
+        else if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+          update(s => gridded(s, coarser(s.settings.gridSize)));
+        }
+        else if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
         else if (e.code === 'KeyV') update(s => ({ ...s, tool: 'polygon' }));
         else if (e.code === 'KeyP') update(s => ({ ...s, tool: 'create' }));
         else if (e.code === 'KeyW') update(s => ({ ...s, tool: 'path' }));
@@ -367,6 +380,11 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
 
         continue;
       }
+
+      // Cmd+plus and Cmd+minus are the browser's own zoom, and the wheel is
+      // the canvas'. Neither is the grid.
+      if (e.code === 'Equal' || e.code === 'Minus') continue;
+      if (e.code === 'NumpadAdd' || e.code === 'NumpadSubtract') continue;
 
       if (e.code === 'KeyP') continue;
 
@@ -433,6 +451,12 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
     }
   });
+}
+
+/** The grid at a new size. Not in the history: what the grid is set to is how
+ * the author is working rather than something the world says. */
+function gridded(s: EditorState, gridSize: number): EditorState {
+  return { ...s, settings: { ...s.settings, gridSize } };
 }
 
 /** The picked things made one, and picked as one. */

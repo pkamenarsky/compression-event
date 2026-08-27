@@ -19,17 +19,36 @@ export const ARTEFACTS: ArtefactType[] = [
 // -----------------------------------------------------------------------------
 
 export interface Settings {
-  /** World units between two grid dots. */
+  /** World units between two grid dots. Halved and doubled by `+` and `-`. */
   gridSize: number
   showGrid: boolean
-  snapToGrid: boolean
 }
 
 export const defaultSettings: Settings = {
   gridSize: 32,
   showGrid: true,
-  snapToGrid: true,
 };
+
+/**
+ * A point on the grid.
+ *
+ * There is no setting for whether to snap, and there was one. Everything the
+ * editor does lands on the grid, and Ctrl held is how a hand says otherwise —
+ * per gesture, at the moment it is wanted, which is when the question actually
+ * comes up. A switch somewhere else answers it once for a whole session, which
+ * is both too often and not often enough.
+ */
+export function onGrid(p: Point, size: number): Point {
+  return {
+    x: Math.round(p.x / size) * size,
+    y: Math.round(p.y / size) * size,
+  };
+}
+
+/** The same, for one number: a step, a depth, an angle in its own units. */
+export function toStep(n: number, step: number): number {
+  return Math.round(n / step) * step;
+}
 
 // -----------------------------------------------------------------------------
 // Tools
@@ -79,6 +98,54 @@ export function toWorld(view: View, p: Point): Point {
     y: p.y / view.zoom + view.y,
   };
 }
+
+/**
+ * As far in as a level is worth looking, and as far out.
+ *
+ * Both ends are about what is legible rather than about arithmetic. Past the
+ * near end a grid cell is wider than the window and there is nothing to see
+ * beside itself; past the far end a room is a few pixels across and the
+ * handles it is edited by are on top of one another.
+ */
+export const ZOOM_MIN = 0.02;
+export const ZOOM_MAX = 32;
+
+/**
+ * Zoomed about a point on screen, which stays over the same world point.
+ *
+ * The whole of what makes a wheel zoom feel like one: the thing under the
+ * cursor is what the gesture is about, so it is the thing that must not move.
+ */
+export function zoomedAt(view: View, by: number, screen: Point): View {
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoom * by));
+  const at = toWorld(view, screen);
+
+  return {
+    ...view,
+    zoom,
+    x: at.x - screen.x / zoom,
+    y: at.y - screen.y / zoom,
+  };
+}
+
+/**
+ * The grid one step finer or coarser.
+ *
+ * Halving and doubling, so that every size in the sequence is a whole number
+ * of the ones below it and a point laid on a fine grid is still on the coarse
+ * one. Any other ratio makes a coarser grid that the drawing already on screen
+ * does not sit on, which is the opposite of what a grid is for.
+ */
+export function finer(size: number): number {
+  return Math.max(GRID_MIN, size / 2);
+}
+
+export function coarser(size: number): number {
+  return Math.min(GRID_MAX, size * 2);
+}
+
+const GRID_MIN = 1;
+const GRID_MAX = 1024;
 
 /** Drag the world along with a screen-space delta. */
 export function panBy(view: View, dx: number, dy: number): View {

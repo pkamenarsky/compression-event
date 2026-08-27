@@ -36,6 +36,11 @@ import {
 } from './types';
 
 /**
+ * 9: there is no setting for whether to snap. Everything the editor does lands
+ * on the grid and Ctrl held is what says otherwise, so a file that carried a
+ * `snapToGrid` of either value reads the same way: with the grid on and the
+ * key free to turn it off, which is what every gesture in it was drawn with.
+ *
  * 8: the world holds measuring paths, and the tool that draws polygons is
  * called `create` rather than `path` — the name now belongs to the tool that
  * draws those. A format-7 file has no paths, which is a world nobody has
@@ -68,7 +73,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 8;
+export const FORMAT = 9;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -178,7 +183,9 @@ export function restored(file: Saved): EditorState {
     currentVersion: file.currentVersion,
     inside: null,
     selection: { polygons: file.selection, vertices: [], artefacts: file.artefacts ?? [] },
-    settings: file.settings,
+    // Only the fields there are. A format-8 file has a `snapToGrid` beside
+    // them, which nothing reads any more — see `FORMAT`.
+    settings: { gridSize: file.settings.gridSize, showGrid: file.settings.showGrid },
     view: file.view,
     // A format-7 file's `path` was the pen, which is now `create`. Nothing
     // else about the tools has ever been renamed.
