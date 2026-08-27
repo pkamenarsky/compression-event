@@ -767,7 +767,7 @@ export function initialState(world: World): EditorState {
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',
-    figure: 'polyline',
+    figure: 'rect',
     replay: null,
     preview: false,
     roaming: false,
