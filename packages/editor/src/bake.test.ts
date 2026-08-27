@@ -34,6 +34,7 @@ import {
   PolygonId,
   PolygonType,
   Transform,
+  VERSIONS,
   VersionId,
   World,
   emptyWorld,
@@ -1029,7 +1030,7 @@ describe('a bake against a world that moved', () => {
     const versions = [...w.versions];
     versions[2] = { ...versions[2], visible: false };
 
-    expect(pruned(bake, { ...w, versions }).spans.size).toBe(4);
+    expect(pruned(bake, { ...w, versions }).spans.size).toBe(VERSIONS - 1);
   });
 });
 
