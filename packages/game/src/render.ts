@@ -119,6 +119,15 @@ export interface Renderer {
 
   resize(): void
   render(): void
+
+  /**
+   * The screen with nothing on it.
+   *
+   * For when there is a camera but nowhere it could honestly be standing —
+   * a player inside a wall would otherwise get a look at the level from the
+   * outside, which is a view the level does not have.
+   */
+  blank(): void
   dispose(): void
 }
 
@@ -327,6 +336,11 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     resize,
     render(): void {
       dither.apply(scene, camera);
+    },
+
+    blank(): void {
+      renderer.setRenderTarget(null);
+      renderer.clear();
     },
 
     dispose(): void {

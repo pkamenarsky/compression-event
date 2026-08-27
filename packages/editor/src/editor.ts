@@ -165,6 +165,11 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
 
       if (e.metaKey || e.ctrlKey) continue;
 
+      // The game has the page. Enter reaching back here used to turn the
+      // editor's own walk on underneath it, so leaving the game landed the
+      // player in a second one.
+      if (afoot !== null) continue;
+
       if (e.code === 'Enter') {
         if (e.repeat || state().roaming) continue;
 
@@ -278,6 +283,11 @@ function playing(state: Value<EditorState>, input: Input): VNode {
 
       if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
 
+      // Already standing in it, one way or the other. The editor's walk and
+      // the game are the same level from the same place, and two of them at
+      // once is two loops, two keyboards and two of the drone.
+      if (state().roaming) continue;
+
       e.preventDefault();
       started(state());
     }
@@ -307,7 +317,7 @@ function started(s: EditorState): void {
 
   // No title screen: Cmd+Enter is the gesture that asked for it, and the
   // level is already there.
-  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, debug: true, leave }), host };
+  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, leave }), host };
 }
 
 /**

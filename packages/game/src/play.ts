@@ -217,6 +217,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * be reached are the same list, deliberately — see `nearest`. */
   let shown: Standing[] = [];
 
+  /**
+   * Whether the level has closed over the player.
+   *
+   * Set the moment there is nowhere to be and cleared by the restart, and what
+   * it buys is the screen going black: from inside a wall the camera can see
+   * the level from the outside, and a level seen from the outside is a set of
+   * surfaces rather than somewhere anyone was standing.
+   */
+  let dead = false;
+
   let ambient: SoundHandle | null = null;
   let coming: SoundHandle | null = null;
   let running = false;
@@ -283,6 +293,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const restart = (): void => {
+    dead = false;
     version = 0;
     shifting = null;
     clock = HOLD;
@@ -331,14 +342,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       shifting = 0;
     }
 
-    // Somewhere that stops existing is the level closing over the player, and
-    // it is worth hearing before it is worth seeing. Nothing escalates towards
-    // a version the player will not survive to see.
+    // Somewhere that stops existing is the level closing over the player.
+    // Asked here rather than when the picture ends, because the answer is
+    // already known at this point and the picture is a wall arriving: watching
+    // it arrive from inside is the level being read from the outside, and the
+    // moment it is coming for you is the moment it has you.
     const room = walls[to]?.standable({ x: player.x, y: player.z }) ?? true;
 
     escalate(room);
 
-    if (!room) playSoundFor(error, 1);
+    if (!room) void lost();
   };
 
   const walked = (): void => {
@@ -404,7 +417,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const lost = async (): Promise<void> => {
     if (say.busy()) return;
 
+    dead = true;
     say.note(null);
+    playSoundFor(error, 1);
+
     await say.say('PULL YOURSELF TOGETHER', 3000);
 
     if (live) restart();
@@ -552,7 +568,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     );
 
     crowd.update(dt, view.camera);
-    view.render();
+
+    if (dead) view.blank();
+    else view.render();
 
     if (options.debug === true) {
       const flight = shifting === null
