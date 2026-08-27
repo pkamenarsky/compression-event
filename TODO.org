@@ -12,16 +12,15 @@
 
 * selecting a group and trying to alter vertices doesn't work
 * erode only selected edges
-* expand selection/group
+* resolve selection/group
 * edge mode
-* "show floor polygons"
+* show/hide floor polygons
 * fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
 * selection of overlapping vertices
 * locking of polygons? unlock works then with cmd + click
 * unchain
 * version management
-* double click for paths cause enter enters 3d view
 * paths in groups?
 * write rotation degrees when rotating (and maybe when doing any kind of transformation)
 * settings
