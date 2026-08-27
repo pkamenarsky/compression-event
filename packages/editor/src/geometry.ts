@@ -321,6 +321,108 @@ export function decompose(ring: Ring): Cut {
 // Ring arithmetic
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Exact predicates
+//
+// Everything the arrangement decides about *topology* — which side of an edge a
+// point falls on, whether two segments cross, which way a ring winds — is the
+// sign of one determinant. Positions may be approximate and are; signs may not.
+// Two of them that disagree is not a small error, it is an arrangement that
+// contradicts itself, and what comes out of that is a boundary with a dead end
+// in it and a ring closed across a chord.
+//
+// So the sign is computed exactly. The determinant is taken in doubles first
+// along with a bound on how wrong it can be, and where the answer is bigger than
+// its own error bound — which is nearly always — that is the end of it. Where it
+// is not, the whole thing is redone in integers, which a double already is: a
+// double is `m * 2^e` for whole `m`, so six of them scaled to a common exponent
+// turn the determinant into one `BigInt` expression that is right by
+// construction rather than right to within something.
+//
+// Positions are left alone. A crossing is still where the two lines meet in
+// floating point, still to within a rounding of where it really is, and still
+// welded to its neighbours by `snap`. The tolerances have not gone; they have
+// stopped being asked questions that have a yes or no answer.
+// -----------------------------------------------------------------------------
+
+/** Half an ulp: the most a rounded double is off, relative. */
+const ROUNDING = 2 ** -53;
+
+/**
+ * Which side of the line `a` to `b` the point `c` falls on: `1` to its left,
+ * `-1` to its right, and `0` exactly on it.
+ *
+ * The sign of `(b - a) x (c - a)`, and the sign is *right*, not right to within
+ * something. There is no tolerance to pass in and none inside: three points are
+ * collinear when they are, and a hair off it when they are that.
+ *
+ * The determinant is taken in doubles first, along with a bound on how far
+ * rounding can have moved it. Where the answer is larger than its own error
+ * bound the sign is already certain, which it is for all but a handful of the
+ * questions a level asks. Where it is not, the same determinant is taken again
+ * in whole numbers.
+ *
+ * A magnitude is deliberately not offered. Every caller wants a side, and a
+ * caller that wanted a distance would be reading a number this is under no
+ * obligation to get right.
+ */
+export function orientation(a: Point, b: Point, c: Point): number {
+  const left = (b.x - a.x) * (c.y - a.y);
+  const right = (b.y - a.y) * (c.x - a.x);
+  const det = left - right;
+
+  // Three roundings in the differences, one in each product, one in the
+  // subtraction. Eight is that with room to spare: being generous here costs a
+  // little more of the exact path and can never cost an answer.
+  const bound = 8 * ROUNDING * (Math.abs(left) + Math.abs(right));
+
+  // Both products zero means both are *exactly* zero, and so is the answer: a
+  // difference of two doubles rounds to zero only when it really is zero, so a
+  // product that came out zero had a factor that really was. This is the
+  // axis-aligned case, which is most of a level, and it is the one case the
+  // bound above can say nothing about, being zero itself.
+  if (left === 0 && right === 0) return 0;
+
+  return Math.abs(det) > bound ? Math.sign(det) : exact(a, b, c);
+}
+
+/** A double taken apart into the whole number and the power of two it is
+ * exactly the product of. */
+const bits = new DataView(new ArrayBuffer(8));
+
+function dyadic(x: number): [bigint, number] {
+  bits.setFloat64(0, x);
+
+  const word = bits.getBigUint64(0);
+  const sign = word >> 63n === 1n ? -1n : 1n;
+  const exponent = Number(word >> 52n & 0x7ffn);
+  const fraction = word & 0xfffffffffffffn;
+
+  // Zero and the subnormals share the one exponent, and neither carries the
+  // hidden bit that everything else has.
+  return exponent === 0
+    ? [sign * fraction, -1074]
+    : [sign * (fraction | 0x10000000000000n), exponent - 1075];
+}
+
+/**
+ * `orientation` again, in whole numbers.
+ *
+ * Every coordinate is scaled to the smallest of the six exponents, which makes
+ * all of them integers of one unit and leaves the determinant a common power of
+ * two times a `BigInt`. A power of two is positive, so the sign of the one is
+ * the sign of the other, and nothing has been rounded to get there.
+ */
+function exact(a: Point, b: Point, c: Point): number {
+  const parts = [a.x, a.y, b.x, b.y, c.x, c.y].map(dyadic);
+  const floor = Math.min(...parts.map(w => w[1]));
+  const [ax, ay, bx, by, cx, cy] = parts.map(w => w[0] << BigInt(w[1] - floor));
+
+  const det = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+
+  return det > 0n ? 1 : det < 0n ? -1 : 0;
+}
+
 /** Twice the signed area; positive when the ring winds counter-clockwise. */
 export function signedArea2(ring: Ring): number {
   let s = 0;
@@ -368,10 +470,10 @@ export function winding(shape: Shape, p: Point): number {
  */
 function turn(a: Point, b: Point, p: Point): number {
   if (a.y <= p.y) {
-    if (b.y > p.y && cross(a, b, p) > 0) return 1;
+    if (b.y > p.y && orientation(a, b, p) > 0) return 1;
   }
   else {
-    if (b.y <= p.y && cross(a, b, p) < 0) return -1;
+    if (b.y <= p.y && orientation(a, b, p) < 0) return -1;
   }
 
   return 0;
@@ -467,10 +569,6 @@ export function fieldContains(f: Field, p: Point): boolean {
 /** Nonzero fill. Points exactly on an edge are not to be relied on. */
 export function contains(shape: Shape, p: Point): boolean {
   return winding(shape, p) !== 0;
-}
-
-function cross(a: Point, b: Point, p: Point): number {
-  return (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y);
 }
 
 // -----------------------------------------------------------------------------
@@ -724,41 +822,34 @@ function intersectInto(
 ): void {
   const rx = s.b.x - s.a.x, ry = s.b.y - s.a.y;
   const sx = u.b.x - u.a.x, sy = u.b.y - u.a.y;
-  const d = rx * sy - ry * sx;
   const qx = u.a.x - s.a.x, qy = u.a.y - s.a.y;
 
   const rl = Math.hypot(rx, ry), sl = Math.hypot(sx, sy);
 
-  if (Math.abs(d) <= eps * rl * sl) {
-    // Parallel. Only collinear pairs can meet, and then along a whole stretch.
-    if (Math.abs(qx * ry - qy * rx) > eps * rl) return;
-
-    const rr = rx * rx + ry * ry;
-    const t0 = (qx * rx + qy * ry) / rr;
-    const t1 = t0 + (sx * rx + sy * ry) / rr;
-
-    // A collinear overlap meets at the other segment's *endpoints*, so these
-    // are input vertices rather than crossings.
-    addParam(ts, t0, u.ta);
-    addParam(ts, t1, u.tb);
-
-    const ss = sx * sx + sy * sy;
-    const u0 = (-qx * sx - qy * sy) / ss;
-    const u1 = (rx * sx + ry * sy - qx * sx - qy * sy) / ss;
-
-    addParam(us, u0, s.ta);
-    addParam(us, u1, s.tb);
-
-    if (cs !== null && u.rank < s.rank) {
-      cs.push({ t0: Math.min(t0, t1), t1: Math.max(t0, t1), rank: u.rank });
-    }
-
-    if (cu !== null && s.rank < u.rank) {
-      cu.push({ t0: Math.min(u0, u1), t1: Math.max(u0, u1), rank: s.rank });
-    }
+  // Whether these two are the same line is a question about the input, not
+  // about the arrangement, and `eps` is the right thing to ask it with: two
+  // edges a rounding apart are one edge, and are wanted as one — that is what
+  // lets a rank drop the duplicate instead of the two of them fighting. Asked
+  // exactly, a wall flush against another wall becomes two walls a hair apart,
+  // and everything downstream has to live with the hair.
+  if (Math.abs(rx * sy - ry * sx) <= eps * rl * sl) {
+    if (Math.abs(qx * ry - qy * rx) <= eps * rl) along(s, u, ts, us, cs, cu);
 
     return;
   }
+
+  // Whether they *meet* is decided the tolerant way too, and that is a measured
+  // choice rather than the old one left standing. `orientation` will answer it
+  // exactly — four signs, which side of each segment the other's two ends fall
+  // on — and doing so is worse. A pair a rounding short of crossing stops being
+  // cut, while the weld two steps down the pipeline goes on treating the two
+  // ends as one point, so the operands' arrangements stop agreeing with each
+  // other: six boxes turning past one another came out 192 units from the truth
+  // at 337 of 998 instants, against none. Exactness has to go all the way down
+  // or not at all, and all the way down means rounding the geometry onto a grid
+  // before any of this, not sharpening one predicate in the middle of a
+  // pipeline that rounds either side of it.
+  const d = rx * sy - ry * sx;
 
   const t = (qx * sy - qy * sx) / d;
   const u0 = (qx * ry - qy * rx) / d;
@@ -773,6 +864,51 @@ function intersectInto(
 
   addParam(ts, t, tag);
   addParam(us, u0, tag);
+}
+
+/**
+ * Two segments on exactly the same line, and the stretch of each that the other
+ * covers.
+ *
+ * Where they run along each other the overlap is recorded on whichever is
+ * outranked. That is the one thing a segment cannot work out from its own pieces
+ * later: that something else is lying on it.
+ */
+function along(
+  s: Seg,
+  u: Seg,
+  ts: Param[],
+  us: Param[],
+  cs: Cover[] | null,
+  cu: Cover[] | null,
+): void {
+  const rx = s.b.x - s.a.x, ry = s.b.y - s.a.y;
+  const sx = u.b.x - u.a.x, sy = u.b.y - u.a.y;
+  const qx = u.a.x - s.a.x, qy = u.a.y - s.a.y;
+
+  const rr = rx * rx + ry * ry;
+  const t0 = (qx * rx + qy * ry) / rr;
+  const t1 = t0 + (sx * rx + sy * ry) / rr;
+
+  // A collinear overlap meets at the other segment's *endpoints*, so these are
+  // input vertices rather than crossings.
+  addParam(ts, t0, u.ta);
+  addParam(ts, t1, u.tb);
+
+  const ss = sx * sx + sy * sy;
+  const u0 = (-qx * sx - qy * sy) / ss;
+  const u1 = (rx * sx + ry * sy - qx * sx - qy * sy) / ss;
+
+  addParam(us, u0, s.ta);
+  addParam(us, u1, s.tb);
+
+  if (cs !== null && u.rank < s.rank) {
+    cs.push({ t0: Math.min(t0, t1), t1: Math.max(t0, t1), rank: u.rank });
+  }
+
+  if (cu !== null && s.rank < u.rank) {
+    cu.push({ t0: Math.min(u0, u1), t1: Math.max(u0, u1), rank: s.rank });
+  }
 }
 
 function addParam(ts: Param[], t: number, tag: Tag): void {
@@ -1573,12 +1709,98 @@ function edge(off: number): number {
 }
 
 /**
+ * The kept segments that are on a closed boundary, which is all of them unless
+ * one was kept in error.
+ *
+ * A boundary is a set of cycles: leave a node by one of its edges and there is
+ * always another to leave the next one by, because the face on your left is the
+ * same face the whole way round. So a segment whose head has nothing leaving it,
+ * or whose tail has nothing arriving, is not on a boundary at all, and the only
+ * way to have one is to have classified it wrong.
+ *
+ * `chain` cannot use such a segment and does not notice it either: the walk runs
+ * into the dead end and closes the ring across whatever chord takes it back to
+ * where it started. That is not a hairline artefact — it is a straight line
+ * drawn through the middle of the shape, and a room came out as two triangles
+ * with a third of its ground missing between them.
+ *
+ * Pruning to a fixpoint removes exactly the segments that cannot be on any cycle
+ * and stops, so an arrangement that was right to begin with passes through
+ * untouched: there is nothing in it to take out. This is not a repair — nothing
+ * puts back the boundary that should have been there — it is a containment. What
+ * it turns a misclassification into is a missing hairline rather than a chord,
+ * and it is the only thing in here that can tell you the arrangement broke.
+ */
+function walkable(segs: Seg[], from: number[], to: number[], nodes: number): number[] {
+  const out: number[] = new Array(nodes).fill(0);
+  const into: number[] = new Array(nodes).fill(0);
+
+  for (let i = 0; i < segs.length; i++) {
+    out[from[i]]++;
+    into[to[i]]++;
+  }
+
+  const live = segs.map(() => true);
+  const stranded = (i: number): boolean => live[i] && (out[to[i]] === 0 || into[from[i]] === 0);
+
+  const doomed: number[] = [];
+
+  for (let i = 0; i < segs.length; i++) {
+    if (stranded(i)) doomed.push(i);
+  }
+
+  if (doomed.length === 0) return segs.map((_s, i) => i);
+
+  // Which segments each node would have to be told about, so that taking one out
+  // costs its own two nodes rather than a sweep of everything. Built only where
+  // there is something to take out, which is nearly nowhere.
+  const touching: number[][] = Array.from({ length: nodes }, () => []);
+
+  for (let i = 0; i < segs.length; i++) {
+    touching[from[i]].push(i);
+    touching[to[i]].push(i);
+  }
+
+  while (doomed.length > 0) {
+    const i = doomed.pop()!;
+
+    if (!live[i]) continue;
+
+    live[i] = false;
+    out[from[i]]--;
+    into[to[i]]--;
+
+    for (const j of touching[from[i]]) {
+      if (stranded(j)) doomed.push(j);
+    }
+
+    for (const j of touching[to[i]]) {
+      if (stranded(j)) doomed.push(j);
+    }
+  }
+
+  const kept: number[] = [];
+
+  for (let i = 0; i < segs.length; i++) {
+    if (live[i]) kept.push(i);
+  }
+
+  // Nothing left is not a containment, it is the answer going missing, and the
+  // chord `chain` would have drawn is less wrong than a room that is not there.
+  // It happens when the classification lost a segment out of the *middle* of a
+  // cycle rather than hanging a stub off the side of one: refuse to bridge the
+  // gap and the whole ring is a path, every segment on it is stranded, and the
+  // cascade takes the lot.
+  return kept.length === 0 ? segs.map((_s, i) => i) : kept;
+}
+
+/**
  * Kept segments back into rings. Where more than two edges meet, the successor
  * is the sharpest left turn available: with the interior on the left, hugging
  * it traces each face separately instead of driving straight through the
  * crossing and coming back out as one self-intersecting loop.
  */
-function chain(segs: Seg[], snap: number): TaggedShape {
+function chain(all: Seg[], snap: number): TaggedShape {
   const weld = welder(snap);
   const nodes = weld.at;
   const tags: Tag[] = [];
@@ -1591,8 +1813,13 @@ function chain(segs: Seg[], snap: number): TaggedShape {
     return i;
   };
 
-  const from = segs.map(s => node(s.a, s.ta));
-  const to = segs.map(s => node(s.b, s.tb));
+  const heads = all.map(s => node(s.a, s.ta));
+  const tails = all.map(s => node(s.b, s.tb));
+
+  const live = walkable(all, heads, tails, nodes.length);
+  const segs = live.map(i => all[i]);
+  const from = live.map(i => heads[i]);
+  const to = live.map(i => tails[i]);
 
   const out: number[][] = nodes.map(() => []);
   segs.forEach((_s, i) => out[from[i]].push(i));

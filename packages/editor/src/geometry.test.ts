@@ -19,6 +19,7 @@ import {
   erode,
   intersect,
   isCCW,
+  orientation,
   shapeArea,
   signedArea2,
   boundaryRuns,
@@ -83,6 +84,132 @@ const inRect = (x: number, y: number, w: number, h: number) => (p: Point) =>
 // -----------------------------------------------------------------------------
 // Ring arithmetic
 // -----------------------------------------------------------------------------
+
+describe('orientation', () => {
+  // The predicate is checked against the slowest, most obvious thing that could
+  // answer the same question: the determinant in `BigInt`, written out here so
+  // that the one in `geometry.ts` has something to be wrong against rather than
+  // an argument about error bounds.
+
+  const bits = new DataView(new ArrayBuffer(8));
+
+  /** A double as the whole number and the power of two it is the product of. */
+  function dyadic(x: number): [bigint, number] {
+    bits.setFloat64(0, x);
+
+    const w = bits.getBigUint64(0);
+    const sign = w >> 63n === 1n ? -1n : 1n;
+    const e = Number(w >> 52n & 0x7ffn);
+    const f = w & 0xfffffffffffffn;
+
+    return e === 0 ? [sign * f, -1074] : [sign * (f | 0x10000000000000n), e - 1075];
+  }
+
+  function exactly(a: Point, b: Point, c: Point): number {
+    const ps = [a.x, a.y, b.x, b.y, c.x, c.y].map(dyadic);
+    const lo = Math.min(...ps.map(w => w[1]));
+    const [ax, ay, bx, by, cx, cy] = ps.map(w => w[0] << BigInt(w[1] - lo));
+    const d = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+
+    return d > 0n ? 1 : d < 0n ? -1 : 0;
+  }
+
+  /** `n` ulps further from zero, or nearer for a negative `n`. */
+  function nudge(x: number, n: number): number {
+    bits.setFloat64(0, x);
+
+    let w = bits.getBigUint64(0);
+
+    for (let i = 0; i < Math.abs(n); i++) w += (n > 0) === (x >= 0) ? 1n : -1n;
+
+    bits.setBigUint64(0, w);
+
+    return bits.getFloat64(0);
+  }
+
+  test('has the sign the exact determinant has, on input chosen to break it', () => {
+    let seed = 12345;
+    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+    let flat = 0, naive = 0;
+
+    for (let k = 0; k < 200000; k++) {
+      const scale = 10 ** Math.floor(rnd() * 8 - 3);
+      const a = { x: (rnd() - 0.5) * scale, y: (rnd() - 0.5) * scale };
+      const b = { x: (rnd() - 0.5) * scale, y: (rnd() - 0.5) * scale };
+      const t = rnd() * 2 - 0.5;
+
+      let c = {
+        x: nudge(a.x + (b.x - a.x) * t, Math.floor(rnd() * 5) - 2),
+        y: nudge(a.y + (b.y - a.y) * t, Math.floor(rnd() * 5) - 2),
+      };
+
+      // A third of them on whole numbers, with the third point exactly on the
+      // line: that is the level's own geometry, and the case where the answer
+      // has to be zero rather than a hair either side of it.
+      if (k % 3 === 0) {
+        a.x = Math.round(a.x); a.y = Math.round(a.y);
+        b.x = Math.round(b.x); b.y = Math.round(b.y);
+
+        const m = Math.round(rnd() * 8) - 4;
+
+        c = { x: a.x + (b.x - a.x) * m, y: a.y + (b.y - a.y) * m };
+
+        if (k % 6 === 0) c = { x: nudge(c.x, 1), y: c.y };
+      }
+
+      const want = exactly(a, b, c);
+
+      if (want === 0) flat++;
+      if (Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) !== want) naive++;
+
+      expect(orientation(a, b, c)).toBe(want);
+    }
+
+    // The input is worth what it claims to be: a good share of it is exactly
+    // collinear, and the plain floating-point formula gets a good share wrong.
+    expect(flat).toBeGreaterThan(40000);
+    expect(naive).toBeGreaterThan(10000);
+  });
+
+  test('gives one answer however the three points are handed to it', () => {
+    // The property the arrangement actually leans on. The same three points
+    // reach it in whatever order a walk happened to arrive in, and a predicate
+    // that says left one way round and right the other is an arrangement that
+    // contradicts itself — which is what a dead end in a boundary is made of.
+    let seed = 999;
+    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+    let naive = 0;
+
+    const plain = (a: Point, b: Point, c: Point): number =>
+      Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+
+    for (let k = 0; k < 50000; k++) {
+      const scale = 10 ** Math.floor(rnd() * 6 - 2);
+      const a = { x: Math.round((rnd() - 0.5) * scale), y: Math.round((rnd() - 0.5) * scale) };
+      const b = { x: Math.round((rnd() - 0.5) * scale), y: Math.round((rnd() - 0.5) * scale) };
+      const t = rnd() * 2 - 0.5;
+      const c = {
+        x: nudge(a.x + (b.x - a.x) * t, Math.floor(rnd() * 3) - 1),
+        y: nudge(a.y + (b.y - a.y) * t, Math.floor(rnd() * 3) - 1),
+      };
+
+      const it = orientation(a, b, c);
+
+      // Rotating the three is the same turn; swapping two reverses it.
+      expect(orientation(b, c, a)).toBe(it);
+      expect(orientation(c, a, b)).toBe(it);
+      expect(orientation(b, a, c) + it).toBe(0);
+
+      if (plain(b, c, a) !== plain(a, b, c) || plain(b, a, c) + plain(a, b, c) !== 0) naive++;
+    }
+
+    // And the plain formula does not have it, which is why this is here.
+    expect(naive).toBeGreaterThan(1000);
+  });
+
+});
 
 describe('ring arithmetic', () => {
   test('signed area follows the winding', () => {
