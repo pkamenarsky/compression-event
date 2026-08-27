@@ -29,14 +29,25 @@
 * version management
 
 * shortcuts
-  c - create shape; cr - rect; cn - n-gon; cp - polyline
-  p - points; + - add points; - delete points; click - select; drag - marquee; shift+selection gesture - add to selection
-  t - select; tt - translate; tr - rotate; ts - scale; te - erode; gg/cmd+g - group; gu/cmd-shift-g - ungroup; click - select group; cmd+click - select poly; drag - marquee; shift+selection gesture - add to selection
-  v - versions; vn/arrow down (global) - next; vp/arrow up (global) - prev
+  c - create shape; cr - rect; cn - n-gon; cv - polyline; ca - artefact; cp - path
+    mode in UI; drag - creates shape (or click in case of artefact or click + click + ... in the case of polyline or path)
+  e - edit; ep - points; ee - edges; ep - polys (artefacts are always selectable)
+    mode in UI; t - translate; r - rotate; s - scale; groups; selection (+selection stack for each element), direct selection;
   e - effects; ec - chamfer; en - noise
-  p - paths; same as in points mode
-  a - artifacts
+    click on poly / group & drag
+
+  v - versions; vn/arrow down (global) - next; vp/arrow up (global) - prev
   bb - bake
+
+  // p - paths; same as in points mode
+  // a - artifacts
+  // p - points; + - add points; - delete points; click - select; drag - marquee; shift+selection gesture - add to selection
+  // t - select; tt - translate; tr - rotate; ts - scale; te - erode; gg/cmd+g - group; gu/cmd-shift-g - ungroup; click - select group; cmd+click - select poly; drag - marquee; shift+selection gesture - add to selection
+
+  questions
+    create a rect and want to move/scale it right away? friction
+    create an artefact but want to move it? friction
+    want to edit edge? have to click on edge first - friction
 * UI
   pressing ? overlays tooltips on everything that is visible
 
