@@ -108,6 +108,18 @@ export interface Artefact {
    * table is read against. */
   at: Point
   places: (Point | null)[]
+  /**
+   * Which way it points at each version, as a yaw in radians: zero looks up
+   * the negative z axis, growing the way the player's yaw does.
+   *
+   * A place has no direction of its own — this is the one its frame has been
+   * turned by, which is what makes a turn about the start's own point mean
+   * something. Only the start reads it: the player is put where it stands and
+   * faces the way it faces.
+   *
+   * Null wherever `places` is, and for the same reason.
+   */
+  facings: (number | null)[]
 }
 
 export interface Version {

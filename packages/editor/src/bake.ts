@@ -106,6 +106,7 @@ import {
   compose,
   contributed,
   depths,
+  facing,
   groupFrame,
   placeAt,
   sidedWith,
@@ -2744,11 +2745,13 @@ export function artefactsDuring(
 
     if (there === null && then === null) continue;
 
+    const m = easedFrame(world, id, late, t);
+
     const at = there === null ? then!
       : then === null ? there
-      : place(easedFrame(world, id, late, t), [it.at])[0];
+      : place(m, [it.at])[0];
 
-    out.push({ id, type: it.type, at });
+    out.push({ id, type: it.type, at, facing: facing(m) });
   }
 
   return out.sort((p, q) => p.id - q.id);

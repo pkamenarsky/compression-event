@@ -195,6 +195,25 @@ export interface Placed {
   id: ArtefactId
   type: ArtefactType
   at: Point
+  /** Which way its frame has been turned, as a yaw in radians. See `facing`. */
+  facing: number
+}
+
+/**
+ * Which way a frame is pointing, out of its linear part alone.
+ *
+ * An artefact is a place and carries no direction of its own, so the direction
+ * is the one its chain has turned it: north in its own frame, taken through
+ * the same transforms its point is. A yaw rather than a vector, and measured
+ * the way the game measures the player's — zero looks up the negative y axis,
+ * and it grows clockwise on screen.
+ *
+ * Only the start has anything to do with it. A key has no front.
+ */
+export function facing(m: Affine): number {
+  const x = -m.c, y = -m.d;
+
+  return Math.atan2(x, -y);
 }
 
 /**
@@ -213,6 +232,15 @@ export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | nul
   return place(groupFrame(world, v, id), [it.at])[0];
 }
 
+/** Which way it is pointing at a version, or nothing if it is not there yet. */
+export function facingAt(world: World, id: ArtefactId, v: VersionId): number | null {
+  const it = world.artefacts.get(id);
+
+  if (it === undefined || !chain(world, v).includes(it.birth)) return null;
+
+  return facing(groupFrame(world, v, id));
+}
+
 /** Everything standing at a version, in id order. */
 export function artefactsAt(world: World, v: VersionId): Placed[] {
   const out: Placed[] = [];
@@ -220,7 +248,7 @@ export function artefactsAt(world: World, v: VersionId): Placed[] {
   for (const [id, it] of world.artefacts) {
     const at = placeAt(world, id, v);
 
-    if (at !== null) out.push({ id, type: it.type, at });
+    if (at !== null) out.push({ id, type: it.type, at, facing: facingAt(world, id, v)! });
   }
 
   return out.sort((a, b) => a.id - b.id);

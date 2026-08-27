@@ -471,9 +471,13 @@ export function worldCanvas(
       const anchors = starting(world(), v, ids);
 
       // One pivot for the whole selection, so several polygons turn together
-      // rather than each about itself. Artefacts are in it: a lone one turning
-      // about itself would sit perfectly still, and a room turning about a
-      // centre its own key was left out of would leave the key behind.
+      // rather than each about itself. Artefacts are in it: a room turning
+      // about a centre its own key was left out of would leave the key behind.
+      //
+      // A lone artefact turns about its own point and stays exactly where it
+      // is, which is the gesture the start wants — the place is unchanged and
+      // the facing is not. Every other kind has no facing to change, so it is
+      // a turn that does nothing, which is what a turn of a point should be.
       const pivot = centroid([...items.flatMap(it => it.source), ...places]);
 
       cursor('crosshair');
@@ -1889,7 +1893,7 @@ function ghosts(
   // The outline only, and no label: a ghost says where something was, and
   // seven kinds written twice over is not that. Into the same path as the
   // rings, so one stroke draws the whole of what this version was.
-  for (const it of artefactsAt(world, v)) diamond(ctx, toScreen(view, it.at));
+  for (const it of artefactsAt(world, v)) icon(ctx, toScreen(view, it.at), it);
 
   ctx.strokeStyle = stroke;
   ctx.lineWidth = 1;
@@ -2195,7 +2199,7 @@ function artefacts(
     const colour = !near ? theme.outside : here ? theme.picked : theme.artefact;
 
     ctx.beginPath();
-    diamond(ctx, q);
+    icon(ctx, q, it);
 
     ctx.fillStyle = here && near ? theme.pickedFill : theme.canvas;
     ctx.fill();
@@ -2203,24 +2207,63 @@ function artefacts(
     // The facets, which are what make it read as the icon rather than as a
     // lozenge. Added to the same path after the fill, so one stroke draws the
     // outline and the facets together and they cannot disagree about weight.
-    ctx.moveTo(q.x - WAIST, q.y - SHOULDER);
-    ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
-    ctx.moveTo(q.x - FACET, q.y - SHOULDER);
-    ctx.lineTo(q.x, q.y + BOTTOM);
-    ctx.lineTo(q.x + FACET, q.y - SHOULDER);
-    ctx.lineTo(q.x, q.y - TOP);
+    if (it.type === 'start') {
+      const [tip, back] = [ahead(q, it.facing, NOSE, 0), ahead(q, it.facing, -TAIL, 0)];
+
+      ctx.moveTo(back.x, back.y);
+      ctx.lineTo(tip.x, tip.y);
+    }
+    else {
+      ctx.moveTo(q.x - WAIST, q.y - SHOULDER);
+      ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
+      ctx.moveTo(q.x - FACET, q.y - SHOULDER);
+      ctx.lineTo(q.x, q.y + BOTTOM);
+      ctx.lineTo(q.x + FACET, q.y - SHOULDER);
+      ctx.lineTo(q.x, q.y - TOP);
+    }
 
     ctx.strokeStyle = colour;
     ctx.lineWidth = here && near ? 1.5 : 1;
     ctx.stroke();
 
     ctx.fillStyle = !near ? theme.outside : here ? theme.picked : theme.muted;
-    ctx.fillText(it.type, q.x, q.y + BOTTOM + 3);
+    ctx.fillText(it.type, q.x, q.y + (it.type === 'start' ? NOSE : BOTTOM) + 3);
   }
 }
 
-/** The outline, as a subpath. Its own function because a ghost draws it and
- * nothing else, in among the rings of the version it belongs to. */
+/**
+ * The outline of one artefact, as a subpath. Its own function because a ghost
+ * draws it and nothing else, in among the rings of the version it belongs to.
+ *
+ * The start is the one kind with a direction — it is where the player is put
+ * *and* which way they are looking — so it is drawn as a dart along that
+ * direction rather than as a diamond, which has nothing to say about it.
+ */
+function icon(ctx: CanvasRenderingContext2D, q: Point, it: Placed): void {
+  if (it.type === 'start') dart(ctx, q, it.facing);
+  else diamond(ctx, q);
+}
+
+/** A point `f` pixels along the facing and `s` across it, from `q`. */
+function ahead(q: Point, facing: number, f: number, s: number): Point {
+  const fx = Math.sin(facing), fy = -Math.cos(facing);
+
+  return { x: q.x + fx * f - fy * s, y: q.y + fy * f + fx * s };
+}
+
+/** The start's outline: long enough down the facing to be read as pointing
+ * that way at a glance, and no wider than the diamond it stands in for. */
+function dart(ctx: CanvasRenderingContext2D, q: Point, facing: number): void {
+  const tip = ahead(q, facing, NOSE, 0);
+  const left = ahead(q, facing, -TAIL, -WAIST);
+  const right = ahead(q, facing, -TAIL, WAIST);
+
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(right.x, right.y);
+  ctx.lineTo(left.x, left.y);
+  ctx.closePath();
+}
+
 function diamond(ctx: CanvasRenderingContext2D, q: Point): void {
   ctx.moveTo(q.x, q.y - TOP);
   ctx.lineTo(q.x + WAIST, q.y - SHOULDER);
@@ -2237,6 +2280,10 @@ const SHOULDER = 2.5;
 const BOTTOM = 9;
 const WAIST = 8;
 const FACET = 3.5;
+
+/** The start's dart, from its own point: ahead to the tip, back to the base. */
+const NOSE = 14;
+const TAIL = 7;
 
 /**
  * The bake, played back: the same runs, drawn from the buffers rather than from

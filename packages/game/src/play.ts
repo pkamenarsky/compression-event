@@ -295,13 +295,17 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const spawn = (): void => {
-    const start = world.artefacts.find(it => it.type === 'start')?.places[0];
+    // Where the start stands and which way it points: the mark on the floor
+    // carries a direction, and being put down facing a wall is not a level
+    // beginning.
+    const start = world.artefacts.find(it => it.type === 'start');
+    const at = start?.places[0];
 
-    player.x = (start?.x ?? 0) * SCALE;
-    player.z = (start?.y ?? 0) * SCALE;
+    player.x = (at?.x ?? 0) * SCALE;
+    player.z = (at?.y ?? 0) * SCALE;
     player.vx = 0;
     player.vz = 0;
-    player.yaw = 0;
+    player.yaw = start?.facings[0] ?? 0;
   };
 
   const restart = (): void => {

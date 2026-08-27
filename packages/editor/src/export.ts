@@ -31,7 +31,7 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
+import { Contributed, IDENTITY, contributing, facingAt, placeAt, resolveAt } from './scene';
 import { ArtefactId, Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
@@ -415,6 +415,7 @@ export function artefactsShipped(world: World): GameArtefact[] {
       type: it.type,
       at: it.at,
       places: world.versions.map((_unused, v) => placeAt(world, id, v)),
+      facings: world.versions.map((_unused, v) => facingAt(world, id, v)),
     };
   });
 }
