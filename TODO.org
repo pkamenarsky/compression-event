@@ -12,7 +12,7 @@
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
 
 * visible versions can be a strip instead of individual lines
-** button: all versions/next version/all subsequent versions/strip
+** button: none/all/next/subsequent/strip (current version is always visible)
 * effects
 ** chamfer etc
 
