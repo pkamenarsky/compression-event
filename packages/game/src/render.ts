@@ -34,13 +34,9 @@ import { DitherPass } from './dither';
 import { Morph, morph } from './morph';
 import { still } from './still';
 import { Run, Source, WallOptions } from './walls';
-import { Floor, Point, World } from './world';
-
-/** World units per editor unit: the editor's grid of 25 is one metre. */
-export const SCALE = 1 / 25;
+import { Floor, Point, SCALE, TILE_SIZE, World } from './world';
 
 const WALL_HEIGHT = 7;
-const TILE_SIZE = 4;
 
 const WALL_COLOR = 0xfdebeb;
 const LINE_COLOR = 0x000000;

@@ -40,7 +40,7 @@ import { Standing, artefacts } from './artefacts';
 import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
-import { SCALE, renderer } from './render';
+import { renderer } from './render';
 import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
 import {
   SoundHandle,
@@ -53,7 +53,7 @@ import {
   versionShift,
 } from './sound';
 import { Run } from './walls';
-import { Artefact, ArtefactType, Point, World } from './world';
+import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
 /** Eye height, in world units. Exported because standing in the level is
  * standing in the level, wherever the walking is being done from. */

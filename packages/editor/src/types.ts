@@ -1,4 +1,4 @@
-import { ArtefactType, Point, PolygonType } from '@ce/game/world';
+import { ArtefactType, Point, PolygonType, SCALE, TILE_SIZE } from '@ce/game/world';
 import type { Bake } from './bake';
 
 export type { ArtefactType, Point, PolygonType };
@@ -24,8 +24,14 @@ export interface Settings {
   showGrid: boolean
 }
 
+/**
+ * The grid starts at one tile of the game's floor, taken back into editor
+ * units — the one grid the level is seen against from inside, so it is the one
+ * it is drawn on from above. `+` and `-` halve and double from there, which
+ * keeps every size the author can reach a division of the tile.
+ */
 export const defaultSettings: Settings = {
-  gridSize: 32,
+  gridSize: TILE_SIZE / SCALE,
   showGrid: true,
 };
 
@@ -412,7 +418,7 @@ export interface World {
 
 /** Long enough to author a shrink sequence against, short enough to fit down
  * the side of the window without a scrollbar. */
-export const VERSIONS = 5;
+export const VERSIONS = 9;
 
 export function emptyWorld(): World {
   return {

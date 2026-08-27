@@ -32,6 +32,29 @@
 
 import { BakedLevel, EMPTY_BAKED } from './baked';
 
+// -----------------------------------------------------------------------------
+// The two numbers both halves are measured in
+//
+// Here rather than in the renderer, which is where they were, because the
+// editor needs them too and has no business loading three.js to read a
+// constant. This module is what the two halves already agree on, and a scale
+// is exactly that kind of fact.
+// -----------------------------------------------------------------------------
+
+/** World units per editor unit: the editor's grid of 25 is one metre. */
+export const SCALE = 1 / 25;
+
+/**
+ * One floor tile, in world units.
+ *
+ * The grid a level is worked on from above and the grid it is seen against
+ * from inside have to be the same grid, or a room laid out on dots that fall
+ * halfway across the tiles looked square in the editor and reads as nothing in
+ * the level. So the editor's default grid is this, taken through `SCALE` —
+ * see `defaultSettings` — and the sizes it can be taken to are divisions of it.
+ */
+export const TILE_SIZE = 4;
+
 /**
  * What an author can draw, which is not what the game is handed.
  *

@@ -14,7 +14,8 @@
 // tenth of a second of it.
 // -----------------------------------------------------------------------------
 
-import { SCALE, WALK_SPEED } from '@ce/game';
+import { WALK_SPEED } from '@ce/game';
+import { SCALE } from '@ce/game/world';
 import { Path, PathId, Point, World } from './types';
 
 /** Editor units the player covers in a second: the game's speed is in world

@@ -20,8 +20,7 @@
 
 import * as THREE from 'three';
 import { bayerGLSL } from './dither';
-import { SCALE } from './render';
-import { ArtefactType } from './world';
+import { ArtefactType, SCALE } from './world';
 
 /** Where one artefact stands, in editor units. */
 export interface Standing {
