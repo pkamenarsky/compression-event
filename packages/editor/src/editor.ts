@@ -149,10 +149,15 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
 /**
  * Standing in the level rather than looking down at it.
  *
- * Enter goes in — and turns the 3D view on if it was not already, since being
+ * `\` goes in — and turns the 3D view on if it was not already, since being
  * inside something invisible is not a state worth having. Coming back out is
  * the pointer lock going, which the view watches for, so Escape works without
  * anything here waiting for it.
+ *
+ * A key nothing types and nothing else in the editor wants, which is the whole
+ * of why it is this one. Enter was it until the paths tool needed the key that
+ * says a thing being laid down is finished, and going into the level for
+ * committing a walk is two things happening for one press.
  *
  * The arrows switch version while inside, and switch it the same way the
  * version strip does: `switched`, so a transition is declared in the same
@@ -161,16 +166,16 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
 function roaming(input: Input, state: Value<EditorState>, update: Update): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* keyPressed(input, 'Enter', 'ArrowUp', 'ArrowDown');
+      const e = yield* keyPressed(input, 'Backslash', 'ArrowUp', 'ArrowDown');
 
       if (e.metaKey || e.ctrlKey) continue;
 
-      // The game has the page. Enter reaching back here used to turn the
+      // The game has the page. `\` reaching back here used to turn the
       // editor's own walk on underneath it, so leaving the game landed the
       // player in a second one.
       if (afoot !== null) continue;
 
-      if (e.code === 'Enter') {
+      if (e.code === 'Backslash') {
         if (e.repeat || state().roaming) continue;
 
         e.preventDefault();
@@ -265,7 +270,7 @@ function playable(s: EditorState, to: VersionId): boolean {
 }
 
 /**
- * Cmd+Enter hands the level to the game and stands in it.
+ * Cmd+\ hands the level to the game and stands in it.
  *
  * The game is a function over an element, exactly as the 3D panel's renderer
  * is — the editor is one of its callers rather than something it is launched
@@ -279,7 +284,7 @@ function playable(s: EditorState, to: VersionId): boolean {
 function playing(state: Value<EditorState>, input: Input): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* keyPressed(input, 'Enter');
+      const e = yield* keyPressed(input, 'Backslash');
 
       if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
 
@@ -298,7 +303,7 @@ function playing(state: Value<EditorState>, input: Input): VNode {
 let afoot: { game: Game, host: HTMLElement } | null = null;
 
 function started(s: EditorState): void {
-  // One at a time. A second Cmd+Enter used to lay another game over the first
+  // One at a time. A second Cmd+\ used to lay another game over the first
   // and leave it running underneath — its loop, its keyboard, its drone.
   if (afoot !== null) return;
 
@@ -315,7 +320,7 @@ function started(s: EditorState): void {
     host.remove();
   };
 
-  // No title screen: Cmd+Enter is the gesture that asked for it, and the
+  // No title screen: Cmd+\ is the gesture that asked for it, and the
   // level is already there.
   afoot = { game: play(host, shipped(s.world, s.bake), { title: false, leave }), host };
 }
@@ -336,14 +341,15 @@ function started(s: EditorState): void {
  * the other two, rather than having to guess between that and starting a shape.
  *
  * `i` is nobody's. Illustrator has no tool for dropping a thing into a level,
- * and the letters that would read as one are taken.
+ * and the letters that would read as one are taken. `w` is the walk: the paths
+ * tool measures how long one takes, and `p` is spoken for by the pen.
  */
 function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
       const e = yield* keyPressed(
         input,
-        'KeyA', 'KeyV', 'KeyP', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
+        'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
       );
 
       const command = e.metaKey || e.ctrlKey;
@@ -355,13 +361,17 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       if (!command) {
         if (e.code === 'KeyA') update(s => ({ ...s, tool: 'point' }));
         else if (e.code === 'KeyV') update(s => ({ ...s, tool: 'polygon' }));
-        else if (e.code === 'KeyP') update(s => ({ ...s, tool: 'path' }));
+        else if (e.code === 'KeyP') update(s => ({ ...s, tool: 'create' }));
+        else if (e.code === 'KeyW') update(s => ({ ...s, tool: 'path' }));
         else if (e.code === 'KeyI') update(s => ({ ...s, tool: 'artefact' }));
 
         continue;
       }
 
       if (e.code === 'KeyP') continue;
+
+      // Cmd+W closes the window, which is emphatically not a tool switch.
+      if (e.code === 'KeyW') continue;
 
       // Cmd+I is the browser's, and there is nothing here it would mean.
       if (e.code === 'KeyI') continue;
@@ -519,7 +529,7 @@ const TOOLS: ToolSpec[] = [
   },
 
   {
-    id: 'path',
+    id: 'create',
     icon: [
       path({ d: 'M4.5 18.5 C 4.5 9, 19.5 15, 19.5 5.5' }),
       rect({ x: 2.5, y: 16.5, width: 4, height: 4 }),
@@ -539,6 +549,17 @@ const TOOLS: ToolSpec[] = [
     id: 'polygon',
     icon: [
       path({ d: 'M12 3 L20.6 9.2 L17.3 19.3 H6.7 L3.4 9.2 Z' }),
+    ],
+  },
+
+  // A route with a stopwatch on it: the legs of the walk, and the thing they
+  // are measured in.
+  {
+    id: 'path',
+    icon: [
+      path({ d: 'M3.5 19.5 L9 12.5 L14 16 L20.5 6.5' }),
+      circle({ cx: 17, cy: 17, r: 4 }),
+      path({ d: 'M17 14.8 V17 H18.8' }),
     ],
   },
 ];

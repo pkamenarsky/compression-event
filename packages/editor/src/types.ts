@@ -35,7 +35,7 @@ export const defaultSettings: Settings = {
 // Tools
 // -----------------------------------------------------------------------------
 
-export type Tool = 'point' | 'path' | 'artefact' | 'polygon';
+export type Tool = 'point' | 'create' | 'artefact' | 'polygon' | 'path';
 
 // -----------------------------------------------------------------------------
 // View — the window onto the world
@@ -143,6 +143,7 @@ export const EMPTY_TRANSFORM: Transform = {
 // -----------------------------------------------------------------------------
 
 export type PolygonId = number;
+export type PathId = number;
 export type GroupId = number;
 export type VertexId = number;
 export type ArtefactId = number;
@@ -295,10 +296,30 @@ export interface Artefact {
   at: Point
 }
 
+/**
+ * A walk somebody might take through the level, and nothing more.
+ *
+ * A measuring tape rather than a part of the world: it is not shipped, nothing
+ * collides with it, and no version transforms it. What it is for is the one
+ * question the geometry cannot answer by being looked at — how long the walk
+ * from here to there takes — and the answer is the run of the points times the
+ * speed the player walks at. See `seconds`.
+ *
+ * Version-independent deliberately. A path is drawn over whichever version is
+ * being looked at and reads the same over all of them, because the thing being
+ * measured is the route, and comparing the same route against two versions is
+ * most of what one is drawn for.
+ */
+export interface Path {
+  points: Point[]
+}
+
 export interface World {
   polygons: Map<PolygonId, Polygon>
   groups: Map<GroupId, Group>
   artefacts: Map<ArtefactId, Artefact>
+  /** The measuring paths. Not part of the level — see `Path`. */
+  paths: Map<PathId, Path>
   /** One counter for every kind of id. */
   nextId: number
   versions: Version[]
@@ -313,6 +334,7 @@ export function emptyWorld(): World {
     polygons: new Map(),
     groups: new Map(),
     artefacts: new Map(),
+    paths: new Map(),
     nextId: 0,
 
     versions: Array.from({ length: VERSIONS }, (_unused, i) => ({
@@ -617,7 +639,7 @@ export interface EditorState {
   /**
    * Standing in it rather than looking at it: the 3D view over the whole
    * window, the camera at eye height, and the keyboard belonging to whoever is
-   * walking rather than to the editor. Enter goes in and Escape comes back.
+   * walking rather than to the editor. `\` goes in and Escape comes back.
    *
    * It implies `preview` — the view is up for as long as someone is inside it,
    * whether or not the panel was — and it takes the shortcuts away from the

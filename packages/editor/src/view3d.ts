@@ -529,7 +529,7 @@ function panel(
             return;
           }
 
-          // Asked for on the way in, where the Enter press is still counted as
+          // Asked for on the way in, where the `\` press is still counted as
           // something a person did. A browser can refuse it — too soon after the
           // last one is the usual reason — and the promise it hands back rejects
           // rather than throwing, so it is caught here and the view says to click.
@@ -555,9 +555,9 @@ function panel(
               return;
             }
 
-            // Enter again asks for the pointer again, for when the first ask was
+            // `\` again asks for the pointer again, for when the first ask was
             // refused and clicking is not what a hand on WASD wants to do.
-            if (e.code === 'Enter') {
+            if (e.code === 'Backslash') {
               e.preventDefault();
               if (document.pointerLockElement !== host) capture();
               return;

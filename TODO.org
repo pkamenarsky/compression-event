@@ -1,5 +1,3 @@
-* start view direction
-* paths
 * create button
 ** (!) should be selected first
 ** rect
@@ -27,6 +25,8 @@
 * locking of polygons? unlock works then with cmd + click
 * unchain
 * version management
+* double click for paths cause enter enters 3d view
+* paths in groups?
 
 * shortcuts
   c - create shape; cr - rect; cn - n-gon; cv - polyline; ca - artefact; cp - path

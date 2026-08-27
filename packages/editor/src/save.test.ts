@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { addPath } from './paths';
 import { FORMAT, restored, saved } from './save';
 import { resolveAt } from './scene';
 import { TOP, addArtefact, addPolygon, editAt, placeAt, withEdit } from './scene';
@@ -101,6 +102,34 @@ describe('save', () => {
 
     expect(restored(JSON.parse(JSON.stringify(old)) as typeof file).world.groups.size)
       .toEqual(0);
+  });
+
+  test('measuring paths survive the trip, and a format-7 file has none', () => {
+    const before = world();
+    const drawn: EditorState = {
+      ...before,
+      world: addPath(before.world, [{ x: 0, y: 0 }, { x: 100, y: 0 }]).world,
+    };
+
+    const file = saved(drawn);
+    const after = restored(JSON.parse(JSON.stringify(file)) as typeof file);
+
+    expect([...after.world.paths.values()]).toEqual([
+      { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
+    ]);
+
+    // And the tool it was drawing with was called something else then.
+    const old = {
+      ...file,
+      format: 7,
+      tool: 'path' as const,
+      world: { ...file.world, paths: undefined },
+    };
+
+    const back = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    expect(back.world.paths.size).toBe(0);
+    expect(back.tool).toBe('create');
   });
 
   test('artefacts survive the trip, places and all, and a format-5 file has none', () => {

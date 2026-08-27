@@ -64,6 +64,12 @@ export const theme = {
   /** The source ring under an eroded polygon: where the handles are. */
   source: '#6f7788',
   draft: '#8fb4ff',
+  /** A measuring path. Not part of the level and not any kind of shape, so it
+   * gets a line of its own — warm, because everything the level is made of is
+   * cool, and a tape laid over a drawing should read as being on top of it
+   * rather than in it. */
+  path: '#e0a35c',
+  pathText: '#f0c894',
   csg: '#f2c14e',
   /** The bake played back: the same set, but the one the game would draw, so
    * it is thinner and brighter than the editor's own answer sitting under it. */

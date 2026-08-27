@@ -63,6 +63,15 @@ import {
   withEdit,
   withinBox,
 } from './scene';
+import {
+  OnPath,
+  addPath,
+  hitPathEdge,
+  hitPathPoint,
+  seconds,
+  setPath,
+  timings,
+} from './paths';
 import { theme } from './theme';
 import {
   ARTEFACTS,
@@ -71,6 +80,8 @@ import {
   ArtefactType,
   EditorState,
   Id,
+  Path,
+  PathId,
   Point,
   Polygon,
   PolygonId,
@@ -339,6 +350,10 @@ export function worldCanvas(
       }
 
       const points = tool() === 'point';
+
+      // A box over the corners is a selection of corners, so nothing is picked
+      // out of a path any more. One Backspace, one meaning.
+      if (points) setLocal({ ...local(), onPath: null });
 
       // Corners come off what is on screen as itself; polygons come off
       // everything, because a member is how a marquee finds the group over it.
@@ -717,6 +732,284 @@ export function worldCanvas(
       }
     }
 
+    /**
+     * Laying down a measuring path, from the first point until it is committed.
+     *
+     * The pen's gesture with one thing taken out of it: there is nothing to
+     * close. A polygon is a ring and is only a polygon once it is one, so the
+     * pen ends by meeting its own first point; a walk is a run of legs and is
+     * a walk at every length, so it ends when the author says it does. Enter
+     * writes it, Escape drops it, and neither is guessed at from where a click
+     * happened to land.
+     *
+     * Escape drops the draft and nothing else. Carrying on with a path that is
+     * already in the document leaves that one exactly as it was — the points
+     * being added are the draft's until they are committed, which is what
+     * makes trying an extra leg out free.
+     */
+    function* measuring(open: Walk): Op<void> {
+      setLocal({ ...local(), laying: open, onPath: null });
+
+      // The same claim the pen makes on Cmd+Z, for the same reason: while a
+      // walk is open it takes back a point rather than undoing the document,
+      // and the points laid down so far are not in the document to be undone.
+      //
+      // Enter as well. Nothing else waits on it — going and standing in the
+      // level is `\`, which it became so that committing a walk could be the
+      // key that means a thing being laid down is finished — and a gesture
+      // holding the keys it answers to is how the rest of this works.
+      const release = input.claim('KeyZ', 'Enter', 'NumpadEnter');
+
+      try {
+        while (true) {
+          const next = yield* select({
+            key: input.keyDown,
+            press: pointerPressed(),
+
+            tracking: pointerMoved(e => {
+              const w = local().laying;
+
+              if (w !== null) setLocal({ ...local(), laying: { ...w, at: at(e, true) } });
+            }),
+
+            stopped: abandoned,
+            lost: blurred(),
+          });
+
+          if (next.tag === 'stopped' || next.tag === 'lost') return dropWalk();
+
+          if (next.tag === 'key') {
+            const e = next.value;
+            const command = e.metaKey || e.ctrlKey;
+
+            if (!command && e.code === 'Space') {
+              e.preventDefault();
+              yield* panning();
+            }
+            else if (!command && e.code === 'Escape') {
+              return dropWalk();
+            }
+            else if (!command && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+              return commitWalk();
+            }
+            else if (command && e.code === 'KeyZ' && !e.shiftKey) {
+              e.preventDefault();
+
+              const w = local().laying!;
+              const points = w.points.slice(0, -1);
+
+              // Back past the first point is back to no walk at all, and the
+              // next Cmd+Z is the document's again.
+              if (points.length === 0) return dropWalk();
+
+              setLocal({ ...local(), laying: { ...w, points } });
+            }
+
+            continue;
+          }
+
+          const e = next.value;
+
+          if (e.target !== el) continue;
+
+          const decided = yield* select({
+            drag: pointerDragged({ x: e.clientX, y: e.clientY }, SLOP),
+            click: pointerReleased(),
+            lost: blurred(),
+          });
+
+          if (decided.tag === 'lost') return dropWalk();
+          if (decided.tag === 'drag') continue;
+
+          const w = local().laying!;
+          const to = at(e, true);
+
+          setLocal({ ...local(), laying: { ...w, points: [...w.points, to], at: to } });
+        }
+      }
+      finally {
+        release();
+      }
+    }
+
+    /** The open walk dropped, wherever it had got to. Whatever it was carrying
+     * on with stays in the document as it was. */
+    function dropWalk(): void {
+      setLocal({ ...local(), laying: null });
+    }
+
+    /** The open walk written into the document, under its own id if it had one. */
+    function commitWalk(): void {
+      const w = local().laying;
+
+      if (w === null) return;
+
+      update(s => marked(
+        {
+          ...s,
+          world: w.id === null
+            ? addPath(s.world, w.points).world
+            : setPath(s.world, w.id, w.points),
+        },
+        s.world,
+      ));
+
+      dropWalk();
+    }
+
+    /** The path point under the cursor, if a click is close enough to be
+     * about one. */
+    function pathPointAt(e: PointerEvent): OnPath | null {
+      return hitPathPoint(world().paths, at(e), HANDLE / view().zoom);
+    }
+
+    /**
+     * A click read against the paths, and what it did: picking a point,
+     * adding one to a leg, or taking one away with minus held.
+     *
+     * Both tools that touch a path read a click the same way, and this is the
+     * whole of what they share. A point beats a leg, because every point lies
+     * on two of them; a leg means adding one, because clicking a line is how a
+     * point is added to the middle of anything here. What is left over — a
+     * click on nothing, and the last point of a path — is the part the two
+     * tools answer differently, so it comes back false and each says what it
+     * means for itself.
+     */
+    function pathPicked(e: PointerEvent, resumable: boolean): boolean {
+      const reach = HANDLE / view().zoom;
+      const on = hitPathPoint(world().paths, at(e), reach);
+      const taking = input.holding(MINUS[0]) || input.holding(MINUS[1]);
+
+      if (on !== null) {
+        // The one the paths tool carries the walk on from. Left alone here, so
+        // that it can.
+        const last = on.index === world().paths.get(on.id)!.points.length - 1;
+
+        if (resumable && last && !taking) return false;
+
+        if (taking) {
+          removePathPoint(on);
+        }
+        else {
+          // Picking one lets the corners go, the same way picking a corner
+          // lets this go: Backspace means one thing, and what it means is
+          // whatever the last click was about.
+          setLocal({ ...local(), onPath: on });
+          update(s => ({ ...s, selection: { ...s.selection, vertices: [] } }));
+        }
+
+        return true;
+      }
+
+      // Held, minus only ever takes points away — the same rule the corners
+      // follow, and for the same reason: a click that missed by a pixel adding
+      // one instead is the opposite of what was asked for.
+      if (taking) return false;
+
+      const leg = hitPathEdge(world().paths, at(e), reach);
+
+      if (leg === null) return false;
+
+      const points = [...world().paths.get(leg.id)!.points];
+
+      points.splice(leg.index + 1, 0, at(e, true));
+
+      update(s => marked({ ...s, world: setPath(s.world, leg.id, points) }, s.world));
+      setLocal({ ...local(), onPath: { id: leg.id, index: leg.index + 1 } });
+
+      return true;
+    }
+
+    /**
+     * A click with the paths tool up, once it is known to be a click.
+     *
+     * What the shared reading leaves: a click on nothing starts a walk,
+     * because that is what a tool that draws does with one, and a click on the
+     * last point of a path carries that path on. The second is the one gesture
+     * here that has to be learnt — a walk is drawn to be extended, the answer
+     * to "and how much further to there", and there is nowhere else to put it.
+     */
+    function* pathClick(e: PointerEvent): Op<void> {
+      if (pathPicked(e, true)) return;
+
+      const here = at(e);
+      const on = hitPathPoint(world().paths, here, HANDLE / view().zoom);
+
+      if (on !== null) {
+        const path = world().paths.get(on.id)!;
+
+        return yield* measuring({ id: on.id, points: path.points, at: here });
+      }
+
+      const first = at(e, true);
+
+      yield* measuring({ id: null, points: [first], at: first });
+    }
+
+    /** The picked path point taken out. The path goes with it once there is
+     * not enough left to be a walk — see `setPath`. */
+    function unpointing(): boolean {
+      const on = local().onPath;
+
+      if (on === null) return false;
+
+      removePathPoint(on);
+
+      return true;
+    }
+
+    function removePathPoint(on: OnPath): void {
+      setLocal({ ...local(), onPath: null });
+
+      update(s => {
+        const path = s.world.paths.get(on.id);
+
+        if (path === undefined) return s;
+
+        const points = path.points.filter((_unused, i) => i !== on.index);
+
+        return marked({ ...s, world: setPath(s.world, on.id, points) }, s.world);
+      });
+    }
+
+    /**
+     * One point of a path following the cursor.
+     *
+     * Its own gesture rather than a share of `draggingVertices`, because a path
+     * has no version, no frame and no history to write a transform into: the
+     * point is where it is, and moving it is the map with a different number
+     * in it. Cancelling puts the world back the way every other gesture does.
+     */
+    function* draggingPathPoint(on: OnPath): Op<void> {
+      const was = world();
+
+      setLocal({ ...local(), onPath: on });
+      cursor('move');
+
+      const end = yield* select({
+        moving: pointerMoved(e => {
+          const to = at(e, true);
+
+          update(s => {
+            const path = s.world.paths.get(on.id);
+
+            if (path === undefined) return s;
+
+            const points = path.points.map((p, i) => (i === on.index ? to : p));
+
+            return { ...s, world: setPath(s.world, on.id, points) };
+          });
+        }),
+        panning: alongside(),
+        done: pointerReleased(),
+        cancel: keyPressed(input, 'Escape'),
+        lost: blurred(),
+      });
+
+      cursor('');
+      update(s => settled(s, was, end.tag === 'cancel'));
+    }
+
     /** The draft dropped, wherever it had got to. */
     function abandon(): void {
       setLocal({ ...local(), draft: null });
@@ -781,6 +1074,11 @@ export function worldCanvas(
       const corner = hitVertex(items, at(e), reach);
       const taking = input.holding(MINUS[0]) || input.holding(MINUS[1]);
 
+      // A path point before a polygon's corner, because a path is drawn over
+      // the level and what is on top is what a click on it means. Its legs
+      // come after the corners rather than before — see below.
+      if (corner === null && pathPointAt(e) !== null && pathPicked(e, false)) return;
+
       // Held, minus only ever takes corners away. Letting it fall through to
       // the edge would mean a click that missed the corner by a pixel added one
       // instead of removing one, which is the opposite of what was asked for.
@@ -803,6 +1101,10 @@ export function worldCanvas(
       }
 
       if (corner !== null) {
+        // Whatever path point was picked is not any more. One Backspace, and
+        // what it takes is whatever the last click was about.
+        setLocal({ ...local(), onPath: null });
+
         update(s => ({
           ...s,
           selection: {
@@ -820,6 +1122,11 @@ export function worldCanvas(
         return;
       }
 
+      // A leg of a path, once the corners have had their say: a corner is a
+      // smaller target than a line and missing one because a path happened to
+      // be drawn across it would be the corner that could not be picked.
+      if (pathPicked(e, false)) return;
+
       const edge = hitEdge(items, at(e), reach);
 
       if (edge !== null) {
@@ -827,6 +1134,8 @@ export function worldCanvas(
 
         if (it !== undefined) {
           const v = currentVersion();
+
+          setLocal({ ...local(), onPath: null });
 
           update(s => {
             const grown = addVertex(s.world, v, it, edge.index, edge.at);
@@ -848,6 +1157,7 @@ export function worldCanvas(
       // Nothing under it: let go of what was picked. Shift means adding, and
       // adding nothing to a selection leaves it alone.
       if (!e.shiftKey) {
+        setLocal({ ...local(), onPath: null });
         update(s => ({ ...s, selection: { ...s.selection, vertices: [] } }));
       }
     }
@@ -1172,6 +1482,14 @@ export function worldCanvas(
     }
 
     function removing(): void {
+      // A picked path point is what Backspace means under either tool that can
+      // pick one, and it is checked first: the paths tool has nothing else to
+      // delete, and under the point tool one is only ever picked instead of a
+      // corner, never as well as.
+      if (unpointing()) return;
+
+      if (tool() === 'path') return;
+
       update(s => {
         if (tool() === 'artefact') {
           if (s.selection.artefacts.length === 0) return s;
@@ -1300,7 +1618,15 @@ export function worldCanvas(
           // switching away would leave it waiting for clicks that now mean
           // something else entirely — so the pen is told, and drops it itself.
           effect(tool, t => {
-            if (t !== 'path' && local().draft !== null) abandoned.emit();
+            if (t !== 'create' && local().draft !== null) abandoned.emit();
+            if (t !== 'path' && local().laying !== null) abandoned.emit();
+
+            // Only the two tools that can pick a path point have anything to
+            // say about one, and one left picked under any other would be
+            // taken by the next Backspace, which meant something else.
+            if (t !== 'path' && t !== 'point' && local().onPath !== null) {
+              setLocal({ ...local(), onPath: null });
+            }
           }),
         ],
       ),
@@ -1390,6 +1716,17 @@ export function worldCanvas(
               // A drag that started on something is that thing being moved: a
               // corner under the point tool, a polygon under the polygon one.
               // Anywhere else it is a marquee.
+              if (tool() === 'point' || tool() === 'path') {
+                // A path point before a corner, the same way a click reads
+                // them: what is drawn on top is what the hand is aiming at.
+                const on = pathPointAt(e);
+
+                if (on !== null) {
+                  yield* draggingPathPoint(on);
+                  continue;
+                }
+              }
+
               if (tool() === 'point') {
                 const grab = hitVertex(
                   pickable(),
@@ -1402,6 +1739,7 @@ export function worldCanvas(
                     ? selection().vertices
                     : [grab.vertex];
 
+                  setLocal({ ...local(), onPath: null });
                   update(s => ({ ...s, selection: { ...s.selection, vertices: picked } }));
                   yield* draggingVertices(grab.vertex, picked);
                   continue;
@@ -1466,8 +1804,11 @@ export function worldCanvas(
               if (twice(e)) entering(e);
               else picking(e);
             }
-            else if (tool() === 'path') {
+            else if (tool() === 'create') {
               yield* drawing(e);
+            }
+            else if (tool() === 'path') {
+              yield* pathClick(e);
             }
             else if (tool() === 'artefact') {
               const on = grabbing(e);
@@ -1502,9 +1843,28 @@ interface Draft {
   at: Point
 }
 
+/**
+ * A measuring path being laid down.
+ *
+ * `id` is the path it will be written back to, which is null for a new one and
+ * set when an existing one is being carried on with — resuming is the same
+ * gesture, started from the points that are already there.
+ */
+interface Walk {
+  id: PathId | null
+  points: Point[]
+  at: Point
+}
+
 interface Local {
   marquee: Marquee | null
   draft: Draft | null
+  /** The open measuring path, if one is being laid down. */
+  laying: Walk | null
+  /** The picked point of a committed path, which is what Backspace takes. Not
+   * in the document's selection: a path is not part of the level, and nothing
+   * else in the editor has anything to say about one. */
+  onPath: OnPath | null
   /**
    * A gesture is running, so the versions downstream of this one are drawn
    * whatever their eyes say.
@@ -1519,6 +1879,8 @@ interface Local {
 const EMPTY_LOCAL: Local = {
   marquee: null,
   draft: null,
+  laying: null,
+  onPath: null,
   previewing: false,
 };
 
@@ -1818,6 +2180,20 @@ function layers(
     new Set(selection.artefacts),
     id => reachable(world, id, inside),
   ));
+
+  // The measuring paths, over everything and under every tool: a tape is laid
+  // on top of what it is measuring, and what it says about the layout is worth
+  // as much while the layout is being moved as while it is being measured.
+  // Dashed, which is what keeps that from being clutter — nothing else on the
+  // canvas is, so a path reads as an annotation over the drawing rather than
+  // as another line in it.
+  //
+  // The one being laid down is drawn from the gesture instead, so the
+  // committed copy of a path being carried on with sits this one out and there
+  // are not two of it on screen.
+  out.push(ctx => measures(ctx, view, world.paths, local.laying?.id ?? null, local.onPath));
+
+  if (local.laying !== null) out.push(ctx => laying(ctx, view, local.laying!));
 
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
@@ -2433,6 +2809,116 @@ function draft(ctx: CanvasRenderingContext2D, view: View, d: Draft): void {
     ctx.stroke();
   }
 }
+
+/**
+ * The committed measuring paths: the legs, the points, and the clock at each.
+ *
+ * The number is the whole point of the drawing. It goes above and to the right
+ * of its point, one side for all of them, so that a path doubling back on
+ * itself has its labels in a readable column rather than scattered around the
+ * corners.
+ */
+function measures(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  paths: ReadonlyMap<PathId, Path>,
+  /** The one being carried on with, drawn by the gesture instead. */
+  open: PathId | null,
+  picked: OnPath | null,
+): void {
+  for (const [id, it] of paths) {
+    if (id === open) continue;
+
+    tape(ctx, view, it.points, null, picked?.id === id ? picked.index : null);
+  }
+}
+
+/** The path being laid down: what is there, and the leg the cursor is on the
+ * end of. */
+function laying(ctx: CanvasRenderingContext2D, view: View, w: Walk): void {
+  tape(ctx, view, w.points, w.at, null);
+}
+
+/**
+ * One path drawn: `points` as legs with a time at each, and `to` as the leg
+ * still being aimed, which carries the time it would come to.
+ */
+function tape(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  points: readonly Point[],
+  to: Point | null,
+  picked: number | null,
+): void {
+  if (points.length === 0) return;
+
+  const screen = points.map(p => toScreen(view, p));
+  const times = timings(to === null ? points : [...points, to]);
+
+  ctx.beginPath();
+  screen.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+
+  ctx.strokeStyle = theme.path;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.setLineDash(DASH);
+  ctx.stroke();
+
+  // The leg on the end of the cursor, dashed finer: it is where the walk would
+  // go rather than where it goes, and the difference is worth seeing without
+  // reading the numbers.
+  if (to !== null) {
+    const end = toScreen(view, to);
+    const last = screen[screen.length - 1];
+
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.setLineDash([2, 3]);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+
+  ctx.beginPath();
+  for (const p of screen) {
+    ctx.rect(Math.round(p.x) - 2.5, Math.round(p.y) - 2.5, 5, 5);
+  }
+  ctx.fillStyle = theme.path;
+  ctx.fill();
+
+  if (picked !== null && screen[picked] !== undefined) {
+    const p = screen[picked];
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, HANDLE / 2, 0, Math.PI * 2);
+    ctx.strokeStyle = theme.picked;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.fillStyle = theme.pathText;
+
+  // Nothing at the first point: zero seconds is where every walk starts and
+  // saying so is one number per path that never changes.
+  screen.forEach((p, i) => {
+    if (i > 0) ctx.fillText(seconds(times[i]), p.x + 6, p.y - 5);
+  });
+
+  if (to !== null) {
+    const end = toScreen(view, to);
+
+    ctx.fillText(seconds(times[times.length - 1]), end.x + 6, end.y - 5);
+  }
+}
+
+/** The dash a measuring path is drawn with. Long enough to read as a dashed
+ * line at a glance rather than as a dotted one, which is what the fill under a
+ * floor already is. */
+const DASH = [6, 4];
 
 function marquee(ctx: CanvasRenderingContext2D, view: View, m: Marquee): void {
   const a = toScreen(view, m.a), b = toScreen(view, m.b);

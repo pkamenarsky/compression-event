@@ -21,6 +21,8 @@ import {
   Group,
   GroupId,
   Id,
+  Path,
+  PathId,
   Polygon,
   PolygonId,
   Settings,
@@ -34,6 +36,11 @@ import {
 } from './types';
 
 /**
+ * 8: the world holds measuring paths, and the tool that draws polygons is
+ * called `create` rather than `path` — the name now belongs to the tool that
+ * draws those. A format-7 file has no paths, which is a world nobody has
+ * measured anything in, and a `path` in its tool field meant the pen.
+ *
  * 7: an artefact is a point and a kind, and what has happened to it since is a
  * transform in the versions like everything else's. A format-6 file holds a
  * move per version instead, which is the same sequence of places said the long
@@ -61,7 +68,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 7;
+export const FORMAT = 8;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -86,6 +93,8 @@ export interface Saved {
     /** Absent before format 6, where there were none. Each one's places go out
      * as entries for the same reason a version's edits do. */
     artefacts?: [ArtefactId, SavedArtefact][]
+    /** Absent before format 8, where there were none. */
+    paths?: [PathId, Path][]
     versions: SavedVersion[]
   }
 }
@@ -127,6 +136,7 @@ export function saved(state: EditorState): Saved {
       artefacts: [...state.world.artefacts].map(
         ([id, a]) => [id, { type: a.type, birth: a.birth, at: a.at }],
       ),
+      paths: [...state.world.paths],
       versions: state.world.versions.map(savedVersion),
     },
   };
@@ -161,6 +171,7 @@ export function restored(file: Saved): EditorState {
       polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
       groups: new Map(file.world.groups ?? []),
       artefacts,
+      paths: new Map(file.world.paths ?? []),
       nextId: file.world.nextId,
       versions,
     },
@@ -169,7 +180,9 @@ export function restored(file: Saved): EditorState {
     selection: { polygons: file.selection, vertices: [], artefacts: file.artefacts ?? [] },
     settings: file.settings,
     view: file.view,
-    tool: file.tool,
+    // A format-7 file's `path` was the pen, which is now `create`. Nothing
+    // else about the tools has ever been renamed.
+    tool: (file.tool as string) === 'path' && file.format < 8 ? 'create' : file.tool,
 
     // None of these are in the file: a transition that is not running, whether
     // a panel is open, and whether someone is standing inside it. Opening a
