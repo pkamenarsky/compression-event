@@ -486,6 +486,91 @@ function rotated(ring: Ring, deg: number, c: Point): Ring {
 const room = rect(0, -200, 400, 200);
 const pillar = (deg: number) => rotated(rect(100, -100, 40, 200), deg, { x: 120, y: 0 });
 
+describe('a vertex landing on a wall', () => {
+  // The thing an author does all the time, and the arrangement's worst case. A
+  // corner exactly on a wall has always been fine; a corner a rounding or two
+  // off one was not, and the failure was not subtle — the cut called the corner
+  // and the crossing it makes two points, the weld further down called them one,
+  // and between those two answers a room came back as two triangles with half
+  // its ground missing. See `NEARBY`.
+
+  /** A room, and a slab whose corner sits `gap` above the room's top wall while
+   * its lower edge crosses that wall at a very shallow angle. */
+  function grazing(gap: number, k: number): { room: Shape, slab: Shape } {
+    return {
+      room: simplify([[
+        { x: 0, y: -200 * k }, { x: 400 * k, y: -200 * k },
+        { x: 400 * k, y: 0 }, { x: 0, y: 0 },
+      ]]),
+      slab: simplify([[
+        { x: 200 * k, y: gap }, { x: 400 * k, y: -1 * k },
+        { x: 400 * k, y: 60 * k }, { x: 200 * k, y: 60 * k },
+      ]]),
+    };
+  }
+
+  /** The room, less the wedge of slab below the wall. The slab's lower edge
+   * crosses `y = 0` at `x0`, and the wedge is the triangle from there to the
+   * room's far corner. */
+  function less(gap: number, k: number): number {
+    const x0 = 200 * k + 200 * k * gap / (gap + k);
+
+    return 400 * k * 200 * k - (400 * k - x0) * k / 2;
+  }
+
+  test('is exact when it lands exactly', () => {
+    for (const k of [1, 10, 100]) {
+      const { room, slab } = grazing(0, k);
+
+      expect(shapeArea(subtract(room, slab))).toBeCloseTo(less(0, k), 6);
+    }
+  });
+
+  test('and is no worse for landing a hair off, at any distance or scale', () => {
+    // Swept rather than sampled: the band that used to break is narrow, it sits
+    // wherever the tolerances happen to put it, and nobody would have guessed
+    // where. Fourteen decades of gap covers it several times over.
+    let worst = 0;
+
+    for (const k of [1, 10, 100]) {
+      for (let e = -14; e <= 0; e += 0.125) {
+        const gap = 10 ** e * k;
+        const { room, slab } = grazing(gap, k);
+        const whole = 400 * k * 200 * k;
+
+        worst = Math.max(worst, Math.abs(shapeArea(subtract(room, slab)) - less(gap, k)) / whole);
+      }
+    }
+
+    // What is left is the snapping itself, which moves a vertex by at most a few
+    // `snap` and moves the answer by no more. It used to be half the room.
+    expect(worst).toBeLessThan(1e-6);
+  });
+
+  test('and a corner sweeping through a wall keeps the room whole', () => {
+    // The case as it was reported: a slab turning until one of its corners
+    // grazes the wall, at the one angle where it does. Bisection in `provenance`
+    // finds that angle; this walks across it.
+    const room = rect(0, -200, 400, 200);
+    const pillar = (deg: number): Ring => {
+      const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+
+      return rect(100, -100, 40, 200).map(p => ({
+        x: 120 + (p.x - 120) * c - p.y * s,
+        y: (p.x - 120) * s + p.y * c,
+      }));
+    };
+
+    const want = Math.atan2(100, 20) * 180 / Math.PI;
+
+    for (const step of [1e-9, 1e-8, 1e-7, 1e-6, 1e-5]) {
+      for (let k = -60; k <= 60; k++) {
+        expect(shapeArea(subtract([room], [pillar(want + k * step)]))).toBeCloseTo(76000, 3);
+      }
+    }
+  });
+});
+
 describe('provenance', () => {
   test('every point has exactly one tag', () => {
     const r = combineTagged([rect(0, 0, 10, 10)], [rect(5, 5, 10, 10)], OpUnion);
@@ -581,7 +666,16 @@ describe('provenance', () => {
       else lo = mid;
     }
 
-    expect(lo).toBeCloseTo(want, 6);
+    // The handoff has moved, by design and by exactly the designed amount. A
+    // corner within a few `snap` of the wall is read as touching it rather than
+    // crossing it — see `NEARBY` — so the crossing this bisects for holds off
+    // until the corner is that much clear of the wall. The corner swings on a
+    // radius of hypot(100, 20) and the scene is about 600 across, which puts the
+    // shift a shade over a millionth of a degree: measured here rather than
+    // waved at, so that widening the tolerance cannot quietly widen this too.
+    const slack = 3 * 600e-9 / Math.hypot(100, 20) * 180 / Math.PI;
+
+    expect(Math.abs(lo - want)).toBeLessThan(slack * 1.5);
   });
 
   test('comparing only the endpoints invents a swap that never happens', () => {

@@ -506,6 +506,18 @@ interface Cover {
 interface Param {
   t: number
   tag: Tag
+  /**
+   * Where the cut is, when that is not simply how far along the segment it
+   * sits.
+   *
+   * A vertex a hair off a segment cuts it, and the point of cutting it there is
+   * that the vertex and the cut are the *same* point of the arrangement. Left to
+   * the parameter, the cut lands at the vertex's foot instead — a hair away —
+   * and whether the two ever become one node is then up to a weld further down
+   * that has its own idea of how close is close. Carrying the point settles it
+   * here: the two are one because they are the same pair of numbers.
+   */
+  at?: Point
 }
 
 /**
@@ -692,8 +704,8 @@ function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
       }
 
       out.push({
-        a: { x: a.x + dx * t0.t, y: a.y + dy * t0.t },
-        b: { x: a.x + dx * t1.t, y: a.y + dy * t1.t },
+        a: t0.at ?? { x: a.x + dx * t0.t, y: a.y + dy * t0.t },
+        b: t1.at ?? { x: a.x + dx * t1.t, y: a.y + dy * t1.t },
         edge: segs[i].edge,
         ta: t0.tag,
         tb: t1.tag,
@@ -760,6 +772,19 @@ function intersectInto(
     return;
   }
 
+  // An end of one lying all but on the other is *on* it, and where that end sits
+  // is where these two meet — not the crossing a hair further along. Both are
+  // true of the same configuration and only one of them can be the node: keep
+  // the crossing as well and the boundary gets two nodes a rounding apart where
+  // it has one corner, which is a sliver of a face that nothing can classify
+  // and, when the walk gives up on it, a chord drawn across the shape.
+  //
+  // This is the reading `welder` is going to take further down anyway, taken
+  // here, where there is still something to be done about it. Left to the weld
+  // the two disagree over a whole band of separations — near enough that the
+  // weld makes one node of them, far enough that the cut has already made two.
+  if (touching(s, u, ts, us, eps * NEARBY)) return;
+
   const t = (qx * sy - qy * sx) / d;
   const u0 = (qx * ry - qy * rx) / d;
 
@@ -775,8 +800,86 @@ function intersectInto(
   addParam(us, u0, tag);
 }
 
-function addParam(ts: Param[], t: number, tag: Tag): void {
-  if (t > 0 && t < 1) ts.push({ t, tag });
+/**
+ * How much further than the weld's own reach a vertex may sit from an edge and
+ * still be read as on it.
+ *
+ * The band this has to cover is the one between "close enough that the weld will
+ * make these one node anyway" and "far enough that the crossing is honestly a
+ * separate point". Below it everything already worked; above it everything
+ * already worked; inside it the cut said two points and the weld said one, and
+ * what came out was a room with half its ground missing.
+ *
+ * Measured rather than reasoned to, and the window is narrow enough to be worth
+ * writing down: at two and above the sweeps below are clean, and at six a
+ * pillar inside an eroding group starts coming apart, because a reach this
+ * generous begins swallowing crossings that are really there. Three is the
+ * middle of that, and it is a factor of two from trouble in each direction
+ * rather than a decade — so anything that widens the arrangement's other
+ * tolerances should be run past `a vertex landing on a wall` in
+ * `geometry.test.ts` before it is believed.
+ *
+ * What it costs is that a vertex within this of a wall is treated as touching
+ * it, which moves the boundary by at most that much — a few hundred-millionths
+ * of a unit on a level this size, against the half a room it buys.
+ */
+const NEARBY = 3;
+
+/**
+ * Ends of either segment that lie within `reach` of the other one, cut in where
+ * they land.
+ *
+ * A vertex a hair off a wall is a vertex on the wall, and saying so is what
+ * makes a level that is nearly flush behave like one that is exactly flush —
+ * which the arrangement has always handled exactly right.
+ *
+ * The cut is placed at the vertex itself rather than at its foot on the edge, so
+ * that the two readings of it are the same pair of numbers and not two points a
+ * rounding apart hoping to be welded. The edge picks up a kink of at most
+ * `reach`, which is a great deal less than the edge's own idea of straight.
+ *
+ * True when it found any, and then the crossing is not looked for: these two
+ * meet where the vertex is.
+ */
+function touching(s: Seg, u: Seg, ts: Param[], us: Param[], reach: number): boolean {
+  let found = false;
+
+  for (const [host, guest, into, ta, tb] of [
+    [s, u, ts, u.ta, u.tb] as const,
+    [u, s, us, s.ta, s.tb] as const,
+  ]) {
+    for (const [p, tag] of [[guest.a, ta] as const, [guest.b, tb] as const]) {
+      const at = footOf(host, p, reach);
+
+      if (at === null) continue;
+
+      addParam(into, at, tag, p);
+      found = true;
+    }
+  }
+
+  return found;
+}
+
+/** How far along a segment a point within `reach` of it sits, or nothing where
+ * it is further off than that, or past either end. */
+function footOf(s: Seg, p: Point, reach: number): number | null {
+  const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
+  const len = Math.hypot(dx, dy);
+
+  if (len <= reach) return null;
+
+  const at = ((p.x - s.a.x) * dx + (p.y - s.a.y) * dy) / (len * len);
+
+  if (at <= 0 || at >= 1) return null;
+
+  const off = Math.abs((p.x - s.a.x) * dy - (p.y - s.a.y) * dx) / len;
+
+  return off <= reach ? at : null;
+}
+
+function addParam(ts: Param[], t: number, tag: Tag, at?: Point): void {
+  if (t > 0 && t < 1) ts.push({ t, tag, at });
 }
 
 // -----------------------------------------------------------------------------
