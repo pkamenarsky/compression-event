@@ -4,7 +4,6 @@
 ** n-gon shape shows slider for point count
 ** polyline
 ** also artifacts? would make sense
-* zoom
 * settings
 ** grid size
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
@@ -27,6 +26,7 @@
 * version management
 * double click for paths cause enter enters 3d view
 * paths in groups?
+* write rotation degrees when rotating (and maybe when doing any kind of transformation)
 
 * shortcuts
   c - create shape; cr - rect; cn - n-gon; cv - polyline; ca - artefact; cp - path
