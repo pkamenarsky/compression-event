@@ -68,6 +68,7 @@ export function editor(initial: World): VNode {
 
           replaying(s.currentVersion, state, update),
           roaming(input, state, update),
+          versions(input, update),
 
           worldCanvas(
             s.world,
@@ -164,32 +165,47 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
  * of why it is this one. Enter was it until the paths tool needed the key that
  * says a thing being laid down is finished, and going into the level for
  * committing a walk is two things happening for one press.
- *
- * The arrows switch version while inside, and switch it the same way the
- * version strip does: `switched`, so a transition is declared in the same
- * update that moves the version and the walls morph across rather than jump.
  */
 function roaming(input: Input, state: Value<EditorState>, update: Update): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* keyPressed(input, 'Backslash', 'ArrowUp', 'ArrowDown');
+      const e = yield* keyPressed(input, 'Backslash');
 
-      if (e.metaKey || e.ctrlKey) continue;
+      if (e.metaKey || e.ctrlKey || e.repeat) continue;
 
       // The game has the page. `\` reaching back here used to turn the
       // editor's own walk on underneath it, so leaving the game landed the
       // player in a second one.
-      if (afoot !== null) continue;
+      if (afoot !== null || state().roaming) continue;
 
-      if (e.code === 'Backslash') {
-        if (e.repeat || state().roaming) continue;
+      e.preventDefault();
+      update(s => ({ ...s, roaming: true }));
+    }
+  });
+}
 
-        e.preventDefault();
-        update(s => ({ ...s, roaming: true }));
-        continue;
-      }
+/**
+ * The arrows switch version, wherever the eye happens to be.
+ *
+ * Looking down at the canvas, standing inside the 3D view, or with the panel
+ * up beside the drawing: which version is on screen is one fact about the
+ * editor rather than one about whichever view is showing it, so the key that
+ * changes it belongs to none of them. It was the walk's alone, and reaching
+ * the strip from the canvas meant taking the hand off what it was doing.
+ *
+ * Switched the way the version strip switches it: `switched`, so a transition
+ * is declared in the same update that moves the version and the walls morph
+ * across rather than jump.
+ *
+ * The game is the exception, and the only one. It has the page, its own
+ * keyboard and its own idea of which version is on — see `afoot`.
+ */
+function versions(input: Input, update: Update): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(input, 'ArrowUp', 'ArrowDown');
 
-      if (!state().roaming) continue;
+      if (e.metaKey || e.ctrlKey || afoot !== null) continue;
 
       e.preventDefault();
 
