@@ -1333,6 +1333,65 @@ describe('a corner that was always there but flat at one end', () => {
   });
 });
 
+describe('a wall that is eroded while a corner leaves it', () => {
+  // The fade used to be worked out by projecting the ring again without the
+  // corners that change and keeping whatever the first projection had left over.
+  // That reads the two as the same curve with one vertex fewer, and they only
+  // are where the corner is already flat — which is one end of the span and
+  // nowhere else. Anywhere in between, with an offset on, the leftovers did not
+  // line up, the whole fade was given up on, and the line stood solid for the
+  // length of the span and went out in its last frame.
+  //
+  // Without an offset the two projections agree point for point, so this needs
+  // an eroded wall to show at all, which is why every case above missed it.
+
+  function folding(): { world: World, id: PolygonId } {
+    const { world, ids } = drawn(['level', [
+      { x: -100, y: -100 }, { x: 0, y: -170 }, { x: 100, y: -100 },
+      { x: 100, y: 100 }, { x: -100, y: 100 },
+    ]]);
+
+    const deep = withEdit(world, 0, ids[0], { ...editAt(world, 0, ids[0], 12) });
+    const going = deep.polygons.get(ids[0])!.points[1].id;
+
+    return { world: removeVertices(deep, 1, [going]), id: ids[0] };
+  }
+
+  /** How solid the faintest point of the outline is at `t`. */
+  function dimmest(span: Span, id: PolygonId, t: number): number {
+    const track = span.tracks.find(x => x.id === id)!;
+    const s = stretchAt(track, t)!;
+    const u = s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
+
+    let least = 1;
+
+    s.opacity[0].forEach((ring, r) => ring.forEach((v, i) => {
+      least = Math.min(least, v + (s.opacity[1][r][i] - v) * u);
+    }));
+
+    return least;
+  }
+
+  test('the leaving corner fades over the whole span, not its last frame', () => {
+    const { world, id } = folding();
+    const span = run(bakeSpan(world, 0));
+
+    expect(dimmest(span, id, 0)).toBeCloseTo(1, 9);
+    expect(dimmest(span, id, 0.25)).toBeCloseTo(0.75, 2);
+    expect(dimmest(span, id, 0.5)).toBeCloseTo(0.5, 2);
+    expect(dimmest(span, id, 0.75)).toBeCloseTo(0.25, 2);
+    expect(dimmest(span, id, 1)).toBeCloseTo(0, 9);
+  });
+
+  test('and the span still draws what the editor draws at both ends', () => {
+    const { world } = folding();
+    const span = run(bakeSpan(world, 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(world, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(world, 1), 6);
+  });
+});
+
 describe('a corner arriving right beside one that is leaving', () => {
   /**
    * The case that broke: the two are neighbours in the ring, so the corner

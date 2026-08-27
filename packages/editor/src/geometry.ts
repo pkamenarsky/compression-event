@@ -814,6 +814,71 @@ export function combineTagged(
 }
 
 /**
+ * How far each segment's middle can be stepped off without leaving the face
+ * it is stepping into — half the distance to the nearest other segment, and
+ * `Infinity` where nothing is within reach at all, which is nearly everywhere.
+ *
+ * `arranged` reads the field a step off either side of a segment's middle and
+ * keeps the segment when the two readings differ. That is only a statement about
+ * *this* segment while both readings stay inside the two faces it separates.
+ * Nothing after `split` crosses anything else, so the only way another segment
+ * gets between them is to run alongside at a hair's distance — which is what two
+ * edges do just past a crossing they made at a very shallow angle.
+ *
+ * The stub past such a crossing lies nearer to the edge it crossed than a fixed
+ * step is long. Both readings then straddle that edge instead of this one, come
+ * back different, and the stub is kept as a boundary it is not on. Chaining
+ * cannot use it — it dead-ends — so the walk closes the ring across a chord and
+ * hands back two rings with a triangle of ground missing between them, which is
+ * what a wall flat enough to have almost stopped turning used to do at the end of
+ * a span.
+ *
+ * Only segments within the fixed step are asked about, so this is a tree query
+ * that comes back empty for all but a handful of a level's segments.
+ */
+function clearance(segs: Seg[], reach: number, snap: number): number[] {
+  const boxes = segs.map((s, id) => ({
+    id,
+    box: box(
+      Math.min(s.a.x, s.b.x),
+      Math.min(s.a.y, s.b.y),
+      Math.max(s.a.x, s.b.x),
+      Math.max(s.a.y, s.b.y),
+    ),
+  }));
+
+  const tree = build(boxes);
+  const out = segs.map(() => Infinity);
+
+  segs.forEach((s, i) => {
+    const mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
+
+    each(tree, expand(box(mx, my, mx, my), reach), j => {
+      if (j === i) return;
+
+      const d = toSegment(segs[j], mx, my);
+
+      // Something lying along this segment rather than beside it is the same
+      // boundary arriving twice — that is what `shadow` is for — and stepping
+      // off it is stepping off this one. Only a *different* boundary running
+      // close by can put a reading in the wrong face.
+      if (d > snap && d < out[i]) out[i] = d;
+    });
+  });
+
+  return out.map(d => d / 2);
+}
+
+/** How far `(x, y)` is from the segment, endpoints included. */
+function toSegment(s: Seg, x: number, y: number): number {
+  const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
+  const len = dx * dx + dy * dy;
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((x - s.a.x) * dx + (y - s.a.y) * dy) / len));
+
+  return Math.hypot(x - (s.a.x + dx * t), y - (s.a.y + dy * t));
+}
+
+/**
  * The pieces of the arrangement that belong to the answer, each turned so the
  * answer's interior is on its left.
  *
@@ -835,15 +900,19 @@ function arranged(
   const kept: Seg[] = [];
   const seen = new Set<string>();
   const weld = welder(snap);
+  const room = clearance(segs, scale * 1e-7, snap);
 
-  for (const s of segs) {
+  for (let k = 0; k < segs.length; k++) {
+    const s = segs[k];
     const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
     const len = Math.hypot(dx, dy);
     if (len <= snap) continue;
 
     // A step off either side of the middle, far enough to clear rounding and
-    // short enough to stay inside whichever face the side belongs to.
-    const off = Math.min(scale * 1e-7, len * 0.25);
+    // short enough to stay inside whichever face the side belongs to. The last
+    // of those is a fact about the neighbourhood rather than about this segment,
+    // which is why `clearance` had to go and measure it.
+    const off = Math.min(scale * 1e-7, len * 0.25, room[k]);
     const nx = -dy / len * off, ny = dx / len * off;
     const mx = s.a.x + dx / 2, my = s.a.y + dy / 2;
 

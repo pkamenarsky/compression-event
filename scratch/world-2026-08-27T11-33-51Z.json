@@ -1,0 +1,432 @@
+{
+  "format": 7,
+  "tool": "point",
+  "currentVersion": 0,
+  "selection": [
+    10
+  ],
+  "artefacts": [],
+  "settings": {
+    "gridSize": 32,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "view": {
+    "x": -474.46875,
+    "y": -267.7421875,
+    "zoom": 1,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 23,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": 64,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 64,
+                "y": 192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -384,
+                "y": 192
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -384,
+                "y": -192
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        5,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 6,
+              "at": {
+                "x": 608,
+                "y": -96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 7,
+              "at": {
+                "x": 608,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 22,
+              "at": {
+                "x": 272.01030854617846,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 21,
+              "at": {
+                "x": 208.17578125,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 20,
+              "at": {
+                "x": 177,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 32,
+                "y": 96
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": 32,
+                "y": -96
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        10,
+        {
+          "type": "solid",
+          "birth": 0,
+          "points": [
+            {
+              "id": 11,
+              "at": {
+                "x": 544,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 12,
+              "at": {
+                "x": 544,
+                "y": 32
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 13,
+              "at": {
+                "x": 160,
+                "y": 32
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 14,
+              "at": {
+                "x": 160,
+                "y": 64
+              },
+              "birth": 0,
+              "death": 4
+            },
+            {
+              "id": 15,
+              "at": {
+                "x": 96,
+                "y": 64
+              },
+              "birth": 0,
+              "death": 4
+            },
+            {
+              "id": 16,
+              "at": {
+                "x": 96,
+                "y": -64
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "artefacts": [
+      [
+        17,
+        {
+          "type": "exit",
+          "birth": 0,
+          "at": {
+            "x": -32,
+            "y": -128
+          }
+        }
+      ],
+      [
+        18,
+        {
+          "type": "start",
+          "birth": 0,
+          "at": {
+            "x": -320,
+            "y": 64
+          }
+        }
+      ],
+      [
+        19,
+        {
+          "type": "key",
+          "birth": 0,
+          "at": {
+            "x": 192,
+            "y": 64
+          }
+        }
+      ]
+    ],
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": [
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": -17.39453125
+              },
+              "vertices": []
+            }
+          ],
+          [
+            19,
+            {
+              "transform": {
+                "translation": {
+                  "x": 12.34375,
+                  "y": 22.52734375
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ],
+          [
+            5,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [
+                [
+                  21,
+                  {
+                    "x": -16.17578125,
+                    "y": 32
+                  }
+                ],
+                [
+                  22,
+                  {
+                    "x": -16.010308546178464,
+                    "y": 0
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 26.59375
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": [
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 10.8125
+              },
+              "vertices": [
+                [
+                  15,
+                  {
+                    "x": 0,
+                    "y": 32
+                  }
+                ],
+                [
+                  14,
+                  {
+                    "x": 0,
+                    "y": 32
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": [
+          [
+            10,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": -16.1953125
+              },
+              "vertices": [
+                [
+                  15,
+                  {
+                    "x": 0,
+                    "y": -32
+                  }
+                ],
+                [
+                  14,
+                  {
+                    "x": 0,
+                    "y": -32
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}

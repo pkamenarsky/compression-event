@@ -685,6 +685,45 @@ describe('erode', () => {
     // that corner. The mitre is what makes the sum exact rather than close.
     expect(shapeArea(shape)).toBeCloseTo(80 * 20 + 20 * 60, 6);
   });
+
+  test('a corner that has almost stopped turning loses no ground', () => {
+    // A wall folding flat over a span passes through every shallow angle on its
+    // way, and two edges meeting at one cross their offsets at that same shallow
+    // angle. The stub each leaves past the crossing lies nearer to the other
+    // edge than the step `arranged` takes to read which side is which, so both
+    // readings used to land in the same face, the stub was kept as a boundary,
+    // and the chain ran into a dead end and closed the ring across the shape —
+    // two rings and a triangle of missing ground where there was one room.
+    //
+    // Swept rather than sampled, because the angle it went wrong at was not one
+    // anybody would have thought to write down.
+    // Two corners of a notch sliding onto the straight line between their
+    // neighbours, which is what `spanning` has them do over the last span of the
+    // level this came out of.
+    const mix = (a: number, b: number, u: number): number => a + (b - a) * u;
+
+    const folding = (u: number): Ring => [
+      { x: 544, y: -64 }, { x: 544, y: 32 }, { x: 160, y: 32 },
+      { x: mix(160, 160 - 64 / 3, u), y: mix(64, 32 - 96 / 3, u) },
+      { x: mix(96, 160 - 128 / 3, u), y: mix(64, 32 - 192 / 3, u) },
+      { x: 96, y: -64 },
+    ];
+
+    let last: number | null = null;
+
+    for (let k = 0; k <= 2000; k++) {
+      const shape = erode(simplify([folding(k / 2000)]), -16.1953125);
+      const area = shapeArea(shape);
+
+      expect(shape.length).toBe(1);
+
+      // The fold takes ground away steadily, a few units of area at a time. The
+      // triangle that used to go missing is three and a half thousand.
+      if (last !== null) expect(Math.abs(area - last)).toBeLessThan(100);
+
+      last = area;
+    }
+  });
 });
 
 // -----------------------------------------------------------------------------

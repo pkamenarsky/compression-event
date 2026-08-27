@@ -112,7 +112,6 @@ import {
   sideOf,
   live,
   place,
-  project,
   resolved,
   unplace,
   resolveAt,
@@ -794,29 +793,23 @@ function between(a: Ring, b: Ring, t: number): Ring {
  * without being asked. So this is empty at every instant but two, and at those
  * two it is a handful of points.
  *
- * A flat corner's two edges are parallel, so its place on the eroded boundary
- * is its own position moved along the edge normal by the depth: the mitre a
- * corner would get has nothing to bite on. That is the offset `moved` takes in
- * `erode`, and it has to be, or the point would miss the edge it is meant to
- * land on.
+ * A flat corner's two edges are parallel, so `mitred` comes back with its own
+ * position moved along the shared normal by the depth: the mitre a corner would
+ * get has nothing to bite on. That is the offset `moved` takes in `erode`, and
+ * it has to be, or the point would miss the edge it is meant to land on.
  */
 function invented(m: Moving, source: Ring, erosion: number, t: number): Point[] {
   const dead = t === 0 ? m.dead[0] : t === 1 ? m.dead[1] : null;
   if (dead === null) return [];
 
   const out: Point[] = [];
-  const n = source.length;
 
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < source.length; i++) {
     if (dead[i] !== true) continue;
 
-    const a = source[(i - 1 + n) % n], b = source[i];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const l = Math.hypot(dx, dy);
+    const p = mitred(source, i, erosion);
 
-    if (l === 0) continue;
-
-    out.push({ x: b.x - dy / l * erosion, y: b.y + dx / l * erosion });
+    if (p !== null) out.push(p);
   }
 
   return out;
@@ -860,14 +853,20 @@ function world1(items: Moving[], t: number): Resolved[] {
  * How solid each vertex of a polygon's projection is, at one instant — the
  * doc's `lineOpacity`, worked out where the answer is actually known.
  *
- * A corner `spanning` invented sits exactly on the edge between its
- * ring-neighbours at the end that does not have it, and erosion moves edges
- * parallel, so it is exactly collinear in the projection too. Take it out of
- * the source ring and the projection is the *same curve* with one vertex
- * fewer. So the extras are found by projecting twice and matching, rather than
- * by asking which points look straight — which would hide a real corner that
- * happens to be flat, and could not tell a corner arriving from one that was
- * never there.
+ * The question is only ever asked about the corners `spanning` invented, and
+ * about those it is asked at every instant of the span, not only at the two ends
+ * where they are flat. So the point has to be *named*, and the name is
+ * arithmetic: erosion moves every edge parallel to itself, so the image of a
+ * corner is where its two moved edges meet, which is `mitred` and is the same
+ * point `erode` builds the boundary out of.
+ *
+ * It used to be found instead by projecting the ring again without them and
+ * keeping whatever was left over. That is only sound where taking a corner out
+ * leaves the same curve — which is to say where it is already flat, which is to
+ * say at the two ends of the span and nowhere in between. Everywhere else the
+ * two projections are honestly different shapes, the leftovers did not line up,
+ * and the whole fade was abandoned: the lines stayed solid for the length of the
+ * span and vanished in its last frame, which is the thing they exist not to do.
  *
  * Only polygons whose corner set actually changes across the span pay for it,
  * which in most spans is none of them.
@@ -886,43 +885,63 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
   if (changing.length === 0) return null;
 
   const full = it.shape;
-  const keep = it.local.filter((_unused, i) => !m.dead[0][i] && !m.dead[1][i]);
-
-  if (keep.length < 3) return null;
-
-  const reduced = project(place(it.frame, keep), it.erosion);
-
-  // A ring that split or collapsed between the two is not something the zip
-  // below can be trusted on. Everything draws, which is what happens today.
-  if (reduced.length !== full.length) return null;
-
   const snap = near(new Map([[it.id, full]]));
-  const out: number[][] = [];
-  const extras: { ring: number, index: number }[] = [];
+  const out = full.map(ring => ring.map(() => 1));
 
-  for (let r = 0; r < full.length; r++) {
-    const mine = full[r], theirs = reduced[r];
+  for (const i of changing) {
+    const image = mitred(it.source, i, it.erosion);
 
-    out.push(mine.map(() => 1));
+    // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
+    // it nowhere to be, and a point that is not drawn needs no opacity.
+    if (image === null) continue;
 
-    for (let i = 0; i < mine.length; i++) {
-      if (corner(theirs === undefined ? [] : [theirs], mine[i], snap) === null) {
-        extras.push({ ring: r, index: i });
-      }
-    }
-  }
+    const at = corner(full, image, snap);
 
-  // The extras come out in ring order and so do the corners that were taken
-  // out, so they line up. Where they do not, nothing is claimed.
-  if (extras.length !== changing.length) return null;
-
-  extras.forEach((at, k) => {
-    const i = changing[k];
+    if (at === null) continue;
 
     out[at.ring][at.index] = mix(m.dead[0][i] ? 0 : 1, m.dead[1][i] ? 0 : 1, t);
-  });
+  }
 
   return out;
+}
+
+/**
+ * Where corner `i` of a ring lands once the ring is offset by `depth` — the
+ * meeting point of its two edges after each has moved to its left.
+ *
+ * This is `erode`'s own construction rather than a guess at it: every surviving
+ * edge lies on a translate of its own line, so the corner between two of them is
+ * where those translates cross. Two edges that run exactly straight through the
+ * corner never cross, and then the answer is the corner moved along the shared
+ * normal, which is that construction's limit rather than a case beside it.
+ *
+ * `null` where the corner is not on the offset boundary at all: a ring that
+ * doubles back on itself sends the meeting point off towards infinity, and a
+ * deep enough offset eats the edges the corner stood between.
+ */
+function mitred(ring: Ring, i: number, depth: number): Point | null {
+  const n = ring.length;
+  const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+
+  const ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy);
+  const vx = c.x - b.x, vy = c.y - b.y, vl = Math.hypot(vx, vy);
+
+  if (ul === 0 || vl === 0) return null;
+
+  const p = { x: ux / ul, y: uy / ul };
+  const q = { x: vx / vl, y: vy / vl };
+
+  // Both moved lines pass through the corner's own offset, one for each edge.
+  const pa = { x: b.x - p.y * depth, y: b.y + p.x * depth };
+  const qa = { x: b.x - q.y * depth, y: b.y + q.x * depth };
+
+  const turn = p.x * q.y - p.y * q.x;
+
+  if (Math.abs(turn) < 1e-12) return pa;
+
+  const s = ((qa.x - pa.x) * q.y - (qa.y - pa.y) * q.x) / turn;
+
+  return { x: pa.x + p.x * s, y: pa.y + p.y * s };
 }
 
 /**
