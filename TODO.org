@@ -1,3 +1,4 @@
+* selecting a group and trying to alter vertices doesn't work
 * start view direction
 * paths
 * create button
