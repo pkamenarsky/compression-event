@@ -1613,14 +1613,56 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
 export const TOLERANCE = 0.05;
 
 /**
- * Narrower than this and an interval the two sides will not agree on is a
- * discontinuity rather than a stretch to keep splitting.
+ * How thin an interval has to get before the bisection gives up on it.
+ *
+ * One meaning, used for both of the things that end a bisection. An interval the
+ * two sides will not agree about is a discontinuity, and this is how finely it is
+ * pinned; an interval they agree about but whose middle the stretch cannot reach
+ * is a curve too sharp to follow, and this is how far it is chased.
+ *
+ * It used to be two meanings under one name, and the second was doing damage. A
+ * narrow interval whose ends were comparable was kept *without being checked at
+ * all* — not "we found an event" but "we stopped asking" — and whatever the
+ * interpolation did in the middle went unmeasured and unreported. What that hid
+ * was a unit of pop in anything much turning, with `Span.worst` calmly saying
+ * two hundredths. Now the check runs whether or not there is width left to split,
+ * and what it finds goes into `worst` either way.
  *
  * It is a width in `t`, and the pop it leaves is that width times how fast the
- * geometry is moving — for a span crossing a couple of hundred world units,
- * a few thousandths of a unit.
+ * geometry is moving. That is a few thousandths of a unit for a vertex, which is
+ * what this value was once reasoned from — but a *crossing* has no such bound:
+ * two edges going parallel send their meeting point off at any speed you like,
+ * and near one of those the outline has been measured moving eight units inside
+ * a single gap. So this is not a value anybody can argue is enough, and it is
+ * not claimed to be. It is the depth the search gives up at, and everything it
+ * gives up on now goes into `worst` — which is where to look.
+ *
+ * What the levels to hand say, measured rather than guessed. A tenth of this is
+ * cheap and useless on a quiet level and ruinous on a busy one: 28s against 45s
+ * for a `worst` of 1.70 against 0.10, which is thirty-four times the tolerance.
+ * A tenth the other way brings that level inside tolerance at 59s. So it sits
+ * here, and a level whose `worst` has crept past `TOLERANCE` is a level that
+ * wants it smaller — which is now a thing the bake can be asked rather than a
+ * thing to be guessed at.
  */
 const GAP = 1e-4;
+
+/**
+ * The same, for an interval whose two ends agree and whose middle the stretch
+ * cannot reach.
+ *
+ * Its own constant because the two cost wildly different amounts. Pinning an
+ * event is a bisection and every event pays for it, so halving `GAP` doubles the
+ * cover; chasing a bend happens in the handful of places that bend, so this can
+ * be orders of magnitude finer for nothing. On the busiest level to hand,
+ * dropping it two decades cost six-tenths of a percent and halved the error the
+ * bake had to own — where dropping `GAP` one decade cost a third of the bake for
+ * the same answer.
+ *
+ * They were one constant, and what that bought was every event in the level
+ * paying the price of the few places that needed the depth.
+ */
+const BEND = 1e-6;
 
 const MARGIN = 0.5;
 
@@ -1669,6 +1711,46 @@ function explained(a: Taken, b: Taken): boolean {
     return other !== undefined && run.corner.every((c, i) =>
       c === other.corner[i] || covered(run.whence[i]));
   });
+}
+
+/**
+ * The furthest apart the two outlines are, as sets of points rather than as
+ * lists of them.
+ *
+ * `apart` is the sharper measure and the right one everywhere it can be used: it
+ * pairs point with point, so it catches a point that has slid along a boundary
+ * the shape of which has not changed. It needs the two readings to agree about
+ * where their rings start, which is what `lined` is for.
+ *
+ * In the window `abutting` gives away, they do not agree. The stretch is being
+ * drawn past the end it was cut at and the fresh evaluation has cut its runs its
+ * own way, so `lined` pairs points that are not each other's opposite number and
+ * calls a shape that is right to within a twentieth of a unit a hundred and
+ * eighteen units wrong. A measure of `worst` that overstates by two thousand
+ * times is no more use than one that understates, so that one region is measured
+ * the blunt way: how far is any point of either from the nearest point of the
+ * other. It cannot see a permutation, and there is nothing there to see.
+ */
+function strayed(a: Frame, b: Frame): number {
+  const far = (from: Point[], to: Point[]): number => {
+    let worst = 0;
+
+    for (const p of from) {
+      let near = Infinity;
+
+      for (const q of to) near = Math.min(near, Math.hypot(p.x - q.x, p.y - q.y));
+
+      worst = Math.max(worst, near);
+    }
+
+    return worst;
+  };
+
+  const one = a.flatMap(r => r.points), two = b.flatMap(r => r.points);
+
+  if (one.length === 0 || two.length === 0) return one.length === two.length ? 0 : Infinity;
+
+  return Math.max(far(one, two), far(two, one));
 }
 
 /**
@@ -1997,11 +2079,6 @@ function* cutTrack(
 
     const s = stretchOf(a, b);
 
-    if (narrow) {
-      keep(s);
-      continue;
-    }
-
     // How far the stretch would sit from the truth at an instant inside it.
     const check = (c: Taken): number =>
       comparable(a, c) ? apart(drawn(s, riders, c.t), c.out) : Infinity;
@@ -2027,11 +2104,30 @@ function* cutTrack(
       }
     }
 
-    if (off > tol * MARGIN) {
+    if (off > tol * MARGIN && b.t - a.t > BEND) {
       stack.push([m, b], [a, m]);
       continue;
     }
 
+    // Narrow and still not agreeing: the ends were comparable but the inside is
+    // not, which is a discontinuity that has been pinned as far as it is worth
+    // pinning — the same answer the incomparable path above reaches, from the
+    // other side of it.
+    if (!Number.isFinite(off)) {
+      keep(instant(a));
+      keep(instant(b));
+
+      done = b.t;
+      yield done;
+      continue;
+    }
+
+    // Measured whether or not it passed. A stretch kept because the interval ran
+    // out of width is still the bake's error to own: `worst` is what the bake
+    // says about itself, and a number that only counts the checks that went well
+    // is not that. This used to be the one place a stretch was kept with no
+    // check at all, and what it hid was a whole unit of pop in a level with
+    // anything much turning in it.
     worst = Math.max(worst, off);
     keep(s);
 
@@ -2039,7 +2135,39 @@ function* cutTrack(
     yield done;
   }
 
-  return { stretches: abutting(out.filter(wide)), jumps: out.filter(s => !wide(s)), worst, evaluations };
+  const kept = out.filter(wide);
+  const cover = abutting(kept);
+
+  // What `abutting` gives away, checked. Closing the gaps around an event hands
+  // each neighbour half of one, so a stretch is drawn over a window wider than
+  // the one it was measured over — and `abutting` calls that safe on the grounds
+  // that half a gap is smaller than the tolerance the gap converged to. That
+  // holds for a vertex. It does not hold for a crossing: two edges going
+  // parallel send their meeting point off at any speed, and the outline has been
+  // measured moving eight units inside one gap. So it is measured rather than
+  // argued, and what it finds is `worst` like anything else — this was the one
+  // region of the cover nothing looked at, and every instant the replay was ever
+  // caught out at was inside one.
+  for (let i = 0; i < cover.length; i++) {
+    const grown = cover[i], was = kept[i];
+
+    for (const t of [grown.t0, grown.t1]) {
+      if (t >= was.t0 && t <= was.t1) continue;
+
+      const c = at(t);
+
+      // The two sides of an event genuinely differ, and the size of that is the
+      // event's own, not the replay's — the same exclusion `apart` makes by
+      // coming back infinite. Here it has to be made in so many words, because
+      // `strayed` will cheerfully measure the distance across a discontinuity
+      // and report the pop as though the replay had invented it.
+      if (signature(drawn(grown, riders, t)) !== signature(c.out)) continue;
+
+      worst = Math.max(worst, strayed(drawn(grown, riders, t), c.out));
+    }
+  }
+
+  return { stretches: cover, jumps: out.filter(s => !wide(s)), worst, evaluations };
 
   function keep(s: Stretch): void {
     const last = out[out.length - 1];

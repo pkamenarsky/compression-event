@@ -693,6 +693,99 @@ describe('a pillar turning inside a wall', () => {
   });
 });
 
+describe('a turning world is no worse than it says it is', () => {
+  // `Span.worst` is the bake's statement about itself, and the whole point of
+  // measuring rather than arguing about which events exist. It stopped being
+  // true the moment a stretch could be kept without its check running: an
+  // interval that ran out of width to split was accepted in silence, so the one
+  // place the replay was worst was the one place nothing looked. Six boxes
+  // turned by degrees rather than fractions of one put a whole unit of pop
+  // behind a `worst` of two hundredths.
+  //
+  // Nothing here asks the error to be small. It asks the number to be honest,
+  // which is the property everything else rests on.
+
+  function boxes(spin: number): World {
+    let world = emptyWorld();
+    const ids: PolygonId[] = [];
+
+    for (let i = 0; i < 6; i++) {
+      const made = addPolygon(
+        world,
+        i % 3 === 2 ? 'solid' : 'level',
+        rect(-140 + 60 * i, -90 + 40 * (i % 3), 150, 130),
+        0,
+        TOP,
+      );
+
+      world = made.world;
+      ids.push(made.id);
+    }
+
+    ids.forEach((id, i) => {
+      world = transformed(world, 1, id, {
+        rotation: (i % 2 ? 1 : -1) * spin,
+        translation: { x: 10 * i - 20, y: 6 * i },
+      });
+    });
+
+    return world;
+  }
+
+  /** The furthest a point of one frame sits from the nearest point of the
+   * other, both ways — blind to how the runs were cut up, so that two readings
+   * starting their rings in different places do not read as a disagreement. */
+  function asSets(a: Frame, b: Frame): number {
+    const far = (from: Point[], to: Point[]): number => {
+      let m = 0;
+
+      for (const p of from) {
+        let near = Infinity;
+
+        for (const q of to) near = Math.min(near, Math.hypot(p.x - q.x, p.y - q.y));
+
+        m = Math.max(m, near);
+      }
+
+      return m;
+    };
+
+    const one = a.flatMap(r => r.points), two = b.flatMap(r => r.points);
+
+    return Math.max(far(one, two), far(two, one));
+  }
+
+  test('at instants the bake did not choose to look at', () => {
+    for (const spin of [20]) {
+      const world = boxes(spin);
+      const span = run(bakeSpan(world, 0));
+
+      let seen = 0, worst = 0;
+
+      // Deliberately not the midpoints and quarters the bake checked itself at.
+      for (let i = 0; i <= 997; i++) {
+        const t = i / 997;
+        const a = sample(span, t), b = truth(world, 0, t);
+        // The bake's own idea of two readings being the same arrangement: not
+        // how many points there are but where each one came from. Anything else
+        // is a genuine event, which it owns as a jump and no stretch claims to
+        // draw — and asking it to answer for those would be asking it to answer
+        // for the world's discontinuities rather than its own error.
+        const shape = (f: Frame) =>
+          f.map(r => `${r.id}:${JSON.stringify(r.whence)}`).sort().join(' ');
+
+        if (shape(a) !== shape(b)) continue;
+
+        seen++;
+        worst = Math.max(worst, asSets(a, b));
+      }
+
+      expect(seen).toBeGreaterThan(700);
+      expect(worst).toBeLessThanOrEqual(span.worst + 1e-9);
+    }
+  }, 30_000);
+});
+
 describe('the replay against the CSG worked out directly', () => {
   test('erosion', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 200)]);
