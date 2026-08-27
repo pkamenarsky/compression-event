@@ -152,6 +152,44 @@ describe('a hairpin', () => {
   });
 });
 
+describe('a wall at an awkward angle', () => {
+  /** A room turned off the axes, so that no wall's normal is a round number. */
+  const diamond = ring([{ x: 50, y: 0 }, { x: 100, y: 50 }, { x: 50, y: 100 }, { x: 0, y: 50 }]);
+
+  /**
+   * A slide runs along the wall it was clipped against, which means its
+   * distance from that wall is nothing but what the arithmetic rounded to. It
+   * rounded the wrong way, the slide read as heading into the very wall it was
+   * sliding along, and the move was abandoned — on a wall at one angle and not
+   * on the same wall at another, which is the worst way to have it.
+   */
+  test('does not stall the slide along it', () => {
+    const hulls = room(diamond);
+    const step = { x: 1, y: -2 };
+    let at: Point = { x: 50, y: 50 };
+
+    // Into the wall first, and then along it for a while.
+    for (let i = 0; i < 20; i++) at = hulls.trace(at, step);
+
+    let along = 0;
+
+    for (let i = 0; i < 25; i++) {
+      const was = at;
+
+      at = hulls.trace(at, step);
+
+      const went = Math.hypot(at.x - was.x, at.y - was.y);
+
+      // Every step of the slide is the same step, which is what not
+      // stuttering means. The first one sets what that is.
+      if (along === 0) along = went;
+
+      expect(went).toBeCloseTo(along, 6);
+      expect(went).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('a slot too narrow to walk into', () => {
   /** A room with a notch cut into the middle of its top wall. */
   function notched(width: number): Polygon {

@@ -32,6 +32,12 @@
 // Everything else is Quake 2's: expand each wall by the player's radius so the
 // player is a point, trace the point against the convex hulls that produces,
 // stop at the first, turn along it, and trace again with what is left.
+//
+// There are two traces in here and only one of them is wired up. `traceQ2` is
+// the above; `traceOld` is what the jam build did, which slid once and then cut
+// the slide short at the next wall rather than turning it again. The second is
+// kept so that the first can be switched away from and felt against — see
+// `trace`, which is one line and names which.
 // -----------------------------------------------------------------------------
 
 import { Point, Polygon, PolygonPoint, signedArea } from './world';
@@ -44,6 +50,10 @@ interface Hull {
   /** Counter-clockwise, so the plane normals come out pointing outward. */
   verts: Point[]
   planes: { nx: number, ny: number, d: number }[]
+  /** The original wall's outward normal. Only `traceOld` reads it: telling two
+   * hulls of one wall apart from a corner was how it knew what a corner was. */
+  wallNx: number
+  wallNy: number
 }
 
 /**
@@ -137,7 +147,7 @@ function hullOf(
   const planes = planesOf(verts);
   if (planes.length < 3) return null;
 
-  return { verts, planes };
+  return { verts, planes, wallNx: a.enx, wallNy: a.eny };
 }
 
 /** What a trace against one hull found: where it went in, where it would come
@@ -188,6 +198,13 @@ function hit(c: Crossed): boolean {
  * start inside it. */
 const GAP = 1e-4;
 
+/** `traceOld` only: two hulls whose walls point the same way are one wall,
+ * not a corner. */
+const SAME_WALL = 0.99;
+
+/** `traceOld` only: hits this much of the move apart are the same instant. */
+const TOGETHER = 0.01;
+
 /** How many times one move may be turned before what is left of it is given
  * up on. Quake 2's number, for Quake 2's reason: a move that is still finding
  * new walls after four of them is in a place no amount of turning gets it out
@@ -196,6 +213,23 @@ const BUMPS = 4;
 
 /** Two planes this alike are one plane, and a long wall's hulls share theirs. */
 const SAME_PLANE = 0.999;
+
+/**
+ * How far into a plane a slide may read as heading before it is disbelieved.
+ *
+ * A slide runs exactly along the plane it was clipped against, and *exactly*
+ * is not something the arithmetic can say: the dot product that ought to come
+ * back as zero comes back as the last bit or two of a double, on one side of
+ * it or the other depending on the angle of the wall. Read as a slide heading
+ * into the very wall it is sliding along, the move was given up on — a player
+ * stuck fast against one wall and walking freely along the next one.
+ *
+ * Scaled by the move, so it stays a statement about precision rather than a
+ * distance anyone could walk. Quake 2 gets the same effect by clipping a
+ * hundredth past the plane rather than onto it, which also lifts the player
+ * off every wall by a hundredth of the speed they hit it at; this does not.
+ */
+const TOUCHING = 1e-9;
 
 /**
  * The move turned to run along one of the planes it has met without running
@@ -214,8 +248,9 @@ function along(move: Point, planes: readonly { nx: number, ny: number }[]): Poin
   for (const plane of planes) {
     const into = move.x * plane.nx + move.y * plane.ny;
     const slid = { x: move.x - into * plane.nx, y: move.y - into * plane.ny };
+    const touching = -TOUCHING * Math.hypot(slid.x, slid.y);
 
-    if (planes.every(other => slid.x * other.nx + slid.y * other.ny >= 0)) return slid;
+    if (planes.every(other => slid.x * other.nx + slid.y * other.ny >= touching)) return slid;
   }
 
   return null;
@@ -297,6 +332,9 @@ export class Hulls {
     return turns;
   }
 
+  /** The one in force. Swap for `traceOld` to feel the difference. */
+  trace = this.traceQ2;
+
   /**
    * A move, stopped and turned along whatever it meets — Quake 2's slide move,
    * in two dimensions.
@@ -313,7 +351,7 @@ export class Hulls {
    * one that says a corner is a corner: not that two walls were touched, but
    * that between them there is nothing forward left to do.
    */
-  trace(start: Point, move: Point): Point {
+  traceQ2(start: Point, move: Point): Point {
     const planes: { nx: number, ny: number }[] = [];
 
     let at = { ...start };
@@ -354,5 +392,79 @@ export class Hulls {
     }
 
     return at;
+  }
+
+  /**
+   * The trace as it was before `traceQ2`: one slide, and then a second trace
+   * that only cuts the slide short rather than turning it again.
+   *
+   * Kept to be switched to and felt, not because anything calls it. It is a
+   * wall away from the other one in two places — a corner is two walls at once
+   * here and nowhere left to go there, and a slide ends at the next wall here
+   * and carries on along it there.
+   *
+   * Everything is traced, not just the first thing in the way: two walls
+   * arriving at the same instant is a corner and stops the player dead, where
+   * sliding along either one of them would walk through the other.
+   */
+  traceOld(start: Point, move: Point): Point {
+    const length = Math.hypot(move.x, move.y);
+    if (length < 1e-8) return { ...start };
+
+    const end = { x: start.x + move.x, y: start.y + move.y };
+    const hits = [];
+
+    for (const hull of this.hulls) {
+      const crossed = traced(start, end, hull);
+
+      if (hit(crossed)) {
+        hits.push({ frac: crossed.enter, ...crossed, wall: hull });
+      }
+    }
+
+    if (hits.length === 0) return end;
+
+    hits.sort((a, b) => a.frac - b.frac);
+
+    const first = hits[0];
+    const safe = Math.max(0, first.frac - GAP / length);
+    const stopped = { x: start.x + move.x * safe, y: start.y + move.y * safe };
+
+    // Two hulls off one wall are not two walls: a long wall is one hull per
+    // edge, and crossing where they meet would otherwise read as a corner.
+    const walls: typeof hits = [];
+
+    for (const h of hits) {
+      if (h.frac - first.frac >= TOGETHER) break;
+
+      const known = walls.some(w =>
+        h.wall.wallNx * w.wall.wallNx + h.wall.wallNy * w.wall.wallNy > SAME_WALL);
+
+      if (!known) walls.push(h);
+    }
+
+    if (walls.length >= 2) return stopped;
+
+    const rest = { x: move.x * (1 - first.frac), y: move.y * (1 - first.frac) };
+    const into = rest.x * first.nx + rest.y * first.ny;
+    const slide = { x: rest.x - into * first.nx, y: rest.y - into * first.ny };
+
+    const along = Math.hypot(slide.x, slide.y);
+    if (along < 1e-8) return stopped;
+
+    // The slide is traced too: sliding along one wall is how the player
+    // reaches the next one.
+    const to = { x: stopped.x + slide.x, y: stopped.y + slide.y };
+    let frac = 1;
+
+    for (const hull of this.hulls) {
+      const crossed = traced(stopped, to, hull);
+
+      if (hit(crossed) && crossed.enter < frac) frac = crossed.enter;
+    }
+
+    const safely = Math.max(0, frac - GAP / along);
+
+    return { x: stopped.x + slide.x * safely, y: stopped.y + slide.y * safely };
   }
 }
