@@ -1,7 +1,3 @@
-* erode only selected edges
-* expand selection/group
-* edge mode
-* selecting a group and trying to alter vertices doesn't work
 * start view direction
 * paths
 * create button
@@ -20,6 +16,10 @@
 * effects
 ** chamfer etc
 
+* selecting a group and trying to alter vertices doesn't work
+* erode only selected edges
+* expand selection/group
+* edge mode
 * "show floor polygons"
 * fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
