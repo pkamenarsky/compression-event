@@ -750,16 +750,17 @@ function intersectInto(
     const t1 = t0 + (sx * rx + sy * ry) / rr;
 
     // A collinear overlap meets at the other segment's *endpoints*, so these
-    // are input vertices rather than crossings.
-    addParam(ts, t0, u.ta);
-    addParam(ts, t1, u.tb);
+    // are input vertices rather than crossings — and the point is that vertex,
+    // not the parameter's idea of where it projects to.
+    addParam(ts, t0, u.ta, u.a);
+    addParam(ts, t1, u.tb, u.b);
 
     const ss = sx * sx + sy * sy;
     const u0 = (-qx * sx - qy * sy) / ss;
     const u1 = (rx * sx + ry * sy - qx * sx - qy * sy) / ss;
 
-    addParam(us, u0, s.ta);
-    addParam(us, u1, s.tb);
+    addParam(us, u0, s.ta, s.a);
+    addParam(us, u1, s.tb, s.b);
 
     if (cs !== null && u.rank < s.rank) {
       cs.push({ t0: Math.min(t0, t1), t1: Math.max(t0, t1), rank: u.rank });
@@ -796,8 +797,14 @@ function intersectInto(
 
   const tag = crossTag(s.edge, u.edge);
 
-  addParam(ts, t, tag);
-  addParam(us, u0, tag);
+  // One point, handed to both. Worked out twice — once from `t` along this
+  // segment and once from `u0` along that one — it comes back as two points a
+  // last bit or two apart, and something downstream then has to notice they are
+  // the same place. They are the same place because they are the same object.
+  const meet = { x: s.a.x + rx * t, y: s.a.y + ry * t };
+
+  addParam(ts, t, tag, meet);
+  addParam(us, u0, tag, meet);
 }
 
 /**
@@ -1595,24 +1602,35 @@ interface Welder {
 }
 
 /**
- * A crossing is worked out twice — once as the split of each edge that runs
- * through it — and the two answers differ in their last bits. Rounding to a
- * grid is very nearly enough to reunite them, and fails exactly when the pair
- * straddles a cell boundary: then one crossing becomes two, a ring cannot be
- * stitched through it, and what comes out is the outline with a corner missing
- * or nothing at all.
+ * The same place, arrived at by different arithmetic, given one identity.
  *
- * That is not the rare accident it looks. A cell boundary sits at a half, and
- * the coordinates this editor deals in — a grid snap, a drag quantised to a
- * pixel — divide into the cell size exactly and land on one, where a single ulp
- * decides which side each copy falls. Erosion depths taken off a slider put
- * roughly one in six of them there.
+ * Two edges crossing used to be the whole of this: the crossing was worked out
+ * once as the split of each of them and the two answers differed in their last
+ * bits. That one is gone — `intersectInto` now works the point out once and
+ * hands the same one to both — and what is left is the case no sharing reaches.
+ * Three edges through a point make three pairwise crossings, each solved from a
+ * different pair, and they are the same place computed three ways. Nothing short
+ * of exact arithmetic makes those the same numbers.
  *
- * So the cell is where to look rather than the answer: a point takes the
- * identity of anything already standing within `snap` of it, and starts a new
- * one only when there is nothing to join. Only a point near a wall can have a
- * twin on the other side of it, so only that one pays to look — which leaves
- * the common path at the single lookup it always was.
+ * A grid on its own is very nearly enough and fails exactly when a pair straddles
+ * a cell boundary: then one point becomes two, a ring cannot be stitched through
+ * it, and out comes the outline with a corner missing or nothing at all. Nor is
+ * that the rare accident it looks — a boundary sits at a half, and the
+ * coordinates this editor deals in divide into the cell size exactly and land on
+ * one, where a single ulp decides the side.
+ *
+ * So the cell is where to look rather than the answer: a point takes the identity
+ * of anything already standing within `snap` of it, and starts a new one only
+ * where there is nothing to join. Only a point near a wall can have a twin on the
+ * far side of it, so only that one pays to look, and the common path stays at the
+ * single lookup it always was.
+ *
+ * How much room `snap` leaves here is now enormous and deliberately unspent. The
+ * widest gap it has ever been measured bridging is a ten-millionth of it, across
+ * a quarter of a million welds of input chosen to be as awkward as possible, and
+ * the whole suite still passes with it divided by a million. It stopped being a
+ * tuning parameter when `touching` moved the decision it used to arbitrate up to
+ * the cut, where there is something to be done about it.
  */
 function welder(snap: number): Welder {
   const cells = new Map<string, number[]>();
