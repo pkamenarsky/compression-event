@@ -559,18 +559,13 @@ export function worldCanvas(
             : { x: from.x + toStep(step.x, g), y: from.y + toStep(step.y, g) };
         }
 
-        // A depth, read off whichever way the hand went furthest. Both, since
-        // a depth is one number and a hand pulling at a diagonal has not said
-        // which of its two components it meant — so the bigger one is taken as
-        // the one it meant, and the other is drift.
-        //
-        // Down and left eat into the shape, up and right give it back, which
-        // is one rule with the scale: right and up make the thing bigger,
-        // left and down make it smaller, whichever gesture is being used to
-        // say so.
+        // A depth, read off the horizontal alone: right gives material back,
+        // left eats into the shape, and the vertical is drift. It read both
+        // for a while, taking whichever the hand had gone furthest along, and
+        // that turned every diagonal into a guess about which of the two was
+        // meant — a depth is one number, so one axis says it.
         if (code === 'KeyE') {
-          const d = { x: from.x - to.x, y: to.y - from.y };
-          const deep = Math.abs(d.x) >= Math.abs(d.y) ? d.x : d.y;
+          const deep = from.x - to.x;
 
           return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
         }
