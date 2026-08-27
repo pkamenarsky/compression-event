@@ -14,11 +14,19 @@
 // Two clocks, deliberately apart
 // -----------------------------------
 // The walls *move* over the length of a shift, and the walls that *stop* the
-// player change at the end of it, in one step. That is the agreement in
+// player change at the start of it, in one step. That is the agreement in
 // `world.ts`: collision runs on the set at a version, the morph is a picture of
-// getting from one to the next, and a picture is not somewhere to stand. So for
-// the length of a shift the wall on screen is a little ahead of the wall that
-// stops you, which is what the jam build had between its snaps too.
+// getting from one to the next, and a picture is not somewhere to stand.
+//
+// Which of the two ends the player is standing in is a choice, and it is the
+// arriving one. There is exactly one question asked about whether the player is
+// alive — whether they are standing somewhere the level has — and putting them
+// on the destination the moment the shift begins is what makes that one
+// question enough. Caught by the wall that is coming, they are inside it
+// immediately and die on the spot rather than watching it arrive. Clear of it,
+// they are held by where the level is *going* for the length of the picture,
+// so a room that is about to close is not a corridor to walk out of into the
+// black behind the level.
 //
 // An artefact is drawn on the first clock and *is* somewhere on the second: it
 // travels from where it stood to where it will stand while the walls do, and
@@ -191,9 +199,13 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   /** Where the player is and which way they are facing, in world units. */
   const player = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
 
-  /** Which version stops the player and holds the artefacts. During a shift
-   * this is still the one being left — see the header. */
+  /** Which version is drawn and holds the artefacts. During a shift this is
+   * still the one being left — see the header. */
   let version = 0;
+
+  /** Which version's walls stop the player. The same as `version` while one is
+   * standing, and the one arriving for the length of a shift. */
+  let footing = 0;
 
   /** How far into a shift, in seconds, or null while one is standing. */
   let shifting: number | null = null;
@@ -295,6 +307,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const restart = (): void => {
     dead = false;
     version = 0;
+    footing = 0;
     shifting = null;
     clock = HOLD;
 
@@ -342,16 +355,18 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       shifting = 0;
     }
 
-    // Somewhere that stops existing is the level closing over the player.
-    // Asked here rather than when the picture ends, because the answer is
-    // already known at this point and the picture is a wall arriving: watching
-    // it arrive from inside is the level being read from the outside, and the
-    // moment it is coming for you is the moment it has you.
-    const room = walls[to]?.standable({ x: player.x, y: player.z }) ?? true;
+    // What the player stands in from here is where the level is going, which
+    // is what makes the one check in the loop the whole of dying: a player the
+    // arriving wall covers is inside a wall this instant, and one it misses is
+    // held by the room it leaves rather than free to walk out through where
+    // the old room used to be.
+    footing = to;
 
-    escalate(room);
-
-    if (!room) void lost();
+    // Somewhere that stops existing is the level closing over the player, and
+    // it is worth hearing before it is worth seeing. Nothing escalates towards
+    // a version the player will not survive to see; the dying itself is the
+    // loop's, this frame, a few lines further down.
+    escalate(walls[to]?.standable({ x: player.x, y: player.z }) ?? true);
   };
 
   const walked = (): void => {
@@ -385,7 +400,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     player.vz = sped.y;
 
     const was = { x: player.x, y: player.z };
-    const now = walls[version]?.trace(was, { x: player.vx * dt, y: player.vz * dt }) ?? was;
+    const now = walls[footing]?.trace(was, { x: player.vx * dt, y: player.vz * dt }) ?? was;
 
     player.x = now.x;
     player.z = now.y;
@@ -557,7 +572,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
       if (found !== null && found.away <= TAKEN) void took(found.index, found.type);
 
-      if (!(walls[version]?.standable({ x: player.x, y: player.z }) ?? true)) void lost();
+      if (!(walls[footing]?.standable({ x: player.x, y: player.z }) ?? true)) void lost();
     }
 
     view.camera.position.set(player.x, EYE, player.z);

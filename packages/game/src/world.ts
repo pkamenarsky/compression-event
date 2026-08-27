@@ -24,8 +24,10 @@
 // against, and a ring is where they are.
 //
 // So collision snaps at version boundaries while the walls morph between them,
-// and during a transition the wall you see is a little ahead of the wall that
-// stops you. That was chosen. The seams were not.
+// and during a transition the wall you see is a little behind the wall that
+// stops you: the snap is to the version arriving, taken when the picture
+// starts. That was chosen — see *Two clocks* in `play.ts` for why that end and
+// not the other. The seams were not.
 // -----------------------------------------------------------------------------
 
 import { BakedLevel, EMPTY_BAKED } from './baked';
