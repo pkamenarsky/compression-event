@@ -416,10 +416,13 @@ export function worldCanvas(
 
       setLocal({ ...local(), previewing: true });
 
+      const locked = axisLock(() => SLOP / view().zoom);
+
       const end = yield* select({
         dragging: pointerMoved(e => {
           const to = at(e, true);
-          const dx = to.x - anchor.from.x, dy = to.y - anchor.from.y;
+          const step = locked(e, { x: to.x - anchor.from.x, y: to.y - anchor.from.y });
+          const dx = step.x, dy = step.y;
 
           update(s => {
             let world = s.world;
@@ -530,25 +533,36 @@ export function worldCanvas(
        * that the same drag is the same factor twice running, which free-hand
        * scaling never was.
        */
+      const locked = axisLock(() => SLOP / view().zoom);
+
       const aim = (e: PointerEvent): Point => {
         const to = at(e);
         const g = settings().gridSize;
 
+        // The step, not the place: a selection has no one point that ought to
+        // land on the grid, and snapping any particular corner of it would
+        // drag the rest out of whatever alignment they had. Alt holds it to
+        // one axis, before the grid rather than after, so that a locked move
+        // is still a whole number of cells along the line it is held to.
+        if (code === 'KeyT') {
+          const step = locked(e, { x: to.x - from.x, y: to.y - from.y });
+
+          return free(e)
+            ? { x: from.x + step.x, y: from.y + step.y }
+            : { x: from.x + toStep(step.x, g), y: from.y + toStep(step.y, g) };
+        }
+
         if (free(e)) return to;
 
-        if (code === 'KeyR') return turnedAbout(pivot, from, to, TURN);
+        // Five degrees ordinarily and forty-five with Alt: the second is the
+        // set of turns a level is actually built out of, and the first is fine
+        // enough to aim anything else with.
+        if (code === 'KeyR') return turnedAbout(pivot, from, to, e.altKey ? EIGHTH : TURN);
 
         // A depth, read off the vertical alone, so only that is quantised: the
         // sideways drift of a hand pulling downward is not part of what was
         // asked for and never was.
         if (code === 'KeyE') return { x: to.x, y: from.y + toStep(to.y - from.y, g) };
-
-        // The step, not the place: a selection has no one point that ought to
-        // land on the grid, and snapping any particular corner of it would
-        // drag the rest out of whatever alignment they had.
-        if (code === 'KeyT') {
-          return { x: from.x + toStep(to.x - from.x, g), y: from.y + toStep(to.y - from.y, g) };
-        }
 
         return onGrid(to, g);
       };
@@ -570,6 +584,7 @@ export function worldCanvas(
                   unplace(m, pivot),
                   unplace(m, from),
                   unplace(m, to),
+                  e.altKey,
                 ),
               });
             }
@@ -1407,13 +1422,16 @@ export function worldCanvas(
       cursor('move');
       setLocal({ ...local(), previewing: true });
 
+      const locked = axisLock(() => SLOP / view().zoom);
+
       const end = yield* select({
         moving: pointerMoved(e => {
           const to = at(e);
           const step = free(e) ? 0 : settings().gridSize;
 
-          const dx = step === 0 ? to.x - start.x : toStep(to.x - start.x, step);
-          const dy = step === 0 ? to.y - start.y : toStep(to.y - start.y, step);
+          const raw = locked(e, { x: to.x - start.x, y: to.y - start.y });
+          const dx = step === 0 ? raw.x : toStep(raw.x, step);
+          const dy = step === 0 ? raw.y : toStep(raw.y, step);
 
           update(st => {
             let world = st.world;
@@ -1901,7 +1919,15 @@ const EMPTY_LOCAL: Local = {
 
 /** `was` is the transform as it stood when the key went down, so that every
  * move recomputes from there rather than from the last frame. */
-type Mode = (was: Transform, pivot: Point, from: Point, to: Point) => Transform;
+type Mode = (
+  was: Transform,
+  pivot: Point,
+  from: Point,
+  to: Point,
+  /** Whether Alt is held, which is a different reading of the same drag rather
+   * than a constraint on it: a scale that was two factors becomes one. */
+  alt: boolean,
+) => Transform;
 
 /**
  * The same transform, turned by `angle` about `pivot`.
@@ -1978,8 +2004,12 @@ function turnedAbout(pivot: Point, from: Point, to: Point, step: number): Point 
 }
 
 /** What a turn lands on: five degrees, which is 72 of them round the circle
- * and every angle a level is built out of. */
+ * and fine enough to aim anything with. */
 const TURN = Math.PI / 36;
+
+/** What a turn lands on with Alt held: the eighth of a circle, which is the
+ * only angle most of a level is ever turned by. */
+const EIGHTH = Math.PI / 4;
 
 function ratio(was: number, now: number): number {
   return Math.abs(was) < 1e-6 || Math.abs(now) < 1e-6 ? 1 : now / was;
@@ -2001,7 +2031,25 @@ const TRANSFORMS: Record<string, Mode> = {
       - Math.atan2(from.y - pivot.y, from.x - pivot.x),
   ),
 
-  KeyS: (t, pivot, from, to) => {
+  /**
+   * Both axes, each from its own share of the drag, and one factor for both
+   * with Alt.
+   *
+   * The free reading is the useful one by a long way — a room is made wider
+   * and shallower in one gesture rather than two — and the price is that a
+   * drag along one axis alone leaves the other alone, so a scale that meant to
+   * be uniform has to be aimed. Alt is that, said explicitly.
+   */
+  KeyS: (t, pivot, from, to, alt) => {
+    if (!alt) {
+      return squashed(
+        t,
+        pivot,
+        ratio(from.x - pivot.x, to.x - pivot.x),
+        ratio(from.y - pivot.y, to.y - pivot.y),
+      );
+    }
+
     const f = ratio(
       Math.hypot(from.x - pivot.x, from.y - pivot.y),
       Math.hypot(to.x - pivot.x, to.y - pivot.y),
@@ -2010,9 +2058,9 @@ const TRANSFORMS: Record<string, Mode> = {
     return squashed(t, pivot, f, f);
   },
 
-  // One axis at a time, which is the only way to say a squash: there is no
-  // reading of a single drag that gives two independent factors and is not a
-  // surprise on one of them.
+  // One axis and nothing else, whatever the drag does on the other. `s` reads
+  // both, so these are how one of them is said on its own without having to
+  // hold the hand still.
   KeyX: (t, pivot, from, to) => squashed(t, pivot, ratio(from.x - pivot.x, to.x - pivot.x), 1),
   KeyY: (t, pivot, from, to) => squashed(t, pivot, 1, ratio(from.y - pivot.y, to.y - pivot.y)),
 
@@ -2056,6 +2104,42 @@ function wheeling(el: HTMLCanvasElement, update: Update): () => void {
   el.addEventListener('wheel', onWheel, { passive: false });
 
   return () => el.removeEventListener('wheel', onWheel);
+}
+
+/**
+ * Alt holds a move to one axis: the one the hand had gone furthest along when
+ * the key was first seen.
+ *
+ * Decided from the drag rather than from the cursor's position at the moment
+ * of the press, because at the moment of the press it has gone nowhere and
+ * there is nothing to read. So the answer is deferred until the hand has said
+ * something — under `slop` of movement it is still not asking for either axis
+ * — and then it is kept, so that wandering off the line does not swap the
+ * gesture out from under itself.
+ *
+ * Letting Alt go forgets it. Holding it again asks the question again, which
+ * is how a move locked to the wrong axis is fixed without starting over.
+ */
+function axisLock(slop: () => number): (e: { altKey: boolean }, d: Point) => Point {
+  let axis: 'x' | 'y' | null = null;
+
+  return (e, d) => {
+    if (!e.altKey) {
+      axis = null;
+
+      return d;
+    }
+
+    if (axis === null) {
+      const reach = slop();
+
+      if (Math.abs(d.x) < reach && Math.abs(d.y) < reach) return d;
+
+      axis = Math.abs(d.x) >= Math.abs(d.y) ? 'x' : 'y';
+    }
+
+    return axis === 'x' ? { x: d.x, y: 0 } : { x: 0, y: d.y };
+  };
 }
 
 /** How much of a zoom one pixel of wheel is worth, as an exponent. A notch of
