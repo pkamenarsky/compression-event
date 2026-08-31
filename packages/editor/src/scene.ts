@@ -524,14 +524,65 @@ export function project(source: Ring, erosion: number): Shape {
  * progressively the author raises the depth version by version — 2, 5, 9, 14 —
  * which is more direct to author than compounding and exactly reproducible.
  */
+/**
+ * The last projection taken for each polygon, and what it was taken from.
+ *
+ * `resolveAt` builds a fresh `Resolved` every call, so the laziness in one of
+ * them saves nothing across two: a drag resolves the whole world at every
+ * pointer move and every polygon's projection is worked out again, including
+ * the ones the hand is nowhere near. An arrangement apiece is most of a frame
+ * at seven polygons, and `live` then throws all but one of them away, having
+ * paid for them to find out they had not moved.
+ *
+ * A projection is a pure function of the placed ring, the depth and the
+ * invented corners, so remembering the last one per polygon answers the
+ * repeats. The ring is compared point by point — it is a fresh array either
+ * way — which is one pass over the geometry against an arrangement over it.
+ *
+ * One entry per polygon, so the map is the size of the world and not of the
+ * gesture.
+ */
+interface Projection {
+  source: Ring
+  erosion: number
+  keep: readonly Point[] | undefined
+  shape: Shape
+}
+
+const projections = new Map<Id, Projection>();
+
+function sameRing(a: Ring, b: Ring): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].x !== b[i].x || a[i].y !== b[i].y) return false;
+  }
+
+  return true;
+}
+
 /** A `Resolved` whose projection has not been taken yet. */
 export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
-  let shape: Shape | null = null;
-
   return {
     ...at,
     get shape(): Shape {
-      return shape ??= keeping(project(at.source, at.erosion), at.keep ?? []);
+      const was = projections.get(at.id);
+
+      if (
+        was !== undefined
+        && was.erosion === at.erosion
+        && was.keep === at.keep
+        && sameRing(was.source, at.source)
+      ) {
+        return was.shape;
+      }
+
+      const shape = keeping(project(at.source, at.erosion), at.keep ?? []);
+
+      projections.set(at.id, { source: at.source, erosion: at.erosion, keep: at.keep, shape });
+
+      return shape;
     },
   };
 }
