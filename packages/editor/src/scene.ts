@@ -551,7 +551,7 @@ interface Projection {
 
 const projections = new Map<Id, Projection>();
 
-function sameRing(a: Ring, b: Ring): boolean {
+function samePoints(a: readonly Point[], b: readonly Point[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
 
@@ -560,6 +560,12 @@ function sameRing(a: Ring, b: Ring): boolean {
   }
 
   return true;
+}
+
+/** The invented corners, which are usually none — and none is a fresh empty
+ * array every time it is asked for, so identity is no answer here. */
+function sameKeep(a: readonly Point[] | undefined, b: readonly Point[] | undefined): boolean {
+  return samePoints(a ?? [], b ?? []);
 }
 
 /** A `Resolved` whose projection has not been taken yet. */
@@ -572,8 +578,8 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
       if (
         was !== undefined
         && was.erosion === at.erosion
-        && was.keep === at.keep
-        && sameRing(was.source, at.source)
+        && sameKeep(was.keep, at.keep)
+        && samePoints(was.source, at.source)
       ) {
         return was.shape;
       }
@@ -1306,7 +1312,8 @@ export function contributed(
         kind: it.polygon.type,
         shape: it.shape,
         frame: it.frame,
-        simple: it.erosion !== 0,
+        // Already an arrangement, whatever its depth. See `plainly`.
+        simple: true,
         keep: it.keep,
       });
 
@@ -1534,10 +1541,13 @@ export function plainly(items: readonly Resolved[]): Contributed[] {
     frame: it.frame,
     keep: it.keep,
 
-    // A projection at any depth came out of an arrangement and is already
-    // simple. At depth zero it is the source ring as drawn, which is allowed
-    // to cross itself.
-    simple: it.erosion !== 0,
+    // A projection came out of an arrangement and is already simple, at every
+    // depth. Depth zero is not the exception it used to be: `project` decomposes
+    // there too, so that a ring which has not started eroding is cut the same
+    // way as the same ring a moment later — see `project`. Saying otherwise
+    // costs an arrangement per polygon per evaluation, for an answer that is
+    // already in hand.
+    simple: true,
   }));
 }
 
