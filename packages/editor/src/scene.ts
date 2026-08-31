@@ -551,6 +551,81 @@ interface Projection {
 
 const projections = new Map<Id, Projection>();
 
+/**
+ * The same, one frame further in: the projection of a polygon's *local* ring,
+ * which is the one thing about it a move does not change.
+ *
+ * A mitred offset commutes with a rigid motion — every edge moves inward along
+ * its own normal, and a rotation takes normals to normals — so a polygon being
+ * carried about at a fixed depth has one projection, seen from different
+ * places. Taking it in the polygon's own frame and putting the answer where the
+ * frame says therefore gives the same shape as offsetting the placed ring, and
+ * it is the difference between an arrangement per instant and one per gesture.
+ *
+ * Under a uniform scale the depth scales with it, which is the `erosion / s`
+ * below. Under anything else — a squash, a shear — an offset is genuinely not
+ * the same shape seen twice, and the world frame is where it has to be taken.
+ * See `similarity`.
+ *
+ * What this does *not* answer is a depth that is itself moving. A span whose
+ * version deepens an erosion has a different shape at every instant of it, and
+ * no framing makes two of them one. That is the bake's own cost and it is
+ * inherent; this is for the polygon that moves at the depth it already had.
+ */
+interface Local {
+  local: Ring
+  erosion: number
+  shape: Shape
+}
+
+const locals = new Map<Id, Local>();
+
+/**
+ * What a frame does to lengths, or nothing when it does different things to
+ * different directions.
+ *
+ * A similarity is what erosion survives: the two columns have to be
+ * perpendicular and the same length, so that a circle comes out a circle and an
+ * inward normal stays inward. A reflection is turned down with them — it hands
+ * back a ring wound the other way, and every reader downstream takes the
+ * winding for the answer.
+ *
+ * The comparisons are relative and deliberately tight. Being wrong here does
+ * not look wrong, it disagrees with the shape the world frame would have given,
+ * so anything not plainly a similarity goes the long way round.
+ */
+function similarity(m: Affine): number | null {
+  const s = Math.hypot(m.a, m.b);
+  const t = Math.hypot(m.c, m.d);
+
+  if (s === 0 || m.a * m.d - m.b * m.c <= 0) return null;
+  if (Math.abs(t - s) > s * 1e-12) return null;
+  if (Math.abs(m.a * m.c + m.b * m.d) > s * s * 1e-12) return null;
+
+  return s;
+}
+
+/** The projection, taken wherever it is cheapest to take it and always handed
+ * back in world units. */
+function projection(at: Omit<Resolved, 'shape'>): Shape {
+  const s = similarity(at.frame);
+
+  if (s === null) return project(at.source, at.erosion);
+
+  const erosion = at.erosion / s;
+  const was = locals.get(at.id);
+
+  const shape = was !== undefined && was.erosion === erosion && samePoints(was.local, at.local)
+    ? was.shape
+    : project(at.local, erosion);
+
+  if (was === undefined || was.shape !== shape) {
+    locals.set(at.id, { local: at.local, erosion, shape });
+  }
+
+  return shape.map(ring => place(at.frame, ring));
+}
+
 function samePoints(a: readonly Point[], b: readonly Point[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -584,7 +659,7 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
         return was.shape;
       }
 
-      const shape = keeping(project(at.source, at.erosion), at.keep ?? []);
+      const shape = keeping(projection(at), at.keep ?? []);
 
       projections.set(at.id, { source: at.source, erosion: at.erosion, keep: at.keep, shape });
 

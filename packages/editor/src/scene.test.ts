@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'vitest';
+import fc from 'fast-check';
 import { Point } from '@ce/game/world';
-import { OpSubtract, Shape, combine, contains, intersect, shapeArea, simplify } from './geometry';
+import { OpSubtract, Ring, Shape, combine, contains, intersect, shapeArea, simplify } from './geometry';
 import {
   TOP,
   Resolved,
+  project,
+  resolved,
   addPolygon,
   composed,
   EMPTY_LIVE,
@@ -1744,5 +1747,107 @@ describe('a floor takes no part in the set', () => {
     const after = retyped(world, ids[1], 'floor');
 
     expect(resolveAt(after, 0).map(it => it.id)).toEqual(ids);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The two framings of a projection
+//
+// `resolved` takes a polygon's projection in the polygon's own frame whenever
+// its frame is a similarity, and places the answer — which is only sound
+// because a mitred offset commutes with a rotation and scales with a scale.
+// Nothing else in the suite can catch it if it does not: the bake and its
+// yardstick both go through `resolved`, so a projection taken in the wrong
+// frame would be wrong in both and they would agree about it.
+//
+// So the two framings are held against each other here directly, with the world
+// frame as the yardstick: it is the one that was always taken and the one every
+// stored bake was made with.
+// -----------------------------------------------------------------------------
+
+describe('a projection is the same shape wherever it is taken', () => {
+  const rings: Ring[] = [
+    [{ x: -45, y: -30 }, { x: 45, y: -30 }, { x: 45, y: 30 }, { x: -45, y: 30 }],
+    [{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: -10 }, { x: -10, y: -10 },
+     { x: -10, y: 40 }, { x: -40, y: 40 }],
+    [{ x: -15, y: -45 }, { x: 15, y: -45 }, { x: 15, y: -15 }, { x: 45, y: -15 },
+     { x: 45, y: 15 }, { x: 15, y: 15 }, { x: 15, y: 45 }, { x: -15, y: 45 },
+     { x: -15, y: 15 }, { x: -45, y: 15 }, { x: -45, y: -15 }, { x: -15, y: -15 }],
+  ];
+
+  test('a similarity carries it, at every depth', () => {
+    let checked = 0;
+
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...rings),
+        fc.record({
+          x: fc.double({ min: -400, max: 400, noNaN: true }),
+          y: fc.double({ min: -400, max: 400, noNaN: true }),
+          rotation: fc.double({ min: -3.14, max: 3.14, noNaN: true }),
+          scale: fc.double({ min: 0.4, max: 2.5, noNaN: true }),
+          // Zero, or a depth that means something. Between the two lies a
+          // band — an offset smaller than the arrangement's own snap, which is
+          // a ten-billionth of the geometry — where the two framings can
+          // honestly disagree about how many corners are left, because the
+          // shape itself is ambiguous there: the world frame snapped four
+          // corners together and the local frame, working on the same ring
+          // scaled up, did not. No depth an author can reach is in that band,
+          // and `project` already treats exact zero as its own case.
+          erosion: fc.oneof(
+            fc.constant(0),
+            fc.double({ min: 1e-3, max: 18, noNaN: true }),
+          ),
+        }),
+        (ring, t) => {
+          const m = affine({
+            ...EMPTY_TRANSFORM,
+            translation: { x: t.x, y: t.y },
+            rotation: t.rotation,
+            scale: { x: t.scale, y: t.scale },
+          });
+
+          // The world frame's answer, which is what this has to reproduce.
+          const there = project(place(m, ring), t.erosion);
+
+          // And the local one's, placed. Read off a `Resolved` rather than
+          // worked out here, so that what is being checked is the path the
+          // editor and the bake actually take.
+          const here = resolved({
+            id: 0,
+            polygon: { type: 'level', birth: 0, points: [] },
+            corners: [],
+            local: ring,
+            frame: m,
+            source: place(m, ring),
+            erosion: t.erosion,
+          }).shape;
+
+          expect(here.length).toBe(there.length);
+
+          // Eroded away entirely is a fine answer and a dull one.
+          if (there.length === 0) return true;
+
+          checked++;
+
+          for (let r = 0; r < there.length; r++) {
+            expect(here[r].length).toBe(there[r].length);
+
+            // The two arithmetics are not the same arithmetic, so the points
+            // are held to a tolerance — but a hair of one, taken off the size
+            // of the geometry. Anything further apart is a different shape.
+            for (let i = 0; i < there[r].length; i++) {
+              expect(Math.hypot(here[r][i].x - there[r][i].x, here[r][i].y - there[r][i].y))
+                .toBeLessThan(1e-6 * t.scale * 400);
+            }
+          }
+
+          return true;
+        },
+      ),
+      { numRuns: 400 },
+    );
+
+    expect(checked).toBeGreaterThan(200);
   });
 });
