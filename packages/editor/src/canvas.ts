@@ -2837,11 +2837,25 @@ function polygons(
  * squares, so a handle sits on top of its own spoke rather than under it.
  */
 function leaders(ctx: CanvasRenderingContext2D, view: View, it: Resolved): void {
-  const moved = erodedCorners(it.source, it.depths ?? it.erosion);
+  spokes(ctx, view, it.source, erodedCorners(it.source, it.depths ?? it.erosion));
+}
 
+/**
+ * One ring's corners joined to where they went, corner for corner.
+ *
+ * Apart from `leaders` because a group's is a ring of a union rather than a
+ * source ring, and there is more than one of them — but it is the same line
+ * saying the same thing, and it has to look identical wherever it is drawn.
+ */
+function spokes(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  ring: Ring,
+  moved: readonly Point[],
+): void {
   ctx.beginPath();
 
-  it.source.forEach((p, i) => {
+  ring.forEach((p, i) => {
     const a = toScreen(view, p);
     const b = toScreen(view, moved[i]);
 
@@ -2945,13 +2959,9 @@ function groups(
     const was = sources.get(g.id);
 
     if (was !== undefined) {
-      ctx.save();
-      between(ctx, view, was.shape, g.shape);
-
       const to = erodedShape(was.shape, was.depth);
 
       was.shape.forEach((ring, i) => spokes(ctx, view, ring, to[i]));
-      ctx.restore();
     }
 
     // Drawn as the floor it is, and never as picked: the group's own outline
