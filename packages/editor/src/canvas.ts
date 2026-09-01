@@ -50,6 +50,7 @@ import {
   hitArtefact,
   movedStart,
   depths,
+  editable,
   occupying,
   occupyingSource,
   removeArtefacts,
@@ -1574,20 +1575,24 @@ export function worldCanvas(
      * through to the polygon for one click without going anywhere.
      */
     /**
-     * The polygons the tools may touch: what is on screen as itself.
+     * The polygons the tools may touch: what has a handle on screen.
      *
      * Corners belong to polygons, and a polygon inside a shut group has none
-     * on screen. Without this the point tool would still find the handles it
-     * is not drawing, and a click on nothing would move a corner of something
-     * a group is standing for. Everything outside the group standing open goes
-     * for the same reason, having been put out of reach.
+     * on screen unless the group is picked — which is the whole of what
+     * `editable` decides, for the drawing and for the click alike. Without it
+     * the point tool would find handles nothing is drawing, and a click on
+     * nothing would move a corner of something a group is standing for.
      */
     function pickable(): Resolved[] {
       const w = world();
-      const path = opened(w, inside());
 
-      return resolveAt(w, currentVersion())
-        .filter(it => !swallowed(w, it.id, path) && reachable(w, it.id, inside()));
+      return editable(
+        w,
+        resolveAt(w, currentVersion()),
+        opened(w, inside()),
+        inside(),
+        new Set(polygonsIn(w, selection().polygons)),
+      );
     }
 
     /**
@@ -2579,10 +2584,10 @@ function layers(
 
   const reach = (id: Id) => reachable(world, id, inside);
 
-  out.push(ctx => polygons(ctx, view, loose, selection, reached, tool === 'point', reach));
   const shut = occupying(world, current, items, path);
   const picking = new Set<Id>(selection.polygons);
 
+  out.push(ctx => polygons(ctx, view, loose, reached, tool === 'point', reach));
   out.push(ctx =>
     groups(ctx, view, shut, picking, reach, moved(world, current, items, path, shut, picking)),
   );
@@ -2600,7 +2605,16 @@ function layers(
   const singled = items.filter(it => named.has(it.id) && swallowed(world, it.id, path));
 
   if (singled.length > 0) {
-    out.push(ctx => polygons(ctx, view, singled, selection, reached, false, () => true));
+    out.push(ctx => polygons(ctx, view, singled, reached, false, () => true));
+  }
+
+  // Last of the level, over every outline and every fill: a handle is what the
+  // hand is aiming at, and nothing drawn after it would be. The same list the
+  // click asks — see `editable`.
+  if (tool === 'point') {
+    const handles = editable(world, items, path, inside, reached);
+
+    out.push(ctx => corners(ctx, view, handles, selection));
   }
 
   out.push(ctx => outlines(ctx, view, outline));
@@ -2762,7 +2776,6 @@ function polygons(
   ctx: CanvasRenderingContext2D,
   view: View,
   items: Resolved[],
-  selection: Selection,
   /** The polygons the selection reaches: itself, or everything under an open
    * group. A shut group draws its own outline instead — see `groups`. */
   reached: ReadonlySet<PolygonId>,
@@ -2776,36 +2789,68 @@ function polygons(
     const here = reach(it.id);
 
     if ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles)) {
-      ctx.beginPath();
-      trace(ctx, view, it.source);
-
-      ctx.strokeStyle = theme.source;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      source(ctx, view, [it.source]);
 
       if (picked) leaders(ctx, view, it);
     }
 
     outlined(ctx, view, it.shape, it.polygon.type, picked, here, theme.pickedFill);
   }
+}
 
-  if (!handles) return;
+/**
+ * The boundary an erosion started from, dashed under the projection it made.
+ *
+ * One ring for a polygon and any number for a group, which is the whole of the
+ * difference between the two: a group's is the union its members make, and a
+ * union is as many rings as it needs. Dashed either way and in the same
+ * colour, because it is the same thing being said — this is where the shape
+ * would be with the depth taken off — and a group that said it differently
+ * would read as a different kind of statement rather than the same one about
+ * a bigger shape.
+ */
+function source(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
+  ctx.beginPath();
 
+  for (const ring of shape) trace(ctx, view, ring);
+
+  ctx.strokeStyle = theme.source;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+/**
+ * The corners the point tool can grab, as squares on the source rings.
+ *
+ * Its own pass over its own list rather than part of `polygons`, because what
+ * has a corner on screen and what has an outline on screen are no longer the
+ * same question: a picked group draws one outline and every one of its
+ * members' corners. `editable` settles the list, and settles it for the click
+ * as well, so a handle is drawn exactly where one can be grabbed.
+ *
+ * Over the groups rather than under them. A group's fill is painted after the
+ * polygons and would take the squares inside it with it, which are the very
+ * ones this is here to put back.
+ */
+function corners(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  items: readonly Resolved[],
+  selection: Selection,
+): void {
   // Two passes rather than one, so that each colour is a single fill: which
   // corners are picked is the only thing the point tool is about, and a hollow
   // square against a solid one says it at any zoom.
-  const corners = new Set(selection.vertices);
+  const on = new Set(selection.vertices);
 
   for (const picked of [false, true]) {
     ctx.beginPath();
 
     for (const it of items) {
-      if (!reach(it.id)) continue;
-
       it.source.forEach((p, i) => {
-        if (corners.has(it.corners[i].id) !== picked) return;
+        if (on.has(it.corners[i].id) !== picked) return;
 
         const s = toScreen(view, p);
         ctx.rect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5);
@@ -2971,6 +3016,8 @@ function groups(
     const was = sources.get(g.id);
 
     if (was !== undefined) {
+      source(ctx, view, was.shape);
+
       const to = erodedShape(was.shape, was.depth);
       const standing = survived(g.shape);
 

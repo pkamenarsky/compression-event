@@ -20,6 +20,7 @@ import {
   starting,
   under,
   unstep,
+  editable,
   reachable,
   reaching,
   showing,
@@ -1587,6 +1588,45 @@ describe('going inside a group', () => {
 
     expect(open.map(c => c.id).sort()).toEqual([...ids].sort());
     expect(ids.some(id => swallowed(world, id, [group]))).toBe(false);
+  });
+
+  test('picking a group puts its members\' corners back, and nothing else', () => {
+    // A shut group hides its members' outlines and their corners with them —
+    // but a handle is worth reaching the moment the group is named, and it is
+    // the only way to edit a corner without going inside. The outlines stay
+    // hidden: `showing` is what draws, and it is not being asked here.
+    const { world, ids, group } = pair();
+    const items = resolveAt(world, 0);
+
+    expect(editable(world, items, [], null, new Set())).toEqual([]);
+
+    const reached = new Set(polygonsIn(world, [group]));
+
+    expect(editable(world, items, [], null, reached).map(it => it.id).sort())
+      .toEqual([...ids].sort());
+  });
+
+  test('and a group standing open needs no picking for it', () => {
+    // Inside the group its members draw themselves, so their corners are
+    // already there — the same answer with nothing picked at all.
+    const { world, ids, group } = pair();
+    const items = resolveAt(world, 0);
+
+    expect(editable(world, items, [group], group, new Set()).map(it => it.id).sort())
+      .toEqual([...ids].sort());
+  });
+
+  test('but nothing outside the group standing open is ever editable', () => {
+    // Out of reach is out of reach: being named by an old selection does not
+    // put a handle back on something the open group does not hold.
+    const { world, ids, group } = pair();
+    const loose = addPolygon(world, 'level', rect(60, 0, 10, 10), 0, TOP);
+    const items = resolveAt(loose.world, 0);
+
+    const picked = new Set([...ids, loose.id]);
+
+    expect(editable(loose.world, items, [group], group, picked).map(it => it.id).sort())
+      .toEqual([...ids].sort());
   });
 
   test('a group draws as one shape even at depth zero', () => {

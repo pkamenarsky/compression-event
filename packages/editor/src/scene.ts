@@ -1817,6 +1817,36 @@ export function swallowed(world: World, id: Id, path: readonly GroupId[]): boole
 }
 
 /**
+ * The polygons the point tool has handles on: everything drawn by itself, plus
+ * the members of whatever groups are picked.
+ *
+ * A shut group hides its members' outlines, and their corners went with them —
+ * a handle on a shape that is not on screen is a handle on nothing. Picking
+ * the group puts them back, corners only: the group is still one outline, and
+ * what a click on it does is still pick the group, but the shapes underneath
+ * are named now and their corners are worth reaching. That is the same bargain
+ * command-click already makes for one polygon at a time, offered to the whole
+ * of what the selection names.
+ *
+ * Drawing and picking ask this together, and have to: a handle drawn where no
+ * click lands is worse than no handle, and a click that lands where nothing is
+ * drawn is worse still.
+ */
+export function editable(
+  world: World,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+  inside: GroupId | null,
+  /** What the selection reaches, from `polygonsIn`. */
+  picked: ReadonlySet<PolygonId>,
+): Resolved[] {
+  return items.filter(it =>
+    reachable(world, it.id, inside)
+    && (picked.has(it.id) || !swallowed(world, it.id, path)),
+  );
+}
+
+/**
  * Whether a click can reach `id` at all.
  *
  * Everything outside the group standing open is out of reach: it is drawn, so
