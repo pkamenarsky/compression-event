@@ -257,41 +257,19 @@ function offset(shape: Cut, swept: Band): Cut {
 }
 
 /**
- * How far a corner's mitre may reach, as a multiple of the depth, before it is
- * cut off square. A corner turning back on itself sends the two moved lines
- * very nearly parallel and their meeting point off towards infinity; past this
- * the wedge is closed with a straight edge instead.
+ * How far a corner's mitre may reach from the corner, as a multiple of the
+ * depth, before the wedge is clipped to that radius instead.
  *
- * Under one depth it only bites on a slit, and it bites there at every depth or
- * at none: the moved lines are translates of the source ones, so how far the
- * mitre reaches is a fixed multiple of the depth for a given corner and the
- * ratio this compares against never changes. Nothing can cross it by being
- * dragged.
+ * A corner turning back on itself sends the two moved lines very nearly
+ * parallel and their meeting point off towards infinity, and a spike that long
+ * is not what anybody drew. Under one depth it only bites on a slit, and it
+ * bites there at every depth or at none — the moved lines are translates of the
+ * source ones, so a corner's reach is a fixed multiple of the depth and nothing
+ * can be dragged across the limit.
  *
- * Under a depth per corner it can be crossed, because an edge whose ends go
- * different distances rotates and the two lines close on parallel as it does.
- * Where that happens the shape pops once, by however much the spike the mitre
- * would have cut is worth — the wedge under the mitre and the wedge under the
- * chord are different sizes, and there is nothing continuous in between.
- *
- * **The pop is wanted, and the chord is what it buys.** Both continuous
- * closings were built and thrown away, and the reason is the same both times:
- * what makes them continuous is keeping the spike, and a spike this long is a
- * hairline of ground taken out of the middle of a room. It reads as two walls
- * on top of each other, it stands a line up along its length wherever an
- * outline is drawn, and a room it has split stays split for as long as the
- * limit allows — which is eight times the depth. The chord cuts it off instead:
- * the boundary crosses the corner square, the room that the spike had split
- * comes back together in one step, and there is no sliver anywhere. A step in
- * the shape is a cheaper thing to look at than a room quietly full of
- * degenerate geometry.
- *
- * For the record, since the obvious fix is obvious: holding the mitre at
- * `reach` is *worse* than the chord, not better — it keeps the full-length
- * spike right up to the depth where the two lines go parallel and then loses
- * the lot, so the step is bigger rather than smaller. Clipping the wedge to a
- * circle of that radius is genuinely continuous and genuinely monotone, and it
- * is the version with the sliver in it.
+ * A depth per corner rotates the moved lines, so the reach depends on the depth
+ * rather than scaling with it, and the limit is crossed by dragging. That is
+ * why the wedge is clipped rather than closed with the chord: see `held`.
  */
 const MITRE_LIMIT = 8;
 
@@ -364,11 +342,8 @@ function band(shape: Shape, depth: (i: number) => number): Band {
       // hole in it exactly where the corner needed covering.
       const moved = p.mx * q.my - p.my * q.mx;
       const corner = turn * moved > 0 ? meet(p, q) : null;
-      const reach = Math.abs(d) * MITRE_LIMIT;
 
-      put(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
-        ? [q.a, p.mb, q.ma]
-        : [q.a, p.mb, corner, q.ma], d);
+      put([q.a, p.mb, ...held(q.a, p, q, corner, Math.abs(d) * MITRE_LIMIT), q.ma], d);
     }
   }
 
@@ -444,6 +419,95 @@ function moved(ring: Ring, depth: (i: number) => number): Moved[] {
 
   return out;
 }
+
+/**
+ * The far side of the wedge: the mitre where it is near enough, and the mitre
+ * *clipped to a circle* of radius `reach` around the corner where it is not.
+ *
+ * The limit used to close the wedge with the chord, and closing it that way is
+ * a jump — the wedge under a mitre at `reach` and the wedge under the chord are
+ * different sizes with nothing in between, so a corner dragged across the limit
+ * popped. Under one depth nothing can be dragged across it, so it never showed;
+ * a corner offset apart rotates its edges, the mitre's reach then depends on
+ * the depth rather than scaling with it, and it shows.
+ *
+ * Clipping is the continuous reading of the same limit. The boundary runs out
+ * along each moved line as far as the circle and round it in between, so at the
+ * instant the mitre touches the circle the two crossings and the mitre are the
+ * same point and the wedge is unchanged. Past it they part along the arc, as
+ * slowly as the mitre was sliding out.
+ *
+ * It also puts the two lines parallel and the two lines crossed over — the case
+ * with no mitre at all — on the same footing as every other: the crossings with
+ * the circle are a fact about each line on its own, so they stay where they are
+ * while the meeting point runs off to infinity and comes back the other side.
+ * That singularity is the mitre's, not the corner's, and clipping is what stops
+ * the wedge inheriting it.
+ */
+function held(at: Point, p: Moved, q: Moved, mitre: Point | null, reach: number): Point[] {
+  if (mitre !== null && Math.hypot(mitre.x - at.x, mitre.y - at.y) <= reach) return [mitre];
+
+  // Out along p's moved line, and back along q's: the two places the offset
+  // would leave the circle if it kept going.
+  const out = leaving(at, p.mb, p.mx, p.my, reach);
+  const back = leaving(at, q.ma, -q.mx, -q.my, reach);
+
+  // Only when the corner is already further out than the limit allows, which
+  // takes a depth so much smaller than the geometry that the wedge is a
+  // rounding error either way. The chord still spans the gap.
+  if (out === null || back === null) return [];
+
+  return [out, ...arc(at, out, back, reach), back];
+}
+
+/**
+ * How far along a ray from `from` the circle of radius `r` about `at` is, as a
+ * point — or nothing when the ray starts outside it and never comes back.
+ *
+ * `from` is a moved edge-end, which sits exactly `|depth|` from the corner, and
+ * `r` is a multiple of that, so ordinarily it starts inside and there is one
+ * crossing ahead of it.
+ */
+function leaving(at: Point, from: Point, ux: number, uy: number, r: number): Point | null {
+  const fx = from.x - at.x, fy = from.y - at.y;
+  const b = fx * ux + fy * uy;
+  const c = fx * fx + fy * fy - r * r;
+  const disc = b * b - c;
+
+  if (disc < 0) return null;
+
+  const s = -b + Math.sqrt(disc);
+
+  return s < 0 ? null : { x: from.x + ux * s, y: from.y + uy * s };
+}
+
+/** The way round the circle from `from` to `to` that turns less than half of
+ * it, as the points in between — the ends themselves are the caller's. */
+function arc(at: Point, from: Point, to: Point, r: number): Point[] {
+  const a0 = Math.atan2(from.y - at.y, from.x - at.x);
+  const a1 = Math.atan2(to.y - at.y, to.x - at.x);
+
+  let span = a1 - a0;
+
+  while (span > Math.PI) span -= 2 * Math.PI;
+  while (span < -Math.PI) span += 2 * Math.PI;
+
+  const steps = Math.ceil(Math.abs(span) / ARC_STEP);
+  const out: Point[] = [];
+
+  for (let k = 1; k < steps; k++) {
+    const a = a0 + span * (k / steps);
+
+    out.push({ x: at.x + Math.cos(a) * r, y: at.y + Math.sin(a) * r });
+  }
+
+  return out;
+}
+
+/** How finely the clipped mitre's arc is drawn. A wedge is ground being taken
+ * away rather than an outline, and nothing downstream sees these as corners —
+ * `cornersOnly` keeps whichever of them the boundary actually turns at. */
+const ARC_STEP = Math.PI / 12;
 
 /** Where two moved edges' lines cross, or nothing when they are parallel. */
 function meet(p: Moved, q: Moved): Point | null {
