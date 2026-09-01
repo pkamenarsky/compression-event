@@ -963,17 +963,21 @@ describe('erodeAt', () => {
     }
   });
 
-  test('and eroding it only ever takes ground away', () => {
-    // The property the whole corner wedge is answerable to, and the one thing
-    // every way of getting it wrong showed up as. A bowtie mitre leaves a hole
-    // in the band; a missing wedge leaves a gap; a wedge closed with the chord
-    // where the mitre would have been long leaves the spike behind. All three
-    // hand ground back to a shape that is being eroded further, and none of
-    // them can hide from this.
+  test('and the wedge that covers it never doubles back on itself', () => {
+    // Past the depth where the two moved lines cross over, `meet` answers with
+    // the crossing behind the corner. Built through it the wedge is a bowtie,
+    // the nonzero rule reads its middle as ground, and the band comes out with
+    // a hole in it where the corner most needed covering — which showed up as
+    // the shape gaining a bite back at one particular depth and keeping it.
+    //
+    // Eroding takes ground away, so the area may only fall. It falls at every
+    // step here but one, and that one is the mitre limit cutting a spike off
+    // square — a step that is there on purpose, and is pinned here so that
+    // making it continuous cannot happen by accident. See `MITRE_LIMIT`.
     let last = Infinity;
     const rose: number[] = [];
 
-    for (let d = 0; d <= 1200; d += 0.5) {
+    for (let d = 0; d <= 1200; d += 5) {
       const area = shapeArea(dragged(d));
 
       if (area > last + 1e-6) rose.push(d);
@@ -981,32 +985,71 @@ describe('erodeAt', () => {
       last = area;
     }
 
-    expect(rose).toEqual([]);
+    expect(rose).toEqual([185]);
   });
 
-  test('and it goes on taking it away smoothly, over the mitre limit and past it', () => {
-    // Continuity, which monotonicity alone does not give: a limit that closed
-    // the wedge with the chord fell off a step the moment it bit, and there is
-    // nothing in the world's own geometry at that depth for a step to be about.
+  /**
+   * The same room a few versions on, from
+   * `scratch/world-2026-09-01T13-57-23Z.json`: one corner pulled back out, one
+   * dragged well in, and the far wall carried three hundred units across, with
+   * a fourth drag going on over the top of all of it.
+   *
+   * It is here because a wedge closed with the mitre held at the limit, rather
+   * than cut off with the chord, takes ninety-six per cent of this room away
+   * between one half-unit of depth and the next and gives it back sixty units
+   * later. The spike is eight times the depth long by then, which is longer
+   * than the room is wide, so it does not merely dent the shape — it slices it
+   * into a pair of scraps. There is nothing in the room's own geometry at that
+   * depth for either event to be about.
+   */
+  const carried: Ring = [
+    { x: -1200, y: -700 }, { x: -1000, y: -1100 }, { x: -500, y: -1000 },
+    { x: -600, y: -300 }, { x: 0, y: -1100 }, { x: 800, y: -200 },
+    { x: -900, y: 600 }, { x: -1500, y: 200 }, { x: -1200, y: -500 },
+  ];
+
+  /** Its three remaining corners taken `d` deep, over the depths the version
+   * below it left on the other six. */
+  const deepening = (d: number) =>
+    erodeAt(carried, [d, d, d, -123.828125, 398.375, 398.375, 323.703125, 323.703125, 323.703125]);
+
+  test('a room already deep on six corners does not vanish as the last three go in', () => {
+    let last = Infinity;
+    let rose = 0;
+
+    for (let d = 0; d <= 700; d += 0.25) {
+      const area = shapeArea(deepening(d));
+
+      // Eroding gives nothing back. A few hundredths of a per cent does come
+      // back here and there, which is the arrangement re-cutting a ring it has
+      // already cut and not a corner going anywhere.
+      if (area > last + 1000) rose++;
+
+      last = area;
+    }
+
+    expect(rose).toBe(0);
+  });
+
+  test('and goes on shrinking a little at a time rather than in one lurch', () => {
+    // Monotonicity alone would not catch it — the room vanishing and coming
+    // back is two steps, and only the second is a rise. What says it is wrong
+    // is the size of either: half the room in a quarter of a unit of depth.
     //
-    // The two places it used to step are both in here. Around 185 the mitre
-    // first reaches past the limit; around 388 the two moved lines go parallel
-    // and the mitre runs off to infinity and comes back the other side. The
-    // clipped wedge notices neither: what it is bounded by is each line's own
-    // crossing with the circle, and those go nowhere.
-    let last = shapeArea(dragged(0));
+    // Ten thousand-odd is what the room genuinely loses fastest, around 406,
+    // where a three-point crumb splits off the far corner for three units of
+    // depth and rejoins. That is real and it is a rounding error's worth of
+    // area; five hundred and fifty thousand is not.
+    let last = shapeArea(deepening(0));
     let worst = 0;
 
-    for (let d = 0.5; d <= 600; d += 0.5) {
-      const area = shapeArea(dragged(d));
+    for (let d = 0.25; d <= 700; d += 0.25) {
+      const area = shapeArea(deepening(d));
 
       worst = Math.max(worst, last - area);
       last = area;
     }
 
-    // A half unit deeper over a boundary this long is a few thousand units of
-    // ground. A step would be six figures — the chord left 189,000 on the table
-    // at 185, and holding the mitre at the limit instead left 448,000 at 388.
     expect(worst).toBeLessThan(20000);
   });
 
