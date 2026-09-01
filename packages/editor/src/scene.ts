@@ -539,8 +539,8 @@ export function project(source: Ring, erosion: number): Shape {
  * repeats. The ring is compared point by point — it is a fresh array either
  * way — which is one pass over the geometry against an arrangement over it.
  *
- * One entry per polygon, so the map is the size of the world and not of the
- * gesture.
+ * One entry per polygon, so what is held is the size of the world and not of
+ * the gesture — and held weakly, so it is not even that for long. See below.
  */
 interface Projection {
   source: Ring
@@ -549,7 +549,16 @@ interface Projection {
   shape: Shape
 }
 
-const projections = new Map<Id, Projection>();
+/**
+ * Kept against the `Polygon` itself rather than against its id, so that a
+ * polygon the author deletes takes its projection with it. Ids are minted and
+ * never reused, so a map keyed by one only ever grows — a session spent drawing
+ * and undoing would leave a ring and a shape behind for every id it burned.
+ * A polygon whose points change is a new object and gets a new entry; the old
+ * one is garbage the moment the world stops naming it, which is exactly when
+ * the projection stops being worth anything.
+ */
+const projections = new WeakMap<Polygon, Projection>();
 
 /**
  * The same, one frame further in: the projection of a polygon's *local* ring,
@@ -578,7 +587,7 @@ interface Local {
   shape: Shape
 }
 
-const locals = new Map<Id, Local>();
+const locals = new WeakMap<Polygon, Local>();
 
 /**
  * What a frame does to lengths, or nothing when it does different things to
@@ -613,14 +622,14 @@ function projection(at: Omit<Resolved, 'shape'>): Shape {
   if (s === null) return project(at.source, at.erosion);
 
   const erosion = at.erosion / s;
-  const was = locals.get(at.id);
+  const was = locals.get(at.polygon);
 
   const shape = was !== undefined && was.erosion === erosion && samePoints(was.local, at.local)
     ? was.shape
     : project(at.local, erosion);
 
   if (was === undefined || was.shape !== shape) {
-    locals.set(at.id, { local: at.local, erosion, shape });
+    locals.set(at.polygon, { local: at.local, erosion, shape });
   }
 
   return shape.map(ring => place(at.frame, ring));
@@ -648,7 +657,7 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
   return {
     ...at,
     get shape(): Shape {
-      const was = projections.get(at.id);
+      const was = projections.get(at.polygon);
 
       if (
         was !== undefined
@@ -661,7 +670,10 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
 
       const shape = keeping(projection(at), at.keep ?? []);
 
-      projections.set(at.id, { source: at.source, erosion: at.erosion, keep: at.keep, shape });
+      projections.set(
+        at.polygon,
+        { source: at.source, erosion: at.erosion, keep: at.keep, shape },
+      );
 
       return shape;
     },
