@@ -318,6 +318,31 @@ export function erodedShape(shape: Shape, depth: number): Point[][] {
 }
 
 /**
+ * How big a shape is, as the arrangement measures it: the span of the box
+ * round it, and 1 for a shape with no size to speak of.
+ *
+ * The unit every tolerance here is written in. An absolute epsilon is a
+ * statement about the units the caller happens to be working in, and the same
+ * level drawn at a tenth the scale would get a tenth the answer out of it —
+ * which is exactly the bug it would be there to prevent. `scaleOf` is this
+ * same measure taken over segments, for the arrangement's own snap.
+ */
+function extentOf(shape: Shape): number {
+  let lo = Infinity, hi = -Infinity;
+
+  for (const ring of shape) {
+    for (const p of ring) {
+      lo = Math.min(lo, p.x, p.y);
+      hi = Math.max(hi, p.x, p.y);
+    }
+  }
+
+  const d = hi - lo;
+
+  return Number.isFinite(d) && d > 0 ? d : 1;
+}
+
+/**
  * Whether a point is a corner the offset kept: something the boundary it
  * produced still turns at.
  *
@@ -339,17 +364,7 @@ export function erodedShape(shape: Shape, depth: number): Point[][] {
  * ring against one outline and the index is worth building once.
  */
 export function survived(shape: Shape): (p: Point) => boolean {
-  let lo = Infinity, hi = -Infinity;
-
-  for (const ring of shape) {
-    for (const p of ring) {
-      lo = Math.min(lo, p.x, p.y);
-      hi = Math.max(hi, p.x, p.y);
-    }
-  }
-
-  const extent = hi - lo;
-  const eps = (Number.isFinite(extent) && extent > 0 ? extent : 1) * 1e-7;
+  const eps = extentOf(shape) * 1e-7;
 
   // Bucketed at the tolerance, so a lookup is nine cells rather than the whole
   // outline. A picked group can be a union of a hundred polygons, and this is
@@ -408,17 +423,7 @@ export function survived(shape: Shape): (p: Point) => boolean {
  * saves.
  */
 export function onBoundary(shape: Shape): (p: Point) => boolean {
-  let lo = Infinity, hi = -Infinity;
-
-  for (const ring of shape) {
-    for (const p of ring) {
-      lo = Math.min(lo, p.x, p.y);
-      hi = Math.max(hi, p.x, p.y);
-    }
-  }
-
-  const extent = hi - lo;
-  const eps = (Number.isFinite(extent) && extent > 0 ? extent : 1) * 1e-7;
+  const eps = extentOf(shape) * 1e-7;
 
   return p => shape.some(ring => ring.some((a, i) => {
     const b = ring[(i + 1) % ring.length];
@@ -503,7 +508,29 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
 function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
   const out: Band = { inward: [], outward: [] };
 
-  for (let r = 0; r < shape.length; r++) sweep(shape[r], i => depth(r, i), out);
+  // A depth this side of the arrangement's own snap is no depth at all, and
+  // saying so here is what keeps the answer from depending on the frame it was
+  // taken in. A corner at 1e-15 of the shape's own size still has a *sign*,
+  // and the sign is not a small thing: a wall between one of those and an
+  // ordinary depth is a wall whose two ends went opposite ways, so it is cut
+  // at the crossing and a slice of band is emitted on the far side. The slice
+  // has the area its depth deserves — none — but it carries a vertex, and
+  // whether the walk welds that vertex away or keeps it comes down to how the
+  // numbers happened to round. Taken in a polygon's own frame and again in
+  // world units, the same shape then came back with a different number of
+  // corners. Rounded off first, both agree by construction.
+  //
+  // Relative, so it says the same thing at every scale: the depth and the size
+  // of the shape go through a frame together, and their ratio comes out the
+  // far side unchanged.
+  const eps = extentOf(shape) * 1e-9;
+  const at = (r: number, i: number): number => {
+    const d = depth(r, i);
+
+    return Math.abs(d) <= eps ? 0 : d;
+  };
+
+  for (let r = 0; r < shape.length; r++) sweep(shape[r], i => at(r, i), out);
 
   return out;
 }

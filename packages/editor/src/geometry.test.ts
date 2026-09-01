@@ -907,6 +907,32 @@ describe('erodeAt', () => {
     expect(erodeAt(strip, [10, 30, 10, 10, 10])[0].length).toBe(5);
   });
 
+  test('a depth inside the arrangement\'s own snap is no depth at all', () => {
+    // A hair of a depth still has a sign, and the sign is what costs: a wall
+    // whose two ends went opposite ways is cut at the crossing and a slice of
+    // band comes off the far side, with no area to speak of and a vertex all
+    // the same. Whether the walk keeps that vertex is a question about
+    // rounding, which is how the same shape came back with a different number
+    // of corners depending on the frame it was offset in.
+    const one = erodeAt(square, [10, 10, -1e-9, 10]);
+    const none = erodeAt(square, [10, 10, 0, 10]);
+
+    expect(one.map(r => r.length)).toEqual(none.map(r => r.length));
+    expect(shapeArea(one)).toBeCloseTo(shapeArea(none), 9);
+  });
+
+  test('and it is relative, so it says the same thing at either scale', () => {
+    // The depth and the shape go through a frame together and their ratio
+    // comes out unchanged, which is the whole reason the tolerance is written
+    // as a fraction of the extent rather than as a number of units.
+    const small = square.map(p => ({ x: p.x / 100, y: p.y / 100 }));
+
+    const one = erodeAt(small, [0.1, 0.1, -1e-11, 0.1]);
+    const none = erodeAt(small, [0.1, 0.1, 0, 0.1]);
+
+    expect(one.map(r => r.length)).toEqual(none.map(r => r.length));
+  });
+
   test('the winding is settled here, so a clockwise ring erodes inward', () => {
     // The depths are named by where a corner sits in the ring the caller has,
     // and turning the ring round has to take them with it.
