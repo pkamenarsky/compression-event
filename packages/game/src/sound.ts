@@ -45,6 +45,15 @@ export function audioContext(): AudioContext {
 
 // ── Active sounds ──
 
+/**
+ * Every sound that has been started and not stopped, so that `stopAll` can
+ * reach them.
+ *
+ * A handle leaves only by being stopped. Nothing here notices a sound running
+ * out on its own — the factory says what its output node is and keeps its
+ * sources to itself, so there is nothing to hang an `ended` on — which makes
+ * stopping what a caller owes, not a courtesy. See `playSound`.
+ */
 const _active = new Set<SoundHandle>();
 
 /** Stop every currently-playing sound. */
@@ -62,6 +71,15 @@ export function stopAll(): void {
  *
  * Returns a `SoundHandle` whose `stop()` method will silence it
  * immediately (with a short fade-out to avoid clicks).
+ *
+ * Every handle must be stopped, including one for a sound that ends by itself.
+ * A blip that schedules its own last note is over as far as the ear is
+ * concerned, but its handle and its master gain stay here until `stop()` takes
+ * them out, and a page that plays one per pickup for an hour is holding an
+ * hour's worth. `playSoundFor` is the way to say it: it puts the `stop()` on a
+ * timer, and it is what every one-shot in the game goes through. Reach for
+ * `playSound` itself only for something that runs until it is told not to —
+ * the drone — and then hold the handle and stop it.
  */
 export function playSound(def: SoundDef): SoundHandle {
   const ctx = getContext();
