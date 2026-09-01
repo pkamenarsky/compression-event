@@ -19,24 +19,27 @@
 ** polyline
 ** also artifacts? would make sense
 
+* erode only selected edges
+* edge mode
+
+* selection of overlapping vertices
+* selecting a group and trying to alter vertices doesn't work
+* locking of polygons? unlock works then with cmd + click
+
+* resolve selection/group
+
 * visible versions can be a strip instead of individual lines
 ** button: none/all/next/subsequent/strip (current version is always visible)
-* effects
-** chamfer etc
-
-* selecting a group and trying to alter vertices doesn't work
-* erode only selected edges
-* resolve selection/group
-* edge mode
 * show/hide floor polygons
 * fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
-* selection of overlapping vertices
-* locking of polygons? unlock works then with cmd + click
+* write rotation degrees when rotating (and maybe when doing any kind of transformation)
+
 * unchain
 * version management
+
 * paths in groups?
-* write rotation degrees when rotating (and maybe when doing any kind of transformation)
+
 * settings
 ** grid size
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
