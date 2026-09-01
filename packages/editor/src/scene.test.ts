@@ -2019,15 +2019,18 @@ describe('a projection is the same shape wherever it is taken', () => {
           y: fc.double({ min: -400, max: 400, noNaN: true }),
           rotation: fc.double({ min: -3.14, max: 3.14, noNaN: true }),
           scale: fc.double({ min: 0.4, max: 2.5, noNaN: true }),
-          erosion: fc.double({ min: 1e-3, max: 12, noNaN: true }),
-          // Which corner is offset apart from the rest, and by how much. Away
-          // from zero at both ends for the reason the depth above is: an offset
-          // under the arrangement's snap is a shape the two framings are
-          // honestly allowed to disagree about.
+          // Both away from zero, and within a couple of orders of each other.
+          // Where a wall's two ends carry depths of opposite sign, the boundary
+          // crosses the wall at `erosion / (erosion + |by|)` along it — so a
+          // depth a thousandth of its neighbour's puts that crossing hard up
+          // against a corner, where the boundary is barely turning and the two
+          // framings are as free to disagree as they are about a depth under
+          // the arrangement's own snap.
+          erosion: fc.double({ min: 0.5, max: 12, noNaN: true }),
           which: fc.nat({ max: 20 }),
           by: fc.oneof(
-            fc.double({ min: 1e-3, max: 12, noNaN: true }),
-            fc.double({ min: -12, max: -1e-3, noNaN: true }),
+            fc.double({ min: 0.5, max: 12, noNaN: true }),
+            fc.double({ min: -12, max: -0.5, noNaN: true }),
           ),
         }),
         (ring, t) => {

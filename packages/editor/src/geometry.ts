@@ -214,35 +214,139 @@ export function erode(shape: Cut, depth: number): Cut {
 }
 
 /**
- * The offset taken with a depth per vertex: the boundary passes `depths[i]`
- * from `source[i]`, interpolated along each edge between its two ends.
+ * The offset taken with a depth per vertex: every corner moves to the point
+ * that is `depths[i]` from both of the walls meeting there, and the boundary
+ * between two moved corners is the straight line joining them.
  *
- * The same construction, and that is the whole point of it. `band` builds one
- * quad per edge out of two independently moved endpoints, so an edge whose ends
- * go different distances is a trapezoid rather than a rectangle and nothing
- * else about it changes; the wedge at a corner is built from that corner's own
- * depth on both of its edges, so the mitre is still where its two moved lines
- * meet. A uniform `depths` therefore reproduces `erode` exactly, and a varying
- * one splits, deletes and turns itself inside out by the same machinery.
+ * The corner rather than the wall, which is the whole of what makes this
+ * different from `erode`. A uniform depth cannot tell the two apart — a corner
+ * at `d` from both its walls is exactly where the two walls moved `d` along
+ * their own normals cross, so the mitre *is* the moved corner and either
+ * reading builds the same band. Once the depths differ they part company, and
+ * they part immediately: the scaled bisector slides a corner *along* its walls
+ * as well as across them, so the wall joining two moved corners is a chord
+ * between them rather than the original wall carrying a linear ramp of depth.
  *
- * What it gives up is the invariant above: an edge whose ends move by different
- * amounts does not stay parallel to where it started, and a source corner that
- * was flat can turn in the projection. `bake`'s `flat` knows this.
+ * What it buys is that there is no mitre to run away. `erode` has to build a
+ * wedge at every corner the ring turns away from, and the wedge reaches to
+ * where the two moved walls cross, which is off towards infinity as they close
+ * on parallel — hence `MITRE_LIMIT`, and hence a spike as long as the limit
+ * allows standing in the middle of a room. Here the corner *is* the crossing.
+ * There is one quad per wall, they meet at the corners, and nothing reaches
+ * anywhere the offset does not go.
  *
- * The ring rather than a `Cut`, because the depths are named by where a vertex
- * sits in the ring the caller has in hand and an arrangement would not keep
- * them there. Winding is settled here instead: the band is swept to the left of
- * the ring, so a clockwise one is turned round — and its depths with it — before
- * anything is measured.
+ * What it costs is that a quad can fold. A corner whose bisector is long enough
+ * sends its moved point past the far end of the wall, and the quad crosses
+ * itself; a bowtie's two lobes are wound against each other, so filled as one
+ * ring it would cancel most of the band away. Each is cut into two triangles
+ * and wound separately, which fills both lobes — and both lobes are ground the
+ * wall genuinely sweeps on its way in.
+ *
+ * The ring rather than a `Cut`, and the winding settled here, for the reason
+ * `erode` takes a `Cut`: the depths are named by where a corner sits in the
+ * ring the caller has in hand, and an arrangement would not keep them there.
  */
 export function erodeAt(source: Ring, depths: readonly number[]): Cut {
   const flip = !isCCW(source);
   const ring = flip ? [...source].reverse() : source;
   const at = flip ? [...depths].reverse() : depths;
 
-  const simple = simplify([ring]);
+  return offset(simplify([ring]), swept(ring, i => at[i]));
+}
 
-  return offset(simple, band([ring], i => at[i]));
+/** Where each corner goes: `depth` from both of the walls meeting there. */
+function corners(ring: Ring, depth: (i: number) => number): Point[] {
+  const n = ring.length;
+  const normals: Point[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    // A repeated point is not a wall and has no normal. It inherits the one
+    // before it, so the corner either side of it still has two to bisect.
+    normals.push(l === 0
+      ? (normals[i - 1] ?? { x: 0, y: 0 })
+      : { x: -dy / l, y: dx / l });
+  }
+
+  return ring.map((v, i) => {
+    const d = depth(i);
+    const p = normals[(i - 1 + n) % n], q = normals[i];
+
+    let bx = p.x + q.x, by = p.y + q.y;
+    const l = Math.hypot(bx, by);
+
+    // A hairpin's two normals cancel and there is no bisector to scale. The
+    // wall's own normal is the least wrong thing to move along, and it is what
+    // the corner would have got had the ring simply carried on.
+    if (l < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
+
+    bx /= l;
+    by /= l;
+
+    const cosHalf = bx * q.x + by * q.y;
+
+    if (Math.abs(cosHalf) < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
+
+    return { x: v.x + bx / cosHalf * d, y: v.y + by / cosHalf * d };
+  });
+}
+
+/**
+ * The ground the boundary covers on its way in and on its way out, kept apart
+ * for `offset`: one quad per wall, running from where it was to where it went.
+ *
+ * Two triangles per quad rather than the quad, so that a wall whose two moved
+ * ends have crossed over fills both of its lobes instead of cancelling one
+ * against the other. Where the depth changes sign along a wall the quad is cut
+ * at the crossing first, because the two halves are not the same operation.
+ */
+function swept(ring: Ring, depth: (i: number) => number): Band {
+  const out: Band = { inward: [], outward: [] };
+  const moved = corners(ring, depth);
+  const n = ring.length;
+
+  const put = (a: Point, b: Point, c: Point, side: number): void => {
+    const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+
+    if (area === 0) return;
+
+    const tri = area > 0 ? [a, b, c] : [a, c, b];
+
+    if (side > 0) out.inward.push(tri);
+    else if (side < 0) out.outward.push(tri);
+  };
+
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const a = ring[i], b = ring[j];
+    const da = depth(i), db = depth(j);
+
+    if (da === 0 && db === 0) continue;
+
+    if (da * db < 0) {
+      // Where the moved wall crosses the wall it came from: the one place
+      // along it the boundary has not moved at all.
+      const t = da / (da - db);
+      const c = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      const m = { x: moved[i].x + (moved[j].x - moved[i].x) * t,
+                  y: moved[i].y + (moved[j].y - moved[i].y) * t };
+
+      put(a, c, m, da);
+      put(a, m, moved[i], da);
+      put(c, b, moved[j], db);
+      put(c, moved[j], m, db);
+      continue;
+    }
+
+    const side = da !== 0 ? da : db;
+
+    put(a, b, moved[j], side);
+    put(a, moved[j], moved[i], side);
+  }
+
+  return out;
 }
 
 /** The material left when the boundary has swept `swept`: what it covered on

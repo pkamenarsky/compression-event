@@ -840,23 +840,25 @@ describe('erodeAt', () => {
   });
 
   test('a corner pulled in on its own leaves its neighbours where they were', () => {
-    // A square with one corner taken 20 deeper is still a quadrilateral: the
-    // two edges meeting there tilt about the far ends they share with the
-    // edges that have not moved, and the corner slides up the diagonal to where
-    // the two tilted lines now cross.
+    // A square with one corner taken 20 deeper is still a quadrilateral: that
+    // corner goes to where it is 20 from both of its walls, which on a right
+    // angle is 20 * sqrt(2) up the diagonal, and the two walls meeting there
+    // become chords to the corners that have not moved.
     const shape = erodeAt(square, [20, 0, 0, 0]);
 
     expect(shape.length).toBe(1);
     expect(shape[0].length).toBe(4);
     expect(shape[0].some(p => p.x === 0 && p.y === 0)).toBe(false);
+    expect(shape[0].some(p => Math.abs(p.x - 20) < 1e-9 && Math.abs(p.y - 20) < 1e-9)).toBe(true);
 
     // The two edges the corner is not on are untouched, so the far side of the
     // square is still the far side of the square.
     const far = shape[0].filter(p => p.x > 99.9 || p.y > 99.9);
 
     expect(far.length).toBe(3);
-    // The triangle the two tilted lines cut off the corner, and nothing else.
-    expect(shapeArea(shape)).toBeCloseTo(10000 - 100 * 100 / 6, 9);
+    // The triangle the two chords cut off the corner, and nothing else: half of
+    // the 20-by-... no — the quadrilateral (20,20) (100,0) (100,100) (0,100).
+    expect(shapeArea(shape)).toBeCloseTo(8000, 9);
   });
 
   test('a corner pushed out on its own is the same thing the other way', () => {
@@ -963,21 +965,16 @@ describe('erodeAt', () => {
     }
   });
 
-  test('and the wedge that covers it never doubles back on itself', () => {
-    // Past the depth where the two moved lines cross over, `meet` answers with
-    // the crossing behind the corner. Built through it the wedge is a bowtie,
-    // the nonzero rule reads its middle as ground, and the band comes out with
-    // a hole in it where the corner most needed covering — which showed up as
-    // the shape gaining a bite back at one particular depth and keeping it.
-    //
-    // Eroding takes ground away, so the area may only fall. It falls at every
-    // step here but one, and that one is the mitre limit cutting a spike off
-    // square — a step that is there on purpose, and is pinned here so that
-    // making it continuous cannot happen by accident. See `MITRE_LIMIT`.
+  test('and eroding it only ever takes ground away', () => {
+    // Eroding takes ground away, so the area may only fall — at every step,
+    // with nothing anywhere for a step to be about. There is no mitre here to
+    // reach past a limit and be cut off, so there is no depth at which the
+    // shape has to lurch: the corner *is* where the two moved walls cross, and
+    // it goes on being that at every depth.
     let last = Infinity;
     const rose: number[] = [];
 
-    for (let d = 0; d <= 1200; d += 5) {
+    for (let d = 0; d <= 1200; d += 0.5) {
       const area = shapeArea(dragged(d));
 
       if (area > last + 1e-6) rose.push(d);
@@ -985,7 +982,7 @@ describe('erodeAt', () => {
       last = area;
     }
 
-    expect(rose).toEqual([185]);
+    expect(rose).toEqual([]);
   });
 
   /**
