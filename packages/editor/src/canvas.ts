@@ -50,7 +50,8 @@ import {
   hitArtefact,
   movedStart,
   depths,
-  editable,
+  Handle,
+  handles,
   occupying,
   occupyingSource,
   removeArtefacts,
@@ -378,7 +379,7 @@ export function worldCanvas(
 
       // Corners come off what is on screen as itself; polygons come off
       // everything, because a member is how a marquee finds the group over it.
-      const items = points ? pickable() : resolveAt(world(), currentVersion());
+      const items = resolveAt(world(), currentVersion());
 
       // A marquee takes whole groups: half a group picked is a selection that
       // no gesture could act on without taking the group apart. Whole at the
@@ -386,7 +387,7 @@ export function worldCanvas(
       // members, which is the point of having gone in.
       const path = opened(world(), inside());
       const caught = points
-        ? verticesWithinBox(items, box.a, box.b)
+        ? verticesWithinBox(grabs(), box.a, box.b)
         : [...new Set(
           withinBox(items, box.a, box.b)
             .filter(id => reachable(world(), id, inside()))
@@ -1333,7 +1334,7 @@ export function worldCanvas(
     function clicked(e: PointerEvent): void {
       const items = pickable();
       const reach = HANDLE / view().zoom;
-      const corner = hitVertex(items, at(e), reach);
+      const corner = hitVertex(grabs(), at(e), reach);
 
       // A path point before a polygon's corner, because a path is drawn over
       // the level and what is on top is what a click on it means. Its legs
@@ -1575,20 +1576,33 @@ export function worldCanvas(
      * through to the polygon for one click without going anywhere.
      */
     /**
-     * The polygons the tools may touch: what has a handle on screen.
+     * The polygons the tools may touch: what is on screen as itself.
      *
-     * Corners belong to polygons, and a polygon inside a shut group has none
-     * on screen unless the group is picked — which is the whole of what
-     * `editable` decides, for the drawing and for the click alike. Without it
-     * the point tool would find handles nothing is drawing, and a click on
-     * nothing would move a corner of something a group is standing for.
+     * Edges, now that corners have `grabs`. An edge is clicked to grow a
+     * corner out of it, and the edges of a shut group's members are not on
+     * screen — the group draws one outline over the lot. Picking the group
+     * does not put them back the way it puts the corners back: a corner is a
+     * handle on a shape the outline is made of, and a seam is a line the group
+     * exists to hide.
      */
     function pickable(): Resolved[] {
       const w = world();
+      const path = opened(w, inside());
 
-      return editable(
+      return resolveAt(w, currentVersion())
+        .filter(it => !swallowed(w, it.id, path) && reachable(w, it.id, inside()));
+    }
+
+    /** The corners on screen, which are the ones a click may take. The same
+     * call the drawing makes — see `handles`. */
+    function grabs(): Handle[] {
+      const w = world();
+      const v = currentVersion();
+
+      return handles(
         w,
-        resolveAt(w, currentVersion()),
+        v,
+        resolveAt(w, v),
         opened(w, inside()),
         inside(),
         new Set(polygonsIn(w, selection().polygons)),
@@ -2033,11 +2047,7 @@ export function worldCanvas(
               }
 
               if (tool() === 'point') {
-                const grab = hitVertex(
-                  pickable(),
-                  at(e),
-                  HANDLE / view().zoom,
-                );
+                const grab = hitVertex(grabs(), at(e), HANDLE / view().zoom);
 
                 if (grab !== null) {
                   const picked = selection().vertices.includes(grab.vertex)
@@ -2610,11 +2620,11 @@ function layers(
 
   // Last of the level, over every outline and every fill: a handle is what the
   // hand is aiming at, and nothing drawn after it would be. The same list the
-  // click asks — see `editable`.
+  // click asks — see `handles`.
   if (tool === 'point') {
-    const handles = editable(world, items, path, inside, reached);
+    const on = handles(world, current, items, path, inside, reached);
 
-    out.push(ctx => corners(ctx, view, handles, selection));
+    out.push(ctx => corners(ctx, view, on, selection));
   }
 
   out.push(ctx => outlines(ctx, view, outline));
@@ -2826,9 +2836,9 @@ function source(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
  *
  * Its own pass over its own list rather than part of `polygons`, because what
  * has a corner on screen and what has an outline on screen are no longer the
- * same question: a picked group draws one outline and every one of its
- * members' corners. `editable` settles the list, and settles it for the click
- * as well, so a handle is drawn exactly where one can be grabbed.
+ * same question: a picked group draws one outline and the corners of its
+ * members that lie on it. `handles` settles the list, and settles it for the
+ * click as well, so a square is drawn exactly where one can be grabbed.
  *
  * Over the groups rather than under them. A group's fill is painted after the
  * polygons and would take the squares inside it with it, which are the very
@@ -2837,24 +2847,23 @@ function source(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
 function corners(
   ctx: CanvasRenderingContext2D,
   view: View,
-  items: readonly Resolved[],
+  on: readonly Handle[],
   selection: Selection,
 ): void {
   // Two passes rather than one, so that each colour is a single fill: which
   // corners are picked is the only thing the point tool is about, and a hollow
   // square against a solid one says it at any zoom.
-  const on = new Set(selection.vertices);
+  const chosen = new Set(selection.vertices);
 
   for (const picked of [false, true]) {
     ctx.beginPath();
 
-    for (const it of items) {
-      it.source.forEach((p, i) => {
-        if (on.has(it.corners[i].id) !== picked) return;
+    for (const h of on) {
+      if (chosen.has(h.vertex) !== picked) continue;
 
-        const s = toScreen(view, p);
-        ctx.rect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5);
-      });
+      const s = toScreen(view, h.at);
+
+      ctx.rect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5);
     }
 
     ctx.fillStyle = picked ? theme.picked : theme.vertex;

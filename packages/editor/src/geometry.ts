@@ -385,6 +385,59 @@ export function survived(shape: Shape): (p: Point) => boolean {
 }
 
 /**
+ * Whether a point lies on a boundary of `shape` — anywhere along it, not only
+ * where it turns.
+ *
+ * The question a group's handles ask. A group is drawn as one outline and its
+ * members' corners are scattered over the ground under it: some are on that
+ * outline and some are seams between two members, interior geometry that
+ * shutting the group exists to put away. A handle on a seam is a handle on
+ * nothing anyone can see, which is what makes a picked group full of them
+ * confusing rather than useful.
+ *
+ * Anywhere along it, and not `survived`, because the two ask different things.
+ * A corner where two members meet flush is dropped from the union — the walk
+ * has no reason to turn there, so it is not a vertex of the outline — but it
+ * sits squarely on the line that is drawn, and the shape it belongs to moves
+ * when it is dragged. Hiding it would take a handle off a corner the eye can
+ * see on the outline, which is the thing this is trying to avoid.
+ *
+ * Brute force over the segments, deliberately. It is asked once per corner of
+ * one picked group, against that group's own union, and a grid over a boundary
+ * that changes on every frame of a drag costs more to build than the walk it
+ * saves.
+ */
+export function onBoundary(shape: Shape): (p: Point) => boolean {
+  let lo = Infinity, hi = -Infinity;
+
+  for (const ring of shape) {
+    for (const p of ring) {
+      lo = Math.min(lo, p.x, p.y);
+      hi = Math.max(hi, p.x, p.y);
+    }
+  }
+
+  const extent = hi - lo;
+  const eps = (Number.isFinite(extent) && extent > 0 ? extent : 1) * 1e-7;
+
+  return p => shape.some(ring => ring.some((a, i) => {
+    const b = ring[(i + 1) % ring.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l = Math.hypot(dx, dy);
+
+    if (l <= eps) return Math.hypot(p.x - a.x, p.y - a.y) <= eps;
+
+    // Along the wall and across it, taken apart: off either end is not on the
+    // wall however close the line it lies on passes.
+    const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (l * l);
+
+    if (t < -eps / l || t > 1 + eps / l) return false;
+
+    return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l <= eps;
+  }));
+}
+
+/**
  * The ground the boundary covers on its way in and on its way out, kept apart:
  * `offset` subtracts the one and adds the other.
  *

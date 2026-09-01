@@ -39,6 +39,7 @@ import {
   erodeAt,
   isCCW,
   keeping,
+  onBoundary,
   simplify,
   subtract,
   unionAll,
@@ -1817,8 +1818,8 @@ export function swallowed(world: World, id: Id, path: readonly GroupId[]): boole
 }
 
 /**
- * The polygons the point tool has handles on: everything drawn by itself, plus
- * the members of whatever groups are picked.
+ * The polygons the point tool may have handles on: everything drawn by itself,
+ * plus the members of whatever groups are picked.
  *
  * A shut group hides its members' outlines, and their corners went with them —
  * a handle on a shape that is not on screen is a handle on nothing. Picking
@@ -1828,9 +1829,9 @@ export function swallowed(world: World, id: Id, path: readonly GroupId[]): boole
  * command-click already makes for one polygon at a time, offered to the whole
  * of what the selection names.
  *
- * Drawing and picking ask this together, and have to: a handle drawn where no
- * click lands is worse than no handle, and a click that lands where nothing is
- * drawn is worse still.
+ * Which of those corners are worth a square is a second question, and it is
+ * `handles` that answers it: a member offers only the corners standing on the
+ * group's own boundary.
  */
 export function editable(
   world: World,
@@ -1844,6 +1845,75 @@ export function editable(
     reachable(world, it.id, inside)
     && (picked.has(it.id) || !swallowed(world, it.id, path)),
   );
+}
+
+/** One corner the point tool can put a square on and a click can land on:
+ * which corner it is, and where it is standing. */
+export interface Handle extends Grabbed {
+  at: Point
+}
+
+/**
+ * Every handle on screen, which is what the point tool draws and what a click
+ * under it hits.
+ *
+ * A corner rather than a polygon, because a picked group's members do not
+ * offer all of theirs. A group is one outline and the corners under it are of
+ * two kinds: the ones on that outline, which are the shape of the thing being
+ * looked at, and the seams where two members meet, which are the internal
+ * geometry shutting the group put away. Handing back every corner of every
+ * member puts the seams back as squares — the outline of the members without
+ * the lines, which is the most confusing form the hidden geometry could take.
+ * So a swallowed member offers the corners that are on the group's boundary
+ * and no others.
+ *
+ * The group's *source* boundary, and its floor's: the union with the group's
+ * own depth left off, which is where the members' corners actually are, and
+ * the floor union beside it, which is drawn inside the group and is nobody's
+ * outline but is on screen all the same. See `occupyingSource`.
+ *
+ * Drawing and hitting share this and have to: a square drawn where no click
+ * lands is worse than no square, and a click that moves a corner with no
+ * square on it is worse still.
+ */
+export function handles(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+  inside: GroupId | null,
+  /** What the selection reaches, from `polygonsIn`. */
+  picked: ReadonlySet<PolygonId>,
+): Handle[] {
+  const mine = editable(world, items, path, inside, picked);
+  const shut = mine.filter(it => swallowed(world, it.id, path));
+
+  // Only where a picked group is standing for something, which is the only
+  // case that needs a boundary to test against.
+  const on = new Map<Id, (p: Point) => boolean>();
+
+  if (shut.length !== 0) {
+    for (const g of occupyingSource(world, v, items, path)) {
+      const edge = onBoundary(g.shape);
+      const floor = g.floor.length === 0 ? null : onBoundary(g.floor);
+
+      on.set(g.id, p => edge(p) || (floor !== null && floor(p)));
+    }
+  }
+
+  const out: Handle[] = [];
+
+  for (const it of mine) {
+    const edge = on.get(reaching(world, it.id, path));
+
+    it.source.forEach((at, index) => {
+      if (edge !== undefined && !edge(at)) return;
+
+      out.push({ id: it.id, index, vertex: it.corners[index].id, at });
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -2070,22 +2140,20 @@ export function hitting(
  * that either.
  */
 export function hitVertex(
-  items: Resolved[],
+  on: readonly Handle[],
   at: Point,
   radius: number,
 ): Grabbed | null {
   let best: Grabbed | null = null;
   let bestDistance = radius;
 
-  for (const it of items) {
-    it.source.forEach((p, index) => {
-      const d = Math.hypot(p.x - at.x, p.y - at.y);
+  for (const h of on) {
+    const d = Math.hypot(h.at.x - at.x, h.at.y - at.y);
 
-      if (d <= bestDistance) {
-        bestDistance = d;
-        best = { id: it.id, index, vertex: it.corners[index].id };
-      }
-    });
+    if (d <= bestDistance) {
+      bestDistance = d;
+      best = { id: h.id, index: h.index, vertex: h.vertex };
+    }
   }
 
   return best;
@@ -2151,20 +2219,13 @@ function along(a: Point, b: Point, p: Point): Point {
 
 /** Every corner inside the box, by id, which is what a marquee over the points
  * is asking for. */
-export function verticesWithinBox(items: Resolved[], a: Point, b: Point): VertexId[] {
+export function verticesWithinBox(on: readonly Handle[], a: Point, b: Point): VertexId[] {
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-  const out: VertexId[] = [];
 
-  for (const it of items) {
-    it.source.forEach((p, i) => {
-      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
-        out.push(it.corners[i].id);
-      }
-    });
-  }
-
-  return out;
+  return on
+    .filter(h => h.at.x >= x0 && h.at.x <= x1 && h.at.y >= y0 && h.at.y <= y1)
+    .map(h => h.vertex);
 }
 
 // -----------------------------------------------------------------------------

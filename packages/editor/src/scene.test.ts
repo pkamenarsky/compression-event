@@ -21,6 +21,7 @@ import {
   under,
   unstep,
   editable,
+  handles,
   reachable,
   reaching,
   showing,
@@ -723,8 +724,9 @@ describe('corners added and taken away', () => {
     // corner a hair away from the one being reached for.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const items = resolveAt(world, 0);
+    const on = handles(world, 0, items, [], null, new Set());
 
-    expect(hitVertex(items, { x: 2, y: 2 }, 9)).not.toEqual(null);
+    expect(hitVertex(on, { x: 2, y: 2 }, 9)).not.toEqual(null);
   });
 });
 
@@ -1627,6 +1629,53 @@ describe('going inside a group', () => {
 
     expect(editable(loose.world, items, [group], group, picked).map(it => it.id).sort())
       .toEqual([...ids].sort());
+  });
+
+  test('a picked group offers the corners on its outline and not the seams', () => {
+    // Two rooms flush against each other are one outline with a seam down the
+    // middle, and the seam is what shutting the group put away. The four
+    // corners along it are still there and still drag their own polygon — but
+    // a square on one is a square on a line nobody can see, so the group keeps
+    // them to itself.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 10, 10)],
+      ['level', rect(10, 0, 10, 10)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(made.world, 0);
+    const reached = new Set(polygonsIn(made.world, [made.id]));
+
+    const on = handles(made.world, 0, items, [], null, reached);
+
+    // Six of the eight: the two ends of the seam are shared, and the corners
+    // that meet there are exactly the ones the union does not have.
+    expect(on.map(h => h.at)).toEqual(expect.arrayContaining([
+      { x: 0, y: 0 }, { x: 0, y: 10 }, { x: 20, y: 0 }, { x: 20, y: 10 },
+    ]));
+
+    // The seam ends are on the outline, so they keep their squares — one per
+    // member, since both members turn there.
+    expect(on.filter(h => h.at.x === 10).length).toBe(4);
+    expect(on.length).toBe(8);
+  });
+
+  test('and none at all of a member that is buried inside another', () => {
+    // A room wholly inside another contributes no boundary to the union, so
+    // every one of its corners is interior and none is worth a handle.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(40, 40, 10, 10)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(made.world, 0);
+    const reached = new Set(polygonsIn(made.world, [made.id]));
+
+    const on = handles(made.world, 0, items, [], null, reached);
+
+    expect(on.every(h => h.id !== ids[1])).toBe(true);
+    expect(on.length).toBe(4);
   });
 
   test('a group draws as one shape even at depth zero', () => {
