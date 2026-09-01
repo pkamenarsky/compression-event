@@ -19,13 +19,11 @@
 ** polyline
 ** also artifacts? would make sense
 
-* erode only selected edges
 * edge mode
 
-* selection of overlapping vertices
-* selecting a group and trying to alter vertices doesn't work
-* locking of polygons? unlock works then with cmd + click
+* paths in groups?
 
+* selection of overlapping vertices
 * resolve selection/group
 
 * visible versions can be a strip instead of individual lines
@@ -35,10 +33,9 @@
 * make it more clear when drilled into group
 * write rotation degrees when rotating (and maybe when doing any kind of transformation)
 
+* locking of polygons? unlock works then with cmd + click
 * unchain
 * version management
-
-* paths in groups?
 
 * settings
 ** grid size
