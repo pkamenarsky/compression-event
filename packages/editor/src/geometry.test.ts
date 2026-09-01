@@ -19,6 +19,7 @@ import {
   decompose,
   erode,
   erodeAt,
+  erodedCorners,
   intersect,
   isCCW,
   shapeArea,
@@ -1531,5 +1532,45 @@ describe('n-gons', () => {
 
     expect(ring).toHaveLength(6);
     expect(new Set(ring.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`)).size).toBe(6);
+  });
+});
+
+describe('erodedCorners', () => {
+  const square = rect(0, 0, 100, 100);
+
+  test('a corner lands where the offset that moved it put it', () => {
+    // 10 from both walls of a right angle is 10 in and 10 along, and the ring
+    // is a square, so every corner goes to the same place its own diagonal
+    // takes it — which is the corner of the eroded square.
+    const moved = erodedCorners(square, 10);
+
+    expect(moved.length).toBe(square.length);
+
+    for (const p of erode(simplify([square]), 10)[0]) {
+      expect(moved.some(m => Math.hypot(m.x - p.x, m.y - p.y) < 1e-9)).toBe(true);
+    }
+  });
+
+  test('the depths are read against the ring, whichever way it is wound', () => {
+    // The same claim `erodeAt` makes, and for the same reason: the caller names
+    // a corner by where it sits in the ring it handed over.
+    const clockwise = [...square].reverse();
+
+    const one = erodedCorners(square, [20, 0, 0, 0]);
+    const other = erodedCorners(clockwise, [0, 0, 0, 20]);
+
+    expect(other[3].x).toBeCloseTo(one[0].x, 9);
+    expect(other[3].y).toBeCloseTo(one[0].y, 9);
+    expect(other[2].x).toBeCloseTo(one[1].x, 9);
+  });
+
+  test('a corner the erosion consumed still says where it pushed to', () => {
+    // Past half the square there is no outline left to be on, and the answer is
+    // the point the corner ran to rather than nothing: that is what makes it a
+    // line the drawing can hang on a vertex.
+    const moved = erodedCorners(square, 80);
+
+    expect(moved[0].x).toBeCloseTo(80, 9);
+    expect(moved[2].x).toBeCloseTo(20, 9);
   });
 });

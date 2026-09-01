@@ -5,7 +5,7 @@ import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, artefactsDuring, replayed } from './bake';
-import { Ring, Shape, ngon } from './geometry';
+import { Ring, Shape, erodedCorners, ngon } from './geometry';
 import {
   Input,
   blurred,
@@ -2779,6 +2779,8 @@ function polygons(
       ctx.setLineDash([3, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
+
+      if (picked) leaders(ctx, view, it);
     }
 
     outlined(ctx, view, it.shape, it.polygon.type, picked, here, theme.pickedFill);
@@ -2808,6 +2810,48 @@ function polygons(
     ctx.fillStyle = picked ? theme.picked : theme.vertex;
     ctx.fill();
   }
+}
+
+/**
+ * A hairline from each corner of the source ring to where the offset put it.
+ *
+ * Which vertex became which is the one thing the projection cannot be read
+ * off. The source is dashed under the eroded outline already, so both rings
+ * are on screen — but a corner rounded off, a wall that swallowed its
+ * neighbour, or two corners that met and crossed all look alike from outside,
+ * and the answer is not recoverable by eye at any zoom.
+ *
+ * Only under a picked polygon, and never merely because the point tool is out.
+ * The dashed source is cheap to have standing everywhere; a spoke per corner
+ * over a level of them is a hedgehog. Selection is what narrows it to the one
+ * shape the question is being asked about, and picking a second polygon asks
+ * it there too rather than instead.
+ *
+ * Faint, thin and undashed: a leader line is scaffolding, and it has to lose
+ * to both rings it joins wherever it crosses one. Drawn before the corner
+ * squares, so a handle sits on top of its own spoke rather than under it.
+ */
+function leaders(ctx: CanvasRenderingContext2D, view: View, it: Resolved): void {
+  const moved = erodedCorners(it.source, it.depths ?? it.erosion);
+
+  ctx.beginPath();
+
+  it.source.forEach((p, i) => {
+    const a = toScreen(view, p);
+    const b = toScreen(view, moved[i]);
+
+    // A corner that did not move has no line to draw, and at a depth of zero
+    // every corner is one of those. Screen space rather than world, because
+    // what is being avoided is a line too short to read.
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return;
+
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  });
+
+  ctx.strokeStyle = theme.leader;
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
 }
 
 /**

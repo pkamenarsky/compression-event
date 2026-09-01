@@ -260,6 +260,42 @@ export function erodeAt(source: Ring, depths: readonly number[]): Cut {
 }
 
 /**
+ * Where each corner of `source` goes under the same offset the projection
+ * takes: index for index with the ring it was handed.
+ *
+ * The corner and not the outline, which is the only reason this can answer at
+ * all. What comes back out of `erode` or `erodeAt` is an arrangement, and an
+ * arrangement keeps no names — a corner can be cut away by a neighbour's band,
+ * or land on a wall it now shares with three others, and asking which of the
+ * points in the result *was* a given source vertex is a question the offset
+ * threw away. The moved corner is upstream of all of that: it is `corners`,
+ * the same one both paths sweep from, and it is where the vertex went whether
+ * or not the vertex survived.
+ *
+ * So a line drawn to it is honest about the projection and not about the
+ * outline: it says where this corner pushed to. Where the point it names is
+ * not on the eroded boundary, that corner is one the erosion consumed, and the
+ * line running past the outline into the interior is the picture of that.
+ *
+ * A number for a uniform depth, an array for one per corner — the same two
+ * cases `erode` and `erodeAt` divide on, and the winding settled here the way
+ * `erodeAt` settles it, so a clockwise ring moves inwards like any other.
+ */
+export function erodedCorners(source: Ring, depths: readonly number[] | number): Point[] {
+  const flip = !isCCW(source);
+  const ring = flip ? [...source].reverse() : source;
+  const n = source.length;
+
+  const depth = typeof depths === 'number'
+    ? () => depths
+    : (i: number) => depths[flip ? n - 1 - i : i];
+
+  const moved = corners(ring, depth);
+
+  return flip ? moved.reverse() : moved;
+}
+
+/**
  * The ground the boundary covers on its way in and on its way out, kept apart:
  * `offset` subtracts the one and adds the other.
  *

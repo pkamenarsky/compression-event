@@ -63,6 +63,9 @@ export const theme = {
   vertex: '#c8cad2',
   /** The source ring under an eroded polygon: where the handles are. */
   source: '#6f7788',
+  /** The hairline joining a corner to where the erosion sent it. Under the
+   * source's own line, because it is an aside about a ring already drawn. */
+  leader: 'rgba(111, 119, 136, 0.55)',
   draft: '#8fb4ff',
   /** A measuring path. Not part of the level and not any kind of shape, so it
    * gets a line of its own — warm, because everything the level is made of is
