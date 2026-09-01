@@ -31,7 +31,7 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Contributed, IDENTITY, contributing, facingAt, placeAt, resolveAt } from './scene';
+import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
 import { ArtefactId, Id, PolygonId, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
@@ -415,7 +415,6 @@ export function artefactsShipped(world: World): GameArtefact[] {
       type: it.type,
       at: it.at,
       places: world.versions.map((_unused, v) => placeAt(world, id, v)),
-      facings: world.versions.map((_unused, v) => facingAt(world, id, v)),
     };
   });
 }
@@ -437,6 +436,9 @@ export function shipped(world: World, bake: Bake): GameWorld {
   return {
     paths: [],
     artefacts: artefactsShipped(world),
+    // As it stands, once: it is in no version's layer, so there is nothing to
+    // resolve it through and nothing per version to say about it.
+    start: { at: world.start.at, facing: world.start.facing },
     versions: world.versions.map((_unused, v) => versionOf(world, v)),
     baked: bakedLevel(bake, world),
   };

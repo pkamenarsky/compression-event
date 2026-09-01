@@ -20,14 +20,14 @@
 
 import * as THREE from 'three';
 import { bayerGLSL } from './dither';
-import { ArtefactType, SCALE } from './world';
+import { IconType, SCALE } from './world';
 
 /** Where one artefact stands, in editor units. */
 export interface Standing {
   /** Which artefact this is. Two frames naming the same id are one thing
    * moving, rather than one thrown away and another built. */
   id: number
-  type: ArtefactType
+  type: IconType
   x: number
   y: number
 }
@@ -81,9 +81,9 @@ export function artefacts(scene: THREE.Scene): Artefacts {
 
   /** Built the first time a kind is asked for, and shared by every artefact of
    * that kind after. */
-  const bodies = new Map<ArtefactType, Body>();
+  const bodies = new Map<IconType, Body>();
 
-  const bodyOf = (type: ArtefactType): Body => {
+  const bodyOf = (type: IconType): Body => {
     let it = bodies.get(type);
 
     if (it === undefined) {
@@ -95,7 +95,7 @@ export function artefacts(scene: THREE.Scene): Artefacts {
   };
 
   interface Held {
-    type: ArtefactType
+    type: IconType
     /** The solid and its edges together, so that one turn moves both. */
     group: THREE.Group
     /** Null where the kind casts none. */
@@ -112,7 +112,7 @@ export function artefacts(scene: THREE.Scene): Artefacts {
   /** Whether a kind is drawn at all from where the level is being looked at. */
   const drawn = (it: Held): boolean => above || !bodyOf(it.type).overhead;
 
-  const build = (type: ArtefactType): Held => {
+  const build = (type: IconType): Held => {
     const it = bodyOf(type);
     const group = new THREE.Group();
 
@@ -371,7 +371,7 @@ function inward(spread: number, radius: number, height: number): Piece[] {
   return out;
 }
 
-function body(type: ArtefactType): Body {
+function body(type: IconType): Body {
   switch (type) {
     // The way out: a black disc facing whoever is looking at it, hanging
     // still. It is a hole rather than a thing, and a hole does not bob.

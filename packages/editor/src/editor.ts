@@ -464,7 +464,11 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
             : pasted(s.world, s.currentVersion, s.clipboard, at, where);
 
           return marked(
-            { ...s, world, selection: { ...s.selection, polygons: ids, artefacts } },
+            {
+              ...s,
+              world,
+              selection: { ...s.selection, polygons: ids, artefacts, start: false },
+            },
             s.world,
           );
         });
@@ -497,7 +501,7 @@ function together(s: EditorState): EditorState {
     {
       ...s,
       world: made.world,
-      selection: { ...s.selection, polygons: [made.id], artefacts: [] },
+      selection: { ...s.selection, polygons: [made.id], artefacts: [], start: false },
     },
     s.world,
   );

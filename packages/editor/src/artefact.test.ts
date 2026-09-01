@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { artefactsDuring, bakeAll, replayed } from './bake';
+import { artefactsShipped, shipped } from './export';
 import { Point } from '@ce/game/world';
 
 import {
@@ -13,12 +14,16 @@ import {
   editAt,
   grouped,
   hitArtefact,
+  movedStart,
   pasted,
   placeAt,
   removeArtefacts,
   retypeArtefacts,
+  shownAt,
   stamped,
   starting,
+  START_ID,
+  turnedStart,
   reachable,
   swallowed,
   ungrouped,
@@ -471,6 +476,46 @@ describe('copying one takes what it goes on to do', () => {
 
       expect(put.world.artefacts.get(put.artefacts[0])!.type).toEqual(type);
     }
+  });
+});
+
+describe('the start is not one of them', () => {
+  test('a new world has one, at the origin, and nothing takes it away', () => {
+    expect(emptyWorld().start).toEqual({ at: { x: 0, y: 0 }, facing: 0 });
+  });
+
+  test('it stands in the same place at every version, whatever the layers say', () => {
+    // The one thing that separates it from an artefact: a version's layer is
+    // keyed by an id, and it has none, so there is nothing a version can say
+    // about where the level begins.
+    const drawn = addPolygon(emptyWorld(), 'level', [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ], 0, TOP);
+
+    const world = movedStart(
+      withEdit(drawn.world, 1, drawn.id, {
+        transform: { ...EMPTY_TRANSFORM, translation: { x: 500, y: 500 } },
+        vertices: new Map(),
+      }),
+      { x: 12, y: 34 },
+    );
+
+    for (let v = 0; v < world.versions.length; v++) {
+      expect(shownAt(world, v).filter(it => it.type === 'start')).toEqual([
+        { id: START_ID, type: 'start', at: { x: 12, y: 34 }, facing: 0 },
+      ]);
+    }
+  });
+
+  test('it is what the level ships as its start, and no artefact is one', () => {
+    const world = turnedStart(movedStart(emptyWorld(), { x: 5, y: 6 }), 1.25);
+    const put = addArtefact(world, 'key', { x: 1, y: 2 }, 0, TOP);
+
+    expect(shipped(put.world, { spans: new Map(), progress: null }).start)
+      .toEqual({ at: { x: 5, y: 6 }, facing: 1.25 });
+    expect(artefactsShipped(put.world).map(it => it.type)).toEqual(['key']);
   });
 });
 

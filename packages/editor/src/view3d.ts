@@ -38,7 +38,16 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { Artefacts, EYE, Point, Renderer, SCALE, WALK_SPEED, artefacts, renderer, urged } from '@ce/game';
 import { Bake, artefactsDuring, spanAt } from './bake';
 import { bakedLevel, floorsAt } from './export';
-import { EMPTY_LIVE, Live, artefactsAt, contributing, live, resolveAt, sourced } from './scene';
+import {
+  EMPTY_LIVE,
+  Live,
+  artefactsAt,
+  contributing,
+  live,
+  resolveAt,
+  sourced,
+  startPlaced,
+} from './scene';
 import { theme } from './theme';
 import { Replay, Update, VersionId, World } from './types';
 
@@ -263,9 +272,13 @@ function panel(
     const peopled = (w: World, v: VersionId, r: Replay | null): void => {
       if (crowd === null) return;
 
-      const shown = playing(r)
-        ? artefactsDuring(w, r.from, r.to, r.at)
-        : artefactsAt(w, v);
+      // The start with them, standing still: it is in no version's layer, so
+      // there is nothing for a walk to carry it along. Drawn from above only —
+      // see `overhead` — which is where it is a mark on the floor.
+      const shown = [
+        startPlaced(w),
+        ...(playing(r) ? artefactsDuring(w, r.from, r.to, r.at) : artefactsAt(w, v)),
+      ];
 
       crowd.show(shown.map(it => ({ id: it.id, type: it.type, x: it.at.x, y: it.at.y })));
     };
@@ -496,7 +509,7 @@ function panel(
 
             spans = baked.spans.length;
 
-            view.load({ paths: [], versions: [], artefacts: [], baked });
+            view.load({ paths: [], versions: [], artefacts: [], start: w.start, baked });
             // Untracked, and that is the whole of why a transition is cheap.
             // The walk writes where it has got to into the store on every tick,
             // so an effect whose body read it there was invalidated on every

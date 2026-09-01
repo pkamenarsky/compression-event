@@ -34,9 +34,19 @@ import {
   VertexId,
   View,
   Point,
+  World,
+  IconType,
+  Start,
 } from './types';
+import { facingAt, placeAt } from './scene';
 
 /**
+ * 11: the start is a field of the world rather than an artefact of kind
+ * `start`. A format-10 file has one among the artefacts — or several, or none,
+ * which is exactly what this stops being sayable — so the first of them is
+ * lifted out at where it stood at v0 and the rest go with it. A file with none
+ * reads as a start at the origin, which is where a new world's is.
+ *
  * 10: the create tool draws a rectangle, an n-gon or a polyline, and which of
  * them goes in the file beside the tool. A format-9 file has no shape in it,
  * which is the polyline: it was the only thing that tool could draw.
@@ -78,7 +88,7 @@ import {
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 10;
+export const FORMAT = 11;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -107,12 +117,16 @@ export interface Saved {
     artefacts?: [ArtefactId, SavedArtefact][]
     /** Absent before format 8, where there were none. */
     paths?: [PathId, Path][]
+    /** Absent before format 11, where it was an artefact — see `FORMAT`. */
+    start?: Start
     versions: SavedVersion[]
   }
 }
 
 export interface SavedArtefact {
-  type: Artefact['type']
+  /** Wider than an artefact's own kind, because a format-10 file's start is
+   * one of these — see `FORMAT` and `lifted`. */
+  type: IconType
   birth: VersionId
   /** Its own point, before any version's transform. A format-6 file has a list
    * of per-version moves here instead — see `FORMAT`. */
@@ -150,6 +164,7 @@ export function saved(state: EditorState): Saved {
         ([id, a]) => [id, { type: a.type, birth: a.birth, at: a.at }],
       ),
       paths: [...state.world.paths],
+      start: state.world.start,
       versions: state.world.versions.map(savedVersion),
     },
   };
@@ -173,24 +188,49 @@ export function restored(file: Saved): EditorState {
   }
 
   const versions = file.world.versions.map(restoredVersion);
+
+  // The starts among them come in with the rest and are taken back out below:
+  // where one stood is a question about the world it was in, so the world has
+  // to be built before it can be asked.
   const artefacts = new Map<ArtefactId, Artefact>();
+  const wasStart: ArtefactId[] = [];
 
   for (const [id, a] of file.world.artefacts ?? []) {
-    artefacts.set(id, { type: a.type, birth: a.birth, at: settling(a, id, versions) });
+    const at = settling(a, id, versions);
+
+    if (a.type === 'start') wasStart.push(id);
+
+    artefacts.set(id, { type: a.type === 'start' ? 'exit' : a.type, birth: a.birth, at });
   }
 
+  const world: World = {
+    polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
+    groups: new Map(file.world.groups ?? []),
+    artefacts,
+    start: file.world.start ?? { at: { x: 0, y: 0 }, facing: 0 },
+    paths: new Map(file.world.paths ?? []),
+    nextId: file.world.nextId,
+    versions,
+  };
+
+  // Lifted before they go, since lifting one is a read of where it stands.
+  const out = file.world.start !== undefined ? world : lifted(world, wasStart[0]);
+
+  for (const id of wasStart) artefacts.delete(id);
+
   return {
-    world: {
-      polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
-      groups: new Map(file.world.groups ?? []),
-      artefacts,
-      paths: new Map(file.world.paths ?? []),
-      nextId: file.world.nextId,
-      versions,
-    },
+    world: out,
     currentVersion: file.currentVersion,
     inside: null,
-    selection: { polygons: file.selection, vertices: [], artefacts: file.artefacts ?? [] },
+    selection: {
+      polygons: file.selection,
+      vertices: [],
+      // A format-10 file could have the start picked, and its id names nothing
+      // now. Dropped rather than turned into `start: true`: which of them was
+      // picked is about the sitting the file was written in, not the world.
+      artefacts: (file.artefacts ?? []).filter(id => artefacts.has(id)),
+      start: false,
+    },
     // Only the fields there are. A format-8 file has a `snapToGrid` beside
     // them, which nothing reads any more — see `FORMAT`.
     settings: { gridSize: file.settings.gridSize, showGrid: file.settings.showGrid },
@@ -215,6 +255,27 @@ export function restored(file: Saved): EditorState {
     // than about the world, and opening a file is a fresh one.
     history: EMPTY_HISTORY,
     clipboard: [],
+  };
+}
+
+/**
+ * The world with its start read off the artefact a format-10 file kept it as.
+ *
+ * Where that artefact stood at v0, which is the only version a start has ever
+ * meant anything at: the player was put at `places[0]` and nowhere else, so
+ * every later layer of it was a move nothing read. A file with no start
+ * artefact keeps the origin it came in with.
+ *
+ * The layers themselves are left where they are. They key an id that is no
+ * longer in the world, so nothing resolves them, and taking them out would be
+ * a second thing this could get wrong.
+ */
+function lifted(world: World, id: ArtefactId | undefined): World {
+  if (id === undefined) return world;
+
+  return {
+    ...world,
+    start: { at: placeAt(world, id, 0) ?? { x: 0, y: 0 }, facing: facingAt(world, id, 0) ?? 0 },
   };
 }
 

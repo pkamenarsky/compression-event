@@ -35,7 +35,7 @@ function world(): EditorState {
 
   return {
     ...initialState(w),
-    selection: { polygons: [b.id], vertices: [], artefacts: [] },
+    selection: { polygons: [b.id], vertices: [], artefacts: [], start: false },
     tool: 'polygon',
     currentVersion: 2,
   };
@@ -211,6 +211,53 @@ describe('save', () => {
     expect(placeAt(after.world, one.id, 0)).toBeNull();
     expect(placeAt(after.world, one.id, 2)).toEqual({ x: 10, y: 0 });
     expect(placeAt(after.world, one.id, 4)).toEqual({ x: 15, y: 5 });
+  });
+
+  test('the start survives the trip, and a format-10 file kept it as an artefact', () => {
+    const before = world();
+    const placed: EditorState = {
+      ...before,
+      world: { ...before.world, start: { at: { x: 7, y: -3 }, facing: Math.PI / 2 } },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(saved(placed))));
+
+    expect(after.world.start).toEqual({ at: { x: 7, y: -3 }, facing: Math.PI / 2 });
+
+    // There it was one of the artefacts, turned by whatever its layers turned
+    // it. Where it stood at v0 is where it stood, since that is the only
+    // version the player was ever put at.
+    const one = addArtefact(before.world, 'exit', { x: 4, y: 0 }, 0, TOP);
+    const spun = withEdit(one.world, 0, one.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
+      vertices: new Map(),
+    });
+
+    const file = saved({
+      ...before,
+      world: spun,
+      selection: { ...before.selection, artefacts: [one.id] },
+    });
+    const old = {
+      ...file,
+      format: 10,
+      world: {
+        ...file.world,
+        start: undefined,
+        artefacts: file.world.artefacts!.map(([id, a]) => [id, { ...a, type: 'start' }]),
+      },
+    };
+
+    const opened = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    expect(opened.world.start.at.x).toBeCloseTo(0);
+    expect(opened.world.start.at.y).toBeCloseTo(4);
+    expect(opened.world.start.facing).toBeCloseTo(Math.PI / 2);
+
+    // And it is not an artefact any more, nor picked as one.
+    expect(opened.world.artefacts.size).toEqual(0);
+    expect(opened.selection.artefacts).toEqual([]);
+    expect(opened.selection.start).toBe(false);
   });
 
   test('a format-3 file opens, with every corner standing throughout', () => {

@@ -40,14 +40,19 @@ import {
   affine,
   place,
   placeAt,
+  START_ID,
   addArtefact,
   artefactsAt,
   artefactsIn,
   artefactsWithinBox,
   hitArtefact,
+  movedStart,
   occupying,
   removeArtefacts,
   retypeArtefacts,
+  shownAt,
+  startPlaced,
+  turnedStart,
   Occupied,
   swallowed,
   reachable,
@@ -79,6 +84,7 @@ import {
   FIGURES,
   NGON_MAX,
   NGON_MIN,
+  EMPTY_SELECTION,
   EMPTY_TRANSFORM,
   ArtefactType,
   EditorState,
@@ -351,6 +357,7 @@ export function worldCanvas(
           ...s,
           selection: {
             ...s.selection,
+            start: false,
             artefacts: alsoPicked(adding ? s.selection.artefacts : [], caught),
           },
         }));
@@ -488,7 +495,14 @@ export function worldCanvas(
       const mine = new Set(artefactsIn(world(), ids));
       const places = artefactsAt(world(), v).filter(it => mine.has(it.id)).map(it => it.at);
 
-      if (items.length === 0 && places.length === 0) return;
+      // The start takes the two gestures that mean something to a place with a
+      // direction, and it takes them alone — it is picked alone. What it is
+      // not is a member of the selection above: it is in no version's layer,
+      // so a move writes its own point rather than an edit at `v`, and every
+      // version reads the one it wrote.
+      const beginning = code === 'KeyT' || code === 'KeyR' ? selection().start : false;
+
+      if (items.length === 0 && places.length === 0 && !beginning) return;
 
       const from = at(e);
 
@@ -509,7 +523,11 @@ export function worldCanvas(
       // is, which is the gesture the start wants — the place is unchanged and
       // the facing is not. Every other kind has no facing to change, so it is
       // a turn that does nothing, which is what a turn of a point should be.
-      const pivot = centroid([...items.flatMap(it => it.source), ...places]);
+      const pivot = centroid([
+        ...items.flatMap(it => it.source),
+        ...places,
+        ...(beginning ? [was.start.at] : []),
+      ]);
 
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
@@ -632,6 +650,19 @@ export function worldCanvas(
           update(s => {
             let world = s.world;
 
+            // Its own point and its own facing, off the same reading of the
+            // drag the transforms get: a move is where the cursor has gone, and
+            // a turn about its own point is a turn of the direction alone.
+            if (beginning && code === 'KeyT') {
+              world = movedStart(world, {
+                x: was.start.at.x + to.x - from.x,
+                y: was.start.at.y + to.y - from.y,
+              });
+            }
+            else if (beginning) {
+              world = turnedStart(world, was.start.facing + about(pivot, from, to));
+            }
+
             for (const [id, edit] of anchors) {
               const m = frames.get(id)!;
 
@@ -688,7 +719,7 @@ export function worldCanvas(
      *
      * Born into the version on screen, like a polygon, and of the first kind
      * there is — the number keys retype it, and one that was never going to be
-     * a start is one keystroke from being whatever it is.
+     * an exit is one keystroke from being whatever it is.
      */
     function placing(e: PointerEvent): void {
       update(s => {
@@ -701,18 +732,28 @@ export function worldCanvas(
         );
 
         return marked(
-          { ...s, world, selection: { ...s.selection, artefacts: [id] } },
+          { ...s, world, selection: { ...s.selection, artefacts: [id], start: false } },
           s.world,
         );
       });
     }
 
+    /**
+     * The start picks alone and drops everything else, Shift or no Shift: it is
+     * not in the versions, so the gestures that would hold it together with a
+     * room have two different places to write and one thing to mean by it.
+     */
     function pickingArtefact(e: PointerEvent, id: ArtefactId): void {
+      if (id === START_ID) {
+        update(s => ({ ...s, selection: { ...EMPTY_SELECTION, start: true } }));
+        return;
+      }
+
       update(s => ({
         ...s,
         selection: e.shiftKey
-          ? { ...s.selection, artefacts: togglePicked(s.selection.artefacts, id) }
-          : { ...s.selection, polygons: [], artefacts: [id] },
+          ? { ...s.selection, start: false, artefacts: togglePicked(s.selection.artefacts, id) }
+          : { ...s.selection, start: false, polygons: [], artefacts: [id] },
       }));
     }
 
@@ -1361,7 +1402,10 @@ export function worldCanvas(
       if (stack.length === 0) {
         // Shift means adding, and adding nothing leaves the selection alone.
         if (!e.shiftKey) {
-          update(s => ({ ...s, selection: { ...s.selection, polygons: [], artefacts: [] } }));
+          update(s => ({
+            ...s,
+            selection: { ...s.selection, polygons: [], artefacts: [], start: false },
+          }));
         }
 
         return;
@@ -1370,7 +1414,11 @@ export function worldCanvas(
       if (e.shiftKey) {
         update(s => ({
           ...s,
-          selection: { ...s.selection, polygons: togglePicked(s.selection.polygons, stack[0]) },
+          selection: {
+            ...s.selection,
+            start: false,
+            polygons: togglePicked(s.selection.polygons, stack[0]),
+          },
         }));
 
         return;
@@ -1385,7 +1433,10 @@ export function worldCanvas(
         const on = picked.length === 1 ? stack.indexOf(picked[0]) : -1;
         const next = on < 0 ? 0 : (on + 1) % stack.length;
 
-        return { ...s, selection: { ...s.selection, polygons: [stack[next]], artefacts: [] } };
+        return {
+          ...s,
+          selection: { ...s.selection, polygons: [stack[next]], artefacts: [], start: false },
+        };
       });
     }
 
@@ -1644,8 +1695,8 @@ export function worldCanvas(
      */
     function grabbing(e: PointerEvent, all = false): ArtefactId | null {
       const path = opened(world(), inside());
-      const shown = artefactsAt(world(), currentVersion())
-        .filter(it => all || !swallowed(world(), it.id, path));
+      const shown = shownAt(world(), currentVersion())
+        .filter(it => it.id === START_ID || all || !swallowed(world(), it.id, path));
 
       return hitArtefact(shown, at(e), HANDLE / view().zoom);
     }
@@ -1954,7 +2005,7 @@ export function worldCanvas(
                   if (!selection().artefacts.includes(grab)) {
                     update(s => ({
                       ...s,
-                      selection: { ...s.selection, polygons: [], artefacts: [grab] },
+                      selection: { ...s.selection, polygons: [], artefacts: [grab], start: false },
                     }));
                   }
 
@@ -1976,7 +2027,12 @@ export function worldCanvas(
                   if (!under.some(id => selection().polygons.includes(id))) {
                     update(s => ({
                       ...s,
-                      selection: { ...s.selection, polygons: [under[0]], artefacts: [] },
+                      selection: {
+                        ...s.selection,
+                        polygons: [under[0]],
+                        artefacts: [],
+                        start: false,
+                      },
                     }));
                   }
 
@@ -2204,6 +2260,14 @@ function turnedAbout(pivot: Point, from: Point, to: Point, step: number): Point 
   return { x: pivot.x + reach * Math.cos(angle), y: pivot.y + reach * Math.sin(angle) };
 }
 
+/** How far a drag has gone round a pivot, in radians. What a rotation turns
+ * by, said on its own for the one thing that is a direction rather than a
+ * transform. */
+function about(pivot: Point, from: Point, to: Point): number {
+  return Math.atan2(to.y - pivot.y, to.x - pivot.x)
+    - Math.atan2(from.y - pivot.y, from.x - pivot.x);
+}
+
 /** What a turn lands on: five degrees, which is 72 of them round the circle
  * and fine enough to aim anything with. */
 const TURN = Math.PI / 36;
@@ -2221,12 +2285,7 @@ const TRANSFORMS: Record<string, Mode> = {
     },
   }),
 
-  KeyR: (t, { pivot, from, to }) => turned(
-    t,
-    pivot,
-    Math.atan2(to.y - pivot.y, to.x - pivot.x)
-      - Math.atan2(from.y - pivot.y, from.x - pivot.x),
-  ),
+  KeyR: (t, { pivot, from, to }) => turned(t, pivot, about(pivot, from, to)),
 
   /** Both axes, each from its own share of the drag — one factor for both
    * where Alt has already made them one. Where the factors come from is
@@ -2519,14 +2578,16 @@ function layers(
   // each other, but there is no second answer here to read against: an
   // artefact has no bake, and drawing the version on screen underneath would
   // put a still diamond at the destination of every flying one.
+  // The start goes in with them, and stands still through a walk: it is in no
+  // version's layer, so there is nothing for a walk to carry it along.
   out.push(ctx => artefacts(
     ctx,
     view,
     walk === null
-      ? artefactsAt(world, current)
-      : artefactsDuring(world, walk.from, walk.to, walk.at),
-    new Set(selection.artefacts),
-    id => reachable(world, id, inside),
+      ? shownAt(world, current)
+      : [startPlaced(world), ...artefactsDuring(world, walk.from, walk.to, walk.at)],
+    new Set(selection.start ? [START_ID, ...selection.artefacts] : selection.artefacts),
+    id => id === START_ID || reachable(world, id, inside),
   ));
 
   // The measuring paths, over everything and under every tool: a tape is laid

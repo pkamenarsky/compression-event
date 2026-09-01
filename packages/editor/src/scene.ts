@@ -49,6 +49,7 @@ import {
   EMPTY_TRANSFORM,
   Edit,
   GroupId,
+  IconType,
   Id,
   Vertex,
   Polygon,
@@ -190,10 +191,11 @@ export function addPolygon(
 // read of `Artefact.at` against a chain.
 // -----------------------------------------------------------------------------
 
-/** One artefact as a version left it. */
+/** One artefact as a version left it, or the start, which every version
+ * leaves where it is. */
 export interface Placed {
   id: ArtefactId
-  type: ArtefactType
+  type: IconType
   at: Point
   /** Which way its frame has been turned, as a yaw in radians. See `facing`. */
   facing: number
@@ -239,6 +241,39 @@ export function facingAt(world: World, id: ArtefactId, v: VersionId): number | n
   if (it === undefined || !chain(world, v).includes(it.birth)) return null;
 
   return facing(groupFrame(world, v, id));
+}
+
+/**
+ * The start's id in a list of `Placed`.
+ *
+ * It has no id — it is a field of the world rather than something in a map —
+ * but it is drawn and picked alongside the artefacts, and a `Placed` is named
+ * by one. Negative, so it can never be mistaken for a real id: those come off
+ * a counter that starts at zero and only goes up.
+ */
+export const START_ID: ArtefactId = -1;
+
+/** The start as one of the things standing in the level. Every version gets
+ * the same one. */
+export function startPlaced(world: World): Placed {
+  return { id: START_ID, type: 'start', at: world.start.at, facing: world.start.facing };
+}
+
+/** The start moved to a point of its own, which is where it is at every
+ * version. */
+export function movedStart(world: World, at: Point): World {
+  return { ...world, start: { ...world.start, at } };
+}
+
+/** The start turned to face a yaw. */
+export function turnedStart(world: World, facing: number): World {
+  return { ...world, start: { ...world.start, facing } };
+}
+
+/** Everything standing at a version, the start first: it is drawn under the
+ * artefacts, and picked after them where the two overlap. */
+export function shownAt(world: World, v: VersionId): Placed[] {
+  return [startPlaced(world), ...artefactsAt(world, v)];
 }
 
 /** Everything standing at a version, in id order. */

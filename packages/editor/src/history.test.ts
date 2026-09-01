@@ -92,6 +92,7 @@ describe('undo', () => {
         polygons: [made.id],
         vertices: made.world.polygons.get(made.id)!.points.map(p => p.id),
         artefacts: [],
+        start: false,
       },
     };
 

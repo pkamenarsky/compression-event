@@ -66,7 +66,16 @@ export const TILE_SIZE = 4;
  */
 export type PolygonType = 'level' | 'solid' | 'floor';
 
-export type ArtefactType = 'start' | 'exit' | 'key' | 'delay' | 'decompress' | 'anchor' | 'compass';
+export type ArtefactType = 'exit' | 'key' | 'delay' | 'decompress' | 'anchor' | 'compass';
+
+/**
+ * What can be drawn standing in a level: the artefacts, and the start.
+ *
+ * The start is not an artefact — it is one place the level has, written in a
+ * field of its own — but it is drawn from above like one, so the thing that
+ * draws them is keyed by this rather than by `ArtefactType`.
+ */
+export type IconType = ArtefactType | 'start';
 
 export interface Point {
   x: number
@@ -131,18 +140,27 @@ export interface Artefact {
    * table is read against. */
   at: Point
   places: (Point | null)[]
-  /**
-   * Which way it points at each version, as a yaw in radians: zero looks up
-   * the negative z axis, growing the way the player's yaw does.
-   *
-   * A place has no direction of its own — this is the one its frame has been
-   * turned by, which is what makes a turn about the start's own point mean
-   * something. Only the start reads it: the player is put where it stands and
-   * faces the way it faces.
-   *
-   * Null wherever `places` is, and for the same reason.
-   */
-  facings: (number | null)[]
+}
+
+/**
+ * Where the player comes in, and which way they are looking.
+ *
+ * A field of the world rather than an artefact, because it is neither optional
+ * nor repeatable: every level has exactly one and no level can do without it.
+ * Said as an artefact it was a kind that had to be searched for, could be
+ * deleted, and could be placed twice — three ways for a level to be broken
+ * that the format itself can refuse instead.
+ *
+ * One place rather than one per version, and that is the point of it. The
+ * player is put here once, when the level begins, and nothing later in the
+ * chain has anywhere else to put them.
+ *
+ * The facing is a yaw in radians: zero looks up the negative z axis, growing
+ * the way the player's yaw does.
+ */
+export interface Start {
+  at: Point
+  facing: number
 }
 
 export interface Version {
@@ -163,12 +181,20 @@ export interface World {
    * see the header. */
   versions: Version[]
   artefacts: Artefact[]
+  /** Where the player is put, and facing which way. See `Start`. */
+  start: Start
   /** The morph between each adjacent pair of versions, as buffers. */
   baked: BakedLevel
 }
 
 export function emptyWorld(): World {
-  return { paths: [], versions: [], artefacts: [], baked: EMPTY_BAKED };
+  return {
+    paths: [],
+    versions: [],
+    artefacts: [],
+    start: { at: { x: 0, y: 0 }, facing: 0 },
+    baked: EMPTY_BAKED,
+  };
 }
 
 // -----------------------------------------------------------------------------

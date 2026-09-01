@@ -226,7 +226,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** Where the artefacts are on screen this frame. What is drawn and what can
    * be reached are the same list, deliberately — see `nearest`. */
-  let shown: Standing[] = [];
+  // Their own kinds rather than `Standing`'s wider one: what is drawn here is
+  // the artefacts, and the start is not one of them.
+  let shown: (Standing & { type: ArtefactType })[] = [];
 
   /**
    * Whether the level has closed over the player.
@@ -297,14 +299,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // Where the start stands and which way it points: the mark on the floor
     // carries a direction, and being put down facing a wall is not a level
     // beginning.
-    const start = world.artefacts.find(it => it.type === 'start');
-    const at = start?.places[0];
-
-    player.x = (at?.x ?? 0) * SCALE;
-    player.z = (at?.y ?? 0) * SCALE;
+    player.x = world.start.at.x * SCALE;
+    player.z = world.start.at.y * SCALE;
     player.vx = 0;
     player.vz = 0;
-    player.yaw = start?.facings[0] ?? 0;
+    player.yaw = world.start.facing;
   };
 
   const restart = (): void => {
@@ -421,9 +420,6 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     let out: Near | null = null;
 
     for (const it of shown) {
-      // The start is a mark on the floor rather than a thing to walk up to.
-      if (it.type === 'start') continue;
-
       const away = Math.hypot(player.x - it.x * SCALE, player.z - it.y * SCALE);
 
       if (out === null || away < out.away) out = { index: it.id, type: it.type, away };

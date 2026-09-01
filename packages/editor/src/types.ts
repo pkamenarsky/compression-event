@@ -1,11 +1,10 @@
-import { ArtefactType, Point, PolygonType, SCALE, TILE_SIZE } from '@ce/game/world';
+import { ArtefactType, IconType, Point, PolygonType, SCALE, TILE_SIZE } from '@ce/game/world';
 import type { Bake } from './bake';
 
-export type { ArtefactType, Point, PolygonType };
+export type { ArtefactType, IconType, Point, PolygonType };
 
 /** The kinds, in the order the number keys pick them. */
 export const ARTEFACTS: ArtefactType[] = [
-  'start',
   'exit',
   'key',
   'delay',
@@ -388,6 +387,28 @@ export interface Artefact {
 }
 
 /**
+ * Where the player comes in, and which way they are looking.
+ *
+ * Not an artefact, and none of what is written above it applies. Every level
+ * has exactly one start and no level can do without one, so it is a field
+ * here rather than something an author has to remember to place and can place
+ * twice — the editor opens with it standing at the origin and there is no
+ * gesture that takes it away.
+ *
+ * Nor is it in the versions. A start is where the level begins, and the level
+ * begins once: a place per version would be a question about which of them the
+ * player comes in at, and the answer would always be the first. So a move
+ * writes the point itself and every version reads the same one.
+ *
+ * The facing is a yaw the way the game measures it — see `Start` in
+ * `world.ts`, which is what this is shipped as.
+ */
+export interface Start {
+  at: Point
+  facing: number
+}
+
+/**
  * A walk somebody might take through the level, and nothing more.
  *
  * A measuring tape rather than a part of the world: it is not shipped, nothing
@@ -409,6 +430,8 @@ export interface World {
   polygons: Map<PolygonId, Polygon>
   groups: Map<GroupId, Group>
   artefacts: Map<ArtefactId, Artefact>
+  /** Where the player comes in. Always there, at every version. See `Start`. */
+  start: Start
   /** The measuring paths. Not part of the level — see `Path`. */
   paths: Map<PathId, Path>
   /** One counter for every kind of id. */
@@ -425,6 +448,7 @@ export function emptyWorld(): World {
     polygons: new Map(),
     groups: new Map(),
     artefacts: new Map(),
+    start: { at: { x: 0, y: 0 }, facing: 0 },
     paths: new Map(),
     nextId: 0,
 
@@ -535,9 +559,24 @@ export interface Selection {
   polygons: PolygonId[]
   vertices: VertexId[]
   artefacts: ArtefactId[]
+  /**
+   * Whether the start is picked, which is a flag rather than an id because
+   * there is one of it and it has none.
+   *
+   * On its own, always: the start is not in the versions, so a gesture that
+   * held it and a room together would be writing into two different places and
+   * meaning one thing by it. Picking it drops everything else, and everything
+   * else drops it.
+   */
+  start: boolean
 }
 
-export const EMPTY_SELECTION: Selection = { polygons: [], vertices: [], artefacts: [] };
+export const EMPTY_SELECTION: Selection = {
+  polygons: [],
+  vertices: [],
+  artefacts: [],
+  start: false,
+};
 
 /** `more` added to `some`, keeping what was already there and its order. */
 export function alsoPicked(some: readonly number[], more: readonly number[]): number[] {
@@ -664,6 +703,8 @@ function settled(s: EditorState): EditorState {
         id => s.world.polygons.has(id) || s.world.groups.has(id),
       ),
       vertices: s.selection.vertices.filter(id => corners.has(id)),
+      // Always there, so nothing can have taken it away.
+      start: s.selection.start,
       artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
     },
   };
