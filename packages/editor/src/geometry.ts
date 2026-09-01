@@ -260,7 +260,23 @@ function offset(shape: Cut, swept: Band): Cut {
  * How far a corner's mitre may reach, as a multiple of the depth, before it is
  * cut off square. A corner turning back on itself sends the two moved lines
  * very nearly parallel and their meeting point off towards infinity; past this
- * the wedge is closed with a straight edge instead. It only bites on a slit.
+ * the wedge is closed with a straight edge instead.
+ *
+ * Under one depth it only bites on a slit, and it bites there at every depth or
+ * at none: the moved lines are translates of the source ones, so how far the
+ * mitre reaches is a fixed multiple of the depth for a given corner and the
+ * ratio this compares against never changes. Nothing can cross it by being
+ * dragged.
+ *
+ * Under a depth per corner it can be crossed, because an edge whose ends go
+ * different distances rotates and the two lines close on parallel as it does.
+ * Where that happens the shape pops once, by however much the spike the mitre
+ * would have cut is worth — the wedge under the mitre and the wedge under the
+ * chord are different sizes, and there is nothing continuous in between. It is
+ * bounded and it is the limit doing its job rather than a corner going wrong,
+ * but it is visible, and closing the wedge with the mitre held at `reach`
+ * rather than with the chord is what would make it continuous. That would
+ * change what a slit does under one depth, so it is not done here.
  */
 const MITRE_LIMIT = 8;
 
@@ -323,7 +339,16 @@ function band(shape: Shape, depth: (i: number) => number): Band {
 
       if (turn * d >= 0) continue;
 
-      const corner = meet(p, q);
+      // The mitre is where the two moved lines meet, and it is the corner's
+      // image only while they still turn the way the edges do. An edge whose
+      // ends go different distances rotates, and once one has rotated past the
+      // other the lines have already crossed: `meet` answers with the crossing
+      // behind the corner, which is a point on neither offset, and the quad
+      // built through it doubles back on itself. A bowtie is not a wedge — the
+      // nonzero rule reads its middle as ground, and the band ends up with a
+      // hole in it exactly where the corner needed covering.
+      const moved = p.mx * q.my - p.my * q.mx;
+      const corner = turn * moved > 0 ? meet(p, q) : null;
       const reach = Math.abs(d) * MITRE_LIMIT;
 
       put(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
@@ -335,9 +360,23 @@ function band(shape: Shape, depth: (i: number) => number): Band {
   return out;
 }
 
-/** One edge of a ring, and where moving it left put it. `ux, uy` is the
- * direction the moved edge runs in, which is the original's only while both of
- * its ends go the same distance. */
+/**
+ * One edge of a ring, and where moving it left put it.
+ *
+ * Two directions, and which is which matters. `ux, uy` is the edge's own, and
+ * it is what says whether the ring turns away at a corner — the gap a wedge
+ * fills is between two moved endpoints whose offsets are along the two *source*
+ * normals, so the source corner is what opens it, at every depth. `mx, my` is
+ * the direction the moved edge actually runs in, which is the original's only
+ * while both of its ends go the same distance, and it is what the mitre is the
+ * meeting of.
+ *
+ * Reading the moved one for the turn is the bug this comment is here to stop
+ * coming back: an edge whose ends go different distances can rotate far enough
+ * to turn a reflex corner convex, and the wedge then goes missing at the one
+ * corner most in need of it — leaving the offset boundary to run back through
+ * the source corner, and the shape to gain ground as it erodes.
+ */
 interface Moved {
   a: Point
   b: Point
@@ -347,6 +386,8 @@ interface Moved {
   db: number
   ux: number
   uy: number
+  mx: number
+  my: number
 }
 
 function moved(ring: Ring, depth: (i: number) => number): Moved[] {
@@ -369,7 +410,7 @@ function moved(ring: Ring, depth: (i: number) => number): Moved[] {
     // Exactly the original where the two ends agree, rather than the same
     // number arrived at the long way round: every depth used to be uniform and
     // the arithmetic that answered it is not to be perturbed.
-    const mx = mb.x - ma.x, my = mb.y - ma.y, ml = Math.hypot(mx, my);
+    const dx2 = mb.x - ma.x, dy2 = mb.y - ma.y, ml = Math.hypot(dx2, dy2);
     const same = da === db || ml === 0;
 
     out.push({
@@ -379,8 +420,10 @@ function moved(ring: Ring, depth: (i: number) => number): Moved[] {
       mb,
       da,
       db,
-      ux: same ? ux : mx / ml,
-      uy: same ? uy : my / ml,
+      ux,
+      uy,
+      mx: same ? ux : dx2 / ml,
+      my: same ? uy : dy2 / ml,
     });
   }
 
@@ -389,13 +432,13 @@ function moved(ring: Ring, depth: (i: number) => number): Moved[] {
 
 /** Where two moved edges' lines cross, or nothing when they are parallel. */
 function meet(p: Moved, q: Moved): Point | null {
-  const d = p.ux * q.uy - p.uy * q.ux;
+  const d = p.mx * q.my - p.my * q.mx;
 
   if (Math.abs(d) < 1e-12) return null;
 
-  const t = ((q.ma.x - p.ma.x) * q.uy - (q.ma.y - p.ma.y) * q.ux) / d;
+  const t = ((q.ma.x - p.ma.x) * q.my - (q.ma.y - p.ma.y) * q.mx) / d;
 
-  return { x: p.ma.x + p.ux * t, y: p.ma.y + p.uy * t };
+  return { x: p.ma.x + p.mx * t, y: p.ma.y + p.my * t };
 }
 
 /**

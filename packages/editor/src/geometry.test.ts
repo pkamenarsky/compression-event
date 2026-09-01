@@ -929,6 +929,64 @@ describe('erodeAt', () => {
     expect(erodeAt(waisted, [10, 90, 10, 10, 90, 10]).length).toBe(2);
   });
 
+  /**
+   * The room from `scratch/world-2026-09-01T12-33-53Z.json`, whose reflex
+   * corner and the two beside it were dragged deeper until the shape came
+   * apart and put itself back together wrongly.
+   *
+   * It is here rather than in a smaller made-up ring because what broke needs
+   * three things at once: a reflex corner, an edge into it whose two ends carry
+   * different depths, and enough depth for that edge to rotate past the corner
+   * it runs into. This has all three at around 400 units in.
+   */
+  const reflex: Ring = [
+    { x: -1200, y: -700 }, { x: -1000, y: -1100 }, { x: -500, y: -1000 },
+    { x: -600, y: -300 }, { x: 0, y: -1100 }, { x: 800, y: -200 },
+    { x: -600, y: 500 }, { x: -1500, y: 200 }, { x: -1200, y: -500 },
+  ];
+
+  /** That ring with the reflex corner and the two after it taken `d` deeper. */
+  const dragged = (d: number) => erodeAt(reflex, reflex.map((_, i) => i >= 3 && i <= 5 ? d : 0));
+
+  test('a corner the offset has moved past is not still standing in the answer', () => {
+    // The wedge at a corner is needed because the two moved edge-ends part
+    // company there, and how far they part is a fact about the *source*
+    // corner — the offsets are along the two source normals. Deciding it off
+    // the moved directions instead loses the wedge at exactly the depth an
+    // edge has rotated enough to read the corner as convex, and the boundary
+    // then runs back through the corner as it was drawn, untouched by any
+    // depth at all.
+    for (let d = 10; d <= 1200; d += 10) {
+      const held = dragged(d).some(ring => ring.some(p => p.x === -600 && p.y === -300));
+
+      expect([d, held]).toEqual([d, false]);
+    }
+  });
+
+  test('and the wedge that covers it never doubles back on itself', () => {
+    // Past the depth where the two moved lines cross over, `meet` answers with
+    // the crossing behind the corner. Built through it the wedge is a bowtie,
+    // the nonzero rule reads its middle as ground, and the band comes out with
+    // a hole in it where the corner most needed covering — which showed up as
+    // the shape gaining a bite back at one particular depth and keeping it.
+    //
+    // Eroding takes ground away, so the area may only fall. It falls at every
+    // step here but one, and that one is the mitre limit rather than this: see
+    // the note on `MITRE_LIMIT`.
+    let last = Infinity;
+    const rose: number[] = [];
+
+    for (let d = 0; d <= 1200; d += 5) {
+      const area = shapeArea(dragged(d));
+
+      if (area > last + 1e-6) rose.push(d);
+
+      last = area;
+    }
+
+    expect(rose).toEqual([185]);
+  });
+
   test('every depth zero is the ring simplified and nothing else', () => {
     expect(erodeAt(square, [0, 0, 0, 0])).toEqual(simplify([square]));
   });
