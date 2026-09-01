@@ -299,6 +299,24 @@ export interface Polygon {
 export interface Edit {
   transform: Transform
   vertices: Map<VertexId, Point>
+  /**
+   * Extra depth for single corners, added to `transform.erosion`, in the same
+   * units and with the same sign. Absent from the map is nought — an offset
+   * that agrees with the one the whole polygon is under.
+   *
+   * By corner rather than by edge, which is what makes it a thing a layer can
+   * hold at all: a corner has an id and keeps it while corners are inserted
+   * either side of it, and an edge has neither. It is also what the offset
+   * itself wants — the two moved lines meeting at a corner both carry that
+   * corner's depth, so a number per corner names the mitre and a number per
+   * edge would leave it to be argued about.
+   *
+   * Restated rather than accumulated, the way `transform.erosion` is: a
+   * version that writes an edit at all writes the depths it means to be under,
+   * and `editAt` seeds them from what the base resolved to so that a nudge
+   * does not throw them away.
+   */
+  depths: Map<VertexId, number>
 }
 
 /**

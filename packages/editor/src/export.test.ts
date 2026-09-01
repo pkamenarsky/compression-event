@@ -788,11 +788,13 @@ describe('the chain a vertex rides', () => {
     const turned = withEdit(outer.world, 1, inner.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 5 },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const squashed = withEdit(turned, 1, outer.id, {
       transform: { ...EMPTY_TRANSFORM, scale: { x: 1.6, y: 0.7 } },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     return {

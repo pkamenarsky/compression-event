@@ -473,6 +473,20 @@ interface Moving {
    */
   dead: [boolean[], boolean[]]
   depth: [number, number]
+  /**
+   * The depth at each of `corners` at the two ends, written over the same ring
+   * the way `local` is, and read only where `varying` says the polygon has
+   * corners offset apart from each other.
+   *
+   * A corner one end had to invent carries the depth its edge has where it
+   * sits — the same interpolation its position gets — so that it stays flat in
+   * the projection as well as in the source. Anything else and it would push a
+   * dent into a wall it is supposed to be lying along.
+   */
+  depths: [number[], number[]]
+  /** Whether either end offsets a corner apart from the rest. Almost never, and
+   * the uniform road is the one whose arithmetic has not moved. */
+  varying: boolean
   /** The groups holding it over this span, innermost first. */
   holders: Holder[]
   newborn: boolean
@@ -505,12 +519,10 @@ interface Moving {
  * it does not — the arriving-beside-a-leaving case again — there is no shared
  * pair to measure against, and a run of them is spread evenly instead.
  */
-function spanning(
-  was: Resolved,
-  now: Resolved,
-): { corners: Vertex[], local: [Ring, Ring], dead: [boolean[], boolean[]] } {
+function spanning(was: Resolved, now: Resolved): Spanned {
   const here = new Map(was.corners.map((c, i) => [c.id, was.local[i]]));
   const there = new Map(now.corners.map((c, i) => [c.id, now.local[i]]));
+  const deep = [depthsOf(was), depthsOf(now)] as const;
 
   const corners = was.polygon.points.filter(c => here.has(c.id) || there.has(c.id));
 
@@ -521,12 +533,18 @@ function spanning(
 
   // Same count as both ends means the same corners as both ends: each is a
   // subset of the union, so equal sizes make all three the same set.
+  const depths: [number[], number[]] = [
+    corners.map(c => deep[0].get(c.id) ?? was.erosion),
+    corners.map(c => deep[1].get(c.id) ?? now.erosion),
+  ];
+
   if (corners.length === was.corners.length && corners.length === now.corners.length) {
-    return straightened(corners, [was.local, now.local], dead);
+    return straightened(corners, [was.local, now.local], dead, depths);
   }
 
   const n = corners.length;
   const ends = [here, there] as const;
+  const ends2 = [was.erosion, now.erosion] as const;
   const local: [Ring, Ring] = [
     corners.map(c => here.get(c.id) ?? ORIGIN),
     corners.map(c => there.get(c.id) ?? ORIGIN),
@@ -564,10 +582,38 @@ function spanning(
         : ((i - before + n) % n) / ((after - before + n) % n);
 
       local[side][i] = between2(from, to, at);
+
+      // The depth it would have had if it were on the edge, because it is: a
+      // corner is flat in the projection only where its own offset agrees with
+      // what its neighbours' offsets say the edge is doing at that point.
+      const da = deep[side].get(corners[before].id) ?? ends2[side];
+      const db = deep[side].get(corners[after].id) ?? ends2[side];
+
+      depths[side][i] = da + (db - da) * at;
     }
   });
 
-  return straightened(corners, local, dead);
+  return straightened(corners, local, dead, depths);
+}
+
+/** What `Resolved.depths` says, by corner id, and nothing where the polygon is
+ * under one depth throughout. */
+function depthsOf(it: Resolved): Map<VertexId, number> {
+  const out = new Map<VertexId, number>();
+
+  if (it.depths !== null) {
+    it.corners.forEach((c, i) => out.set(c.id, it.depths![i]));
+  }
+
+  return out;
+}
+
+/** The two ends of a span written over one ring: what `spanning` produces. */
+interface Spanned {
+  corners: Vertex[]
+  local: [Ring, Ring]
+  dead: [boolean[], boolean[]]
+  depths: [number[], number[]]
 }
 
 /**
@@ -598,18 +644,20 @@ function straightened(
   corners: Vertex[],
   local: [Ring, Ring],
   dead: [boolean[], boolean[]],
-): { corners: Vertex[], local: [Ring, Ring], dead: [boolean[], boolean[]] } {
+  depths: [number[], number[]],
+): Spanned {
   const snap: [number, number] = [near1(local[0]), near1(local[1])];
 
   for (let i = 0; i < corners.length; i++) {
     if (dead[0][i] || dead[1][i]) continue;
 
-    const was = flat(local[0], i, snap[0]), now = flat(local[1], i, snap[1]);
+    const was = flat(local[0], depths[0], i, snap[0]);
+    const now = flat(local[1], depths[1], i, snap[1]);
 
     if (was !== now) dead[was ? 0 : 1][i] = true;
   }
 
-  return { corners, local, dead };
+  return { corners, local, dead, depths };
 }
 
 /** The arrangement's own tolerance, off one ring. See `near`. */
@@ -621,16 +669,32 @@ function near1(ring: Ring): number {
   return extent * 1e-9;
 }
 
-/** Whether the ring runs straight through a corner: `cornersOnly`'s question,
- * asked of the source rather than of the projection. */
-function flat(ring: Ring, i: number, snap: number): boolean {
+/**
+ * Whether the ring runs straight through a corner: `cornersOnly`'s question,
+ * asked of the source rather than of the projection.
+ *
+ * Asking it of the source is only allowed because the offset does not bend a
+ * straight run — which is true while one depth covers the whole ring, and false
+ * the moment a corner carries its own. Three points in a line whose depths are
+ * not in the same line come out of `erodeAt` as a genuine corner, so the depths
+ * have to answer the same question the positions do, and both have to say yes.
+ */
+function flat(ring: Ring, depths: readonly number[], i: number, snap: number): boolean {
   const n = ring.length;
   const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
   const ux = b.x - a.x, uy = b.y - a.y;
   const vx = c.x - b.x, vy = c.y - b.y;
   const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
 
-  return reach === 0 || Math.abs(ux * vy - uy * vx) / reach <= snap;
+  if (reach === 0) return true;
+  if (Math.abs(ux * vy - uy * vx) / reach > snap) return false;
+
+  // Where the depth sits, against where running from `a` to `c` would put it.
+  const l = Math.hypot(ux, uy) + Math.hypot(vx, vy);
+  const da = depths[(i - 1 + n) % n], db = depths[i], dc = depths[(i + 1) % n];
+  const want = l === 0 ? da : da + (dc - da) * (Math.hypot(ux, uy) / l);
+
+  return Math.abs(db - want) <= snap;
 }
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -676,6 +740,8 @@ function moving(world: World, from: VersionId): Moving[] {
         local: [it.local, it.local] as [Ring, Ring],
         dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
         depth: [it.erosion, it.erosion] as [number, number],
+        depths: [flatDepths(it), flatDepths(it)] as [number[], number[]],
+        varying: it.depths !== null,
         holders: [],
         newborn: true,
       };
@@ -691,10 +757,17 @@ function moving(world: World, from: VersionId): Moving[] {
       local: over.local,
       dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
+      depths: over.depths,
+      varying: was.depths !== null || it.depths !== null,
       holders: holding(it.id),
       newborn: false,
     };
   });
+}
+
+/** A depth per corner for a polygon standing still: whatever it is under. */
+function flatDepths(it: Resolved): number[] {
+  return it.depths !== null ? [...it.depths] : it.corners.map(() => it.erosion);
 }
 
 function mix(u: number, v: number, t: number): number {
@@ -799,7 +872,12 @@ function between(a: Ring, b: Ring, t: number): Ring {
  * get has nothing to bite on. That is the offset `moved` takes in `erode`, and
  * it has to be, or the point would miss the edge it is meant to land on.
  */
-function invented(m: Moving, source: Ring, erosion: number, t: number): Point[] {
+function invented(
+  m: Moving,
+  source: Ring,
+  erosion: number | readonly number[],
+  t: number,
+): Point[] {
   const dead = t === 0 ? m.dead[0] : t === 1 ? m.dead[1] : null;
   if (dead === null) return [];
 
@@ -808,7 +886,7 @@ function invented(m: Moving, source: Ring, erosion: number, t: number): Point[] 
   for (let i = 0; i < source.length; i++) {
     if (dead[i] !== true) continue;
 
-    const p = mitred(source, i, erosion);
+    const p = mitred(source, i, typeof erosion === 'number' ? erosion : erosion[i]);
 
     if (p !== null) out.push(p);
   }
@@ -832,6 +910,9 @@ function world1(items: Moving[], t: number): Resolved[] {
     const frame = riding(m, t);
     const source = place(frame, local);
     const erosion = mix(m.depth[0], m.depth[1], t);
+    const depths = m.varying
+      ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t))
+      : null;
 
     // Named rather than spread: spreading `m.at` would read its projection,
     // which is the one thing worth not doing here.
@@ -843,7 +924,8 @@ function world1(items: Moving[], t: number): Resolved[] {
       frame,
       source,
       erosion,
-      keep: invented(m, source, erosion, t),
+      depths,
+      keep: invented(m, source, depths ?? erosion, t),
     }));
   }
 
@@ -890,7 +972,7 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
   const out = full.map(ring => ring.map(() => 1));
 
   for (const i of changing) {
-    const image = mitred(it.source, i, it.erosion);
+    const image = mitred(it.source, i, it.depths === null ? it.erosion : it.depths[i]);
 
     // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
     // it nowhere to be, and a point that is not drawn needs no opacity.
@@ -1112,7 +1194,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
       kind: 'floor',
       shape: it.shape,
       frame: it.frame,
-      simple: it.erosion !== 0,
+      simple: it.erosion !== 0 || it.depths !== null,
       keep: it.keep,
     });
   }

@@ -41,6 +41,11 @@ import {
 import { facingAt, placeAt } from './scene';
 
 /**
+ * 12: a version's layer may hold a depth for single corners as well as one for
+ * the whole polygon. A format-11 file holds none, which is a world where every
+ * corner of a polygon is offset by the same amount — so it reads as one, which
+ * is what an absent map means anywhere.
+ *
  * 11: the start is a field of the world rather than an artefact of kind
  * `start`. A format-10 file has one among the artefacts — or several, or none,
  * which is exactly what this stops being sayable — so the first of them is
@@ -88,7 +93,7 @@ import { facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 11;
+export const FORMAT = 12;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -144,6 +149,9 @@ export interface SavedVersion {
 export interface SavedEdit {
   transform: Transform
   vertices: [VertexId, Point][]
+  /** Absent before format 12, and absent since wherever it is empty — which is
+   * every layer nobody has offset a single corner of. */
+  depths?: [VertexId, number][]
 }
 
 export function saved(state: EditorState): Saved {
@@ -177,7 +185,11 @@ function savedVersion(v: Version): SavedVersion {
     visible: v.visible,
     edits: [...v.edits].map(([id, e]) => [
       id,
-      { transform: e.transform, vertices: [...e.vertices] },
+      {
+        transform: e.transform,
+        vertices: [...e.vertices],
+        depths: e.depths.size === 0 ? undefined : [...e.depths],
+      },
     ]),
   };
 }
@@ -306,6 +318,7 @@ function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point 
     edits.set(id, {
       transform: { ...EMPTY_TRANSFORM, translation: move },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     versions[v] = { ...versions[v], edits };
@@ -336,7 +349,11 @@ function standingThroughout(polygon: Polygon): Polygon {
 
 function restoredVersion(v: SavedVersion): Version {
   const edits = new Map<Id, Edit>(
-    v.edits.map(([id, e]) => [id, { transform: e.transform, vertices: new Map(e.vertices) }]),
+    v.edits.map(([id, e]) => [id, {
+      transform: e.transform,
+      vertices: new Map(e.vertices),
+      depths: new Map(e.depths ?? []),
+    }]),
   );
 
   return { name: v.name, base: v.base, visible: v.visible, edits };

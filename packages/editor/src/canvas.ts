@@ -32,6 +32,8 @@ import {
   hitVertex,
   contributing,
   starting,
+  deepen,
+  owning,
   under,
   unplace,
   unstep,
@@ -448,7 +450,7 @@ export function worldCanvas(
 
               const edit = placeVertex(
                 it,
-                editAt(world, v, id, it.erosion),
+                editAt(world, v, id, it),
                 index,
                 { x: from.x + dx, y: from.y + dy },
               );
@@ -487,7 +489,22 @@ export function worldCanvas(
       // key that means nothing to it — every other transform means what it
       // means to anything else.
       const standing = code === 'KeyE' ? [] : selection().artefacts;
-      const ids = [...selection().polygons, ...standing];
+
+      // Erosion is the one transform a corner can be under by itself: picked
+      // corners eroded go deeper than the polygon they are in rather than
+      // instead of it, which is what a depth per corner is for. Their polygons
+      // stand in for them here — a depth is written into the layer of the
+      // thing that has a ring, and a corner has none — and every other gesture
+      // ignores the corners entirely, being about where a whole thing is.
+      // Under the point tool alone, which is the only one that picks them:
+      // a corner selection left standing while the hand is on the polygon tool
+      // is not what an erosion there is asking about.
+      const corners = new Set(
+        code === 'KeyE' && tool() === 'point' ? selection().vertices : [],
+      );
+      const owners = corners.size === 0 ? [] : owning(world(), corners);
+
+      const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing];
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
@@ -664,6 +681,18 @@ export function worldCanvas(
             }
 
             for (const [id, edit] of anchors) {
+              const polygon = world.polygons.get(id);
+
+              if (corners.size > 0 && polygon !== undefined) {
+                world = withEdit(
+                  world,
+                  v,
+                  id,
+                  deepen(edit, polygon, corners, to.y - from.y),
+                );
+                continue;
+              }
+
               const m = frames.get(id)!;
 
               world = withEdit(world, v, id, {
@@ -1913,6 +1942,14 @@ export function worldCanvas(
             else if (REMOVE.includes(e.code)) {
               removing();
             }
+            // Erosion is the one transform the point tool has a use for: a
+            // depth on picked corners is a corner's gesture, and the corners
+            // are only pickable under this tool. Every other transform is
+            // about where a whole thing is and stays where it was.
+            else if (tool() === 'point' && e.code === 'KeyE'
+              && selection().vertices.length > 0) {
+              yield* transforming(e.code, TRANSFORMS[e.code]);
+            }
             else if (tool() === 'polygon') {
               const mode = TRANSFORMS[e.code];
 
@@ -2733,7 +2770,7 @@ function polygons(
     const picked = reached.has(it.id);
     const here = reach(it.id);
 
-    if (it.erosion !== 0 && here && (picked || handles)) {
+    if ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles)) {
       ctx.beginPath();
       trace(ctx, view, it.source);
 

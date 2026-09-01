@@ -210,9 +210,50 @@ export function simplify(a: Shape): Cut {
 export function erode(shape: Cut, depth: number): Cut {
   if (depth === 0) return shape;
 
-  const swept = band(shape, depth);
+  return offset(shape, band(shape, () => depth));
+}
 
-  return depth > 0 ? subtract(shape, swept) : union(shape, swept);
+/**
+ * The offset taken with a depth per vertex: the boundary passes `depths[i]`
+ * from `source[i]`, interpolated along each edge between its two ends.
+ *
+ * The same construction, and that is the whole point of it. `band` builds one
+ * quad per edge out of two independently moved endpoints, so an edge whose ends
+ * go different distances is a trapezoid rather than a rectangle and nothing
+ * else about it changes; the wedge at a corner is built from that corner's own
+ * depth on both of its edges, so the mitre is still where its two moved lines
+ * meet. A uniform `depths` therefore reproduces `erode` exactly, and a varying
+ * one splits, deletes and turns itself inside out by the same machinery.
+ *
+ * What it gives up is the invariant above: an edge whose ends move by different
+ * amounts does not stay parallel to where it started, and a source corner that
+ * was flat can turn in the projection. `bake`'s `flat` knows this.
+ *
+ * The ring rather than a `Cut`, because the depths are named by where a vertex
+ * sits in the ring the caller has in hand and an arrangement would not keep
+ * them there. Winding is settled here instead: the band is swept to the left of
+ * the ring, so a clockwise one is turned round — and its depths with it — before
+ * anything is measured.
+ */
+export function erodeAt(source: Ring, depths: readonly number[]): Cut {
+  const flip = !isCCW(source);
+  const ring = flip ? [...source].reverse() : source;
+  const at = flip ? [...depths].reverse() : depths;
+
+  const simple = simplify([ring]);
+
+  return offset(simple, band([ring], i => at[i]));
+}
+
+/** The material left when the boundary has swept `swept`: what it covered on
+ * the way in is gone, what it covered on the way out is ground. */
+function offset(shape: Cut, swept: Band): Cut {
+  let out: Cut = shape;
+
+  if (swept.inward.length > 0) out = subtract(out, swept.inward);
+  if (swept.outward.length > 0) out = union(out, swept.outward);
+
+  return out;
 }
 
 /**
@@ -223,53 +264,97 @@ export function erode(shape: Cut, depth: number): Cut {
  */
 const MITRE_LIMIT = 8;
 
-/** The ground the boundary covers on its way in: `erode` subtracts this. */
-function band(shape: Shape, depth: number): Shape {
-  const out: Shape = [];
+/**
+ * The ground the boundary covers on its way in and on its way out, kept apart:
+ * `offset` subtracts the one and adds the other.
+ *
+ * Two sides rather than one because a depth per vertex is free to change sign
+ * along a ring — one corner pulled in while its neighbour is pushed out — and
+ * the two halves of that sweep are not the same operation. Where the sign turns
+ * over, it turns over at a point on an edge, and the edge's quad is cut there
+ * into a piece per side.
+ */
+interface Band {
+  inward: Shape
+  outward: Shape
+}
+
+/** `depth` is asked by vertex index, so a caller with one number for the whole
+ * ring pays nothing for the ones that have one each. */
+function band(shape: Shape, depth: (i: number) => number): Band {
+  const out: Band = { inward: [], outward: [] };
+
+  const put = (ring: Ring, side: number): void => {
+    if (side > 0) out.inward.push(ccw(ring));
+    else if (side < 0) out.outward.push(ccw(ring));
+  };
 
   for (const ring of shape) {
     const edges = moved(ring, depth);
 
     for (const e of edges) {
-      out.push(ccw([e.a, e.b, e.mb, e.ma]));
+      if (e.da === 0 && e.db === 0) continue;
+
+      // Opposite signs put part of the quad on each side, and the two parts
+      // meet where the offset passes through nothing at all.
+      if (e.da * e.db < 0) {
+        const t = e.da / (e.da - e.db);
+        const c = { x: e.a.x + (e.b.x - e.a.x) * t, y: e.a.y + (e.b.y - e.a.y) * t };
+
+        put([e.a, c, e.ma], e.da);
+        put([c, e.b, e.mb], e.db);
+        continue;
+      }
+
+      put([e.a, e.b, e.mb, e.ma], e.da !== 0 ? e.da : e.db);
     }
 
     // Between two edges the ring turns away from, the band would leave a wedge
     // of ground standing on nothing. The corner it wants is where the two moved
-    // lines meet, which is the mitre.
+    // lines meet, which is the mitre. Both of them carry this corner's own
+    // depth, so there is one sign here however the neighbours differ.
     for (let i = 0; i < edges.length; i++) {
       const p = edges[(i - 1 + edges.length) % edges.length], q = edges[i];
+      const d = q.da;
+
+      if (d === 0) continue;
+
       const turn = p.ux * q.uy - p.uy * q.ux;
 
-      if (turn * depth >= 0) continue;
+      if (turn * d >= 0) continue;
 
       const corner = meet(p, q);
-      const reach = Math.abs(depth) * MITRE_LIMIT;
+      const reach = Math.abs(d) * MITRE_LIMIT;
 
-      out.push(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
-        ? ccw([q.a, p.mb, q.ma])
-        : ccw([q.a, p.mb, corner, q.ma]));
+      put(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
+        ? [q.a, p.mb, q.ma]
+        : [q.a, p.mb, corner, q.ma], d);
     }
   }
 
   return out;
 }
 
-/** One edge of a ring, and where moving it `depth` to its left put it. */
+/** One edge of a ring, and where moving it left put it. `ux, uy` is the
+ * direction the moved edge runs in, which is the original's only while both of
+ * its ends go the same distance. */
 interface Moved {
   a: Point
   b: Point
   ma: Point
   mb: Point
+  da: number
+  db: number
   ux: number
   uy: number
 }
 
-function moved(ring: Ring, depth: number): Moved[] {
+function moved(ring: Ring, depth: (i: number) => number): Moved[] {
   const out: Moved[] = [];
 
   for (let i = 0; i < ring.length; i++) {
-    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const j = (i + 1) % ring.length;
+    const a = ring[i], b = ring[j];
     const dx = b.x - a.x, dy = b.y - a.y;
     const l = Math.hypot(dx, dy);
 
@@ -277,15 +362,25 @@ function moved(ring: Ring, depth: number): Moved[] {
     if (l === 0) continue;
 
     const ux = dx / l, uy = dy / l;
-    const ox = -uy * depth, oy = ux * depth;
+    const da = depth(i), db = depth(j);
+    const ma = { x: a.x - uy * da, y: a.y + ux * da };
+    const mb = { x: b.x - uy * db, y: b.y + ux * db };
+
+    // Exactly the original where the two ends agree, rather than the same
+    // number arrived at the long way round: every depth used to be uniform and
+    // the arithmetic that answered it is not to be perturbed.
+    const mx = mb.x - ma.x, my = mb.y - ma.y, ml = Math.hypot(mx, my);
+    const same = da === db || ml === 0;
 
     out.push({
       a,
       b,
-      ma: { x: a.x + ox, y: a.y + oy },
-      mb: { x: b.x + ox, y: b.y + oy },
-      ux,
-      uy,
+      ma,
+      mb,
+      da,
+      db,
+      ux: same ? ux : mx / ml,
+      uy: same ? uy : my / ml,
     });
   }
 

@@ -112,7 +112,11 @@ describe('an artefact is a point, and the versions do to it what they do', () =>
     // About the origin, then about (1, 0): (1,0) → (0,1) → (0,-1).
     const once = quarter(EMPTY_TRANSFORM, { x: 0, y: 0 });
     const twice = quarter(once, { x: 1, y: 0 });
-    const turned = withEdit(world, 0, id, { transform: twice, vertices: new Map() });
+    const turned = withEdit(world, 0, id, {
+      transform: twice,
+      vertices: new Map(),
+      depths: new Map(),
+    });
 
     expect(placeAt(turned, id, 0)!.x).toBeCloseTo(0, 9);
     expect(placeAt(turned, id, 0)!.y).toBeCloseTo(-1, 9);
@@ -171,6 +175,7 @@ describe('a group takes one with it, because it is a member like any other', () 
     const turned = withEdit(world, 1, group, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     expect(placeAt(turned, artefact, 1)!.x).toBeCloseTo(-50, 9);
@@ -218,6 +223,7 @@ describe('a group takes one with it, because it is a member like any other', () 
     const turned = withEdit(world, 0, group, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const put = addArtefact(turned, 'exit', { x: 10, y: 0 }, 0, {
@@ -244,6 +250,7 @@ function turningRoom(): { world: World, artefact: number, group: number } {
   const world = withEdit(made.world, 1, made.id, {
     transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
     vertices: new Map(),
+    depths: new Map(),
   });
 
   return { world, artefact: put.id, group: made.id };
@@ -289,6 +296,7 @@ describe('a walk moves them on the walls’ clock', () => {
     const turned = withEdit(world, 1, id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.x).toBeCloseTo(0, 9);
@@ -321,6 +329,7 @@ describe('a walk moves them on the walls’ clock', () => {
         translation: { x: 2 * turn.x, y: 2 * turn.y },
       },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     // Half way is a quarter turn about (1, 0): (2, 0) goes to (1, 1).
@@ -498,6 +507,7 @@ describe('the start is not one of them', () => {
       withEdit(drawn.world, 1, drawn.id, {
         transform: { ...EMPTY_TRANSFORM, translation: { x: 500, y: 500 } },
         vertices: new Map(),
+        depths: new Map(),
       }),
       { x: 12, y: 34 },
     );
@@ -555,6 +565,7 @@ describe('and it keeps step with the walls it stands among', () => {
         scale: { x: 1.4, y: 0.8 },
       },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const bake = baked(world);

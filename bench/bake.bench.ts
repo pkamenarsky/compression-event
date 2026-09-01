@@ -71,6 +71,7 @@ test('what an eroding group adds', () => {
     return withEdit(made.world, 1, made.id, {
       transform: { ...EMPTY_TRANSFORM, ...t },
       vertices: new Map(),
+      depths: new Map(),
     });
   };
 
@@ -82,6 +83,53 @@ test('what an eroding group adds', () => {
     ['a group of 8, no depth', held(plain, ids, 8, {})],
     ['a group of 8, eroding', held(plain, ids, 8, { erosion: 10 })],
     ['a group of 8, eroding and turning', held(plain, ids, 8, { erosion: 10, rotation: 0.35 })],
+  ];
+
+  for (const [name, w] of cases) {
+    const t0 = performance.now();
+    const job = bakeSpan(w, 0);
+
+    let step = job.next();
+    while (!step.done) step = job.next();
+
+    const span: Span = step.value;
+    const ms = performance.now() - t0;
+
+    console.log(
+      `${name.padEnd(36)} bake ${ms.toFixed(0).padStart(6)}ms  ` +
+      `csg ${String(span.evaluations).padStart(6)}  ` +
+      `stretches ${String(weight(span).stretches).padStart(5)}  ` +
+      `worst ${span.worst.toFixed(4)}`,
+    );
+  }
+}, 1200000);
+
+/**
+ * What a depth per corner costs, against the same level offset uniformly.
+ *
+ * Not the offset itself. `erodeAt` and `erode` are one construction with the
+ * depths written out differently, they hand the boolean an arrangement of the
+ * same size, and a level with none of these on it bakes in exactly the time it
+ * did before they existed.
+ *
+ * What it costs is stretches, and the `csg` column says so: the two rise
+ * together, so the bake is doing the same work per instant at more instants.
+ * That is the feature rather than the implementation. A uniform offset moves
+ * every edge parallel to itself, so a straight run stays straight and a corner
+ * keeps the neighbours it had; a corner offset apart tilts the two edges
+ * meeting at it, which turns flat corners the uniform offset would have dropped
+ * into real ones and slides the corner's own image along a line neither of its
+ * edges lies on. More of the boundary is moving, and moving less predictably,
+ * so the event search finds more places where it has to cut.
+ */
+test('what a depth per corner adds', () => {
+  const rooms = 120;
+  const { world, ids } = level(rooms);
+
+  const cases: [string, World][] = [
+    ['every corner at one depth', version(world, ids, 0.6)],
+    ['a corner apart on 1 in 4', version(world, ids, 0.6, 1, 0.25)],
+    ['a corner apart on all of them', version(world, ids, 0.6, 1, 1)],
   ];
 
   for (const [name, w] of cases) {

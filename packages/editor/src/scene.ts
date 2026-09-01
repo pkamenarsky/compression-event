@@ -36,6 +36,7 @@ import {
   Shape,
   contains,
   erode,
+  erodeAt,
   isCCW,
   keeping,
   simplify,
@@ -109,6 +110,30 @@ export interface Resolved {
   readonly shape: Shape
   /** The depth `shape` was taken at, inherited where this version states none. */
   erosion: number
+  /**
+   * The extra depth on single corners, by id — `Edit.depths` as this version
+   * leaves it, and empty in every world nobody has offset a corner of.
+   *
+   * Kept by id rather than as an array beside `corners` because that is how it
+   * is authored and how it is written down; `depths` below is the same thing
+   * arranged for the offset, which wants a number per vertex of the ring and
+   * nothing to look up.
+   *
+   * The editor's business alone, and absent where nobody is going to ask: an
+   * instant inside a span is not a version and has no layer to have said this,
+   * and building the map anyway would be one allocation per polygon per instant
+   * of the bake for a field nothing there reads.
+   */
+  over?: ReadonlyMap<VertexId, number>
+  /**
+   * The total depth at each of `corners`, or nothing where they all agree.
+   *
+   * `null` is not an optimisation. A uniform offset is the one `erode` takes,
+   * an arrangement it has always taken and whose answer is byte-for-byte what
+   * it was; the varying one goes another way round. So the two are told apart
+   * once, here, rather than by every reader comparing numbers.
+   */
+  depths: readonly number[] | null
   /**
    * Points the projection must have as vertices even though it does not turn
    * at them, in world units.
@@ -544,10 +569,30 @@ function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): voi
  * later, and the two were interpolated corner-to-neighbour: a square turning
  * into a diamond inscribed in itself.
  */
-export function project(source: Ring, erosion: number): Shape {
+export function project(source: Ring, erosion: number, depths: readonly number[] | null): Shape {
+  if (depths !== null) return erodeAt(source, depths);
+
   const simple = simplify([source]);
 
   return erosion === 0 ? simple : erode(simple, erosion);
+}
+
+/** The per-corner depths under a frame that scales: an offset is a length and
+ * goes through one the way lengths do. */
+function scaled(depths: readonly number[] | null, s: number): readonly number[] | null {
+  return depths === null ? null : depths.map(d => d / s);
+}
+
+function sameDepths(a: readonly number[] | null, b: readonly number[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+
+  return true;
 }
 
 /**
@@ -580,6 +625,7 @@ export function project(source: Ring, erosion: number): Shape {
 interface Projection {
   source: Ring
   erosion: number
+  depths: readonly number[] | null
   keep: readonly Point[] | undefined
   shape: Shape
 }
@@ -619,6 +665,7 @@ const projections = new WeakMap<Polygon, Projection>();
 interface Local {
   local: Ring
   erosion: number
+  depths: readonly number[] | null
   shape: Shape
 }
 
@@ -654,17 +701,21 @@ function similarity(m: Affine): number | null {
 function projection(at: Omit<Resolved, 'shape'>): Shape {
   const s = similarity(at.frame);
 
-  if (s === null) return project(at.source, at.erosion);
+  if (s === null) return project(at.source, at.erosion, at.depths);
 
   const erosion = at.erosion / s;
+  const depths = scaled(at.depths, s);
   const was = locals.get(at.polygon);
 
-  const shape = was !== undefined && was.erosion === erosion && samePoints(was.local, at.local)
+  const shape = was !== undefined
+    && was.erosion === erosion
+    && sameDepths(was.depths, depths)
+    && samePoints(was.local, at.local)
     ? was.shape
-    : project(at.local, erosion);
+    : project(at.local, erosion, depths);
 
   if (was === undefined || was.shape !== shape) {
-    locals.set(at.polygon, { local: at.local, erosion, shape });
+    locals.set(at.polygon, { local: at.local, erosion, depths, shape });
   }
 
   return shape.map(ring => place(at.frame, ring));
@@ -697,6 +748,7 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
       if (
         was !== undefined
         && was.erosion === at.erosion
+        && sameDepths(was.depths, at.depths)
         && sameKeep(was.keep, at.keep)
         && samePoints(was.source, at.source)
       ) {
@@ -707,7 +759,7 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
 
       projections.set(
         at.polygon,
-        { source: at.source, erosion: at.erosion, keep: at.keep, shape },
+        { source: at.source, erosion: at.erosion, depths: at.depths, keep: at.keep, shape },
       );
 
       return shape;
@@ -814,6 +866,38 @@ export function groupFrame(world: World, v: VersionId, id: GroupId): Affine {
   return m;
 }
 
+/** Shared, because there is one of these per polygon per resolve and almost
+ * all of them are this. */
+const EMPTY_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
+
+/**
+ * The depth at each standing corner, or nothing where the layer says nothing
+ * about any of them.
+ *
+ * A corner named with an offset of nought is the same as a corner not named, so
+ * a map that has been written into and emptied again does not put the polygon
+ * down the slower road for the rest of the session.
+ */
+function varying(
+  corners: readonly Vertex[],
+  erosion: number,
+  over: ReadonlyMap<VertexId, number>,
+): readonly number[] | null {
+  if (over.size === 0) return null;
+
+  let any = false;
+
+  const out = corners.map(c => {
+    const d = over.get(c.id) ?? 0;
+
+    if (d !== 0) any = true;
+
+    return erosion + d;
+  });
+
+  return any ? out : null;
+}
+
 export function resolveAt(world: World, v: VersionId): Resolved[] {
   const inherited = new Set(chain(world, v));
 
@@ -823,6 +907,10 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
   const local = new Map<PolygonId, Map<VertexId, Point>>();
   const frame = new Map<PolygonId, Affine>();
   const depth = new Map<PolygonId, number>();
+  // What a layer says about single corners, wholesale rather than merged, for
+  // the same reason `depth` is: a layer states the offsets it means to be
+  // under, and `editAt` hands it the ones its base was under to start from.
+  const over = new Map<PolygonId, ReadonlyMap<VertexId, number>>();
 
   for (const k of chain(world, v)) {
     const version = world.versions[k];
@@ -833,6 +921,7 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
         local.set(id, new Map());
         frame.set(id, IDENTITY);
         depth.set(id, 0);
+        over.set(id, EMPTY_DEPTHS);
       }
 
       const at = local.get(id);
@@ -851,6 +940,7 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
         displace(at, edit.vertices);
         frame.set(id, compose(affine(edit.transform), frame.get(id)!));
         depth.set(id, edit.transform.erosion);
+        over.set(id, edit.depths);
       }
 
       // After its own, and whether or not it has one of its own: what moves a
@@ -879,6 +969,7 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
     const ring = corners.map(c => at.get(c.id) ?? { ...c.at });
     const erosion = depth.get(id) ?? 0;
+    const mine = over.get(id) ?? EMPTY_DEPTHS;
     const m = frame.get(id)!;
 
     out.push(resolved({
@@ -889,6 +980,8 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
       frame: m,
       source: place(m, ring),
       erosion,
+      over: mine,
+      depths: varying(corners, erosion, mine),
     }));
   }
 
@@ -907,13 +1000,26 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 /**
  * This version's own edit for a polygon, or a fresh one that changes nothing.
  *
- * The depth is seeded from what the polygon already resolved to, so that the
- * first thing written into a layer — a nudge, a move — does not also throw away
- * the erosion its base had.
+ * The depths are seeded from what it already resolved to, so that the first
+ * thing written into a layer — a nudge, a move — does not also throw away the
+ * erosion its base had. Both of them: the polygon's own, and the corners
+ * offset apart from it.
+ *
+ * Hand it the `Resolved` wherever there is one, which is every polygon. A bare
+ * number is for the things that have no ring and so no corners to have offset —
+ * a group, an artefact — and for a caller stating a depth outright; it seeds no
+ * corner depths, because there are none to seed it from.
  */
-export function editAt(world: World, v: VersionId, id: Id, erosion: number): Edit {
+export function editAt(world: World, v: VersionId, id: Id, base: number | Resolved): Edit {
+  const erosion = typeof base === 'number' ? base : base.erosion;
+  const over = typeof base === 'number' ? EMPTY_DEPTHS : base.over ?? EMPTY_DEPTHS;
+
   return world.versions[v].edits.get(id)
-    ?? { transform: { ...EMPTY_TRANSFORM, erosion }, vertices: new Map() };
+    ?? {
+      transform: { ...EMPTY_TRANSFORM, erosion },
+      vertices: new Map(),
+      depths: new Map(over),
+    };
 }
 
 /**
@@ -934,7 +1040,7 @@ export function editAt(world: World, v: VersionId, id: Id, erosion: number): Edi
  * nudge — throws away the erosion its base had.
  */
 export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id, Edit> {
-  const mine = new Map<Id, number>(resolveAt(world, v).map(it => [it.id, it.erosion]));
+  const mine = new Map<Id, Resolved>(resolveAt(world, v).map(it => [it.id, it]));
   const theirs = depths(world, v);
 
   return new Map(
@@ -946,7 +1052,12 @@ export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id
       // take back off.
       .map(id => [
         id,
-        editAt(world, v, id, world.artefacts.has(id) ? 0 : mine.get(id) ?? theirs.get(id) ?? 0),
+        editAt(
+          world,
+          v,
+          id,
+          world.artefacts.has(id) ? 0 : mine.get(id) ?? theirs.get(id) ?? 0,
+        ),
       ]),
   );
 }
@@ -1098,7 +1209,8 @@ export function ungrouped(world: World, id: GroupId): World | null {
     const edits = new Map(versions[k].edits);
 
     for (const member of group.members) {
-      const was = edits.get(member) ?? { transform: EMPTY_TRANSFORM, vertices: new Map() };
+      const was = edits.get(member)
+        ?? { transform: EMPTY_TRANSFORM, vertices: new Map(), depths: new Map() };
       const now = composed(mine.transform, was.transform);
 
       if (now === null) return null;
@@ -1214,6 +1326,52 @@ export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point):
   });
 
   return { ...edit, vertices };
+}
+
+/**
+ * The named corners taken `by` deeper than the polygon they are in, or shallower
+ * where `by` is negative.
+ *
+ * Against the layer rather than against nothing, so a drag composes with what
+ * the version already held — and `starting` seeded that from what the base
+ * resolved to, so the first drag in a fresh version starts where the shape on
+ * screen is rather than at nought.
+ *
+ * A corner that comes back to the depth of its polygon is taken out of the map
+ * instead of being written as nought. What is left is the same offset either
+ * way, but only an empty map says *nothing here is offset*, which is what puts
+ * the polygon back on the road `erode` has always taken. See `varying`.
+ */
+export function deepen(
+  edit: Edit,
+  polygon: Polygon,
+  corners: ReadonlySet<VertexId>,
+  by: number,
+): Edit {
+  const depths = new Map(edit.depths);
+
+  for (const corner of polygon.points) {
+    if (!corners.has(corner.id)) continue;
+
+    const d = (edit.depths.get(corner.id) ?? 0) + by;
+
+    if (d === 0) depths.delete(corner.id);
+    else depths.set(corner.id, d);
+  }
+
+  return { ...edit, depths };
+}
+
+/** Which polygons the picked corners belong to. A depth is written into the
+ * layer of the thing that has a ring, and a corner is not one. */
+export function owning(world: World, corners: ReadonlySet<VertexId>): PolygonId[] {
+  const out: PolygonId[] = [];
+
+  for (const [id, polygon] of world.polygons) {
+    if (polygon.points.some(c => corners.has(c.id))) out.push(id);
+  }
+
+  return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -2018,7 +2176,7 @@ export function addVertex(
     return { world: grown, vertex };
   }
 
-  const edit = placeVertex(now, editAt(grown, v, it.id, now.erosion), where, at);
+  const edit = placeVertex(now, editAt(grown, v, it.id, now), where, at);
 
   return { world: withEdit(grown, v, it.id, edit), vertex };
 }
@@ -2102,10 +2260,16 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
   const deep = depths(world, v);
 
   /** What a version's layer says, as the copy will say it. */
-  const layers = (id: Id, m: Affine | null, erosion: number): [number, Edit][] => {
+  const layers = (
+    id: Id,
+    m: Affine | null,
+    erosion: number,
+    over: ReadonlyMap<VertexId, number> = new Map(),
+  ): [number, Edit][] => {
     const out: [number, Edit][] = [[0, {
       transform: { ...EMPTY_TRANSFORM, erosion },
       vertices: new Map(),
+      depths: new Map(over),
     }]];
 
     for (let k = v + 1; k < world.versions.length; k++) {
@@ -2118,6 +2282,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
         vertices: m === null
           ? new Map()
           : new Map([...edit.vertices].map(([id, d]) => [id, pointing(m, d)])),
+        depths: new Map(edit.depths),
       }]);
     }
 
@@ -2168,7 +2333,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
       kind: 'polygon',
       type: it.polygon.type,
       points,
-      edits: layers(id, it.frame, it.erosion),
+      edits: layers(id, it.frame, it.erosion, it.over),
     }];
   };
 
@@ -2213,6 +2378,7 @@ function written(
       vertices: new Map([...edit.vertices].map(
         ([v, d]) => [renamed.get(v) ?? v, unstep(m, d.x, d.y)],
       )),
+      depths: new Map([...edit.depths].map(([v, d]) => [renamed.get(v) ?? v, d])),
     });
   }
 

@@ -68,8 +68,22 @@ export function level(rooms: number): { world: World, ids: PolygonId[] } {
   return { world, ids };
 }
 
-/** One version over the level, touching `share` of it. */
-export function version(world: World, ids: PolygonId[], share: number, v = 1): World {
+/**
+ * One version over the level, touching `share` of it.
+ *
+ * `bend` is the share of the polygons it touches that get one corner offset
+ * apart from the rest, which is what puts them on the varying road inside
+ * `erodeAt` rather than the uniform one `erode` has always taken. Nought by
+ * default, so every row measured before this existed still measures the same
+ * thing.
+ */
+export function version(
+  world: World,
+  ids: PolygonId[],
+  share: number,
+  v = 1,
+  bend = 0,
+): World {
   const rnd = seeded(999);
   const at = resolveAt(world, v);
 
@@ -100,7 +114,15 @@ export function version(world: World, ids: PolygonId[], share: number, v = 1): W
       vertices.set(v.id, { x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 30 });
     }
 
-    out = withEdit(out, v, id, { transform, vertices });
+    const depths = new Map<number, number>();
+
+    if (rnd() < bend) {
+      const poly = out.polygons.get(id)!;
+
+      depths.set(poly.points[(rnd() * poly.points.length) | 0].id, 5 + rnd() * 10);
+    }
+
+    out = withEdit(out, v, id, { transform, vertices, depths });
   }
 
   return out;

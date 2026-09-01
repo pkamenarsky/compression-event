@@ -18,6 +18,7 @@ import {
   contains,
   decompose,
   erode,
+  erodeAt,
   intersect,
   isCCW,
   shapeArea,
@@ -818,6 +819,118 @@ describe('erode', () => {
 
       last = area;
     }
+  });
+});
+
+describe('erodeAt', () => {
+  const square = rect(0, 0, 100, 100);
+
+  test('one depth for every corner is the offset it always was', () => {
+    // The whole claim the varying road rests on: it is not a second offset that
+    // usually agrees, it is the same construction with the depths written out
+    // one per corner. So the two have to land on the same shape wherever both
+    // are defined, and that has to hold through a split and an inversion.
+    for (const d of [-30, -7, 0, 1, 10, 40, 49.5, 60]) {
+      const one = erode(simplify([square]), d);
+      const many = erodeAt(square, square.map(() => d));
+
+      expect(shapeArea(many)).toBeCloseTo(shapeArea(one), 9);
+      expect(many.length).toBe(one.length);
+    }
+  });
+
+  test('a corner pulled in on its own leaves its neighbours where they were', () => {
+    // A square with one corner taken 20 deeper is still a quadrilateral: the
+    // two edges meeting there tilt about the far ends they share with the
+    // edges that have not moved, and the corner slides up the diagonal to where
+    // the two tilted lines now cross.
+    const shape = erodeAt(square, [20, 0, 0, 0]);
+
+    expect(shape.length).toBe(1);
+    expect(shape[0].length).toBe(4);
+    expect(shape[0].some(p => p.x === 0 && p.y === 0)).toBe(false);
+
+    // The two edges the corner is not on are untouched, so the far side of the
+    // square is still the far side of the square.
+    const far = shape[0].filter(p => p.x > 99.9 || p.y > 99.9);
+
+    expect(far.length).toBe(3);
+    // The triangle the two tilted lines cut off the corner, and nothing else.
+    expect(shapeArea(shape)).toBeCloseTo(10000 - 100 * 100 / 6, 9);
+  });
+
+  test('a corner pushed out on its own is the same thing the other way', () => {
+    const shape = erodeAt(square, [-20, 0, 0, 0]);
+
+    expect(shape.length).toBe(1);
+    expect(shapeArea(shape)).toBeGreaterThan(10000);
+  });
+
+  test('depths of both signs on one ring split the band and keep both halves', () => {
+    // The case a single subtract could not answer. One corner eats in while the
+    // one beside it grows out, so the sweep crosses the boundary part way along
+    // the edge between them and the two halves are different operations.
+    const shape = erodeAt(square, [25, -25, 0, 0]);
+
+    expect(shape.length).toBe(1);
+
+    // Ground taken at the one and given at the other, so there is material
+    // outside where the square was and none where its first corner used to be.
+    expect(shape[0].some(p => p.x > 100)).toBe(true);
+    expect(shape[0].some(p => p.x > 0 && p.x < 50 && p.y > 0 && p.y < 50)).toBe(true);
+    expect(shapeArea(shape)).toBeGreaterThan(8000);
+  });
+
+  test('a corner deep enough on its own eats the shape away locally', () => {
+    // It goes through the event rather than stopping at it: nothing is clamped
+    // and nothing is frozen, exactly as for a uniform depth.
+    const shape = erodeAt(square, [200, 0, 0, 0]);
+
+    expect(shapeArea(shape)).toBeLessThan(shapeArea(erodeAt(square, [50, 0, 0, 0])));
+  });
+
+  test('a flat corner whose depth disagrees turns in the projection', () => {
+    // The invariant the uniform offset kept and this one cannot: three points
+    // in a line come out as three points in a line only where their depths are
+    // in a line too. `bake`'s `flat` is the reader that has to know.
+    const strip: Ring = [
+      { x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 },
+      { x: 100, y: 100 }, { x: 0, y: 100 },
+    ];
+
+    expect(erodeAt(strip, [10, 10, 10, 10, 10])[0].length).toBe(4);
+    expect(erodeAt(strip, [10, 30, 10, 10, 10])[0].length).toBe(5);
+  });
+
+  test('the winding is settled here, so a clockwise ring erodes inward', () => {
+    // The depths are named by where a corner sits in the ring the caller has,
+    // and turning the ring round has to take them with it.
+    const clockwise = [...square].reverse();
+    const depths = [0, 0, 0, 20];
+
+    const wound = erodeAt(clockwise, depths);
+    const other = erodeAt(square, [20, 0, 0, 0]);
+
+    expect(shapeArea(wound)).toBeCloseTo(shapeArea(other), 6);
+    expect(isCCW(wound[0])).toBe(true);
+  });
+
+  test('a ring split by a varying depth comes back as two rooms', () => {
+    const strip = rect(0, 0, 400, 100);
+
+    // Deep at the two corners in the middle of the long sides, so the waist
+    // pinches shut while the ends stay open.
+    const waisted: Ring = [
+      { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 0 },
+      { x: 400, y: 100 }, { x: 200, y: 100 }, { x: 0, y: 100 },
+    ];
+
+    expect(erodeAt(strip, strip.map(() => 10)).length).toBe(1);
+    expect(erodeAt(waisted, [10, 90, 10, 10, 90, 10]).length).toBe(2);
+  });
+
+  test('every depth zero is the ring simplified and nothing else', () => {
+    expect(erodeAt(square, [0, 0, 0, 0])).toEqual(simplify([square]));
   });
 });
 

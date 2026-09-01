@@ -1288,6 +1288,7 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
     const turning = withEdit(made.world, 1, made.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: 0.8, erosion: 12 },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const it = resolveAt(turning, 1).find(r => r.id === ids[1])!;

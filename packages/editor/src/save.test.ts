@@ -24,6 +24,7 @@ function world(): EditorState {
   vertices.set(b.world.polygons.get(b.id)!.points[1].id, { x: 1, y: -1 });
 
   const w = withEdit(b.world, 2, b.id, {
+    depths: new Map([[b.world.polygons.get(b.id)!.points[2].id, -3]]),
     transform: {
       translation: { x: 3, y: -2 },
       rotation: 0.25,
@@ -47,6 +48,33 @@ describe('save', () => {
     const after = restored(JSON.parse(JSON.stringify(saved(before))));
 
     expect(after).toEqual(before);
+  });
+
+  test('a depth on one corner comes back, and an empty map is not written', () => {
+    const before = world();
+    const file = JSON.parse(JSON.stringify(saved(before)));
+    const edits = new Map(file.world.versions[2].edits);
+
+    // Written where there is something to say, and nowhere else — every layer
+    // in every file made before this one has nothing to say here.
+    expect([...edits.values()].every(e => (e as { depths?: unknown }).depths !== null)).toBe(true);
+
+    const after = restored(file);
+    const back = [...after.world.versions[2].edits.values()][0];
+
+    expect([...back.depths.values()]).toEqual([-3]);
+  });
+
+  test('a file written before there were corner depths reads as having none', () => {
+    const file = JSON.parse(JSON.stringify(saved(world())));
+
+    for (const [, e] of file.world.versions[2].edits) delete e.depths;
+
+    file.format = FORMAT - 1;
+
+    const after = restored(file);
+
+    expect([...after.world.versions[2].edits.values()][0].depths.size).toBe(0);
   });
 
   test('a layer comes back as maps rather than as arrays', () => {
@@ -142,6 +170,7 @@ describe('save', () => {
     const moved = withEdit(one.world, 2, one.id, {
       transform: { ...EMPTY_TRANSFORM, translation: { x: 45, y: 54 } },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const placed: EditorState = {
@@ -231,6 +260,7 @@ describe('save', () => {
     const spun = withEdit(one.world, 0, one.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
       vertices: new Map(),
+      depths: new Map(),
     });
 
     const file = saved({
