@@ -1592,7 +1592,8 @@ export function worldCanvas(
      * would drag the rest out of whatever alignment they had.
      */
     /**
-     * The picked things follow the cursor: polygons, artefacts, or both.
+     * The picked things follow the cursor: polygons, artefacts, the start, or
+     * any of them together.
      *
      * One gesture for the two of them because a selection can hold both, and
      * two gestures would have to agree about the step anyway. They read it
@@ -1604,11 +1605,16 @@ export function worldCanvas(
       const v = currentVersion();
       const was = world();
       const ids = [...selection().polygons, ...selection().artefacts];
-      const start = at(from);
+      const grabbed = at(from);
+
+      // The start comes along the same way it does under `t`: its own point
+      // written directly, since it is in no version's layer to write an edit
+      // into. Alone, because it is picked alone.
+      const beginning = selection().start;
 
       const anchors = starting(was, v, ids);
 
-      if (anchors.size === 0) return;
+      if (anchors.size === 0 && !beginning) return;
 
       const frames = new Map([...anchors.keys()].map(id => [id, under(was, v, id)]));
 
@@ -1622,12 +1628,19 @@ export function worldCanvas(
           const to = at(e);
           const step = free(e) ? 0 : settings().gridSize;
 
-          const raw = locked(e, { x: to.x - start.x, y: to.y - start.y });
+          const raw = locked(e, { x: to.x - grabbed.x, y: to.y - grabbed.y });
           const dx = step === 0 ? raw.x : toStep(raw.x, step);
           const dy = step === 0 ? raw.y : toStep(raw.y, step);
 
           update(st => {
             let world = st.world;
+
+            if (beginning) {
+              world = movedStart(world, {
+                x: was.start.at.x + dx,
+                y: was.start.at.y + dy,
+              });
+            }
 
             for (const [id, edit] of anchors) {
               // The step as this one's own frame reads it. Snapped in world
@@ -2002,7 +2015,14 @@ export function worldCanvas(
                   // Grabbing one already picked drags the whole selection,
                   // polygons included. Grabbing one that is not takes it alone,
                   // the way grabbing an unpicked polygon does.
-                  if (!selection().artefacts.includes(grab)) {
+                  // The start alone, since it is picked alone — see
+                  // `pickingArtefact`.
+                  if (grab === START_ID) {
+                    if (!selection().start) {
+                      update(s => ({ ...s, selection: { ...EMPTY_SELECTION, start: true } }));
+                    }
+                  }
+                  else if (!selection().artefacts.includes(grab)) {
                     update(s => ({
                       ...s,
                       selection: { ...s.selection, polygons: [], artefacts: [grab], start: false },
