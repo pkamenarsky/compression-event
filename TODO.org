@@ -1,5 +1,3 @@
-* bake only from version onwards that changed
-* canvas lagging
 * create button
 ** (!) should be selected first
 ** rect
