@@ -7,16 +7,38 @@
 // something that can stop it. Nothing in here knows about the game.
 // -----------------------------------------------------------------------------
 
+/** How long a sound that never ends lasts. The drone, and nothing else. */
+export const FOREVER = Infinity;
+
 /**
- * A sound definition: given an AudioContext, build a subgraph and return
- * its final output node.  The factory may also start OscillatorNodes /
- * AudioBufferSourceNodes internally — `playSound` will connect the
- * returned node to `ctx.destination`.
+ * What a factory hands back: the graph it built, and how long it lasts.
+ *
+ * The length is the factory's own business and nobody else's. It is the one
+ * who scheduled every envelope and every `stop`, so it is the only one who
+ * knows when there is nothing left to hear — and a caller guessing at it is a
+ * guess that goes stale the moment the sound is retuned.
+ *
+ * `FOREVER` is for a sound with no end written into it. It runs until whoever
+ * started it says otherwise, which makes holding its handle the point rather
+ * than a chore.
+ */
+export interface Sound {
+  /** The last node of the graph. `playSound` connects it to the destination. */
+  node: AudioNode
+  /** Seconds from `startTime` until it is over, or `FOREVER`. */
+  over: number
+}
+
+/**
+ * A sound definition: given an AudioContext, build a subgraph and say what it
+ * is and how long it goes on for. The factory may also start OscillatorNodes /
+ * AudioBufferSourceNodes internally — `playSound` will connect the returned
+ * node to `ctx.destination`.
  *
  * The factory receives a `startTime` (in AudioContext time) so envelopes
  * can be scheduled precisely.
  */
-export type SoundDef = (ctx: AudioContext, startTime: number) => AudioNode;
+export type SoundDef = (ctx: AudioContext, startTime: number) => Sound;
 
 export interface SoundHandle {
   /** Stop the sound immediately (with a tiny fade-out to avoid clicks). */
@@ -46,13 +68,11 @@ export function audioContext(): AudioContext {
 // ── Active sounds ──
 
 /**
- * Every sound that has been started and not stopped, so that `stopAll` can
- * reach them.
+ * Every sound in flight, so that `stopAll` can reach them.
  *
- * A handle leaves only by being stopped. Nothing here notices a sound running
- * out on its own — the factory says what its output node is and keeps its
- * sources to itself, so there is nothing to hang an `ended` on — which makes
- * stopping what a caller owes, not a courtesy. See `playSound`.
+ * A handle leaves either by being stopped or by its sound running out, which
+ * `playSound` knows the moment of because the factory said so. Only a `FOREVER`
+ * one waits on somebody.
  */
 const _active = new Set<SoundHandle>();
 
@@ -69,24 +89,18 @@ export function stopAll(): void {
 /**
  * Instantiate a sound definition and start playing it.
  *
- * Returns a `SoundHandle` whose `stop()` method will silence it
- * immediately (with a short fade-out to avoid clicks).
- *
- * Every handle must be stopped, including one for a sound that ends by itself.
- * A blip that schedules its own last note is over as far as the ear is
- * concerned, but its handle and its master gain stay here until `stop()` takes
- * them out, and a page that plays one per pickup for an hour is holding an
- * hour's worth. `playSoundFor` is the way to say it: it puts the `stop()` on a
- * timer, and it is what every one-shot in the game goes through. Reach for
- * `playSound` itself only for something that runs until it is told not to —
- * the drone — and then hold the handle and stop it.
+ * Returns a `SoundHandle` whose `stop()` method will silence it immediately
+ * (with a short fade-out to avoid clicks). A caller that only wants the sound
+ * played can drop it: the handle takes itself out of `_active` when the sound
+ * is over, on the length the factory reported. A `FOREVER` one is the
+ * exception, and holding its handle is the whole of starting it.
  */
 export function playSound(def: SoundDef): SoundHandle {
   const ctx = getContext();
   const startTime = ctx.currentTime;
 
   // Build the node graph
-  const output = def(ctx, startTime);
+  const { node: output, over } = def(ctx, startTime);
 
   // Master gain so we can fade out on stop
   const master = ctx.createGain();
@@ -95,11 +109,13 @@ export function playSound(def: SoundDef): SoundHandle {
   master.connect(ctx.destination);
 
   let stopped = false;
+  let ending = 0;
 
   const handle: SoundHandle = {
     stop() {
       if (stopped) return;
       stopped = true;
+      clearTimeout(ending);
       // Short fade-out to avoid click
       const now = ctx.currentTime;
       master.gain.setValueAtTime(master.gain.value, now);
@@ -117,23 +133,15 @@ export function playSound(def: SoundDef): SoundHandle {
   };
 
   _active.add(handle);
-  return handle;
-}
 
-// ── Helper: auto-stop after a duration ──
+  // Its own end, on the clock, so that nothing has to remember to take it out.
+  // A hair after the sound is over rather than exactly on it: the fade `stop`
+  // puts on has nothing left to fade by then, and the point of the timer is the
+  // bookkeeping rather than the silence.
+  if (over !== FOREVER) {
+    ending = setTimeout(() => handle.stop(), over * 1000 + 50) as unknown as number;
+  }
 
-/**
- * Play a sound and automatically stop it after `durationSec` seconds.
- */
-export function playSoundFor(def: SoundDef, durationSec: number): SoundHandle {
-  const handle = playSound(def);
-  const id = setTimeout(() => handle.stop(), durationSec * 1000);
-  // Wrap stop so clearing the timeout also works if stopped early
-  const originalStop = handle.stop;
-  handle.stop = () => {
-    clearTimeout(id);
-    originalStop();
-  };
   return handle;
 }
 
@@ -171,7 +179,7 @@ export const pickup: SoundDef = (ctx, t) => {
   osc.start(t);
   osc.stop(t + 0.15);
 
-  return gain;
+  return { node: gain, over: 0.15 };
 };
 
 /**
@@ -190,7 +198,7 @@ export const error: SoundDef = (ctx, t) => {
   osc.start(t);
   osc.stop(t + 0.3);
 
-  return gain;
+  return { node: gain, over: 0.3 };
 };
 
 /**
@@ -213,7 +221,8 @@ export const drone: SoundDef = (ctx, t) => {
   osc1.start(t);
   osc2.start(t);
 
-  return gain;
+  // No end is scheduled anywhere above, which is what makes it the drone.
+  return { node: gain, over: FOREVER };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,7 +406,7 @@ export function versionShift(opts: VersionShiftOptions = {}): SoundDef {
   }
 
   // The actual SoundDef
-  return (ctx: AudioContext, t: number): AudioNode => {
+  return (ctx: AudioContext, t: number): Sound => {
     const master = ctx.createGain();
 
     // Master envelope: instant on, fade out over last 0.6s
@@ -465,7 +474,8 @@ export function versionShift(opts: VersionShiftOptions = {}): SoundDef {
       panner.connect(master);
     }
 
-    return master;
+    // The layers are stopped at `duration + 0.1`, which is the last of it.
+    return { node: master, over: duration + 0.1 };
   };
 }
 
@@ -512,7 +522,7 @@ export function levelComplete(opts: LevelCompleteSoundOptions = {}): SoundDef {
   const masterGain = opts.gain ?? 0.35;
   const duration = opts.duration ?? 1.2;
 
-  return (ctx: AudioContext, t: number): AudioNode => {
+  return (ctx: AudioContext, t: number): Sound => {
     const master = ctx.createGain();
     master.gain.setValueAtTime(masterGain, t);
     // Fade out over the last 30% of the duration
@@ -580,6 +590,7 @@ export function levelComplete(opts: LevelCompleteSoundOptions = {}): SoundDef {
       }
     }
 
-    return master;
+    // Everything above is inside the master's own fade, which ends here.
+    return { node: master, over: duration };
   };
 }

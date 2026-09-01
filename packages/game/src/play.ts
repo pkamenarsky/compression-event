@@ -49,7 +49,6 @@ import {
   levelComplete,
   pickup,
   playSound,
-  playSoundFor,
   versionShift,
 } from './sound';
 import { Run } from './walls';
@@ -251,7 +250,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * clock is, and stopped outright when there is nothing to escalate to. */
   const escalate = (on = true): void => {
     coming?.stop();
-    coming = on ? playSoundFor(versionShift(), HOLD) : null;
+    coming = on ? playSound(versionShift({ duration: HOLD })) : null;
   };
 
   /** The version on screen, standing still. */
@@ -438,7 +437,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     dead = true;
     say.note(null);
-    playSoundFor(error, 1);
+    playSound(error);
 
     await say.say('PULL YOURSELF TOGETHER', 3000);
 
@@ -455,7 +454,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         clock = HOLD;
         placed(version, version, 0);
         escalate();
-        playSoundFor(pickup, 1);
+        playSound(pickup);
         break;
 
       // Back the way the level came, which is the only way back there is.
@@ -463,7 +462,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         if (version === 0) break;
 
         gone.add(index);
-        playSoundFor(pickup, 1);
+        playSound(pickup);
         compress(version - 1, 'decompress');
         break;
 
@@ -471,7 +470,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         gone.add(index);
         carrying.add('key');
         placed(version, version, 0);
-        playSoundFor(pickup, 1);
+        playSound(pickup);
         break;
 
       case 'exit':
@@ -482,7 +481,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         escalate(false);
         ambient?.stop();
         ambient = null;
-        playSoundFor(levelComplete(), 3);
+        playSound(levelComplete());
 
         await say.say('DIRECTIVE FULFILLED', 5000);
 
