@@ -1,0 +1,247 @@
+{
+  "format": 12,
+  "tool": "polygon",
+  "figure": "polyline",
+  "currentVersion": 1,
+  "selection": [],
+  "artefacts": [],
+  "settings": {
+    "gridSize": 100,
+    "showGrid": true
+  },
+  "view": {
+    "x": -2443.296875,
+    "y": -1432.515625,
+    "zoom": 0.25,
+    "width": 1420,
+    "height": 810,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 10,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -1200,
+                "y": -700
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": -1000,
+                "y": -1100
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -500,
+                "y": -1000
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -600,
+                "y": -300
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 5,
+              "at": {
+                "x": 0,
+                "y": -1100
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 6,
+              "at": {
+                "x": 800,
+                "y": -200
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 7,
+              "at": {
+                "x": -600,
+                "y": 500
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": -1500,
+                "y": 200
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": -1200,
+                "y": -500
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "artefacts": [],
+    "paths": [],
+    "start": {
+      "at": {
+        "x": 0,
+        "y": 0
+      },
+      "facing": 0
+    },
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": [
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [],
+              "depths": [
+                [
+                  4,
+                  -1.625
+                ],
+                [
+                  5,
+                  -1.625
+                ],
+                [
+                  6,
+                  -1.625
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            0,
+            {
+              "transform": {
+                "translation": {
+                  "x": 0,
+                  "y": 0
+                },
+                "rotation": 0,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": [],
+              "depths": [
+                [
+                  4,
+                  1676.921875
+                ],
+                [
+                  5,
+                  -1.625
+                ],
+                [
+                  6,
+                  -1.625
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v5",
+        "base": 4,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v6",
+        "base": 5,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v7",
+        "base": 6,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v8",
+        "base": 7,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}
