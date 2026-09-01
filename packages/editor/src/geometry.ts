@@ -180,23 +180,26 @@ export function simplify(a: Shape): Cut {
 }
 
 /**
- * The plain mitred offset: every edge moves inward by `depth`, each corner goes
- * where its two moved lines meet, and an edge that runs out of room takes its
- * endpoints with it.
+ * The plain mitred offset: every corner moves to where its two walls, moved
+ * `depth` along their own normals, cross — and a wall that runs out of room
+ * takes its endpoints with it.
  *
- * It is done by taking away the band the boundary sweeps on its way in — one
- * quad per edge, one mitred wedge per corner that opens as it turns — rather
- * than by moving the vertices and trying to sort out the mess. Moving the
- * vertices is a page of code and gets the easy half right, but the ring it
- * produces folds back on itself once an edge collapses, and no fill rule tells
- * a fold from material: a square eroded past its own middle comes back inside
- * out, wound the same way it started, and reads as a smaller square of ground
- * where there should be none. Subtracting the band has no such state. Where the
- * band covers a room the room is gone, where it pinches one in two there are
- * two rooms, and both answers come out of the arrangement that was going to run
- * anyway.
+ * One depth for the whole shape, which is `erodeAt` with the same number
+ * everywhere and nothing else: the two are the same construction and this is
+ * the name for the ordinary case. See there for how it is built and what it
+ * costs.
  *
- * Every surviving edge therefore lies on a translate of its own original line,
+ * It is done by taking away the band the boundary sweeps on its way in, rather
+ * than by moving the vertices and filling the ring that comes out. That was a
+ * page of code and got the easy half right, but the ring folds back on itself
+ * once a wall collapses, and no fill rule tells a fold from material: a square
+ * eroded past its own middle comes back inside out, wound the same way it
+ * started, and reads as a smaller square of ground where there should be none.
+ * The band has no such state. Where it covers a room the room is gone, where it
+ * pinches one in two there are two rooms, and both answers come out of the
+ * arrangement that was going to run anyway.
+ *
+ * Every surviving wall therefore lies on a translate of its own original line,
  * exactly parallel to where it started, at every depth. Nothing is clamped and
  * nothing is frozen, so vertices die freely — which costs no identity, because
  * erosion is a projection and never writes back to a source.
@@ -205,12 +208,14 @@ export function simplify(a: Shape): Cut {
  * hole alike, so a hole opens up as the material around it shrinks with no
  * special case. A negative depth grows the shape instead, by putting the band
  * on the other side and adding it. The input has to be simple; `simplify` is
- * what the caller has already run to make it so.
+ * what the caller has already run to make it so, and its winding is what says
+ * which way is in — unlike `erodeAt`, which is handed a bare ring and settles
+ * that itself.
  */
 export function erode(shape: Cut, depth: number): Cut {
   if (depth === 0) return shape;
 
-  return offset(shape, band(shape, () => depth));
+  return offset(shape, swept(shape, () => depth));
 }
 
 /**
@@ -251,7 +256,22 @@ export function erodeAt(source: Ring, depths: readonly number[]): Cut {
   const ring = flip ? [...source].reverse() : source;
   const at = flip ? [...depths].reverse() : depths;
 
-  return offset(simplify([ring]), swept(ring, i => at[i]));
+  return offset(simplify([ring]), swept([ring], (_, i) => at[i]));
+}
+
+/**
+ * The ground the boundary covers on its way in and on its way out, kept apart:
+ * `offset` subtracts the one and adds the other.
+ *
+ * Two sides rather than one because a depth per corner is free to change sign
+ * around a ring — one corner pulled in while its neighbour is pushed out — and
+ * the two halves of that sweep are not the same operation. Where the sign turns
+ * over it turns over at a point on a wall, and the wall's quad is cut there
+ * into a piece per side.
+ */
+interface Band {
+  inward: Shape
+  outward: Shape
 }
 
 /** Where each corner goes: `depth` from both of the walls meeting there. */
@@ -302,20 +322,49 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
  * against the other. Where the depth changes sign along a wall the quad is cut
  * at the crossing first, because the two halves are not the same operation.
  */
-function swept(ring: Ring, depth: (i: number) => number): Band {
+function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
   const out: Band = { inward: [], outward: [] };
+
+  for (let r = 0; r < shape.length; r++) sweep(shape[r], i => depth(r, i), out);
+
+  return out;
+}
+
+/** One ring's worth of it, into `out`. */
+function sweep(ring: Ring, depth: (i: number) => number, out: Band): void {
   const moved = corners(ring, depth);
   const n = ring.length;
 
-  const put = (a: Point, b: Point, c: Point, side: number): void => {
-    const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const emit = (ring: Ring, side: number): void => {
+    if (side > 0) out.inward.push(ccw(ring));
+    else if (side < 0) out.outward.push(ccw(ring));
+  };
 
-    if (area === 0) return;
+  /**
+   * One wall's worth of sweep: the quad from where it was to where it went,
+   * whole where it is a quad and cut in two where it has folded over.
+   *
+   * Whole wherever it can be, and that is not tidiness. A quad split down its
+   * diagonal leaves one piece of the order of the wall's length by the depth
+   * and one of the order of the depth squared, and at a depth near the
+   * arrangement's own tolerance the second is beneath it while the first is
+   * not — so half the sweep lands and half does not, and a hole the band was
+   * supposed to open up disappears instead. Only a fold needs the diagonal,
+   * because a bowtie filled as one ring cancels a lobe against the other.
+   */
+  const put3 = (a: Point, b: Point, c: Point, side: number): void => {
+    emit([a, b, c], side);
+  };
 
-    const tri = area > 0 ? [a, b, c] : [a, c, b];
+  const put = (a: Point, b: Point, c: Point, d: Point, side: number): void => {
+    if (crossing(a, b, c, d) || crossing(b, c, d, a)) {
+      emit([a, b, c], side);
+      emit([a, c, d], side);
 
-    if (side > 0) out.inward.push(tri);
-    else if (side < 0) out.outward.push(tri);
+      return;
+    }
+
+    emit([a, b, c, d], side);
   };
 
   for (let i = 0; i < n; i++) {
@@ -326,27 +375,53 @@ function swept(ring: Ring, depth: (i: number) => number): Band {
     if (da === 0 && db === 0) continue;
 
     if (da * db < 0) {
-      // Where the moved wall crosses the wall it came from: the one place
-      // along it the boundary has not moved at all.
-      const t = da / (da - db);
-      const c = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-      const m = { x: moved[i].x + (moved[j].x - moved[i].x) * t,
-                  y: moved[i].y + (moved[j].y - moved[i].y) * t };
+      // Where the moved wall crosses the wall it came from — the one place
+      // along it the boundary has not moved at all — which is the point the
+      // sweep's two sides meet at and the only place it can be cut. Not the
+      // depths' own zero: a corner moved along its bisector slides along the
+      // wall as well as across it, so where the offset passes through nothing
+      // is a crossing to be solved for rather than a fraction to be read off.
+      const x = met(a, b, moved[i], moved[j]);
 
-      put(a, c, m, da);
-      put(a, m, moved[i], da);
-      put(c, b, moved[j], db);
-      put(c, moved[j], m, db);
-      continue;
+      if (x !== null) {
+        put3(a, x, moved[i], da);
+        put3(x, b, moved[j], db);
+        continue;
+      }
     }
 
     const side = da !== 0 ? da : db;
 
-    put(a, b, moved[j], side);
-    put(a, moved[j], moved[i], side);
+    put(a, b, moved[j], moved[i], side);
   }
+}
 
-  return out;
+/** Where two segments cross, or nothing when they do not. */
+function met(a: Point, b: Point, c: Point, d: Point): Point | null {
+  const ux = b.x - a.x, uy = b.y - a.y;
+  const vx = d.x - c.x, vy = d.y - c.y;
+  const det = ux * vy - uy * vx;
+
+  if (det === 0) return null;
+
+  const t = ((c.x - a.x) * vy - (c.y - a.y) * vx) / det;
+  const u = ((c.x - a.x) * uy - (c.y - a.y) * ux) / det;
+
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+
+  return { x: a.x + ux * t, y: a.y + uy * t };
+}
+
+/** Whether two segments cross, ends excluded: what tells a folded quad from a
+ * quad. */
+function crossing(a: Point, b: Point, c: Point, d: Point): boolean {
+  const side = (p: Point, q: Point, r: Point) =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+
+  const a1 = side(a, b, c), a2 = side(a, b, d);
+  const b1 = side(c, d, a), b2 = side(c, d, b);
+
+  return a1 * a2 < 0 && b1 * b2 < 0;
 }
 
 /** The material left when the boundary has swept `swept`: what it covered on
@@ -358,229 +433,6 @@ function offset(shape: Cut, swept: Band): Cut {
   if (swept.outward.length > 0) out = union(out, swept.outward);
 
   return out;
-}
-
-/**
- * How far a corner's mitre may reach, as a multiple of the depth, before it is
- * cut off square. A corner turning back on itself sends the two moved lines
- * very nearly parallel and their meeting point off towards infinity; past this
- * the wedge is closed with a straight edge instead.
- *
- * Under one depth it only bites on a slit, and it bites there at every depth or
- * at none: the moved lines are translates of the source ones, so how far the
- * mitre reaches is a fixed multiple of the depth for a given corner and the
- * ratio this compares against never changes. Nothing can cross it by being
- * dragged.
- *
- * Under a depth per corner it can be crossed, because an edge whose ends go
- * different distances rotates and the two lines close on parallel as it does.
- * Where that happens the shape pops once, by however much the spike the mitre
- * would have cut is worth — the wedge under the mitre and the wedge under the
- * chord are different sizes, and there is nothing continuous in between.
- *
- * **The pop is wanted, and the chord is what it buys.** Both continuous
- * closings were built and thrown away, and the reason is the same both times:
- * what makes them continuous is keeping the spike, and a spike this long is a
- * hairline of ground taken out of the middle of a room. It reads as two walls
- * on top of each other, it stands a line up along its length wherever an
- * outline is drawn, and a room it has split stays split for as long as the
- * limit allows — which is eight times the depth. The chord cuts it off instead:
- * the boundary crosses the corner square, the room that the spike had split
- * comes back together in one step, and there is no sliver anywhere. A step in
- * the shape is a cheaper thing to look at than a room quietly full of
- * degenerate geometry.
- *
- * For the record, since the obvious fix is obvious: holding the mitre at
- * `reach` is *worse* than the chord, not better — it keeps the full-length
- * spike right up to the depth where the two lines go parallel and then loses
- * the lot, so the step is bigger rather than smaller. Clipping the wedge to a
- * circle of that radius is genuinely continuous and genuinely monotone, and it
- * is the version with the sliver in it.
- */
-const MITRE_LIMIT = 8;
-
-/**
- * The ground the boundary covers on its way in and on its way out, kept apart:
- * `offset` subtracts the one and adds the other.
- *
- * Two sides rather than one because a depth per vertex is free to change sign
- * along a ring — one corner pulled in while its neighbour is pushed out — and
- * the two halves of that sweep are not the same operation. Where the sign turns
- * over, it turns over at a point on an edge, and the edge's quad is cut there
- * into a piece per side.
- */
-interface Band {
-  inward: Shape
-  outward: Shape
-}
-
-/** `depth` is asked by vertex index, so a caller with one number for the whole
- * ring pays nothing for the ones that have one each. */
-function band(shape: Shape, depth: (i: number) => number): Band {
-  const out: Band = { inward: [], outward: [] };
-
-  const put = (ring: Ring, side: number): void => {
-    if (side > 0) out.inward.push(ccw(ring));
-    else if (side < 0) out.outward.push(ccw(ring));
-  };
-
-  for (const ring of shape) {
-    const edges = moved(ring, depth);
-
-    for (const e of edges) {
-      if (e.da === 0 && e.db === 0) continue;
-
-      // Opposite signs put part of the quad on each side, and the two parts
-      // meet where the offset passes through nothing at all.
-      if (e.da * e.db < 0) {
-        const t = e.da / (e.da - e.db);
-        const c = { x: e.a.x + (e.b.x - e.a.x) * t, y: e.a.y + (e.b.y - e.a.y) * t };
-
-        put([e.a, c, e.ma], e.da);
-        put([c, e.b, e.mb], e.db);
-        continue;
-      }
-
-      put([e.a, e.b, e.mb, e.ma], e.da !== 0 ? e.da : e.db);
-    }
-
-    // Between two edges the ring turns away from, the band would leave a wedge
-    // of ground standing on nothing. The corner it wants is where the two moved
-    // lines meet, which is the mitre. Both of them carry this corner's own
-    // depth, so there is one sign here however the neighbours differ.
-    for (let i = 0; i < edges.length; i++) {
-      const p = edges[(i - 1 + edges.length) % edges.length], q = edges[i];
-      const d = q.da;
-
-      if (d === 0) continue;
-
-      const turn = p.ux * q.uy - p.uy * q.ux;
-
-      if (turn * d >= 0) continue;
-
-      const corner = mitre(p, q);
-      const reach = Math.abs(d) * MITRE_LIMIT;
-
-      put(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
-        ? [q.a, p.mb, q.ma]
-        : [q.a, p.mb, corner, q.ma], d);
-    }
-  }
-
-  return out;
-}
-
-/**
- * One edge of a ring, and where moving it left put it.
- *
- * Two directions, and which is which matters. `ux, uy` is the edge's own, and
- * it is what says whether the ring turns away at a corner — the gap a wedge
- * fills is between two moved endpoints whose offsets are along the two *source*
- * normals, so the source corner is what opens it, at every depth. `mx, my` is
- * the direction the moved edge actually runs in, which is the original's only
- * while both of its ends go the same distance, and it is what the mitre is the
- * meeting of.
- *
- * Reading the moved one for the turn is the bug this comment is here to stop
- * coming back: an edge whose ends go different distances can rotate far enough
- * to turn a reflex corner convex, and the wedge then goes missing at the one
- * corner most in need of it — leaving the offset boundary to run back through
- * the source corner, and the shape to gain ground as it erodes.
- */
-interface Moved {
-  a: Point
-  b: Point
-  ma: Point
-  mb: Point
-  da: number
-  db: number
-  ux: number
-  uy: number
-  mx: number
-  my: number
-}
-
-function moved(ring: Ring, depth: (i: number) => number): Moved[] {
-  const out: Moved[] = [];
-
-  for (let i = 0; i < ring.length; i++) {
-    const j = (i + 1) % ring.length;
-    const a = ring[i], b = ring[j];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const l = Math.hypot(dx, dy);
-
-    // A repeated point is not an edge and has no line to move.
-    if (l === 0) continue;
-
-    const ux = dx / l, uy = dy / l;
-    const da = depth(i), db = depth(j);
-    const ma = { x: a.x - uy * da, y: a.y + ux * da };
-    const mb = { x: b.x - uy * db, y: b.y + ux * db };
-
-    // Exactly the original where the two ends agree, rather than the same
-    // number arrived at the long way round: every depth used to be uniform and
-    // the arithmetic that answered it is not to be perturbed.
-    const dx2 = mb.x - ma.x, dy2 = mb.y - ma.y, ml = Math.hypot(dx2, dy2);
-    const same = da === db || ml === 0;
-
-    out.push({
-      a,
-      b,
-      ma,
-      mb,
-      da,
-      db,
-      ux,
-      uy,
-      mx: same ? ux : dx2 / ml,
-      my: same ? uy : dy2 / ml,
-    });
-  }
-
-  return out;
-}
-
-/**
- * The corner's image under the offset: where the two moved lines cross, and
- * nothing where that crossing is not a place the boundary goes.
- *
- * The offset runs along p's moved line, past where p's moved edge ends, turns
- * at the mitre, and comes back down q's to where q's moved edge begins. So the
- * mitre is ahead of `p.mb` along p and behind `q.ma` along q, and a crossing
- * that is behind either is the two lines meeting somewhere the boundary never
- * reaches. The wedge built through such a point folds over into a bowtie, and a
- * bowtie is not a wedge: the nonzero rule reads one of its two lobes as ground,
- * so the band comes out with a hole in it — not at the corner, but wherever
- * that lobe happens to have swept, which can be most of a room away. It showed
- * up as a crumb of floor left standing on its own in the middle of nothing.
- *
- * Under one depth this can never happen and the test costs a dot product: the
- * moved lines are translates of the source ones, so a corner the ring turns
- * away from puts the mitre ahead of the one and behind the other by
- * construction. It is an edge whose ends go different distances, rotating until
- * the two lines are nearly parallel, that walks the crossing back past the ends
- * of both.
- */
-function mitre(p: Moved, q: Moved): Point | null {
-  const m = meet(p, q);
-
-  if (m === null) return null;
-
-  const ahead = (m.x - p.mb.x) * p.mx + (m.y - p.mb.y) * p.my;
-  const behind = (m.x - q.ma.x) * q.mx + (m.y - q.ma.y) * q.my;
-
-  return ahead >= 0 && behind <= 0 ? m : null;
-}
-
-/** Where two moved edges' lines cross, or nothing when they are parallel. */
-function meet(p: Moved, q: Moved): Point | null {
-  const d = p.mx * q.my - p.my * q.mx;
-
-  if (Math.abs(d) < 1e-12) return null;
-
-  const t = ((q.ma.x - p.ma.x) * q.my - (q.ma.y - p.ma.y) * q.mx) / d;
-
-  return { x: p.ma.x + p.mx * t, y: p.ma.y + p.my * t };
 }
 
 /**
