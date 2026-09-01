@@ -2078,10 +2078,25 @@ export function hitPolygons(items: Resolved[], at: Point): PolygonId[] {
   const out: PolygonId[] = [];
 
   for (let i = items.length - 1; i >= 0; i--) {
-    if (contains(items[i].shape, at)) out.push(items[i].id);
+    if (contains(standingFor(items[i]), at)) out.push(items[i].id);
   }
 
   return out;
+}
+
+/**
+ * The shape a click is tested against: the projection, or the source ring
+ * where the projection is empty.
+ *
+ * A polygon eroded away has nothing on screen and nothing to click, and being
+ * unpickable is how it stays that way for good — there is no gesture that
+ * takes the depth back off a shape that cannot be selected. So the source ring
+ * stands in for it, and the drawing puts that ring on screen for exactly the
+ * same shapes: what can be picked is what is drawn, which is the rule
+ * everywhere else too.
+ */
+function standingFor(it: Resolved): Shape {
+  return it.shape.length === 0 ? [it.source] : it.shape;
 }
 
 /**
@@ -2116,6 +2131,29 @@ export function hitting(
 
   const open = path[path.length - 1] ?? null;
 
+  // The source union, for the groups that eroded away to nothing. Taken once
+  // and only where one has, since it is a second union over every member of
+  // every shut group. A group standing at a depth that leaves nothing is
+  // otherwise unpickable for good, the same trap `standingFor` keeps a polygon
+  // out of, and its source ring is on screen for the same reason.
+  let source: Map<GroupId, Shape> | null = null;
+
+  const drawn = (id: Id, it: Resolved): Shape => {
+    const shape = shut.get(id);
+
+    if (shape !== undefined && shape.length !== 0) return shape;
+
+    // A polygon standing for itself answers with its own ring; a group has to
+    // answer with the union, and cannot be left to answer with the member this
+    // pass happens to be looking at — every member maps to the one id, and the
+    // first of them to be asked is the only one that gets to.
+    if (id === it.id) return standingFor(it);
+
+    source ??= new Map(occupyingSource(world, v, items, path).map(o => [o.id, o.shape]));
+
+    return source.get(id as GroupId) ?? shape ?? [];
+  };
+
   for (let i = items.length - 1; i >= 0; i--) {
     if (!reachable(world, items[i].id, open)) continue;
 
@@ -2125,7 +2163,7 @@ export function hitting(
 
     asked.add(id);
 
-    if (contains(shut.get(id) ?? items[i].shape, at)) out.push(id);
+    if (contains(drawn(id, items[i]), at)) out.push(id);
   }
 
   return out;

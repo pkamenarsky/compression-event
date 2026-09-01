@@ -2798,7 +2798,14 @@ function polygons(
     const picked = reached.has(it.id);
     const here = reach(it.id);
 
-    if ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles)) {
+    // A shape eroded away has no projection to draw and nothing to click, so
+    // its source ring stands in for it always rather than only under the
+    // selection: it is the one state where the dashed line is not an aside
+    // about a shape on screen but the whole of what is on screen. `hitting`
+    // falls back to the same ring, so what is drawn is what can be picked.
+    const gone = it.shape.length === 0;
+
+    if (gone || ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles))) {
       source(ctx, view, [it.source]);
 
       if (picked) leaders(ctx, view, it);
@@ -2939,9 +2946,11 @@ function spokes(
   ctx.stroke();
 }
 
-/** A group's boundary before its own erosion, and the depth that moved it. */
+/** A group's boundary either side of its own erosion, and the depth between
+ * them. `now` is empty for a group eroded away to nothing. */
 interface Moved {
-  shape: Shape
+  was: Shape
+  now: Shape
   depth: number
 }
 
@@ -2955,6 +2964,15 @@ interface Moved {
  * asked for only when a picked group is actually eroding: nothing picked, or
  * nothing picked at a depth, and this is a walk over the groups on screen and
  * no geometry at all.
+ *
+ * The walk is over the *source* groups and not the ones being drawn, which is
+ * what a group eroded away to nothing turns on. Such a group leaves `occupying`
+ * altogether — there is no outline to draw and nothing to click — and picking
+ * it would then show nothing at all, though the marquee finds it perfectly
+ * well by its members' corners. A polygon in the same state still draws its
+ * dashed source ring, because that ring is on the polygon rather than on the
+ * projection; the source union is a group's answer to the same thing, and
+ * taking it here is what gives the two the same behaviour.
  *
  * The depth is the one the group's own side was offset by, sign and all. A
  * group's walls go the other way from its rooms — `erode(A - B, d)` is
@@ -2973,18 +2991,30 @@ function moved(
 ): ReadonlyMap<GroupId, Moved> {
   const out = new Map<GroupId, Moved>();
   const depth = depths(world, v);
+  const now = new Map(shut.map(g => [g.id, g.shape]));
 
-  const wanted = shut.filter(g => picking.has(g.id) && (depth.get(g.id) ?? 0) !== 0);
+  // Picked, or gone: a group eroded away draws its source ring whether or not
+  // anything is picked, because that ring is the only thing saying it is there
+  // at all — and it is what a click on it finds. Being gone is not the same as
+  // being absent from `shut`, which is also true of every group a shut group
+  // is standing for, and those draw nothing of their own.
+  const wanted = (id: GroupId): boolean =>
+    (depth.get(id) ?? 0) !== 0
+    && (picking.has(id)
+      || (!path.includes(id) && !swallowed(world, id, path) && (now.get(id)?.length ?? 0) === 0));
 
-  if (wanted.length === 0) return out;
+  if (![...depth.keys()].some(wanted)) return out;
 
-  const was = new Map(occupyingSource(world, v, items, path).map(g => [g.id, g.shape]));
+  for (const g of occupyingSource(world, v, items, path)) {
+    if (!wanted(g.id)) continue;
 
-  for (const g of wanted) {
     const d = depth.get(g.id) ?? 0;
-    const shape = was.get(g.id);
 
-    if (shape !== undefined) out.set(g.id, { shape, depth: g.kind === 'solid' ? -d : d });
+    out.set(g.id, {
+      was: g.shape,
+      now: now.get(g.id) ?? [],
+      depth: g.kind === 'solid' ? -d : d,
+    });
   }
 
   return out;
@@ -3022,17 +3052,6 @@ function groups(
 
     outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.groupFill);
 
-    const was = sources.get(g.id);
-
-    if (was !== undefined) {
-      source(ctx, view, was.shape);
-
-      const to = erodedShape(was.shape, was.depth);
-      const standing = survived(g.shape);
-
-      was.shape.forEach((ring, i) => spokes(ctx, view, ring, to[i], standing));
-    }
-
     // Drawn as the floor it is, and never as picked: the group's own outline
     // has already said that, and saying it twice puts a second heavy line
     // inside the first. The edge is here because the stipple needs one — a
@@ -3054,6 +3073,18 @@ function groups(
       outlined(ctx, view, g.floor, 'floor', false, here, theme.groupFill);
       ctx.restore();
     }
+  }
+
+  // Its own pass, because what it draws is not keyed to what `shown` holds: a
+  // group eroded away has no outline to hang this off and is the one that
+  // needs it most, being otherwise a selection with nothing on screen at all.
+  for (const was of sources.values()) {
+    source(ctx, view, was.was);
+
+    const to = erodedShape(was.was, was.depth);
+    const standing = survived(was.now);
+
+    was.was.forEach((ring, i) => spokes(ctx, view, ring, to[i], standing));
   }
 }
 

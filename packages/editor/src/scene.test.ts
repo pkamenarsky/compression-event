@@ -32,6 +32,7 @@ import {
   ungrouped,
   without,
   addVertex,
+  hitPolygon,
   hitPolygons,
   affine,
   copied,
@@ -1676,6 +1677,35 @@ describe('going inside a group', () => {
 
     expect(on.every(h => h.id !== ids[1])).toBe(true);
     expect(on.length).toBe(4);
+  });
+
+  test('a group eroded away to nothing can still be clicked, on its source', () => {
+    // Otherwise it is gone for good: nothing draws it, nothing picks it, and
+    // there is no gesture that takes the depth back off a group that cannot be
+    // selected. What stands in is the union with the depth off, which is the
+    // ring the canvas draws for exactly this case.
+    const { world, group } = pair();
+    const gone = moved(world, 0, group, { erosion: 40 });
+    const items = resolveAt(gone, 0);
+
+    // Nothing is drawn for it at all — that is what being eroded away means.
+    expect(occupying(gone, 0, items, [])).toEqual([]);
+
+    // And it is still there to be picked, over the ground it started on and
+    // nowhere else.
+    expect(hitting(gone, 0, items, [], { x: 5, y: 5 })).toEqual([group]);
+    expect(hitting(gone, 0, items, [], { x: 15, y: 5 })).toEqual([]);
+  });
+
+  test('and so can a polygon, which is the same trap', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
+    const gone = moved(world, 0, ids[0], { erosion: 20 });
+    const items = resolveAt(gone, 0);
+
+    expect(items[0].shape).toEqual([]);
+    expect(hitting(gone, 0, items, [], { x: 5, y: 5 })).toEqual([ids[0]]);
+    expect(hitPolygon(items, { x: 5, y: 5 })).toBe(ids[0]);
+    expect(hitPolygon(items, { x: 50, y: 50 })).toBe(null);
   });
 
   test('a group draws as one shape even at depth zero', () => {
