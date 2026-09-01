@@ -67,22 +67,8 @@ export function playSound(def: SoundDef): SoundHandle {
   const ctx = getContext();
   const startTime = ctx.currentTime;
 
-  // Build the node graph, watching for the sources it starts.
-  //
-  // A sound that runs out on its own — every oscillator stopped, every buffer
-  // played to its end — never calls `stop()`, so without this its handle sits
-  // in `_active` for the life of the page with its master gain still wired to
-  // the destination. Most sounds are that kind. `playSoundFor` happens to stop
-  // them on a timer, which is what has been keeping the set from growing, but
-  // that is a caller's habit rather than something `playSound` can rely on.
-  //
-  // A factory only says what its output node is, so the sources are collected
-  // as it asks for them. `ended` fires on each one that was started and given
-  // an end, and the last of them is the sound being over. One that is never
-  // given an end — the drone — has to be stopped by whoever started it, which
-  // is what `stop` is for.
-  const sources: AudioScheduledSourceNode[] = [];
-  const output = def(watching(ctx, sources), startTime);
+  // Build the node graph
+  const output = def(ctx, startTime);
 
   // Master gain so we can fade out on stop
   const master = ctx.createGain();
@@ -113,55 +99,7 @@ export function playSound(def: SoundDef): SoundHandle {
   };
 
   _active.add(handle);
-
-  // The sound running out is the handle's business being over. The nodes are
-  // let go the same way `stop` lets them go, minus the fade: there is nothing
-  // left to fade.
-  let left = sources.length;
-
-  const finished = (): void => {
-    if (--left > 0 || stopped) return;
-    stopped = true;
-    try {
-      master.disconnect();
-    } catch (_) {
-      /* already disconnected */
-    }
-    _active.delete(handle);
-  };
-
-  for (const source of sources) source.addEventListener('ended', finished, { once: true });
-
   return handle;
-}
-
-/**
- * The same context, with every source it is asked for noted down.
- *
- * A proxy rather than a wrapper with a method apiece, because a factory may
- * reach for anything on a context — `currentTime`, `sampleRate`, `destination`,
- * whichever `create` it needs — and only two of those are of any interest here.
- * Everything is handed straight through, bound to the real context, so a
- * factory cannot tell the difference.
- */
-function watching(ctx: AudioContext, into: AudioScheduledSourceNode[]): AudioContext {
-  return new Proxy(ctx, {
-    get(target, key) {
-      const value = Reflect.get(target, key, target) as unknown;
-
-      if (typeof value !== 'function') return value;
-
-      return (...args: unknown[]): unknown => {
-        const made = (value as (...a: unknown[]) => unknown).apply(target, args);
-
-        if (key === 'createOscillator' || key === 'createBufferSource') {
-          into.push(made as AudioScheduledSourceNode);
-        }
-
-        return made;
-      };
-    },
-  });
 }
 
 // ── Helper: auto-stop after a duration ──
