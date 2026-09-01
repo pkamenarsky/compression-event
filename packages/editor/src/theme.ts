@@ -63,6 +63,18 @@ export const theme = {
   vertex: '#c8cad2',
   /** The source ring under an eroded polygon: where the handles are. */
   source: '#6f7788',
+  /**
+   * The same ring where it is the whole of what is on screen: a shape eroded
+   * away to nothing, drawn as the ground it started on.
+   *
+   * Red, and only where such a shape is *not* picked. Everything else on the
+   * canvas says whether it is picked with its own outline — the heavy stroke
+   * and the fill under it — and a shape with no outline left has nothing to
+   * say it with, so the dashed ring has to say both at once: this is here, and
+   * this is not the one you have hold of. Picking it puts it back in `source`,
+   * which is the colour every other source ring is drawn in.
+   */
+  gone: '#b8574f',
   /** The hairline joining a corner to where the erosion sent it. Under the
    * source's own line, because it is an aside about a ring already drawn. */
   leader: 'rgba(111, 119, 136, 0.55)',

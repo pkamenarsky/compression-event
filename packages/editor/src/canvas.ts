@@ -2806,7 +2806,7 @@ function polygons(
     const gone = it.shape.length === 0;
 
     if (gone || ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles))) {
-      source(ctx, view, [it.source]);
+      source(ctx, view, [it.source], gone && !picked ? theme.gone : theme.source);
 
       if (picked) leaders(ctx, view, it);
     }
@@ -2826,12 +2826,19 @@ function polygons(
  * would read as a different kind of statement rather than the same one about
  * a bigger shape.
  */
-function source(ctx: CanvasRenderingContext2D, view: View, shape: Shape): void {
+function source(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  shape: Shape,
+  /** `theme.gone` where the ring is standing in for a shape that eroded away
+   * and is not picked — see there. */
+  stroke = theme.source,
+): void {
   ctx.beginPath();
 
   for (const ring of shape) trace(ctx, view, ring);
 
-  ctx.strokeStyle = theme.source;
+  ctx.strokeStyle = stroke;
   ctx.lineWidth = 1;
   ctx.setLineDash([3, 3]);
   ctx.stroke();
@@ -3078,8 +3085,10 @@ function groups(
   // Its own pass, because what it draws is not keyed to what `shown` holds: a
   // group eroded away has no outline to hang this off and is the one that
   // needs it most, being otherwise a selection with nothing on screen at all.
-  for (const was of sources.values()) {
-    source(ctx, view, was.was);
+  for (const [id, was] of sources) {
+    // A group is only in here unpicked when it has eroded away, which is the
+    // one case the ring has to carry the selection itself.
+    source(ctx, view, was.was, picking.has(id) ? theme.source : theme.gone);
 
     const to = erodedShape(was.was, was.depth);
     const standing = survived(was.now);
