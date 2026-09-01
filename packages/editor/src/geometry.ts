@@ -296,6 +296,28 @@ export function erodedCorners(source: Ring, depths: readonly number[] | number):
 }
 
 /**
+ * The same for a whole arrangement offset uniformly: where each corner of each
+ * ring goes, ring for ring and corner for corner with what it was handed.
+ *
+ * The winding is taken as it stands rather than settled, which is the one
+ * difference from `erodedCorners` and is what makes this the counterpart to
+ * `erode` rather than to `erodeAt`. Material is on the left of every ring an
+ * arrangement produces, hole and outer alike, so the bisector already points
+ * into the material and a hole opens up as the ground around it shrinks — the
+ * same reason `erode` can take a `Cut` and offset every ring by one number.
+ * Hand it a shape that has not been through one and the holes go the wrong way.
+ *
+ * A `Shape` and not a `Cut`, unlike `erode`, because the brand is about a ring
+ * knowing where it starts and this is only ever asked about a shape the caller
+ * has the indices of already — `Occupied.shape`, which is a union either way
+ * and has lost the brand on its way through `Contributed`. Nothing here writes
+ * back, so the worst a shape that is not walked can do is draw a wrong line.
+ */
+export function erodedShape(shape: Shape, depth: number): Point[][] {
+  return shape.map(ring => corners(ring, () => depth));
+}
+
+/**
  * The ground the boundary covers on its way in and on its way out, kept apart:
  * `offset` subtracts the one and adds the other.
  *

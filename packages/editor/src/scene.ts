@@ -1684,6 +1684,11 @@ export interface Occupied {
    * internal geometry that shutting it was meant to put away — so there is
    * nothing on screen to click in the hole one leaves, and the click falls
    * through, as a click on anything not drawn does.
+   *
+   * Always an arrangement, whichever branch built it: a union, or a union with
+   * the solid side taken out of it. That is what lets `erodedShape` offset it
+   * ring by ring — material is on the left of every ring a walk produces, hole
+   * and outer alike, so one depth moves them all the right way.
    */
   shape: Shape
   /**
@@ -1730,9 +1735,41 @@ export function occupying(
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Occupied[] {
+  return occupied(world, showing(world, v, items, path));
+}
+
+/**
+ * The same, with every shut group's own depth left off: the boundary the
+ * group's erosion moved, rather than where it moved it to.
+ *
+ * A group has no source ring — it has no corners at all, which is the whole
+ * reason `Occupied` is not a `Resolved` — so the only thing there is to say
+ * where its erosion started from is the union taken again at depth zero. Its
+ * members are resolved once either way and the union is the cheap half, so
+ * this is a second pass over shapes already in hand rather than a second
+ * resolve.
+ *
+ * Only drawing asks, and only about a group that is picked: it is the far end
+ * of a leader line. See `moved`.
+ */
+export function occupyingSource(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+): Occupied[] {
+  const open = new Set<Id>(path);
+
+  return occupied(world, contributed(world, items, id =>
+    open.has(id) ? null : { depth: 0 },
+  ));
+}
+
+/** The two sides of each group put together into the one outline it draws as. */
+function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
   const sides = new Map<GroupId, Map<PolygonType, Shape>>();
 
-  for (const c of showing(world, v, items, path)) {
+  for (const c of shown) {
     const id = sidedWith(c.id) ?? c.id;
 
     if (!world.groups.has(id)) continue;

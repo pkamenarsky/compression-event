@@ -20,6 +20,7 @@ import {
   erode,
   erodeAt,
   erodedCorners,
+  erodedShape,
   intersect,
   isCCW,
   shapeArea,
@@ -1572,5 +1573,39 @@ describe('erodedCorners', () => {
 
     expect(moved[0].x).toBeCloseTo(80, 9);
     expect(moved[2].x).toBeCloseTo(20, 9);
+  });
+});
+
+describe('erodedShape', () => {
+  test('a hole opens up as the ground around it shrinks', () => {
+    // The one thing the per-ring winding is for. A square room with a square
+    // pillar in it, cut so the pillar is the hole: at depth 10 the outer ring
+    // comes in by 10 and the hole ring goes *out* by 10, because both are
+    // moving into the material between them.
+    const room = subtract([rect(0, 0, 100, 100)], [rect(40, 40, 20, 20)]);
+    const moved = erodedShape(room, 10);
+
+    const all = moved.flat();
+    const xs = all.map(p => p.x);
+
+    expect(Math.min(...xs)).toBeCloseTo(10, 9);
+    expect(Math.max(...xs)).toBeCloseTo(90, 9);
+
+    // And the hole's own corners have gone the other way: 30 and 70, not 50.
+    expect(all.some(p => Math.abs(p.x - 30) < 1e-9 && Math.abs(p.y - 30) < 1e-9)).toBe(true);
+    expect(all.some(p => Math.abs(p.x - 70) < 1e-9 && Math.abs(p.y - 70) < 1e-9)).toBe(true);
+  });
+
+  test('every ring keeps its corners, whatever the depth does to them', () => {
+    // It is a correspondence and not a shape: ring for ring and corner for
+    // corner with what it was handed, including where the offset would have
+    // closed the ring away entirely.
+    const room = subtract([rect(0, 0, 100, 100)], [rect(40, 40, 20, 20)]);
+
+    for (const d of [-20, 0, 5, 200]) {
+      const moved = erodedShape(room, d);
+
+      expect(moved.map(r => r.length)).toEqual(room.map(r => r.length));
+    }
   });
 });

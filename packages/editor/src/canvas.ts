@@ -5,7 +5,7 @@ import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, artefactsDuring, replayed } from './bake';
-import { Ring, Shape, erodedCorners, ngon } from './geometry';
+import { Ring, Shape, erodedCorners, erodedShape, ngon } from './geometry';
 import {
   Input,
   blurred,
@@ -49,7 +49,9 @@ import {
   artefactsWithinBox,
   hitArtefact,
   movedStart,
+  depths,
   occupying,
+  occupyingSource,
   removeArtefacts,
   retypeArtefacts,
   shownAt,
@@ -2578,8 +2580,11 @@ function layers(
   const reach = (id: Id) => reachable(world, id, inside);
 
   out.push(ctx => polygons(ctx, view, loose, selection, reached, tool === 'point', reach));
+  const shut = occupying(world, current, items, path);
+  const picking = new Set<Id>(selection.polygons);
+
   out.push(ctx =>
-    groups(ctx, view, occupying(world, current, items, path), new Set(selection.polygons), reach),
+    groups(ctx, view, shut, picking, reach, moved(world, current, items, path, shut, picking)),
   );
 
   // Command-click reaches past a group to one polygon inside it, and what it
@@ -2891,6 +2896,57 @@ function spokes(
   ctx.stroke();
 }
 
+/** A group's boundary before its own erosion, and the depth that moved it. */
+interface Moved {
+  shape: Shape
+  depth: number
+}
+
+/**
+ * The same question `leaders` answers for a polygon, asked of the shut groups
+ * that are picked: what the group's erosion moved, and by how much.
+ *
+ * A group has no corners, so there is nothing to run a leader from until the
+ * union is taken again without the depth on it — see `occupyingSource`. That
+ * is a second union over every member of every shut group, which is why it is
+ * asked for only when a picked group is actually eroding: nothing picked, or
+ * nothing picked at a depth, and this is a walk over the groups on screen and
+ * no geometry at all.
+ *
+ * The depth is the one the group's own side was offset by, sign and all. A
+ * group's walls go the other way from its rooms — `erode(A - B, d)` is
+ * `erode(A, d) - erode(B, -d)`, which is what makes a pillar keep its distance
+ * from a shrinking room — so a group drawn as its walls has its corners moving
+ * out where a room's move in, and a leader that ignored that would point the
+ * wrong way at every corner of it. See `contributed`.
+ */
+function moved(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+  shut: readonly Occupied[],
+  picking: ReadonlySet<Id>,
+): ReadonlyMap<GroupId, Moved> {
+  const out = new Map<GroupId, Moved>();
+  const depth = depths(world, v);
+
+  const wanted = shut.filter(g => picking.has(g.id) && (depth.get(g.id) ?? 0) !== 0);
+
+  if (wanted.length === 0) return out;
+
+  const was = new Map(occupyingSource(world, v, items, path).map(g => [g.id, g.shape]));
+
+  for (const g of wanted) {
+    const d = depth.get(g.id) ?? 0;
+    const shape = was.get(g.id);
+
+    if (shape !== undefined) out.set(g.id, { shape, depth: g.kind === 'solid' ? -d : d });
+  }
+
+  return out;
+}
+
 /**
  * The shut groups, each as the one outline it occupies.
  *
@@ -2914,11 +2970,26 @@ function groups(
    * by way of the members `reached` stands for. */
   picking: ReadonlySet<Id>,
   reach: (id: Id) => boolean,
+  /** Where each picked group's erosion started from, from `moved`. Empty for
+   * every group not drawing leaders, which is nearly all of them. */
+  sources: ReadonlyMap<GroupId, Moved>,
 ): void {
   for (const g of shown) {
     const here = reach(g.id);
 
     outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.groupFill);
+
+    const was = sources.get(g.id);
+
+    if (was !== undefined) {
+      ctx.save();
+      between(ctx, view, was.shape, g.shape);
+
+      const to = erodedShape(was.shape, was.depth);
+
+      was.shape.forEach((ring, i) => spokes(ctx, view, ring, to[i]));
+      ctx.restore();
+    }
 
     // Drawn as the floor it is, and never as picked: the group's own outline
     // has already said that, and saying it twice puts a second heavy line
