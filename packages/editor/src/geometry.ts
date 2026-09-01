@@ -318,6 +318,73 @@ export function erodedShape(shape: Shape, depth: number): Point[][] {
 }
 
 /**
+ * Whether a point is a corner the offset kept: something the boundary it
+ * produced still turns at.
+ *
+ * The other half of a correspondence. `erodedCorners` says where a vertex
+ * pushed to whether or not it survived, which is what makes it answerable at
+ * all — but a corner the erosion consumed pushed to somewhere that is not on
+ * the outline any more, and a line drawn to it is a line to nothing. Asking
+ * the arrangement whether the point came out the far end is the only way to
+ * tell the two apart, because dying is exactly what the arrangement did to it.
+ *
+ * By position and not by name, since a name is the thing the arrangement threw
+ * away. The tolerance is the arrangement's own, scaled off the extent of what
+ * it produced the way `combine` scales its weld: a corner that survives comes
+ * back welded to within that of where the band put it, and nothing else in the
+ * outline is anywhere near it — the offset does not produce two corners a
+ * billionth apart.
+ *
+ * A predicate rather than an answer per point, because a group asks ring after
+ * ring against one outline and the index is worth building once.
+ */
+export function survived(shape: Shape): (p: Point) => boolean {
+  let lo = Infinity, hi = -Infinity;
+
+  for (const ring of shape) {
+    for (const p of ring) {
+      lo = Math.min(lo, p.x, p.y);
+      hi = Math.max(hi, p.x, p.y);
+    }
+  }
+
+  const extent = hi - lo;
+  const eps = (Number.isFinite(extent) && extent > 0 ? extent : 1) * 1e-7;
+
+  // Bucketed at the tolerance, so a lookup is nine cells rather than the whole
+  // outline. A picked group can be a union of a hundred polygons, and this is
+  // asked once per corner of it on every frame a drag draws.
+  const at = new Map<string, Point[]>();
+  const key = (x: number, y: number): string => `${Math.round(x / eps)}:${Math.round(y / eps)}`;
+
+  for (const ring of shape) {
+    for (const p of ring) {
+      const k = key(p.x, p.y);
+      const cell = at.get(k);
+
+      if (cell === undefined) at.set(k, [p]);
+      else cell.push(p);
+    }
+  }
+
+  return p => {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cell = at.get(key(p.x + dx * eps, p.y + dy * eps));
+
+        if (cell === undefined) continue;
+
+        for (const q of cell) {
+          if (Math.hypot(q.x - p.x, q.y - p.y) <= eps) return true;
+        }
+      }
+    }
+
+    return false;
+  };
+}
+
+/**
  * The ground the boundary covers on its way in and on its way out, kept apart:
  * `offset` subtracts the one and adds the other.
  *

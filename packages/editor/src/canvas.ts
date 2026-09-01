@@ -5,7 +5,7 @@ import { Op, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, artefactsDuring, replayed } from './bake';
-import { Ring, Shape, erodedCorners, erodedShape, ngon } from './geometry';
+import { Ring, Shape, erodedCorners, erodedShape, ngon, survived } from './geometry';
 import {
   Input,
   blurred,
@@ -2837,7 +2837,9 @@ function polygons(
  * squares, so a handle sits on top of its own spoke rather than under it.
  */
 function leaders(ctx: CanvasRenderingContext2D, view: View, it: Resolved): void {
-  spokes(ctx, view, it.source, erodedCorners(it.source, it.depths ?? it.erosion));
+  const moved = erodedCorners(it.source, it.depths ?? it.erosion);
+
+  spokes(ctx, view, it.source, moved, survived(it.shape));
 }
 
 /**
@@ -2852,10 +2854,20 @@ function spokes(
   view: View,
   ring: Ring,
   moved: readonly Point[],
+  /** Whether the projection still turns at a point, from `survived`. */
+  standing: (p: Point) => boolean,
 ): void {
   ctx.beginPath();
 
   ring.forEach((p, i) => {
+    // A corner the erosion consumed has nothing at the far end of its line:
+    // its moved point is where it pushed to, and what it pushed into closed
+    // over it. Nothing is drawn for it at all — a line into the middle of the
+    // projection reads as a stray mark, and a line stopped at the outline
+    // reads as a corner that is there, which is the one thing it is not. The
+    // outline losing a corner is what says the corner went.
+    if (!standing(moved[i])) return;
+
     const a = toScreen(view, p);
     const b = toScreen(view, moved[i]);
 
@@ -2960,8 +2972,9 @@ function groups(
 
     if (was !== undefined) {
       const to = erodedShape(was.shape, was.depth);
+      const standing = survived(g.shape);
 
-      was.shape.forEach((ring, i) => spokes(ctx, view, ring, to[i]));
+      was.shape.forEach((ring, i) => spokes(ctx, view, ring, to[i], standing));
     }
 
     // Drawn as the floor it is, and never as picked: the group's own outline

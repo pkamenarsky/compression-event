@@ -21,6 +21,7 @@ import {
   erodeAt,
   erodedCorners,
   erodedShape,
+  survived,
   intersect,
   isCCW,
   shapeArea,
@@ -1607,5 +1608,47 @@ describe('erodedShape', () => {
 
       expect(moved.map(r => r.length)).toEqual(room.map(r => r.length));
     }
+  });
+});
+
+describe('survived', () => {
+  const square = rect(0, 0, 100, 100);
+
+  test('a corner the offset kept is at a corner of what it produced', () => {
+    const shape = erode(simplify([square]), 10);
+    const standing = survived(shape);
+
+    for (const p of erodedCorners(square, 10)) expect(standing(p)).toBe(true);
+  });
+
+  test('and one it consumed is not', () => {
+    // A square eroded past its own middle is gone, and every corner of it went
+    // with the ground: each pushed to the far side of the centre, and there is
+    // no outline left for any of them to be on.
+    const standing = survived(erode(simplify([square]), 80));
+
+    for (const p of erodedCorners(square, 80)) expect(standing(p)).toBe(false);
+  });
+
+  test('the ones that died are told from the ones beside them that did not', () => {
+    // The case the whole thing is for: one shape, one depth, and some corners
+    // standing while others are gone. An L with a thin arm and a fat one loses
+    // the thin arm first, and the three corners that made it go with it while
+    // the three the fat arm kept are still on the outline.
+    const ell = [
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 },
+      { x: 15, y: 40 }, { x: 15, y: 100 }, { x: 0, y: 100 },
+    ];
+
+    const standing = survived(erode(simplify([ell]), 10));
+
+    expect(erodedCorners(ell, 10).map(standing)).toEqual([
+      true, true, true,
+      false, false, false,
+    ]);
+  });
+
+  test('nothing at all survives an outline that is empty', () => {
+    expect(survived([])({ x: 0, y: 0 })).toBe(false);
   });
 });
