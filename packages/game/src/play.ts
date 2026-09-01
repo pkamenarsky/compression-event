@@ -231,14 +231,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   let shown: (Standing & { type: ArtefactType })[] = [];
 
   /**
-   * Whether the level has closed over the player.
+   * How far into dying, in seconds, or null while there is somewhere to stand.
    *
-   * Set the moment there is nowhere to be and cleared by the restart, and what
-   * it buys is the screen going black: from inside a wall the camera can see
-   * the level from the outside, and a level seen from the outside is a set of
-   * surfaces rather than somewhere anyone was standing.
+   * Set the moment there is nowhere to be and cleared by the restart. The
+   * screen still ends up black — from inside a wall the camera can see the
+   * level from the outside, and a level seen from the outside is a set of
+   * surfaces rather than somewhere anyone was standing — but it gets there
+   * over the length of the shift rather than in a cut, and the picture keeps
+   * running underneath. Long enough to see which wall did it, and no longer.
    */
-  let dead = false;
+  let dying: number | null = null;
 
   let ambient: SoundHandle | null = null;
   let coming: SoundHandle | null = null;
@@ -307,7 +309,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const restart = (): void => {
-    dead = false;
+    dying = null;
+    say.veil(0);
     version = 0;
     footing = 0;
     shifting = null;
@@ -428,13 +431,24 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     return out === null || out.away > NAMED ? null : out;
   };
 
-  const lost = async (): Promise<void> => {
-    if (say.busy()) return;
+  /**
+   * The level closing over the player.
+   *
+   * The picture in flight is left to finish — the wall that did it is the one
+   * thing worth seeing, and it is the arriving one — under a black that comes
+   * up over the same length of time. On the last version there is no picture
+   * to run and only the black happens.
+   */
+  const lost = (): void => {
+    if (dying !== null) return;
 
-    dead = true;
+    dying = 0;
     say.note(null);
     playSound(error);
+  };
 
+  /** The far end of that, once the screen is black. */
+  const ended = async (): Promise<void> => {
     await say.say('PULL YOURSELF TOGETHER', 3000);
 
     if (live) restart();
@@ -536,11 +550,15 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // The scene is still drawn while a message is up — it is what the message
     // is over.
     if (running && !say.busy()) {
-      stepped(dt);
+      // A player who is dying is a spectator: the shift below still runs, and
+      // nothing else about standing in the level does.
+      if (dying === null) {
+        stepped(dt);
 
-      // Through the shift as well, so that the beat is `HOLD` and not `HOLD`
-      // plus however long the picture happens to take.
-      clock -= dt;
+        // Through the shift as well, so that the beat is `HOLD` and not `HOLD`
+        // plus however long the picture happens to take.
+        clock -= dt;
+      }
 
       if (shifting !== null) {
         shifting += dt;
@@ -560,18 +578,29 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       // The last version compressing has nowhere to compress to, and a level
       // that has run out is not a level that stops: it is the one beat the
       // player cannot be anywhere for.
-      else if (clock <= 0) {
+      else if (dying === null && clock <= 0) {
         if (version + 1 < world.versions.length) compress(version + 1);
-        else void lost();
+        else lost();
       }
 
-      const found = nearest();
+      if (dying === null) {
+        const found = nearest();
 
-      say.note(found === null ? null : named(found.type));
+        say.note(found === null ? null : named(found.type));
 
-      if (found !== null && found.away <= TAKEN) void took(found.index, found.type);
+        if (found !== null && found.away <= TAKEN) void took(found.index, found.type);
 
-      if (!(walls[footing]?.standable({ x: player.x, y: player.z }) ?? true)) void lost();
+        if (!(walls[footing]?.standable({ x: player.x, y: player.z }) ?? true)) lost();
+      }
+
+      // Counted after the shift above, so that the frame the level closes on
+      // is the frame the black starts from rather than one behind it.
+      if (dying !== null) {
+        dying += dt;
+        say.veil(dying / SHIFT);
+
+        if (dying >= SHIFT) void ended();
+      }
     }
 
     view.camera.position.set(player.x, EYE, player.z);
@@ -583,7 +612,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     crowd.update(dt, view.camera);
 
-    if (dead) view.blank();
+    // Under a black that is already whole there is nothing to draw, and what
+    // there is to draw is the level from the outside.
+    if (dying !== null && dying >= SHIFT) view.blank();
     else view.render();
 
     if (options.debug === true) {

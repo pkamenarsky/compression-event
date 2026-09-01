@@ -34,6 +34,16 @@ export interface Hud {
    * Never on unless it is asked for. */
   stat(text: string | null): void
 
+  /**
+   * How far the level has closed over: black over the whole screen at 1,
+   * nothing at 0.
+   *
+   * Dying is a picture rather than a cut — the wall that did it is worth
+   * seeing arrive — and this is what takes the picture away again at the end
+   * of it, before there is a view of the level from the outside to be had.
+   */
+  veil(a: number): void
+
   /** The end: black, and no way out of it. */
   black(): void
 
@@ -60,6 +70,7 @@ export function hud(host: HTMLElement): Hud {
   const under = document.createElement('div');
   const near = document.createElement('div');
   const corner = document.createElement('div');
+  const dark = document.createElement('div');
 
   sheet(screen, `
     position: absolute; inset: 0;
@@ -89,6 +100,12 @@ export function hud(host: HTMLElement): Hud {
     opacity: 0; transition: opacity 0.2s;
   `);
 
+  sheet(dark, `
+    position: absolute; inset: 0;
+    background: #000; opacity: 0;
+    z-index: 9; pointer-events: none;
+  `);
+
   sheet(corner, `
     position: absolute; left: 8px; top: 8px;
     color: #7f7; font: 11px ui-monospace, monospace; white-space: pre;
@@ -96,7 +113,7 @@ export function hud(host: HTMLElement): Hud {
   `);
 
   screen.append(line, under);
-  host.append(near, corner, screen);
+  host.append(near, dark, corner, screen);
 
   return {
     say(text: string, ms: number, beneath = ''): Promise<void> {
@@ -145,6 +162,10 @@ export function hud(host: HTMLElement): Hud {
       if (text !== null) corner.textContent = text;
     },
 
+    veil(a: number): void {
+      dark.style.opacity = String(Math.min(Math.max(a, 0), 1));
+    },
+
     black(): void {
       line.textContent = '';
       under.textContent = '';
@@ -160,6 +181,7 @@ export function hud(host: HTMLElement): Hud {
       waiting?.();
       screen.remove();
       near.remove();
+      dark.remove();
       corner.remove();
     },
   };
