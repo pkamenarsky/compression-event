@@ -1,3 +1,16 @@
+* a shape in both create and select mode has handles to scale, rotate and erode
+** TODO exact shape and form
+* create button - like now, but each created shape can be transformed with the handles
+** but it can't be dragged? cause it's nice to be able to create shapes from inside other shapes
+** either a handle for transformation or disable dragging
+* select
+** polygons/groups - select polygons/groups (shift, marquee), transform, delete
+** points - select points (shift, marquee), transform, add, delete
+** edges - select edges (shift, marquee), transform, add, delete
+* effects - act on selection
+** chamfer etc
+** erosion as well?
+ 
 * snap to grid function
 * create button
 ** (!) should be selected first
