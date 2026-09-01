@@ -146,11 +146,15 @@ describe('save', () => {
       { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
     ]);
 
-    // And the tool it was drawing with was called something else then.
+    // And the tool it was drawing with was called something else then. The
+    // figure goes with it: there was one thing the pen drew, so a file of that
+    // vintage does not say which — and saying nothing is the whole of what is
+    // being read here.
     const old = {
       ...file,
       format: 7,
       tool: 'path' as const,
+      figure: undefined,
       world: { ...file.world, paths: undefined },
     };
 
