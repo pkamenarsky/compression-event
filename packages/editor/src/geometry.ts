@@ -354,16 +354,7 @@ function band(shape: Shape, depth: (i: number) => number): Band {
 
       if (turn * d >= 0) continue;
 
-      // The mitre is where the two moved lines meet, and it is the corner's
-      // image only while they still turn the way the edges do. An edge whose
-      // ends go different distances rotates, and once one has rotated past the
-      // other the lines have already crossed: `meet` answers with the crossing
-      // behind the corner, which is a point on neither offset, and the quad
-      // built through it doubles back on itself. A bowtie is not a wedge — the
-      // nonzero rule reads its middle as ground, and the band ends up with a
-      // hole in it exactly where the corner needed covering.
-      const moved = p.mx * q.my - p.my * q.mx;
-      const corner = turn * moved > 0 ? meet(p, q) : null;
+      const corner = mitre(p, q);
       const reach = Math.abs(d) * MITRE_LIMIT;
 
       put(corner === null || Math.hypot(corner.x - q.a.x, corner.y - q.a.y) > reach
@@ -443,6 +434,38 @@ function moved(ring: Ring, depth: (i: number) => number): Moved[] {
   }
 
   return out;
+}
+
+/**
+ * The corner's image under the offset: where the two moved lines cross, and
+ * nothing where that crossing is not a place the boundary goes.
+ *
+ * The offset runs along p's moved line, past where p's moved edge ends, turns
+ * at the mitre, and comes back down q's to where q's moved edge begins. So the
+ * mitre is ahead of `p.mb` along p and behind `q.ma` along q, and a crossing
+ * that is behind either is the two lines meeting somewhere the boundary never
+ * reaches. The wedge built through such a point folds over into a bowtie, and a
+ * bowtie is not a wedge: the nonzero rule reads one of its two lobes as ground,
+ * so the band comes out with a hole in it — not at the corner, but wherever
+ * that lobe happens to have swept, which can be most of a room away. It showed
+ * up as a crumb of floor left standing on its own in the middle of nothing.
+ *
+ * Under one depth this can never happen and the test costs a dot product: the
+ * moved lines are translates of the source ones, so a corner the ring turns
+ * away from puts the mitre ahead of the one and behind the other by
+ * construction. It is an edge whose ends go different distances, rotating until
+ * the two lines are nearly parallel, that walks the crossing back past the ends
+ * of both.
+ */
+function mitre(p: Moved, q: Moved): Point | null {
+  const m = meet(p, q);
+
+  if (m === null) return null;
+
+  const ahead = (m.x - p.mb.x) * p.mx + (m.y - p.mb.y) * p.my;
+  const behind = (m.x - q.ma.x) * q.mx + (m.y - q.ma.y) * q.my;
+
+  return ahead >= 0 && behind <= 0 ? m : null;
 }
 
 /** Where two moved edges' lines cross, or nothing when they are parallel. */

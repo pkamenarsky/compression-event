@@ -994,13 +994,15 @@ describe('erodeAt', () => {
    * dragged well in, and the far wall carried three hundred units across, with
    * a fourth drag going on over the top of all of it.
    *
-   * It is here because a wedge closed with the mitre held at the limit, rather
-   * than cut off with the chord, takes ninety-six per cent of this room away
-   * between one half-unit of depth and the next and gives it back sixty units
-   * later. The spike is eight times the depth long by then, which is longer
-   * than the room is wide, so it does not merely dent the shape — it slices it
-   * into a pair of scraps. There is nothing in the room's own geometry at that
-   * depth for either event to be about.
+   * It is here for two things it caught. A wedge closed with the mitre held at
+   * the limit, rather than cut off with the chord, takes ninety-six per cent of
+   * this room away between one half-unit of depth and the next and gives it
+   * back sixty units later — the spike is eight times the depth long by then,
+   * longer than the room is wide, so it does not dent the shape, it slices it.
+   * And a mitre taken without asking where on the offset it falls leaves a
+   * crumb of floor standing on its own eight hundred units from the corner that
+   * produced it. There is nothing in the room's own geometry at either depth
+   * for either event to be about.
    */
   const carried: Ring = [
     { x: -1200, y: -700 }, { x: -1000, y: -1100 }, { x: -500, y: -1000 },
@@ -1015,20 +1017,28 @@ describe('erodeAt', () => {
 
   test('a room already deep on six corners does not vanish as the last three go in', () => {
     let last = Infinity;
-    let rose = 0;
+    const rose: number[] = [];
 
     for (let d = 0; d <= 700; d += 0.25) {
       const area = shapeArea(deepening(d));
 
-      // Eroding gives nothing back. A few hundredths of a per cent does come
-      // back here and there, which is the arrangement re-cutting a ring it has
-      // already cut and not a corner going anywhere.
-      if (area > last + 1000) rose++;
+      if (area > last + 1e-6) rose.push(d);
 
       last = area;
     }
 
-    expect(rose).toBe(0);
+    expect(rose).toEqual([]);
+  });
+
+  test('and stays one room the whole way rather than shedding a crumb of itself', () => {
+    // A bowtie wedge's far lobe is wound against the rest of the band, so it
+    // cancels whatever it covers instead of adding to it. What it covered here
+    // was a corner of an edge's own quad, most of a room from the corner the
+    // wedge belonged to, and what was left standing there was a three-point
+    // island of floor with nothing under it.
+    for (let d = 0; d <= 700; d += 0.25) {
+      expect([d, deepening(d).length]).toEqual([d, 1]);
+    }
   });
 
   test('and goes on shrinking a little at a time rather than in one lurch', () => {
@@ -1036,10 +1046,9 @@ describe('erodeAt', () => {
     // back is two steps, and only the second is a rise. What says it is wrong
     // is the size of either: half the room in a quarter of a unit of depth.
     //
-    // Ten thousand-odd is what the room genuinely loses fastest, around 406,
-    // where a three-point crumb splits off the far corner for three units of
-    // depth and rejoins. That is real and it is a rounding error's worth of
-    // area; five hundred and fifty thousand is not.
+    // A few hundred is what the room genuinely loses fastest over a quarter of
+    // a unit. Ten thousand was the crumb rejoining; five hundred and fifty
+    // thousand was the room being sliced in two.
     let last = shapeArea(deepening(0));
     let worst = 0;
 
@@ -1050,7 +1059,7 @@ describe('erodeAt', () => {
       last = area;
     }
 
-    expect(worst).toBeLessThan(20000);
+    expect(worst).toBeLessThan(2000);
   });
 
   test('every depth zero is the ring simplified and nothing else', () => {
