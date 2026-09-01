@@ -2837,48 +2837,11 @@ function polygons(
  * squares, so a handle sits on top of its own spoke rather than under it.
  */
 function leaders(ctx: CanvasRenderingContext2D, view: View, it: Resolved): void {
-  ctx.save();
-  between(ctx, view, [it.source], it.shape);
-  spokes(ctx, view, it.source, erodedCorners(it.source, it.depths ?? it.erosion));
-  ctx.restore();
-}
+  const moved = erodedCorners(it.source, it.depths ?? it.erosion);
 
-/**
- * Clipped to the ground between the two boundaries: the leader stops where the
- * projection starts.
- *
- * A corner the erosion consumed has nowhere on the outline to land, and its
- * moved point is somewhere in the middle of what is left — so the line to it
- * runs straight through the eroded shape and out across the interior, which
- * reads as a stray line rather than as a corner that died. Cut at the outline
- * it is a tick against the boundary, and the whole picture is then the same
- * one at every corner: a spoke across the ground the erosion took.
- *
- * The clip rather than a trim per line, because the trim is an intersection
- * per corner against every wall of the projection and this is one path the
- * canvas was going to rasterise anyway. Even-odd over both boundaries, so it
- * is the ground between them whichever way round they are: a corner pushed
- * out sits in the annulus too, with the source ring as the inner edge of it.
- */
-function between(ctx: CanvasRenderingContext2D, view: View, a: Shape, b: Shape): void {
   ctx.beginPath();
 
-  for (const ring of a) trace(ctx, view, ring);
-  for (const ring of b) trace(ctx, view, ring);
-
-  ctx.clip('evenodd');
-}
-
-/** One ring's corners joined to where they went, corner for corner. */
-function spokes(
-  ctx: CanvasRenderingContext2D,
-  view: View,
-  ring: Ring,
-  moved: readonly Point[],
-): void {
-  ctx.beginPath();
-
-  ring.forEach((p, i) => {
+  it.source.forEach((p, i) => {
     const a = toScreen(view, p);
     const b = toScreen(view, moved[i]);
 
