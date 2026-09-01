@@ -11,7 +11,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Hulls, PLAYER_RADIUS } from './coldet';
-import { Point, Polygon, signedArea, withNormals } from './world';
+import { BISECTOR_LIMIT, Point, Polygon, signedArea, withNormals } from './world';
 
 /** Counter-clockwise, which is a room: every ring that reaches here is one, or
  * a hole in one. */
@@ -149,6 +149,51 @@ describe('a hairpin', () => {
     const at = room(slit).trace({ x: 30, y: 60 }, { x: 40, y: 0 });
 
     expect(at.x).toBeLessThan(50 - PLAYER_RADIUS + 1e-2);
+  });
+});
+
+describe('a spur that is very nearly a hairpin', () => {
+  // The one above is exact — out and back along the same line — and is caught
+  // by the guard for two normals that cancel. This is the same spur a
+  // thousandth of a unit off it, which is what an offset deep enough to split a
+  // room actually leaves behind, and which reads as an ordinary corner all the
+  // way down. Its bisector is a thousand units long, and the wall it belongs to
+  // used to be expanded into a quad whose far corner had slid down the wall
+  // rather than across it, leaving the strip beside that wall covered by
+  // nothing at all. See `BISECTOR_LIMIT`.
+  //
+  // What that let the player do is held end to end rather than here — `export`
+  // has the room it was found in, offset until it splits, walked in at the
+  // game's own scale. Both halves of the invariant are what this is for.
+  //
+  // The proportions are the ones it was found at: a spur a couple of radii long
+  // and a ten-thousandth of one wide, hanging off the end of a wall forty
+  // radii long. The length of that wall is the point — the bisector at the tip
+  // is what its far corner is built from, so what slides is the whole of the
+  // strip beside it.
+  const spur = ring([
+    { x: 0, y: 0 },
+    { x: 60, y: 0 },
+    { x: 60, y: 40 },
+    { x: 60.00005, y: 39.3 },
+  ]);
+
+  test('the corner at its tip does not send the bisector off down the wall', () => {
+    const worst = Math.max(...withNormals(spur.points).map(p => {
+      const tx = -p.eny, ty = p.enx;
+
+      return Math.abs(p.bnx * tx + p.bny * ty);
+    }));
+
+    expect(worst).toBeLessThan(BISECTOR_LIMIT + 1e-9);
+  });
+
+  test('and the wall it belongs to is still a radius thick all the way along', () => {
+    // Held along the wall and not in length, so the crossways component is
+    // untouched and the moved edge is still a translate at exactly a radius.
+    for (const p of withNormals(spur.points)) {
+      expect(p.bnx * p.enx + p.bny * p.eny).toBeCloseTo(1, 9);
+    }
   });
 });
 

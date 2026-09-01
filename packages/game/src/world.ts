@@ -231,6 +231,42 @@ export function signedArea(points: readonly Point[]): number {
  * wound the other way from its outer ring and both arrive here as rings. What
  * "outward" means follows from it: away from the material either way.
  */
+/**
+ * How far along a wall a corner's bisector may run, in player radii, before it
+ * is held there.
+ *
+ * The bisector is the unit bisector over the cosine of the half angle, so its
+ * component *across* the wall is exactly one and its component *along* the wall
+ * is the cotangent of the half angle — which runs away to infinity as a corner
+ * closes on a hairpin. There is a guard below for the hairpin itself, at 1e-8,
+ * and between the two lies every corner that is not quite one: a spur eighteen
+ * units long and a thousandth of a unit wide reads as an ordinary corner, comes
+ * back with a bisector nineteen hundred long, and `hullOf` builds the wall's
+ * expansion out of it — a quad whose far corner has slid two hundred units down
+ * the wall rather than a radius across it. The strip beside that wall is then
+ * not covered by anything and the player walks out through it.
+ *
+ * Rings like that are not authored, they are arrived at: an offset deep enough
+ * to split a room leaves the two pieces meeting almost exactly, and almost is
+ * what does it. So the bound is here rather than in whatever produced the ring.
+ *
+ * Held *along* rather than in length, which is the whole of why this works. The
+ * component across the wall is what makes the moved edge a translate of the
+ * original at exactly a radius, and scaling the whole bisector down loses it —
+ * the wall then stops the player short of where it should and the strip beside
+ * it is still uncovered, which is a fix that fixes nothing. Holding the
+ * tangential part keeps the crossways part exact and only stops the corner
+ * sliding; what it costs is that the two walls at a corner sharper than
+ * `2 * atan(1 / 16)` — about seven degrees — no longer meet exactly at their
+ * mitre, and the tip of that spike is a little thinner than a radius.
+ *
+ * Sixteen because nothing that has to be exact needs more. A level's worth of
+ * uniformly eroded rooms wants at most fourteen; the one corner in a hundred
+ * and twenty rooms that wanted forty was two point eight degrees wide, and
+ * holding it changes nothing anyone can walk through.
+ */
+export const BISECTOR_LIMIT = 16;
+
 export function withNormals(points: readonly Point[]): PolygonPoint[] {
   const n = points.length;
   if (n < 3) return [];
@@ -269,11 +305,27 @@ export function withNormals(points: readonly Point[]): PolygonPoint[] {
       return { x: p.x, y: p.y, bnx: here.nx, bny: here.ny, enx: here.nx, eny: here.ny };
     }
 
+    const bnx = bx / cosHalf, bny = by / cosHalf;
+
+    // Along the wall rather than across it. The component across is exactly one
+    // by construction and is the whole of what the bisector is for; what runs
+    // away at a near-hairpin is the component along, and holding that is what
+    // keeps the moved edge a translate of the original while stopping the far
+    // corner sliding off down it.
+    const tx = -here.ny, ty = here.nx;
+    const along = bnx * tx + bny * ty;
+
+    if (Math.abs(along) <= BISECTOR_LIMIT) {
+      return { x: p.x, y: p.y, bnx, bny, enx: here.nx, eny: here.ny };
+    }
+
+    const held = Math.sign(along) * BISECTOR_LIMIT;
+
     return {
       x: p.x,
       y: p.y,
-      bnx: bx / cosHalf,
-      bny: by / cosHalf,
+      bnx: here.nx + tx * held,
+      bny: here.ny + ty * held,
       enx: here.nx,
       eny: here.ny,
     };

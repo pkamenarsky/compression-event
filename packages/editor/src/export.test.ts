@@ -14,7 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { Point } from '@ce/game/world';
+import { Point, SCALE } from '@ce/game/world';
 import { BakedSpan, CROSSING, FRAME_STRIDE, Hulls, outline, placeAt, signedArea } from '@ce/game';
 import { Frame, artefactsDuring, bakeSpan, riding, sample, stretchAt, truth } from './bake';
 import { artefactsShipped, bakedSpan, versionOf } from './export';
@@ -28,6 +28,7 @@ import {
   affine,
   compose,
   contributing,
+  deepen,
   editAt,
   grouped,
   live,
@@ -405,6 +406,91 @@ describe('a span begins and ends on what the editor draws', () => {
       expect(apart(truth(world, 0, 1), outline(flat, 1))).toBeLessThan(EXACT);
     });
   }
+});
+
+/**
+ * A room offset one corner at a time until it comes apart, walked in.
+ *
+ * The shape an offset that deep leaves is not one anybody draws: the two pieces
+ * of the split room meet almost exactly, and what "almost" leaves behind is a
+ * spur eighteen units long and a thousandth of a unit wide hanging off an
+ * otherwise straight wall. Every reader downstream has to survive it, and the
+ * one that did not was collision — see `BISECTOR_LIMIT`.
+ *
+ * End to end rather than on a ring made up for the purpose, because the point
+ * is that the editor hands the game shapes like this without either of them
+ * doing anything wrong. The ring is the one from
+ * `scratch/world-2026-09-01T12-33-53Z.json`, which is where it was found.
+ */
+describe('a room split by a depth on one corner', () => {
+  const room: Point[] = [
+    { x: -1200, y: -700 }, { x: -1000, y: -1100 }, { x: -500, y: -1000 },
+    { x: -600, y: -300 }, { x: 0, y: -1100 }, { x: 800, y: -200 },
+    { x: -600, y: 500 }, { x: -1500, y: 200 }, { x: -1200, y: -500 },
+  ];
+
+  /** The room with corner `i` taken `by` deeper than the rest. */
+  function bent(by: readonly [number, number][]): World {
+    const { world, ids } = drawn(['level', room]);
+    const polygon = world.polygons.get(ids[0])!;
+
+    let edit = editAt(world, 0, ids[0], resolveAt(world, 0)[0]);
+
+    for (const [i, d] of by) {
+      edit = deepen(edit, polygon, new Set([polygon.points[i].id]), d);
+    }
+
+    return withEdit(world, 0, ids[0], edit);
+  }
+
+  /**
+   * How many straight walks out of `from` leave the level, of a hundred and
+   * twenty tried.
+   *
+   * At the game's own scale, which is the whole of what makes this a test: the
+   * player is a fixed size in world units and the room is in editor ones, so
+   * building the hulls at a scale of one leaves the player a twenty-fifth of
+   * their size — small enough to walk round the spur instead of through the
+   * wall beside it, and small enough for this to pass with the bug in.
+   */
+  function escapes(world: World, from: Point): number {
+    const hulls = new Hulls(versionOf(world, 0).polygons, SCALE);
+    const start = { x: from.x * SCALE, y: from.y * SCALE };
+
+    if (!hulls.standable(start)) return -1;
+
+    let out = 0;
+
+    for (let k = 0; k < 120; k++) {
+      const a = k / 120 * Math.PI * 2;
+      let at = start;
+
+      // Far enough to cross the room several times over, so a leak anywhere
+      // along the way is found rather than walked up to and stopped at.
+      for (let i = 0; i < 1200; i++) {
+        at = hulls.trace(at, { x: Math.cos(a) * 0.05, y: Math.sin(a) * 0.05 });
+      }
+
+      if (!hulls.standable(at)) out++;
+    }
+
+    return out;
+  }
+
+  test('is still a room the player cannot walk out of', () => {
+    expect(escapes(bent([[3, 497.96875], [4, -1.625], [5, -1.625]]), { x: 0, y: 0 })).toBe(0);
+  });
+
+  test('at every depth on the way there', () => {
+    for (let d = 0; d <= 1200; d += 50) {
+      const out = escapes(bent([[3, d], [4, -1.625], [5, -1.625]]), { x: 0, y: 0 });
+
+      // Below zero is the start point being eaten, which past a certain depth
+      // it is: the room the player stood in is gone, and there is nothing to
+      // walk out of.
+      expect([d, out]).toEqual([d, out < 0 ? out : 0]);
+    }
+  });
 });
 
 describe('what the buffers are', () => {
