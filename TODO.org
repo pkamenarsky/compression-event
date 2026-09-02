@@ -32,6 +32,7 @@
 
 * selection of overlapping vertices
 * resolve selection/group
+** possible? how will this later versions of same group?
 
 * visible versions can be a strip instead of individual lines
 ** button: none/all/next/subsequent/strip (current version is always visible)
