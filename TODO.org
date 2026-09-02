@@ -38,6 +38,7 @@
 * version management
 
 * settings
+** autobake
 ** grid size
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
 
