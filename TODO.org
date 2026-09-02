@@ -3,14 +3,20 @@
 * create button - like now, but each created shape can be transformed with the handles
 ** but it can't be dragged? cause it's nice to be able to create shapes from inside other shapes
 ** either a handle for transformation or disable dragging
+** dragging of points/edges works though
 * select
 ** polygons/groups - select polygons/groups (shift, marquee), transform, delete
 ** points - select points (shift, marquee), transform, add, delete
 ** edges - select edges (shift, marquee), transform, add, delete
+*** maybe no need for modes: since we can't add points by clicking on edges we can select edges, points and polys equally
+**** selection stack needs to be able to hold heterogenous shapes
+** dragging a point scales/rotates uniformly
+* points mode
+** drag points as usual + add/delete points
 * effects - act on selection
 ** chamfer etc
 ** erosion as well?
- 
+
 * snap to grid function
 * create button
 ** (!) should be selected first
@@ -34,6 +40,7 @@
 * make it more clear when drilled into group
 * write rotation degrees when rotating (and maybe when doing any kind of transformation)
 ** in the same style as n-gon point count arrow
+* statusbar shows action + available modifier keys to modify action
 
 * locking of polygons? unlock works then with cmd + click
 * unchain
