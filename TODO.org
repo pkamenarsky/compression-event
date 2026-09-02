@@ -16,6 +16,7 @@
 ** (!) should be selected first
 ** rect
 ** n-gon shape shows slider for point count
+*** show arrow up down and point count
 ** polyline
 ** also artifacts? would make sense
 
@@ -32,6 +33,7 @@
 * fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
 * write rotation degrees when rotating (and maybe when doing any kind of transformation)
+** in the same style as n-gon point count arrow
 
 * locking of polygons? unlock works then with cmd + click
 * unchain
