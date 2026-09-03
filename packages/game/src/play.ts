@@ -273,9 +273,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   /**
    * Where every artefact is drawn, part way from one version to another.
    *
-   * One that only exists at one end of the shift stands still at the place it
-   * has: something arriving has nowhere to arrive from, and something on its
-   * way out has nowhere to go.
+   * One that only exists at one end of the shift has no second place to be
+   * pulled towards, but it rides its slot all the same — see `riding`.
    */
   const placed = (from: number, to: number, t: number): void => {
     // A shift is one span read forwards or backwards, so the span is the
@@ -734,9 +733,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
  * than one version — there are still two places, and a straight line between
  * them is better than a jump.
  *
- * One that exists at only one end stands still at the place it has: something
- * arriving has nowhere to arrive from, and something on its way out has
- * nowhere to go.
+ * One that exists at only one end has no second place to be interpolated
+ * towards, but it still has a slot, and the slot is where the room it is
+ * standing in went. So it rides that: a key introduced into a turning room goes
+ * round with the room from the start of the shift rather than hanging at the
+ * far end of it. Only where there is no slot to ride does it stand still.
  */
 function riding(
   span: BakedSpan | undefined,
@@ -749,16 +750,20 @@ function riding(
   const a = it.places[from] ?? null;
   const b = it.places[to] ?? null;
 
-  if (a === null || b === null) return a ?? b;
+  if (a === null && b === null) return null;
   if (from === to) return a;
 
   const slot = span?.artefacts[index] ?? -1;
 
+  if (slot < 0) {
+    return a === null || b === null
+      ? a ?? b
+      : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  }
+
   // The span runs from the earlier version to the later one, so a shift the
   // other way is the same span read backwards.
-  return slot < 0
-    ? { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
-    : placeAt(span!, slot, it.at, to > from ? t : 1 - t);
+  return placeAt(span!, slot, it.at, to > from ? t : 1 - t);
 }
 
 /**

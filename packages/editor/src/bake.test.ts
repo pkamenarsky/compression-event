@@ -98,6 +98,29 @@ function length(frame: Frame): number {
   return out;
 }
 
+/**
+ * The middle of a frame's bounding box: enough to say where a shape sits and
+ * blind to how big it is, which is what a growing polygon needs asking.
+ *
+ * The box rather than the mean of the points, because a frame is open runs with
+ * shared ends and the mean counts some corners twice — which reads as a drift
+ * of its own.
+ */
+function middle(frame: Frame): Point {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  for (const run of frame) {
+    for (const p of run.points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
 function lengthOf(runs: Point[][]): number {
   return length(runs.map(points => ({
     id: 0,
@@ -649,15 +672,78 @@ describe('keyframes', () => {
     expect(length(sample(span, 1))).toBeCloseTo(0, 6);
   });
 
-  test('a polygon born into the later version appears at the boundary', () => {
+  test('a polygon born into the later version grows out of its middle', () => {
     const { world } = drawn(['level', rect(0, 0, 100, 100)]);
     const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
 
     const span = run(bakeSpan(added.world, 0));
 
-    expect(length(sample(span, 0))).toBeCloseTo(400, 6);
-    expect(length(sample(span, 0.999))).toBeCloseTo(400, 6);
+    // A point at the near end — not nothing, and not the whole polygon either.
+    expect(length(sample(span, 0))).toBeGreaterThan(400);
+    expect(length(sample(span, 0))).toBeLessThan(401);
     expect(length(sample(span, 1))).toBeCloseTo(800, 6);
+
+    // And a perimeter that climbs in step with the scale the whole way, rather
+    // than holding still and then arriving.
+    for (const t of [0.25, 0.5, 0.75]) {
+      expect(length(sample(span, t)) - 400).toBeCloseTo(400 * t, 0);
+    }
+  });
+
+  test('and grows about its own centre, so it does not drift into place', () => {
+    const { world } = drawn(['level', rect(0, 0, 100, 100)]);
+    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
+
+    const span = run(bakeSpan(added.world, 0));
+
+    for (const t of [0, 0.4, 1]) {
+      const mine = sample(span, t).filter(r => r.id === added.id);
+
+      expect(mine.length).toBeGreaterThan(0);
+      expect(middle(mine).x).toBeCloseTo(350, 4);
+      expect(middle(mine).y).toBeCloseTo(350, 4);
+    }
+  });
+
+  test('and the span says the same thing the editor does all the way across', () => {
+    const { world } = drawn(['level', rect(0, 0, 100, 100)]);
+    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
+
+    expect(drift(added.world)).toBeLessThan(TOLERANCE);
+  });
+
+  test('one born into a group that turns rides the group while it grows', () => {
+    const { world, ids } = drawn(['level', rect(-300, -100, 200, 200)]);
+    const added = addPolygon(world, 'level', rect(100, -100, 200, 200), 1, TOP);
+    const group = grouped(added.world, 0, [ids[0], added.id], TOP)!;
+    const w = transformed(group.world, 1, group.id, { rotation: Math.PI / 2 });
+
+    const span = run(bakeSpan(w, 0));
+
+    // A quarter turn about the origin takes (200, 0) to (0, 200), so half of it
+    // takes the newborn's middle to the diagonal. Growing where it will end up
+    // instead would leave it sitting at (200, 0) the whole way.
+    const half = middle(sample(span, 0.5).filter(r => r.id === added.id));
+
+    expect(half.x).toBeCloseTo(200 / Math.SQRT2, 4);
+    expect(half.y).toBeCloseTo(200 / Math.SQRT2, 4);
+
+    // And it is a point that rode there, not a polygon.
+    expect(length(sample(span, 0)) - editorAt(w, 0)).toBeLessThan(1);
+  });
+
+  test('one growing into its neighbour is cut where it reaches the wall', () => {
+    const { world } = drawn(['level', rect(0, 0, 200, 200)]);
+    const added = addPolygon(world, 'level', rect(150, 50, 200, 100), 1, TOP);
+
+    const span = run(bakeSpan(added.world, 0));
+    const track = span.tracks.find(t => t.id === added.id)!;
+
+    // It starts as a point clear of the room and ends overlapping it, so two
+    // rooms join part way through — an event, and one that only exists at all
+    // because the birth is a motion rather than an appearance.
+    expect(track.stretches.length).toBeGreaterThan(1);
+    expect(span.worst).toBeLessThan(TOLERANCE);
   });
 });
 

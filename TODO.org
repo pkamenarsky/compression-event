@@ -1,5 +1,6 @@
+* eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 * deleting poly from version deletes it from all
-* new polygons in version just snap into existence :(
+
 * a shape in both create and select mode has handles to scale, rotate and erode
 ** TODO exact shape and form
 * create button - like now, but each created shape can be transformed with the handles

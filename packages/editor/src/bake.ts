@@ -32,6 +32,26 @@
 // interpolates an accumulated chain — the property the composed frame in
 // `scene.ts` was allowed to give up.
 //
+// A polygon that is new in `k + 1` has no `local_k` of its own, and is given
+// one: its own ring pinched into its own middle. So `local(t)` opens it back
+// out over the span and it grows out of a point instead of arriving whole at
+// the boundary — through the same three lines above rather than through a case
+// of its own. See `budding`, which also says why the birth goes in the ring
+// rather than in the frame, where it looks like it belongs.
+//
+// It costs something. A birth is now a motion, so it makes topology events
+// where it grows through its neighbours and the span is cut where they are,
+// where before there was nothing inside the span to find. A hundred-room level
+// gaining a pillar in every fourth room cuts about fifteen extra stretches per
+// birth and takes about half again as long to bake.
+//
+// The one thing it is not is absent. A ring with no area is not something the
+// arrangement can be asked about, so the near end holds a real polygon a
+// thousandth of its final size; standing still at version `k` the game draws
+// nothing there, and the instant a shift starts it draws a speck. That is the
+// one place the still and the morph do not agree, and it is a tenth of a unit
+// wide.
+//
 // A stretch belongs to a polygon
 // ------------------------------
 // Not to the level. A polygon's share of the outline is a question about that
@@ -69,8 +89,7 @@
 //
 // - **Known outright, from the layer chain.** Both ends of the span, always: a
 //   version boundary is a keyframe because the interpolation's derivative
-//   changes there, and because a polygon born in `k + 1` appears exactly there
-//   and nowhere inside. Those cost nothing.
+//   changes there. Those cost nothing.
 //
 // - **Measured, because nothing else is trustworthy.** Everything else — a
 //   corner passing through an edge, two rooms joining, an eroded ring losing a
@@ -102,6 +121,7 @@ import {
   Resolved,
   affine,
   artefactsAt,
+  centroid,
   chain,
   compose,
   contributed,
@@ -444,9 +464,10 @@ export function pruned(bake: Bake, world: World): Bake {
  * One polygon across one span: the frame it already stood in, the layer being
  * eased onto it, and its two endpoints.
  *
- * A polygon born into `k + 1` has no `t` inside the span at which it exists —
- * it appears at the boundary, which is a keyframe already — so it is `newborn`
- * and shows up only at `t === 1`.
+ * A polygon born into `k + 1` has no near end of its own, so it is given one:
+ * the same ring, pinched into its own middle. See `budding`. From there it is a
+ * polygon like any other — it rides its groups, it cuts stretches where it
+ * grows through its neighbours, and nothing downstream has to know it is new.
  */
 interface Moving {
   at: Resolved
@@ -489,7 +510,6 @@ interface Moving {
   varying: boolean
   /** The groups holding it over this span, innermost first. */
   holders: Holder[]
-  newborn: boolean
 }
 
 /**
@@ -713,6 +733,45 @@ function between2(a: Point, b: Point, t: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
+/**
+ * How small a polygon is at the instant before it is there.
+ *
+ * Not nought. A ring with no area is not something the arrangement can be asked
+ * about — every edge is degenerate, every crossing is a division by nothing,
+ * and the offset of it is worse — so the near end is a real polygon, only a
+ * very small one. Small enough to read as a point at any scale a level is drawn
+ * at, and some six orders above the tolerance `near1` works to, so the CSG is
+ * looking at an honest shape rather than at rounding.
+ */
+const SEED = 1e-3;
+
+/**
+ * A polygon born into the later version, given the near end it does not have:
+ * its own ring, pinched into its own middle.
+ *
+ * In the ring rather than in the frame, and the two are the same shape. A
+ * uniform scale about the centroid takes every corner along the line from the
+ * centroid to where it ends up, and the scale runs linearly over the span, so
+ * scaling the frame and lerping the corners are the same arithmetic — which is
+ * exactly what `between` and the shader's `mix(aPointA, aPointB, u)` already
+ * do, at both ends of every stretch, for free.
+ *
+ * The frame road works and was the first one written. What is wrong with it is
+ * single precision: a frame squashed by `SEED` has to be opened back out by a
+ * layer of `1 / SEED`, and the translation holding the pivot still is then a
+ * large number that must cancel a large number in a float32 table. The error
+ * that survives is small — some hundredths of a unit — but it is error bought
+ * for nothing, since the ring says the same thing exactly.
+ */
+function budding(local: Ring): Ring {
+  const c = centroid(local);
+
+  return local.map(p => ({
+    x: c.x + (p.x - c.x) * SEED,
+    y: c.y + (p.y - c.y) * SEED,
+  }));
+}
+
 function moving(world: World, from: VersionId): Moving[] {
   const before = new Map(resolveAt(world, from).map(it => [it.id, it]));
   const after = resolveAt(world, from + 1);
@@ -732,18 +791,26 @@ function moving(world: World, from: VersionId): Moving[] {
     const layer = edit?.transform ?? EMPTY_TRANSFORM;
 
     if (was === undefined) {
+      // Its own transform is applied outright rather than eased: a version that
+      // both makes a polygon and moves it is describing where the polygon *is*,
+      // and there is no earlier place for that to be a move away from. So the
+      // only thing in flight over the frame is what its groups are doing, and
+      // the birth itself is in the ring.
       return {
         at: it,
-        base: it.frame,
+        base: compose(affine(layer), groupFrame(world, from, it.id)),
         layer: EMPTY_TRANSFORM,
         corners: it.corners,
-        local: [it.local, it.local] as [Ring, Ring],
+        local: [budding(it.local), it.local] as [Ring, Ring],
         dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
-        depth: [it.erosion, it.erosion] as [number, number],
-        depths: [flatDepths(it), flatDepths(it)] as [number[], number[]],
+
+        // From nothing, so that the depth stays in proportion to the shape it
+        // is taken off. A full depth against a thousandth of a polygon is not a
+        // thin room; it is an inside-out one.
+        depth: [0, it.erosion] as [number, number],
+        depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
-        holders: [],
-        newborn: true,
+        holders: holding(it.id),
       };
     }
 
@@ -760,7 +827,6 @@ function moving(world: World, from: VersionId): Moving[] {
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
       holders: holding(it.id),
-      newborn: false,
     };
   });
 }
@@ -899,13 +965,6 @@ function world1(items: Moving[], t: number): Resolved[] {
   const out: Resolved[] = [];
 
   for (const m of items) {
-    if (m.newborn && t < 1) continue;
-
-    if (m.newborn) {
-      out.push(m.at);
-      continue;
-    }
-
     const local = between(m.local[0], m.local[1], t);
     const frame = riding(m, t);
     const source = place(frame, local);
@@ -1418,8 +1477,6 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
 const PROBES = 16;
 
 function reach(m: Moving): AABB {
-  if (m.newborn) return ofRings([m.at.source]);
-
   let all: AABB | null = null;
   let step = 0;
   let was: Ring | null = null;
@@ -2369,9 +2426,14 @@ export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
  * the same chain, eased the same way, rather than by a second answer to a
  * question the frame table already answers.
  *
- * Newborn the same way a polygon is: an artefact the later version introduces
- * arrives where it is put, rather than flying in from wherever the identity
- * would have left it.
+ * Newborn the same way a polygon is, with the one difference that an artefact
+ * has no size: there is nothing to grow out of a point, so what a birth gets
+ * here is not a scale but the rest of it. It hangs in its group's frame from
+ * the near end of the span and rides whatever that group does, so a key
+ * introduced into a room that also turns this version goes round with the room
+ * instead of waiting at the far end for it. Its own transform is applied
+ * outright, for the reason `moving` gives: it says where the artefact is, not
+ * where it went.
  */
 function carried(world: World, from: VersionId): Map<Id, Rider> {
   const next = world.versions[from + 1];
@@ -2385,14 +2447,14 @@ function carried(world: World, from: VersionId): Map<Id, Rider> {
     if (it.birth > from + 1) continue;
 
     const born = it.birth <= from;
+    const own = next.edits.get(id)?.transform ?? EMPTY_TRANSFORM;
+    const base = groupFrame(world, from, id);
 
     out.set(id, {
-      base: groupFrame(world, born ? from : from + 1, id),
-      layer: born ? next.edits.get(id)?.transform ?? EMPTY_TRANSFORM : EMPTY_TRANSFORM,
-      holders: born
-        ? enclosing(world, id)
-          .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM }))
-        : [],
+      base: born ? base : compose(affine(own), base),
+      layer: born ? own : EMPTY_TRANSFORM,
+      holders: enclosing(world, id)
+        .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM })),
     });
   }
 
@@ -2420,7 +2482,7 @@ function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
         ? cast.riders.get(group) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
         : {
           base: m.base,
-          layer: m.newborn ? EMPTY_TRANSFORM : m.layer,
+          layer: m.layer,
           holders: m.holders,
         },
     ];
@@ -2794,8 +2856,13 @@ export function stretchAt(track: Track, t: number): Stretch | null {
  * holds, and interpolating the two ends instead would carry a turning artefact
  * across the chord while the room it is in went round the arc.
  *
- * One that is not there yet is not slid in from anywhere: it appears where it
- * is first put, since there is nowhere for it to come from.
+ * One that is not there yet still rides. There is nowhere for it to come *from*
+ * — its own transform is applied outright rather than eased on, since it says
+ * where the artefact is rather than where it went — but the groups holding it
+ * are moving over this leg like any others, and a key put into a turning room
+ * belongs to the room from the start of the turn. This is `carried`'s rule, and
+ * it is here as well because the two have to agree across the crossing between
+ * the still and the morph.
  */
 export function artefactsDuring(
   world: World,
@@ -2827,34 +2894,46 @@ export function artefactsDuring(
 
     if (there === null && then === null) continue;
 
-    const m = easedFrame(world, id, late, t);
+    // Whether the artefact was already standing at the near end of the leg,
+    // which is the whole of what decides how its own layer is read.
+    const stood = placeAt(world, id, Math.min(a, b)) !== null;
+    const m = easedFrame(world, id, late, t, stood);
 
-    const at = there === null ? then!
-      : then === null ? there
-      : place(m, [it.at])[0];
-
-    out.push({ id, type: it.type, at, facing: facing(m) });
+    out.push({ id, type: it.type, at: place(m, [it.at])[0], facing: facing(m) });
   }
 
   return out.sort((p, q) => p.id - q.id);
 }
 
-/** `groupFrame`, with one version's layers part way on. */
-function easedFrame(world: World, id: ArtefactId, late: VersionId, t: number): Affine {
+/**
+ * `groupFrame`, with one version's layers part way on.
+ *
+ * `stood` says whether the artefact's *own* layer at `late` is one of them. It
+ * is not, for one the leg introduces: there was no earlier place for that
+ * transform to be a move away from, so it is applied whole while the groups
+ * ease.
+ */
+function easedFrame(
+  world: World,
+  id: ArtefactId,
+  late: VersionId,
+  t: number,
+  stood: boolean,
+): Affine {
   const up = enclosing(world, id);
   let m = IDENTITY;
 
   for (const k of chain(world, late)) {
     const edits = world.versions[k].edits;
-    const lay = (of: Id): Transform => {
+    const lay = (of: Id, ease: boolean): Transform => {
       const own = edits.get(of)?.transform ?? EMPTY_TRANSFORM;
 
-      return k === late ? easing(own, t) : own;
+      return k === late && ease ? easing(own, t) : own;
     };
 
-    m = compose(affine(lay(id)), m);
+    m = compose(affine(lay(id, stood)), m);
 
-    for (const g of up) m = compose(affine(lay(g)), m);
+    for (const g of up) m = compose(affine(lay(g, true)), m);
   }
 
   return m;

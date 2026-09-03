@@ -210,6 +210,36 @@ describe('a flattened span replays as its span does', () => {
 
     expect(agrees(w, 0)).toBeLessThan(SLACK);
   });
+
+  // A birth is a scale in the frame table like any other, so this is not really
+  // a new road through the shader — but it is the only one that runs a scale of
+  // a thousand through it, and a pivot that far from the identity is where
+  // single precision would say so if it were going to.
+  test('a room born into the later version, growing out of its middle', () => {
+    const { world } = drawn(['level', rect(0, 0, 200, 160)]);
+    const added = addPolygon(world, 'level', rect(400, 300, 140, 140), 1, TOP);
+
+    expect(agrees(added.world, 0)).toBeLessThan(SLACK);
+  });
+
+  test('and one born into a group that turns while it grows', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 160)],
+      ['level', rect(220, 40, 120, 120)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const added = addPolygon(made.world, 'level', rect(60, 220, 140, 100), 1, TOP);
+    const held = {
+      ...added.world,
+      groups: new Map(added.world.groups).set(made.id, {
+        ...added.world.groups.get(made.id)!,
+        members: [...added.world.groups.get(made.id)!.members, added.id],
+      }),
+    };
+
+    expect(agrees(moved(held, 1, made.id, { rotation: 0.7 }), 0)).toBeLessThan(SLACK);
+  });
 });
 
 // -----------------------------------------------------------------------------

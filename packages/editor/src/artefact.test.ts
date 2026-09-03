@@ -14,6 +14,7 @@ import {
   editAt,
   grouped,
   hitArtefact,
+  landing,
   movedStart,
   pasted,
   placeAt,
@@ -366,6 +367,53 @@ describe('a walk moves them on the walls’ clock', () => {
 
     expect(artefactsDuring(world, 0, 1, 0)[0].at).toEqual({ x: 60, y: 0 });
     expect(artefactsDuring(world, 0, 1, 0.5)[0].at).toEqual({ x: 60, y: 0 });
+  });
+
+  test('but one put into a turning room still goes round with the room', () => {
+    const a = addPolygon(emptyWorld(), 'level', [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ], 0, TOP);
+
+    const b = addPolygon(a.world, 'level', [
+      { x: 200, y: 0 },
+      { x: 300, y: 0 },
+      { x: 300, y: 100 },
+      { x: 200, y: 100 },
+    ], 0, TOP);
+
+    const made = grouped(b.world, 0, [a.id, b.id], TOP)!;
+
+    // Drilled into the group, at the version that also turns it: there is
+    // nowhere for the key to come from, and a room for it to come round in.
+    const put = addArtefact(
+      made.world,
+      'key',
+      { x: 100, y: 0 },
+      1,
+      landing(made.world, 1, made.id),
+    );
+
+    const turned = withEdit(put.world, 1, made.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
+      vertices: new Map(),
+      depths: new Map(),
+    });
+
+    const half = artefactsDuring(turned, 0, 1, 0.5)[0].at;
+
+    expect(half.x).toBeCloseTo(100 / Math.SQRT2, 9);
+    expect(half.y).toBeCloseTo(100 / Math.SQRT2, 9);
+
+    // And it ends where standing still at the later version puts it, which is
+    // the crossing the still and the walk have to agree across.
+    const there = artefactsDuring(turned, 0, 1, 1)[0].at;
+    const still = placeAt(turned, put.id, 1)!;
+
+    expect(there.x).toBeCloseTo(still.x, 9);
+    expect(there.y).toBeCloseTo(still.y, 9);
   });
 
   test('a walk of no length is just the version', () => {
