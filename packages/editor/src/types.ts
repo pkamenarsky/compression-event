@@ -284,6 +284,9 @@ export interface Polygon {
   type: PolygonType
   /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
+  /** The version whose layer took it out, or nothing while it stands. Exactly
+   * a corner's `death`, one level up: see `standing`. */
+  death: VersionId | null
   points: Vertex[]
 }
 
@@ -344,15 +347,22 @@ export interface Version {
 }
 
 /**
- * Whether a corner is one of the polygon's, at a version that inherits from
- * `from`: born into one of those versions, and not yet taken out by one.
+ * Whether something is there at a version that inherits from `from`: born into
+ * one of those versions, and not yet taken out by one.
  *
  * Membership rather than `<=`, because the chain is a chain rather than a
  * count. Versions happen to be numbered in order today and forks would end
  * that; nothing here would need changing when they do.
+ *
+ * A corner, a polygon, a group and an artefact all answer it the same way and
+ * all four ask it, so this takes the pair rather than the thing. Existence is
+ * one question in this world, asked at four sizes.
  */
-export function standing(corner: Vertex, from: ReadonlySet<VersionId>): boolean {
-  return from.has(corner.birth) && (corner.death === null || !from.has(corner.death));
+export function standing(
+  it: { birth: VersionId, death: VersionId | null },
+  from: ReadonlySet<VersionId>,
+): boolean {
+  return from.has(it.birth) && (it.death === null || !from.has(it.death));
 }
 
 /**
@@ -375,6 +385,17 @@ export function standing(corner: Vertex, from: ReadonlySet<VersionId>): boolean 
 export interface Group {
   /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
+  /**
+   * The version whose layer took it out, or nothing while it stands.
+   *
+   * Never on its own: a group's members die with it, because a group is not
+   * geometry and leaving its rooms behind while the thing that holds them
+   * together goes would be a delete that removed less than it drew. What it
+   * does *not* do is change the membership — the group still holds what it held
+   * at every version that still has it, which is the whole reason death is a
+   * version rather than a deletion from the map.
+   */
+  death: VersionId | null
   members: Id[]
 }
 
@@ -400,6 +421,8 @@ export interface Artefact {
   type: ArtefactType
   /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
+  /** The version whose layer took it out, or nothing while it stands. */
+  death: VersionId | null
   /** In its own frame, before any version's transform. */
   at: Point
 }
@@ -624,20 +647,31 @@ export function togglePicked(some: readonly number[], id: number): number[] {
  * it, and those two have to keep agreeing. Paste remints them together.
  *
  * `birth` and `death` on a corner are offsets too, so a corner the original
- * grows at v3 the copy grows three versions after it lands.
+ * grows at v3 the copy grows three versions after it lands. `death` on the
+ * clipping itself is one as well, and is nothing for a thing the original never
+ * removes: what is copied is a life, and one that ends two versions on ends two
+ * versions after the paste. Only `death` — a clipping is taken at the version
+ * it was copied from and is born where it lands, so its birth is always 0.
  */
 export type Clipping =
   | {
       kind: 'polygon'
       type: PolygonType
       points: Vertex[]
+      death?: number
       edits: [number, Edit][]
     }
-  | { kind: 'group', members: Clipping[], edits: [number, Edit][] }
+  | { kind: 'group', members: Clipping[], death?: number, edits: [number, Edit][] }
   /** An artefact, the same way round as a polygon: where it stood at the copy
    * version in world units, and every layer after it keyed by how far past the
    * copy it was. */
-  | { kind: 'artefact', type: ArtefactType, at: Point, edits: [number, Edit][] }
+  | {
+      kind: 'artefact'
+      type: ArtefactType
+      at: Point
+      death?: number
+      edits: [number, Edit][]
+    }
 
 // -----------------------------------------------------------------------------
 // Undo

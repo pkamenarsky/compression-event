@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
 import { FORMAT, restored, saved } from './save';
 import { resolveAt } from './scene';
-import { TOP, addArtefact, addPolygon, editAt, placeAt, withEdit } from './scene';
+import { TOP, addArtefact, addPolygon, editAt, grouped, placeAt, removeAt, withEdit } from './scene';
 import { EMPTY_TRANSFORM, EditorState, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
@@ -113,7 +113,7 @@ describe('save', () => {
       ...before,
       world: {
         ...before.world,
-        groups: new Map([[100, { birth: 0, members: ids }]]),
+        groups: new Map([[100, { birth: 0, death: null, members: ids }]]),
         nextId: 101,
       },
     };
@@ -121,7 +121,7 @@ describe('save', () => {
     const after = restored(JSON.parse(JSON.stringify(saved(grouped))));
 
     expect(after.world.groups).toBeInstanceOf(Map);
-    expect(after.world.groups.get(100)).toEqual({ birth: 0, members: ids });
+    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids });
 
     // A file written before there were any says nothing about them rather than
     // saying there are none, and both read the same way.
@@ -324,5 +324,47 @@ describe('save', () => {
       expect(resolveAt(after.world, 4).find(r => r.id === id)!.corners.length)
         .toEqual(p.points.length);
     }
+  });
+
+  test('what a version took out comes back saying so', () => {
+    const before = world();
+    const ids = [...before.world.polygons.keys()];
+    const gone = removeAt(before.world, 2, [ids[0]]);
+
+    const after = restored(JSON.parse(JSON.stringify(saved({ ...before, world: gone }))));
+
+    expect(after.world.polygons.get(ids[0])!.death).toEqual(2);
+    expect(resolveAt(after.world, 1).map(r => r.id)).toContain(ids[0]);
+    expect(resolveAt(after.world, 2).map(r => r.id)).not.toContain(ids[0]);
+  });
+
+  test('a group and an artefact carry theirs too', () => {
+    const before = world();
+    const ids = [...before.world.polygons.keys()];
+    const put = addArtefact(before.world, 'key', { x: 1, y: 2 }, 0, TOP);
+    const made = grouped(put.world, 0, [ids[0], put.id], TOP)!;
+    const gone = removeAt(made.world, 3, [made.id]);
+
+    const after = restored(JSON.parse(JSON.stringify(saved({ ...before, world: gone }))));
+
+    expect(after.world.groups.get(made.id)!.death).toEqual(3);
+    expect(after.world.artefacts.get(put.id)!.death).toEqual(3);
+    expect(after.world.polygons.get(ids[0])!.death).toEqual(3);
+  });
+
+  test('a file written before anything could be taken out reads as nothing was', () => {
+    const file = JSON.parse(JSON.stringify(saved(world())));
+
+    for (const [, p] of file.world.polygons) delete p.death;
+    for (const [, g] of file.world.groups ?? []) delete g.death;
+    for (const [, a] of file.world.artefacts ?? []) delete a.death;
+
+    file.format = FORMAT - 1;
+
+    const after = restored(file);
+
+    for (const [, p] of after.world.polygons) expect(p.death).toEqual(null);
+    for (const [, g] of after.world.groups) expect(g.death).toEqual(null);
+    for (const [, a] of after.world.artefacts) expect(a.death).toEqual(null);
   });
 });

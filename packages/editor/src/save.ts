@@ -41,6 +41,13 @@ import {
 import { facingAt, placeAt } from './scene';
 
 /**
+ * 13: a polygon, a group and an artefact each carry the version that took it
+ * out, the way a corner already did. A format-12 file has none, which is a
+ * world where nothing was ever removed at a version — and it is: removal was
+ * global until now, so anything a format-12 file no longer holds is not in it
+ * at all. It reads as everything living to the last version, which is what it
+ * did.
+ *
  * 12: a version's layer may hold a depth for single corners as well as one for
  * the whole polygon. A format-11 file holds none, which is a world where every
  * corner of a polygon is offset by the same amount — so it reads as one, which
@@ -93,7 +100,7 @@ import { facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 12;
+export const FORMAT = 13;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -133,6 +140,8 @@ export interface SavedArtefact {
    * one of these — see `FORMAT` and `lifted`. */
   type: IconType
   birth: VersionId
+  /** Absent before format 13, and absent since wherever it is nothing. */
+  death?: VersionId | null
   /** Its own point, before any version's transform. A format-6 file has a list
    * of per-version moves here instead — see `FORMAT`. */
   at: Point | [VersionId, Point][]
@@ -169,7 +178,12 @@ export function saved(state: EditorState): Saved {
       polygons: [...state.world.polygons],
       groups: [...state.world.groups],
       artefacts: [...state.world.artefacts].map(
-        ([id, a]) => [id, { type: a.type, birth: a.birth, at: a.at }],
+        ([id, a]) => [id, {
+          type: a.type,
+          birth: a.birth,
+          death: a.death ?? undefined,
+          at: a.at,
+        }],
       ),
       paths: [...state.world.paths],
       start: state.world.start,
@@ -212,12 +226,19 @@ export function restored(file: Saved): EditorState {
 
     if (a.type === 'start') wasStart.push(id);
 
-    artefacts.set(id, { type: a.type === 'start' ? 'exit' : a.type, birth: a.birth, at });
+    artefacts.set(id, {
+      type: a.type === 'start' ? 'exit' : a.type,
+      birth: a.birth,
+      death: a.death ?? null,
+      at,
+    });
   }
 
   const world: World = {
     polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
-    groups: new Map(file.world.groups ?? []),
+    groups: new Map(
+      (file.world.groups ?? []).map(([id, g]) => [id, { ...g, death: g.death ?? null }]),
+    ),
     artefacts,
     start: file.world.start ?? { at: { x: 0, y: 0 }, facing: 0 },
     paths: new Map(file.world.paths ?? []),
@@ -333,17 +354,21 @@ function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point 
  * Before format 4 they always did, so a corner with nothing to say about it is
  * read as having been there since its polygon was drawn and never taken out.
  * Written out again it says so; nothing is lost and nothing is invented.
+ *
+ * And the polygon itself, before format 13, where nothing could be taken out at
+ * a version at all.
  */
 function standingThroughout(polygon: Polygon): Polygon {
-  if (polygon.points.every(c => c.birth !== undefined)) return polygon;
-
   return {
     ...polygon,
-    points: polygon.points.map(c => ({
-      ...c,
-      birth: c.birth ?? polygon.birth,
-      death: c.death ?? null,
-    })),
+    death: polygon.death ?? null,
+    points: polygon.points.every(c => c.birth !== undefined)
+      ? polygon.points
+      : polygon.points.map(c => ({
+        ...c,
+        birth: c.birth ?? polygon.birth,
+        death: c.death ?? null,
+      })),
   };
 }
 

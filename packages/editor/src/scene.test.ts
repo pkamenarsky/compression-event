@@ -8,6 +8,8 @@ import {
   project,
   resolved,
   addPolygon,
+  addArtefact,
+  placeAt,
   composed,
   EMPTY_LIVE,
   contributing,
@@ -29,6 +31,7 @@ import {
   swallowed,
   sideOf,
   polygonsIn,
+  removeAt,
   ungrouped,
   without,
   addVertex,
@@ -61,6 +64,7 @@ import {
   PolygonId,
   PolygonType,
   Transform,
+  VERSIONS,
   VersionId,
   World,
   emptyWorld,
@@ -1396,6 +1400,173 @@ describe('making and taking apart', () => {
   });
 });
 
+describe('taken out at a version, and standing at the ones before it', () => {
+  const there = (world: World, v: VersionId) => resolveAt(world, v).map(it => it.id).sort();
+
+  test('a polygon goes from that version onward and stays in the ones before', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const gone = removeAt(world, 2, [ids[1]]);
+
+    expect(there(gone, 0)).toEqual([...ids].sort());
+    expect(there(gone, 1)).toEqual([...ids].sort());
+    expect(there(gone, 2)).toEqual([ids[0]]);
+    expect(there(gone, 4)).toEqual([ids[0]]);
+  });
+
+  test('what an earlier version drew is untouched, corners and all', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const moved = transformed(world, 1, ids[0], { translation: { x: 40, y: 0 } });
+    const gone = removeAt(moved, 2, [ids[0]]);
+
+    expect(only(gone, 1, ids[0]).source).toEqual(only(moved, 1, ids[0]).source);
+    expect(resolveAt(gone, 2)).toEqual([]);
+  });
+
+  test('a layer written after the delete is inert rather than wrong', () => {
+    // The order the editor cannot produce but undo can walk back into: move it
+    // at v3, then step back to v2 and take it out. What v3 says is still
+    // written, and says nothing, because nothing walks that far.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const moved = transformed(world, 3, ids[0], { translation: { x: 500, y: 0 } });
+    const gone = removeAt(moved, 2, [ids[0]]);
+
+    expect(gone.versions[3].edits.has(ids[0])).toBe(true);
+    expect(resolveAt(gone, 3)).toEqual([]);
+  });
+
+  test('one taken out at the version it was drawn in goes entirely', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const added = addPolygon(world, 'level', rect(300, 0, 100, 100), 2, TOP);
+    const gone = removeAt(added.world, 2, [added.id]);
+
+    // Nothing to be about: it never stood at any version, so there is no
+    // record to keep and the map does not keep one.
+    expect(gone.polygons.has(added.id)).toBe(false);
+    expect(there(gone, 2)).toEqual([ids[0]]);
+  });
+
+  test('a group goes with everything under it, and takes nothing apart', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const gone = removeAt(made.world, 2, [made.id]);
+
+    expect(there(gone, 1)).toEqual([...ids].sort());
+    expect(there(gone, 2)).toEqual([]);
+
+    // The membership is a fact about every version that still has the group,
+    // so it survives the removal exactly as it was.
+    expect(gone.groups.get(made.id)!.members).toEqual(made.world.groups.get(made.id)!.members);
+    expect(gone.groups.get(made.id)!.death).toEqual(2);
+  });
+
+  test('one member of a group goes without the group going', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const gone = removeAt(made.world, 2, [ids[1]]);
+
+    expect(there(gone, 2)).toEqual([ids[0]]);
+    expect(gone.groups.get(made.id)!.death).toEqual(null);
+  });
+
+  test('a member that went first is not moved by the group going later', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const one = removeAt(made.world, 1, [ids[1]]);
+    const both = removeAt(one, 3, [made.id]);
+
+    expect(both.polygons.get(ids[1])!.death).toEqual(1);
+    expect(both.polygons.get(ids[0])!.death).toEqual(3);
+  });
+
+  test('taking a dead group apart hands its death down to the members', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const gone = removeAt(made.world, 2, [made.id]);
+    const apart = ungrouped(gone, made.id)!;
+
+    // Otherwise the rooms would come back: the group that took them is no
+    // longer there to have taken them.
+    expect(there(apart, 1)).toEqual([...ids].sort());
+    expect(there(apart, 2)).toEqual([]);
+  });
+
+  test('drawn into a group that a later version already took out, it goes too', () => {
+    // The one case nothing can write a death for: at v3 the group is already
+    // gone, and at v1 a room is drawn into it. Nobody was there to mark the
+    // room, and it must still go where the group went.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const gone = removeAt(made.world, 3, [made.id]);
+    const added = addPolygon(gone, 'level', rect(600, 0, 100, 100), 1, landing(gone, 1, made.id));
+
+    expect(added.world.polygons.get(added.id)!.death).toEqual(null);
+    expect(there(added.world, 2)).toContain(added.id);
+    expect(there(added.world, 3)).not.toContain(added.id);
+    expect(there(added.world, 4)).toEqual([]);
+  });
+
+  test('and so does an artefact dropped into one', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const gone = removeAt(made.world, 3, [made.id]);
+    const put = addArtefact(gone, 'key', { x: 50, y: 50 }, 1, landing(gone, 1, made.id));
+
+    expect(placeAt(put.world, put.id, 2)).not.toBeNull();
+    expect(placeAt(put.world, put.id, 3)).toBeNull();
+  });
+
+  test('a copy of something doomed is doomed the same number of versions on', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const gone = removeAt(world, 3, [ids[0]]);
+    const clips = copied(gone, 1, [ids[0]]);
+    const put = pasted(gone, 1, clips, { x: 500, y: 0 }, TOP);
+    const copy = put.ids[0] as PolygonId;
+
+    // Copied at v1 and taken out at v3 is a life two versions long, and that
+    // is what lands wherever it is pasted.
+    expect(put.world.polygons.get(copy)!.death).toEqual(3);
+    expect(there(put.world, 2)).toContain(copy);
+    expect(there(put.world, 3)).not.toContain(copy);
+  });
+
+  test('and one whose death would fall off the end simply lives to the last', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const gone = removeAt(world, 3, [ids[0]]);
+    const clips = copied(gone, 1, [ids[0]]);
+    const put = pasted(gone, VERSIONS - 1, clips, { x: 500, y: 0 }, TOP);
+
+    expect(put.world.polygons.get(put.ids[0] as PolygonId)!.death).toEqual(null);
+  });
+});
+
 describe('what a selection reaches', () => {
   test('a group stands for the polygons under it', () => {
     const { world, ids, group } = pair();
@@ -2087,7 +2258,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           // editor and the bake actually take.
           const here = resolved({
             id: 0,
-            polygon: { type: 'level', birth: 0, points: [] },
+            polygon: { type: 'level', birth: 0, death: null, points: [] },
             corners: [],
             local: ring,
             frame: m,
@@ -2167,7 +2338,7 @@ describe('a projection is the same shape wherever it is taken', () => {
 
           const here = resolved({
             id: 0,
-            polygon: { type: 'level', birth: 0, points: [] },
+            polygon: { type: 'level', birth: 0, death: null, points: [] },
             corners: [],
             local: ring,
             frame: m,

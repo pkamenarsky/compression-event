@@ -39,18 +39,33 @@
 // of its own. See `budding`, which also says why the birth goes in the ring
 // rather than in the frame, where it looks like it belongs.
 //
-// It costs something. A birth is now a motion, so it makes topology events
-// where it grows through its neighbours and the span is cut where they are,
-// where before there was nothing inside the span to find. A hundred-room level
-// gaining a pillar in every fourth room cuts about fifteen extra stretches per
-// birth and takes about half again as long to bake.
+// One that `k + 1` takes out is the same thing read backwards: it has no
+// `local_{k+1}`, and gets the pinched ring at that end instead. A removal is a
+// birth with the span running the other way, and it is written that way here —
+// the only asymmetry is that a dying polygon takes no layer of its own, since a
+// version that does not have a polygon cannot be saying anything about it.
 //
-// The one thing it is not is absent. A ring with no area is not something the
-// arrangement can be asked about, so the near end holds a real polygon a
-// thousandth of its final size; standing still at version `k` the game draws
-// nothing there, and the instant a shift starts it draws a speck. That is the
-// one place the still and the morph do not agree, and it is a tenth of a unit
-// wide.
+// It costs something, and what it costs is not about which direction it goes —
+// a birth and a removal of the same polygon measure identically, being the same
+// span read from the two ends. It is about what the polygon touches. Either one
+// is now a motion, so it makes topology events where it passes through its
+// neighbours and the span is cut where they are, where before there was nothing
+// inside the span to find.
+//
+// So a pillar standing alone inside a room is free: a hole that stays a hole
+// until it is a speck is no event at all, and a hundred-room level losing the
+// pillar from every room bakes in exactly the time and exactly the stretches it
+// did before. A room joined to its neighbours by corridors is the other end of
+// it — pulling away from them is a real event per corridor per instant it takes
+// to separate — and a quarter of a hundred-room level arriving or leaving that
+// way is some fifty extra stretches each and about eight times the bake.
+//
+// The one thing either is is absent. A ring with no area is not something the
+// arrangement can be asked about, so the end a polygon does not have holds a
+// real polygon a thousandth of its final size; standing still at the version
+// where it is not there the game draws nothing, and the instant a shift starts
+// it draws a speck. That is the one place the still and the morph do not agree,
+// and it is a tenth of a unit wide.
 //
 // A stretch belongs to a polygon
 // ------------------------------
@@ -134,6 +149,7 @@ import {
   live,
   place,
   resolved,
+  standingIn,
   unplace,
   resolveAt,
 } from './scene';
@@ -400,7 +416,14 @@ export interface Span {
 /**
  * A span's geometry depends on its own two versions and on every version above
  * them, since that is what `resolveAt` walks. So the stamp is the whole chain
- * down to `k + 1`, plus the polygons and the group structure themselves.
+ * down to `k + 1`, plus the polygons, the group structure and the artefacts
+ * themselves.
+ *
+ * The artefacts because they have slots in the frame table — `carried` puts
+ * them there, and which of them exist decides both how many slots there are and
+ * what `bakedSpan` indexes them by. A span baked before a key was dropped has
+ * no row for it, and the game falls back to a straight line between the two
+ * places rather than the frame it should be riding.
  *
  * It is the `edits` maps rather than the `Version` objects, so that opening and
  * closing a ghost's eye — which replaces the version but changes no
@@ -410,6 +433,7 @@ export interface Stamp {
   edits: unknown[]
   polygons: unknown
   groups: unknown
+  artefacts: unknown
 }
 
 export interface Bake {
@@ -426,6 +450,7 @@ export function stamp(world: World, from: VersionId): Stamp {
     edits: world.versions.slice(0, from + 2).map(v => v.edits),
     polygons: world.polygons,
     groups: world.groups,
+    artefacts: world.artefacts,
   };
 }
 
@@ -438,6 +463,7 @@ export function spanAt(bake: Bake, world: World, from: VersionId): Span | null {
 
   if (span.stamp.polygons !== now.polygons) return null;
   if (span.stamp.groups !== now.groups) return null;
+  if (span.stamp.artefacts !== now.artefacts) return null;
   if (span.stamp.edits.length !== now.edits.length) return null;
 
   return span.stamp.edits.every((e, i) => e === now.edits[i]) ? span : null;
@@ -464,10 +490,11 @@ export function pruned(bake: Bake, world: World): Bake {
  * One polygon across one span: the frame it already stood in, the layer being
  * eased onto it, and its two endpoints.
  *
- * A polygon born into `k + 1` has no near end of its own, so it is given one:
- * the same ring, pinched into its own middle. See `budding`. From there it is a
- * polygon like any other — it rides its groups, it cuts stretches where it
- * grows through its neighbours, and nothing downstream has to know it is new.
+ * A polygon born into `k + 1` has no near end of its own, and one taken out at
+ * `k + 1` has no far end; either way the end it lacks is the same ring pinched
+ * into its own middle. See `budding`. From there it is a polygon like any
+ * other — it rides its groups, it cuts stretches where it passes through its
+ * neighbours, and nothing downstream has to know it is arriving or leaving.
  */
 interface Moving {
   at: Resolved
@@ -746,8 +773,8 @@ function between2(a: Point, b: Point, t: number): Point {
 const SEED = 1e-3;
 
 /**
- * A polygon born into the later version, given the near end it does not have:
- * its own ring, pinched into its own middle.
+ * The end a polygon does not have, whichever end that is: its own ring, pinched
+ * into its own middle.
  *
  * In the ring rather than in the frame, and the two are the same shape. A
  * uniform scale about the centroid takes every corner along the line from the
@@ -772,20 +799,37 @@ function budding(local: Ring): Ring {
   }));
 }
 
+/**
+ * Every group holding something, with what the later version does to it.
+ *
+ * Membership is global, so which groups these are is not a question about when
+ * any of them was made. What *is* a question is whether the group is still
+ * there at the far end: a group taken out at `from + 1` may still have a layer
+ * written at that version from before it was, and applying it would carry a
+ * shrinking room off to somewhere the editor never draws. A group that is not
+ * there does nothing, which is the same answer `resolveAt` gives by never
+ * reaching it.
+ */
+function holders(world: World, from: VersionId, id: Id): Holder[] {
+  const next = world.versions[from + 1];
+  const there = new Set(chain(world, from + 1));
+
+  return enclosing(world, id).map(g => ({
+    id: g,
+    layer: standingIn(world, g, there)
+      ? next.edits.get(g)?.transform ?? EMPTY_TRANSFORM
+      : EMPTY_TRANSFORM,
+  }));
+}
+
 function moving(world: World, from: VersionId): Moving[] {
   const before = new Map(resolveAt(world, from).map(it => [it.id, it]));
   const after = resolveAt(world, from + 1);
 
   const next = world.versions[from + 1];
+  const holding = (id: PolygonId): Holder[] => holders(world, from, id);
 
-  /** Every group holding a polygon, with what the later version does to it.
-   * Membership is global, so this is not a question about when the group was
-   * made — only about what this version says. */
-  const holding = (id: PolygonId): Holder[] =>
-    enclosing(world, id)
-      .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM }));
-
-  return after.map(it => {
+  const out = after.map(it => {
     const was = before.get(it.id);
     const edit = next.edits.get(it.id);
     const layer = edit?.transform ?? EMPTY_TRANSFORM;
@@ -829,6 +873,38 @@ function moving(world: World, from: VersionId): Moving[] {
       holders: holding(it.id),
     };
   });
+
+  // And the ones going the other way. A polygon the later version takes out is
+  // in `before` and nowhere in `after`, so it is picked up here rather than in
+  // the walk above, and given the far end it does not have: the same ring
+  // pinched into its own middle, which is `budding` read backwards.
+  //
+  // Its own layer at `from + 1` is *not* applied, whatever it says. A polygon
+  // is not editable at a version that does not have it, so anything written
+  // there was written before the delete and is inert everywhere else — see
+  // `resolveAt`, which stops walking a polygon at its death and never reads it.
+  // What is left in flight is what its groups are doing, which is real: a room
+  // going out of a turning group turns on its way out.
+  const kept = new Set(after.map(it => it.id));
+
+  for (const [id, was] of before) {
+    if (kept.has(id)) continue;
+
+    out.push({
+      at: was,
+      base: was.frame,
+      layer: EMPTY_TRANSFORM,
+      corners: was.corners,
+      local: [was.local, budding(was.local)] as [Ring, Ring],
+      dead: [was.corners.map(() => false), was.corners.map(() => false)] as [boolean[], boolean[]],
+      depth: [was.erosion, 0] as [number, number],
+      depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
+      varying: was.depths !== null,
+      holders: holding(id),
+    });
+  }
+
+  return out;
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1184,14 +1260,20 @@ function casting(world: World, from: VersionId): Cast {
   }
 
   const next = world.versions[from + 1];
+  const there = new Set(chain(world, from + 1));
   const riders = new Map<GroupId, Rider>();
 
   for (const id of eroding.keys()) {
     riders.set(id, {
       base: groupFrame(world, from, id),
-      layer: next.edits.get(id)?.transform ?? EMPTY_TRANSFORM,
-      holders: enclosing(world, id)
-        .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM })),
+
+      // Nothing, for a group the later version takes out: whatever it says
+      // about one it does not have was written before the removal and means
+      // no more here than a dead polygon's layer does. See `moving`.
+      layer: standingIn(world, id, there)
+        ? next.edits.get(id)?.transform ?? EMPTY_TRANSFORM
+        : EMPTY_TRANSFORM,
+      holders: holders(world, from, id),
     });
   }
 
@@ -2426,14 +2508,20 @@ export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
  * the same chain, eased the same way, rather than by a second answer to a
  * question the frame table already answers.
  *
- * Newborn the same way a polygon is, with the one difference that an artefact
- * has no size: there is nothing to grow out of a point, so what a birth gets
- * here is not a scale but the rest of it. It hangs in its group's frame from
- * the near end of the span and rides whatever that group does, so a key
- * introduced into a room that also turns this version goes round with the room
- * instead of waiting at the far end for it. Its own transform is applied
- * outright, for the reason `moving` gives: it says where the artefact is, not
- * where it went.
+ * Born and taken out the same way a polygon is, with the one difference that an
+ * artefact has no size: there is nothing to grow out of a point or shrink back
+ * into one, so what those get here is not a scale but the rest of it. Either
+ * way it hangs in its group's frame from the near end of the span and rides
+ * whatever that group does, so a key introduced into a room that also turns
+ * goes round with the room instead of waiting at the far end for it, and one
+ * taken out of a turning room turns on its way out.
+ *
+ * The layer it eases is its own, and only where it is standing at both ends.
+ * Arriving, the transform is applied outright — it says where the artefact is
+ * rather than where it went, and there is no earlier place for it to be a move
+ * away from. Leaving, there is nothing to ease at all: whatever the later
+ * version says about it was written before the delete and is inert, exactly as
+ * `moving` says of a polygon's.
  */
 function carried(world: World, from: VersionId): Map<Id, Rider> {
   const next = world.versions[from + 1];
@@ -2441,20 +2529,23 @@ function carried(world: World, from: VersionId): Map<Id, Rider> {
 
   if (next === undefined) return out;
 
-  for (const [id, it] of world.artefacts) {
-    // Nothing before the version that introduced it may name it, so one the
-    // span has never heard of is not in the span at all.
-    if (it.birth > from + 1) continue;
+  const near = new Set(chain(world, from));
+  const far = new Set(chain(world, from + 1));
 
-    const born = it.birth <= from;
+  for (const [id, it] of world.artefacts) {
+    const here = standingIn(world, id, near), there = standingIn(world, id, far);
+
+    // At neither end is not in the span at all: one the versions have not
+    // reached yet, and one they finished with before it began.
+    if (!here && !there) continue;
+
     const own = next.edits.get(id)?.transform ?? EMPTY_TRANSFORM;
     const base = groupFrame(world, from, id);
 
     out.set(id, {
-      base: born ? base : compose(affine(own), base),
-      layer: born ? own : EMPTY_TRANSFORM,
-      holders: enclosing(world, id)
-        .map(g => ({ id: g, layer: next.edits.get(g)?.transform ?? EMPTY_TRANSFORM })),
+      base: here ? base : compose(affine(own), base),
+      layer: here && there ? own : EMPTY_TRANSFORM,
+      holders: holders(world, from, id),
     });
   }
 
@@ -2829,6 +2920,9 @@ export function stretchAt(track: Track, t: number): Stretch | null {
   return all[lo];
 }
 
+/** How an artefact's own layer at the later version is read over a leg. */
+type Own = 'ease' | 'whole' | 'none';
+
 /**
  * The set part way through a walk from one version to another, which is what
  * the editor draws while the versions change under it.
@@ -2856,10 +2950,9 @@ export function stretchAt(track: Track, t: number): Stretch | null {
  * holds, and interpolating the two ends instead would carry a turning artefact
  * across the chord while the room it is in went round the arc.
  *
- * One that is not there yet still rides. There is nowhere for it to come *from*
- * — its own transform is applied outright rather than eased on, since it says
- * where the artefact is rather than where it went — but the groups holding it
- * are moving over this leg like any others, and a key put into a turning room
+ * One that is not there yet, and one on its way out, both still ride. There is
+ * nowhere for either to come from or go to, but the groups holding them are
+ * moving over this leg like any others, and a key put into a turning room
  * belongs to the room from the start of the turn. This is `carried`'s rule, and
  * it is here as well because the two have to agree across the crossing between
  * the still and the morph.
@@ -2894,10 +2987,13 @@ export function artefactsDuring(
 
     if (there === null && then === null) continue;
 
-    // Whether the artefact was already standing at the near end of the leg,
-    // which is the whole of what decides how its own layer is read.
-    const stood = placeAt(world, id, Math.min(a, b)) !== null;
-    const m = easedFrame(world, id, late, t, stood);
+    // Which ends of the leg it is standing at, which is the whole of what
+    // decides how its own layer is read. The leg's own two versions rather
+    // than its direction: going backwards is the same span read the other way,
+    // and a thing arriving is a thing leaving seen from there.
+    const here = placeAt(world, id, Math.min(a, b)) !== null;
+    const own: Own = there !== null && then !== null ? 'ease' : here ? 'none' : 'whole';
+    const m = easedFrame(world, id, late, t, own);
 
     out.push({ id, type: it.type, at: place(m, [it.at])[0], facing: facing(m) });
   }
@@ -2908,32 +3004,38 @@ export function artefactsDuring(
 /**
  * `groupFrame`, with one version's layers part way on.
  *
- * `stood` says whether the artefact's *own* layer at `late` is one of them. It
- * is not, for one the leg introduces: there was no earlier place for that
- * transform to be a move away from, so it is applied whole while the groups
- * ease.
+ * The groups always ease. What the artefact's *own* layer at `late` does is
+ * `own`, and there are three answers rather than two. It eases where the
+ * artefact is standing at both ends of the leg, which is the ordinary case. It
+ * is applied `whole` for one the leg introduces: there was no earlier place for
+ * that transform to be a move away from. And it is skipped entirely for one the
+ * leg takes out, because a layer written at a version that does not have the
+ * artefact was written before the delete and means nothing — the same reading
+ * `resolveAt` gives a dead polygon's.
  */
 function easedFrame(
   world: World,
   id: ArtefactId,
   late: VersionId,
   t: number,
-  stood: boolean,
+  own: Own,
 ): Affine {
   const up = enclosing(world, id);
   let m = IDENTITY;
 
   for (const k of chain(world, late)) {
     const edits = world.versions[k].edits;
-    const lay = (of: Id, ease: boolean): Transform => {
-      const own = edits.get(of)?.transform ?? EMPTY_TRANSFORM;
+    const lay = (of: Id, how: Own): Transform => {
+      const layer = edits.get(of)?.transform ?? EMPTY_TRANSFORM;
 
-      return k === late && ease ? easing(own, t) : own;
+      if (k !== late) return layer;
+
+      return how === 'ease' ? easing(layer, t) : how === 'whole' ? layer : EMPTY_TRANSFORM;
     };
 
-    m = compose(affine(lay(id, stood)), m);
+    m = compose(affine(lay(id, own)), m);
 
-    for (const g of up) m = compose(affine(lay(g, true)), m);
+    for (const g of up) m = compose(affine(lay(g, 'ease')), m);
   }
 
   return m;

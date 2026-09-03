@@ -54,7 +54,7 @@ import {
   handles,
   occupying,
   occupyingSource,
-  removeArtefacts,
+  removeAt,
   retypeArtefacts,
   shownAt,
   startPlaced,
@@ -66,7 +66,6 @@ import {
   live,
   placeVertex,
   polygonsIn,
-  without,
   removeVertices,
   resolveAt,
   runs,
@@ -122,7 +121,6 @@ import {
   opened,
   panBy,
   parentOf,
-  within,
   resized,
   togglePicked,
   toScreen,
@@ -1780,7 +1778,7 @@ export function worldCanvas(
           return marked(
             {
               ...s,
-              world: removeArtefacts(s.world, s.selection.artefacts),
+              world: removeAt(s.world, s.currentVersion, s.selection.artefacts),
               selection: { ...s.selection, artefacts: [] },
             },
             s.world,
@@ -1798,35 +1796,19 @@ export function worldCanvas(
           );
         }
 
-        const world = s.selection.artefacts.length === 0
-          ? s.world
-          : removeArtefacts(s.world, s.selection.artefacts);
+        // Polygons and artefacts in one call, because they are one gesture and
+        // a group holds both. `removeAt` takes what is under a group itself,
+        // so what goes in is what was picked rather than what it reaches.
+        const picked = [...s.selection.polygons, ...s.selection.artefacts];
 
-        if (s.selection.polygons.length === 0) {
-          return world === s.world
-            ? s
-            : marked({ ...s, world, selection: { ...s.selection, artefacts: [] } }, s.world);
-        }
+        if (picked.length === 0) return s;
 
-        // A group goes with what was in it: picking one is picking the rooms
-        // under it, and deleting it while they stayed would be a selection
-        // that deleted less than it drew.
-        // A group goes with what was in it, artefacts included: they are
-        // members like anything else, and leaving one behind would leave a key
-        // hanging in the air where its room was.
-        const gone = new Set(s.selection.polygons.flatMap(id => within(s.world, id)));
-        const polygons = new Map(world.polygons);
-        const artefacts = new Map(world.artefacts);
+        const world = removeAt(s.world, s.currentVersion, picked);
 
-        for (const id of gone) {
-          polygons.delete(id);
-          artefacts.delete(id);
-        }
-
-        return marked(
+        return world === s.world ? s : marked(
           {
             ...s,
-            world: without({ ...world, polygons, artefacts }, gone),
+            world,
             selection: { ...s.selection, polygons: [], artefacts: [] },
           },
           s.world,

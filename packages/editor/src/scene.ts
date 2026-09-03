@@ -196,6 +196,7 @@ export function addPolygon(
   const polygon: Polygon = {
     type,
     birth,
+    death: null,
     points: local.map((at, i) => ({ id: id + 1 + i, at, birth, death: null })),
   };
 
@@ -245,6 +246,51 @@ export function facing(m: Affine): number {
 }
 
 /**
+ * Every version that takes something out: its own removal, and the removal of
+ * any group holding it.
+ *
+ * A group goes with what is in it — that is the rule a delete has always
+ * followed — so what removes the holder removes the held. `removeAt` writes
+ * both, and this is not for the things it wrote. It is for the one case the
+ * writing cannot reach: a room drawn *into* a group at v1 when the group was
+ * already taken out at v3. Nobody could have written a death on it, since it
+ * did not exist when the group went, and it must still go where the group
+ * went.
+ *
+ * Only deaths, never births. A group made at v2 out of rooms drawn at v0 does
+ * not un-draw them: grouping is a handle appearing, and removing one is the
+ * contents going.
+ */
+export function removals(world: World, id: Id): VersionId[] {
+  const own = world.polygons.get(id) ?? world.groups.get(id) ?? world.artefacts.get(id);
+  const out: VersionId[] = own === undefined || own.death === null ? [] : [own.death];
+
+  for (const g of enclosing(world, id)) {
+    const death = world.groups.get(g)?.death;
+
+    if (death !== undefined && death !== null) out.push(death);
+  }
+
+  return out;
+}
+
+/**
+ * Whether a thing is one of the world's at a version: born into the chain, and
+ * neither it nor anything holding it taken out by one.
+ *
+ * The whole of what existence means here, and the one place that says so.
+ * `resolveAt` asks the same question the long way round, because it is walking
+ * the chain anyway and can drop a polygon as it passes.
+ */
+export function standingIn(world: World, id: Id, from: ReadonlySet<VersionId>): boolean {
+  const own = world.polygons.get(id) ?? world.groups.get(id) ?? world.artefacts.get(id);
+
+  if (own === undefined || !standing(own, from)) return false;
+
+  return removals(world, id).every(d => !from.has(d));
+}
+
+/**
  * Where an artefact stands at a version, or nothing if it is not there yet.
  *
  * Its own point taken through every transform down the chain, which is the same
@@ -255,16 +301,16 @@ export function facing(m: Affine): number {
 export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | null {
   const it = world.artefacts.get(id);
 
-  if (it === undefined || !chain(world, v).includes(it.birth)) return null;
+  if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
 
   return place(groupFrame(world, v, id), [it.at])[0];
 }
 
-/** Which way it is pointing at a version, or nothing if it is not there yet. */
+/** Which way it is pointing at a version, or nothing if it is not there. */
 export function facingAt(world: World, id: ArtefactId, v: VersionId): number | null {
   const it = world.artefacts.get(id);
 
-  if (it === undefined || !chain(world, v).includes(it.birth)) return null;
+  if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
 
   return facing(groupFrame(world, v, id));
 }
@@ -332,7 +378,7 @@ export function addArtefact(
   const id = world.nextId;
   const artefacts = new Map(world.artefacts);
 
-  artefacts.set(id, { type, birth: v, at: unplace(where.frame, at) });
+  artefacts.set(id, { type, birth: v, death: null, at: unplace(where.frame, at) });
 
   return {
     world: joined({ ...world, artefacts, nextId: id + 1 }, where.into, [id]),
@@ -352,21 +398,6 @@ export function retypeArtefacts(
 
     if (it !== undefined) artefacts.set(id, { ...it, type });
   }
-
-  return { ...world, artefacts };
-}
-
-/**
- * Gone from the world, at every version.
- *
- * Not from this one onward: there is no way to say an artefact has stopped, the
- * same way there is none for a polygon, and inventing one here would be a
- * second kind of absence for `placeAt` to tell apart from not-yet-placed.
- */
-export function removeArtefacts(world: World, ids: readonly ArtefactId[]): World {
-  const artefacts = new Map(world.artefacts);
-
-  for (const id of ids) artefacts.delete(id);
 
   return { ...world, artefacts };
 }
@@ -913,6 +944,13 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
   // under, and `editAt` hands it the ones its base was under to start from.
   const over = new Map<PolygonId, ReadonlyMap<VertexId, number>>();
 
+  // Worked out once rather than per version: the walk up to a polygon's holders
+  // is the same at every step of the chain, and there are as many steps as
+  // there are versions.
+  const taken = new Map<PolygonId, VersionId[]>();
+
+  for (const id of world.polygons.keys()) taken.set(id, removals(world, id));
+
   for (const k of chain(world, v)) {
     const version = world.versions[k];
     const outer = new Map<Id, Affine>();
@@ -923,6 +961,22 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
         frame.set(id, IDENTITY);
         depth.set(id, 0);
         over.set(id, EMPTY_DEPTHS);
+      }
+
+      // Taken out by this version — its own removal, or that of a group holding
+      // it, which is the same thing: see `removals`.
+      //
+      // After the birth rather than before: the walk is what says a polygon is
+      // here at all, so dropping it here drops it from the rest of the walk
+      // too, and whatever later layers still name it are inert rather than
+      // wrong. They are left written for the reason `removeVertices` leaves a
+      // displacement — a layer that moved something still moved it, at the
+      // versions that still have it.
+      if (taken.get(id)!.includes(k)) {
+        local.delete(id);
+        frame.delete(id);
+        depth.delete(id);
+        over.delete(id);
       }
 
       const at = local.get(id);
@@ -1166,7 +1220,7 @@ export function grouped(
   const id = world.nextId;
   const groups = new Map(world.groups);
 
-  groups.set(id, { birth: v, members: tops });
+  groups.set(id, { birth: v, death: null, members: tops });
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
@@ -1194,6 +1248,11 @@ export function grouped(
  * refused whole rather than in part: half an ungroup would leave the members
  * displaced at the versions it could not do, which is worse than not having
  * done it.
+ *
+ * A group that is taken out at a version passes that on too, the same way it
+ * passes on its transform: the members died with it, and letting them outlive
+ * the thing whose removal took them would be an ungroup that brought rooms
+ * back. The earlier of the two, since a member may already have gone first.
  */
 export function ungrouped(world: World, id: GroupId): World | null {
   const group = world.groups.get(id);
@@ -1224,7 +1283,24 @@ export function ungrouped(world: World, id: GroupId): World | null {
   }
 
   const groups = new Map(world.groups);
+  const polygons = new Map(world.polygons);
+  const artefacts = new Map(world.artefacts);
   const up = parentOf(world).get(id);
+
+  if (group.death !== null) {
+    for (const member of group.members) {
+      for (const map of [groups, polygons, artefacts] as Map<Id, { death: VersionId | null }>[]) {
+        const it = map.get(member);
+
+        if (it === undefined) continue;
+
+        map.set(member, {
+          ...it,
+          death: it.death === null ? group.death : Math.min(it.death, group.death),
+        });
+      }
+    }
+  }
 
   groups.delete(id);
 
@@ -1239,7 +1315,7 @@ export function ungrouped(world: World, id: GroupId): World | null {
     });
   }
 
-  return { ...world, groups, versions };
+  return { ...world, groups, polygons, artefacts, versions };
 }
 
 /**
@@ -1414,13 +1490,21 @@ export interface Contributed {
  *
  * Inherited down the chain exactly as a polygon's is: a version that says
  * nothing about a group leaves its depth where its base had it.
+ *
+ * A group that is not there at `v` has no depth, whatever a layer written
+ * before it was taken out still says. Nothing reaches its members either — they
+ * went with it — so this is about the ghost rather than about the geometry, and
+ * a ghost with a depth is one more thing for a reader to have to rule out.
  */
 export function depths(world: World, v: VersionId): Map<Id, number> {
+  const inherited = new Set(chain(world, v));
   const out = new Map<Id, number>();
 
-  for (const k of chain(world, v)) {
+  for (const k of inherited) {
     for (const [id, edit] of world.versions[k].edits) {
-      if (world.groups.has(id)) out.set(id, edit.transform.erosion);
+      if (world.groups.has(id) && standingIn(world, id, inherited)) {
+        out.set(id, edit.transform.erosion);
+      }
     }
   }
 
@@ -2358,6 +2442,89 @@ export function addVertex(
  * three keeps all of them: what is being asked for below that is to delete the
  * polygon, and that is a different thing to ask for.
  */
+/**
+ * Polygons, groups and artefacts taken out as of `v`, and standing as they were
+ * before it.
+ *
+ * The same shape as `removeVertices`, one level up, and for the same reasons.
+ * What a version's layers already said about a thing stays written: a layer
+ * that turned a room still turned it, at the versions that still have the room,
+ * and dropping those on the way out would quietly edit the past. `resolveAt`
+ * stops walking a thing at its death, so what is left behind is inert rather
+ * than wrong.
+ *
+ * A group goes with everything under it. That is the rule a delete already
+ * followed when it was global — picking a group is picking the rooms in it, and
+ * removing the thing that holds them together while they stayed would be a
+ * delete that removed less than it drew — and it is the rule here, one version
+ * at a time. What it does *not* do is take the group apart: the membership is a
+ * fact about the world at every version that still has the group, and `without`
+ * is for things that are leaving the world rather than leaving a version.
+ *
+ * Born into `v` and taken out at `v` is the one case that goes entirely: it
+ * never stood anywhere, so there is no version for the record to be about. That
+ * one *does* restructure, since what is left is a group holding something that
+ * is not in the world at all.
+ */
+export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World {
+  const inherited = new Set(chain(world, v));
+
+  // Everything under what was picked, which is what a delete has always
+  // reached. A group is in here as itself as well as through its members.
+  const gone = new Set<Id>();
+
+  for (const id of going) {
+    for (const m of within(world, id)) gone.add(m);
+  }
+
+  const polygons = new Map(world.polygons);
+  const groups = new Map(world.groups);
+  const artefacts = new Map(world.artefacts);
+  const outright = new Set<Id>();
+
+  let changed = false;
+
+  /** One thing's map entry, either killed at `v` or dropped outright. */
+  const take = <T extends { birth: VersionId, death: VersionId | null }>(
+    map: Map<Id, T>,
+    id: Id,
+    it: T,
+  ): void => {
+    // Not standing here is not something a delete has anything to say about.
+    // It reaches these through a group rather than through a click — a member
+    // that died two versions ago, or one not born until later — and either way
+    // its own record is already right.
+    if (!standing(it, inherited)) return;
+
+    changed = true;
+
+    if (it.birth === v) {
+      map.delete(id);
+      outright.add(id);
+      return;
+    }
+
+    map.set(id, { ...it, death: v });
+  };
+
+  for (const id of gone) {
+    const polygon = polygons.get(id);
+    if (polygon !== undefined) take(polygons, id, polygon);
+
+    const group = groups.get(id);
+    if (group !== undefined) take(groups, id, group);
+
+    const artefact = artefacts.get(id);
+    if (artefact !== undefined) take(artefacts, id, artefact);
+  }
+
+  if (!changed) return world;
+
+  const out = { ...world, polygons, groups, artefacts };
+
+  return outright.size === 0 ? out : without(out, outright);
+}
+
 export function removeVertices(
   world: World,
   v: VersionId,
@@ -2400,6 +2567,31 @@ export function removeVertices(
  * displacement turns and stretches with the frame but does not travel. */
 function pointing(m: Affine, d: Point): Point {
   return { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
+}
+
+/**
+ * How far past the copy version the thing being copied is taken out, or nothing
+ * where it is not.
+ *
+ * The same offset a corner's `death` becomes, and for the same reason: what is
+ * copied is a life rather than a shape, so a room the original loses two
+ * versions on is a room the copy loses two versions after it lands. One that
+ * died before the copy version is never reached — nothing that is not standing
+ * at `v` is offered to `clip` at all.
+ */
+function outliving(it: { death: VersionId | null }, v: VersionId): number | undefined {
+  return it.death === null ? undefined : it.death - v;
+}
+
+/**
+ * `outliving` read back at the version a paste lands in.
+ *
+ * A death that falls off the end of the chain is nothing: there is no version
+ * left to take the thing out, so the copy simply lives to the last one. The
+ * same rule a corner's death is restored under.
+ */
+function dying(world: World, v: VersionId, death: number | undefined): VersionId | null {
+  return death === undefined || v + death >= world.versions.length ? null : v + death;
 }
 
 /**
@@ -2465,7 +2657,13 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
       // else. There is no ring under it to displace and no depth to inherit.
       return here === null
         ? []
-        : [{ kind: 'artefact', type: thing.type, at: here, edits: layers(id, null, 0) }];
+        : [{
+          kind: 'artefact',
+          type: thing.type,
+          at: here,
+          death: outliving(thing, v),
+          edits: layers(id, null, 0),
+        }];
     }
 
     const group = world.groups.get(id);
@@ -2476,6 +2674,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
       return members.length === 0 ? [] : [{
         kind: 'group',
         members,
+        death: outliving(group, v),
         edits: layers(id, null, deep.get(id) ?? 0),
       }];
     }
@@ -2499,6 +2698,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
       kind: 'polygon',
       type: it.polygon.type,
       points,
+      death: outliving(it.polygon, v),
       edits: layers(id, it.frame, it.erosion, it.over),
     }];
   };
@@ -2577,7 +2777,12 @@ function restore(
     const id = world.nextId;
     const artefacts = new Map(world.artefacts);
 
-    artefacts.set(id, { type: clip.type, birth: v, at: unplace(m, clip.at) });
+    artefacts.set(id, {
+      type: clip.type,
+      birth: v,
+      death: dying(world, v, clip.death),
+      at: unplace(m, clip.at),
+    });
 
     const out = { ...world, artefacts, nextId: id + 1 };
 
@@ -2598,7 +2803,7 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: v, members });
+    groups.set(id, { birth: v, death: dying(out, v, clip.death), members });
     out = { ...out, groups, nextId: id + 1 };
 
     return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
@@ -2623,7 +2828,7 @@ function restore(
 
   const polygons = new Map(world.polygons);
 
-  polygons.set(id, { type: clip.type, birth: v, points });
+  polygons.set(id, { type: clip.type, birth: v, death: dying(world, v, clip.death), points });
 
   const out = {
     ...world,
@@ -2686,7 +2891,9 @@ export function pasted(
  * while the original goes on eroding.
  *
  * Corners still to arrive go with the tail, and corners due to leave stop
- * leaving. What either was for is not happening here.
+ * leaving. What either was for is not happening here — and the same goes for
+ * the thing itself: a stamp of a room that is due to be taken out is a room,
+ * not a countdown.
  */
 export function stamped(
   world: World,
@@ -2696,14 +2903,20 @@ export function stamped(
   where: Landing,
 ): { world: World, ids: Id[], artefacts: ArtefactId[] } {
   const now = (clip: Clipping): Clipping => clip.kind === 'artefact'
-    ? { ...clip, edits: clip.edits.slice(0, 1) }
+    ? { ...clip, death: undefined, edits: clip.edits.slice(0, 1) }
     : clip.kind === 'group'
-    ? { ...clip, members: clip.members.map(now), edits: clip.edits.slice(0, 1) }
+    ? {
+        ...clip,
+        members: clip.members.map(now),
+        death: undefined,
+        edits: clip.edits.slice(0, 1),
+      }
     : {
         ...clip,
         points: clip.points
           .filter(c => c.birth === 0)
           .map(c => ({ ...c, death: null })),
+        death: undefined,
         edits: clip.edits.slice(0, 1),
       };
 

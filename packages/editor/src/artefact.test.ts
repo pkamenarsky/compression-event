@@ -18,7 +18,7 @@ import {
   movedStart,
   pasted,
   placeAt,
-  removeArtefacts,
+  removeAt,
   retypeArtefacts,
   shownAt,
   stamped,
@@ -132,10 +132,21 @@ describe('an artefact is a point, and the versions do to it what they do', () =>
     expect(artefactsAt(typed, 0)[0].type).toEqual('exit');
   });
 
-  test('removing takes it out of every version at once', () => {
+  test('removing takes it out of that version onward and leaves the rest', () => {
     const { world, id } = dropped(0);
+    const gone = removeAt(world, 2, [id]);
 
-    expect(artefactsAt(removeArtefacts(world, [id]), 4)).toEqual([]);
+    expect(artefactsAt(gone, 1).map(p => p.id)).toEqual([id]);
+    expect(artefactsAt(gone, 2)).toEqual([]);
+    expect(artefactsAt(gone, 4)).toEqual([]);
+  });
+
+  test('and one removed at the version it was put in goes entirely', () => {
+    const { world, id } = dropped(2);
+    const gone = removeAt(world, 2, [id]);
+
+    expect(gone.artefacts.has(id)).toBe(false);
+    expect(artefactsAt(gone, 4)).toEqual([]);
   });
 
   test('ids come off the world counter, so nothing can be confused for one', () => {
@@ -414,6 +425,58 @@ describe('a walk moves them on the walls’ clock', () => {
 
     expect(there.x).toBeCloseTo(still.x, 9);
     expect(there.y).toBeCloseTo(still.y, 9);
+  });
+
+  test('and one taken out of a turning room turns on its way out', () => {
+    const a = addPolygon(emptyWorld(), 'level', [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ], 0, TOP);
+
+    const b = addPolygon(a.world, 'level', [
+      { x: 200, y: 0 },
+      { x: 300, y: 0 },
+      { x: 300, y: 100 },
+      { x: 200, y: 100 },
+    ], 0, TOP);
+
+    const made = grouped(b.world, 0, [a.id, b.id], TOP)!;
+    const put = addArtefact(
+      made.world,
+      'key',
+      { x: 100, y: 0 },
+      0,
+      landing(made.world, 0, made.id),
+    );
+
+    const turned = withEdit(put.world, 1, made.id, {
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
+      vertices: new Map(),
+      depths: new Map(),
+    });
+
+    const gone = removeAt(turned, 1, [put.id]);
+    const half = artefactsDuring(gone, 0, 1, 0.5)[0].at;
+
+    expect(half.x).toBeCloseTo(100 / Math.SQRT2, 9);
+    expect(half.y).toBeCloseTo(100 / Math.SQRT2, 9);
+
+    // And it is gone once the walk lands, rather than hanging where it was.
+    expect(artefactsDuring(gone, 1, 1, 0)).toEqual(artefactsAt(gone, 1));
+    expect(artefactsAt(gone, 1)).toEqual([]);
+  });
+
+  test('a layer written after a removal does not move it on its way out', () => {
+    // The one the editor cannot author but undo can walk back into. What v1
+    // says about an artefact v1 does not have is inert, the same way it is for
+    // a polygon, so the walk reads it the way standing still does.
+    const { world, id } = dropped(0);
+    const shifted = moved(world, 1, [id], { x: 500, y: 0 });
+    const gone = removeAt(shifted, 1, [id]);
+
+    expect(artefactsDuring(gone, 0, 1, 0.5)[0].at).toEqual({ x: 10, y: 20 });
   });
 
   test('a walk of no length is just the version', () => {

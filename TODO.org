@@ -1,5 +1,4 @@
 * eroded group in an eroded group behaves strange, but it's probably correct; but good to check
-* deleting poly from version deletes it from all
 
 * a shape in both create and select mode has handles to scale, rotate and erode
 ** TODO exact shape and form

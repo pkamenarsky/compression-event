@@ -17,6 +17,7 @@ import {
 import {
   TOP,
   addPolygon,
+  removeAt,
   grouped,
   addVertex,
   csg,
@@ -529,6 +530,22 @@ describe('the replay never leaves the truth, as a shape', () => {
     follows(transformed(made.world, 1, made.id, { erosion: 24 }), 0);
   });
 
+  test('an eroding group taken out, which shrinks and stops eroding at once', () => {
+    // Two things going to nothing over the same span: the members into their
+    // own middles, and the group's depth to zero because a group that is not
+    // there is not eroding either. The bake has to stay inside its own
+    // tolerance while both do.
+    const { world, ids } = drawn(
+      ['level', rect(-300, -100, 200, 200)],
+      ['level', rect(100, -100, 200, 200)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const eroding = transformed(made.world, 0, made.id, { erosion: 20 });
+
+    follows(removeAt(eroding, 1, [made.id]), 0);
+  });
+
   test('a polygon sliding into a wall it ends up touching', () => {
     const { world, ids } = drawn(
       ['level', rect(-200, 0, 400, 100)],
@@ -730,6 +747,81 @@ describe('keyframes', () => {
 
     // And it is a point that rode there, not a polygon.
     expect(length(sample(span, 0)) - editorAt(w, 0)).toBeLessThan(1);
+  });
+
+  test('a polygon taken out of the later version shrinks into its middle', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 300, 100, 100)],
+    );
+
+    const span = run(bakeSpan(removeAt(world, 1, [ids[1]]), 0));
+
+    expect(length(sample(span, 0))).toBeCloseTo(800, 6);
+    expect(length(sample(span, 1))).toBeGreaterThan(400);
+    expect(length(sample(span, 1))).toBeLessThan(401);
+
+    // Falling away in step with the scale rather than standing there and then
+    // being gone: a birth read backwards.
+    for (const t of [0.25, 0.5, 0.75]) {
+      expect(length(sample(span, t)) - 400).toBeCloseTo(400 * (1 - t), 0);
+    }
+  });
+
+  test('and shrinks about its own centre, so it does not slide off to die', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 300, 100, 100)],
+    );
+
+    const span = run(bakeSpan(removeAt(world, 1, [ids[1]]), 0));
+
+    for (const t of [0, 0.6, 1]) {
+      const mine = sample(span, t).filter(r => r.id === ids[1]);
+
+      expect(mine.length).toBeGreaterThan(0);
+      expect(middle(mine).x).toBeCloseTo(350, 4);
+      expect(middle(mine).y).toBeCloseTo(350, 4);
+    }
+  });
+
+  test('and a removal reads against the editor all the way across too', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 300, 100, 100)],
+    );
+
+    expect(drift(removeAt(world, 1, [ids[1]]))).toBeLessThan(TOLERANCE);
+  });
+
+  test('one taken out of a group that turns rides the group while it goes', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-300, -100, 200, 200)],
+      ['level', rect(100, -100, 200, 200)],
+    );
+
+    const group = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const gone = removeAt(group.world, 1, [ids[1]]);
+    const w = transformed(gone, 1, group.id, { rotation: Math.PI / 2 });
+
+    const span = run(bakeSpan(w, 0));
+    const half = middle(sample(span, 0.5).filter(r => r.id === ids[1]));
+
+    expect(half.x).toBeCloseTo(200 / Math.SQRT2, 4);
+    expect(half.y).toBeCloseTo(200 / Math.SQRT2, 4);
+  });
+
+  test('one shrinking out of its neighbour is cut where it leaves the wall', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 200)],
+      ['level', rect(150, 50, 200, 100)],
+    );
+
+    const span = run(bakeSpan(removeAt(world, 1, [ids[1]]), 0));
+    const track = span.tracks.find(t => t.id === ids[1])!;
+
+    expect(track.stretches.length).toBeGreaterThan(1);
+    expect(span.worst).toBeLessThan(TOLERANCE);
   });
 
   test('one growing into its neighbour is cut where it reaches the wall', () => {

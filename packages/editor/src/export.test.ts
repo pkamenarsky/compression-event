@@ -33,6 +33,7 @@ import {
   grouped,
   live,
   sourced,
+  removeAt,
   removeVertices,
   resolveAt,
   withEdit,
@@ -220,6 +221,15 @@ describe('a flattened span replays as its span does', () => {
     const added = addPolygon(world, 'level', rect(400, 300, 140, 140), 1, TOP);
 
     expect(agrees(added.world, 0)).toBeLessThan(SLACK);
+  });
+
+  test('a room taken out of the later version, shrinking into its middle', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 200, 160)],
+      ['level', rect(400, 300, 140, 140)],
+    );
+
+    expect(agrees(removeAt(world, 1, [ids[1]]), 0)).toBeLessThan(SLACK);
   });
 
   test('and one born into a group that turns while it grows', () => {
