@@ -382,6 +382,12 @@ function started(s: EditorState): void {
  * Cmd+E resolves a group, which is the odd one out: every other shortcut here
  * writes into the version on screen, and that one rewrites the whole chain. See
  * `flattened`.
+ *
+ * Cmd+U unchains what is picked and Cmd+Shift+U chains it back up, the way
+ * Cmd+G and Cmd+Shift+G are one question asked both ways round. See `loosened`.
+ *
+ * Every key acted on has to be in the list waited on below, or the bus never
+ * wakes for it and the branch that would have handled it is unreachable.
  */
 function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
@@ -389,6 +395,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       const e = yield* keyPressed(
         input,
         'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyE', 'KeyG',
+        'KeyU',
         'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
