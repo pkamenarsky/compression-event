@@ -12,6 +12,7 @@ import { copied, grouped, landing, pasted, stamped, ungrouped } from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
+import { resolveGroup } from './resolve';
 import { theme } from './theme';
 import {
   EditorState,
@@ -365,13 +366,17 @@ function started(s: EditorState): void {
  * `i` is nobody's. Illustrator has no tool for dropping a thing into a level,
  * and the letters that would read as one are taken. `w` is the walk: the paths
  * tool measures how long one takes, and `p` is spoken for by the pen.
+ *
+ * Cmd+E resolves a group, which is the odd one out: every other shortcut here
+ * writes into the version on screen, and that one rewrites the whole chain. See
+ * `flattened`.
  */
 function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
       const e = yield* keyPressed(
         input,
-        'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyG',
+        'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyE', 'KeyG',
         'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
@@ -433,6 +438,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
       else if (e.code === 'KeyG') {
         update(e.shiftKey ? apart : together);
+      }
+      else if (e.code === 'KeyE') {
+        update(flattened);
       }
       else if (e.code === 'KeyC') {
         update(s => ({
@@ -548,6 +556,58 @@ function apart(s: EditorState): EditorState {
           ...picked.filter(id => world.artefacts.has(id)),
         ],
       },
+    },
+    s.world,
+  );
+}
+
+/**
+ * The picked groups resolved: each replaced by the polygons its union comes to,
+ * at every version it stood at. See `resolve.ts`.
+ *
+ * The one gesture here that rewrites the whole chain rather than writing into
+ * the version on screen, because the thing it replaces spans the whole chain.
+ * Which is why it is a shortcut and nothing else — it is not a transform, there
+ * is no handle for it, and undo is what takes it back.
+ *
+ * Anything picked that is not a group is left alone rather than refusing the
+ * gesture: resolving a selection of a group and a room means resolving the
+ * group, and the room was never in question.
+ */
+function flattened(s: EditorState): EditorState {
+  let world = s.world;
+  const picked: Id[] = [];
+
+  for (const id of s.selection.polygons) {
+    if (!world.groups.has(id)) {
+      picked.push(id);
+      continue;
+    }
+
+    const out = resolveGroup(world, id);
+
+    if (out === null) {
+      picked.push(id);
+      continue;
+    }
+
+    world = out.world;
+    picked.push(out.id);
+  }
+
+  return marked(
+    {
+      ...s,
+      world,
+      // Whatever is still there. A group that went and left one polygon is
+      // named by the polygon; one that stayed is named by itself.
+      selection: {
+        ...s.selection,
+        polygons: picked.filter(id => world.polygons.has(id) || world.groups.has(id)),
+      },
+      // The union may be nothing like what the group was inside, and standing
+      // in a group that no longer exists is a place with no way out.
+      inside: world.groups.has(s.inside ?? -1) ? s.inside : null,
     },
     s.world,
   );
