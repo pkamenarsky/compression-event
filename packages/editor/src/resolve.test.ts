@@ -92,7 +92,7 @@ function drawnArea(world: World, v: VersionId): number {
 describe('resolving a group', () => {
   test('two overlapping rooms come to one polygon', () => {
     const { world, group } = pair();
-    const out = resolveGroup(world, group)!;
+    const out = resolveGroup(world, 0, group)!;
 
     expect(out).not.toBeNull();
 
@@ -105,73 +105,85 @@ describe('resolving a group', () => {
 
     // The union of two 100x100 rooms overlapping by 40.
     expect(shapeArea(it.shape)).toBeCloseTo(100 * 160, 6);
-    expect(out.loose).toBe(0);
+
+    // Nothing was animating it, so nothing is being dropped.
+    expect(out.losing).toEqual([]);
   });
 
   test('the union it draws is the union it drew, at every version', () => {
     const { world, group } = pair();
     const before = world.versions.map((_unused, v) => drawnArea(world, v));
-    const out = resolveGroup(world, group)!;
+    const out = resolveGroup(world, 0, group)!;
 
     expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 6)));
   });
 
-  test('a member moved at a later version keeps its corners', () => {
+  test('a member moved at a later version is named as being lost', () => {
     const { world, group, b } = pair();
 
     // The right-hand room slides further right at v3, so the two overlap less.
     const moved = transformed(world, 3, b, { translation: { x: 20, y: 0 } });
-    const out = resolveGroup(moved, group)!;
+    const out = resolveGroup(moved, 0, group)!;
+
+    // Read at v0, and v0 is what every version becomes. Which is exactly what
+    // `losing` is for: the shape at v4 was 100x180 and is now 100x160, and
+    // nothing about the result says so.
+    expect(out.losing).toEqual([3]);
 
     const [id] = [...out.world.polygons.keys()];
-    const polygon = out.world.polygons.get(id)!;
 
-    // Nothing was born and nothing died: the same eight corners, moved.
-    expect(polygon.points.every(p => p.birth === 0 && p.death === null)).toBe(true);
+    for (const v of [0, 3, 4]) {
+      const it = resolveAt(out.world, v).find(r => r.id === id)!;
 
-    const before = resolveAt(out.world, 2).find(r => r.id === id)!;
-    const later = resolveAt(out.world, 4).find(r => r.id === id)!;
-
-    expect(before.corners.map(c => c.id)).toEqual(later.corners.map(c => c.id));
-    expect(shapeArea(before.shape)).toBeCloseTo(100 * 160, 6);
-    expect(shapeArea(later.shape)).toBeCloseTo(100 * 180, 6);
+      expect(shapeArea(it.shape)).toBeCloseTo(100 * 160, 6);
+    }
   });
 
-  test('members pulled apart bring the crossings to an end', () => {
+  test('read at a later version, that version is what it becomes', () => {
     const { world, group, b } = pair();
+    const moved = transformed(world, 3, b, { translation: { x: 20, y: 0 } });
+    const out = resolveGroup(moved, 3, group)!;
 
-    // Far enough right to clear the first room entirely: two rings where there
-    // was one, and the four crossings that made the union have nothing to be.
-    const moved = transformed(world, 4, b, { translation: { x: 200, y: 0 } });
-    const out = resolveGroup(moved, group)!;
+    // Nothing after v3 said anything, and v3 is where it was read, so v0 to v2
+    // are the versions that change — and they are the ones named.
+    expect(out.losing).toEqual([]);
 
-    // Two rings at v4 and after, so the group stays to hold them.
-    expect(out.world.groups.has(group)).toBe(true);
-    expect(out.world.polygons.size).toBeGreaterThan(1);
+    const [id] = [...out.world.polygons.keys()];
+    const it = resolveAt(out.world, 0).find(r => r.id === id)!;
 
-    const at = (v: VersionId) => resolveAt(out.world, v).length;
+    expect(shapeArea(it.shape)).toBeCloseTo(100 * 180, 6);
+  });
 
-    expect(at(0)).toBe(1);
-    expect(at(3)).toBe(1);
-    expect(at(4)).toBe(2);
+  test('a member is not left in the world with layers still naming it', () => {
+    const { world, group, a, b } = pair();
+    const moved = transformed(world, 3, b, { translation: { x: 20, y: 0 } });
+    const out = resolveGroup(moved, 0, group)!;
+
+    expect(out.world.polygons.has(a)).toBe(false);
+    expect(out.world.polygons.has(b)).toBe(false);
+
+    for (const version of out.world.versions) {
+      expect(version.edits.has(a)).toBe(false);
+      expect(version.edits.has(b)).toBe(false);
+    }
   });
 
   test('a group deleted at a version stays deleted', () => {
     const { world, group } = pair();
 
     // Nothing standing anywhere is nothing to resolve.
-    const empty = resolveGroup(emptyWorld(), group);
+    const empty = resolveGroup(emptyWorld(), 0, group);
 
     expect(empty).toBeNull();
-    expect(resolveGroup(world, 999)).toBeNull();
+    expect(resolveGroup(world, 0, 999)).toBeNull();
   });
 
   test('the group keeps its depth rather than baking it in', () => {
     const { world, group } = pair();
     const eroded = transformed(world, 2, group, { erosion: 5 });
     const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
-    const out = resolveGroup(eroded, group)!;
+    const out = resolveGroup(eroded, 0, group)!;
 
     expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 4)));
@@ -186,7 +198,7 @@ describe('resolving a group', () => {
   test('a moving group keeps its motion as a transform', () => {
     const { world, group } = pair();
     const turned = transformed(world, 5, group, { rotation: Math.PI / 6 });
-    const out = resolveGroup(turned, group)!;
+    const out = resolveGroup(turned, 0, group)!;
 
     const [id] = [...out.world.polygons.keys()];
 
@@ -207,7 +219,7 @@ describe('resolving a group', () => {
 
     const made = grouped(world, 0, ids, landing(world, 0, null))!;
     const before = drawnArea(made.world, 0);
-    const out = resolveGroup(made.world, made.id)!;
+    const out = resolveGroup(made.world, 0, made.id)!;
 
     // One polygon, on one side of the set. Nothing is taken back out.
     expect([...out.world.polygons.values()].map(p => p.type)).toEqual(['level']);
@@ -239,7 +251,7 @@ describe('resolving a group', () => {
     const made = grouped(world, 0, ids, landing(world, 0, null))!;
     const eroded = transformed(made.world, 3, made.id, { erosion: 4 });
     const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
-    const out = resolveGroup(eroded, made.id)!;
+    const out = resolveGroup(eroded, 0, made.id)!;
 
     expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 4)));
@@ -257,7 +269,7 @@ describe('resolving a group', () => {
     })();
 
     const held = grouped(withKey, 0, [group, key], landing(withKey, 0, null))!;
-    const out = resolveGroup(held.world, group)!;
+    const out = resolveGroup(held.world, 0, group)!;
 
     // The outer group still holds what it held: the resolved thing, and the
     // room that was never part of it.
@@ -266,32 +278,38 @@ describe('resolving a group', () => {
   });
 });
 
-describe('lineage', () => {
-  test('every corner of every version belongs to a standing vertex', () => {
+describe('what one reading costs', () => {
+  test('every corner stands for the whole of the polygon it is in', () => {
     const { world, group, b } = pair();
     const moved = transformed(world, 3, b, { rotation: 0.3 });
-    const out = resolveGroup(moved, group)!;
+    const out = resolveGroup(moved, 0, group)!;
+
+    // One reading means one shape: no corner is born and none dies, at any
+    // version, because there is no version at which anything is different.
+    for (const polygon of out.world.polygons.values()) {
+      expect(polygon.points.every(p => p.birth === polygon.birth)).toBe(true);
+      expect(polygon.points.every(p => p.death === polygon.death)).toBe(true);
+    }
 
     for (let v = 0; v < VERSIONS; v++) {
-      for (const it of resolveAt(out.world, v)) {
-        expect(it.corners.length).toBe(it.local.length);
-        expect(it.corners.every(c => standing(c, new Set(Array.from({ length: v + 1 }, (_u, i) => i)))))
-          .toBe(true);
-      }
+      const it = resolveAt(out.world, v)[0];
+
+      expect(it.corners.length).toBe(it.local.length);
     }
   });
 
-  test('the ring order holds still as corners come and go', () => {
-    const { world, group, b } = pair();
-    const moved = transformed(world, 4, b, { translation: { x: 200, y: 0 } });
-    const out = resolveGroup(moved, group)!;
+  test('no layer displaces a corner, so the group\'s motion is still motion', () => {
+    const { world, group } = pair();
+    const turned = transformed(world, 5, group, { rotation: Math.PI / 6 });
+    const out = resolveGroup(turned, 0, group)!;
+    const [id] = [...out.world.polygons.keys()];
 
-    for (const polygon of out.world.polygons.values()) {
-      const ids = polygon.points.map(p => p.id);
-
-      // Every corner named once, and the dead left where they were.
-      expect(new Set(ids).size).toBe(ids.length);
+    for (const version of out.world.versions) {
+      expect(version.edits.get(id)?.vertices.size ?? 0).toBe(0);
     }
+
+    expect(out.world.versions[5].edits.get(id)!.transform.rotation)
+      .toBeCloseTo(Math.PI / 6, 12);
   });
 });
 
@@ -319,16 +337,19 @@ describe('a group made later than what is in it', () => {
   });
 
   test('resolving leaves v0 exactly as full as it was', () => {
-    const before = world.versions.map((_unused, v) => drawnArea(world, v));
-    const out = resolveGroup(world, group)!;
+    const before = drawnArea(world, 0);
+    const out = resolveGroup(world, 0, group)!;
 
-    expect(drawnArea(out.world, 0)).toBeGreaterThan(0);
-    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
-      .toEqual(before.map(a => expect.closeTo(a, 4)));
+    expect(drawnArea(out.world, 0)).toBeCloseTo(before, 4);
+
+    // v1 turns one of the rooms, which is the layer that cannot survive — and
+    // it is the one version named.
+    expect(out.losing).toEqual([1]);
+    expect(drawnArea(out.world, 1)).toBeCloseTo(before, 4);
   });
 
   test('the ring itself is born where the rooms were, not where the group was', () => {
-    const out = resolveGroup(world, group)!;
+    const out = resolveGroup(world, 0, group)!;
 
     for (const polygon of out.world.polygons.values()) expect(polygon.birth).toBe(0);
 
@@ -358,7 +379,7 @@ function holed(): { world: World, id: PolygonId } {
   );
 
   const made = grouped(world, 0, ids, landing(world, 0, null))!;
-  const out = resolveGroup(made.world, made.id)!;
+  const out = resolveGroup(made.world, 0, made.id)!;
 
   return { world: out.world, id: [...out.world.polygons.keys()][0] };
 }

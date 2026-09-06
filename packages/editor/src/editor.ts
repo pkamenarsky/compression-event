@@ -12,7 +12,7 @@ import { copied, grouped, landing, pasted, stamped, ungrouped } from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
-import { resolveGroup } from './resolve';
+import { Resolution, resolveGroup } from './resolve';
 import { theme } from './theme';
 import {
   EditorState,
@@ -440,7 +440,11 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
         update(e.shiftKey ? apart : together);
       }
       else if (e.code === 'KeyE') {
-        update(flattened);
+        // Read out here rather than inside the update, because it asks a
+        // question and an update has to be a function of the state alone.
+        const done = flattened(state());
+
+        if (done !== null) update(() => done);
       }
       else if (e.code === 'KeyC') {
         update(s => ({
@@ -562,8 +566,8 @@ function apart(s: EditorState): EditorState {
 }
 
 /**
- * The picked groups resolved: each replaced by the polygons its union comes to,
- * at every version it stood at. See `resolve.ts`.
+ * The picked groups resolved: each replaced by the polygons its union comes to
+ * at the version on screen. See `resolve.ts`.
  *
  * The one gesture here that rewrites the whole chain rather than writing into
  * the version on screen, because the thing it replaces spans the whole chain.
@@ -573,27 +577,33 @@ function apart(s: EditorState): EditorState {
  * Anything picked that is not a group is left alone rather than refusing the
  * gesture: resolving a selection of a group and a room means resolving the
  * group, and the room was never in question.
+ *
+ * Nothing at all where the author says no to what it is about to drop. Asked
+ * once for the whole selection rather than once per group, since answering the
+ * same question four times is not consent, it is a queue.
  */
-function flattened(s: EditorState): EditorState {
+function flattened(s: EditorState): EditorState | null {
+  const groups = s.selection.polygons.filter(id => s.world.groups.has(id));
+  const out = new Map<GroupId, Resolution>();
+
   let world = s.world;
-  const picked: Id[] = [];
 
-  for (const id of s.selection.polygons) {
-    if (!world.groups.has(id)) {
-      picked.push(id);
-      continue;
-    }
+  for (const id of groups) {
+    const done = resolveGroup(world, s.currentVersion, id);
 
-    const out = resolveGroup(world, id);
+    if (done === null) continue;
 
-    if (out === null) {
-      picked.push(id);
-      continue;
-    }
-
-    world = out.world;
-    picked.push(out.id);
+    world = done.world;
+    out.set(id, done);
   }
+
+  if (out.size === 0) return null;
+
+  const losing = [...new Set([...out.values()].flatMap(r => r.losing))].sort((a, b) => a - b);
+
+  if (losing.length > 0 && !agreed(s, losing)) return null;
+
+  const picked = s.selection.polygons.map(id => out.get(id)?.id ?? id);
 
   return marked(
     {
@@ -610,6 +620,31 @@ function flattened(s: EditorState): EditorState {
       inside: world.groups.has(s.inside ?? -1) ? s.inside : null,
     },
     s.world,
+  );
+}
+
+/**
+ * Whether the author wants what is about to be dropped dropped.
+ *
+ * The one thing about a resolve that cannot be seen by looking at the result:
+ * the versions it empties are the ones you are not standing in, so the damage
+ * is off screen by definition. Hence a question rather than a status line.
+ *
+ * Only when there is something to lose. A group nobody has animated resolves
+ * without a word, which is nearly every one of them.
+ */
+function agreed(s: EditorState, losing: readonly VersionId[]): boolean {
+  const names = losing.map(v => s.world.versions[v].name).join(', ');
+  const here = s.world.versions[s.currentVersion].name;
+
+  return confirm(
+    `Resolving reads the group as it stands at ${here}, and that is the shape it `
+    + 'becomes at every version.\n\n'
+    + `${names} ${losing.length === 1 ? 'moves' : 'move'} the members separately, and a `
+    + 'union cannot carry that: a version\'s transform moves a whole polygon, and there '
+    + `is no one transform that is what all of them were doing. ${names} will stop `
+    + 'saying anything about it.\n\n'
+    + 'The group\'s own moves and its erosion are kept.',
   );
 }
 
