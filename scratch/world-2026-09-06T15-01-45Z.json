@@ -1,0 +1,216 @@
+{
+  "format": 13,
+  "tool": "polygon",
+  "figure": "rect",
+  "currentVersion": 0,
+  "selection": [
+    10
+  ],
+  "artefacts": [],
+  "settings": {
+    "gridSize": 100,
+    "showGrid": true
+  },
+  "view": {
+    "x": -3258.640625,
+    "y": -1686.765625,
+    "zoom": 0.25,
+    "width": 1470,
+    "height": 831,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 11,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -1100,
+                "y": -700
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": -300,
+                "y": -700
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": -300,
+                "y": 0
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -1100,
+                "y": 0
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        5,
+        {
+          "type": "level",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 6,
+              "at": {
+                "x": -600,
+                "y": -300
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 7,
+              "at": {
+                "x": 600,
+                "y": -300
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 600,
+                "y": 600
+              },
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": -600,
+                "y": 600
+              },
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [
+      [
+        10,
+        {
+          "birth": 1,
+          "death": null,
+          "members": [
+            0,
+            5
+          ]
+        }
+      ]
+    ],
+    "artefacts": [],
+    "paths": [],
+    "start": {
+      "at": {
+        "x": 0,
+        "y": 0
+      },
+      "facing": 0
+    },
+    "versions": [
+      {
+        "name": "v0",
+        "base": null,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v1",
+        "base": 0,
+        "visible": true,
+        "edits": [
+          [
+            5,
+            {
+              "transform": {
+                "translation": {
+                  "x": -75.00000000000001,
+                  "y": 20.0961894323342
+                },
+                "rotation": -0.5235987755982989,
+                "scale": {
+                  "x": 1,
+                  "y": 1
+                },
+                "erosion": 0
+              },
+              "vertices": []
+            }
+          ]
+        ]
+      },
+      {
+        "name": "v2",
+        "base": 1,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v3",
+        "base": 2,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v4",
+        "base": 3,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v5",
+        "base": 4,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v6",
+        "base": 5,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v7",
+        "base": 6,
+        "visible": true,
+        "edits": []
+      },
+      {
+        "name": "v8",
+        "base": 7,
+        "visible": true,
+        "edits": []
+      }
+    ]
+  }
+}

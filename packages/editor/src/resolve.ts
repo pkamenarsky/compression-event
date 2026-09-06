@@ -657,9 +657,28 @@ export function resolveGroup(world: World, id: GroupId): Resolution | null {
 
   if (group === undefined) return null;
 
+  // Every version any of the geometry is there at, rather than every version
+  // the *group* is there at.
+  //
+  // A group made at v1 out of rooms drawn at v0 does not un-draw them —
+  // grouping is a handle appearing, which is why `removals` reads a holder's
+  // death and never its birth — so those rooms stand at v0 with nothing holding
+  // them, and what replaces them has to stand there too. Taken from the group's
+  // own birth instead, resolving emptied v0 and grew the whole level out of its
+  // middle at v1.
+  //
+  // At a version before the group, its layers say nothing and its depth is
+  // nought, so the union taken there is the union of the members as they stand:
+  // the same set the CSG was making of them one by one.
+  const geometry = within(world, id).filter(m => world.polygons.has(m));
+
   const versions = world.versions
     .map((_unused, v) => v)
-    .filter(v => standingIn(world, id, new Set(chain(world, v))));
+    .filter(v => {
+      const from = new Set(chain(world, v));
+
+      return geometry.some(m => standingIn(world, m, from));
+    });
 
   if (versions.length === 0) return null;
 

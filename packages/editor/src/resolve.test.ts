@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { shapeArea, union } from './geometry';
@@ -23,6 +24,7 @@ import {
   emptyWorld,
   standing,
 } from './types';
+import { Saved, restored } from './save';
 import { resolveGroup } from './resolve';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -250,5 +252,53 @@ describe('lineage', () => {
       // Every corner named once, and the dead left where they were.
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+});
+
+describe('a group made later than what is in it', () => {
+  /**
+   * A pair of rooms drawn at v0 and grouped at v1, with one of them turned by
+   * the group's own layer. Off disk rather than built here, because what it is
+   * a regression against is a shape of history the editor makes and the tests
+   * above did not: the geometry outlives the handle on it.
+   */
+  const world = restored(
+    JSON.parse(
+      readFileSync(
+        new URL('../../../scratch/world-2026-09-06T15-01-45Z.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Saved,
+  ).world;
+
+  const group = 10;
+
+  test('the rooms it was made of stand before it did', () => {
+    expect(world.groups.get(group)!.birth).toBe(1);
+    expect(resolveAt(world, 0).length).toBe(2);
+  });
+
+  test('resolving leaves v0 exactly as full as it was', () => {
+    const before = world.versions.map((_unused, v) => drawnArea(world, v));
+    const out = resolveGroup(world, group)!;
+
+    expect(drawnArea(out.world, 0)).toBeGreaterThan(0);
+    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
+      .toEqual(before.map(a => expect.closeTo(a, 4)));
+  });
+
+  test('the ring itself is born where the rooms were, not where the group was', () => {
+    const out = resolveGroup(world, group)!;
+
+    for (const polygon of out.world.polygons.values()) expect(polygon.birth).toBe(0);
+
+    // Corners do come and go across v0 to v1, and rightly: the group turns one
+    // of the rooms there, so the pair of edges that cross is a different pair
+    // and the crossing they made is a different crossing. What must not happen
+    // is the whole ring arriving at once.
+    const at = (v: VersionId) => resolveAt(out.world, v)[0].corners.length;
+
+    expect(at(0)).toBeGreaterThan(3);
+    expect(at(1)).toBeGreaterThan(3);
   });
 });
