@@ -126,7 +126,19 @@
 
 import { Point } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
-import { Member, Ring, Shape, boundaryRuns, ground, keeping, simplify } from './geometry';
+import {
+  Member,
+  Ring,
+  Shape,
+  alongOf,
+  boundaryRuns,
+  betweenOf,
+  ground,
+  keeping,
+  nextOf,
+  prevOf,
+  simplify,
+} from './geometry';
 import {
   Affine,
   Contributed,
@@ -166,6 +178,7 @@ import {
   VertexId,
   World,
   enclosing,
+  ringsOf,
 } from './types';
 import { pieces } from './worldset';
 
@@ -597,13 +610,17 @@ function spanning(was: Resolved, now: Resolved): Spanned {
     corners.map(c => there.get(c.id) ?? ORIGIN),
   ];
 
-  // The nearest corner in that direction that `has` holds. It terminates
-  // because neither end is ever left with fewer than three corners.
+  // The nearest corner in that direction that `has` holds. Round the corner's
+  // own ring, not round the list: a hole's neighbours are in the hole. It
+  // terminates because no ring at either end is ever left with fewer than three
+  // corners.
+  const rings = ringsOf(corners);
+
   const nearest = (i: number, step: number, has: Map<VertexId, Point>): number => {
     let k = i;
 
     do {
-      k = (k + step + n) % n;
+      k = alongOf(rings, n, k, step);
     }
     while (!has.has(corners[k].id));
 
@@ -626,7 +643,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
       // construction, so its place in that run is all the spreading needs.
       const at = sameBefore && sameAfter
         ? fraction(other.get(corners[before].id)!, other.get(corners[after].id)!, other.get(c.id)!)
-        : ((i - before + n) % n) / ((after - before + n) % n);
+        : betweenOf(rings, n, before, i) / betweenOf(rings, n, before, after);
 
       local[side][i] = between2(from, to, at);
 
@@ -694,12 +711,13 @@ function straightened(
   depths: [number[], number[]],
 ): Spanned {
   const snap: [number, number] = [near1(local[0]), near1(local[1])];
+  const rings = ringsOf(corners);
 
   for (let i = 0; i < corners.length; i++) {
     if (dead[0][i] || dead[1][i]) continue;
 
-    const was = flat(local[0], depths[0], i, snap[0]);
-    const now = flat(local[1], depths[1], i, snap[1]);
+    const was = flat(local[0], rings, depths[0], i, snap[0]);
+    const now = flat(local[1], rings, depths[1], i, snap[1]);
 
     if (was !== now) dead[was ? 0 : 1][i] = true;
   }
@@ -726,9 +744,16 @@ function near1(ring: Ring): number {
  * not in the same line come out of `erodeAt` as a genuine corner, so the depths
  * have to answer the same question the positions do, and both have to say yes.
  */
-function flat(ring: Ring, depths: readonly number[], i: number, snap: number): boolean {
+function flat(
+  ring: Ring,
+  rings: readonly number[],
+  depths: readonly number[],
+  i: number,
+  snap: number,
+): boolean {
   const n = ring.length;
-  const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+  const before = prevOf(rings, n, i), after = nextOf(rings, n, i);
+  const a = ring[before], b = ring[i], c = ring[after];
   const ux = b.x - a.x, uy = b.y - a.y;
   const vx = c.x - b.x, vy = c.y - b.y;
   const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
@@ -738,7 +763,7 @@ function flat(ring: Ring, depths: readonly number[], i: number, snap: number): b
 
   // Where the depth sits, against where running from `a` to `c` would put it.
   const l = Math.hypot(ux, uy) + Math.hypot(vx, vy);
-  const da = depths[(i - 1 + n) % n], db = depths[i], dc = depths[(i + 1) % n];
+  const da = depths[before], db = depths[i], dc = depths[after];
   const want = l === 0 ? da : da + (dc - da) * (Math.hypot(ux, uy) / l);
 
   return Math.abs(db - want) <= snap;
@@ -1024,11 +1049,12 @@ function invented(
   if (dead === null) return [];
 
   const out: Point[] = [];
+  const rings = ringsOf(m.corners);
 
   for (let i = 0; i < source.length; i++) {
     if (dead[i] !== true) continue;
 
-    const p = mitred(source, i, typeof erosion === 'number' ? erosion : erosion[i]);
+    const p = mitred(source, rings, i, typeof erosion === 'number' ? erosion : erosion[i]);
 
     if (p !== null) out.push(p);
   }
@@ -1107,7 +1133,7 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
   const out = full.map(ring => ring.map(() => 1));
 
   for (const i of changing) {
-    const image = mitred(it.source, i, it.depths === null ? it.erosion : it.depths[i]);
+    const image = mitred(it.source, it.rings, i, it.depths === null ? it.erosion : it.depths[i]);
 
     // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
     // it nowhere to be, and a point that is not drawn needs no opacity.
@@ -1137,9 +1163,9 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * doubles back on itself sends the meeting point off towards infinity, and a
  * deep enough offset eats the edges the corner stood between.
  */
-function mitred(ring: Ring, i: number, depth: number): Point | null {
+function mitred(ring: Ring, rings: readonly number[], i: number, depth: number): Point | null {
   const n = ring.length;
-  const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+  const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
 
   const ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy);
   const vx = c.x - b.x, vy = c.y - b.y, vl = Math.hypot(vx, vy);

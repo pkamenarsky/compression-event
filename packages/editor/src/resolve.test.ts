@@ -1,15 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { shapeArea, union } from './geometry';
+import { nextOf, shapeArea } from './geometry';
 import {
   TOP,
   addPolygon,
+  addVertex,
   csg,
   depths,
   editAt,
   grouped,
+  hitEdge,
+  hitPolygon,
   landing,
+  removeVertices,
   resolveAt,
   showing,
   withEdit,
@@ -22,9 +26,12 @@ import {
   VersionId,
   World,
   emptyWorld,
+  initialState,
+  ringsOf,
   standing,
 } from './types';
-import { Saved, restored } from './save';
+import { Frame, truth } from './bake';
+import { FORMAT, Saved, restored, saved } from './save';
 import { resolveGroup } from './resolve';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -189,7 +196,7 @@ describe('resolving a group', () => {
     expect(out.world.versions[5].edits.get(id)!.vertices.size).toBe(0);
   });
 
-  test('a courtyard becomes a hole taken back out', () => {
+  test('a courtyard becomes a hole in the room, not a pillar in it', () => {
     // Four corridors round an empty middle: the union has a hole in it.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 20)],
@@ -202,10 +209,43 @@ describe('resolving a group', () => {
     const before = drawnArea(made.world, 0);
     const out = resolveGroup(made.world, made.id)!;
 
-    const kinds = [...out.world.polygons.values()].map(p => p.type).sort();
+    // One polygon, on one side of the set. Nothing is taken back out.
+    expect([...out.world.polygons.values()].map(p => p.type)).toEqual(['level']);
 
-    expect(kinds).toEqual(['level', 'solid']);
+    const [polygon] = [...out.world.polygons.values()];
+
+    // Two rings: the outline of the block, and the courtyard in it.
+    expect(ringsOf(polygon.points).length).toBe(2);
+    expect(new Set(polygon.points.map(p => p.ring))).toEqual(new Set([0, 1]));
+
+    const it = resolveAt(out.world, 0)[0];
+
+    expect(it.rings.length).toBe(2);
+    expect(shapeArea(it.shape)).toBeCloseTo(before, 6);
     expect(drawnArea(out.world, 0)).toBeCloseTo(before, 6);
+
+    // 100x100 with a 60x60 courtyard out of the middle.
+    expect(before).toBeCloseTo(100 * 100 - 60 * 60, 6);
+  });
+
+  test('a hole survives being eroded, and opens as the ground shrinks', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 20)],
+      ['level', rect(0, 80, 100, 20)],
+      ['level', rect(0, 0, 20, 100)],
+      ['level', rect(80, 0, 20, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const eroded = transformed(made.world, 3, made.id, { erosion: 4 });
+    const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
+    const out = resolveGroup(eroded, made.id)!;
+
+    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
+      .toEqual(before.map(a => expect.closeTo(a, 4)));
+
+    // The courtyard got bigger as the walls came in, rather than smaller.
+    expect(before[3]).toBeLessThan(before[0]);
   });
 
   test('an artefact in the group stays in the group', () => {
@@ -302,3 +342,158 @@ describe('a group made later than what is in it', () => {
     expect(at(1)).toBeGreaterThan(3);
   });
 });
+
+// -----------------------------------------------------------------------------
+// A polygon with a hole in it, once it is one
+// -----------------------------------------------------------------------------
+
+/** Four corridors round an empty middle, resolved: one room with a courtyard.
+ * The shape everything below is about. */
+function holed(): { world: World, id: PolygonId } {
+  const { world, ids } = drawn(
+    ['level', rect(0, 0, 100, 20)],
+    ['level', rect(0, 80, 100, 20)],
+    ['level', rect(0, 0, 20, 100)],
+    ['level', rect(80, 0, 20, 100)],
+  );
+
+  const made = grouped(world, 0, ids, landing(world, 0, null))!;
+  const out = resolveGroup(made.world, made.id)!;
+
+  return { world: out.world, id: [...out.world.polygons.keys()][0] };
+}
+
+describe('a hole is a ring like any other', () => {
+  test('the CSG sees through it', () => {
+    const { world } = holed();
+
+    // The courtyard is outside the set: the runs are the outline and the hole,
+    // and the middle of the world is not in the level.
+    expect(shapeArea(resolveAt(world, 0)[0].shape)).toBeCloseTo(100 * 100 - 60 * 60, 6);
+    expect(csg(world, 0).length).toBeGreaterThan(0);
+  });
+
+  test('a click in the courtyard picks nothing', () => {
+    const { world, id } = holed();
+    const items = resolveAt(world, 0);
+
+    expect(hitPolygon(items, { x: 10, y: 50 })).toBe(id);
+    expect(hitPolygon(items, { x: 50, y: 50 })).toBeNull();
+  });
+
+  test('a corner added to the courtyard stays in the courtyard', () => {
+    const { world, id } = holed();
+    const it = resolveAt(world, 0).find(r => r.id === id)!;
+
+    // An edge of the hole rather than of the outline.
+    const inner = it.corners.findIndex(c => c.ring === 1);
+    const at = hitEdge([it], midpoint(it, inner), 1)!;
+
+    expect(at.index).toBe(inner);
+
+    const grown = addVertex(world, 0, it, inner, at.at);
+    const polygon = grown.world.polygons.get(id)!;
+    const corner = polygon.points.find(c => c.id === grown.vertex)!;
+
+    expect(corner.ring).toBe(1);
+    expect(ringsOf(resolveAt(grown.world, 0).find(r => r.id === id)!.corners).length).toBe(2);
+  });
+
+  test('the edge after a ring is that ring, not the next one', () => {
+    const { world, id } = holed();
+    const it = resolveAt(world, 0).find(r => r.id === id)!;
+
+    // The outline's last corner joins its first, not the courtyard's first.
+    const last = it.rings[1] - 1;
+    const at = hitEdge([it], midpoint(it, last), 1)!;
+
+    expect(at.index).toBe(last);
+    expect(nextOf(it.rings, it.corners.length, last)).toBe(0);
+    expect(nextOf(it.rings, it.corners.length, it.corners.length - 1)).toBe(it.rings[1]);
+  });
+
+  test('taking the courtyard below three corners is refused, not fudged', () => {
+    const { world, id } = holed();
+    const it = resolveAt(world, 0).find(r => r.id === id)!;
+    const inner = it.corners.filter(c => c.ring === 1).map(c => c.id);
+
+    expect(inner.length).toBeGreaterThan(3);
+
+    // Down to three is fine, and the outline is untouched by it.
+    const some = removeVertices(world, 1, inner.slice(0, inner.length - 3));
+    const left = resolveAt(some, 1).find(r => r.id === id)!;
+
+    expect(left.corners.filter(c => c.ring === 1).length).toBe(3);
+    expect(ringsOf(left.corners).length).toBe(2);
+
+    // One more would leave a ring that is not one, so nothing goes at all.
+    expect(removeVertices(some, 2, [left.corners.find(c => c.ring === 1)!.id]))
+      .toBe(some);
+  });
+
+  test('it survives a round trip through a file', () => {
+    const { world, id } = holed();
+    const back = restored(JSON.parse(JSON.stringify(saved(initialState(world))))).world;
+    const polygon = back.polygons.get(id)!;
+
+    expect(polygon.points.map(c => c.ring)).toEqual(world.polygons.get(id)!.points.map(c => c.ring));
+    expect(shapeArea(resolveAt(back, 0)[0].shape)).toBeCloseTo(100 * 100 - 60 * 60, 6);
+  });
+
+  test('a file written before rings reads as one ring', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
+    const file = JSON.parse(JSON.stringify(saved(initialState(world))));
+
+    for (const [, polygon] of file.world.polygons) {
+      for (const corner of polygon.points) delete corner.ring;
+    }
+
+    file.format = FORMAT - 1;
+
+    const back = restored(file).world;
+
+    expect(back.polygons.get(ids[0])!.points.every(c => c.ring === 0)).toBe(true);
+  });
+
+  test('the bake carries it across a span without losing the hole', () => {
+    const { world, id } = holed();
+    const moved = transformed(world, 1, id, { translation: { x: 30, y: 0 } });
+
+    // The boundary is the outline and the courtyard, and it stays both for the
+    // length of the span: a translation moves the block and takes the hole with
+    // it, so the total run length holds still.
+    const outline = 4 * 100;
+    const courtyard = 4 * 60;
+
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(walked(truth(moved, 0, t))).toBeCloseTo(outline + courtyard, 6);
+    }
+  });
+});
+
+/** Total length of a frame's runs: enough of a fingerprint for a boundary that
+ * is supposed to be one outline and one courtyard. */
+function walked(frame: Frame): number {
+  let out = 0;
+
+  for (const run of frame) {
+    for (let i = 1; i < run.points.length; i++) {
+      out += Math.hypot(
+        run.points[i].x - run.points[i - 1].x,
+        run.points[i].y - run.points[i - 1].y,
+      );
+    }
+  }
+
+  return out;
+}
+
+/** The middle of the edge leaving corner `i`, round its own ring. */
+function midpoint(it: { source: Point[], rings: readonly number[] }, i: number): Point {
+  const j = nextOf(it.rings, it.source.length, i);
+
+  return {
+    x: (it.source[i].x + it.source[j].x) / 2,
+    y: (it.source[i].y + it.source[j].y) / 2,
+  };
+}

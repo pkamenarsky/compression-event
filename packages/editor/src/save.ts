@@ -53,6 +53,13 @@ import { facingAt, placeAt } from './scene';
  * corner of a polygon is offset by the same amount — so it reads as one, which
  * is what an absent map means anywhere.
  *
+ * 14: a polygon is any number of rings — an outline and the holes in it — laid
+ * end to end in one list of corners, each corner saying which ring it belongs
+ * to. A format-13 file has one ring, so every corner in it is a corner of ring
+ * nought, which is what it is read as. Nothing is guessed at: one ring is what
+ * every polygon in it had, and the field only ever says something once a hole
+ * exists to say it about.
+ *
  * 11: the start is a field of the world rather than an artefact of kind
  * `start`. A format-10 file has one among the artefacts — or several, or none,
  * which is exactly what this stops being sayable — so the first of them is
@@ -100,7 +107,7 @@ import { facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 13;
+export const FORMAT = 14;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -357,18 +364,20 @@ function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point 
  *
  * And the polygon itself, before format 13, where nothing could be taken out at
  * a version at all.
+ *
+ * The ring a corner is in comes from here too. Before format 14 there was one,
+ * so every corner is a corner of it — see `Vertex.ring`.
  */
 function standingThroughout(polygon: Polygon): Polygon {
   return {
     ...polygon,
     death: polygon.death ?? null,
-    points: polygon.points.every(c => c.birth !== undefined)
-      ? polygon.points
-      : polygon.points.map(c => ({
-        ...c,
-        birth: c.birth ?? polygon.birth,
-        death: c.death ?? null,
-      })),
+    points: polygon.points.map(c => ({
+      ...c,
+      ring: c.ring ?? 0,
+      birth: c.birth ?? polygon.birth,
+      death: c.death ?? null,
+    })),
   };
 }
 

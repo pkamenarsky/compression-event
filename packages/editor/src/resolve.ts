@@ -69,6 +69,16 @@
 // across the arcs they used to travel.
 //
 // That is not a bug with a fix. It is what handles cost.
+//
+// Holes
+// -----
+// The union of a ring of corridors is one room with a courtyard in the middle,
+// and that is what it comes out as: one polygon, whose second ring is the
+// courtyard. Not a room and a pillar — a pillar is on the other side of the set
+// and cuts the rooms around it too, so a neighbour built up against the block
+// could never fill the courtyard in, which is not what the group did.
+//
+// This is what `Vertex.ring` was added for. See `types.ts`.
 // -----------------------------------------------------------------------------
 
 import { PolygonType } from '@ce/game/world';
@@ -78,6 +88,7 @@ import {
   Ring,
   Whither,
   boundaryRuns,
+  contains,
   ground,
 } from './geometry';
 import {
@@ -111,29 +122,6 @@ import {
  * The same list `sideOf` numbers, and for the same reason: a room's boundary
  * and a pillar's are not one boundary. */
 const SIDES: readonly PolygonType[] = ['level', 'solid', 'floor'];
-
-/**
- * What a hole in one side's union becomes.
- *
- * A hole is a ring wound the other way inside the same shape, and there is no
- * polygon that is a ring wound the other way: `project` settles the winding on
- * its way through the arrangement, so a lone clockwise ring comes back filled.
- * The hole has to be said the way this world already says holes — as something
- * taken back out.
- *
- * Which is not an approximation *inside* the group. A group offers its sides
- * apart and the CSG takes `level - solid`, so a hole put on the solid side of
- * the group it was a hole in comes back out of the same union, at the same
- * depth, with the sign flipped exactly as `contributed` already flips it.
- *
- * It is an approximation outside one, and precisely as much of one as this
- * editor has always had: a group's solid side cuts the rooms around it too, so
- * a resolved courtyard is a hole no neighbour can fill in. That is the existing
- * meaning of a group holding a room and a pillar, reached by a new road.
- */
-function complement(kind: PolygonType): PolygonType {
-  return kind === 'solid' ? 'level' : 'solid';
-}
 
 // -----------------------------------------------------------------------------
 // Naming the union's corners
@@ -299,11 +287,53 @@ function rings(items: readonly Contributed[], kind: PolygonType, names: Names): 
   return stitched(out);
 }
 
-/** One ring of the union as the polygon it will become: which side it is on,
- * and its corners in the group's own frame, wound the way a polygon is. */
+/**
+ * One ring of the union: which side of the set it is on, whether it is a hole,
+ * and which of this version's outlines it is a hole in.
+ *
+ * A hole stays with the outline it is a hole in rather than becoming something
+ * taken back out. It is one polygon's second ring, which is what a courtyard
+ * is: the union of a ring of corridors is one room with a gap in the middle,
+ * and saying it as a room and a pillar would put a wall between them that is
+ * not anywhere.
+ */
 interface Reading {
   kind: PolygonType
+  hole: boolean
+  /** The reading it is a hole in, by index in the version's own list. */
+  owner: number | null
   ring: NamedRing
+}
+
+/** Which ring of a set is which, in one pass.
+ *
+ * By area and by containment rather than by winding on its own. A shape read in
+ * a frame that mirrors comes back wound the other way from end to end, and the
+ * nonzero rule does not mind — an outline at -1 is as filled as one at +1 — so
+ * the sign that matters is the one *relative to the biggest ring*, which is an
+ * outline whichever way round the frame put it.
+ */
+function nested(rings: readonly NamedRing[]): { hole: boolean, owner: number | null }[] {
+  const area = rings.map(signed);
+  const biggest = area.reduce((b, a, i) => (Math.abs(a) > Math.abs(area[b]) ? i : b), 0);
+  const outward = Math.sign(area[biggest]);
+
+  const hole = area.map(a => Math.sign(a) !== outward);
+
+  return rings.map((ring, i) => {
+    if (!hole[i]) return { hole: false, owner: null };
+
+    // The tightest outline round it. Tightest rather than first, so a courtyard
+    // inside a room inside a courtyard belongs to the room.
+    let owner: number | null = null;
+
+    rings.forEach((other, j) => {
+      if (hole[j] || !contains([other.map(p => p.at)], ring[0].at)) return;
+      if (owner === null || Math.abs(area[j]) < Math.abs(area[owner])) owner = j;
+    });
+
+    return { hole: true, owner };
+  });
 }
 
 /**
@@ -316,6 +346,9 @@ interface Reading {
  * than becoming a set of corners that happen to have moved.
  *
  * The group's own depth is not applied. It stays where it was written.
+ *
+ * Which ring is a hole is decided here, in the frame the corners are written
+ * down in, because that is the frame `project` will read their winding in.
  */
 function readingAt(world: World, v: VersionId, id: GroupId): { rings: Reading[], loose: number } {
   const inside = new Set(within(world, id).filter(m => m !== id));
@@ -342,18 +375,19 @@ function readingAt(world: World, v: VersionId, id: GroupId): { rings: Reading[],
   const out: Reading[] = [];
 
   for (const kind of SIDES) {
-    for (const ring of rings(items, kind, names)) {
-      // Wound the other way round is a hole, and a hole is the other side of
-      // the set. Reversed as it goes, so that every polygon this makes is a
-      // polygon: material on the left, like anything drawn by hand.
-      const hole = signed(ring) < 0;
-      const wound = hole ? [...ring].reverse() : ring;
+    // Into the group's frame first, since that is where the winding is read.
+    const mine = rings(items, kind, names)
+      .map(ring => ring.map(p => ({ at: unplace(frame, p.at), key: p.key })));
 
-      out.push({
-        kind: hole ? complement(kind) : kind,
-        ring: wound.map(p => ({ at: unplace(frame, p.at), key: p.key })),
-      });
-    }
+    const how = nested(mine);
+    const base = out.length;
+
+    mine.forEach((ring, i) => out.push({
+      kind,
+      hole: how[i].hole,
+      owner: how[i].owner === null ? null : base + how[i].owner!,
+      ring,
+    }));
   }
 
   return { rings: out, loose: names.loose() };
@@ -384,6 +418,11 @@ function readingAt(world: World, v: VersionId, id: GroupId): { rings: Reading[],
  */
 interface Line {
   kind: PolygonType
+  /** Whether it is a hole, and in which line. Settled where the line is born:
+   * a courtyard does not change which room it is the courtyard of, and if the
+   * union rearranges itself that far it is a different ring. */
+  hole: boolean
+  owner: Line | null
   slots: string[]
   /** Where each slot stood, per version. */
   at: Map<string, Map<VersionId, Point>>
@@ -466,16 +505,20 @@ function lineage(world: World, id: GroupId, versions: readonly VersionId[]): {
     loose += reading.loose;
 
     const claimed = new Set<Line>();
+    const mine = new Map<Reading, Line>();
 
     for (const it of reading.rings) {
       const best = previous === null ? null : lines
-        .filter(l => l.kind === it.kind && l.last === previous && !claimed.has(l))
+        .filter(l => l.kind === it.kind && l.hole === it.hole
+          && l.last === previous && !claimed.has(l))
         .map(l => ({ l, n: shared(l, previous!, it.ring) }))
         .filter(s => s.n > 0)
         .sort((a, b) => b.n - a.n)[0]?.l ?? null;
 
       const line = best ?? {
         kind: it.kind,
+        hole: it.hole,
+        owner: null,
         slots: [],
         at: new Map(),
         seen: new Map(),
@@ -511,6 +554,17 @@ function lineage(world: World, id: GroupId, versions: readonly VersionId[]): {
       line.slots = merged(line.slots, order);
       line.seen.set(v, now);
       line.last = v;
+      mine.set(it, line);
+    }
+
+    // After the lot of them, since a hole read before its outline would have
+    // nothing to point at yet. Only for a line being born: which outline a hole
+    // belongs to is settled once, and a hole that changed hands would be a
+    // hole somewhere else.
+    for (const [it, line] of mine) {
+      if (line.owner !== null || !line.hole || it.owner === null) continue;
+
+      line.owner = mine.get(reading.rings[it.owner]) ?? null;
     }
 
     previous = v;
@@ -545,34 +599,58 @@ function span(line: Line): number {
   return hi > lo ? hi - lo : 1;
 }
 
-/** One line as a polygon and the layers that move it. */
+/**
+ * One outline and the holes in it, as a polygon and the layers that move it.
+ *
+ * `parts` is the outline first and its holes after, which is the order a
+ * polygon keeps its corners in and the order `ringsOf` reads them back out of.
+ * A hole born later than its outline is corners born later, and one that closes
+ * up is corners that die: a courtyard opening as two wings of a building come
+ * apart is exactly the vertex arithmetic a version already does, and needs
+ * nothing said about rings at all.
+ */
 function written(
-  line: Line,
+  parts: readonly Line[],
   id: PolygonId,
   first: VertexId,
   versions: readonly VersionId[],
 ): { polygon: Polygon, edits: Map<VersionId, Map<VertexId, Point>> } {
-  const alive = versions.filter(v => (line.seen.get(v)?.size ?? 0) > 0);
+  const outer = parts[0];
+  const alive = versions.filter(v => (outer.seen.get(v)?.size ?? 0) > 0);
   const points: Vertex[] = [];
-  const ids = new Map<string, VertexId>();
 
-  line.slots.forEach((slot, i) => ids.set(slot, first + i));
+  /** Every slot's vertex id, by the line it belongs to. Slots are only unique
+   * within a line: two rings can cross the same pair of edges. */
+  const ids = parts.map(() => new Map<string, VertexId>());
 
-  for (const slot of line.slots) {
-    const where = line.at.get(slot)!;
-    const mine = alive.filter(v => where.has(v));
-    const birth = mine[0];
-    const gone = after(versions, mine[mine.length - 1]);
+  let next = first;
 
-    points.push({
-      id: ids.get(slot)!,
-      at: where.get(birth)!,
-      birth,
-      // Where the corner outlives the ring, the ring's death says so and one
-      // here as well would be two statements of one fact.
-      death: gone !== null && line.seen.has(gone) ? gone : null,
-    });
-  }
+  parts.forEach((line, ring) => {
+    for (const slot of line.slots) {
+      const where = line.at.get(slot)!;
+      const mine = alive.filter(v => where.has(v));
+
+      // A corner of a hole at a version the outline is not there at is not a
+      // corner of anything. It cannot happen — a hole needs something to be a
+      // hole in — but the id would be minted either way and a polygon with a
+      // corner nothing ever places is worse than one ring short.
+      if (mine.length === 0) continue;
+
+      const gone = after(versions, mine[mine.length - 1]);
+
+      ids[ring].set(slot, next);
+
+      points.push({
+        id: next++,
+        at: where.get(mine[0])!,
+        ring,
+        birth: mine[0],
+        // Where the corner outlives the ring, the ring's death says so and one
+        // here as well would be two statements of one fact.
+        death: gone !== null && line.seen.has(gone) ? gone : null,
+      });
+    }
+  });
 
   // A layer states where a corner is by how far it has moved since it was last
   // stated, because that is what `resolveAt` accumulates. So the position is
@@ -591,24 +669,27 @@ function written(
   // below anything a grid can put on screen.
   const held = new Map<VertexId, Point>();
   const edits = new Map<VersionId, Map<VertexId, Point>>();
-  const still = span(line) * 1e-12;
+  const still = span(outer) * 1e-12;
 
   for (const v of alive) {
     const now = new Map<VertexId, Point>();
 
-    for (const slot of line.seen.get(v)!) {
-      const vertex = ids.get(slot)!;
-      const p = line.at.get(slot)!.get(v)!;
-      const was = held.get(vertex);
+    parts.forEach((line, ring) => {
+      for (const slot of line.seen.get(v) ?? []) {
+        const vertex = ids[ring].get(slot);
 
-      if (was !== undefined && Math.abs(was.x - p.x) + Math.abs(was.y - p.y) > still) {
-        now.set(vertex, { x: p.x - was.x, y: p.y - was.y });
-        held.set(vertex, p);
+        if (vertex === undefined) continue;
+
+        const p = line.at.get(slot)!.get(v)!;
+        const was = held.get(vertex);
+
+        if (was === undefined || Math.abs(was.x - p.x) + Math.abs(was.y - p.y) > still) {
+          if (was !== undefined) now.set(vertex, { x: p.x - was.x, y: p.y - was.y });
+
+          held.set(vertex, p);
+        }
       }
-      else if (was === undefined) {
-        held.set(vertex, p);
-      }
-    }
+    });
 
     edits.set(v, now);
   }
@@ -617,8 +698,8 @@ function written(
 
   return {
     polygon: {
-      type: line.kind,
-      birth: line.born,
+      type: outer.kind,
+      birth: outer.born,
       death: end,
       points,
     },
@@ -705,11 +786,15 @@ export function resolveGroup(world: World, id: GroupId): Resolution | null {
   let next = world.nextId;
   const made: { id: PolygonId, edits: Map<VersionId, Map<VertexId, Point>> }[] = [];
 
-  for (const line of lines) {
+  // An outline and the holes in it are one polygon. A hole whose outline is not
+  // here — which the geometry cannot produce, since a hole needs something to
+  // be a hole in — would otherwise be a ring nobody draws.
+  for (const outer of lines.filter(l => !l.hole)) {
+    const parts = [outer, ...lines.filter(l => l.hole && l.owner === outer)];
     const mine = next;
-    const out = written(line, mine, mine + 1, versions);
+    const out = written(parts, mine, mine + 1, versions);
 
-    next = mine + 1 + line.slots.length;
+    next = mine + 1 + out.polygon.points.length;
     polygons.set(mine, out.polygon);
     made.push({ id: mine, edits: out.edits });
   }

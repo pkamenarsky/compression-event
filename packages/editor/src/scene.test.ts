@@ -66,10 +66,17 @@ import {
   Transform,
   VERSIONS,
   VersionId,
+  Vertex,
   World,
   emptyWorld,
   opened,
 } from './types';
+
+/** Corners for a synthetic `Resolved`: one ring of them, index for index with
+ * the points, which is the invariant `resolved` reads the ring split out of. */
+function oneRing(ring: Point[]): Vertex[] {
+  return ring.map((at, i) => ({ id: i, at, ring: 0, birth: 0, death: null }));
+}
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -2251,7 +2258,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           });
 
           // The world frame's answer, which is what this has to reproduce.
-          const there = project(place(m, ring), t.erosion, null);
+          const there = project(place(m, ring), [0], t.erosion, null);
 
           // And the local one's, placed. Read off a `Resolved` rather than
           // worked out here, so that what is being checked is the path the
@@ -2259,7 +2266,10 @@ describe('a projection is the same shape wherever it is taken', () => {
           const here = resolved({
             id: 0,
             polygon: { type: 'level', birth: 0, death: null, points: [] },
-            corners: [],
+            // One ring's worth, because the ring split is read off these: see
+            // `resolved`. A `Resolved` whose corners do not answer for its
+            // points is not one the editor or the bake ever builds.
+            corners: oneRing(ring),
             local: ring,
             frame: m,
             source: place(m, ring),
@@ -2334,12 +2344,15 @@ describe('a projection is the same shape wherever it is taken', () => {
           const depths = ring.map((_, i) =>
             t.erosion + (i === t.which % ring.length ? t.by : 0));
 
-          const there = project(place(m, ring), t.erosion, depths);
+          const there = project(place(m, ring), [0], t.erosion, depths);
 
           const here = resolved({
             id: 0,
             polygon: { type: 'level', birth: 0, death: null, points: [] },
-            corners: [],
+            // One ring's worth, because the ring split is read off these: see
+            // `resolved`. A `Resolved` whose corners do not answer for its
+            // points is not one the editor or the bake ever builds.
+            corners: oneRing(ring),
             local: ring,
             frame: m,
             source: place(m, ring),

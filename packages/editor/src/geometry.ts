@@ -30,6 +30,73 @@ export type Ring = Point[];
 /** A shape is any number of rings, filled by the nonzero winding rule. */
 export type Shape = Ring[];
 
+// -----------------------------------------------------------------------------
+// Rings inside one list
+//
+// A polygon's corners are kept as one flat list in ring order, with the outer
+// ring first and its holes after it, and a second list saying where each ring
+// starts. Everything that pairs a corner with something — its position, its
+// depth, whether it is standing, which vertex id it has — stays index for index
+// with that one list, which is what the whole editor and the whole bake are
+// built on.
+//
+// So a hole changes exactly one thing about walking corners: which corner comes
+// after the last one. `nextOf` and `prevOf` are that difference, and they are
+// the reason this could be done without unpicking the arrays.
+// -----------------------------------------------------------------------------
+
+/** Which ring index `i` falls in. */
+export function ringAt(rings: readonly number[], i: number): number {
+  let r = 0;
+
+  while (r + 1 < rings.length && rings[r + 1] <= i) r++;
+
+  return r;
+}
+
+/** Where the ring holding `i` starts, and where it ends — the half-open span
+ * the walk wraps inside. */
+function span(rings: readonly number[], n: number, i: number): [number, number] {
+  const r = ringAt(rings, i);
+
+  return [rings[r], r + 1 < rings.length ? rings[r + 1] : n];
+}
+
+/** The corner after `i`, wrapping at the end of its own ring rather than at the
+ * end of the list. */
+export function nextOf(rings: readonly number[], n: number, i: number): number {
+  const [lo, hi] = span(rings, n, i);
+
+  return i + 1 >= hi ? lo : i + 1;
+}
+
+/** And the one before it. */
+export function prevOf(rings: readonly number[], n: number, i: number): number {
+  const [lo, hi] = span(rings, n, i);
+
+  return i <= lo ? hi - 1 : i - 1;
+}
+
+/** `step` corners along from `i`, round its own ring. */
+export function alongOf(rings: readonly number[], n: number, i: number, step: number): number {
+  const [lo, hi] = span(rings, n, i);
+  const len = hi - lo;
+
+  return lo + (((i - lo + step) % len) + len) % len;
+}
+
+/** How far it is from `i` to `j` going forwards round their ring. */
+export function betweenOf(rings: readonly number[], n: number, i: number, j: number): number {
+  const [lo, hi] = span(rings, n, i);
+
+  return ((j - i) % (hi - lo) + (hi - lo)) % (hi - lo);
+}
+
+/** A flat list cut back into the rings it was kept in. */
+export function sliced<T>(flat: readonly T[], rings: readonly number[]): T[][] {
+  return rings.map((lo, r) => flat.slice(lo, r + 1 < rings.length ? rings[r + 1] : flat.length));
+}
+
 declare const walked: unique symbol;
 
 /**
@@ -260,6 +327,36 @@ export function erodeAt(source: Ring, depths: readonly number[]): Cut {
 }
 
 /**
+ * The same for a source with holes in it: the depths flat and in ring order,
+ * exactly as the corners they belong to are.
+ *
+ * The winding is taken as it stands rather than settled, which is the one
+ * difference from `erodeAt` and is the same difference `erodeShapeAt` has from
+ * it. There is no settling to do — a shape with a hole in it has already said
+ * which of its rings is which by how they are wound, and reversing a ring here
+ * because it happens to be clockwise would fill the hole in.
+ */
+export function erodeRingsAt(source: Shape, depths: readonly number[]): Cut {
+  const starts = ringStarts(source);
+
+  return offset(simplify(source), swept(source, (r, i) => depths[starts[r] + i]));
+}
+
+/** Where each ring of a shape begins, once its rings are laid end to end. */
+export function ringStarts(shape: Shape): number[] {
+  const out: number[] = [];
+
+  let n = 0;
+
+  for (const ring of shape) {
+    out.push(n);
+    n += ring.length;
+  }
+
+  return out;
+}
+
+/**
  * Where each corner of `source` goes under the same offset the projection
  * takes: index for index with the ring it was handed.
  *
@@ -313,6 +410,22 @@ export function erodedCorners(source: Ring, depths: readonly number[] | number):
  * and has lost the brand on its way through `Contributed`. Nothing here writes
  * back, so the worst a shape that is not walked can do is draw a wrong line.
  */
+export function erodedRingCorners(
+  source: Shape,
+  depths: readonly number[] | number,
+): Point[] {
+  const starts = ringStarts(source);
+  const out: Point[] = [];
+
+  source.forEach((ring, r) => {
+    const at = typeof depths === 'number' ? () => depths : (i: number) => depths[starts[r] + i];
+
+    out.push(...corners(ring, at));
+  });
+
+  return out;
+}
+
 export function erodedShape(shape: Shape, depth: number): Point[][] {
   return shape.map(ring => corners(ring, () => depth));
 }

@@ -258,10 +258,50 @@ export type VersionId = number;
 export interface Vertex {
   id: VertexId
   at: Point
+  /**
+   * Which of the polygon's rings it is a corner of. Nought is the outline; the
+   * rest are holes.
+   *
+   * On the corner rather than on the polygon, because it is the one place that
+   * survives what happens to corners. A polygon keeps every corner it has ever
+   * had, dead ones in place, so that one can be inserted between two others —
+   * and a ring boundary stored as an index into that list would be a number
+   * that means a different thing at every version. A corner knows which ring it
+   * is in for as long as it exists, which is exactly as long as the question
+   * can be asked about it.
+   *
+   * Corners are kept grouped by it and in ring order. Nothing here enforces
+   * that; `addVertex` puts a new corner beside the one it was added after, and
+   * that is the only way one arrives.
+   */
+  ring: number
   /** The version whose layer put it there. */
   birth: VersionId
   /** The version whose layer took it out, or nothing while it still stands. */
   death: VersionId | null
+}
+
+/**
+ * Where each ring starts, in a list of corners kept in ring order.
+ *
+ * Derived rather than stored, everywhere and every time. The corners standing
+ * at a version are a different list from the corners standing at the next one,
+ * and a stored boundary would have to be maintained against both — which is the
+ * bookkeeping `Vertex.ring` exists to avoid. Given the corners, the answer is
+ * one pass.
+ *
+ * A ring that has lost all its corners leaves no gap: the starts are the starts
+ * of the rings that are actually here, in the order they are here in, and
+ * nothing downstream ever asks which number a ring used to go by.
+ */
+export function ringsOf(corners: readonly Vertex[]): number[] {
+  const out: number[] = [];
+
+  corners.forEach((c, i) => {
+    if (i === 0 || c.ring !== corners[i - 1].ring) out.push(i);
+  });
+
+  return out;
 }
 
 /**
@@ -279,6 +319,13 @@ export interface Vertex {
  * actually has is `standing`; the order is the one thing they all agree on, and
  * keeping the dead in place is what lets a corner be inserted between two
  * others without the versions that lack it losing track of where it went.
+ *
+ * More than one ring, and they are laid end to end in this same list: the
+ * outline first and its holes after it, each corner saying which it belongs to.
+ * A hole is the courtyard a ring of rooms encloses, which is a shape the CSG
+ * has always been able to make and the source had no way to hold — see
+ * `Vertex.ring` for why the boundary is on the corner rather than here, and
+ * `ringsOf` for how it is read back.
  */
 export interface Polygon {
   type: PolygonType

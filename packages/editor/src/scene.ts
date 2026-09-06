@@ -37,10 +37,13 @@ import {
   contains,
   erode,
   erodeAt,
+  erodeRingsAt,
   isCCW,
   keeping,
+  nextOf,
   onBoundary,
   simplify,
+  sliced,
   subtract,
   unionAll,
 } from './geometry';
@@ -65,6 +68,7 @@ import {
   enclosing,
   opened,
   parentOf,
+  ringsOf,
   standing,
   within,
 } from './types';
@@ -91,13 +95,26 @@ export interface Resolved {
    * is looking at reads this.
    */
   corners: Vertex[]
-  /** The ring in the polygon's own frame: as drawn, plus every displacement
-   * written at this version or before it. */
+  /**
+   * Where each ring of `corners` starts, from `ringsOf`.
+   *
+   * The corners, the local points, the source points and the depths are all one
+   * flat list in ring order — a hole's corners follow the outline's — and this
+   * is the only thing that says where one ring stops and the next begins. Which
+   * is the whole of what a hole changes for anything walking them: the corner
+   * after the last of a ring is the first of that same ring. See `nextOf`.
+   *
+   * Worked out by `resolved` off the corners it was handed, so nothing building
+   * one has to keep it in step.
+   */
+  readonly rings: readonly number[]
+  /** The points in the polygon's own frame, ring after ring: as drawn, plus
+   * every displacement written at this version or before it. */
   local: Ring
   /** Every transform down the chain, composed. Takes `local` to `source`. */
   frame: Affine
-  /** The ring this version's layer produced, in world units. The handles live
-   * here. */
+  /** The points this version's layer produced, in world units, ring after ring.
+   * The handles live here. */
   source: Ring
   /**
    * The projection: the source decomposed and offset. Read-only, always.
@@ -197,7 +214,7 @@ export function addPolygon(
     type,
     birth,
     death: null,
-    points: local.map((at, i) => ({ id: id + 1 + i, at, birth, death: null })),
+    points: local.map((at, i) => ({ id: id + 1 + i, at, ring: 0, birth, death: null })),
   };
 
   const polygons = new Map(world.polygons);
@@ -601,10 +618,21 @@ function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): voi
  * later, and the two were interpolated corner-to-neighbour: a square turning
  * into a diamond inscribed in itself.
  */
-export function project(source: Ring, erosion: number, depths: readonly number[] | null): Shape {
-  if (depths !== null) return erodeAt(source, depths);
+export function project(
+  source: Ring,
+  rings: readonly number[],
+  erosion: number,
+  depths: readonly number[] | null,
+): Shape {
+  // One ring is the case the winding still has to be settled for: a source ring
+  // is whatever it was drawn as, and `erodeAt` is what decides which way is in.
+  // A source with holes in it has already said, by how its rings are wound, and
+  // settling each of them on its own would fill the holes.
+  if (depths !== null) {
+    return rings.length <= 1 ? erodeAt(source, depths) : erodeRingsAt(sliced(source, rings), depths);
+  }
 
-  const simple = simplify([source]);
+  const simple = simplify(sliced(source, rings));
 
   return erosion === 0 ? simple : erode(simple, erosion);
 }
@@ -656,6 +684,7 @@ function sameDepths(a: readonly number[] | null, b: readonly number[] | null): b
  */
 interface Projection {
   source: Ring
+  rings: readonly number[]
   erosion: number
   depths: readonly number[] | null
   keep: readonly Point[] | undefined
@@ -696,6 +725,7 @@ const projections = new WeakMap<Polygon, Projection>();
  */
 interface Local {
   local: Ring
+  rings: readonly number[]
   erosion: number
   depths: readonly number[] | null
   shape: Shape
@@ -733,7 +763,7 @@ function similarity(m: Affine): number | null {
 function projection(at: Omit<Resolved, 'shape'>): Shape {
   const s = similarity(at.frame);
 
-  if (s === null) return project(at.source, at.erosion, at.depths);
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths);
 
   const erosion = at.erosion / s;
   const depths = scaled(at.depths, s);
@@ -742,12 +772,13 @@ function projection(at: Omit<Resolved, 'shape'>): Shape {
   const shape = was !== undefined
     && was.erosion === erosion
     && sameDepths(was.depths, depths)
+    && sameRings(was.rings, at.rings)
     && samePoints(was.local, at.local)
     ? was.shape
-    : project(at.local, erosion, depths);
+    : project(at.local, at.rings, erosion, depths);
 
   if (was === undefined || was.shape !== shape) {
-    locals.set(at.polygon, { local: at.local, erosion, depths, shape });
+    locals.set(at.polygon, { local: at.local, rings: at.rings, erosion, depths, shape });
   }
 
   return shape.map(ring => place(at.frame, ring));
@@ -770,10 +801,26 @@ function sameKeep(a: readonly Point[] | undefined, b: readonly Point[] | undefin
   return samePoints(a ?? [], b ?? []);
 }
 
-/** A `Resolved` whose projection has not been taken yet. */
-export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
+/** Two rings of four corners and one of eight are the same eight points cut two
+ * ways, and the projection is not the same shape. */
+function sameRings(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((n, i) => n === b[i]);
+}
+
+/**
+ * A `Resolved` whose projection has not been taken yet.
+ *
+ * The ring split comes off the corners rather than being handed in. It is a
+ * fact about them — which ring each says it is in — so asking every caller to
+ * work it out again would be asking them all to agree, and the bake and the
+ * editor build these in different places for different reasons.
+ */
+export function resolved(at: Omit<Resolved, 'shape' | 'rings'>): Resolved {
+  const rings = ringsOf(at.corners);
+
   return {
     ...at,
+    rings,
     get shape(): Shape {
       const was = projections.get(at.polygon);
 
@@ -782,16 +829,17 @@ export function resolved(at: Omit<Resolved, 'shape'>): Resolved {
         && was.erosion === at.erosion
         && sameDepths(was.depths, at.depths)
         && sameKeep(was.keep, at.keep)
+        && sameRings(was.rings, rings)
         && samePoints(was.source, at.source)
       ) {
         return was.shape;
       }
 
-      const shape = keeping(projection(at), at.keep ?? []);
+      const shape = keeping(projection({ ...at, rings }), at.keep ?? []);
 
       projections.set(
         at.polygon,
-        { source: at.source, erosion: at.erosion, depths: at.depths, keep: at.keep, shape },
+        { source: at.source, rings, erosion: at.erosion, depths: at.depths, keep: at.keep, shape },
       );
 
       return shape;
@@ -930,6 +978,61 @@ function varying(
   return any ? out : null;
 }
 
+/**
+ * The corners standing at a version, ring by ring, with the rings that are no
+ * longer rings left out.
+ *
+ * Three is the fewest a ring can have, and a hole below it is not a hole — it
+ * is a couple of stray points that would fold the arrangement rather than open
+ * anything. So a hole goes on its own, quietly, and what is left is still a
+ * polygon.
+ *
+ * The outline is the other way round: it going takes the polygon with it, since
+ * there is then nothing for the holes to be holes in. That is said by the
+ * caller, which has the polygon to drop; here it comes out as a list too short
+ * to be one.
+ */
+function surviving(points: readonly Vertex[], inherited: ReadonlySet<VersionId>): Vertex[] {
+  const out: Vertex[] = [];
+
+  let run: Vertex[] = [];
+  let first = true;
+  let gone = false;
+
+  const close = (): void => {
+    // The outline decides for everybody: below three it is not there, and
+    // neither is anything that was a hole in it.
+    if (first) gone = run.length < 3;
+
+    if (!gone && run.length >= 3) out.push(...run);
+
+    first = false;
+    run = [];
+  };
+
+  // Off the whole list rather than off what is standing: a ring every one of
+  // whose corners has died is still a boundary in the order, and reading the
+  // ring numbers only where somebody survived would let the next ring take the
+  // dead one's place as the outline.
+  let ring = points[0]?.ring;
+
+  for (const c of points) {
+    if (c.ring !== ring) {
+      close();
+
+      if (gone) return [];
+
+      ring = c.ring;
+    }
+
+    if (standing(c, inherited)) run.push(c);
+  }
+
+  close();
+
+  return gone ? [] : out;
+}
+
 export function resolveAt(world: World, v: VersionId): Resolved[] {
   const inherited = new Set(chain(world, v));
 
@@ -1015,9 +1118,9 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
   for (const [id, at] of local) {
     const polygon = world.polygons.get(id)!;
-    const corners = polygon.points.filter(c => standing(c, inherited));
+    const corners = surviving(polygon.points, inherited);
 
-    // A polygon whose corners have all gone is not geometry any more. It cannot
+    // A polygon whose outline has gone is not geometry any more. It cannot
     // happen through the editor, which will not take a ring below three, but
     // resolving is not the place to be sure of that.
     if (corners.length < 3) continue;
@@ -2180,7 +2283,7 @@ export function hitPolygons(items: Resolved[], at: Point): PolygonId[] {
  * everywhere else too.
  */
 function standingFor(it: Resolved): Shape {
-  return it.shape.length === 0 ? [it.source] : it.shape;
+  return it.shape.length === 0 ? sliced(it.source, it.rings) : it.shape;
 }
 
 /**
@@ -2309,7 +2412,7 @@ export function hitEdge(
     const ring = it.source;
 
     for (let i = 0; i < ring.length; i++) {
-      const on = along(ring[i], ring[(i + 1) % ring.length], at);
+      const on = along(ring[i], ring[nextOf(it.rings, ring.length, i)], at);
       const d = Math.hypot(on.x - at.x, on.y - at.y);
 
       if (d <= bestDistance) {
@@ -2389,7 +2492,9 @@ export function addVertex(
   index: number,
   at: Point,
 ): { world: World, vertex: VertexId } {
-  const next = (index + 1) % it.corners.length;
+  // Round its own ring rather than round the list: the corner after the last
+  // of a hole is the first of that hole, not the first of the outline.
+  const next = nextOf(it.rings, it.corners.length, index);
   const t = fraction(it.source[index], it.source[next], at);
 
   const from = it.corners[index].at, to = it.corners[next].at;
@@ -2401,6 +2506,9 @@ export function addVertex(
       x: from.x + (to.x - from.x) * t,
       y: from.y + (to.y - from.y) * t,
     },
+    // Whichever ring the edge it was added to belongs to, which is the whole of
+    // what keeps the corners grouped: a corner only ever arrives beside one.
+    ring: it.corners[index].ring,
     birth: v,
     death: null,
   };
@@ -2542,7 +2650,21 @@ export function removeVertices(
     const here = polygon.points.filter(c => standing(c, inherited));
     const taking = here.filter(c => gone.has(c.id));
 
-    if (taking.length === 0 || here.length - taking.length < 3) continue;
+    if (taking.length === 0) continue;
+
+    // Three per ring rather than three in all. What is being asked for below
+    // that is to delete the ring, and deleting a hole is deleting a hole — a
+    // gesture this has no way to tell from a slip of the marquee, so it refuses
+    // the whole removal exactly as it always has.
+    const left = new Map<number, number>();
+
+    for (const c of here) {
+      if (!gone.has(c.id)) left.set(c.ring, (left.get(c.ring) ?? 0) + 1);
+    }
+
+    const rings = new Set(here.map(c => c.ring));
+
+    if ([...rings].some(r => (left.get(r) ?? 0) < 3)) continue;
 
     const points = polygon.points.flatMap(c => {
       if (!gone.has(c.id) || !standing(c, inherited)) return [c];
@@ -2690,6 +2812,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
       .map(corner => ({
         id: corner.id,
         at: source.get(corner.id) ?? place(it.frame, [corner.at])[0],
+        ring: corner.ring,
         birth: source.has(corner.id) ? 0 : corner.birth - v,
         death: corner.death === null ? null : corner.death - v,
       }));
@@ -2819,6 +2942,7 @@ function restore(
       return {
         id: id + 1 + i,
         at: unplace(m, corner.at),
+        ring: corner.ring,
         birth: v + corner.birth,
         death: corner.death === null || v + corner.death >= world.versions.length
           ? null
