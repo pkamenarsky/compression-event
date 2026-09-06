@@ -8,7 +8,17 @@ import { Bake, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
-import { copied, grouped, landing, pasted, stamped, ungrouped } from './scene';
+import {
+  copied,
+  grouped,
+  landing,
+  pasted,
+  rechained,
+  stamped,
+  unchained,
+  unchainedAt,
+  ungrouped,
+} from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
@@ -20,6 +30,7 @@ import {
   EASINGS,
   REPLAY_EASE,
   REPLAY_MS,
+  Selection,
   Tool,
   Update,
   VERSIONS,
@@ -34,6 +45,7 @@ import {
   initialState,
   opened,
   marked,
+  within,
   redone,
   undone,
 } from './types';
@@ -100,7 +112,7 @@ export function editor(initial: World): VNode {
           breadcrumb(s.world, s.inside, update),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
-          versionStrip(s.world, s.currentVersion, update),
+          versionStrip(s.world, s.selection, s.currentVersion, update),
           bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
         ],
@@ -439,6 +451,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyG') {
         update(e.shiftKey ? apart : together);
       }
+      else if (e.code === 'KeyU') {
+        update(s => loosened(s, e.shiftKey));
+      }
       else if (e.code === 'KeyE') {
         // Read out here rather than inside the update, because it asks a
         // question and an update has to be a function of the state alone.
@@ -487,6 +502,20 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
     }
   });
+}
+
+/**
+ * The picked things cut loose from everything before the version on screen, or
+ * chained back up to it. See *Unchaining* in `scene.ts`.
+ *
+ * One key with a shift on it rather than two, the way grouping is: they are one
+ * question — does this hear from upstream — asked both ways round.
+ */
+function loosened(s: EditorState, back: boolean): EditorState {
+  const ids = [...s.selection.polygons, ...s.selection.artefacts];
+  const how = back ? rechained : unchained;
+
+  return marked({ ...s, world: how(s.world, s.currentVersion, ids) }, s.world);
 }
 
 /** The grid at a new size. Not in the history: what the grid is set to is how
@@ -878,6 +907,7 @@ const STRIP_WIDTH = 132;
 
 function versionStrip(
   world: Value<World>,
+  selection: Value<Selection>,
   current: Value<VersionId>,
   update: Update,
 ): VNode {
@@ -920,14 +950,36 @@ function versionStrip(
       // The chain is a fixed length, so the rows are made once and each reads
       // its own version out of the world.
       ...Array.from({ length: VERSIONS }, (_unused, i) =>
-        versionRow(i, () => world().versions[i], current, update)),
+        versionRow(
+          i,
+          () => world().versions[i],
+          () => unchains(world(), i, selection()),
+          current,
+          update,
+        )),
     ],
+  );
+}
+
+/**
+ * Whether this version's layer unchains anything that is picked.
+ *
+ * About the selection rather than about the world, because a footing is about
+ * one thing and the strip is one column: a mark that meant *somebody* is
+ * unchained here would be on nearly every row of a level that uses this at all,
+ * and would answer a question nobody asked. Picked, it answers the one they
+ * did — where does this stop hearing from upstream.
+ */
+function unchains(world: World, index: VersionId, selection: Selection): boolean {
+  return [...selection.polygons, ...selection.artefacts].some(
+    id => within(world, id).some(m => unchainedAt(world, index, m)),
   );
 }
 
 function versionRow(
   index: VersionId,
   version: Value<Version>,
+  broken: Value<boolean>,
   current: Value<VersionId>,
   update: Update,
 ): VNode {
@@ -970,6 +1022,22 @@ function versionRow(
           },
           () => version().name,
         ),
+      ],
+    ),
+
+    // Two ticks across the rail where it comes down from the version above,
+    // which is exactly where the inheritance is being refused. Drawn over the
+    // row rather than under it, and only about what is picked — see `unchains`.
+    g(
+      {
+        opacity: () => (broken() ? 1 : 0),
+        stroke: theme.gone,
+        'stroke-width': 2,
+        'stroke-linecap': 'round',
+      },
+      [
+        line({ x1: RAIL - 6, y1: -ROW / 2 + 3, x2: RAIL + 6, y2: -ROW / 2 - 5 }),
+        line({ x1: RAIL - 6, y1: -ROW / 2 + 8, x2: RAIL + 6, y2: -ROW / 2 }),
       ],
     ),
 

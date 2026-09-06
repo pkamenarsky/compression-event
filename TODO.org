@@ -1,5 +1,5 @@
 * erosion should be cumulative i think
-
+eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 * eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 
 * a shape in both create and select mode has handles to scale, rotate and erode
@@ -48,7 +48,6 @@
 * statusbar shows action + available modifier keys to modify action
 
 * locking of polygons? unlock works then with cmd + click
-* unchain
 * version management
 
 * settings

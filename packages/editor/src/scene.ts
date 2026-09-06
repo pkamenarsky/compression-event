@@ -53,6 +53,7 @@ import {
   Clipping,
   EMPTY_TRANSFORM,
   Edit,
+  Footing,
   GroupId,
   IconType,
   Id,
@@ -938,6 +939,12 @@ export function groupFrame(world: World, v: VersionId, id: GroupId): Affine {
 
   for (const k of chain(world, v)) {
     const version = world.versions[k];
+    const footing = version.footings.get(id);
+
+    // Everything the chain had built up to here, thrown away for what the
+    // footing says instead. Before this version's own layer, which then applies
+    // on top of it exactly as it would have. See `Footing`.
+    if (footing !== undefined) m = footing.frame;
 
     m = compose(affine(version.edits.get(id)?.transform ?? EMPTY_TRANSFORM), m);
     m = compose(held(world, version, id), m);
@@ -991,8 +998,13 @@ function varying(
  * there is then nothing for the holes to be holes in. That is said by the
  * caller, which has the polygon to drop; here it comes out as a list too short
  * to be one.
+ *
+ * Which corners are standing comes in as a question rather than as a set of
+ * versions, because an unchained polygon answers it differently: what its
+ * footing froze is standing whatever the chain says about where it was born.
+ * See `Footing`.
  */
-function surviving(points: readonly Vertex[], inherited: ReadonlySet<VersionId>): Vertex[] {
+function surviving(points: readonly Vertex[], alive: (c: Vertex) => boolean): Vertex[] {
   const out: Vertex[] = [];
 
   let run: Vertex[] = [];
@@ -1025,7 +1037,7 @@ function surviving(points: readonly Vertex[], inherited: ReadonlySet<VersionId>)
       ring = c.ring;
     }
 
-    if (standing(c, inherited)) run.push(c);
+    if (alive(c)) run.push(c);
   }
 
   close();
@@ -1034,7 +1046,8 @@ function surviving(points: readonly Vertex[], inherited: ReadonlySet<VersionId>)
 }
 
 export function resolveAt(world: World, v: VersionId): Resolved[] {
-  const inherited = new Set(chain(world, v));
+  const order = chain(world, v);
+  const inherited = new Set(order);
 
   // Where each corner stands in its polygon's own frame. A map rather than a
   // ring, because the ring is not a fixed length any more: corners arrive and
@@ -1054,7 +1067,13 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 
   for (const id of world.polygons.keys()) taken.set(id, removals(world, id));
 
-  for (const k of chain(world, v)) {
+  // What an unchained polygon hears instead of the whole chain: the stretch of
+  // it from its last footing on. Absent for everything nobody has unchained,
+  // which is nearly everything — see `Footing`.
+  const since = new Map<PolygonId, ReadonlySet<VersionId>>();
+  const frozen = new Map<PolygonId, ReadonlySet<VertexId>>();
+
+  order.forEach((k, step) => {
     const version = world.versions[k];
     const outer = new Map<Id, Affine>();
 
@@ -1080,6 +1099,22 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
         frame.delete(id);
         depth.delete(id);
         over.delete(id);
+      }
+
+      // Standing on its own numbers from here rather than on what the base
+      // handed over. Where a birth would be, and for the same reason: this is
+      // the version the thing begins at, as far as it is concerned. Only for
+      // something that is here — a footing does not raise the dead, and it does
+      // not bring a polygon forward past the version it is born into.
+      const footing = version.footings.get(id);
+
+      if (footing !== undefined && local.has(id)) {
+        local.set(id, new Map(footing.local));
+        frame.set(id, footing.frame);
+        depth.set(id, footing.erosion);
+        over.set(id, footing.depths);
+        since.set(id, new Set(order.slice(step)));
+        frozen.set(id, new Set(footing.local.keys()));
       }
 
       const at = local.get(id);
@@ -1112,13 +1147,24 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
       outer.set(up, m);
       frame.set(id, compose(m, frame.get(id)!));
     }
-  }
+  });
 
   const out: Resolved[] = [];
 
   for (const [id, at] of local) {
     const polygon = world.polygons.get(id)!;
-    const corners = surviving(polygon.points, inherited);
+    const from = since.get(id) ?? inherited;
+    const kept = frozen.get(id);
+
+    // Born into the stretch being listened to, or frozen into the footing at
+    // the head of it — and either way gone if something in that stretch took it
+    // out. Where there is no footing, `kept` is nothing and this is exactly
+    // `standing`.
+    const corners = surviving(
+      polygon.points,
+      c => (from.has(c.birth) || kept?.has(c.id) === true)
+        && (c.death === null || !from.has(c.death)),
+    );
 
     // A polygon whose outline has gone is not geometry any more. It cannot
     // happen through the editor, which will not take a ring below three, but
@@ -1226,6 +1272,197 @@ export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World 
 
   edits.set(id, edit);
   versions[v] = { ...versions[v], edits };
+
+  return { ...world, versions };
+}
+
+// -----------------------------------------------------------------------------
+// Unchaining
+//
+// Everything above this line is about inheritance: a version is a layer over
+// its base, an edit at v0 is seen at v8, and that is what the document is for.
+// This is the one thing that says no to it, for one thing at a time.
+//
+// An unchained polygon keeps its id, its corners, its groups and every layer
+// ever written about it. What it stops keeping is its base's answer: at the
+// version it was unchained in, the state the chain would have handed over is
+// replaced by a copy of what that state *was* at the moment of unchaining, and
+// the walk carries on from there. So it looks identical the second after, and
+// stays where it is when v0 is dragged the day after.
+//
+// Why a copy and not an inverse
+// -----------------------------
+// The obvious reading of "cut it loose here" is to write the inverse of
+// everything upstream into this version's layer, so the two cancel. They do —
+// once. Edit the upstream transform and the inverse no longer inverts it, and
+// the change comes through as the difference between them, which is worse than
+// it coming through whole. And a transform has no inverse for the parts of the
+// chain that are not transforms: a corner an upstream layer nudges, a corner it
+// deletes, a corner it adds, a depth it states. All of those flow down too, and
+// all of them have to stop.
+//
+// So what is written down is the state, and `Footing` is the shape of it: the
+// composed frame, where each corner stood, which corners there were, and the
+// depths. Exactly the accumulators `resolveAt` carries, which is not a
+// coincidence — the whole trick is that a footing is what a base hands over,
+// said outright instead of computed.
+//
+// Rechaining
+// ----------
+// Delete the footing. The thing becomes derived again and jumps to wherever the
+// chain says it now is — which may be nowhere near where it was sitting, if the
+// upstream it stopped listening to has moved on since. That is the answer, and
+// it is a coherent one: unchaining suppresses the inheritance rather than
+// destroying it, so rechaining restores something that was true all along
+// rather than reconstructing something that was lost. Nothing is inverted and
+// nothing is guessed at.
+//
+// Which is why unchaining is not an identity-breaking operation here, and does
+// not have to be. Breaking identity — copy the geometry into a new polygon born
+// at this version, kill the old one — would give the same picture and would
+// give up the id, the corner ids, the group membership, the layers downstream
+// and any hope of undoing it as anything but an undo.
+//
+// What is *not* unchained
+// -----------------------
+// Existence. A polygon deleted at v1 is gone at v6 whether or not it was
+// unchained at v4, and one drawn at v1 is not around before it. Birth and death
+// are one fact about a thing rather than something a layer hands down — see
+// `standing` — and a thing that outlived its own deletion in one stretch of the
+// chain would be two things wearing one id. Deleting upstream is how something
+// stops existing, and it still is.
+//
+// Groups go down to their members, always. A group is a frame and a union of
+// what its members resolve to, so unchaining the frame alone would leave every
+// upstream nudge inside it still coming through, which is not what anybody
+// meant by unchaining the group.
+// -----------------------------------------------------------------------------
+
+/** Whether `v`'s layer unchains `id`: whether there is a footing here. */
+export function unchainedAt(world: World, v: VersionId, id: Id): boolean {
+  return world.versions[v].footings.has(id);
+}
+
+/**
+ * Whether unchaining `ids` at `v` would say anything.
+ *
+ * The gesture is offered for a selection where any of it is — one already
+ * unchained here beside one that is not is not a reason to refuse.
+ */
+export function unchainable(world: World, v: VersionId, ids: readonly Id[]): boolean {
+  return reaches(world, v, ids).some(id => !unchainedAt(world, v, id));
+}
+
+/** Whether rechaining `ids` at `v` would say anything. */
+export function rechainable(world: World, v: VersionId, ids: readonly Id[]): boolean {
+  return reaches(world, v, ids).some(id => unchainedAt(world, v, id));
+}
+
+/**
+ * Everything under `ids` that a footing at `v` could be about: standing here,
+ * standing at the base, and not the version it was born into.
+ *
+ * Born here is left out because there is nothing to unchain — a thing born at
+ * `v` already stands on this version and hears nothing from before it. Writing
+ * a footing for one would be a copy of an empty state, which is what it has.
+ */
+function reaches(world: World, v: VersionId, ids: readonly Id[]): Id[] {
+  const base = world.versions[v].base;
+
+  if (base === null) return [];
+
+  const here = new Set(chain(world, v));
+  const there = new Set(chain(world, base));
+  const out: Id[] = [];
+
+  for (const id of ids) {
+    for (const m of within(world, id)) {
+      if (!out.includes(m) && standingIn(world, m, here) && standingIn(world, m, there)) {
+        out.push(m);
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * `ids` cut loose from everything before `v`, and everything under them.
+ *
+ * What each one resolved to at the base is copied into `v`'s layer as a
+ * footing, so nothing moves: the same numbers are now stated rather than
+ * inherited. From here on an edit upstream is invisible to them, and an edit
+ * here or later reads exactly as it did.
+ *
+ * The world unchanged where there is nothing to say — at the root version,
+ * which has no base to stop listening to, and for a selection every part of
+ * which is already unchained here.
+ */
+export function unchained(world: World, v: VersionId, ids: readonly Id[]): World {
+  const base = world.versions[v].base;
+  const going = reaches(world, v, ids).filter(id => !unchainedAt(world, v, id));
+
+  if (base === null || going.length === 0) return world;
+
+  // What the base resolved to, read once for the whole gesture. Three readers,
+  // because there are three kinds of thing here and the geometry is only one of
+  // them: a group's depth is a number on a layer rather than something a ring
+  // was eroded by, and an artefact is a point with no depth at all.
+  const mine = new Map(resolveAt(world, base).map(it => [it.id, it]));
+  const theirs = depths(world, base);
+
+  const footings = new Map(world.versions[v].footings);
+
+  for (const id of going) {
+    const it = mine.get(id);
+
+    footings.set(id, it === undefined
+      ? {
+          frame: groupFrame(world, base, id),
+          local: new Map(),
+          erosion: world.groups.has(id) ? theirs.get(id) ?? 0 : 0,
+          depths: new Map(),
+        }
+      : {
+          frame: it.frame,
+          local: new Map(it.corners.map((c, i) => [c.id, it.local[i]])),
+          erosion: it.erosion,
+          depths: new Map(it.over ?? []),
+        });
+  }
+
+  return withFootings(world, v, footings);
+}
+
+/**
+ * `ids` chained back up at `v`: the footings written there taken out again, and
+ * everything under them.
+ *
+ * Only the ones at `v`. A thing unchained twice, at v2 and at v6, is chained
+ * back up one point at a time, standing where the point is — which is the only
+ * reading that lets the two be undone separately, and the only one where doing
+ * this at a version that never unchained anything does nothing at all.
+ *
+ * What comes back is what the chain says now, which is not necessarily what it
+ * said when the footing was written. That is the whole of what was being
+ * suppressed, arriving.
+ */
+export function rechained(world: World, v: VersionId, ids: readonly Id[]): World {
+  const going = reaches(world, v, ids).filter(id => unchainedAt(world, v, id));
+
+  if (going.length === 0) return world;
+
+  const footings = new Map(world.versions[v].footings);
+
+  for (const id of going) footings.delete(id);
+
+  return withFootings(world, v, footings);
+}
+
+function withFootings(world: World, v: VersionId, footings: Map<Id, Footing>): World {
+  const versions = [...world.versions];
+
+  versions[v] = { ...versions[v], footings };
 
   return { ...world, versions };
 }
@@ -1604,6 +1841,14 @@ export function depths(world: World, v: VersionId): Map<Id, number> {
   const out = new Map<Id, number>();
 
   for (const k of inherited) {
+    // Footings first, then this version's own layer over them: the same order
+    // the chain applies them in everywhere else.
+    for (const [id, footing] of world.versions[k].footings) {
+      if (world.groups.has(id) && standingIn(world, id, inherited)) {
+        out.set(id, footing.erosion);
+      }
+    }
+
     for (const [id, edit] of world.versions[k].edits) {
       if (world.groups.has(id) && standingIn(world, id, inherited)) {
         out.set(id, edit.transform.erosion);
@@ -2642,12 +2887,15 @@ export function removeVertices(
 
   if (gone.size === 0) return world;
 
-  const inherited = new Set(chain(world, v));
   const polygons = new Map(world.polygons);
   let changed = false;
 
+  // Which corners are here is a resolve rather than a filter, because an
+  // unchained polygon's are not the ones the chain would name — see `Footing`.
+  const standingHere = new Map(resolveAt(world, v).map(it => [it.id, it.corners]));
+
   for (const [id, polygon] of world.polygons) {
-    const here = polygon.points.filter(c => standing(c, inherited));
+    const here = standingHere.get(id) ?? [];
     const taking = here.filter(c => gone.has(c.id));
 
     if (taking.length === 0) continue;
@@ -2666,8 +2914,10 @@ export function removeVertices(
 
     if ([...rings].some(r => (left.get(r) ?? 0) < 3)) continue;
 
+    const alive = new Set(here.map(c => c.id));
+
     const points = polygon.points.flatMap(c => {
-      if (!gone.has(c.id) || !standing(c, inherited)) return [c];
+      if (!gone.has(c.id) || !alive.has(c.id)) return [c];
 
       // Added and taken out at the same version: it never stood anywhere, so
       // there is nothing for the order to remember and it goes entirely.
@@ -2734,6 +2984,12 @@ function dying(world: World, v: VersionId, death: number | undefined): VersionId
  * frame, which the copy no longer has — its drawn frame is the copy version's
  * world. So they come through that frame: `place` for a corner, which is
  * somewhere, and `pointing` for a displacement, which is only a direction.
+ *
+ * No footings come across, and there is nothing for them to say: a copy is born
+ * at the version it lands in, out of the geometry that stood at the version it
+ * was taken at, so it already hears nothing from before that. A footing further
+ * down the original's chain is the one thing lost, and it is lost the way every
+ * other layer before the copy version is — see *Unchaining*.
  */
 export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping[] {
   const items = new Map(resolveAt(world, v).map(it => [it.id, it]));

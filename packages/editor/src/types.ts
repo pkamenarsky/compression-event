@@ -1,5 +1,6 @@
 import { ArtefactType, IconType, Point, PolygonType, SCALE, TILE_SIZE } from '@ce/game/world';
 import type { Bake } from './bake';
+import type { Affine } from './scene';
 
 export type { ArtefactType, IconType, Point, PolygonType };
 
@@ -370,6 +371,71 @@ export interface Edit {
 }
 
 /**
+ * What a thing stands on where it no longer stands on its base.
+ *
+ * Everything else here is inherited: a version hands its geometry to the next
+ * one, and an edit at v0 is seen at v8 without being replayed. That is the
+ * whole design, and it is the whole problem once a room downstream is finished
+ * — going back to fix the shape of v0 moves the finished room too, and there
+ * is no way to say *this one is done*.
+ *
+ * A footing is that way of saying it. It is written into the layer of the
+ * version it takes effect at, and it says: for this thing, at this version,
+ * ignore what the base handed over and use these numbers instead. Everything
+ * from here on is unchanged — this version's own layer applies to it, and so do
+ * all the versions after, so the room still moves when moved and still erodes
+ * when eroded. It has stopped hearing from upstream, and nothing else.
+ *
+ * The numbers are exactly the state `resolveAt` carries down the chain, frozen
+ * at the moment of unchaining: what the base resolved to. Written down rather
+ * than derived, which is the one place in this file that is true — and it has
+ * to be, because *not being derivable from upstream any more* is the entire
+ * content of the thing.
+ *
+ * Inverting the upstream transforms into this version's layer would look the
+ * same on screen the day it was done and would not be this. An inverse cancels
+ * the transform it was taken against, so the moment that transform is edited it
+ * stops cancelling and the change comes through — which is precisely what was
+ * being asked to stop. Nor could an inverse say anything about a corner an
+ * upstream layer nudges, deletes, or adds. So the state is copied, not undone.
+ *
+ * Rechaining is deleting it. The thing goes back to being derived, and jumps to
+ * wherever the chain says it is now — which is the honest answer, and the
+ * reason unchaining does not have to be a door that locks behind you. See
+ * `unchained` and `rechained` in `scene.ts`.
+ */
+export interface Footing {
+  /**
+   * The composed frame the base handed over: every transform down the chain up
+   * to but not including this version's own layer, group transforms and all.
+   *
+   * A matrix rather than a `Transform`, because that is what is being frozen —
+   * the product, which need not be a rotate-scale-move and generally is not.
+   * See *The composed frame* in `scene.ts`.
+   */
+  frame: Affine
+  /**
+   * Where each corner stood in the polygon's own frame, by id — and, by which
+   * ids are in it, *which* corners there are.
+   *
+   * Both at once deliberately. Which corners are standing is otherwise a
+   * question about the chain, and a chain that is no longer being listened to
+   * cannot answer it: an upstream layer that deletes a corner after the
+   * unchaining must not take it away here, and one that adds a corner must not
+   * put it in. So the keys are the ring, and births and deaths written from
+   * this version on are what still move it.
+   *
+   * Empty for a group and an artefact, which have no ring — a group's members
+   * have rings of their own and are unchained with it.
+   */
+  local: Map<VertexId, Point>
+  /** The depth the base was under. */
+  erosion: number
+  /** The extra depth on single corners the base was under, by id. */
+  depths: Map<VertexId, number>
+}
+
+/**
  * A version is a layer, not a copy. It stores what changed against its base and
  * resolves against it on demand, so an edit to an early version is seen by
  * every later one without being replayed by hand into any of them.
@@ -391,6 +457,16 @@ export interface Version {
    * no ring under it to displace, only members with rings of their own.
    */
   edits: Map<Id, Edit>
+  /**
+   * What this version's layer refuses to inherit, keyed the same way `edits`
+   * is: a polygon, a group or an artefact that has been unchained here stands
+   * on the numbers in its footing instead of on what its base resolved to.
+   *
+   * Nearly always empty, and read alongside `edits` at every step of the walk —
+   * a footing is applied where a birth would be, and then this version's own
+   * edit applies on top of it exactly as it would have. See `Footing`.
+   */
+  footings: Map<Id, Footing>
 }
 
 /**
@@ -545,6 +621,7 @@ export function emptyWorld(): World {
       base: i === 0 ? null : i - 1,
       visible: true,
       edits: new Map(),
+      footings: new Map(),
     })),
   };
 }

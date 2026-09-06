@@ -294,6 +294,20 @@ export interface Holder {
  */
 export interface Rider {
   base: Affine
+  /**
+   * Where the base lands at the far end, where the far end does not stand on
+   * the near one's — which is a thing unchained at `from + 1`, and nothing
+   * else. See `Footing`.
+   *
+   * Absent everywhere else, and absent at the moment of unchaining too: a
+   * footing is a copy of what its base handed over, so the two frames are the
+   * same matrix until an upstream edit moves one of them. What is left when
+   * they do differ is a discontinuity the author asked for, and the span walks
+   * across it entrywise — the one place here that lerps a matrix, because the
+   * two ends are no longer two readings of one motion and there is no motion
+   * to interpolate along.
+   */
+  into?: Affine
   layer: Transform
   holders: Holder[]
 }
@@ -302,14 +316,29 @@ export interface Rider {
  * layer in flight over that, and every group's in flight over that. */
 export function riding(r: {
   base: Affine
+  into?: Affine
   layer: Transform
   holders: readonly Holder[]
 }, t: number): Affine {
-  let frame = compose(affine(easing(r.layer, t)), r.base);
+  let frame = compose(affine(easing(r.layer, t)), walked(r.base, r.into, t));
 
   for (const h of r.holders) frame = compose(affine(easing(h.layer, t)), frame);
 
   return frame;
+}
+
+/** One frame or the walk between two, entrywise. See `Rider.into`. */
+function walked(base: Affine, into: Affine | undefined, t: number): Affine {
+  if (into === undefined) return base;
+
+  return {
+    a: mix(base.a, into.a, t),
+    b: mix(base.b, into.b, t),
+    c: mix(base.c, into.c, t),
+    d: mix(base.d, into.d, t),
+    tx: mix(base.tx, into.tx, t),
+    ty: mix(base.ty, into.ty, t),
+  };
 }
 
 /**
@@ -512,6 +541,8 @@ export function pruned(bake: Bake, world: World): Bake {
 interface Moving {
   at: Resolved
   base: Affine
+  /** The far end's own, where it was unchained at `from + 1`. See `Rider`. */
+  into?: Affine
   layer: Transform
   /**
    * The corners both ends are written over: every corner either version has,
@@ -888,6 +919,7 @@ function moving(world: World, from: VersionId): Moving[] {
     return {
       at: it,
       base: was.frame,
+      into: footed(world, from + 1, it.id),
       layer,
       corners: over.corners,
       local: over.local,
@@ -930,6 +962,17 @@ function moving(world: World, from: VersionId): Moving[] {
   }
 
   return out;
+}
+
+/**
+ * The frame a version's footing puts a thing on, or nothing where it has none.
+ *
+ * What the span needs it for is the far end: everything else about a leg is a
+ * motion away from where the near end stood, and an unchained thing's far end
+ * is not — it stands on numbers of its own. See `Rider.into`.
+ */
+function footed(world: World, v: VersionId, id: Id): Affine | undefined {
+  return world.versions[v]?.footings.get(id)?.frame;
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1292,6 +1335,7 @@ function casting(world: World, from: VersionId): Cast {
   for (const id of eroding.keys()) {
     riders.set(id, {
       base: groupFrame(world, from, id),
+      into: footed(world, from + 1, id),
 
       // Nothing, for a group the later version takes out: whatever it says
       // about one it does not have was written before the removal and means
@@ -2570,6 +2614,7 @@ function carried(world: World, from: VersionId): Map<Id, Rider> {
 
     out.set(id, {
       base: here ? base : compose(affine(own), base),
+      into: here ? footed(world, from + 1, id) : undefined,
       layer: here && there ? own : EMPTY_TRANSFORM,
       holders: holders(world, from, id),
     });
@@ -2599,6 +2644,7 @@ function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
         ? cast.riders.get(group) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
         : {
           base: m.base,
+          into: m.into,
           layer: m.layer,
           holders: m.holders,
         },

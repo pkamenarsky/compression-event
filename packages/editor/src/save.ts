@@ -18,6 +18,7 @@ import {
   EMPTY_TRANSFORM,
   Edit,
   EditorState,
+  Footing,
   Group,
   GroupId,
   Id,
@@ -38,9 +39,14 @@ import {
   IconType,
   Start,
 } from './types';
-import { facingAt, placeAt } from './scene';
+import { Affine, facingAt, placeAt } from './scene';
 
 /**
+ * 15: a version's layer may unchain something — hold what it stands on outright
+ * rather than inheriting it from its base. A format-14 file has no footings,
+ * which is a world where everything is chained all the way back, and it is:
+ * there was no way to say otherwise, so nothing in one meant to.
+ *
  * 13: a polygon, a group and an artefact each carry the version that took it
  * out, the way a corner already did. A format-12 file has none, which is a
  * world where nothing was ever removed at a version — and it is: removal was
@@ -107,7 +113,7 @@ import { facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 14;
+export const FORMAT = 15;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -160,6 +166,17 @@ export interface SavedVersion {
   base: VersionId | null
   visible: boolean
   edits: [Id, SavedEdit][]
+  /** Absent before format 15, and absent since wherever it is empty — which is
+   * every version nobody has unchained anything at. */
+  footings?: [Id, SavedFooting][]
+}
+
+/** A footing with its two maps written out as entries, the way an edit's are. */
+export interface SavedFooting {
+  frame: Affine
+  local: [VertexId, Point][]
+  erosion: number
+  depths: [VertexId, number][]
 }
 
 export interface SavedEdit {
@@ -212,6 +229,17 @@ function savedVersion(v: Version): SavedVersion {
         depths: e.depths.size === 0 ? undefined : [...e.depths],
       },
     ]),
+    footings: v.footings.size === 0
+      ? undefined
+      : [...v.footings].map(([id, f]) => [
+          id,
+          {
+            frame: f.frame,
+            local: [...f.local],
+            erosion: f.erosion,
+            depths: [...f.depths],
+          },
+        ]),
   };
 }
 
@@ -390,7 +418,16 @@ function restoredVersion(v: SavedVersion): Version {
     }]),
   );
 
-  return { name: v.name, base: v.base, visible: v.visible, edits };
+  const footings = new Map<Id, Footing>(
+    (v.footings ?? []).map(([id, f]) => [id, {
+      frame: f.frame,
+      local: new Map(f.local),
+      erosion: f.erosion,
+      depths: new Map(f.depths),
+    }]),
+  );
+
+  return { name: v.name, base: v.base, visible: v.visible, edits, footings };
 }
 
 /** Sortable, and legal on every filesystem worth worrying about. */

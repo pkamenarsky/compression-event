@@ -474,7 +474,17 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
       }
     }
 
-    return { ...version, edits };
+    // And every footing under it, the group's own included. What one holds is
+    // the state its base handed over, in the member's own terms — a frame, a
+    // ring, the corners there were — and none of those survive the union any
+    // better than a member's transform does. So a resolved group is chained
+    // again, and `losing` says so before it happens. See *Unchaining* in
+    // `scene.ts`.
+    const footings = new Map(
+      [...version.footings].filter(([who]) => !gone.has(who) && who !== id),
+    );
+
+    return { ...version, edits, footings };
   });
 
   return {
@@ -482,6 +492,9 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
     id: hoist ? made[0] : id,
     losing: world.versions
       .map((_unused, k) => k)
-      .filter(k => k !== v && [...world.versions[k].edits.keys()].some(who => gone.has(who))),
+      .filter(k => k !== v && (
+        [...world.versions[k].edits.keys()].some(who => gone.has(who))
+        || [...world.versions[k].footings.keys()].some(who => gone.has(who) || who === id)
+      )),
   };
 }
