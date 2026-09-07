@@ -218,6 +218,34 @@ for (const a of [6.4267, 1, 0.1, 0.01, 0]) {
   ]));
 }
 
+rows.push('');
+rows.push('Why the ground tiles never hit it, though they are flat at a constant');
+rows.push('height too. The ground is one rectangle, snapped to the level bounds,');
+rows.push('and the camera is inside it. Its edges parallel to the view each have');
+rows.push('one end ahead and one behind, so neither can supply the pair; the pair');
+rows.push('that is behind is the far edge *across* the view, whose ends differ in');
+rows.push('x by the width of the level. Step outside it and all four corners go');
+rows.push('behind, which is culled — correctly, and not by this.');
+rows.push('');
+
+const AROUND = [[-1150, -1050], [1250, -1050], [1250, 1250], [-1150, 1250]];
+const BEHIND = [[-1150, 200], [1250, 200], [1250, 1250], [-1150, 1250]];
+
+say('ground around the camera, first triangle', drawTri([AROUND[0], AROUND[1], AROUND[2]], 0));
+say('ground around the camera, second', drawTri([AROUND[0], AROUND[2], AROUND[3]], 0));
+say('ground wholly behind, first triangle', drawTri([BEHIND[0], BEHIND[1], BEHIND[2]], 0));
+say('ground wholly behind, second', drawTri([BEHIND[0], BEHIND[2], BEHIND[3]], 0));
+
+rows.push('');
+rows.push('A floor is under no such constraint: it is an arbitrary polygon and');
+rows.push('need not wrap around you. Its edge at x = 200 runs from y = 200 to');
+rows.push('y = 706, both behind the origin, while a corner of the same triangle');
+rows.push('is ahead — which is the shape a rectangle around you cannot make.');
+rows.push('');
+
+say('view-parallel edge wholly behind', drawTri([[200, 200], [200, 706.073], [-102.512, -592.09]], 0));
+say('the same edge bent a quarter of a unit', drawTri([[200, 200], [200.25, 706.073], [-102.512, -592.09]], 0));
+
 document.getElementById('out').textContent = rows.join('\n');
 
   </script>
