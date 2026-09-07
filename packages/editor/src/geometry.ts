@@ -215,12 +215,12 @@ export function unionAll(shapes: readonly Shape[]): Cut {
 
   // One field over all of them, and a point is in the union when it is in any:
   // the same reading `covers` gives a neighbourhood's level side.
-  const on = ground(live.map((shape, id) => ({ id, kind: 'level' as const, shape })));
+  const on = ground(live.map((shape, id) => ({ id, kind: 'add' as const, shape })));
 
   // The arrangement's own output, which is what `Cut` means. This and
   // `combine` are the only two places one is made.
   return chain(
-    arranged(p => covers(on.level, p), () => false, OpUnion, split(raw, snap), snap),
+    arranged(p => covers(on.add, p), () => false, OpUnion, split(raw, snap), snap),
     snap,
   ).rings as Cut;
 }
@@ -1544,10 +1544,18 @@ function arranged(
 // a half seconds to under two.
 // -----------------------------------------------------------------------------
 
-/** A polygon taking part in the set, as `boundaryRuns` needs to see it. */
+/**
+ * A polygon taking part in the set, as `boundaryRuns` needs to see it.
+ *
+ * `kind` is which way it goes and nothing else. It used to be named for what a
+ * level is made of — `level` and `solid` — which was the same two things read
+ * as one kind of thing; a floor is now a set of its own with two sides of its
+ * own, and it goes through here on exactly this machinery. What the set is
+ * *about* never reaches this file.
+ */
 export interface Member {
   id: number
-  kind: 'level' | 'solid'
+  kind: 'add' | 'subtract'
   shape: Shape
 }
 
@@ -1567,8 +1575,8 @@ export interface Member {
  * neighbourhood actually being asked about.
  */
 export interface Ground {
-  level: Side
-  solid: Side
+  add: Side
+  subtract: Side
 }
 
 /** One kind's members, each prepared on its own and findable by where it is. */
@@ -1584,7 +1592,7 @@ export function ground(members: Iterable<Member>): Ground {
   for (const m of members) {
     if (m.shape.length === 0) continue;
 
-    const which = m.kind === 'level' ? 0 : 1;
+    const which = m.kind === 'add' ? 0 : 1;
     const side = sides[which];
 
     boxes[which].push({ id: side.parts.length, box: ofRings(m.shape) });
@@ -1593,7 +1601,7 @@ export function ground(members: Iterable<Member>): Ground {
 
   for (const which of [0, 1]) sides[which].tree = build(boxes[which]);
 
-  return { level: sides[0], solid: sides[1] };
+  return { add: sides[0], subtract: sides[1] };
 }
 
 /**
@@ -1657,8 +1665,8 @@ export interface BoundaryRun {
 
 /**
  * The parts of `subject`'s edges that lie on the boundary of the set the
- * members make — every `level` unioned, every `solid` taken back out — as open
- * runs in the order they are walked.
+ * members make — every `add` unioned, every `subtract` taken back out — as
+ * open runs in the order they are walked.
  *
  * `others` is everything overlapping `subject`; nothing further away can make a
  * difference, which is the point.
@@ -1694,8 +1702,8 @@ export function boundaryRuns(
   // arrangement names in its own terms can be handed back in the level's.
   const whose: { id: number, ring: number }[][] = [[], []];
 
-  for (const kind of ['level', 'solid'] as const) {
-    const which = kind === 'level' ? 0 : 1;
+  for (const kind of ['add', 'subtract'] as const) {
+    const which = kind === 'add' ? 0 : 1;
     const into = which === 0 ? a : b;
 
     for (const m of all.filter(x => x.kind === kind).sort((p, q) => p.id - q.id)) {
@@ -1720,18 +1728,18 @@ export function boundaryRuns(
   const snap = scaleOf(raw) * 1e-9;
   const shared = on ?? ground(all);
 
-  const inLevel = (p: Point) => covers(shared.level, p);
-  const inSolid = (p: Point) => covers(shared.solid, p);
+  const inAdd = (p: Point) => covers(shared.add, p);
+  const inSubtract = (p: Point) => covers(shared.subtract, p);
 
   const made = runs(
-    arranged(inLevel, inSolid, OpSubtract, split([...ours, ...rest], snap, ours.length), snap),
+    arranged(inAdd, inSubtract, OpSubtract, split([...ours, ...rest], snap, ours.length), snap),
     snap,
   );
 
   // Against everything taking part rather than against `ours`: which way the
   // boundary carries on past the end of a run is exactly the question the
   // neighbours are here to answer.
-  const turning = cornering(made.map(r => r.points), raw, inLevel, inSolid, OpSubtract, snap);
+  const turning = cornering(made.map(r => r.points), raw, inAdd, inSubtract, OpSubtract, snap);
 
   const named = (ref: SourceRef): Whence => {
     const from = whose[ref.shape][ref.ring];

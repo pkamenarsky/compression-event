@@ -53,6 +53,14 @@ import { Affine, facingAt, placeAt } from './scene';
  * at all. It reads as everything living to the last version, which is what it
  * did.
  *
+ * 17: a polygon is a set and a direction — `level` or `floor`, added or
+ * subtracted — rather than one of three kinds. A format-16 file's `level` and
+ * `floor` are both added, and its `solid` is a `level` subtracted, which is
+ * exactly what the word meant: a pillar was never a third kind of thing, it
+ * was a room taken back out. Nothing is guessed at, and the one thing the
+ * older format could not say — a hole cut in a floor — is a thing no file
+ * written before this has.
+ *
  * 16: a measuring path is born into a version and taken out at one, and a
  * version's layer may carry a transform for it — so a path can be a member of
  * a group and go where the group goes. A format-15 file's paths are in no
@@ -118,7 +126,7 @@ import { Affine, facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 16;
+export const FORMAT = 17;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -428,6 +436,10 @@ function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point 
 function standingThroughout(polygon: Polygon): Polygon {
   return {
     ...polygon,
+    // A format-16 `solid` said *level, taken back out*, which is what it is
+    // read as. See `FORMAT`.
+    type: (polygon.type as string) === 'solid' ? 'level' : polygon.type,
+    op: polygon.op ?? ((polygon.type as string) === 'solid' ? 'subtract' : 'add'),
     death: polygon.death ?? null,
     points: polygon.points.map(c => ({
       ...c,

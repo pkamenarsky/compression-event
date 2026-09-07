@@ -142,12 +142,19 @@ export interface BakedTrack {
   /**
    * A floor: drawn filled and flat underfoot rather than as walls.
    *
-   * A floor takes no part in the set, so its runs are closed rings — first
-   * point repeated — rather than the open arcs a share of the outline comes
-   * in, and nothing in them is ever a `CROSSING`. Everything else about a
-   * track is the same, which is the point: it rides the same frame, it is cut
-   * to the same measure, and it moves by the same lerp. Only what is built on
-   * top of the points differs, and that is the reader's business.
+   * Which of the two sets the track's boundary belongs to, and nothing more.
+   * A floor is a set of its own — floors added, holes cut in them taken back
+   * out — cut by the same measure against the same kind of neighbourhood, so
+   * its runs are the same open arcs a share of any outline comes in, crossings
+   * and all. Everything about a track is the same, which is the point: it
+   * rides the same frame, it is cut to the same measure, and it moves by the
+   * same lerp.
+   *
+   * Only what is built on top of the points differs, and that is the reader's
+   * business. A wall stands up on a run; a fill needs the loop, and a loop of
+   * the floor set generally belongs to several polygons — so whatever fills it
+   * stitches the runs back into rings at the instant it draws them. See
+   * `looped` in `walls.ts`.
    */
   fill: boolean
   stretches: BakedStretch[]
@@ -421,8 +428,10 @@ export function stretchAt(track: BakedTrack, t: number): BakedStretch | null {
  * costs anything: the game itself never calls it.
  *
  * Every track, floors included — the shader reads them out of the same buffers
- * by the same arithmetic, and what this is for is checking that arithmetic. A
- * fill track's runs are closed rings; see `BakedTrack.fill`.
+ * by the same arithmetic, and what this is for is checking that arithmetic.
+ * Run by run either way: a fill track's runs are arcs of the floor set's
+ * boundary, and putting them back into loops is the fill's business rather
+ * than this one's. See `BakedTrack.fill`.
  */
 export function outline(span: BakedSpan, t: number): Point[][] {
   const out: Point[][] = [];
@@ -436,32 +445,40 @@ export function outline(span: BakedSpan, t: number): Point[][] {
     for (const run of s.runs) {
       const points: Point[] = [];
 
-      for (let i = run.first; i < run.first + run.count; i++) {
-        const solved = span.kinds[i] === CROSSING ? crossingAt(span, i, t, u) : null;
-
-        if (solved !== null) {
-          points.push(solved);
-          continue;
-        }
-
-        // A corner of its own polygon, or a crossing that could not be
-        // placed. Either way it interpolates in the polygon's frame, which
-        // for a corner is exact and for the rest is what the bake's measured
-        // tolerance covers.
-        const m = frameAt(span, span.slots[i], t);
-
-        points.push(place(
-          m,
-          mix(span.pointsA[i * 2], span.pointsB[i * 2], u),
-          mix(span.pointsA[i * 2 + 1], span.pointsB[i * 2 + 1], u),
-        ));
-      }
+      for (let i = run.first; i < run.first + run.count; i++) points.push(placedAt(span, i, t, u));
 
       out.push(points);
     }
   }
 
   return out;
+}
+
+/**
+ * Where one output point stands at `t`, in world units.
+ *
+ * The arithmetic the shader is written against, for a caller holding one point
+ * rather than a whole run: `outline` is this over everything, and the fill's
+ * cut is this over the handful of points a floor has. See `fan`.
+ *
+ * `u` is how far through its own stretch the point is, which the caller has to
+ * know because the stretch belongs to the track rather than to the span.
+ */
+export function placedAt(span: BakedSpan, i: number, t: number, u: number): Point {
+  const solved = span.kinds[i] === CROSSING ? crossingAt(span, i, t, u) : null;
+
+  if (solved !== null) return solved;
+
+  // A corner of its own polygon, or a crossing that could not be placed.
+  // Either way it interpolates in the polygon's frame, which for a corner is
+  // exact and for the rest is what the bake's measured tolerance covers.
+  const m = frameAt(span, span.slots[i], t);
+
+  return place(
+    m,
+    mix(span.pointsA[i * 2], span.pointsB[i * 2], u),
+    mix(span.pointsA[i * 2 + 1], span.pointsB[i * 2 + 1], u),
+  );
 }
 
 /**

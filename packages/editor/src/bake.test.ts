@@ -24,6 +24,7 @@ import {
   editAt,
   removeVertices,
   resolveAt,
+  sideOf,
   withEdit,
 } from './scene';
 import {
@@ -33,7 +34,7 @@ import {
   EMPTY_TRANSFORM,
   Id,
   PolygonId,
-  PolygonType,
+  PolygonKind,
   Transform,
   VERSIONS,
   VersionId,
@@ -41,16 +42,30 @@ import {
   emptyWorld,
 } from './types';
 
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
+
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -691,7 +706,7 @@ describe('keyframes', () => {
 
   test('a polygon born into the later version grows out of its middle', () => {
     const { world } = drawn(['level', rect(0, 0, 100, 100)]);
-    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(300, 300, 100, 100), 1, TOP);
 
     const span = run(bakeSpan(added.world, 0));
 
@@ -709,7 +724,7 @@ describe('keyframes', () => {
 
   test('and grows about its own centre, so it does not drift into place', () => {
     const { world } = drawn(['level', rect(0, 0, 100, 100)]);
-    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(300, 300, 100, 100), 1, TOP);
 
     const span = run(bakeSpan(added.world, 0));
 
@@ -724,14 +739,14 @@ describe('keyframes', () => {
 
   test('and the span says the same thing the editor does all the way across', () => {
     const { world } = drawn(['level', rect(0, 0, 100, 100)]);
-    const added = addPolygon(world, 'level', rect(300, 300, 100, 100), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(300, 300, 100, 100), 1, TOP);
 
     expect(drift(added.world)).toBeLessThan(TOLERANCE);
   });
 
   test('one born into a group that turns rides the group while it grows', () => {
     const { world, ids } = drawn(['level', rect(-300, -100, 200, 200)]);
-    const added = addPolygon(world, 'level', rect(100, -100, 200, 200), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(100, -100, 200, 200), 1, TOP);
     const group = grouped(added.world, 0, [ids[0], added.id], TOP)!;
     const w = transformed(group.world, 1, group.id, { rotation: Math.PI / 2 });
 
@@ -826,7 +841,7 @@ describe('keyframes', () => {
 
   test('one growing into its neighbour is cut where it reaches the wall', () => {
     const { world } = drawn(['level', rect(0, 0, 200, 200)]);
-    const added = addPolygon(world, 'level', rect(150, 50, 200, 100), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(150, 50, 200, 100), 1, TOP);
 
     const span = run(bakeSpan(added.world, 0));
     const track = span.tracks.find(t => t.id === added.id)!;
@@ -891,7 +906,7 @@ describe('a turning world is no worse than it says it is', () => {
     for (let i = 0; i < 6; i++) {
       const made = addPolygon(
         world,
-        i % 3 === 2 ? 'solid' : 'level',
+        kind(i % 3 === 2 ? 'solid' : 'level'),
         rect(-140 + 60 * i, -90 + 40 * (i % 3), 150, 130),
         0,
         TOP,
@@ -1141,9 +1156,9 @@ describe('a turn goes round its pivot, not round the origin', () => {
 
 describe('the incremental set', () => {
   test('leaves a polygon the version does not touch out of the work', () => {
-    const still: [PolygonType, Point[]][] = Array.from(
+    const still: [Named, Point[]][] = Array.from(
       { length: 20 },
-      (_unused, i) => ['level', rect(1000 + i * 200, 0, 100, 100)] as [PolygonType, Point[]],
+      (_unused, i) => ['level', rect(1000 + i * 200, 0, 100, 100)] as [Named, Point[]],
     );
 
     const { world, ids } = drawn(['level', rect(0, 0, 200, 200)], ...still);
@@ -1409,11 +1424,21 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
 
       expect(mine.length).toEqual(real.length);
 
+      // To the bake's own tolerance rather than to the digit. A floor under an
+      // eroding group is kept in the *group's* frame, like every other member,
+      // and a member turning inside a group that is itself turning is a
+      // displacement in that frame — interpolated straight, and cut into
+      // stretches until the chord is within `TOLERANCE` of the arc. Exactness
+      // was what a floor had while it stood outside every union; standing in
+      // one costs it the same thing it costs a room.
       mine.forEach((r, i) => r.points.forEach((p, j) => {
-        expect(p.x).toBeCloseTo(real[i].points[j].x, 9);
-        expect(p.y).toBeCloseTo(real[i].points[j].y, 9);
+        const q = real[i].points[j];
+
+        expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeLessThan(TOLERANCE);
       }));
     }
+
+    expect(span.worst).toBeLessThan(TOLERANCE);
   });
 
   test('and every run of it says it is a fill, so the canvas can tell', () => {
@@ -1484,24 +1509,41 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
 
     const span = run(bakeSpan(moved, 0));
 
+    // Under the group's floor side, not the floor's own id: the group erodes,
+    // so it stands for its members on every side it has one, and its floors
+    // union like its rooms do. See `subjects`.
+    const side = sideOf(made.id, kind('floor'));
+
     for (const t of [0, 0.2, 0.5, 0.8, 1]) {
       const mine = sample(span, t).filter(r => r.fill);
-      const real = truth(moved, 0, t).filter(r => r.id === ids[1]);
+      const real = truth(moved, 0, t).filter(r => r.id === side);
 
       expect(mine.length).toEqual(real.length);
       expect(mine.length).toBeGreaterThan(0);
 
+      // To the bake's own tolerance rather than to the digit. A floor under an
+      // eroding group is kept in the *group's* frame, like every other member,
+      // and a member turning inside a group that is itself turning is a
+      // displacement in that frame — interpolated straight, and cut into
+      // stretches until the chord is within `TOLERANCE` of the arc. Exactness
+      // was what a floor had while it stood outside every union; standing in
+      // one costs it the same thing it costs a room.
       mine.forEach((r, i) => r.points.forEach((p, j) => {
-        expect(p.x).toBeCloseTo(real[i].points[j].x, 9);
-        expect(p.y).toBeCloseTo(real[i].points[j].y, 9);
+        const q = real[i].points[j];
+
+        expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeLessThan(TOLERANCE);
       }));
     }
+
+    expect(span.worst).toBeLessThan(TOLERANCE);
   });
 
-  test('and a group eroding around it does not swallow it', () => {
-    // An eroding group stands in front of its members' union, and a floor is
-    // in no union. So it stays its own subject at its own depth, which is
-    // exactly what `floorsAt` draws standing still.
+  test('and a group eroding around it erodes it, as it does everything else', () => {
+    // A group is one thing, and it erodes as one shape. Its floors are a set
+    // like its rooms are, so what it hands over on that side is their union
+    // pulled in by its own depth — which is what `floorsAt` draws standing
+    // still, both of them through `contributing`, so the still and the morph
+    // agree at the ends of the span by construction.
     const { world, ids } = drawn(
       ['level', rect(-200, -200, 400, 400)],
       ['floor', rect(-50, -50, 100, 100)],
@@ -1510,19 +1552,24 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
     const held = grouped(world, 0, ids, TOP)!;
     const eroding = transformed(held.world, 1, held.id, { erosion: 20 });
     const span = run(bakeSpan(eroding, 0));
-    const track = span.tracks.find(t => t.id === ids[1]);
+    const side = sideOf(held.id, kind('floor'));
+    const track = span.tracks.find(t => t.id === side);
 
     expect(track?.fill).toBe(true);
 
-    // And it is still *there*. The track existing says nothing: the group used
-    // to hand over one union per side, floors included, and the floor's own
-    // track came back empty at every instant while looking perfectly healthy.
+    // And it is still *there*. The track existing says nothing on its own: a
+    // side that hands back an empty union at every instant looks perfectly
+    // healthy from here.
     for (const t of [0, 0.5, 1]) {
-      const mine = sample(span, t).filter(r => r.id === ids[1]);
+      const mine = sample(span, t).filter(r => r.id === side);
 
       expect(mine.length).toBeGreaterThan(0);
-      expect(length(mine)).toBeCloseTo(length(truth(eroding, 0, t).filter(r => r.id === ids[1])), 9);
+      expect(length(mine)).toBeCloseTo(length(truth(eroding, 0, t).filter(r => r.id === side)), 9);
     }
+
+    // Pulled in by the group's depth at the far end, where the depth is whole.
+    // The floor is 100 square and the group takes 20 off every side of it.
+    expect(length(sample(span, 1).filter(r => r.id === side))).toBeCloseTo(4 * 60, 6);
   });
 });
 

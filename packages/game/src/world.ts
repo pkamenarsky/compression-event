@@ -14,8 +14,8 @@
 // the set does not have — two rooms overlapping is the ordinary way to author a
 // level here, and the seam between them was a wall you could see through and
 // could not walk through — so collision is on the union too, and every ring
-// here ships as `level` whatever it was made of: a `solid` has been subtracted
-// by now and is a hole, and a hole is one by the way it is wound.
+// here ships untagged whatever it was made of: what was subtracted has been
+// subtracted by now and is a hole, and a hole is one by the way it is wound.
 //
 // What differs is the shape they arrive in, and that is the whole reason the
 // second is a separate evaluation rather than a read of the first. A run
@@ -56,15 +56,77 @@ export const SCALE = 1 / 25;
 export const TILE_SIZE = 4;
 
 /**
- * What an author can draw, which is not what the game is handed.
+ * How far, in editor units, the replay may sit from the CSG.
  *
- * A `level` is somewhere to stand, a `solid` is something taken back out of it,
- * and a `floor` is neither — it is drawn and nothing else. The first two are
- * resolved into one set before they get here and arrive as untagged rings; the
- * third arrives in a list of its own. So this describes the editor's side of
- * the agreement, and nothing shipped carries it.
+ * A width rather than a tolerance in `t`, which is what makes it meaningful:
+ * it is the thing the eye would see. Well under a pixel at any sane zoom.
+ *
+ * Here rather than only in the bake because it is a promise the bake makes to
+ * whatever plays it back, and one reader takes it up: a fill has to stitch a
+ * span's floor runs into rings, and the two readings of a junction come off
+ * different tracks and agree only to this. See `looped` in `walls.ts`.
  */
-export type PolygonType = 'level' | 'solid' | 'floor';
+export const TOLERANCE = 0.05;
+
+/**
+ * Which of the two sets a polygon is about.
+ *
+ * A `level` is somewhere to stand and a `floor` is somewhere to look at: the
+ * first is resolved into the set collision and the walls are made of, the
+ * second into a shape that is drawn flat underfoot and takes part in nothing.
+ * Both arrive here already resolved — the level as untagged rings, the floor
+ * in a list of its own — so this describes the editor's side of the agreement,
+ * and nothing shipped carries it.
+ */
+export type PolygonType = 'level' | 'floor';
+
+/**
+ * What a polygon does to the set it is about.
+ *
+ * Orthogonal to which set that is, and it was not always: a pillar used to be
+ * a *kind*, `solid`, and there was no way to say the same thing about a floor
+ * at all. A floor could only ever be added to, so a doorway cut through the
+ * floor of a room meant drawing the floor as the pieces around the hole.
+ *
+ * Two questions rather than one, then, and the pair is what everything
+ * downstream switches on. `level`/`subtract` is the old `solid`, exactly.
+ */
+export type PolygonOp = 'add' | 'subtract';
+
+/**
+ * The pair: which set, and which way.
+ *
+ * An interface rather than the four flat names it could have been spelled as,
+ * because the two halves are asked about separately far more often than
+ * together — the CSG only wants the op, the drawing only wants the type — and
+ * a flat name makes every one of those a test against two alternatives instead
+ * of one. `Polygon` in the editor's `types.ts` carries the two fields
+ * directly, so a polygon *is* one of these without being wrapped.
+ */
+export interface PolygonKind {
+  type: PolygonType
+  op: PolygonOp
+}
+
+/** The four of them, in the order everything that iterates them uses: the
+ * level's two sides first, then the floor's. */
+export const KINDS: readonly PolygonKind[] = [
+  { type: 'level', op: 'add' },
+  { type: 'level', op: 'subtract' },
+  { type: 'floor', op: 'add' },
+  { type: 'floor', op: 'subtract' },
+];
+
+/** One kind as a string, for the maps and sets that have to key by one.
+ * Nothing but a key: it is never parsed back and never written to a file. */
+export function kindKey(k: PolygonKind): string {
+  return `${k.type}_${k.op}`;
+}
+
+/** Whether two kinds are the one kind. */
+export function sameKind(a: PolygonKind, b: PolygonKind): boolean {
+  return a.type === b.type && a.op === b.op;
+}
 
 export type ArtefactType = 'exit' | 'key' | 'delay' | 'decompress' | 'anchor' | 'compass';
 
@@ -101,9 +163,9 @@ export interface PolygonPoint {
  * this takes the winding off the signed area rather than assuming it.
  *
  * Untagged, and that is the point. Every ring in the list is the same kind of
- * thing — a `level` was unioned and a `solid` was subtracted long before this,
- * and what a `solid` left behind is a hole, which is one by the way it is
- * wound. There is nothing left for a tag to distinguish.
+ * thing — the added ones were unioned and the subtracted ones taken back out
+ * long before this, and what a subtraction left behind is a hole, which is one
+ * by the way it is wound. There is nothing left for a tag to distinguish.
  */
 export interface Polygon {
   points: PolygonPoint[]
@@ -114,12 +176,25 @@ export interface Polygon {
  *
  * Its own list rather than a tag on the one above, because it is not the same
  * kind of thing and every reader of that list would have to know to skip it. It
- * takes no part in the set, nothing walks into it, and nothing needs to know
- * which side of it is material — so it carries no normals either. A ring of
- * points, filled, is the whole of it.
+ * takes no part in the level, nothing walks into it, and nothing needs to know
+ * which side of it is material — so it carries no normals either. An outline
+ * and the holes cut in it, filled, is the whole of it.
  */
 export interface Floor {
   points: Point[]
+  /**
+   * The rings taken back out of it, wound whichever way they came: a doorway
+   * cut through a floor, and the pillar a floor was drawn around.
+   *
+   * Beside the outline rather than in the list next to it, because the fill is
+   * a triangulation and a triangulator is told a contour and its holes. Which
+   * ring is a hole in which outline is worked out where the set is resolved and
+   * the containment is already in hand — see `filled` in the editor's
+   * `export.ts` — rather than again, per frame, by whatever is drawing.
+   *
+   * Absent where there are none, which is nearly every floor ever drawn.
+   */
+  holes?: Point[][]
 }
 
 /**

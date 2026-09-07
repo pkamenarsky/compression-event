@@ -13,16 +13,30 @@ import {
   removeAt,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, EditorState, VERSIONS, emptyWorld, initialState } from './types';
+import { EMPTY_TRANSFORM, EditorState, VERSIONS, emptyWorld, initialState, PolygonKind } from './types';
+
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
 
 function world(): EditorState {
-  const a = addPolygon(emptyWorld(), 'level', [
+  const a = addPolygon(emptyWorld(), kind('level'), [
     { x: 0, y: 0 },
     { x: 10, y: 0 },
     { x: 10, y: 10 },
   ], 0, TOP);
 
-  const b = addPolygon(a.world, 'solid', [
+  const b = addPolygon(a.world, kind('solid'), [
     { x: 4, y: 4 },
     { x: 8, y: 4 },
     { x: 8, y: 8 },

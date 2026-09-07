@@ -30,9 +30,23 @@ import {
   ungrouped,
   withEdit,
 } from './scene';
-import { ARTEFACTS, Clipping, EMPTY_TRANSFORM, World, emptyWorld, within } from './types';
+import { ARTEFACTS, Clipping, EMPTY_TRANSFORM, World, emptyWorld, within, PolygonKind } from './types';
 
 /** One artefact, put down at `v` and nowhere else. */
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
+
 function dropped(v = 0, x = 10, y = 20): { world: World, id: number } {
   return addArtefact(emptyWorld(), 'key', { x, y }, v, TOP);
 }
@@ -160,7 +174,7 @@ describe('an artefact is a point, and the versions do to it what they do', () =>
 
 describe('a group takes one with it, because it is a member like any other', () => {
   function room(): { world: World, artefact: number, group: number } {
-    const drawn = addPolygon(emptyWorld(), 'level', [
+    const drawn = addPolygon(emptyWorld(), kind('level'), [
       { x: 0, y: 0 },
       { x: 100, y: 0 },
       { x: 100, y: 100 },
@@ -250,7 +264,7 @@ describe('a group takes one with it, because it is a member like any other', () 
 
 /** A key in a room, with the room's group turning a quarter turn at v1. */
 function turningRoom(): { world: World, artefact: number, group: number } {
-  const drawn = addPolygon(emptyWorld(), 'level', [
+  const drawn = addPolygon(emptyWorld(), kind('level'), [
     { x: 0, y: 0 },
     { x: 200, y: 0 },
     { x: 200, y: 200 },
@@ -381,14 +395,14 @@ describe('a walk moves them on the walls’ clock', () => {
   });
 
   test('but one put into a turning room still goes round with the room', () => {
-    const a = addPolygon(emptyWorld(), 'level', [
+    const a = addPolygon(emptyWorld(), kind('level'), [
       { x: 0, y: 0 },
       { x: 100, y: 0 },
       { x: 100, y: 100 },
       { x: 0, y: 100 },
     ], 0, TOP);
 
-    const b = addPolygon(a.world, 'level', [
+    const b = addPolygon(a.world, kind('level'), [
       { x: 200, y: 0 },
       { x: 300, y: 0 },
       { x: 300, y: 100 },
@@ -428,14 +442,14 @@ describe('a walk moves them on the walls’ clock', () => {
   });
 
   test('and one taken out of a turning room turns on its way out', () => {
-    const a = addPolygon(emptyWorld(), 'level', [
+    const a = addPolygon(emptyWorld(), kind('level'), [
       { x: 0, y: 0 },
       { x: 100, y: 0 },
       { x: 100, y: 100 },
       { x: 0, y: 100 },
     ], 0, TOP);
 
-    const b = addPolygon(a.world, 'level', [
+    const b = addPolygon(a.world, kind('level'), [
       { x: 200, y: 0 },
       { x: 300, y: 0 },
       { x: 300, y: 100 },
@@ -571,7 +585,7 @@ describe('copying one takes what it goes on to do', () => {
 
   test('a mixed selection copies both, and both land in the open group', () => {
     const { world, id } = dropped(0, 0, 0);
-    const drawn = addPolygon(world, 'level', [
+    const drawn = addPolygon(world, kind('level'), [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
       { x: 10, y: 10 },
@@ -608,7 +622,7 @@ describe('the start is not one of them', () => {
     // The one thing that separates it from an artefact: a version's layer is
     // keyed by an id, and it has none, so there is nothing a version can say
     // about where the level begins.
-    const drawn = addPolygon(emptyWorld(), 'level', [
+    const drawn = addPolygon(emptyWorld(), kind('level'), [
       { x: 0, y: 0 },
       { x: 100, y: 0 },
       { x: 100, y: 100 },
@@ -659,7 +673,7 @@ describe('and it keeps step with the walls it stands among', () => {
     // off the corner it was placed on, worst in the middle of the turn.
     const corner = { x: 200, y: 0 };
 
-    const drawn = addPolygon(emptyWorld(), 'level', [
+    const drawn = addPolygon(emptyWorld(), kind('level'), [
       { x: 0, y: 0 },
       corner,
       { x: 200, y: 200 },

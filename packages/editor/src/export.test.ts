@@ -14,8 +14,20 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { Point, SCALE } from '@ce/game/world';
-import { BakedSpan, CROSSING, FRAME_STRIDE, Hulls, outline, placeAt, signedArea } from '@ce/game';
+import { Point, SCALE, TOLERANCE } from '@ce/game/world';
+import {
+  BakedSpan,
+  CROSSING,
+  FRAME_STRIDE,
+  Hulls,
+  fills,
+  looped,
+  outline,
+  placeAt,
+  placedAt,
+  ranges,
+  signedArea,
+} from '@ce/game';
 import {
   Frame,
   Span,
@@ -26,7 +38,7 @@ import {
   stretchAt,
   truth,
 } from './bake';
-import { artefactsShipped, bakedSpan, versionOf } from './export';
+import { artefactsShipped, bakedSpan, floorsAt, versionOf } from './export';
 import {
   TOP,
   Affine,
@@ -48,18 +60,32 @@ import {
   unchained,
   withEdit,
 } from './scene';
-import { ArtefactId, EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import { ArtefactId, EMPTY_TRANSFORM, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -228,7 +254,7 @@ describe('a flattened span replays as its span does', () => {
   // single precision would say so if it were going to.
   test('a room born into the later version, growing out of its middle', () => {
     const { world } = drawn(['level', rect(0, 0, 200, 160)]);
-    const added = addPolygon(world, 'level', rect(400, 300, 140, 140), 1, TOP);
+    const added = addPolygon(world, kind('level'), rect(400, 300, 140, 140), 1, TOP);
 
     expect(agrees(added.world, 0)).toBeLessThan(SLACK);
   });
@@ -249,7 +275,7 @@ describe('a flattened span replays as its span does', () => {
     );
 
     const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
-    const added = addPolygon(made.world, 'level', rect(60, 220, 140, 100), 1, TOP);
+    const added = addPolygon(made.world, kind('level'), rect(60, 220, 140, 100), 1, TOP);
     const held = {
       ...added.world,
       groups: new Map(added.world.groups).set(made.id, {
@@ -345,7 +371,7 @@ describe('an artefact rides the frame table like everything else', () => {
   /** A key put exactly on a corner of a room, and the room made to move. */
   function corner(layer: Partial<Transform>): { world: World, key: ArtefactId } {
     const at = { x: 200, y: 0 };
-    const drew = addPolygon(emptyWorld(), 'level', [{ x: 0, y: 0 }, at, { x: 200, y: 200 }], 0, TOP);
+    const drew = addPolygon(emptyWorld(), kind('level'), [{ x: 0, y: 0 }, at, { x: 200, y: 200 }], 0, TOP);
     const put = addArtefact(drew.world, 'key', at, 0, TOP);
     const made = grouped(put.world, 0, [drew.id, put.id], TOP)!;
 
@@ -405,7 +431,7 @@ describe('an artefact rides the frame table like everything else', () => {
   });
 
   test('one the span has never heard of gets no slot in it', () => {
-    const drew = addPolygon(emptyWorld(), 'level', rect(0, 0, 200, 160), 0, TOP);
+    const drew = addPolygon(emptyWorld(), kind('level'), rect(0, 0, 200, 160), 0, TOP);
     const put = addArtefact(drew.world, 'key', { x: 40, y: 40 }, 2, TOP);
 
     const flat = bakedSpan(run(bakeSpan(put.world, 0)), [put.id]);
@@ -1092,5 +1118,100 @@ describe('the standing walls and the bake agree about every vertical', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(60, 20, 100, 60)],
     ).world);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The floor set, standing still and in flight
+//
+// A floor is a set now — floors added, holes cut in them taken back out — so
+// its boundary is partitioned by source and comes out of a span as runs, the
+// same as the level's. What fills it wants the ring, and a ring of that set
+// generally belongs to several polygons, so the runs are stitched back at the
+// instant they are drawn. See `looped` in the game's `walls.ts`.
+//
+// Two things have to hold, and neither is obvious. The runs have to close into
+// rings at every instant, not only at the ends — they are read off tracks cut
+// independently, and two readings of one junction agree only to what the bake
+// measured, so an exact join finds nothing. And the rings have to be the same
+// set the still is handed, or a floor jumps at the version boundary, which is
+// exactly the place a walk stops and the still takes over.
+// -----------------------------------------------------------------------------
+
+describe('the floor set', () => {
+  /** A room, a floor inside it with a hole in the middle, and the floor moved
+   * at v1 so that everything about it is in flight at once. */
+  function laid(): World {
+    const made = drawn(
+      ['level', rect(-600, -600, 1400, 1400)],
+      ['floor', rect(-400, -400, 900, 900)],
+      ['hole', rect(-100, -100, 200, 200)],
+    );
+
+    return transformed(made.world, 1, made.ids[1], {
+      rotation: 0.4,
+      translation: { x: 120, y: 40 },
+    });
+  }
+
+  /** The floor set the morph draws at `t`, as closed rings in world units.
+   * Through the very plumbing the fill is cut from — see `fills`. */
+  function stitched(span: BakedSpan, t: number): Point[][] {
+    const { points, runs } = fills(span);
+    const range = ranges(span);
+
+    const at = (i: number): Point => {
+      const p = points[i];
+      const a = range[p * 2], b = range[p * 2 + 1];
+      const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+
+      return placedAt(span, p, t, u);
+    };
+
+    const alive = (run: readonly number[]): boolean => {
+      const a = range[points[run[0]] * 2], b = range[points[run[0]] * 2 + 1];
+
+      return t >= a && (t < b || b >= 1);
+    };
+
+    return looped(runs.filter(alive), at, TOLERANCE).map(run => run.map(at));
+  }
+
+  const area = (rings: readonly (readonly Point[])[]): number =>
+    rings.reduce((sum, ring) => sum + Math.abs(signedArea(ring)), 0);
+
+  test('the still hands over the hole with the outline it is a hole in', () => {
+    for (const v of [0, 1]) {
+      const shown = floorsAt(laid(), v);
+
+      expect(shown.length).toBe(1);
+      expect(shown[0].holes?.length).toBe(1);
+    }
+  });
+
+  test('the runs close into the same two rings at every instant', () => {
+    const span = bakedSpan(run(bakeSpan(laid(), 0)), []);
+
+    for (let k = 0; k <= 20; k++) {
+      const rings = stitched(span, k / 20);
+
+      // The floor and the hole both move rigidly, so the two areas are the two
+      // they started as the whole way across. A stitch that failed gives no
+      // rings at all; one that joined the wrong ends gives the wrong areas.
+      expect(rings.length).toBe(2);
+      expect(area(rings)).toBeCloseTo(900 * 900 + 200 * 200, 3);
+    }
+  });
+
+  test('and are the set the still is handed, at both ends of the span', () => {
+    const world = laid();
+    const span = bakedSpan(run(bakeSpan(world, 0)), []);
+
+    for (const [t, v] of [[0, 0], [1, 1]] as const) {
+      const shown = floorsAt(world, v);
+
+      expect(area(stitched(span, t)))
+        .toBeCloseTo(area([shown[0].points, ...(shown[0].holes ?? [])]), 3);
+    }
   });
 });

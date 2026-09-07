@@ -18,18 +18,32 @@ import { WallOptions } from '@ce/game';
 import { bakeSpan } from './bake';
 import { bakedSpan, floorsAt } from './export';
 import { TOP, addPolygon, editAt, resolveAt, withEdit } from './scene';
-import { PolygonId, PolygonType, VersionId, World, emptyWorld } from './types';
+import { PolygonId, PolygonKind, VersionId, World, emptyWorld } from './types';
+
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -153,36 +167,52 @@ describe('the meshes a span builds', () => {
  * the start and the end of every transition, so a floor either of them draws
  * alone flashes on or off at that crossing.
  *
- * They cannot be compared vertex for vertex — one holds a ring in world units
- * and the other holds a stretch's two ends in the polygon's own frame — so
- * this compares what is actually the same question: how many triangles, and
- * over what area.
+ * They cannot be compared vertex for vertex, and not only because one holds a
+ * ring in world units and the other a stretch's two ends in the polygon's own
+ * frame. They do not hold the same vertices at all: the still is handed the
+ * floor set as rings, and the morph is handed its boundary as runs — one per
+ * polygon, first point repeated at the end — and stitches them back at the
+ * instant it draws. A square floor is four points to one of them and five to
+ * the other, and both fill the same square.
+ *
+ * So this compares what is actually the same question: the ground the triangles
+ * cover. Off the index buffer either way, because that is what is drawn — the
+ * vertex buffer is in ring order and says nothing about which diagonals were
+ * taken.
  */
 describe('the standing floors and the bake fill the same ground', () => {
-  /** The triangles of a fill mesh, in the two axes the ground has. A still
-   * holds them in `position`, which is x and z with the height between; the
-   * morph holds a pair per point and works the height out in the shader. */
-  function ground(mesh: { geometry: { getAttribute(name: string): {
-    count: number
-    getX(i: number): number
-    getY(i: number): number
-    getZ(i: number): number
-  } } }, name: string, flat: boolean): Point[] {
-    const g = mesh.geometry.getAttribute(name);
-    const out: Point[] = [];
-
-    for (let i = 0; i < g.count; i++) {
-      out.push({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
+  /**
+   * The area the triangles of a fill mesh cover.
+   *
+   * A still holds its points in `position`, which is x and z with the height
+   * between; the morph holds a pair per point and works the height out in the
+   * shader, so its near end is `aPointA`. Every one of these worlds stands
+   * still across the span, so that pair is the same point twice and the
+   * polygon's frame is the identity — which is what lets the two be compared
+   * in the first place.
+   */
+  function covered(mesh: {
+    geometry: {
+      getAttribute(name: string): {
+        getX(i: number): number
+        getY(i: number): number
+        getZ(i: number): number
+      }
+      getIndex(): { count: number, getX(i: number): number } | null
+      drawRange: { start: number, count: number }
     }
+  }, name: string, flat: boolean): number {
+    const g = mesh.geometry.getAttribute(name);
+    const index = mesh.geometry.getIndex()!;
+    const at = (i: number): Point => ({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
 
-    return out;
-  }
+    const range = mesh.geometry.drawRange;
+    const count = Math.min(index.count, range.count);
 
-  function area(points: readonly Point[]): number {
     let out = 0;
 
-    for (let i = 0; i + 2 < points.length; i += 3) {
-      const a = points[i], b = points[i + 1], c = points[i + 2];
+    for (let i = range.start; i + 2 < range.start + count; i += 3) {
+      const a = at(index.getX(i)), b = at(index.getX(i + 1)), c = at(index.getX(i + 2));
 
       out += Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
     }
@@ -194,12 +224,10 @@ describe('the standing floors and the bake fill the same ground', () => {
     const one = still([], floorsAt(world, 0), OPTIONS);
     const two = morph(bakedSpan(run(bakeSpan(world, 0))), OPTIONS);
 
-    const here = ground(one.fill, 'position', false);
-    const there = ground(two.fill, 'aPointA', true);
+    const here = covered(one.fill, 'position', false);
 
-    expect(there.length).toEqual(here.length);
-    expect(here.length).toBeGreaterThan(0);
-    expect(area(there)).toBeCloseTo(area(here), 6);
+    expect(here).toBeGreaterThan(0);
+    expect(covered(two.fill, 'aPointA', true)).toBeCloseTo(here, 6);
 
     // And on the same plane, or one draws over the other.
     expect(two.fill.position.y).toBeCloseTo(one.fill.position.y, 9);

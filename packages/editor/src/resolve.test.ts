@@ -24,7 +24,7 @@ import {
 } from './scene';
 import {
   PolygonId,
-  PolygonType,
+  PolygonKind,
   Transform,
   VERSIONS,
   VersionId,
@@ -40,16 +40,30 @@ import { Frame, truth } from './bake';
 import { FORMAT, Saved, restored, saved } from './save';
 import { resolveGroup, resolveInto } from './resolve';
 
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
+
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -92,7 +106,7 @@ function areas(world: World): number[] {
 /** What is drawn at a version, as one shape. */
 function drawnArea(world: World, v: VersionId): number {
   return showing(world, v, resolveAt(world, v), [])
-    .reduce((s, it) => s + (it.kind === 'solid' ? -1 : 1) * shapeArea(it.shape), 0);
+    .reduce((s, it) => s + (it.kind.op === 'subtract' ? -1 : 1) * shapeArea(it.shape), 0);
 }
 
 describe('resolving a group', () => {
@@ -269,7 +283,7 @@ describe('resolving a group', () => {
   test('an artefact in the group stays in the group', () => {
     const { world, group } = pair();
     const { world: withKey, id: key } = (() => {
-      const added = addPolygon(world, 'level', rect(300, 300, 10, 10), 0, TOP);
+      const added = addPolygon(world, kind('level'), rect(300, 300, 10, 10), 0, TOP);
 
       return { world: added.world, id: added.id };
     })();

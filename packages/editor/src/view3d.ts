@@ -330,10 +330,13 @@ function panel(
 
       const outline = sourced(set);
 
-      // The floors off the resolved polygons rather than out of `versionOf`,
-      // which would union the whole level to answer a question the union has
-      // nothing to do with. Which is also how the bake takes them — see
-      // `subjects` — so the still and the morph draw the same floors.
+      // The floor set rather than the whole of `versionOf`, which would union
+      // the level as well to answer a question about the other set. The same
+      // set the bake cuts its fill tracks out of — see `subjects` — so the
+      // still and the morph draw the same floor.
+      //
+      // Rings rather than the runs `set` already holds, because a fill is a
+      // triangulation and a triangulation wants the loop. See `filled`.
       view.show(outline, floorsAt(w, v));
       peopled(w, v, untracked(replay));
 

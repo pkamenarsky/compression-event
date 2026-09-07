@@ -30,6 +30,7 @@ import {
   Live,
   Resolved,
   addPolygon,
+  floorRuns,
   landing,
   addVertex,
   middle,
@@ -63,6 +64,7 @@ import {
   depths,
   Handle,
   handles,
+  occupiedShape,
   occupying,
   occupyingSource,
   outlining,
@@ -102,6 +104,7 @@ import {
   ARTEFACTS,
   ArtefactId,
   FIGURES,
+  KINDS,
   NGON_MAX,
   NGON_MIN,
   EMPTY_SELECTION,
@@ -113,7 +116,7 @@ import {
   Point,
   Polygon,
   PolygonId,
-  PolygonType,
+  PolygonKind,
   Replay,
   Selection,
   Settings,
@@ -123,6 +126,7 @@ import {
   Transform,
   Update,
   VersionId,
+  kindKey,
   VertexId,
   View,
   World,
@@ -228,7 +232,7 @@ export function worldCanvas(
     if (held !== null && held.world === w && held.to === to && held.inside === ins) return held.at;
 
     const at = new Map(
-      occupying(w, to, resolveAt(w, to), opened(w, ins)).map(g => [g.id, g.shape]),
+      occupying(w, to, resolveAt(w, to), opened(w, ins)).map(g => [g.id, occupiedShape(g)]),
     );
 
     held = { world: w, to, inside: ins, at };
@@ -778,13 +782,13 @@ export function worldCanvas(
       update(s => settled(s, was, end.tag === 'cancel'));
     }
 
-    function retype(type: Polygon['type']): void {
+    function retype(kind: PolygonKind): void {
       update(s => {
         const polygons = new Map(s.world.polygons);
 
         for (const id of polygonsIn(s.world, s.selection.polygons)) {
           const p = polygons.get(id);
-          if (p !== undefined) polygons.set(id, { ...p, type });
+          if (p !== undefined) polygons.set(id, { ...p, ...kind });
         }
 
         return marked({ ...s, world: { ...s.world, polygons } }, s.world);
@@ -851,7 +855,7 @@ export function worldCanvas(
         // a group makes a member of it, exactly where the cursor put it.
         const { world, id } = addPolygon(
           s.world,
-          'level',
+          KINDS[0],
           points,
           s.currentVersion,
           landing(s.world, s.currentVersion, s.inside),
@@ -2020,7 +2024,8 @@ export function worldCanvas(
                   ctx,
                   v,
                   layers(
-                    w, s, v, t, sel, ins, at, l, items, runs(set), played, clip,
+                    w, s, v, t, sel, ins, at, l, items, runs(set), floorRuns(set),
+                    played, clip,
                     // An artefact flying on its own, with the walls it belongs
                     // to standing still because their span has not been baked
                     // yet, reads as a glitch rather than as a walk.
@@ -2109,14 +2114,12 @@ export function worldCanvas(
               if (mode !== undefined) {
                 yield* transforming(e.code, mode);
               }
-              else if (e.code === 'Digit1') {
-                retype('level');
-              }
-              else if (e.code === 'Digit2') {
-                retype('solid');
-              }
-              else if (e.code === 'Digit3') {
-                retype('floor');
+              else {
+                // The four in the order `KINDS` names them: room, pillar,
+                // floor, hole in the floor.
+                const n = Number(e.code.match(/^Digit([1-9])$/)?.[1] ?? NaN);
+
+                if (n >= 1 && n <= KINDS.length) retype(KINDS[n - 1]);
               }
             }
             else if (tool() === 'artefact') {
@@ -2718,6 +2721,9 @@ function layers(
   local: Local,
   items: Resolved[],
   outline: Point[][],
+  /** The floor set's own outline, which is the same answer about the other
+   * set and is drawn in its own colour over the top. */
+  floor: Point[][],
   played: Frame | null,
   /** Where each shut group stands at the version the replay is walking
    * towards, from `occupying`. Null when nothing is playing. */
@@ -2783,7 +2789,11 @@ function layers(
     out.push(ctx => corners(ctx, view, on, selection));
   }
 
-  out.push(ctx => outlines(ctx, view, outline));
+  // The floor first and the level over it, which is the order the two stand
+  // in: a wall is built on the floor, and where a floor's edge runs along a
+  // wall it is the wall that is there to be seen.
+  out.push(ctx => outlines(ctx, view, floor, theme.csgFloor));
+  out.push(ctx => outlines(ctx, view, outline, theme.csg));
 
   // Over the editor's own answer, so the two can be read against each other:
   // where they agree the thin line sits inside the thick one, and where the
@@ -2924,7 +2934,7 @@ function ghosts(
   }
 
   for (const g of occupying(world, v, items, [])) {
-    for (const ring of g.shape) {
+    for (const ring of occupiedShape(g)) {
       trace(ctx, view, ring);
     }
   }
@@ -2978,7 +2988,7 @@ function polygons(
       if (picked) leaders(ctx, view, it);
     }
 
-    outlined(ctx, view, it.shape, it.polygon.type, picked, here, theme.pickedFill);
+    outlined(ctx, view, it.shape, it.polygon, picked, here, theme.pickedFill);
   }
 }
 
@@ -3189,7 +3199,7 @@ function moved(
     out.set(g.id, {
       was: g.shape,
       now: now.get(g.id) ?? [],
-      depth: g.kind === 'solid' ? -d : d,
+      depth: g.kind.op === 'subtract' ? -d : d,
     });
   }
 
@@ -3230,8 +3240,9 @@ function groups(
 
     // Drawn as the floor it is, and never as picked: the group's own outline
     // has already said that, and saying it twice puts a second heavy line
-    // inside the first. The edge is here because the stipple needs one — a
-    // pattern with nothing to stop it frays wherever the shape ends.
+    // inside the first. Filled and edged, both, because an outline alone
+    // inside another outline says nothing about which side of it is floor —
+    // and because the stipple of a hole in it needs an edge to stop at.
     //
     // Clipped rather than cut: a floor is drawn inside the group and the group
     // has just drawn its own outline along every edge the cut would follow, so
@@ -3239,16 +3250,31 @@ function groups(
     // line already on screen. It cost the line underneath, too — the floor's
     // own 0.5 stroke ran back over a picked group's heavy one wherever the two
     // agreed, and a clipped edge has no stroke to do it with.
-    if (g.floor.length !== 0) {
+    //
+    // Nothing to clip to for a group of nothing but floors: `shape` is empty
+    // there and the floor is the whole of what is on screen. Clipping to an
+    // outline that is not there would clip it away, which is the group going
+    // invisible — and a group must be visible, being the thing being picked
+    // and dragged.
+    if (g.floor.length === 0) continue;
+
+    const shut = g.shape.length !== 0;
+
+    if (shut) {
       ctx.save();
       ctx.beginPath();
 
       for (const ring of g.shape) trace(ctx, view, ring);
 
       ctx.clip('evenodd');
-      outlined(ctx, view, g.floor, 'floor', false, here, theme.groupFill);
-      ctx.restore();
     }
+
+    // Picked only where the floor is the whole of the group: then this pass is
+    // the group's own outline and has to carry the selection, there being no
+    // other line on screen to carry it.
+    outlined(ctx, view, g.floor, KINDS[2], !shut && picking.has(g.id), here, theme.groupFill);
+
+    if (shut) ctx.restore();
   }
 
   // Its own pass, because what it draws is not keyed to what `shown` holds: a
@@ -3267,22 +3293,28 @@ function groups(
 }
 
 /**
- * What each kind is painted with, in screen space and built once.
+ * What each way of going is painted with, in screen space and built once.
  *
  * A stroke can only say one thing at a time, and it is already saying whether
- * a shape is picked and whether it can be reached at all. So the kind is said
- * by the fill instead: a solid is hatched because it is material taken away,
- * a floor is dotted because it is not in the set at all, and a room is left
- * plain because it is the ordinary case. Every kind then strokes alike.
+ * a shape is picked and whether it can be reached at all — and, since there are
+ * two sets, which of them the line belongs to. So which *way* a polygon goes is
+ * said by the fill instead: what is taken away is textured, because a texture
+ * says which side of the line the material is on and a ring alone never did.
+ *
+ * A room is left plain, being the ordinary case on its side. A floor is not,
+ * and that is the one asymmetry: a floor is drawn inside a room and a hole in a
+ * floor is drawn inside the floor, so an unfilled floor and the hole in it are
+ * the same picture. The fill is faint enough to leave the room under it legible.
  *
  * Texture rather than geometry, so it does not zoom with the level: a pattern
  * the view's transform stretched would go from hatching to stripes on the way
  * in, and the whole point of it is to look the same everywhere.
  */
-const patterns = new Map<PolygonType, CanvasPattern | null>();
+const patterns = new Map<string, CanvasPattern | null>();
 
-function patterned(kind: PolygonType): CanvasPattern | null {
-  const known = patterns.get(kind);
+function patterned(kind: PolygonKind): CanvasPattern | null {
+  const key = kindKey(kind);
+  const known = patterns.get(key);
 
   if (known !== undefined) return known;
 
@@ -3295,12 +3327,12 @@ function patterned(kind: PolygonType): CanvasPattern | null {
   const on = tile.getContext('2d');
 
   if (on === null) {
-    patterns.set(kind, null);
+    patterns.set(key, null);
 
     return null;
   }
 
-  if (kind === 'solid') {
+  if (kind.type === 'level') {
     on.strokeStyle = theme.solidHatch;
     on.lineWidth = 1;
 
@@ -3327,7 +3359,7 @@ function patterned(kind: PolygonType): CanvasPattern | null {
 
   const made = on.createPattern(tile, 'repeat');
 
-  patterns.set(kind, made);
+  patterns.set(key, made);
 
   return made;
 }
@@ -3335,8 +3367,15 @@ function patterned(kind: PolygonType): CanvasPattern | null {
 /** Fills `shape` with what its kind is painted with, if its kind is painted
  * with anything. The path is the caller's: it is traced once and used for the
  * fill, the picked fill over it and the stroke over that. */
-function shaded(ctx: CanvasRenderingContext2D, kind: PolygonType): void {
-  if (kind === 'level') return;
+function shaded(ctx: CanvasRenderingContext2D, kind: PolygonKind): void {
+  if (kind.op === 'add') {
+    if (kind.type === 'level') return;
+
+    ctx.fillStyle = theme.floorFill;
+    ctx.fill();
+
+    return;
+  }
 
   const pattern = patterned(kind);
 
@@ -3360,7 +3399,7 @@ function outlined(
   ctx: CanvasRenderingContext2D,
   view: View,
   shape: Shape,
-  kind: PolygonType,
+  kind: PolygonKind,
   picked: boolean,
   /** Whether a click could reach it, which is false for everything outside the
    * group standing open. */
@@ -3380,16 +3419,28 @@ function outlined(
     ctx.fill();
   }
 
-  // The same line for every kind: the fill says which kind it is, and the
-  // stroke is left free to say the two things only it can — whether this is
-  // picked, and whether it can be reached at all.
-  ctx.strokeStyle = !here ? theme.outside : picked ? theme.picked : theme.level;
+  // The same line either way round: the fill says which way a polygon goes,
+  // and the stroke says the three things only it can — whether this is picked,
+  // whether it can be reached at all, and which of the two drawings it belongs
+  // to. The last of those is not a meaning stacked on the other two; it is
+  // which picture they are being said about, and the floor answers them in its
+  // own colour. See `theme.floor`.
+  ctx.strokeStyle = !here
+    ? theme.outside
+    : picked
+      ? theme.picked
+      : kind.type === 'floor' ? theme.floor : theme.level;
   ctx.lineWidth = picked ? 2 : 0.5;
   ctx.stroke();
 }
 
-/** The set the game would see, over the top and in the one colour that says so. */
-function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): void {
+/** One set the game would see, over the top and in the colour that says which. */
+function outlines(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  runs: Point[][],
+  colour: string,
+): void {
   if (runs.length === 0) return;
 
   ctx.beginPath();
@@ -3406,7 +3457,7 @@ function outlines(ctx: CanvasRenderingContext2D, view: View, runs: Point[][]): v
     });
   }
 
-  ctx.strokeStyle = theme.csg;
+  ctx.strokeStyle = colour;
   ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
   ctx.stroke();
@@ -3620,7 +3671,7 @@ function replay(
     inside.set(shape, mine);
   }
 
-  stroke(loose, theme.level, 0.5);
+  stroke(loose, theme.replayFloor, 1.25);
 
   for (const [shape, runs] of inside) {
     ctx.save();
@@ -3640,7 +3691,7 @@ function replay(
     // Even-odd, because a shape's holes are rings like any other and the
     // winding they were built with is not something to lean on here.
     ctx.clip('evenodd');
-    stroke(runs, theme.level, 0.5);
+    stroke(runs, theme.replayFloor, 1.25);
     ctx.restore();
   }
 

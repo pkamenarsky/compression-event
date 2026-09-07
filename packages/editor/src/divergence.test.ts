@@ -22,16 +22,30 @@ import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
 import { TOP, addPolygon, addVertex, deepen, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
-import { EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
+import { EMPTY_TRANSFORM, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
     world = added.world; ids.push(added.id);
   }
   return { world, ids };
@@ -370,7 +384,7 @@ test('the replay never strays far from csg(t)', () => {
       let world = emptyWorld();
       const ids: PolygonId[] = [];
       for (let i = 0; i < 6; i++) {
-        const a = addPolygon(world, i % 3 === 2 ? 'solid' : 'level',
+        const a = addPolygon(world, kind(i % 3 === 2 ? 'solid' : 'level'),
           rect(-140 + dx * i, -90 + dy * (i % 3), w, h), 0, TOP);
         world = a.world; ids.push(a.id);
       }

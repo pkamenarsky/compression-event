@@ -1,10 +1,16 @@
 // -----------------------------------------------------------------------------
-// The game world's boundary, kept up to date incrementally
+// One set's boundary, kept up to date incrementally
 //
-// What the game wants is the outline of one set: every `level` polygon unioned,
-// with every `solid` polygon taken back out. Recomputing that from scratch is
+// What is wanted is the outline of one set: every `add` polygon unioned, with
+// every `subtract` polygon taken back out. Recomputing that from scratch is
 // nowhere near a frame at ten thousand polygons, so an edit has to be able to
 // touch a bounded amount of work.
+//
+// Which set is none of this module's business. The level is one — rooms added,
+// pillars taken back out — and the floor is another, kept alongside it and
+// answered by the same code. A polygon says only which way it goes; what it
+// goes into is decided by whoever hands it over. See `PolygonKind` in the
+// game's `world.ts`.
 //
 // What makes that possible is that the outline is *partitioned by source*.
 // Every piece of it lies on some polygon's edge and belongs to that polygon
@@ -56,7 +62,6 @@
 // next to the geometry it saves.
 // -----------------------------------------------------------------------------
 
-import { PolygonType } from '@ce/game/world';
 import { AABB, Tree, emptyTree, ofRings } from './aabb';
 import * as aabb from './aabb';
 import { Member, Point, Shape, Whither, boundaryRuns, ground, simplify } from './geometry';
@@ -66,7 +71,9 @@ export type Id = number;
 /** Minted here, and never confused with an `Id`. */
 export type PieceId = number;
 
-export type Kind = 'level' | 'solid';
+/** Which way a polygon goes, which is the whole of what this needs told. The
+ * same word `geometry.Member` uses, and it has to be: an entry becomes one. */
+export type Kind = 'add' | 'subtract';
 
 export interface Entry {
   id: Id
@@ -139,7 +146,7 @@ export interface WorldSet {
  * is the same work over again on every polygon of every frame the bake takes.
  */
 export type Edit =
-  | { op: 'insert', id: Id, type: PolygonType, shape: Shape, simple?: boolean }
+  | { op: 'insert', id: Id, kind: Kind, shape: Shape, simple?: boolean }
   | { op: 'update', id: Id, shape: Shape, simple?: boolean }
   | { op: 'remove', id: Id };
 
@@ -180,8 +187,8 @@ export function overlapping(set: WorldSet, b: AABB): Id[] {
 // Editing
 // -----------------------------------------------------------------------------
 
-export function insert(set: WorldSet, id: Id, type: PolygonType, s: Shape): Change {
-  return apply(set, [{ op: 'insert', id, type, shape: s }]);
+export function insert(set: WorldSet, id: Id, kind: Kind, s: Shape): Change {
+  return apply(set, [{ op: 'insert', id, kind, shape: s }]);
 }
 
 /** A move, a rotation, a scale, a dragged vertex: all of them are new points. */
@@ -240,7 +247,9 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
 
     if (e.op === 'remove') continue;
 
-    const kind = e.op === 'insert' ? kindOf(e.type) : was?.kind;
+    // An update carries no kind, so it keeps the one it had — and one naming
+    // a polygon this set has never held has nothing to keep, and is dropped.
+    const kind = e.op === 'insert' ? e.kind : was?.kind;
     if (kind === undefined) continue;
 
     // Self-intersections are resolved once, here, rather than every time the
@@ -272,10 +281,6 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
   }
 
   return rebuild(set, { entries, tree, runs, nextPiece: set.nextPiece }, dirty);
-}
-
-function kindOf(type: PolygonType): Kind | undefined {
-  return type === 'level' || type === 'solid' ? type : undefined;
 }
 
 // -----------------------------------------------------------------------------
@@ -364,7 +369,7 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
 
 /** Everything at once, for loading a world. */
 export function fromEntries(
-  items: readonly { id: Id, type: PolygonType, shape: Shape }[],
+  items: readonly { id: Id, kind: Kind, shape: Shape }[],
 ): WorldSet {
   return apply(emptyWorldSet, items.map(i => ({ op: 'insert' as const, ...i }))).set;
 }
@@ -376,6 +381,6 @@ export function recomputed(set: WorldSet): WorldSet {
 }
 
 /** Every source polygon, as it was handed in. */
-export function sources(set: WorldSet): { id: Id, type: PolygonType, shape: Shape }[] {
-  return [...set.entries.values()].map(e => ({ id: e.id, type: e.kind, shape: e.source }));
+export function sources(set: WorldSet): { id: Id, kind: Kind, shape: Shape }[] {
+  return [...set.entries.values()].map(e => ({ id: e.id, kind: e.kind, shape: e.source }));
 }

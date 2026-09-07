@@ -66,7 +66,7 @@ import {
   Id,
   PathId,
   PolygonId,
-  PolygonType,
+  PolygonKind,
   Transform,
   VERSIONS,
   VersionId,
@@ -82,17 +82,31 @@ function oneRing(ring: Point[]): Vertex[] {
   return ring.map((at, i) => ({ id: i, at, ring: 0, birth: 0, death: null }));
 }
 
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
+
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
 /** A world with these polygons drawn in v0, and the ids they were given. */
-function drawn(...specs: [PolygonType, Point[]][]): { world: World, ids: PolygonId[] } {
+function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] } {
   let world = emptyWorld();
   const ids: PolygonId[] = [];
 
   for (const [type, points] of specs) {
-    const added = addPolygon(world, type, points, 0, TOP);
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);
@@ -137,8 +151,8 @@ const runLength = (runs: Point[][]) =>
 
 /** The perimeter the outline ought to have, taken the ring way round. */
 function outlineOf(items: Resolved[]): number {
-  const level = items.filter(i => i.polygon.type === 'level').flatMap(i => i.shape);
-  const solid = items.filter(i => i.polygon.type === 'solid').flatMap(i => i.shape);
+  const level = items.filter(i => i.polygon.op === 'add').flatMap(i => i.shape);
+  const solid = items.filter(i => i.polygon.op === 'subtract').flatMap(i => i.shape);
   const shape: Shape = solid.length === 0
     ? simplify(level)
     : combine(level, solid, OpSubtract);
@@ -459,7 +473,7 @@ describe('versions', () => {
 
   test('a polygon does not exist before the version it was drawn in', () => {
     let { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
-    const added = addPolygon(world, 'level', rect(50, 0, 10, 10), 2, TOP);
+    const added = addPolygon(world, kind('level'), rect(50, 0, 10, 10), 2, TOP);
 
     expect(resolveAt(added.world, 1).map(it => it.id)).toEqual(ids);
     expect(resolveAt(added.world, 2).map(it => it.id)).toEqual([...ids, added.id]);
@@ -755,7 +769,7 @@ describe('copy and paste', () => {
     const after = pasted(eroded, 0, clips, { x: 32, y: 32 }, TOP);
     const copy = only(after.world, 0, after.ids[0]);
 
-    expect(copy.polygon.type).toEqual('solid');
+    expect(copy.polygon).toMatchObject(kind('solid'));
     expect(copy.erosion).toEqual(12);
     expect(shapeArea(copy.shape))
       .toBeCloseTo(shapeArea(only(eroded, 0, ids[0]).shape), 6);
@@ -944,7 +958,7 @@ describe('drilled into a group, everything happens in there', () => {
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const where = landing(turned, 0, g.id);
-    const put = addPolygon(turned, 'solid', rect(400, 0, 40, 40), 0, where);
+    const put = addPolygon(turned, kind('solid'), rect(400, 0, 40, 40), 0, where);
 
     expect(turned.groups.get(g.id)!.members).not.toContain(put.id);
     expect(put.world.groups.get(g.id)!.members).toContain(put.id);
@@ -1264,7 +1278,7 @@ describe('a group moves what is in it', () => {
   test('a group inside a group composes outwards', () => {
     const { world, ids, group } = pair();
     const { world: outer, ids: more } = (() => {
-      const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0, TOP);
+      const added = addPolygon(world, kind('level'), rect(40, 0, 10, 10), 0, TOP);
 
       return { world: added.world, ids: [added.id] };
     })();
@@ -1344,7 +1358,7 @@ describe('born into a group that was already moved', () => {
 
   test('a polygon drawn into it stands where it was drawn', () => {
     const { world, group, at } = moved();
-    const put = addPolygon(world, 'level', rect(5, 5, 4, 4), at, landing(world, at, group));
+    const put = addPolygon(world, kind('level'), rect(5, 5, 4, 4), at, landing(world, at, group));
 
     expect(only(put.world, at, put.id).source[0]).toEqual({ x: 5, y: 5 });
   });
@@ -1373,7 +1387,7 @@ describe('born into a group that was already moved', () => {
 
     // The three of them born together at the same place, so that what the
     // group does next can be read off any of them and compared.
-    const poly = addPolygon(world, 'level', rect(5, 5, 4, 4), at, landing(world, at, group));
+    const poly = addPolygon(world, kind('level'), rect(5, 5, 4, 4), at, landing(world, at, group));
     const art = addArtefact(poly.world, 'key', { x: 5, y: 5 }, at, landing(poly.world, at, group));
     const walk = addPath(
       art.world,
@@ -1405,7 +1419,7 @@ describe('born into a group that was already moved', () => {
 describe('a group holds a measuring path', () => {
   /** A room, a tape across it, and the group over the two. */
   function taped(): { world: World, room: PolygonId, walk: PathId, group: GroupId } {
-    const room = addPolygon(emptyWorld(), 'level', rect(0, 0, 100, 100), 0, TOP);
+    const room = addPolygon(emptyWorld(), kind('level'), rect(0, 0, 100, 100), 0, TOP);
     const walk = addPath(room.world, [{ x: 10, y: 10 }, { x: 90, y: 10 }], 0, TOP);
     const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
 
@@ -1581,7 +1595,7 @@ describe('making and taking apart', () => {
 
   test('a group nested inside another takes its place in the holder', () => {
     const { world, ids, group } = pair();
-    const added = addPolygon(world, 'level', rect(40, 0, 10, 10), 0, TOP);
+    const added = addPolygon(world, kind('level'), rect(40, 0, 10, 10), 0, TOP);
     const top = grouped(added.world, 0, [group, added.id], TOP)!;
 
     const apart = ungrouped(top.world, group)!;
@@ -1630,7 +1644,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
 
   test('one taken out at the version it was drawn in goes entirely', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const added = addPolygon(world, 'level', rect(300, 0, 100, 100), 2, TOP);
+    const added = addPolygon(world, kind('level'), rect(300, 0, 100, 100), 2, TOP);
     const gone = removeAt(added.world, 2, [added.id]);
 
     // Nothing to be about: it never stood at any version, so there is no
@@ -1711,7 +1725,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
 
     const made = grouped(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 3, [made.id]);
-    const added = addPolygon(gone, 'level', rect(600, 0, 100, 100), 1, landing(gone, 1, made.id));
+    const added = addPolygon(gone, kind('level'), rect(600, 0, 100, 100), 1, landing(gone, 1, made.id));
 
     expect(added.world.polygons.get(added.id)!.death).toEqual(null);
     expect(there(added.world, 2)).toContain(added.id);
@@ -1848,13 +1862,13 @@ describe('a group erodes as one shape', () => {
     const w = moved(made.world, 0, made.id, { erosion: 5 });
     const out = contributing(w, 0, resolveAt(w, 0));
 
-    expect(out.map(c => c.kind).sort()).toEqual(['level', 'solid']);
+    expect(out.map(c => c.kind.op).sort()).toEqual(['add', 'subtract']);
 
     // The room pulls in and the pillar pushes out. Eroding the group as one
     // shape pulls in the boundary of `level - solid`, and the boundary of a
     // hole pulled inward is the hole getting bigger.
-    expect(shapeArea(out.find(c => c.kind === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
-    expect(shapeArea(out.find(c => c.kind === 'solid')!.shape)).toBeCloseTo(30 * 30, 6);
+    expect(shapeArea(out.find(c => c.kind.op === 'add')!.shape)).toBeCloseTo(90 * 90, 6);
+    expect(shapeArea(out.find(c => c.kind.op === 'subtract')!.shape)).toBeCloseTo(30 * 30, 6);
   });
 
   test('what the group is eroded by is the width of what it walls off', () => {
@@ -1892,8 +1906,8 @@ describe('a group erodes as one shape', () => {
 
     const out = contributing(w, 0, resolveAt(w, 0));
 
-    expect(out.map(c => c.id)).toEqual([made.id, sideOf(made.id, 'solid')]);
-    expect(sidedWith(sideOf(made.id, 'solid'))).toEqual(made.id);
+    expect(out.map(c => c.id)).toEqual([made.id, sideOf(made.id, kind('solid'))]);
+    expect(sidedWith(sideOf(made.id, kind('solid')))).toEqual(made.id);
 
     // And the set is what those two say it is: the room pulled in by the depth,
     // with the pillar — pushed out by it — taken back out of that.
@@ -1924,7 +1938,7 @@ describe('a group erodes as one shape', () => {
 
   test('a group inside an eroding group is projected first', () => {
     const { world, group: inner } = corridor();
-    const third = addPolygon(world, 'level', rect(300, 0, 40, 40), 0, TOP);
+    const third = addPolygon(world, kind('level'), rect(300, 0, 40, 40), 0, TOP);
     const outer = grouped(third.world, 0, [inner, third.id], TOP)!;
 
     const w = moved(moved(outer.world, 0, inner, { erosion: 15 }), 0, outer.id, { erosion: 2 });
@@ -1984,7 +1998,7 @@ describe('going inside a group', () => {
     // Out of reach is out of reach: being named by an old selection does not
     // put a handle back on something the open group does not hold.
     const { world, ids, group } = pair();
-    const loose = addPolygon(world, 'level', rect(60, 0, 10, 10), 0, TOP);
+    const loose = addPolygon(world, kind('level'), rect(60, 0, 10, 10), 0, TOP);
     const items = resolveAt(loose.world, 0);
 
     const picked = new Set([...ids, loose.id]);
@@ -2169,7 +2183,7 @@ describe('going inside a group', () => {
 
     expect(out).toHaveLength(1);
     expect(out[0].id).toEqual(made.id);
-    expect(out[0].kind).toEqual('level');
+    expect(out[0].kind).toEqual(kind('level'));
 
     // Two rings — the room and the hole — and no third outline anywhere.
     expect(out[0].shape).toHaveLength(2);
@@ -2188,7 +2202,7 @@ describe('going inside a group', () => {
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
-    expect(out[0].kind).toEqual('solid');
+    expect(out[0].kind).toEqual(kind('solid'));
     expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
   });
 
@@ -2214,7 +2228,7 @@ describe('going inside a group', () => {
 
     // Two contributors under one group: there is no shape that is the union of
     // a room and the pillar standing in it.
-    expect(shown.map(c => c.kind).sort()).toEqual(['level', 'solid']);
+    expect(shown.map(c => c.kind.op).sort()).toEqual(['add', 'subtract']);
     expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id, made.id]);
   });
 });
@@ -2323,10 +2337,10 @@ describe('a gesture writes into the frame it is read in', () => {
  * a different path from never having had it.
  */
 describe('a floor takes no part in the set', () => {
-  function retyped(world: World, id: PolygonId, type: PolygonType): World {
+  function retyped(world: World, id: PolygonId, to: Named): World {
     const polygons = new Map(world.polygons);
 
-    polygons.set(id, { ...polygons.get(id)!, type });
+    polygons.set(id, { ...polygons.get(id)!, ...kind(to) });
 
     return { ...world, polygons };
   }
@@ -2448,7 +2462,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           // editor and the bake actually take.
           const here = resolved({
             id: 0,
-            polygon: { type: 'level', birth: 0, death: null, points: [] },
+            polygon: { ...kind('level'), birth: 0, death: null, points: [] },
             // One ring's worth, because the ring split is read off these: see
             // `resolved`. A `Resolved` whose corners do not answer for its
             // points is not one the editor or the bake ever builds.
@@ -2531,7 +2545,7 @@ describe('a projection is the same shape wherever it is taken', () => {
 
           const here = resolved({
             id: 0,
-            polygon: { type: 'level', birth: 0, death: null, points: [] },
+            polygon: { ...kind('level'), birth: 0, death: null, points: [] },
             // One ring's worth, because the ring split is read off these: see
             // `resolved`. A `Resolved` whose corners do not answer for its
             // points is not one the editor or the bake ever builds.

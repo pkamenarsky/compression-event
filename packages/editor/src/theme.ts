@@ -26,24 +26,46 @@ export const theme = {
   ],
 
   /**
-   * The polygons as drawn, and the set the game would see.
+   * The polygons as drawn, and the two sets the game would see.
    *
-   * One line for every kind of polygon. The stroke has two things of its own
-   * to say — whether a shape is picked, and whether it can be reached at all —
-   * and a third meaning stacked on it made all three harder to read. So the
-   * kind is a fill instead, and these are what the two kinds that have one are
-   * filled with.
+   * One line per set, and within a set one line for both ways a polygon can
+   * go. The stroke has two things of its own to say — whether a shape is
+   * picked, and whether it can be reached at all — and a third meaning stacked
+   * on those made all three harder to read. So which way a polygon goes is a
+   * fill instead, and these are what the ones that have a fill are filled with.
    */
   level: '#7b8496',
-  /** A solid is hatched: it is material taken away, and hatching says which
-   * side of the line the material is on, which a ring alone never did. Faint,
-   * because a pillar should not out-shout the room it stands in. */
+  /**
+   * A floor's own outline. Warm where the level is cool, because the two are
+   * separate sets that overlap by construction — a floor is nearly always
+   * drawn inside a room — and one line for both would leave a drawing where
+   * every floor edge reads as a wall that is not there.
+   *
+   * This is the one thing the stroke says besides picked and reachable, and it
+   * gets to because it is not a third meaning stacked on the same axis: it is
+   * *which drawing this line belongs to*, and both drawings then say picked
+   * and reachable in their own terms.
+   */
+  floor: '#b07a45',
+  /** What a pillar is hatched with: it is material taken away, and hatching
+   * says which side of the line the material is on, which a ring alone never
+   * did. Faint, because a pillar should not out-shout the room it stands in. */
   solidHatch: 'rgba(176, 112, 95, 0.42)',
-  /** A floor is stippled: it is in no set at all, drawn flat underfoot and
-   * nothing else. Read against `solidHatch` rather than against the canvas —
-   * the two are the whole of what says which kind a shape is, so they differ
-   * in texture before they differ in colour. */
-  floorDots: 'rgba(150, 142, 160, 0.55)',
+  /** A hole cut in a floor, stippled. Read against `solidHatch` rather than
+   * against the canvas — the two are what say which way a shape goes, so they
+   * differ in texture before they differ in colour. */
+  floorDots: 'rgba(196, 132, 74, 0.55)',
+  /**
+   * A floor, filled — faintly, because it is the ordinary case on its side of
+   * the drawing the way a room is on the other.
+   *
+   * A room is left unfilled and a floor is not, which is not an inconsistency:
+   * a floor lies *inside* something, and one drawn as an outline alone inside
+   * a group's outline leaves nothing saying which side of it the floor is on.
+   * A ring that is a hole and a ring that is an island look the same until one
+   * of them is filled.
+   */
+  floorFill: 'rgba(196, 132, 74, 0.10)',
   /** An artefact. Not a kind of shape, so none of the polygon strokes would be
    * right for it — and nothing else in the level is this colour, which is what
    * a handful of small things scattered over a drawing needs. */
@@ -98,9 +120,15 @@ export const theme = {
   path: '#e0a35c',
   pathText: '#f0c894',
   csg: '#f2c14e',
-  /** The bake played back: the same set, but the one the game would draw, so
-   * it is thinner and brighter than the editor's own answer sitting under it. */
+  /** The floor set the game would see, over the top the same way. Orange to
+   * the level's yellow: two answers about two sets, drawn in the same weight
+   * because neither is an aside about the other. */
+  csgFloor: '#e07c2e',
+  /** The bake played back: the same sets, but the ones the game would draw, so
+   * they are thinner and brighter than the editor's own answer sitting under
+   * them. */
   replay: '#ffe98c',
+  replayFloor: '#ffbe7a',
 
   /** The chrome floating above it. */
   panel: '#2a2b31',

@@ -12,7 +12,19 @@
 
 import { Point } from '../packages/game/src/world';
 import { TOP, addPolygon, editAt, resolveAt, withEdit } from '../packages/editor/src/scene';
-import { PolygonId, Transform, World, emptyWorld } from '../packages/editor/src/types';
+import {
+  PolygonId,
+  PolygonKind,
+  Transform,
+  World,
+  emptyWorld,
+} from '../packages/editor/src/types';
+
+/** A room or a pillar, by the short name this file calls it. */
+type Named = 'level' | 'solid';
+
+const kind = (k: Named): PolygonKind =>
+  ({ type: 'level', op: k === 'solid' ? 'subtract' : 'add' });
 
 function seeded(from: number): () => number {
   let s = from;
@@ -28,8 +40,8 @@ export function level(rooms: number): { world: World, ids: PolygonId[] } {
   const PITCH = 200, W = 150, H = 150;
   const rnd = seeded(12345);
 
-  const put = (points: Point[], type: 'level' | 'solid') => {
-    const added = addPolygon(world, type, points, 0, TOP);
+  const put = (points: Point[], type: Named) => {
+    const added = addPolygon(world, kind(type), points, 0, TOP);
 
     world = added.world;
     ids.push(added.id);

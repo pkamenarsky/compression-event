@@ -203,7 +203,25 @@ export const lineFragment = /* glsl */ `
 `;
 
 /**
- * The triangles a set of closed rings fills with, as indices into whatever flat
+ * One thing to fill: an outline and the holes cut in it, each a closed ring
+ * given as indices into whatever flat array of points the caller holds.
+ *
+ * Open, in the sense that the first index is not repeated at the end. A contour
+ * handed the same point twice has a zero-length edge and the triangulator has
+ * nothing to do with it.
+ *
+ * The holes go with the outline rather than beside it because a triangulator is
+ * told a contour and its holes and cannot work out which is which — and a hole
+ * filled as an outline in its own right fills exactly the part that is supposed
+ * to be gone. Which ring is a hole in which is `nesting`.
+ */
+export interface Contour {
+  outer: readonly number[]
+  holes: readonly (readonly number[])[]
+}
+
+/**
+ * The triangles a set of contours fills with, as indices into whatever flat
  * array of points the caller holds.
  *
  * The other half of `extrude`, and the same bargain: indices rather than
@@ -223,38 +241,202 @@ export const lineFragment = /* glsl */ `
  * the points at that instant. It is a handful of small rings and an ear clip is
  * quadratic in the small: the level's walls are the expensive half and they are
  * still answered once.
- *
- * Rings, so the last point is the first and is dropped: a contour handed the
- * same point twice has a zero-length edge and the triangulator has nothing to
- * do with it.
- *
- * Each ring on its own. A floor with a hole in it is not something either
- * source can produce today — a floor is its own shape, whatever is standing on
- * it — and inventing the contour-to-hole matching for a case that cannot arise
- * would be guessing at what it should look like.
  */
-export function fan(spans: Iterable<Span>, at: (i: number) => Point): Int32Array {
+export function fan(contours: Iterable<Contour>, at: (i: number) => Point): Int32Array {
   const out: number[] = [];
 
-  for (const span of spans) {
-    const n = span.count - 1;
+  const traced = (ring: readonly number[]): THREE.Vector2[] =>
+    ring.map(i => {
+      const p = at(i);
 
-    if (n < 3) continue;
+      return new THREE.Vector2(p.x, p.y);
+    });
 
-    const contour: THREE.Vector2[] = [];
+  for (const contour of contours) {
+    if (contour.outer.length < 3) continue;
 
-    for (let i = 0; i < n; i++) {
-      const p = at(span.first + i);
+    const holes = contour.holes.filter(h => h.length >= 3);
 
-      contour.push(new THREE.Vector2(p.x, p.y));
-    }
+    // One flat list in the order the triangulator numbers them: the outline
+    // first and each hole after it, which is what its faces index into.
+    const all = [contour.outer, ...holes].flat();
 
-    for (const face of THREE.ShapeUtils.triangulateShape(contour, [])) {
-      for (const i of face) out.push(span.first + i);
+    for (const face of THREE.ShapeUtils.triangulateShape(traced(contour.outer), holes.map(traced))) {
+      for (const i of face) out.push(all[i]);
     }
   }
 
   return new Int32Array(out);
+}
+
+/**
+ * Which of a set of closed rings are outlines, and which are holes in which.
+ *
+ * By area and by containment rather than by winding on its own. A set read in a
+ * frame that mirrors comes back wound the other way from end to end, and the
+ * nonzero rule does not mind — an outline at -1 is as filled as one at +1 — so
+ * the sign that matters is the one *relative to the biggest ring*, which is an
+ * outline whichever way round the frame put it.
+ *
+ * Tightest container wins, so a courtyard inside a room inside a courtyard
+ * belongs to the room. A hole inside nothing is dropped: it is a ring the
+ * arrangement wound inward with no outline to be inward of, which nothing can
+ * fill and nothing should try to.
+ *
+ * The one place either source answers this, so a floor drawn standing still and
+ * the same floor part way through a morph are cut the same way. See `filled` in
+ * the editor's `export.ts`, which is this asked about points it already holds.
+ */
+export function nesting(
+  rings: readonly (readonly Point[])[],
+): { outer: number, holes: number[] }[] {
+  if (rings.length === 0) return [];
+
+  const area = rings.map(twiceArea);
+  const biggest = area.reduce((b, a, i) => (Math.abs(a) > Math.abs(area[b]) ? i : b), 0);
+  const outward = Math.sign(area[biggest]);
+
+  const out = rings.map((_unused, outer) => ({ outer, holes: [] as number[] }));
+
+  rings.forEach((ring, i) => {
+    if (Math.sign(area[i]) === outward || ring.length === 0) return;
+
+    let owner: number | null = null;
+
+    rings.forEach((other, j) => {
+      if (Math.sign(area[j]) !== outward || !inside(other, ring[0])) return;
+      if (owner === null || Math.abs(area[j]) < Math.abs(area[owner])) owner = j;
+    });
+
+    if (owner !== null) out[owner].holes.push(i);
+  });
+
+  return out.filter(o => Math.sign(area[o.outer]) === outward);
+}
+
+/** Twice the signed area, which is what says which way a ring is wound. */
+function twiceArea(ring: readonly Point[]): number {
+  let sum = 0;
+
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+
+    sum += a.x * b.y - b.x * a.y;
+  }
+
+  return sum;
+}
+
+/** Whether a point is inside one ring, by the even-odd rule. Only ever asked
+ * about a point of a ring that does not cross this one, so which rule it is
+ * decides nothing. */
+function inside(ring: readonly Point[], p: Point): boolean {
+  let on = false;
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+
+    if ((a.y > p.y) !== (b.y > p.y)
+      && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+      on = !on;
+    }
+  }
+
+  return on;
+}
+
+/**
+ * Open runs joined end to end into closed rings, as index lists.
+ *
+ * A ring of a set belongs to no one polygon — that is the whole reason the
+ * boundary is handed out as runs, and the header of the editor's `worldset.ts`
+ * says why — so anything that needs the loop has to put it back. A wall never
+ * does: it is the quad between two consecutive points, and a run is all it ever
+ * sees. A fill does, because a triangulation is about the ring.
+ *
+ * By position and to a tolerance, not by name and not exactly. A junction is
+ * two readings of one point, and the two are taken off *different tracks*: each
+ * lerps across its own stretch, and two stretches covering the same instant
+ * agree about that point only to whatever the bake measured. Exact matching
+ * therefore joins nothing at all. The gap between two junctions is a wall's
+ * width and the disagreement at one is hundredths of a unit, so nearest-within-
+ * tolerance is not a guess — there is nothing else it could be.
+ *
+ * `at` must answer in one frame for every run, which means world units. A run's
+ * points are kept in its own polygon's frame everywhere else, and two runs
+ * meeting at a crossing have no reason to agree in either of them.
+ *
+ * A run whose two ends are already the same point is a ring on its own: a
+ * polygon nothing overlaps contributes its whole outline in one piece.
+ *
+ * Anything that does not close is dropped. It is not a shape, and a fill is the
+ * one thing here that cannot be drawn as an open thing.
+ */
+export function looped(
+  runs: Iterable<readonly number[]>,
+  at: (i: number) => Point,
+  /** How far apart two readings of one junction may be. The bake's own
+   * `TOLERANCE`, in the units the level is drawn in. */
+  tol: number,
+): number[][] {
+  const mine = [...runs].filter(run => run.length >= 2);
+  const head = mine.map(run => at(run[0]));
+  const tail = mine.map(run => at(run[run.length - 1]));
+  const used = new Set<number>();
+
+  const limit = tol * tol;
+
+  /** The unused run starting nearest `p`, if one starts near enough. */
+  const from = (p: Point): number | undefined => {
+    let best: number | undefined;
+    let near = limit;
+
+    for (let i = 0; i < mine.length; i++) {
+      if (used.has(i)) continue;
+
+      const d = (head[i].x - p.x) ** 2 + (head[i].y - p.y) ** 2;
+
+      if (d <= near) {
+        near = d;
+        best = i;
+      }
+    }
+
+    return best;
+  };
+
+  const closes = (p: Point, q: Point): boolean =>
+    (p.x - q.x) ** 2 + (p.y - q.y) ** 2 <= limit;
+
+  const out: number[][] = [];
+
+  for (let start = 0; start < mine.length; start++) {
+    if (used.has(start)) continue;
+
+    const ring: number[] = [];
+
+    let go: number | undefined = start;
+    let shut = false;
+
+    while (go !== undefined) {
+      used.add(go);
+
+      // Every run's last point is the next one's first. Dropping it here is
+      // what leaves the ring closed rather than doubled at every junction.
+      ring.push(...mine[go].slice(0, -1));
+
+      if (closes(tail[go], head[start])) {
+        shut = true;
+        break;
+      }
+
+      go = from(tail[go]);
+    }
+
+    if (shut && ring.length >= 3) out.push(ring);
+  }
+
+  return out;
 }
 
 export interface WallOptions {

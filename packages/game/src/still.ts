@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { Run, Source, WallOptions, extrude, fan, materials } from './walls';
+import { Contour, Run, Source, WallOptions, extrude, fan, materials } from './walls';
 import { Floor, Point } from './world';
 
 const vertexShader = /* glsl */ `
@@ -59,9 +59,10 @@ const vertexShader = /* glsl */ `
  * The runs arrive with the corner question already answered, for the same
  * reason: the morph is handed that answer through the bake. See `Run`.
  *
- * The floor rings are closed here, because `extrude` and `fan` both read a ring
- * as a run whose last point is its first, and the bake's floor runs come that
- * way already.
+ * The floors arrive as the set already resolved — outlines with the holes cut
+ * in them — because a still is handed a version rather than a span. The morph
+ * has the same set in pieces and stitches them back; here there is nothing to
+ * stitch, and the two agree because they are the same set either way.
  */
 export function still(
   runs: readonly Run[],
@@ -70,35 +71,42 @@ export function still(
 ): Source {
   const points: Point[] = [];
   const spans = [];
-  const rings = [];
+  const rings: Contour[] = [];
 
   for (const run of runs) {
     spans.push({ first: points.length, count: run.points.length });
     points.push(...run.points);
   }
 
-  for (const floor of floors) {
-    if (floor.points.length < 3) continue;
-
-    rings.push({ first: points.length, count: floor.points.length + 1 });
-    points.push(...floor.points, floor.points[0]);
-  }
-
-  const shape = extrude(spans);
-
   // A vertex per point of every floor and an index buffer over them, which is
   // the layout the morph's fill has — it recuts that index buffer every frame
   // and this does not, because this does not move. See `fan`.
+  //
+  // The rings come already sorted into outlines and holes, which is the one
+  // thing the still has and the morph has to work out: what the still is handed
+  // is the resolved set, and the morph is handed its boundary in pieces.
   const mine: number[] = [];
-  const where = [];
 
-  for (const ring of rings) {
-    where.push({ first: mine.length, count: ring.count });
+  const laid = (ring: readonly Point[]): number[] => {
+    const out: number[] = [];
 
-    for (let i = 0; i < ring.count; i++) mine.push(ring.first + i);
+    for (const p of ring) {
+      out.push(mine.length);
+      mine.push(points.length);
+      points.push(p);
+    }
+
+    return out;
+  };
+
+  for (const floor of floors) {
+    if (floor.points.length < 3) continue;
+
+    rings.push({ outer: laid(floor.points), holes: (floor.holes ?? []).map(laid) });
   }
 
-  const face = fan(where, i => points[mine[i]]);
+  const shape = extrude(spans);
+  const face = fan(rings, i => points[mine[i]]);
 
   // Per point of the flattened outline, whether a vertical standing on it is
   // telling the truth. Decided where the boundary was computed and carried on

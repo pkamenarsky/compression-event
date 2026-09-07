@@ -18,7 +18,7 @@
 // does not have: two rooms overlapping is the ordinary way to author a level
 // here, and the seam between them stopped the player dead in the middle of open
 // floor. So what arrives here is the CSG at each version — every `level`
-// unioned, every `solid` taken back out — and a seam is not in it, because the
+// unioned, every pillar taken back out — and a seam is not in it, because the
 // union dissolved it. That is `versionOf` in the editor's exporter, and it is
 // why everything below deals only in `level` rings.
 //
@@ -259,10 +259,10 @@ function along(move: Point, planes: readonly { nx: number, ny: number }[]): Poin
 /**
  * One version's walls, expanded and ready to be walked into.
  *
- * The rings are the union's, so there is one kind of them: `level`. A solid was
- * taken back out where the union was worked out, and what it left behind is a
- * hole wound against the room it is in — so nothing here has to be told that a
- * solid is a solid, or that a hole is a hole. `sideOf` is the whole of that.
+ * The rings are the union's, so there is one kind of them. A pillar was taken
+ * back out where the union was worked out, and what it left behind is a hole
+ * wound against the room it is in — so nothing here has to be told which was
+ * which, or that a hole is a hole. `sideOf` is the whole of that.
  *
  * Every ring handed over is one of them. Floors are drawn rather than walked
  * into and travel in a list of their own, so there is nothing here to skip.
@@ -298,8 +298,8 @@ export class Hulls {
   /**
    * Somewhere to stand: not inside a wall, and inside some room.
    *
-   * Two questions rather than three, because being inside something solid is
-   * not a separate one: a solid is a hole in the union, wound against the room
+   * Two questions rather than three, because being inside a pillar is not a
+   * separate one: a pillar is a hole in the union, wound against the room
    * it is in, so the nonzero rule takes it back out without anything here
    * having to know which ring is which.
    */

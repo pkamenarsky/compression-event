@@ -124,7 +124,7 @@
 // bake simply does not carry one across instants.
 // -----------------------------------------------------------------------------
 
-import { Point } from '@ce/game/world';
+import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
   Member,
@@ -170,6 +170,7 @@ import {
   EMPTY_TRANSFORM,
   GroupId,
   Id,
+  KINDS,
   PolygonId,
   PolygonType,
   Transform,
@@ -178,9 +179,10 @@ import {
   VertexId,
   World,
   enclosing,
+  kindKey,
   ringsOf,
 } from './types';
-import { pieces } from './worldset';
+import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
 // What comes out
@@ -226,7 +228,8 @@ export interface Run {
    */
   corner: boolean[]
   /**
-   * A floor's ring rather than a share of the outline. See `Track.fill`.
+   * A share of the floor's outline rather than of the level's: something to
+   * fill rather than a wall to stand up. See `Track.fill`.
    *
    * It rides on the run for the same reason the corner flags do: what to build
    * on a set of points is not something a reader should be working out again
@@ -410,11 +413,20 @@ export interface Track {
   /**
    * A floor: drawn filled and flat underfoot rather than as walls.
    *
-   * A floor is in no set — `worldset` takes only `level` and `solid` — so its
-   * boundary is its own projection and nothing else, and its runs are closed
-   * rings rather than the open arcs a share of the outline comes in. Everything
-   * else about a track is the same, which is the point: it rides the same
-   * frame, it is cut by the same measure, and it interpolates by the same lerp.
+   * Which set the track's boundary belongs to, and nothing more than that.
+   * A floor is its own set — floors added, floor holes taken back out — cut by
+   * the same `boundaryRuns` against the same kind of neighbourhood, so its runs
+   * are open arcs partitioned by source exactly as the level's are. Everything
+   * about a track is the same, which is the point: it rides the same frame, it
+   * is cut by the same measure, and it interpolates by the same lerp.
+   *
+   * What differs is downstream. A wall stands up on a run and needs only the
+   * run; a fill needs the ring, and a ring of the floor set generally belongs
+   * to several polygons — so whatever draws it stitches the fill runs back into
+   * rings at the instant it draws them. See `stitch` in the game's `walls.ts`.
+   *
+   * It used to mean more: a floor was in no set at all, and its runs were its
+   * own closed rings. That is why the flag is on the run as well as the track.
    */
   fill: boolean
   stretches: Stretch[]
@@ -1388,29 +1400,11 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
     held,
   );
 
-  // An eroding group stands in front of its members and hands over one union
-  // per side, floors included — which is right for the canvas, where a shut
-  // group is drawn as the one outline that says what it occupies, and wrong
-  // here. A floor is in no set, so there is nothing for a union of them to be
-  // the boundary *of*; it is baked as itself at its own depth, which is what
-  // `floorsAt` draws standing still and therefore what the still and the morph
-  // have to agree on. See `subjects`.
-  const mine = all.filter(it => it.kind !== 'floor');
-
-  for (const it of at) {
-    if (it.polygon.type !== 'floor') continue;
-
-    mine.push({
-      id: it.id,
-      kind: 'floor',
-      shape: it.shape,
-      frame: it.frame,
-      simple: it.erosion !== 0 || it.depths !== null,
-      keep: it.keep,
-    });
-  }
-
-  return mine;
+  // Every side of it, floors included. An eroding group hands over one union
+  // per side and each of them is a real boundary: a floor is a set of its own
+  // now, so a group's floors union into one shape exactly as its rooms do, and
+  // there is something for that union to be the boundary *of*. See `subjects`.
+  return all;
 }
 
 
@@ -1419,67 +1413,69 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
 interface Subject {
   id: Id
   mine: Moving[]
+  /** Which set this track's boundary belongs to. A track is only ever cut
+   * against the other members of its own set. */
+  type: PolygonType
   /** See `Track.fill`. */
   fill: boolean
 }
 
-/** Everything the span's tracks are cut for: a polygon that nothing holds, an
- * eroding group in place of all of its members, and every floor as itself. */
+/** Everything the span's tracks are cut for: a polygon that nothing holds, and
+ * an eroding group once per side it has anything on. */
 function subjects(cast: Cast): Subject[] {
   const out = new Map<Id, Moving[]>();
-  const kinds = new Map<Id, Set<PolygonType>>();
+  const kinds = new Map<Id, Set<string>>();
   const all: Subject[] = [];
 
-  for (const m of cast.items) {
-    // A floor is in no set, so there is no union for a group to stand in front
-    // of and nothing for it to be folded into. It is baked as itself at its own
-    // depth, which is exactly what `floorsAt` draws standing still — so the
-    // still and the morph agree at the ends of the span by construction rather
-    // than by two paths happening to arrive at the same answer.
-    if (m.at.polygon.type === 'floor') {
-      all.push({ id: m.at.id, mine: [m], fill: true });
-      continue;
-    }
+  const subject = (id: Id, mine: Moving[], type: PolygonType): Subject =>
+    ({ id, mine, type, fill: type === 'floor' });
 
+  for (const m of cast.items) {
     // The outermost group that erodes, or the polygon itself. Everything
     // between them is transparent and hands its members on.
     const up = enclosing(cast.world, m.at.id).filter(g => cast.eroding.has(g));
     const id = up[up.length - 1] ?? m.at.id;
 
     (out.get(id) ?? out.set(id, []).get(id)!).push(m);
-    (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(m.at.polygon.type);
+    (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(kindKey(m.at.polygon));
   }
 
   for (const [id, mine] of out) {
     if (!cast.eroding.has(id)) {
-      all.push({ id, mine, fill: false });
+      all.push(subject(id, mine, mine[0].at.polygon.type));
       continue;
     }
 
-    // A group that holds both kinds contributes to both sides of the set, and
-    // each side is its own boundary and its own track. They are cut over the
-    // same members and ride the same frame; only the classification differs.
-    if (kinds.get(id)?.has('level')) all.push({ id, mine, fill: false });
-    if (kinds.get(id)?.has('solid')) all.push({ id: sideOf(id, 'solid'), mine, fill: false });
+    // A group that holds more than one kind contributes to more than one side,
+    // and each side is its own boundary and its own track. They are cut over
+    // the same members and ride the same frame; only the classification
+    // differs.
+    for (const kind of KINDS) {
+      if (kinds.get(id)?.has(kindKey(kind)) === true) {
+        all.push(subject(sideOf(id, kind), mine, kind.type));
+      }
+    }
   }
 
   return all;
 }
 
-/** A polygon as the boundary wants to see it: simplified, unless it came out of
- * an erosion and is an arrangement already. The same reasoning `worldset` uses,
- * and it has to be the same or the two would not agree. */
-function memberOf(it: Contributed): Member | null {
-  const kind = it.kind;
-
-  if (kind !== 'level' && kind !== 'solid') return null;
+/** A polygon as the boundary of one set wants to see it: simplified, unless it
+ * came out of an erosion and is an arrangement already. The same reasoning
+ * `worldset` uses, and it has to be the same or the two would not agree.
+ *
+ * Nothing where it is in the other set. A pillar does not cut a floor and a
+ * hole in a floor does not cut a room, so the two are never in one another's
+ * neighbourhoods at all. */
+function memberOf(it: Contributed, type: PolygonType): Member | null {
+  if (it.kind.type !== type) return null;
 
   // A source ring as drawn is allowed to cross itself, so it goes through an
   // arrangement here — and an arrangement drops the vertices it does not turn
   // at, this one included. Anything already simple is spared it.
   const shape = it.simple ? it.shape : keeping(simplify(it.shape), it.keep ?? []);
 
-  return shape.length === 0 ? null : { id: it.id, kind, shape };
+  return shape.length === 0 ? null : { id: it.id, kind: it.kind.op, shape };
 }
 
 /**
@@ -1494,15 +1490,18 @@ function memberOf(it: Contributed): Member | null {
  * tolerances included, and the two answers are the same answer.
  */
 function share(at: readonly Contributed[], only: Id): Frame {
-  const members: Member[] = [];
-  let subject: Member | null = null;
-
   const mine = at.find(it => it.id === only);
 
-  if (mine !== undefined && mine.kind === 'floor') return filling(mine);
+  if (mine === undefined) return [];
+
+  const type = mine.kind.type;
+  const fill = type === 'floor';
+  const members: Member[] = [];
+
+  let subject: Member | null = null;
 
   for (const it of at) {
-    const m = memberOf(it);
+    const m = memberOf(it, type);
 
     if (m === null) continue;
     if (m.id === only) subject = m;
@@ -1516,59 +1515,32 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
 
   return boundaryRuns(subject, others, ground([subject, ...others]))
-    .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence, fill: false }));
+    .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence, fill }));
 }
 
-/**
- * A floor's share: its own rings, and nothing to do with anybody else's.
- *
- * Closed, because a ring of the union belongs to no one polygon and is handed
- * back as open arcs, while a floor's ring is a floor's ring the whole way
- * round. Repeating the first point is how `boundaryRuns` says so too, and it
- * is what `extrude` and the fill both read.
- *
- * Every point is a corner of its own outline, so nothing here is ever a
- * crossing: a floor overlapping a wall is drawn under it, not cut by it.
- */
-function filling(it: Contributed): Frame {
-  return it.shape
-    .filter(ring => ring.length >= 3)
-    .map((ring, r) => ({
-      id: it.id,
-      fill: true,
-      points: [...ring, ring[0]],
-      corner: ring.map(() => true).concat(true),
-      whence: ring
-        .map((_unused, i) => named(it.id, r, i))
-        .concat(named(it.id, r, 0)),
-    }));
-}
-
-function named(id: Id, ring: number, index: number): Origin {
-  return { kind: 'vertex', at: { id, ring, index } };
-}
-
-/** Everybody's share at once, through the full set. The yardstick's path, and
+/** Everybody's share at once, through both full sets. The yardstick's path, and
  * what the editor's own drawing goes through. */
 function everything(at: readonly Contributed[]): Frame {
+  const both = live(EMPTY_LIVE, at);
+
+  const shares = (set: WorldSet, fill: boolean): Frame =>
+    pieces(set).map(p => ({
+      id: p.source,
+      points: p.points,
+      corner: p.corner,
+      whence: p.whence,
+      fill,
+    }));
+
   // Sorted, so that two evaluations line up run by run. `worldset` hands its
   // runs back in whatever order the entries happen to sit in, which an edit
   // reorders; within one polygon the order is the boundary's own and is stable
-  // for as long as the combinatorics are — which is exactly a stretch.
-  // Floors are not in the set at all, so they are put back beside it rather
-  // than read out of it. Sorting by id afterwards lands each one where its own
-  // track put it, which is the order `sample` reads them in.
-  return [
-    ...pieces(live(EMPTY_LIVE, at).set)
-      .map(p => ({
-        id: p.source,
-        points: p.points,
-        corner: p.corner,
-        whence: p.whence,
-        fill: false,
-      })),
-    ...at.filter(it => it.kind === 'floor').flatMap(filling),
-  ].sort((p, q) => p.id - q.id);
+  // for as long as the combinatorics are — which is exactly a stretch. Sorting
+  // by id afterwards lands each run where its own track put it, which is the
+  // order `sample` reads them in, and it is what interleaves the two sets: no
+  // polygon is in both, so the id decides it outright.
+  return [...shares(both.level, false), ...shares(both.floor, true)]
+    .sort((p, q) => p.id - q.id);
 }
 
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
@@ -1667,18 +1639,30 @@ function expandBox(a: AABB, m: number): AABB {
 function neighbourhoods(all: Subject[]): Moving[][] {
   const boxes = all.map(s => s.mine.map(reach).reduce(merge));
 
-  // Floors are in neither half of it: nothing of theirs can bury a boundary and
-  // no boundary can cut them, so they neither look nor are looked at.
-  const tree: Tree = build(
-    boxes.flatMap((box, id) => all[id].fill ? [] : [{ id, box }]),
-  );
+  const tree: Tree = build(boxes.map((box, id) => ({ id, box })));
 
+  // Only within its own set. A pillar cannot bury a floor's boundary and a
+  // hole cut in a floor cannot cut a room, so the two sets are never in one
+  // another's neighbourhoods however far their boxes overlap — and a box test
+  // is the wrong way round to say that, since a floor and the room it is drawn
+  // in overlap by construction.
+  //
+  // A group's two sides find each other here, and must not bring each other's
+  // members along: they are the same members, and a neighbourhood holding
+  // every one of them twice would put every ring into the arrangement twice.
   return all.map((s, i) => {
-    if (s.fill) return s.mine;
+    const near = search(tree, boxes[i]).filter(j => j !== i && all[j].type === s.type);
+    const seen = new Set<Id>();
+    const out: Moving[] = [];
 
-    const near = search(tree, boxes[i]).filter(j => j !== i);
+    for (const m of [s.mine, ...near.map(j => all[j].mine)].flat()) {
+      if (seen.has(m.at.id)) continue;
 
-    return [...s.mine, ...near.flatMap(j => all[j].mine)];
+      seen.add(m.at.id);
+      out.push(m);
+    }
+
+    return out;
   });
 }
 
@@ -1895,14 +1879,10 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
 // of resting on an argument about which events exist.
 // -----------------------------------------------------------------------------
 
-/**
- * How far, in world units, the replay may sit from the CSG before a stretch is
- * split. Well under a pixel at any sane zoom.
- *
- * A width, not a tolerance in `t`, which is what makes it meaningful: it is the
- * thing the eye would see.
- */
-export const TOLERANCE = 0.05;
+/** How far the replay may sit from the CSG before a stretch is split. In
+ * `world.ts` because it is a promise to whoever plays the bake back, and one
+ * reader there takes it up. See `TOLERANCE`. */
+export { TOLERANCE };
 
 /**
  * How thin an interval has to get before the bisection gives up on it.

@@ -28,9 +28,18 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { BakedSpan, CROSSING } from './baked';
-import { Source, Span, WallOptions, extrude, fan, materials } from './walls';
-import { Point } from './world';
+import { BakedSpan, CROSSING, placedAt } from './baked';
+import {
+  Source,
+  Span,
+  WallOptions,
+  extrude,
+  fan,
+  looped,
+  materials,
+  nesting,
+} from './walls';
+import { Point, TOLERANCE } from './world';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -254,25 +263,64 @@ function tabled(data: Float32Array): THREE.DataTexture {
 }
 
 /**
- * Every stretch of every track, one after another, split by what is built on
- * it: a span is one buffer and one draw of each kind, and which of it is alive
- * at an instant is the shader's business.
+ * Every stretch of every wall track, one after another: a span is one buffer
+ * and one draw of each kind, and which of it is alive at an instant is the
+ * shader's business.
+ *
+ * The floors are not in here. What is built on them is not answered once — see
+ * `fills` — so they are gathered as the vertices that cut needs instead.
  */
-function spanRuns(span: BakedSpan): { walls: Span[], fills: Span[] } {
-  const walls: Span[] = [], fills: Span[] = [];
+function walling(span: BakedSpan): Span[] {
+  const out: Span[] = [];
 
   for (const track of span.tracks) {
+    if (track.fill) continue;
+
+    for (const s of track.stretches) out.push(...s.runs);
+  }
+
+  return out;
+}
+
+/**
+ * The floor vertices, and which run each belongs to.
+ *
+ * A vertex per point of every fill run, in run order, and the runs as lists of
+ * indices into those vertices — renumbered from zero, so what the cut hands
+ * back indexes the fill's own buffer rather than the span's points. `points`
+ * maps back the other way, which is what reads the span.
+ *
+ * Its own function because the index buffer is recut every frame and the
+ * buffer it indexes is not, and because a test that stitched its own would be
+ * checking something other than what is drawn.
+ */
+export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
+  const points: number[] = [];
+  const runs: number[][] = [];
+
+  for (const track of span.tracks) {
+    if (!track.fill) continue;
+
     for (const s of track.stretches) {
-      for (const run of s.runs) (track.fill ? fills : walls).push(run);
+      for (const run of s.runs) {
+        const ring: number[] = [];
+
+        for (let i = 0; i < run.count; i++) {
+          ring.push(points.length);
+          points.push(run.first + i);
+        }
+
+        runs.push(ring);
+      }
     }
   }
 
-  return { walls, fills };
+  return { points, runs };
 }
 
 /** The stretch each point belongs to, so a vertex can be told whether it is
  * alive at the instant being drawn. */
-function ranges(span: BakedSpan): Float32Array {
+export function ranges(span: BakedSpan): Float32Array {
   const out = new Float32Array(span.slots.length * 2);
 
   for (const track of span.tracks) {
@@ -302,8 +350,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
 
   const { wall, line, fill } = materials(shaderFor(span.depth), options, uniforms);
 
-  const runs = spanRuns(span);
-  const shape = extrude(runs.walls);
+  const shape = extrude(walling(span));
   const range = ranges(span);
 
   const geometry = (
@@ -357,20 +404,12 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     return g;
   };
 
-  // A vertex per point of every floor, in run order, and an index buffer that
-  // is recut every frame — see `fan`. `where` is the run each one belongs to,
-  // renumbered from zero so what comes back indexes these vertices rather than
-  // the span's points.
-  const mine: number[] = [];
-  const where: Span[] = [];
+  const { points: mine, runs: where } = fills(span);
 
-  for (const run of runs.fills) {
-    where.push({ first: mine.length, count: run.count });
-
-    for (let i = 0; i < run.count; i++) mine.push(run.first + i);
-  }
-
-  const most = where.reduce((n, r) => n + Math.max(0, r.count - 3) * 3, 0);
+  // An outline of n corners with holes of m corners between them cuts into
+  // n + m + 2h - 2 triangles, so every point once and two more per ring covers
+  // whatever the stitching turns these runs into.
+  const most = (mine.length + 2 * where.length) * 3;
   const face = new Uint32Array(most);
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
@@ -392,28 +431,33 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   floors.frustumCulled = false;
 
   /**
-   * Where one of those vertices stands at `t`, in its own polygon's frame.
+   * Where one of those vertices stands at `t`, in world units — the same
+   * arithmetic the shader does, on the CPU. See `placedAt`.
    *
-   * The frame is left off deliberately: a triangulation is a question about
-   * which diagonals lie inside the ring, and an affine map takes the answer to
-   * the answer. So the cut is taken in the frame the points are kept in, and
-   * the shader puts them where they go.
+   * World units rather than the polygon's own frame, which is where the points
+   * are kept and where this used to answer. A triangulation is a question about
+   * which diagonals lie inside the ring and an affine map takes the answer to
+   * the answer, so one frame would do — but only if the whole ring is in it,
+   * and a ring of the floor set generally is not. It is stitched out of runs
+   * off several polygons, each with a frame of its own, and two of them meeting
+   * at a crossing agree about that point in no frame but the world's.
+   *
+   * It is a handful of points a frame, being one floor's worth rather than a
+   * level's. The walls, which are the expensive half, are still answered once
+   * and moved by the shader alone.
    */
   const at = (i: number): Point => {
     const p = mine[i];
     const a = range[p * 2], b = range[p * 2 + 1];
     const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
 
-    return {
-      x: span.pointsA[p * 2] + (span.pointsB[p * 2] - span.pointsA[p * 2]) * u,
-      y: span.pointsA[p * 2 + 1] + (span.pointsB[p * 2 + 1] - span.pointsA[p * 2 + 1]) * u,
-    };
+    return placedAt(span, p, t, u);
   };
 
   /** The same gate the shader draws by, asked of a whole run: a stretch holds
    * its start and not its end, and the last one keeps both. */
-  const alive = (run: Span): boolean => {
-    const a = range[mine[run.first] * 2], b = range[mine[run.first] * 2 + 1];
+  const alive = (run: readonly number[]): boolean => {
+    const a = range[mine[run[0]] * 2], b = range[mine[run[0]] * 2 + 1];
 
     return t >= a && (t < b || b >= 1);
   };
@@ -422,7 +466,19 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   let count = 0;
 
   const recut = (): void => {
-    const cut = fan(where.filter(alive), at);
+    // Stitched, then nested, then cut. A floor run is one polygon's share of
+    // the floor set's boundary, exactly as a wall run is of the level's — see
+    // `Track.fill` in the editor's `bake.ts` — so the loop a fill needs is
+    // generally made of several of them and is put back here, at the instant
+    // it is drawn. The walls never do this: a wall is the quad between two
+    // consecutive points and a run is the whole of what it ever sees.
+    const rings = looped(where.filter(alive), at, TOLERANCE);
+    const contours = nesting(rings.map(ring => ring.map(at))).map(n => ({
+      outer: rings[n.outer],
+      holes: n.holes.map(h => rings[h]),
+    }));
+
+    const cut = fan(contours, at);
 
     face.set(cut);
     count = cut.length;

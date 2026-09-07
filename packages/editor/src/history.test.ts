@@ -13,6 +13,7 @@ import { describe, expect, test } from 'vitest';
 import { TOP, addPolygon } from './scene';
 import {
   EditorState,
+  PolygonKind,
   World,
   emptyWorld,
   initialState,
@@ -21,10 +22,24 @@ import {
   undone,
 } from './types';
 
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
+
 function square(world: World, x: number): { world: World, id: number } {
   return addPolygon(
     world,
-    'level',
+    kind('level'),
     [{ x, y: 0 }, { x: x + 10, y: 0 }, { x: x + 10, y: 10 }, { x, y: 10 }],
     0,
     TOP,

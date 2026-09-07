@@ -27,12 +27,13 @@ import {
   Polygon as GamePolygon,
   Version as GameVersion,
   World as GameWorld,
+  nesting,
   withNormals,
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
-import { ArtefactId, Id, PolygonId, VersionId, World } from './types';
+import { ArtefactId, Id, PolygonId, PolygonType, VersionId, World } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -325,8 +326,8 @@ function shapeOf(it: Contributed): Shape {
 }
 
 /**
- * The set at one version, as closed rings: every `level` unioned, every `solid`
- * taken back out.
+ * One set at one version, as closed rings: everything added unioned, and
+ * everything subtracted taken back out.
  *
  * The same set the bake cuts into stretches, evaluated at one instant and left
  * whole instead of being cut into runs. Runs are what the drawing wants,
@@ -339,8 +340,8 @@ function shapeOf(it: Contributed): Shape {
  * would be nothing for a diff to skip, and this runs once where the editor's
  * own set runs once a frame.
  */
-export function unionAt(world: World, v: VersionId): Shape {
-  let level: Shape = [], solid: Shape = [];
+export function setAt(world: World, v: VersionId, type: PolygonType): Shape {
+  let added: Shape = [], cut: Shape = [];
 
   // Through `contributing`, which is what makes this the same set the editor
   // draws rather than a second one that usually agrees. A group with a depth on
@@ -349,13 +350,20 @@ export function unionAt(world: World, v: VersionId): Shape {
   // at all: it read each polygon's own erosion, found none, and shipped the
   // version before it under the next version's name.
   for (const it of contributing(world, v, resolveAt(world, v))) {
-    if (it.kind === 'level') level = union(level, shapeOf(it));
-    else if (it.kind === 'solid') solid = union(solid, shapeOf(it));
+    if (it.kind.type !== type) continue;
+
+    if (it.kind.op === 'add') added = union(added, shapeOf(it));
+    else cut = union(cut, shapeOf(it));
   }
 
-  if (level.length === 0) return [];
+  if (added.length === 0) return [];
 
-  return solid.length === 0 ? level : subtract(level, solid);
+  return cut.length === 0 ? added : subtract(added, cut);
+}
+
+/** The level: what collision and the walls are made of. */
+export function unionAt(world: World, v: VersionId): Shape {
+  return setAt(world, v, 'level');
 }
 
 /**
@@ -387,29 +395,44 @@ export function versionOf(world: World, v: VersionId): GameVersion {
 }
 
 /**
- * The floors at a version: drawn flat underfoot, and taking part in nothing.
+ * The floor at a version: drawn flat underfoot, and taking part in nothing.
  *
- * Not in the set — `worldset` takes only `level` and `solid` — and not walls
- * either, so they come along in a list of their own rather than as rings the
- * collision would have to know to skip. Points and nothing else: normals are
- * for deciding which side of a ring is material, and a shape that is only ever
- * filled has no such side.
+ * Its own set, resolved exactly as the level is — floors added, floor holes
+ * taken back out — and then cut into the outlines a fill can be laid over.
+ * Not part of the level and not walls, so it comes along in a list of its own
+ * rather than as rings the collision would have to know to skip. Points and
+ * nothing else: normals are for deciding which side of a ring is material, and
+ * a shape that is only ever filled has no such side.
  *
- * Its own function because the 3D view wants them without wanting the union,
- * and the union is the expensive half of `versionOf`.
+ * Its own function because the 3D view wants it without wanting the level, and
+ * the level is the expensive half of `versionOf`.
  */
 export function floorsAt(world: World, v: VersionId): Floor[] {
-  const out: Floor[] = [];
+  return filled(setAt(world, v, 'floor'));
+}
 
-  for (const it of resolveAt(world, v)) {
-    if (it.polygon.type !== 'floor') continue;
+/**
+ * An arrangement as the things that get filled: each outline with the holes
+ * that belong to it.
+ *
+ * A hole has to go with the outline it is a hole in, rather than being handed
+ * over as one more ring, because the triangulator is told a contour and its
+ * holes and has no way to work out which is which — and filling a hole as an
+ * outline in its own right fills exactly the part that is supposed to be gone.
+ *
+ * Through `nesting` rather than by working the containment out here, because
+ * the morph has to answer the same question about the same set — off runs it
+ * has just stitched, where this has the rings in hand — and a floor drawn
+ * standing still that was cut a different way from the same floor a frame into
+ * a transition is a floor that jumps at the version boundary.
+ */
+export function filled(shape: Shape): Floor[] {
+  const rings = shape.filter(ring => ring.length >= 3);
 
-    for (const ring of it.shape) {
-      if (ring.length >= 3) out.push({ points: ring });
-    }
-  }
-
-  return out;
+  return nesting(rings).map(n => ({
+    points: rings[n.outer],
+    holes: n.holes.map(h => rings[h]),
+  }));
 }
 
 /**

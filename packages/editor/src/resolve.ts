@@ -69,14 +69,20 @@
 // nothing for a hole to be a hole in, so the gesture does not happen rather
 // than emptying the group.
 //
-// A floor is in no set — see `filling` in `bake.ts` — so it neither cuts nor is
-// cut, and it comes out as `floor and (level - solid)`. A floor reaching past
+// A floor is in no level — see `filling` in `bake.ts` — so it neither cuts the
+// walls nor is cut by them, and it is resolved as a set of its own: floors
+// added, floor holes taken back out. What comes out is that set intersected
+// with the level, `(floor - hole) and (level - solid)`. A floor reaching past
 // the walls or across a pillar is a floor drawn where there is no room, and it
 // was only ever invisible because a wall stood in front of it. Resolving is
 // where that stops being true.
+//
+// A group with no level at all keeps its floor whole. There is nothing there
+// for the clip to mean, and a gesture that emptied such a group would be
+// resolving it out of existence.
 // -----------------------------------------------------------------------------
 
-import { PolygonType } from '@ce/game/world';
+import { PolygonKind, PolygonType } from '@ce/game/world';
 import {
   Member,
   Point,
@@ -87,7 +93,6 @@ import {
   contains,
   ground,
   intersect,
-  unionAll,
 } from './geometry';
 import {
   Contributed,
@@ -117,9 +122,6 @@ import {
   within,
 } from './types';
 
-/** The three sides a group contributes to, in the order the CSG reads them.
- * The same list `sideOf` numbers, and for the same reason: a room's boundary
- * and a pillar's are not one boundary. */
 // -----------------------------------------------------------------------------
 // The union, as rings
 //
@@ -209,21 +211,21 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
   return out;
 }
 
-/** One side's union, as closed rings in world units. */
-function rings(items: readonly Contributed[]): NamedRing[] {
+/** One set's union, as closed rings in world units. */
+function rings(items: readonly Contributed[], type: PolygonType): NamedRing[] {
   const mine: Member[] = [];
 
   for (const it of items) {
-    // A floor is in no set — see `filling` in `bake.ts` — so it neither cuts
-    // nor is cut, and it is not what bounds anything here.
-    if (it.shape.length === 0 || it.kind === 'floor') continue;
+    // The other set is another question entirely: a pillar does not cut a
+    // floor and a hole in a floor does not cut a room.
+    if (it.shape.length === 0 || it.kind.type !== type) continue;
 
-    mine.push({ id: it.id, kind: it.kind, shape: it.shape });
+    mine.push({ id: it.id, kind: it.kind.op, shape: it.shape });
   }
 
-  // Solids with nothing to be taken out of bound no material. The group is
-  // pillars and a pillar on its own is a hole in nothing.
-  if (!mine.some(m => m.kind === 'level')) return [];
+  // What is taken away with nothing to be taken out of bounds no material.
+  // The group is pillars, and a pillar on its own is a hole in nothing.
+  if (!mine.some(m => m.kind === 'add')) return [];
 
   const on = ground(mine);
   const out: NamedRing[] = [];
@@ -241,7 +243,7 @@ function rings(items: readonly Contributed[]): NamedRing[] {
 }
 
 /**
- * The group's floors, clipped to the ground it just worked out.
+ * The group's floor set, clipped to the ground it just worked out.
  *
  * A floor is a fill drawn where the level is, and a floor reaching out past the
  * walls or across a pillar is a floor drawn where there is no room — which is
@@ -249,17 +251,24 @@ function rings(items: readonly Contributed[]): NamedRing[] {
  * that stops being true, since what comes out is meant to be the shape rather
  * than the parts it was made of.
  *
- * `floor and (level - solid)`, so the pillars appear in the floor as they do in
- * the walls. Straight out of `intersect`, which hands back an arrangement:
- * there is nothing here to stitch, because there are no runs — the boundary of
- * an intersection is not partitioned by source and does not need to be.
+ * `(floor - hole) and (level - solid)`, so the pillars appear in the floor as
+ * they do in the walls, and so do the holes cut in the floor itself. The first
+ * half comes through the same `rings` the walls do, because it is the same
+ * question about a different set; the second is straight out of `intersect`,
+ * which hands back an arrangement, and there is nothing there to stitch —
+ * the boundary of an intersection is not partitioned by source and does not
+ * need to be.
+ *
+ * Unclipped where there is no ground at all. A group of nothing but floors
+ * makes no level, and clipping its floor to that would resolve it away: what
+ * is on screen is a floor, so what it resolves to is that floor.
  */
 function floors(items: readonly Contributed[], walls: readonly Ring[]): Ring[] {
-  const mine = items.filter(it => it.kind === 'floor' && it.shape.length !== 0);
+  const mine = rings(items, 'floor').map(ring => ring.map(p => p.at));
 
-  if (mine.length === 0 || walls.length === 0) return [];
+  if (mine.length === 0 || walls.length === 0) return mine;
 
-  return intersect(unionAll(mine.map(it => it.shape)), [...walls]);
+  return intersect(mine, [...walls]);
 }
 
 // -----------------------------------------------------------------------------
@@ -277,7 +286,7 @@ function floors(items: readonly Contributed[], walls: readonly Ring[]): Ring[] {
  * not anywhere.
  */
 interface Reading {
-  kind: PolygonType
+  kind: PolygonKind
   hole: boolean
   /** The reading it is a hole in, by index in this same list. */
   owner: number | null
@@ -352,16 +361,19 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
   const frame = groupFrame(world, v, id);
   const out: Reading[] = [];
 
-  // The set the group makes, and the floors clipped to it. Two kinds rather
-  // than three: what a solid contributes is a hole in the level, and once it is
-  // one there is nothing of the solid left to be. A pillar sticking out past
+  // The set the group makes, and the floor set clipped to it. Two sides rather
+  // than four: what a pillar contributes is a hole in the level, and once it is
+  // one there is nothing of the pillar left to be. A pillar sticking out past
   // the room it was in goes with it — it was cutting the rooms *around* the
   // group as well, and that is what resolving to one shape costs.
-  const walls = rings(items).map(ring => ring.map(p => p.at));
+  const walls = rings(items, 'level').map(ring => ring.map(p => p.at));
 
-  const sides: [PolygonType, readonly Ring[]][] = [
-    ['level', walls],
-    ['floor', floors(items, walls)],
+  // Both come out added: what a pillar contributed is a hole in the level and
+  // what a floor's hole contributed is a hole in the floor, and once either is
+  // a ring of the shape there is nothing subtracted left for it to be.
+  const sides: [PolygonKind, readonly Ring[]][] = [
+    [{ type: 'level', op: 'add' }, walls],
+    [{ type: 'floor', op: 'add' }, floors(items, walls)],
   ];
 
   for (const [kind, side] of sides) {
@@ -502,7 +514,7 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
       for (const at of part.ring) points.push({ id: ++next, at, ring, birth: born, death });
     });
 
-    polygons.set(mine, { type: outer.kind, birth: born, death, points });
+    polygons.set(mine, { ...outer.kind, birth: born, death, points });
     made.push(mine);
     next++;
   }
@@ -542,9 +554,12 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
         edits.set(m, {
           transform: {
             ...EMPTY_TRANSFORM,
-            // The walls go the other way, and that is the same identity
-            // `contributed` states: erode(A - B, d) = erode(A, d) - erode(B, -d).
-            erosion: polygons.get(m)!.type === 'solid' ? -d : d,
+            // The depth as the group wrote it, never the other way about.
+            // `contributed` has to flip the sign on what a group takes away —
+            // erode(A - B, d) = erode(A, d) - erode(B, -d) — and that flip has
+            // already happened here: every ring out of `readingAt` is added,
+            // holes included, so every one of them erodes inward.
+            erosion: d,
           },
           vertices: new Map<VertexId, Point>(),
           depths: new Map(),

@@ -24,7 +24,21 @@ import {
   starting,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, PathId, Point, VersionId, World, emptyWorld } from './types';
+import { EMPTY_TRANSFORM, PathId, Point, VersionId, World, emptyWorld, PolygonKind } from './types';
+
+/**
+ * A polygon kind by the short name these tests call it: a room, a pillar, a
+ * floor, and a hole cut in a floor.
+ *
+ * The four are two questions — which set, and which way — and writing the pair
+ * out at every call would bury what each test is about. See `PolygonKind`.
+ */
+type Named = 'level' | 'solid' | 'floor' | 'hole';
+
+const kind = (k: Named): PolygonKind => ({
+  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
+  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
+});
 
 describe('timings', () => {
   test('start at zero and add up along the legs', () => {
@@ -108,7 +122,7 @@ describe('the chain', () => {
   test('a group carries the path in it', () => {
     const room = addPolygon(
       emptyWorld(),
-      'level',
+      kind('level'),
       [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
       0,
       TOP,
@@ -128,12 +142,12 @@ describe('the chain', () => {
   test('a path laid inside an open group runs where it was drawn', () => {
     const room = addPolygon(
       emptyWorld(),
-      'level',
+      kind('level'),
       [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
       0,
       TOP,
     );
-    const other = addPolygon(room.world, 'level', [
+    const other = addPolygon(room.world, kind('level'), [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
       { x: 10, y: 10 },
@@ -160,7 +174,7 @@ describe('the chain', () => {
   test('a gesture over a group reaches the paths under it, and starts an edit for one', () => {
     const room = addPolygon(
       emptyWorld(),
-      'level',
+      kind('level'),
       [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
       0,
       TOP,
@@ -215,7 +229,7 @@ describe('writing a point back', () => {
   test('the same through a turn, and through a group as well as its own layer', () => {
     const room = addPolygon(
       emptyWorld(),
-      'level',
+      kind('level'),
       [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
       0,
       TOP,

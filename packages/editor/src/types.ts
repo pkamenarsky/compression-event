@@ -1,8 +1,21 @@
-import { ArtefactType, IconType, Point, PolygonType, SCALE, TILE_SIZE } from '@ce/game/world';
+import {
+  ArtefactType,
+  IconType,
+  KINDS,
+  Point,
+  PolygonKind,
+  PolygonOp,
+  PolygonType,
+  SCALE,
+  TILE_SIZE,
+  kindKey,
+  sameKind,
+} from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Affine } from './scene';
 
-export type { ArtefactType, IconType, Point, PolygonType };
+export type { ArtefactType, IconType, Point, PolygonKind, PolygonOp, PolygonType };
+export { KINDS, kindKey, sameKind };
 
 /** The kinds, in the order the number keys pick them. */
 export const ARTEFACTS: ArtefactType[] = [
@@ -330,6 +343,8 @@ export function ringsOf(corners: readonly Vertex[]): number[] {
  */
 export interface Polygon {
   type: PolygonType
+  /** What it does to the set its `type` names. See `PolygonOp`. */
+  op: PolygonOp
   /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
   /** The version whose layer took it out, or nothing while it stands. Exactly
@@ -814,6 +829,7 @@ export type Clipping =
   | {
       kind: 'polygon'
       type: PolygonType
+      op: PolygonOp
       points: Vertex[]
       death?: number
       edits: [number, Edit][]

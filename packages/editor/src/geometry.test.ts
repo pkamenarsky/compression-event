@@ -1251,11 +1251,11 @@ describe('morph', () => {
 // boundaryRuns
 // -----------------------------------------------------------------------------
 
-const member = (id: number, kind: 'level' | 'solid', r: Ring): Member =>
+const member = (id: number, kind: 'add' | 'subtract', r: Ring): Member =>
   ({ id, kind, shape: [r] });
 
-const lv = (id: number, r: Ring): Member => member(id, 'level', r);
-const sd = (id: number, r: Ring): Member => member(id, 'solid', r);
+const lv = (id: number, r: Ring): Member => member(id, 'add', r);
+const sd = (id: number, r: Ring): Member => member(id, 'subtract', r);
 
 /** Total length of a set of open runs. */
 const runLength = (runs: readonly { points: Point[] }[]) =>
