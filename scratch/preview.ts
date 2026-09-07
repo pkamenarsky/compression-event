@@ -20,7 +20,8 @@ import { shipped, versionOf } from '../packages/editor/src/export';
 import { addPolygon, addVertex, editAt, removeVertices, resolveAt, withEdit } from '../packages/editor/src/scene';
 import { PolygonId, Transform, VersionId, World, emptyWorld } from '../packages/editor/src/types';
 import { outlineAt } from '../packages/game/src/baked';
-import { SCALE, renderer } from '../packages/game/src/render';
+import { SCALE } from '../packages/game/src/world';
+import { renderer } from '../packages/game/src/render';
 
 const hud = document.getElementById('hud')!;
 const view = document.getElementById('view')!;
@@ -148,8 +149,6 @@ function collided(u: number): void {
   const points: number[] = [];
 
   for (const polygon of versionOf(source, v).polygons) {
-    if (polygon.type !== 'level') continue;
-
     const ring = polygon.points;
 
     for (let i = 0; i < ring.length; i++) {
