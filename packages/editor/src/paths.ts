@@ -18,7 +18,7 @@
 
 import { WALK_SPEED } from '@ce/game';
 import { SCALE } from '@ce/game/world';
-import { Laid, Landing, joined, unplace, without } from './scene';
+import { Laid, Landing, groupFrame, joined, unplace, without } from './scene';
 import { PathId, Point, VersionId, World } from './types';
 
 /** Editor units the player covers in a second: the game's speed is in world
@@ -62,6 +62,35 @@ export function seconds(t: number): string {
 // point is being written where it will be read from, so that a path inside a
 // turned group keeps the shape it was drawn with.
 // -----------------------------------------------------------------------------
+
+/**
+ * World points as one path's own frame reads them, at a version: what a
+ * gesture holding a place on screen has to write.
+ *
+ * The inverse of exactly what `pathAt` placed them by, which is the whole
+ * chain — the groups holding it *and* its own layers. Not `under`, which is
+ * the other frame a path has and answers a different question: `under` is
+ * where a path's own *transform* is read, so it is what a drag or a turn
+ * writes into, and it stops short of that transform by construction. The
+ * points are underneath it. Inverting `under` here wrote the walk back in the
+ * frame it had before its own transform, so dragging a point of a moved path
+ * put it where the path used to be.
+ *
+ * Two frames because a path is the one thing here that writes geometry
+ * directly *and* carries a transform over it. A polygon has the same pair and
+ * never notices: its corners go through `Resolved.frame`, which is this one,
+ * and its transform through `under`.
+ */
+export function inFrame(
+  world: World,
+  v: VersionId,
+  id: PathId,
+  points: readonly Point[],
+): Point[] {
+  const m = groupFrame(world, v, id);
+
+  return points.map(p => unplace(m, p));
+}
 
 /**
  * A new path, born into the version it was laid down in, and the id it was

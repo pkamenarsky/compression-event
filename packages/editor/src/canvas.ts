@@ -91,6 +91,7 @@ import {
   hitPath,
   hitPathEdge,
   hitPathPoint,
+  inFrame,
   pathsWithinBox,
   seconds,
   setPath,
@@ -1197,19 +1198,10 @@ export function worldCanvas(
       return pathsAt(world(), currentVersion());
     }
 
-    /**
-     * World points as one path's own frame reads them.
-     *
-     * The inverse a corner's displacement goes through — see `placeVertex` —
-     * for the one thing a path does that a polygon does not: write its
-     * geometry directly rather than as a layer. A tape inside a turned group
-     * is drawn where it looks like it is, and stored where it will be read
-     * back from.
-     */
+    /** World points as one path's own frame reads them — see `inFrame`, which
+     * is where the two frames a path has are told apart. */
     function own(s: EditorState, id: PathId, points: readonly Point[]): Point[] {
-      const m = under(s.world, s.currentVersion, id);
-
-      return points.map(p => unplace(m, p));
+      return inFrame(s.world, s.currentVersion, id, points);
     }
 
     /** The path point under the cursor, if a click is close enough to be

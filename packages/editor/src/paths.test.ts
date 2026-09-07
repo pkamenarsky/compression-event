@@ -5,6 +5,7 @@ import {
   hitPath,
   hitPathEdge,
   hitPathPoint,
+  inFrame,
   pathsWithinBox,
   seconds,
   setPath,
@@ -23,7 +24,7 @@ import {
   starting,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, Point, World, emptyWorld } from './types';
+import { EMPTY_TRANSFORM, PathId, Point, VersionId, World, emptyWorld } from './types';
 
 describe('timings', () => {
   test('start at zero and add up along the legs', () => {
@@ -176,6 +177,75 @@ describe('the chain', () => {
     expect(from.get(walk.id)!.transform.erosion).toBe(0);
   });
 });
+
+
+describe('writing a point back', () => {
+  /**
+   * The frame a point is written in is the one it was read out of, which is
+   * the whole chain rather than the frame the path's own transform is read in.
+   * Getting that wrong is invisible until something has been transformed, and
+   * then every drag lands where the path used to be.
+   */
+  function roundTrip(world: World, id: PathId, v: VersionId): void {
+    const there = pathAt(world, id, v)!;
+    const back = inFrame(world, v, id, there);
+
+    expect(pathAt(setPath(world, id, back), id, v)!).toEqual(there);
+  }
+
+  test('a point dragged to where it already is does not move', () => {
+    const { world, id } = laid([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
+
+    const moved = withEdit(world, 0, id, {
+      ...editAt(world, 0, id, 0),
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 250, y: -30 } },
+    });
+
+    roundTrip(moved, id, 0);
+
+    // And the drag itself: the end put under the cursor at (300, -30) is
+    // there afterwards, rather than 250 short of it.
+    const points = [...moved.paths.get(id)!.points];
+
+    points[1] = inFrame(moved, 0, id, [{ x: 300, y: -30 }])[0];
+
+    expect(pathAt(setPath(moved, id, points), id, 0)![1]).toEqual({ x: 300, y: -30 });
+  });
+
+  test('the same through a turn, and through a group as well as its own layer', () => {
+    const room = addPolygon(
+      emptyWorld(),
+      'level',
+      [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
+      0,
+      TOP,
+    );
+    const walk = addPath(room.world, [{ x: 10, y: 10 }, { x: 40, y: 10 }], 0, TOP);
+    const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
+
+    const turned = withEdit(made.world, 0, made.id, {
+      ...editAt(made.world, 0, made.id, 0),
+      transform: { ...EMPTY_TRANSFORM, rotation: 0.7, translation: { x: 5, y: 9 } },
+    });
+
+    // A layer of the path's own on top of the group's, which is the pair that
+    // `under` alone cannot see.
+    const both = withEdit(turned, 1, walk.id, {
+      ...editAt(turned, 1, walk.id, 0),
+      transform: { ...EMPTY_TRANSFORM, scale: { x: 2, y: 3 }, translation: { x: -4, y: 1 } },
+    });
+
+    const points = [...both.paths.get(walk.id)!.points];
+
+    points[0] = inFrame(both, 1, walk.id, [{ x: 123, y: -45 }])[0];
+
+    const there = pathAt(setPath(both, walk.id, points), walk.id, 1)!;
+
+    expect(there[0].x).toBeCloseTo(123, 9);
+    expect(there[0].y).toBeCloseTo(-45, 9);
+  });
+});
+
 
 describe('hit testing', () => {
   const { world, id } = laid([
