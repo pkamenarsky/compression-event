@@ -246,6 +246,68 @@ rows.push('');
 say('view-parallel edge wholly behind', drawTri([[200, 200], [200, 706.073], [-102.512, -592.09]], 0));
 say('the same edge bent a quarter of a unit', drawTri([[200, 200], [200.25, 706.073], [-102.512, -592.09]], 0));
 
+// -----------------------------------------------------------------------------
+// What gets around it, short of clipping in software
+// -----------------------------------------------------------------------------
+
+rows.push('');
+rows.push('Subdividing does not help, which is the first thing anyone reaches');
+rows.push('for. Split the offending edge and both halves still lie along it,');
+rows.push('both ends still behind. Split at the centroid instead and the edge');
+rows.push('survives whole in one of the three pieces.');
+rows.push('');
+
+const F = [200, 200], G = [200, 706.073], I = [-102.512, -592.09];
+const MID = [200, (200 + 706.073) / 2];
+const CEN = [(F[0] + G[0] + I[0]) / 3, (F[1] + G[1] + I[1]) / 3];
+
+say('the triangle as it is', drawTri([F, G, I], 0));
+say('edge split, near half', drawTri([F, MID, I], 0));
+say('edge split, far half', drawTri([MID, G, I], 0));
+say('centroid split, the piece holding the edge', drawTri([F, G, CEN], 0));
+say('centroid split, one of the other two', drawTri([G, I, CEN], 0));
+
+rows.push('');
+rows.push('Lifting one corner off the plane does, and by very little: the two');
+rows.push('corners then differ in clip.y, and every vertex of a floor agreeing');
+rows.push('in clip.y is exactly what leaves it exposed. Ten microns is plenty;');
+rows.push('a nanometre is under the float32 step and is not.');
+rows.push('');
+
+const lift = (p, h) => { const c = clipOf(p, 0); c[1] += f * h; return c; };
+
+for (const h of [1e-5, 1e-7, 1e-9]) {
+  say(`one corner lifted ${h} world units`, drawRaw([lift(F, h), clipOf(G, 0), clipOf(I, 0)]));
+}
+
+rows.push('');
+rows.push('And the triangulation decides it outright, with no epsilon anywhere.');
+rows.push('Fanned from the one corner in front, the doomed triangle is the one');
+rows.push('holding the edge. Fanned from a corner behind the eye, that triangle');
+rows.push('has all three corners behind and is culled — correctly, since it is');
+rows.push('wholly behind — and the rest cover the same ground exactly.');
+rows.push('');
+
+const HEX = [
+  [-102.512, -592.09], [816.742, 179.255], [799.334, 200],
+  [200, 200], [200, 706.073], [-616.742, 20.745],
+];
+
+const fanFrom = (hub, yaw) => {
+  let total = 0;
+
+  for (let k = 1; k + 1 < HEX.length; k++) {
+    total += drawTri([HEX[hub], HEX[(hub + k) % HEX.length], HEX[(hub + k + 1) % HEX.length]], yaw);
+  }
+
+  return total;
+};
+
+say('fanned from the corner in front, yaw 0', fanFrom(0, 0));
+say('the same fan a ten-thousandth off axis', fanFrom(0, 1e-4));
+say('fanned from a corner behind, yaw 0', fanFrom(2, 0));
+say('fanned from another behind, yaw 0', fanFrom(4, 0));
+
 document.getElementById('out').textContent = rows.join('\n');
 
 
