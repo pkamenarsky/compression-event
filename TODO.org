@@ -3,6 +3,7 @@
 * groups with solids don't get resolved
 ** if resolve results in multiple polygons split them so they are selectable individually
 * slow motion animation so user can check for strange frames
+* better UI for unchained poly/groups
 
 * eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 
