@@ -1,3 +1,4 @@
+* version view horizontal, like keyframes
 * drag in 3d view pans in 2d view
 * erosion should be cumulative i think
 * slow motion animation so user can check for strange frames
