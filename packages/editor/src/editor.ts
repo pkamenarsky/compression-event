@@ -13,6 +13,7 @@ import {
   grouped,
   landing,
   pasted,
+  reaching,
   rechained,
   stamped,
   unchained,
@@ -22,7 +23,7 @@ import {
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
-import { Resolution, resolveGroup } from './resolve';
+import { resolveInto } from './resolve';
 import { theme } from './theme';
 import {
   EditorState,
@@ -602,58 +603,38 @@ function apart(s: EditorState): EditorState {
 }
 
 /**
- * The picked groups resolved: each replaced by the polygons its union comes to
- * at the version on screen. See `resolve.ts`.
+ * The selection resolved: replaced by the polygons its union comes to at the
+ * version on screen. See `resolve.ts`.
+ *
+ * The whole selection at once rather than one group at a time, because that is
+ * what resolving a selection means — two rooms picked together are one shape,
+ * exactly as they would be if they were grouped first. Which is how it is done:
+ * see `resolveInto`.
  *
  * The one gesture here that rewrites the whole chain rather than writing into
  * the version on screen, because the thing it replaces spans the whole chain.
  * Which is why it is a shortcut and nothing else — it is not a transform, there
  * is no handle for it, and undo is what takes it back.
- *
- * Anything picked that is not a group is left alone rather than refusing the
- * gesture: resolving a selection of a group and a room means resolving the
- * group, and the room was never in question.
- *
- * Nothing at all where the author says no to what it is about to drop. Asked
- * once for the whole selection rather than once per group, since answering the
- * same question four times is not consent, it is a queue.
  */
 function flattened(s: EditorState): EditorState | null {
-  const groups = s.selection.polygons.filter(id => s.world.groups.has(id));
-  const out = new Map<GroupId, Resolution>();
+  // What each pick moves as, at the level being worked at: drilled into a
+  // group, resolving two of its members is about those two.
+  const path = opened(s.world, s.inside);
+  const tops = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))];
+  const where = landing(s.world, s.currentVersion, s.inside);
+  const done = resolveInto(s.world, s.currentVersion, tops, where);
 
-  let world = s.world;
-
-  for (const id of groups) {
-    const done = resolveGroup(world, s.currentVersion, id);
-
-    if (done === null) continue;
-
-    world = done.world;
-    out.set(id, done);
-  }
-
-  if (out.size === 0) return null;
-
-  const losing = [...new Set([...out.values()].flatMap(r => r.losing))].sort((a, b) => a - b);
-
-  if (losing.length > 0 && !agreed(s, losing)) return null;
-
-  const picked = s.selection.polygons.map(id => out.get(id)?.id ?? id);
+  if (done === null) return null;
+  if (done.losing.length > 0 && !agreed(s, done.losing)) return null;
 
   return marked(
     {
       ...s,
-      world,
-      // Whatever is still there. A group that went and left one polygon is
-      // named by the polygon; one that stayed is named by itself.
-      selection: {
-        ...s.selection,
-        polygons: picked.filter(id => world.polygons.has(id) || world.groups.has(id)),
-      },
-      // The union may be nothing like what the group was inside, and standing
-      // in a group that no longer exists is a place with no way out.
-      inside: world.groups.has(s.inside ?? -1) ? s.inside : null,
+      world: done.world,
+      selection: { ...s.selection, polygons: done.ids },
+      // The union may be nothing like what the selection was inside, and
+      // standing in a group that no longer exists is a place with no way out.
+      inside: done.world.groups.has(s.inside ?? -1) ? s.inside : null,
     },
     s.world,
   );

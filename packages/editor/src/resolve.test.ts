@@ -4,6 +4,7 @@ import { Point } from '@ce/game/world';
 import { nextOf, shapeArea } from './geometry';
 import {
   TOP,
+  addArtefact,
   addPolygon,
   addVertex,
   csg,
@@ -13,6 +14,7 @@ import {
   hitEdge,
   hitPolygon,
   landing,
+  placeAt,
   removeVertices,
   resolveAt,
   showing,
@@ -26,13 +28,14 @@ import {
   VersionId,
   World,
   emptyWorld,
+  enclosing,
   initialState,
   ringsOf,
   standing,
 } from './types';
 import { Frame, truth } from './bake';
 import { FORMAT, Saved, restored, saved } from './save';
-import { resolveGroup } from './resolve';
+import { resolveGroup, resolveInto } from './resolve';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -518,3 +521,212 @@ function midpoint(it: { source: Point[], rings: readonly number[] }, i: number):
     y: (it.source[i].y + it.source[j].y) / 2,
   };
 }
+
+// -----------------------------------------------------------------------------
+// What comes out is what can be picked
+// -----------------------------------------------------------------------------
+
+describe('the group does not survive being resolved', () => {
+  test('a room with a pillar in it comes to two things, not a group', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const before = drawnArea(made.world, 0);
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    // The two sides of the set are two boundaries and cannot be one polygon,
+    // so this is exactly the case a resolve used to leave looking untouched:
+    // a group holding a level and a solid, replaced by a group holding a level
+    // and a solid.
+    expect(out.world.groups.size).toBe(0);
+    expect(out.ids.length).toBe(2);
+    expect(out.ids.every(id => out.world.polygons.has(id))).toBe(true);
+    expect(out.ids.map(id => out.world.polygons.get(id)!.type).sort())
+      .toEqual(['level', 'solid']);
+
+    expect(drawnArea(out.world, 0)).toBeCloseTo(before, 6);
+  });
+
+  test('rooms that do not touch come to one polygon each', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(300, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    // Two of them overlap and merge; the third is nowhere near either.
+    expect(out.world.groups.size).toBe(0);
+    expect(out.ids.length).toBe(2);
+
+    const areas = out.ids
+      .map(id => shapeArea(resolveAt(out.world, 0).find(r => r.id === id)!.shape))
+      .sort((a, b) => a - b);
+
+    expect(areas).toEqual([
+      expect.closeTo(100 * 100, 6),
+      expect.closeTo(100 * 160, 6),
+    ]);
+
+    // And each is its own thing: picking one is picking one.
+    for (const id of out.ids) expect(enclosing(out.world, id)).toEqual([]);
+  });
+
+  test('the group is left standing only where it cannot come apart', () => {
+    const { world, group } = pair();
+    const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
+    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+
+    // A squash on the outer group and a turn on the artefact under it: squash,
+    // turn, squash is a shear, and no layer says shear. See `composed`.
+    const squashed = transformed(held.world, 1, held.id, { scale: { x: 3, y: 1 } });
+    const turned = transformed(squashed, 1, dropped.id, { rotation: 0.5 });
+
+    const out = resolveInto(turned, 0, [held.id], landing(turned, 0, null))!;
+
+    expect(out.world.groups.has(held.id)).toBe(true);
+    expect(out.ids).toEqual([held.id]);
+  });
+
+  test("an artefact's own moves are none of a resolve's business", () => {
+    const { world, group } = pair();
+    const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
+    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+    const moved = transformed(held.world, 2, dropped.id, { translation: { x: 7, y: 11 } });
+
+    const out = resolveInto(moved, 0, [held.id], landing(moved, 0, null))!;
+
+    // Nothing it did went into the union, so nothing it did is lost by taking
+    // one — and the version that moved it is not one of the versions being
+    // warned about.
+    expect(out.losing).toEqual([]);
+    expect(out.world.versions[2].edits.get(dropped.id)!.transform.translation)
+      .toEqual({ x: 7, y: 11 });
+
+    for (const v of [0, 2]) {
+      const was = placeAt(moved, dropped.id, v)!;
+      const now = placeAt(out.world, dropped.id, v)!;
+
+      expect(now.x).toBeCloseTo(was.x, 9);
+      expect(now.y).toBeCloseTo(was.y, 9);
+    }
+  });
+
+  test('an artefact under it comes out where it stood', () => {
+    const { world, group } = pair();
+    const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
+    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+    const turned = transformed(held.world, 1, held.id, { rotation: 0.5 });
+
+    const was = [0, 1, 2].map(v => placeAt(turned, dropped.id, v)!);
+    const out = resolveInto(turned, 0, [held.id], landing(turned, 0, null))!;
+
+    expect(out.world.groups.size).toBe(0);
+
+    for (const v of [0, 1, 2]) {
+      const now = placeAt(out.world, dropped.id, v)!;
+
+      expect(now.x).toBeCloseTo(was[v].x, 9);
+      expect(now.y).toBeCloseTo(was[v].y, 9);
+    }
+  });
+});
+
+describe('a plain selection resolves the same way a group does', () => {
+  test('two picked rooms are one shape, with no group left behind', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+    );
+
+    const out = resolveInto(world, 0, ids, TOP)!;
+
+    expect(out.world.groups.size).toBe(0);
+    expect(out.ids.length).toBe(1);
+    expect(out.world.polygons.size).toBe(1);
+    expect(shapeArea(resolveAt(out.world, 0)[0].shape)).toBeCloseTo(100 * 160, 6);
+  });
+
+  test('it is the same answer as grouping them and resolving that', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const loose = resolveInto(world, 0, ids, TOP)!;
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const held = resolveGroup(made.world, 0, made.id)!;
+
+    const shapes = (w: World) => resolveAt(w, 0)
+      .map(it => `${it.polygon.type}:${shapeArea(it.shape).toFixed(6)}`)
+      .sort();
+
+    expect(shapes(loose.world)).toEqual(shapes(held.world));
+    expect(loose.world.groups.size).toBe(0);
+    expect(held.world.groups.size).toBe(0);
+  });
+
+  test('a selection inside an open group stays inside it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+      ['level', rect(400, 0, 10, 10)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const where = landing(made.world, 0, made.id);
+    const out = resolveInto(made.world, 0, [ids[0], ids[1]], where)!;
+
+    // The group is still there, holding what it held: the room the two came to,
+    // and the one that was not picked.
+    const group = out.world.groups.get(made.id)!;
+
+    expect(group.members.length).toBe(2);
+    expect(group.members).toContain(ids[2]);
+    expect(out.ids.every(id => group.members.includes(id))).toBe(true);
+  });
+
+  test('a moving group holding the selection still moves it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+      ['level', rect(400, 0, 10, 10)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const turned = transformed(made.world, 1, made.id, { rotation: 0.4 });
+    const before = [0, 1, 2].map(v => drawnArea(turned, v));
+
+    const out = resolveInto(turned, 0, [ids[0], ids[1]], landing(turned, 0, made.id))!;
+
+    // Read in the frame a member is read in at every version, not only at this
+    // one — so the group goes on turning what came out.
+    expect([0, 1, 2].map(v => drawnArea(out.world, v)))
+      .toEqual(before.map(a => expect.closeTo(a, 4)));
+  });
+
+  test('nothing where there is no geometry to union', () => {
+    const dropped = addArtefact(emptyWorld(), 'key', { x: 0, y: 0 }, 0, TOP);
+
+    expect(resolveInto(dropped.world, 0, [], TOP)).toBeNull();
+    expect(resolveInto(dropped.world, 0, [dropped.id], TOP)).toBeNull();
+  });
+
+  test('what it is about to drop is named for a selection too', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 100, 100)],
+    );
+
+    const moved = transformed(world, 3, ids[1], { translation: { x: 20, y: 0 } });
+
+    expect(resolveInto(moved, 0, ids, TOP)!.losing).toEqual([3]);
+    expect(resolveInto(moved, 3, ids, TOP)!.losing).toEqual([]);
+  });
+});

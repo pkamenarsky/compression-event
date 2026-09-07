@@ -75,12 +75,15 @@ import {
 } from './geometry';
 import {
   Contributed,
+  Landing,
   chain,
   contributed,
   depths,
   groupFrame,
+  joined,
   resolveAt,
   standingIn,
+  ungrouped,
   unplace,
 } from './scene';
 import {
@@ -90,13 +93,11 @@ import {
   Id,
   Polygon,
   PolygonId,
-  Transform,
   Version,
   VersionId,
   Vertex,
   VertexId,
   World,
-  parentOf,
   within,
 } from './types';
 
@@ -332,8 +333,20 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
 
 export interface Resolution {
   world: World
-  /** What to pick afterwards: the group, or the one polygon that replaced it. */
-  id: Id
+  /**
+   * What to pick afterwards: the polygons the union came to, each its own
+   * thing.
+   *
+   * Several, because a union is not one shape. Two rooms that do not touch
+   * union to two rings, and a room with a pillar in it to a ring on each side
+   * of the set — and the whole point of resolving is to be able to get at them,
+   * so handing them back held together in a group would be the gesture
+   * pretending to have happened.
+   *
+   * The group itself, in the one case it could not be taken apart: see
+   * `resolveGroup`.
+   */
+  ids: Id[]
   /**
    * The versions whose layers are about to stop saying anything — every version
    * but the one it was read at that had written something about a member.
@@ -390,7 +403,15 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
   // Everything under the group that was geometry. It goes entirely rather than
   // dying at a version: what replaces it stands at every version it stood at,
   // so leaving it would draw the same rooms twice.
-  const gone = new Set<Id>(within(world, id).filter(m => m !== id));
+  //
+  // Geometry, and nothing else. An artefact is a place and has nothing to do
+  // with a union — none of its layers went into one and none of them is lost by
+  // taking one, so a resolve has no business touching it. It came out here
+  // because `within` reaches everything, and the artefact was arriving with its
+  // moves deleted and `losing` naming versions that were losing nothing.
+  const gone = new Set<Id>(
+    within(world, id).filter(m => m !== id && !world.artefacts.has(m)),
+  );
   const kept = group.members.filter(m => world.artefacts.has(m));
 
   const polygons = new Map(world.polygons);
@@ -429,21 +450,11 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
 
   if (made.length === 0) return null;
 
-  // A group of one polygon and nothing else is not a group. Its layers move to
-  // the polygon, which composes them in the same order and the same frame — see
-  // `groupFrame`, whose walk is the polygon's own transform and then its
-  // holders', one version at a time.
-  const hoist = made.length === 1 && kept.length === 0;
-  const owner = parentOf(world).get(id) ?? null;
-
-  if (hoist) groups.delete(id);
-  else groups.set(id, { ...group, members: [...made, ...kept] });
-
-  if (hoist && owner !== null) {
-    const up = groups.get(owner)!;
-
-    groups.set(owner, { ...up, members: up.members.map(m => (m === id ? made[0] : m)) });
-  }
+  // The rings go in where the members were, and the group comes apart round
+  // them. Everything the group's own layers were doing is carried onto them by
+  // `ungrouped`, which is the one piece of this that already existed and the
+  // reason the group is used as scaffolding rather than dismantled by hand.
+  groups.set(id, { ...group, members: [...made, ...kept] });
 
   const depth = new Map(versions.map(k => [k, depths(world, k).get(id) ?? 0]));
 
@@ -452,25 +463,35 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
     // not recoverable as a transform on the union — that is the whole of why
     // this reads one version — and leaving it written would be a layer naming
     // something no longer in the world.
-    const edits = new Map<Id, Edit>(
-      [...version.edits].filter(([who]) => !gone.has(who) && !(hoist && who === id)),
-    );
+    const edits = new Map<Id, Edit>([...version.edits].filter(([who]) => !gone.has(who)));
 
-    if (hoist) {
-      // The group's own layer, where there is no group left to carry it. The
-      // depth is the one it resolved to rather than the one it stated, since a
-      // version that stated nothing inherited its base's and there is nothing
-      // left to inherit from.
+    // The group's depth, written onto every ring at every version it stands
+    // at.
+    //
+    // This is the one thing an ordinary ungroup cannot carry and this one can.
+    // A group's depth offsets the *union* of what its members produced, so once
+    // the members are back to being members there is no union for it to be
+    // about and `composed` drops it. Here each ring already is that union, so a
+    // depth on the ring means exactly what the group's meant.
+    //
+    // At every version rather than only where the group stated one, because a
+    // version that states nothing inherits its base's — and `ungrouped` is
+    // about to write a transform into every member at every version the group
+    // spoke at, which would state a depth of nought at each of them.
+    if (versions.includes(k)) {
       const d = depth.get(k) ?? 0;
-      const transform: Transform = {
-        ...(version.edits.get(id)?.transform ?? EMPTY_TRANSFORM),
-        // The walls go the other way, and that is the same identity
-        // `contributed` states: erode(A - B, d) = erode(A, d) - erode(B, -d).
-        erosion: polygons.get(made[0])!.type === 'solid' ? -d : d,
-      };
 
-      if (versions.includes(k)) {
-        edits.set(made[0], { transform, vertices: new Map<VertexId, Point>(), depths: new Map() });
+      for (const m of made) {
+        edits.set(m, {
+          transform: {
+            ...EMPTY_TRANSFORM,
+            // The walls go the other way, and that is the same identity
+            // `contributed` states: erode(A - B, d) = erode(A, d) - erode(B, -d).
+            erosion: polygons.get(m)!.type === 'solid' ? -d : d,
+          },
+          vertices: new Map<VertexId, Point>(),
+          depths: new Map(),
+        });
       }
     }
 
@@ -487,9 +508,22 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
     return { ...version, edits, footings };
   });
 
+  const held = { ...world, polygons, groups, nextId: next, versions: versionsOut };
+
+  // Taken apart, so that what came out is pickable one ring at a time. It is
+  // the whole reason to resolve: a union you cannot get at is the group you
+  // already had.
+  //
+  // Refused only where a version cannot hold what coming apart would have to
+  // write, which after this is only ever about an artefact the group was
+  // holding — every ring's own transform is the identity here, so composing the
+  // group's onto it is the group's, exactly. Then the group stays, and what is
+  // handed back says so.
+  const apart = ungrouped(held, id);
+
   return {
-    world: { ...world, polygons, groups, nextId: next, versions: versionsOut },
-    id: hoist ? made[0] : id,
+    world: apart ?? held,
+    ids: apart === null ? [id] : made,
     losing: world.versions
       .map((_unused, k) => k)
       .filter(k => k !== v && (
@@ -497,4 +531,68 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
         || [...world.versions[k].footings.keys()].some(who => gone.has(who) || who === id)
       )),
   };
+}
+
+/**
+ * The picked things replaced by the polygons their union comes to.
+ *
+ * What the gesture actually calls. A selection is not a group and does not have
+ * to be one to be read as one — but it is made one anyway, and taken apart
+ * again at the end, because a group is *exactly* "these things, read together"
+ * and everything that follows from that is already written. Making one costs a
+ * map entry; the alternative is a second copy of `groupFrame`, a second copy of
+ * the frame each ring is written down in, and a second answer to what becomes
+ * of an artefact when the thing holding it goes.
+ *
+ * `ids` are what a click picked, already reduced to what moves as one at the
+ * level being worked at — `reaching`, which the caller has done.
+ */
+export function resolveInto(
+  world: World,
+  v: VersionId,
+  ids: readonly Id[],
+  where: Landing,
+): Resolution | null {
+  if (ids.length === 0) return null;
+
+  // One group is the thing itself, and reading it in its own frame is what
+  // leaves its motion on what comes out. Wrapping it in another would read it
+  // in the frame outside it and press this version's turn into the points.
+  if (ids.length === 1 && world.groups.has(ids[0])) return resolveGroup(world, v, ids[0]);
+
+  if (!ids.some(id => within(world, id).some(m => world.polygons.has(m)))) return null;
+
+  const made = enclosed(world, ids, where);
+
+  return resolveGroup(made.world, v, made.id);
+}
+
+/**
+ * A group over `ids`, made only so that it can be taken apart again.
+ *
+ * `grouped` is the gesture and refuses things this must not refuse — fewer than
+ * two, or everything the open group already holds. Both are refusals about a
+ * group being worth making, and this one is not being made to be kept.
+ *
+ * Born at the root and never taken out, so it holds its members at every
+ * version they stand at. Nothing is compensated, exactly as in `grouped`: its
+ * transform is the identity everywhere, so everything is where it was.
+ */
+function enclosed(world: World, ids: readonly Id[], where: Landing): {
+  world: World
+  id: GroupId
+} {
+  const id = world.nextId;
+  const held = new Set<Id>(ids);
+  const groups = new Map(world.groups);
+  const parent = where.into === null ? undefined : groups.get(where.into);
+
+  groups.set(id, { birth: 0, death: null, members: [...ids] });
+
+  // Taken out of wherever they were, so nothing is claimed twice.
+  if (where.into !== null && parent !== undefined) {
+    groups.set(where.into, { ...parent, members: parent.members.filter(m => !held.has(m)) });
+  }
+
+  return { world: joined({ ...world, groups, nextId: id + 1 }, where.into, [id]), id };
 }
