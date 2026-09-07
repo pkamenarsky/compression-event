@@ -248,6 +248,115 @@ say('the same edge bent a quarter of a unit', drawTri([[200, 200], [200.25, 706.
 
 document.getElementById('out').textContent = rows.join('\n');
 
+
+// -----------------------------------------------------------------------------
+// The same triangle again, through WebGPU
+//
+// Which reaches Metal through Dawn rather than through ANGLE. If it fails here
+// too — and it does — then the translation layer is not what is dropping it,
+// and what is left is the Metal driver or the GPU itself. Not distinguishable
+// from out here, and untested on anything that is not an Apple part.
+// -----------------------------------------------------------------------------
+
+(async () => {
+  if (!navigator.gpu) {
+    document.getElementById('out').textContent += '\n\nWebGPU unavailable, so the ANGLE question goes unasked.';
+    return;
+  }
+
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+
+  const W = 256, H = 144, format = 'rgba8unorm';
+
+  const target = device.createTexture({
+    size: [W, H],
+    format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+
+  const shader = device.createShaderModule({
+    code: `
+      @vertex fn vs(@location(0) clip: vec4f) -> @builtin(position) vec4f { return clip; }
+      @fragment fn fs() -> @location(0) vec4f { return vec4f(1.0, 0.0, 0.0, 1.0); }
+    `,
+  });
+
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: {
+      module: shader,
+      entryPoint: 'vs',
+      buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
+    },
+    fragment: { module: shader, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+  });
+
+  const stride = Math.ceil(W * 4 / 256) * 256;
+  const readback = device.createBuffer({
+    size: stride * H,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  const draw = async (clips) => {
+    const data = new Float32Array(clips.flat());
+    const vbuf = device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+
+    device.queue.writeBuffer(vbuf, 0, data);
+
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginRenderPass({
+      colorAttachments: [{
+        view: target.createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vbuf);
+    pass.draw(3);
+    pass.end();
+
+    enc.copyTextureToBuffer({ texture: target }, { buffer: readback, bytesPerRow: stride }, [W, H]);
+    device.queue.submit([enc.finish()]);
+
+    await readback.mapAsync(GPUMapMode.READ);
+    const px = new Uint8Array(readback.getMappedRange().slice(0));
+    readback.unmap();
+    vbuf.destroy();
+
+    let n = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) if (px[y * stride + x * 4] > 100) n++;
+    }
+
+    return n;
+  };
+
+  const A = [6.4267, -2.285, -8.2081, -8], B = [6.4267, -2.285, -28.4713, -28.2429];
+  const C = [-3.2941, -2.285, 23.5072, 23.6836];
+  const vary = (v, i, d) => v.map((n, k) => (k === i ? n + d : n));
+
+  const lines = ['', 'And the same through WebGPU, which reaches Metal without ANGLE.', ''];
+  const put = (label, n) => lines.push(`  ${label.padEnd(44)} ${String(n).padStart(7)} px`);
+
+  put('as measured', await draw([A, B, C]));
+  put('either behind corner moved in x', await draw([A, vary(B, 0, 1e-3), C]));
+  put('either behind corner moved in y', await draw([A, vary(B, 1, 1e-3), C]));
+  put('the front corner moved in y', await draw([A, B, vary(C, 1, 1e-3)]));
+  put('shared clip.x scaled down to 0.1', await draw([
+    [0.1, -2.285, -8.2081, -8], [0.1, -2.285, -28.4713, -28.2429], C,
+  ]));
+  put('only one corner behind the eye', await draw([A, [6.4267, -2.285, 8, 9], C]));
+
+  document.getElementById('out').textContent += lines.join('\n');
+})();
   </script>
 </body>
 </html>
