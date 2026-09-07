@@ -62,6 +62,7 @@ import {
   handles,
   occupying,
   occupyingSource,
+  outlining,
   removeAt,
   retypeArtefacts,
   shownAt,
@@ -554,8 +555,12 @@ export function worldCanvas(
       // The middle of the box round it all rather than the average of the
       // points: see `middle`, and see what it does to a shape somebody has just
       // resolved.
+      //
+      // Round what is drawn rather than round what it was drawn from, which is
+      // `outlining`'s business: a group's pillar is a hole in its room and not
+      // a place the group reaches to.
       const pivot = middle([
-        ...items.flatMap(it => it.source),
+        ...outlining(world(), v, items, opened(world(), inside())),
         ...places,
         ...(beginning ? [was.start.at] : []),
       ]);

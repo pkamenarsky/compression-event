@@ -2274,6 +2274,47 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
 }
 
 /**
+ * The outline of what is picked, as points: where a gesture takes the selection
+ * to be.
+ *
+ * What is drawn, rather than what it was drawn from. A shut group's outline is
+ * its level side with its solid side taken out of it — `occupying` says why —
+ * and a pillar is not part of where a room is. It is a hole in one. So a group
+ * whose pillar reaches out into the dark is still a group centred on its room,
+ * and turning it does not swing about a point out in the middle of nothing.
+ *
+ * Which is the same answer the eye gives, because it is the same answer the
+ * drawing gives: the two ask `occupying` and get one shape back.
+ *
+ * Anything drawn by itself speaks for itself. A lone pillar is a thing that has
+ * been picked and is on screen, so it is where it is.
+ *
+ * The source rings where there is no outline at all — eroded past its own
+ * middle, on every side. The same fallback the drawing makes, and for the same
+ * reason: a selection with nothing on screen still has to be somewhere.
+ */
+export function outlining(
+  world: World,
+  v: VersionId,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+): Point[] {
+  const out: Point[] = [];
+
+  for (const g of occupying(world, v, items, path)) {
+    for (const ring of g.shape.length === 0 ? g.floor : g.shape) out.push(...ring);
+  }
+
+  for (const it of items) {
+    if (swallowed(world, it.id, path)) continue;
+
+    for (const ring of it.shape.length === 0 ? [it.source] : it.shape) out.push(...ring);
+  }
+
+  return out.length > 0 ? out : items.flatMap(it => it.source);
+}
+
+/**
  * Whether a polygon is drawn by itself, or swallowed by a group drawing for it.
  *
  * Any enclosing group that is not on the open path shuts it in. It does not

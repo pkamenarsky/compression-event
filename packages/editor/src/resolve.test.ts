@@ -15,6 +15,7 @@ import {
   hitPolygon,
   landing,
   middle,
+  outlining,
   placeAt,
   removeVertices,
   resolveAt,
@@ -28,6 +29,7 @@ import {
   VERSIONS,
   VersionId,
   World,
+  GroupId,
   emptyWorld,
   enclosing,
   initialState,
@@ -872,8 +874,59 @@ describe('floors are clipped to the ground', () => {
 describe('resolving does not move where a gesture turns about', () => {
   /** What a transform gesture takes as its pivot: see `middle` and the turn in
    * `canvas.ts`, which builds this out of exactly these points. */
-  const pivotOf = (world: World, v: VersionId) =>
-    middle(resolveAt(world, v).flatMap(it => it.source));
+  const pivotOf = (world: World, v: VersionId, path: GroupId[] = []) =>
+    middle(outlining(world, v, resolveAt(world, v), path));
+
+  test('a group turns about its room, not about the pillar sticking out of it', () => {
+    // The pillar reaches a long way past the room, and takes a corner off it.
+    // What the group puts into the level is the room less that corner, and
+    // that is where the group is — the rest of the pillar is a hole in
+    // nothing. Over both it would be the middle of a 460 square.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(60, 60, 400, 400)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+
+    expect(pivotOf(made.world, 0)).toEqual({ x: 50, y: 50 });
+    expect(middle(resolveAt(made.world, 0).flatMap(it => it.source)))
+      .toEqual({ x: 230, y: 230 });
+
+    // And resolving it does not move that: the shape it comes to is the shape
+    // it was already drawing.
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(pivotOf(out.world, 0)).toEqual({ x: 50, y: 50 });
+  });
+
+  test('a group of nothing but pillars is still somewhere', () => {
+    const { world, ids } = drawn(
+      ['solid', rect(0, 0, 100, 100)],
+      ['solid', rect(100, 100, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+
+    // No level side to take them out of, so the walls are what it draws and
+    // the walls are where it is. See `occupied`.
+    expect(pivotOf(made.world, 0)).toEqual({ x: 100, y: 100 });
+  });
+
+  test('drilled into it, a member is where the member is', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(60, 60, 400, 400)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const inside = resolveAt(made.world, 0).filter(it => it.id === ids[1]);
+
+    // The group is open, so nothing is drawing for the pillar and the pillar
+    // is a thing on screen in its own right.
+    expect(middle(outlining(made.world, 0, inside, [made.id])))
+      .toEqual({ x: 260, y: 260 });
+  });
 
   test('the same ground written another way turns about the same point', () => {
     // The small room sits inside the big one and shares its bottom edge, so
