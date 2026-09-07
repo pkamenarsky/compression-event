@@ -18,7 +18,7 @@
 
 import { WALK_SPEED } from '@ce/game';
 import { SCALE } from '@ce/game/world';
-import { Laid, Landing, groupFrame, joined, unplace, without } from './scene';
+import { Laid, Landing, joined, laidAt, unplace, without } from './scene';
 import { PathId, Point, VersionId, World } from './types';
 
 /** Editor units the player covers in a second: the game's speed is in world
@@ -67,19 +67,23 @@ export function seconds(t: number): string {
  * World points as one path's own frame reads them, at a version: what a
  * gesture holding a place on screen has to write.
  *
- * The inverse of exactly what `pathAt` placed them by, which is the whole
- * chain — the groups holding it *and* its own layers. Not `under`, which is
- * the other frame a path has and answers a different question: `under` is
- * where a path's own *transform* is read, so it is what a drag or a turn
- * writes into, and it stops short of that transform by construction. The
- * points are underneath it. Inverting `under` here wrote the walk back in the
- * frame it had before its own transform, so dragging a point of a moved path
- * put it where the path used to be.
+ * `Laid.frame`, inverted — the frame the points came out of is the frame they
+ * go back into, and that is the whole of the rule.
  *
- * Two frames because a path is the one thing here that writes geometry
- * directly *and* carries a transform over it. A polygon has the same pair and
- * never notices: its corners go through `Resolved.frame`, which is this one,
- * and its transform through `under`.
+ * It is worth saying which frame that is, because a path has two and so does
+ * everything else here. Geometry is written in the composition of the whole
+ * chain, which is `Resolved.frame` for a polygon and `Laid.frame` for a path;
+ * a *transform* is written in `under`, which is the same composition with the
+ * thing's own transform left off — necessarily, since that transform is the
+ * part being written. `placeVertex` and a drag make exactly this pair for a
+ * polygon and nobody notices, because a polygon has a `Resolved` in hand and
+ * reads `it.frame` off it.
+ *
+ * A path had no such thing to read, so this reached for a frame by name and
+ * reached for the wrong one: `under`, which stops short of the path's own
+ * transform, so a dragged point was written back in the frame the path had
+ * before it was moved and landed where the path used to be. `Laid` carries its
+ * frame now, and there is one to read.
  */
 export function inFrame(
   world: World,
@@ -87,7 +91,12 @@ export function inFrame(
   id: PathId,
   points: readonly Point[],
 ): Point[] {
-  const m = groupFrame(world, v, id);
+  const m = laidAt(world, id, v)?.frame;
+
+  // Nothing to write against: the path is not standing at this version, so
+  // neither is whatever gesture is asking. It writes its points unchanged
+  // rather than through a frame invented for the occasion.
+  if (m === undefined) return [...points];
 
   return points.map(p => unplace(m, p));
 }

@@ -1323,6 +1323,85 @@ describe('a group moves what is in it', () => {
   });
 });
 
+
+describe('born into a group that was already moved', () => {
+  /**
+   * A group with a move written at v0, and the version to drop things into it
+   * at. What the earlier move must not do is apply twice — once in the ground
+   * the thing was placed against, and again on the way back out.
+   */
+  function moved(): { world: World, group: GroupId, at: VersionId } {
+    const a = drawn(['level', rect(0, 0, 10, 10)], ['level', rect(20, 0, 10, 10)]);
+    const g = grouped(a.world, 0, a.ids, TOP)!;
+
+    const world = withEdit(g.world, 0, g.id, {
+      ...editAt(g.world, 0, g.id, 0),
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 100, y: 0 } },
+    });
+
+    return { world, group: g.id, at: 2 };
+  }
+
+  test('a polygon drawn into it stands where it was drawn', () => {
+    const { world, group, at } = moved();
+    const put = addPolygon(world, 'level', rect(5, 5, 4, 4), at, landing(world, at, group));
+
+    expect(only(put.world, at, put.id).source[0]).toEqual({ x: 5, y: 5 });
+  });
+
+  test('an artefact dropped into it stands where it was dropped', () => {
+    const { world, group, at } = moved();
+    const put = addArtefact(world, 'key', { x: 5, y: 5 }, at, landing(world, at, group));
+
+    expect(placeAt(put.world, put.id, at)).toEqual({ x: 5, y: 5 });
+  });
+
+  test('a path drawn into it runs where it was drawn', () => {
+    const { world, group, at } = moved();
+    const put = addPath(
+      world,
+      [{ x: 5, y: 5 }, { x: 9, y: 5 }],
+      at,
+      landing(world, at, group),
+    );
+
+    expect(pathAt(put.world, put.id, at)).toEqual([{ x: 5, y: 5 }, { x: 9, y: 5 }]);
+  });
+
+  test('and all three still move with the group from there on, by the same step', () => {
+    const { world, group, at } = moved();
+
+    // The three of them born together at the same place, so that what the
+    // group does next can be read off any of them and compared.
+    const poly = addPolygon(world, 'level', rect(5, 5, 4, 4), at, landing(world, at, group));
+    const art = addArtefact(poly.world, 'key', { x: 5, y: 5 }, at, landing(poly.world, at, group));
+    const walk = addPath(
+      art.world,
+      [{ x: 5, y: 5 }, { x: 9, y: 5 }],
+      at,
+      landing(art.world, at, group),
+    );
+
+    const next = (at + 1) as VersionId;
+    const later = withEdit(walk.world, next, group, {
+      ...editAt(walk.world, next, group, 0),
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 100, y: 7 } },
+    });
+
+    const step = (a: Point, b: Point) => ({ x: b.x - a.x, y: b.y - a.y });
+
+    const ring = step(only(later, at, poly.id).source[0], only(later, next, poly.id).source[0]);
+    const place = step(placeAt(later, art.id, at)!, placeAt(later, art.id, next)!);
+    const tape = step(pathAt(later, walk.id, at)![0], pathAt(later, walk.id, next)![0]);
+
+    // Whatever the group does between the two versions, it does to all three.
+    // The number itself is the group's business; that they agree is not.
+    expect(place).toEqual(ring);
+    expect(tape).toEqual(ring);
+  });
+});
+
+
 describe('a group holds a measuring path', () => {
   /** A room, a tape across it, and the group over the two. */
   function taped(): { world: World, room: PolygonId, walk: PathId, group: GroupId } {

@@ -2848,7 +2848,11 @@ function layers(
     pathsAt(world, current),
     local.laying?.id ?? null,
     local.onPath,
-    new Set(pathsIn(world, [...selection.paths, ...selection.polygons])),
+    new Set(selection.paths),
+    // What a picked group has hold of. Drawn differently from a tape picked in
+    // itself, because the two are moved by different things: this one goes
+    // where the group goes, and letting go of the group lets go of it.
+    new Set(pathsIn(world, selection.polygons)),
   ));
 
   if (local.laying !== null) out.push(ctx => laying(ctx, view, local.laying!));
@@ -3691,28 +3695,26 @@ function measures(
   /** The one being carried on with, drawn by the gesture instead. */
   open: PathId | null,
   picked: OnPath | null,
-  /** Every path the selection reaches, whether it was named itself or through
-   * a group holding it. */
-  whole: ReadonlySet<PathId>,
+  /** The paths the selection names in themselves. */
+  mine: ReadonlySet<PathId>,
+  /** The paths it reaches through a group it names instead. */
+  held: ReadonlySet<PathId>,
 ): void {
   for (const it of laid) {
     if (it.id === open) continue;
 
-    tape(
-      ctx,
-      view,
-      it.points,
-      null,
-      picked?.id === it.id ? picked.index : null,
-      whole.has(it.id),
-    );
+    // Named beats held where something has managed to be both: what the
+    // selection says outright is what it says.
+    const whole = mine.has(it.id) ? 'own' : held.has(it.id) ? 'group' : null;
+
+    tape(ctx, view, it.points, null, picked?.id === it.id ? picked.index : null, whole);
   }
 }
 
 /** The path being laid down: what is there, and the leg the cursor is on the
  * end of. */
 function laying(ctx: CanvasRenderingContext2D, view: View, w: Walk): void {
-  tape(ctx, view, w.points, w.at, null, false);
+  tape(ctx, view, w.points, w.at, null, null);
 }
 
 /**
@@ -3725,21 +3727,30 @@ function tape(
   points: readonly Point[],
   to: Point | null,
   picked: number | null,
-  /** Whether the whole walk is picked, which is the state a transform acts on.
-   * Drawn as the picked colour rather than as an outline round it: a tape is a
-   * line, and a line round a line is two lines. */
-  whole: boolean,
+  /**
+   * How the whole walk is picked, which is the state a transform acts on, or
+   * nothing where it is not: `own` for a tape the selection names, `group` for
+   * one a picked group has hold of.
+   *
+   * Drawn as a colour rather than as an outline round it: a tape is a line,
+   * and a line round a line is two lines. The two colours are the ones the
+   * rest of the canvas already uses for the difference — blue for a thing
+   * picked in itself, the group's green for one picked through a group.
+   */
+  whole: 'own' | 'group' | null,
 ): void {
   if (points.length === 0) return;
 
   const screen = points.map(p => toScreen(view, p));
   const times = timings(to === null ? points : [...points, to]);
 
+  const ink = whole === 'own' ? theme.picked : whole === 'group' ? theme.grouped : theme.path;
+
   ctx.beginPath();
   screen.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
 
-  ctx.strokeStyle = whole ? theme.picked : theme.path;
-  ctx.lineWidth = whole ? 2 : 1.5;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = whole === null ? 1.5 : 2;
   ctx.lineJoin = 'round';
   ctx.setLineDash(DASH);
   ctx.stroke();
@@ -3764,7 +3775,7 @@ function tape(
   for (const p of screen) {
     ctx.rect(Math.round(p.x) - 2.5, Math.round(p.y) - 2.5, 5, 5);
   }
-  ctx.fillStyle = whole ? theme.picked : theme.path;
+  ctx.fillStyle = ink;
   ctx.fill();
 
   if (picked !== null && screen[picked] !== undefined) {

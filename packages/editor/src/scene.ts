@@ -507,10 +507,26 @@ export function artefactsWithinBox(shown: readonly Placed[], a: Point, b: Point)
 // one thing they now share.
 // -----------------------------------------------------------------------------
 
-/** One measuring path as a version left it: the walk in world units. */
+/**
+ * One measuring path as a version left it.
+ *
+ * A `Resolved` with the parts a path has, and named the same: `points` is the
+ * walk in world units, where the handles live, and `frame` is what took it
+ * there. There is no `local` beside them because there is nothing to displace
+ * — the route is one list every version reads — so the path's own points are
+ * its `local`, and `frame` is the whole of what a version does to it.
+ */
 export interface Laid {
   id: PathId
   points: Point[]
+  /**
+   * Every transform down the chain, composed: exactly `Resolved.frame`.
+   *
+   * Kept here rather than asked for, because a gesture writing a point back
+   * needs the same frame that placed it and reaching for another one is the
+   * mistake worth designing out. See `inFrame`.
+   */
+  frame: Affine
 }
 
 /**
@@ -520,11 +536,19 @@ export interface Laid {
  * in the path's own frame, and the frame is what the chain has to say about it.
  */
 export function pathAt(world: World, id: PathId, v: VersionId): Point[] | null {
+  return laidAt(world, id, v)?.points ?? null;
+}
+
+/** The same, with the frame it was placed by — which is what anything writing
+ * a point back wants, and the reason `Laid` carries one. */
+export function laidAt(world: World, id: PathId, v: VersionId): Laid | null {
   const it = world.paths.get(id);
 
   if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
 
-  return place(groupFrame(world, v, id), it.points);
+  const frame = groupFrame(world, v, id);
+
+  return { id, points: place(frame, it.points), frame };
 }
 
 /** Every path standing at a version, in id order. */
@@ -532,9 +556,9 @@ export function pathsAt(world: World, v: VersionId): Laid[] {
   const out: Laid[] = [];
 
   for (const id of world.paths.keys()) {
-    const points = pathAt(world, id, v);
+    const it = laidAt(world, id, v);
 
-    if (points !== null) out.push({ id, points });
+    if (it !== null) out.push(it);
   }
 
   return out.sort((a, b) => a.id - b.id);
@@ -1027,18 +1051,44 @@ export function unstep(m: Affine, dx: number, dy: number): Point {
 }
 
 /**
- * A group's own frame at a version: its layer at every stage of the chain, and
- * every group holding it, in the order resolve applies them.
+ * The frame a thing is placed by at a version: its own layer at every stage of
+ * the chain, and every group holding it, in the order resolve applies them.
  *
- * The same walk `resolveAt` does for a polygon, without the geometry — a group
- * has none. What it is for is the bake: keeping a group's points in this rather
- * than in world units is what makes a turning group interpolate along its arc
+ * The same walk `resolveAt` does for a polygon, without the geometry — this is
+ * what it puts in `Resolved.frame`, for the things that have no ring to hang
+ * one on. A group has none, an artefact has a point, a path has a run of them.
+ * What it is also for is the bake: keeping a group's points in this rather than
+ * in world units is what makes a turning group interpolate along its arc
  * instead of across the chord.
+ *
+ * The walk starts where the thing does. Nothing that happened before it was
+ * there applies to it — a room drawn into a group at v2 is placed against the
+ * group *as it stands at v2*, and the move the group was given at v0 is
+ * already in the ground it was drawn on rather than something still to be
+ * applied. `resolveAt` says exactly this for a polygon by seeding the frame at
+ * `polygon.birth`, and this said it for nothing at all: an artefact dropped
+ * into a group an earlier version had moved came out offset by that move, once
+ * for every version between.
+ *
+ * Membership in the chain rather than `k < birth`, for the reason `standing`
+ * is: versions happen to be numbered in order today and forks would end that.
  */
-export function groupFrame(world: World, v: VersionId, id: GroupId): Affine {
+export function groupFrame(world: World, v: VersionId, id: Id): Affine {
   let m = IDENTITY;
 
+  // Nothing in the maps is nothing to be born — the sides `sideOf` mints, and
+  // anything asking about an id the world has lost. The whole chain for those,
+  // which is what this always did.
+  const born = lived(world, id)?.birth;
+  let here = born === undefined;
+
   for (const k of chain(world, v)) {
+    if (!here) {
+      if (k !== born) continue;
+
+      here = true;
+    }
+
     const version = world.versions[k];
     const footing = version.footings.get(id);
 

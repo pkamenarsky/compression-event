@@ -57,6 +57,18 @@ export const theme = {
    * kind — so the fill is the whole of what says one is picked rather than
    * several polygons. */
   groupFill: 'rgba(95, 185, 138, 0.16)',
+  /**
+   * The same green as a line, for the things that are picked by way of a group
+   * rather than in themselves.
+   *
+   * A measuring path is the one thing that needs it. Everything else in a
+   * picked group is drawn as part of the union and says so with `groupFill`; a
+   * tape is not in any union — it is a line lying over one — so it has to say
+   * it in its own stroke. Blue is what a thing picked in itself is drawn in
+   * everywhere, so a tape that turns green is saying *the group has hold of me,
+   * not you*, which is the difference that decides what the next gesture moves.
+   */
+  grouped: '#5fb98a',
   /** Outside the group standing open: still drawn, so the level around it can
    * be worked against, but not pickable and not competing for the eye. */
   outside: '#4a4d57',
