@@ -241,7 +241,7 @@ export type ArtefactId = number;
 
 /** Whatever a version's layer can carry a transform for. One counter, so no
  * two ever collide and a map over all of them is well defined. */
-export type Id = PolygonId | GroupId | ArtefactId;
+export type Id = PolygonId | GroupId | ArtefactId | PathId;
 export type VersionId = number;
 
 /**
@@ -581,12 +581,32 @@ export interface Start {
  * from here to there takes — and the answer is the run of the points times the
  * speed the player walks at. See `seconds`.
  *
- * Version-independent deliberately. A path is drawn over whichever version is
- * being looked at and reads the same over all of them, because the thing being
- * measured is the route, and comparing the same route against two versions is
- * most of what one is drawn for.
+ * The route is version-independent and the frame it is read in is not, which
+ * is the one split that lets a tape be both. `points` is the walk as it was
+ * laid down, in the path's own frame, and every version reads the same list —
+ * so a leg added at v3 is a leg at v0 too, and comparing the same route
+ * against two versions goes on being what a path is drawn for. What a version
+ * may say about it is where it *is*: its layer carries a transform for the
+ * path exactly as it does for a polygon, and so do the layers of every group
+ * holding it. A room moved at v2 takes the tape measuring it along.
+ *
+ * That is also why it has a life. It has to be a thing a group can hold — the
+ * whole point of holding one is that the walk goes where the level goes — and
+ * a member is something born into a version and taken out at one, the same way
+ * everything else in the world is. A path drawn at v0 stands at every version,
+ * which is what every path in every file written before this did.
+ *
+ * There is no ring under it and no depth on it. `Edit.vertices` and
+ * `Edit.depths` are empty for a path the way they are for a group, and the
+ * erosion gesture leaves it alone the way it leaves an artefact alone: a walk
+ * has no thickness to take a depth out of.
  */
 export interface Path {
+  /** The version whose layer introduced it. Nothing before it may name it. */
+  birth: VersionId
+  /** The version whose layer took it out, or nothing while it stands. */
+  death: VersionId | null
+  /** In its own frame, before any version's transform. */
   points: Point[]
 }
 
@@ -596,7 +616,8 @@ export interface World {
   artefacts: Map<ArtefactId, Artefact>
   /** Where the player comes in. Always there, at every version. See `Start`. */
   start: Start
-  /** The measuring paths. Not part of the level — see `Path`. */
+  /** The measuring paths. Not shipped and not collided with, but in the
+   * versions and in the groups like everything else — see `Path`. */
   paths: Map<PathId, Path>
   /** One counter for every kind of id. */
   nextId: number
@@ -725,6 +746,17 @@ export interface Selection {
   vertices: VertexId[]
   artefacts: ArtefactId[]
   /**
+   * The picked paths, whole.
+   *
+   * Its own list rather than a share of `polygons`, for the reason the
+   * artefacts have one: a group's members are of every kind and the selection
+   * is not, so what comes out of an ungroup has to have somewhere to go. A
+   * single point of a path is a different question and is not in here at all —
+   * see `Local.onPath` in `canvas.ts`, which is about a gesture rather than
+   * about the document.
+   */
+  paths: PathId[]
+  /**
    * Whether the start is picked, which is a flag rather than an id because
    * there is one of it and it has none.
    *
@@ -740,6 +772,7 @@ export const EMPTY_SELECTION: Selection = {
   polygons: [],
   vertices: [],
   artefacts: [],
+  paths: [],
   start: false,
 };
 
@@ -796,6 +829,11 @@ export type Clipping =
       death?: number
       edits: [number, Edit][]
     }
+  /** A path, the same way round again: the walk as it stood at the copy
+   * version in world units, and a layer per version after it. There are no
+   * corner ids in it because a path's points have none — the route is one
+   * list and no layer displaces part of it. */
+  | { kind: 'path', points: Point[], death?: number, edits: [number, Edit][] }
 
 // -----------------------------------------------------------------------------
 // Undo
@@ -882,6 +920,7 @@ function settled(s: EditorState): EditorState {
       // Always there, so nothing can have taken it away.
       start: s.selection.start,
       artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
+      paths: s.selection.paths.filter(id => s.world.paths.has(id)),
     },
   };
 }

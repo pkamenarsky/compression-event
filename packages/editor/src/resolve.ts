@@ -456,15 +456,16 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
   // dying at a version: what replaces it stands at every version it stood at,
   // so leaving it would draw the same rooms twice.
   //
-  // Geometry, and nothing else. An artefact is a place and has nothing to do
-  // with a union — none of its layers went into one and none of them is lost by
-  // taking one, so a resolve has no business touching it. It came out here
-  // because `within` reaches everything, and the artefact was arriving with its
-  // moves deleted and `losing` naming versions that were losing nothing.
-  const gone = new Set<Id>(
-    within(world, id).filter(m => m !== id && !world.artefacts.has(m)),
-  );
-  const kept = group.members.filter(m => world.artefacts.has(m));
+  // Geometry, and nothing else. An artefact is a place and a path is a walk,
+  // and neither has anything to do with a union — none of their layers went
+  // into one and none of them is lost by taking one, so a resolve has no
+  // business touching either. They came out here because `within` reaches
+  // everything, and the artefact was arriving with its moves deleted and
+  // `losing` naming versions that were losing nothing.
+  const aside = (m: Id): boolean => world.artefacts.has(m) || world.paths.has(m);
+
+  const gone = new Set<Id>(within(world, id).filter(m => m !== id && !aside(m)));
+  const kept = group.members.filter(aside);
 
   const polygons = new Map(world.polygons);
   const groups = new Map(world.groups);

@@ -57,6 +57,8 @@ import {
   GroupId,
   IconType,
   Id,
+  Path,
+  PathId,
   Vertex,
   Polygon,
   PolygonId,
@@ -317,7 +319,7 @@ export function facing(m: Affine): number {
  * contents going.
  */
 export function removals(world: World, id: Id): VersionId[] {
-  const own = world.polygons.get(id) ?? world.groups.get(id) ?? world.artefacts.get(id);
+  const own = lived(world, id);
   const out: VersionId[] = own === undefined || own.death === null ? [] : [own.death];
 
   for (const g of enclosing(world, id)) {
@@ -338,11 +340,25 @@ export function removals(world: World, id: Id): VersionId[] {
  * the chain anyway and can drop a polygon as it passes.
  */
 export function standingIn(world: World, id: Id, from: ReadonlySet<VersionId>): boolean {
-  const own = world.polygons.get(id) ?? world.groups.get(id) ?? world.artefacts.get(id);
+  const own = lived(world, id);
 
   if (own === undefined || !standing(own, from)) return false;
 
   return removals(world, id).every(d => !from.has(d));
+}
+
+/**
+ * The stretch of the chain `id` stands over, whichever kind of thing it is.
+ *
+ * Four maps and one question. Every kind in the world is born into a version
+ * and taken out at one — that is what existence means here — and the two
+ * readers above want the answer rather than the map it came out of.
+ */
+function lived(world: World, id: Id): { birth: VersionId, death: VersionId | null } | undefined {
+  return world.polygons.get(id)
+    ?? world.groups.get(id)
+    ?? world.artefacts.get(id)
+    ?? world.paths.get(id);
 }
 
 /**
@@ -474,6 +490,54 @@ export function artefactsWithinBox(shown: readonly Placed[], a: Point, b: Point)
   return shown
     .filter(it => it.at.x >= x0 && it.at.x <= x1 && it.at.y >= y0 && it.at.y <= y1)
     .map(it => it.id);
+}
+
+// -----------------------------------------------------------------------------
+// Paths
+//
+// An artefact is one place read against a chain; a path is a run of them, read
+// against the same chain in one call. So this is the artefact section with the
+// arity changed, and deliberately nothing more: a path has no ring, no
+// projection and no depth, so none of the machinery above it applies either.
+//
+// What that buys is the whole of why paths are in here at all. A tape is drawn
+// to measure a room, and it is worth what it says only for as long as it is
+// still lying across that room — put it in the group and the version that moves
+// the room moves the tape with it, because the frame both are read in is the
+// one thing they now share.
+// -----------------------------------------------------------------------------
+
+/** One measuring path as a version left it: the walk in world units. */
+export interface Laid {
+  id: PathId
+  points: Point[]
+}
+
+/**
+ * Where a path runs at a version, or nothing if it is not there.
+ *
+ * `placeAt` with more than one point, down to the call it makes: the route is
+ * in the path's own frame, and the frame is what the chain has to say about it.
+ */
+export function pathAt(world: World, id: PathId, v: VersionId): Point[] | null {
+  const it = world.paths.get(id);
+
+  if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
+
+  return place(groupFrame(world, v, id), it.points);
+}
+
+/** Every path standing at a version, in id order. */
+export function pathsAt(world: World, v: VersionId): Laid[] {
+  const out: Laid[] = [];
+
+  for (const id of world.paths.keys()) {
+    const points = pathAt(world, id, v);
+
+    if (points !== null) out.push({ id, points });
+  }
+
+  return out.sort((a, b) => a.id - b.id);
 }
 
 // -----------------------------------------------------------------------------
@@ -1286,18 +1350,25 @@ export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id
 
   return new Map(
     ids
-      .filter(id => world.polygons.has(id) || world.groups.has(id) || world.artefacts.has(id))
+      .filter(id =>
+        world.polygons.has(id)
+        || world.groups.has(id)
+        || world.artefacts.has(id)
+        || world.paths.has(id),
+      )
       // An artefact has no depth of its own and inherits nobody's: erosion is
       // the one part of a transform that means nothing to a point, and reading
       // its group's depth onto it would write a number nothing would ever
-      // take back off.
+      // take back off. A path is a run of points and answers the same way.
       .map(id => [
         id,
         editAt(
           world,
           v,
           id,
-          world.artefacts.has(id) ? 0 : mine.get(id) ?? theirs.get(id) ?? 0,
+          world.artefacts.has(id) || world.paths.has(id)
+            ? 0
+            : mine.get(id) ?? theirs.get(id) ?? 0,
         ),
       ]),
   );
@@ -1662,11 +1733,14 @@ export function ungrouped(world: World, id: GroupId): World | null {
   const groups = new Map(world.groups);
   const polygons = new Map(world.polygons);
   const artefacts = new Map(world.artefacts);
+  const paths = new Map(world.paths);
   const up = parentOf(world).get(id);
 
   if (group.death !== null) {
     for (const member of group.members) {
-      for (const map of [groups, polygons, artefacts] as Map<Id, { death: VersionId | null }>[]) {
+      const maps = [groups, polygons, artefacts, paths] as Map<Id, { death: VersionId | null }>[];
+
+      for (const map of maps) {
         const it = map.get(member);
 
         if (it === undefined) continue;
@@ -1692,7 +1766,7 @@ export function ungrouped(world: World, id: GroupId): World | null {
     });
   }
 
-  return { ...world, groups, polygons, artefacts, versions };
+  return { ...world, groups, polygons, artefacts, paths, versions };
 }
 
 /**
@@ -1747,6 +1821,20 @@ export function artefactsIn(world: World, ids: readonly Id[]): ArtefactId[] {
   for (const id of ids) {
     for (const m of within(world, id)) {
       if (world.artefacts.has(m)) out.add(m);
+    }
+  }
+
+  return [...out];
+}
+
+/** The same again, for paths: the tapes a gesture over a selection carries
+ * along, including the ones inside a group it names. */
+export function pathsIn(world: World, ids: readonly Id[]): PathId[] {
+  const out = new Set<PathId>();
+
+  for (const id of ids) {
+    for (const m of within(world, id)) {
+      if (world.paths.has(m)) out.add(m);
     }
   }
 
@@ -2911,6 +2999,7 @@ export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World
   const polygons = new Map(world.polygons);
   const groups = new Map(world.groups);
   const artefacts = new Map(world.artefacts);
+  const paths = new Map(world.paths);
   const outright = new Set<Id>();
 
   let changed = false;
@@ -2947,11 +3036,14 @@ export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World
 
     const artefact = artefacts.get(id);
     if (artefact !== undefined) take(artefacts, id, artefact);
+
+    const path = paths.get(id);
+    if (path !== undefined) take(paths, id, path);
   }
 
   if (!changed) return world;
 
-  const out = { ...world, polygons, groups, artefacts };
+  const out = { ...world, polygons, groups, artefacts, paths };
 
   return outright.size === 0 ? out : without(out, outright);
 }
@@ -3122,6 +3214,24 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
         }];
     }
 
+    const walk = world.paths.get(id);
+
+    if (walk !== undefined) {
+      const here = pathAt(world, id, v);
+
+      // An artefact's clipping with more points in it, and the same layers: a
+      // transform per version and nothing else, there being no ring to
+      // displace and no depth to inherit.
+      return here === null
+        ? []
+        : [{
+          kind: 'path',
+          points: here,
+          death: outliving(walk, v),
+          edits: layers(id, null, 0),
+        }];
+    }
+
     const group = world.groups.get(id);
 
     if (group !== undefined) {
@@ -3246,6 +3356,21 @@ function restore(
     return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
   }
 
+  if (clip.kind === 'path') {
+    const id = world.nextId;
+    const paths = new Map(world.paths);
+
+    paths.set(id, {
+      birth: v,
+      death: dying(world, v, clip.death),
+      points: clip.points.map(p => unplace(m, p)),
+    });
+
+    const out = { ...world, paths, nextId: id + 1 };
+
+    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
+  }
+
   if (clip.kind === 'group') {
     const members: Id[] = [];
     let out = world;
@@ -3320,9 +3445,10 @@ export function pasted(
   clips: readonly Clipping[],
   by: Point,
   where: Landing,
-): { world: World, ids: Id[], artefacts: ArtefactId[] } {
+): Pasted {
   const ids: Id[] = [];
   const artefacts: ArtefactId[] = [];
+  const paths: PathId[] = [];
   let out = world;
 
   for (const clip of clips) {
@@ -3331,12 +3457,28 @@ export function pasted(
     out = put.world;
 
     // Kept apart only because the selection holds them in separate lists.
-    // Both go into the group standing open, both being members of one.
+    // All three go into the group standing open, all three being members of
+    // one.
     if (clip.kind === 'artefact') artefacts.push(put.id);
+    else if (clip.kind === 'path') paths.push(put.id);
     else ids.push(put.id);
   }
 
-  return { world: joined(out, where.into, [...ids, ...artefacts]), ids, artefacts };
+  return {
+    world: joined(out, where.into, [...ids, ...artefacts, ...paths]),
+    ids,
+    artefacts,
+    paths,
+  };
+}
+
+/** What a paste leaves picked, in the three lists the selection keeps. */
+export interface Pasted {
+  world: World
+  /** The polygons and groups, which is what `Selection.polygons` holds. */
+  ids: Id[]
+  artefacts: ArtefactId[]
+  paths: PathId[]
 }
 
 /**
@@ -3359,8 +3501,8 @@ export function stamped(
   clips: readonly Clipping[],
   by: Point,
   where: Landing,
-): { world: World, ids: Id[], artefacts: ArtefactId[] } {
-  const now = (clip: Clipping): Clipping => clip.kind === 'artefact'
+): Pasted {
+  const now = (clip: Clipping): Clipping => clip.kind === 'artefact' || clip.kind === 'path'
     ? { ...clip, death: undefined, edits: clip.edits.slice(0, 1) }
     : clip.kind === 'group'
     ? {

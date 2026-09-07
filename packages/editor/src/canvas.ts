@@ -55,6 +55,9 @@ import {
   artefactsAt,
   artefactsIn,
   artefactsWithinBox,
+  Laid,
+  pathsAt,
+  pathsIn,
   hitArtefact,
   movedStart,
   depths,
@@ -85,8 +88,10 @@ import {
 import {
   OnPath,
   addPath,
+  hitPath,
   hitPathEdge,
   hitPathPoint,
+  pathsWithinBox,
   seconds,
   setPath,
   timings,
@@ -103,7 +108,6 @@ import {
   ArtefactType,
   EditorState,
   Id,
-  Path,
   PathId,
   Point,
   Polygon,
@@ -393,19 +397,39 @@ export function worldCanvas(
       // level standing open, that is — inside a group it takes that group's
       // members, which is the point of having gone in.
       const path = opened(world(), inside());
+
+      // Paths are in here rather than off on their own, because they reach the
+      // same way everything else does: a tape inside a shut group is caught as
+      // that group, and what lands in the box is then a group id like any
+      // other. Only the ones that reach themselves are paths as far as the
+      // selection is concerned, and they are the ones with their own list.
+      //
+      // Not under the point tool, which is picking corners. A box drawn there
+      // is a question about a ring.
+      const reach = (id: Id) => reachable(world(), id, inside());
+      const walks = points
+        ? []
+        : pathsWithinBox(laid(), box.a, box.b).filter(reach).map(id => reaching(world(), id, path));
+
       const caught = points
         ? verticesWithinBox(grabs(), box.a, box.b)
-        : [...new Set(
-          withinBox(items, box.a, box.b)
-            .filter(id => reachable(world(), id, inside()))
-            .map(id => reaching(world(), id, path)),
-        )];
+        : [...new Set([
+          ...withinBox(items, box.a, box.b).filter(reach).map(id => reaching(world(), id, path)),
+          ...walks.filter(id => !world().paths.has(id)),
+        ])];
 
       update(s => ({
         ...s,
         selection: points
           ? { ...s.selection, vertices: alsoPicked(adding ? s.selection.vertices : [], caught) }
-          : { ...s.selection, polygons: alsoPicked(adding ? s.selection.polygons : [], caught) },
+          : {
+              ...s.selection,
+              polygons: alsoPicked(adding ? s.selection.polygons : [], caught),
+              paths: alsoPicked(
+                adding ? s.selection.paths : [],
+                walks.filter(id => world().paths.has(id)),
+              ),
+            },
       }));
     }
 
@@ -515,13 +539,25 @@ export function worldCanvas(
       );
       const owners = corners.size === 0 ? [] : owning(world(), corners);
 
-      const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing];
+      // Paths sit out the erosion for the reason artefacts do: a walk has no
+      // thickness to take a depth out of.
+      const walks = code === 'KeyE' ? [] : selection().paths;
+
+      const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing, ...walks];
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
 
       const mine = new Set(artefactsIn(world(), ids));
       const places = artefactsAt(world(), v).filter(it => mine.has(it.id)).map(it => it.at);
+
+      // Every point of every tape the selection reaches, which is what a tape
+      // is where a pivot is concerned: a walk has no outline and no middle of
+      // its own, so where it reaches is where its points are.
+      const tapes = new Set(pathsIn(world(), ids));
+      const walked = pathsAt(world(), v)
+        .filter(it => tapes.has(it.id))
+        .flatMap(it => it.points);
 
       // The start takes the two gestures that mean something to a place with a
       // direction, and it takes them alone — it is picked alone. What it is
@@ -530,7 +566,7 @@ export function worldCanvas(
       // version reads the one it wrote.
       const beginning = code === 'KeyT' || code === 'KeyR' ? selection().start : false;
 
-      if (items.length === 0 && places.length === 0 && !beginning) return;
+      if (items.length === 0 && places.length === 0 && walked.length === 0 && !beginning) return;
 
       const from = at(e);
 
@@ -562,6 +598,7 @@ export function worldCanvas(
       const pivot = middle([
         ...outlining(world(), v, items, opened(world(), inside())),
         ...places,
+        ...walked,
         ...(beginning ? [was.start.at] : []),
       ]);
 
@@ -1133,23 +1170,52 @@ export function worldCanvas(
 
       if (w === null) return;
 
-      update(s => marked(
-        {
-          ...s,
-          world: w.id === null
-            ? addPath(s.world, w.points).world
-            : setPath(s.world, w.id, w.points),
-        },
-        s.world,
-      ));
+      update(s => {
+        // World units on the way in, the path's own frame on the way down: the
+        // walk was drawn against what is on screen, and what is written is
+        // where it will be read from. A new one is placed by the landing, the
+        // way a dropped artefact is; one being carried on with is placed by
+        // the frame it already stands in.
+        const world = w.id === null
+          ? addPath(
+            s.world,
+            w.points,
+            s.currentVersion,
+            landing(s.world, s.currentVersion, s.inside),
+          ).world
+          : setPath(s.world, w.id, own(s, w.id, w.points));
+
+        return marked({ ...s, world }, s.world);
+      });
 
       dropWalk();
+    }
+
+    /** The paths as the version on screen leaves them: where they run, which
+     * is what every click and every label is about. */
+    function laid(): Laid[] {
+      return pathsAt(world(), currentVersion());
+    }
+
+    /**
+     * World points as one path's own frame reads them.
+     *
+     * The inverse a corner's displacement goes through — see `placeVertex` —
+     * for the one thing a path does that a polygon does not: write its
+     * geometry directly rather than as a layer. A tape inside a turned group
+     * is drawn where it looks like it is, and stored where it will be read
+     * back from.
+     */
+    function own(s: EditorState, id: PathId, points: readonly Point[]): Point[] {
+      const m = under(s.world, s.currentVersion, id);
+
+      return points.map(p => unplace(m, p));
     }
 
     /** The path point under the cursor, if a click is close enough to be
      * about one. */
     function pathPointAt(e: PointerEvent): OnPath | null {
-      return hitPathPoint(world().paths, at(e), HANDLE / view().zoom);
+      return hitPathPoint(laid(), at(e), HANDLE / view().zoom);
     }
 
     /**
@@ -1166,12 +1232,14 @@ export function worldCanvas(
      */
     function pathPicked(e: PointerEvent, resumable: boolean): boolean {
       const reach = HANDLE / view().zoom;
-      const on = hitPathPoint(world().paths, at(e), reach);
+      const shown = laid();
+      const on = hitPathPoint(shown, at(e), reach);
 
       if (on !== null) {
         // The one the paths tool carries the walk on from. Left alone here, so
         // that it can.
-        const last = on.index === world().paths.get(on.id)!.points.length - 1;
+        const path = shown.find(it => it.id === on.id)!;
+        const last = on.index === path.points.length - 1;
 
         if (resumable && last) return false;
 
@@ -1184,15 +1252,18 @@ export function worldCanvas(
         return true;
       }
 
-      const leg = hitPathEdge(world().paths, at(e), reach);
+      const leg = hitPathEdge(shown, at(e), reach);
 
       if (leg === null) return false;
 
-      const points = [...world().paths.get(leg.id)!.points];
+      const points = [...shown.find(it => it.id === leg.id)!.points];
 
       points.splice(leg.index + 1, 0, at(e, true));
 
-      update(s => marked({ ...s, world: setPath(s.world, leg.id, points) }, s.world));
+      update(s => marked(
+        { ...s, world: setPath(s.world, leg.id, own(s, leg.id, points)) },
+        s.world,
+      ));
       setLocal({ ...local(), onPath: { id: leg.id, index: leg.index + 1 } });
 
       return true;
@@ -1211,10 +1282,14 @@ export function worldCanvas(
       if (pathPicked(e, true)) return;
 
       const here = at(e);
-      const on = hitPathPoint(world().paths, here, HANDLE / view().zoom);
+      const shown = laid();
+      const on = hitPathPoint(shown, here, HANDLE / view().zoom);
 
       if (on !== null) {
-        const path = world().paths.get(on.id)!;
+        // Where it runs rather than where it is written: a walk is carried on
+        // with on screen, and `commitWalk` takes the whole of it back to the
+        // path's own frame at the end.
+        const path = shown.find(it => it.id === on.id)!;
 
         return yield* measuring({ id: on.id, points: path.points, at: here });
       }
@@ -1244,6 +1319,8 @@ export function worldCanvas(
 
         if (path === undefined) return s;
 
+        // Its own frame either way, so this one needs no inverse: a point is
+        // being taken out rather than put anywhere.
         const points = path.points.filter((_unused, i) => i !== on.index);
 
         return marked({ ...s, world: setPath(s.world, on.id, points) }, s.world);
@@ -1254,9 +1331,12 @@ export function worldCanvas(
      * One point of a path following the cursor.
      *
      * Its own gesture rather than a share of `draggingVertices`, because a path
-     * has no version, no frame and no history to write a transform into: the
-     * point is where it is, and moving it is the map with a different number
-     * in it. Cancelling puts the world back the way every other gesture does.
+     * has no layer to write a displacement into: the route is one list every
+     * version reads, so moving a point is the map with a different number in
+     * it. What it does share is the frame — the cursor goes back through the
+     * path's own before it is written, so a tape inside a turned group takes
+     * the shape the hand drew. Cancelling puts the world back the way every
+     * other gesture does.
      */
     function* draggingPathPoint(on: OnPath): Op<void> {
       const was = world();
@@ -1273,7 +1353,8 @@ export function worldCanvas(
 
             if (path === undefined) return s;
 
-            const points = path.points.map((p, i) => (i === on.index ? to : p));
+            const here = own(s, on.id, [to])[0];
+            const points = path.points.map((p, i) => (i === on.index ? here : p));
 
             return { ...s, world: setPath(s.world, on.id, points) };
           });
@@ -1445,6 +1526,12 @@ export function worldCanvas(
         return;
       }
 
+      // A tape before a room, because it is drawn over one and what is on top
+      // is what a click on it means — the same order the two tools that edit a
+      // path read their clicks in. Reached like anything else: over a tape
+      // inside a shut group this picks the group.
+      if (pickingPath(e) !== null) return;
+
       const stack = standingIn(world(), e, at(e));
 
       if (stack.length === 0) {
@@ -1452,7 +1539,7 @@ export function worldCanvas(
         if (!e.shiftKey) {
           update(s => ({
             ...s,
-            selection: { ...s.selection, polygons: [], artefacts: [], start: false },
+            selection: { ...s.selection, polygons: [], artefacts: [], paths: [], start: false },
           }));
         }
 
@@ -1483,9 +1570,56 @@ export function worldCanvas(
 
         return {
           ...s,
-          selection: { ...s.selection, polygons: [stack[next]], artefacts: [], start: false },
+          selection: {
+            ...s.selection,
+            polygons: [stack[next]],
+            artefacts: [],
+            paths: [],
+            start: false,
+          },
         };
       });
+    }
+
+    /**
+     * A click on a measuring path, picked whole.
+     *
+     * What it picks is what it reaches: the tape itself out here, and the
+     * outermost shut group holding it from inside one — which lands in the
+     * list groups go in, exactly as a click on one of its rooms would. So a
+     * group is one thing to pick however the cursor found it.
+     *
+     * Nothing where the click is not on a tape, which is the answer that lets
+     * the polygons have their say.
+     */
+    function pickingPath(e: PointerEvent): PathId | null {
+      const w = world();
+      const on = hitPath(laid(), at(e), HANDLE / view().zoom);
+
+      if (on === null || !reachable(w, on, inside())) return null;
+
+      const id = reaching(w, on, opened(w, inside()));
+      const mine = w.paths.has(id);
+
+      update(s => ({
+        ...s,
+        selection: e.shiftKey
+          ? {
+              ...s.selection,
+              start: false,
+              polygons: mine ? s.selection.polygons : togglePicked(s.selection.polygons, id),
+              paths: mine ? togglePicked(s.selection.paths, id) : s.selection.paths,
+            }
+          : {
+              ...s.selection,
+              start: false,
+              artefacts: [],
+              polygons: mine ? [] : [id],
+              paths: mine ? [id] : [],
+            },
+      }));
+
+      return on;
     }
 
     /**
@@ -1541,7 +1675,11 @@ export function worldCanvas(
       if (into !== undefined) {
         // The selection goes: what was picked was the group, and it is not a
         // thing that can be picked any more from in here.
-        update(s => ({ ...s, inside: into, selection: { ...s.selection, polygons: [] } }));
+        update(s => ({
+          ...s,
+          inside: into,
+          selection: { ...s.selection, polygons: [], paths: [] },
+        }));
 
         return;
       }
@@ -1569,12 +1707,14 @@ export function worldCanvas(
       update(s => {
         const at = s.inside;
 
-        if (at === null) return { ...s, selection: { ...s.selection, polygons: [] } };
+        if (at === null) {
+          return { ...s, selection: { ...s.selection, polygons: [], paths: [] } };
+        }
 
         return {
           ...s,
           inside: parentOf(s.world).get(at) ?? null,
-          selection: { ...s.selection, polygons: [at] },
+          selection: { ...s.selection, polygons: [at], paths: [] },
         };
       });
     }
@@ -1669,7 +1809,7 @@ export function worldCanvas(
     function* draggingSelection(from: PointerEvent): Op<void> {
       const v = currentVersion();
       const was = world();
-      const ids = [...selection().polygons, ...selection().artefacts];
+      const ids = [...selection().polygons, ...selection().artefacts, ...selection().paths];
       const grabbed = at(from);
 
       // The start comes along the same way it does under `t`: its own point
@@ -1813,10 +1953,11 @@ export function worldCanvas(
           );
         }
 
-        // Polygons and artefacts in one call, because they are one gesture and
-        // a group holds both. `removeAt` takes what is under a group itself,
-        // so what goes in is what was picked rather than what it reaches.
-        const picked = [...s.selection.polygons, ...s.selection.artefacts];
+        // Polygons, artefacts and paths in one call, because they are one
+        // gesture and a group holds all three. `removeAt` takes what is under a
+        // group itself, so what goes in is what was picked rather than what it
+        // reaches.
+        const picked = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
 
         if (picked.length === 0) return s;
 
@@ -1826,7 +1967,7 @@ export function worldCanvas(
           {
             ...s,
             world,
-            selection: { ...s.selection, polygons: [], artefacts: [] },
+            selection: { ...s.selection, polygons: [], artefacts: [], paths: [] },
           },
           s.world,
         );
@@ -2078,7 +2219,13 @@ export function worldCanvas(
                   else if (!selection().artefacts.includes(grab)) {
                     update(s => ({
                       ...s,
-                      selection: { ...s.selection, polygons: [], artefacts: [grab], start: false },
+                      selection: {
+                        ...s.selection,
+                        polygons: [],
+                        artefacts: [grab],
+                        paths: [],
+                        start: false,
+                      },
                     }));
                   }
 
@@ -2088,6 +2235,23 @@ export function worldCanvas(
               }
 
               if (tool() === 'polygon') {
+                // A tape before a room, the same order a click reads them in.
+                // Grabbing one already picked drags the whole selection;
+                // grabbing one that is not takes it alone, which is what
+                // `pickingPath` writes.
+                const on = hitPath(laid(), at(e), HANDLE / view().zoom);
+
+                if (on !== null && reachable(world(), on, inside())) {
+                  const id = reaching(world(), on, opened(world(), inside()));
+
+                  if (!selection().paths.includes(id) && !selection().polygons.includes(id)) {
+                    pickingPath(e);
+                  }
+
+                  yield* draggingSelection(e);
+                  continue;
+                }
+
                 const under = standingIn(world(), e, at(e));
 
                 if (under.length > 0) {
@@ -2104,6 +2268,7 @@ export function worldCanvas(
                         ...s.selection,
                         polygons: [under[0]],
                         artefacts: [],
+                        paths: [],
                         start: false,
                       },
                     }));
@@ -2685,7 +2850,14 @@ function layers(
   // The one being laid down is drawn from the gesture instead, so the
   // committed copy of a path being carried on with sits this one out and there
   // are not two of it on screen.
-  out.push(ctx => measures(ctx, view, world.paths, local.laying?.id ?? null, local.onPath));
+  out.push(ctx => measures(
+    ctx,
+    view,
+    pathsAt(world, current),
+    local.laying?.id ?? null,
+    local.onPath,
+    new Set(pathsIn(world, [...selection.paths, ...selection.polygons])),
+  ));
 
   if (local.laying !== null) out.push(ctx => laying(ctx, view, local.laying!));
 
@@ -3523,22 +3695,32 @@ function draft(ctx: CanvasRenderingContext2D, view: View, d: Draft): void {
 function measures(
   ctx: CanvasRenderingContext2D,
   view: View,
-  paths: ReadonlyMap<PathId, Path>,
+  laid: readonly Laid[],
   /** The one being carried on with, drawn by the gesture instead. */
   open: PathId | null,
   picked: OnPath | null,
+  /** Every path the selection reaches, whether it was named itself or through
+   * a group holding it. */
+  whole: ReadonlySet<PathId>,
 ): void {
-  for (const [id, it] of paths) {
-    if (id === open) continue;
+  for (const it of laid) {
+    if (it.id === open) continue;
 
-    tape(ctx, view, it.points, null, picked?.id === id ? picked.index : null);
+    tape(
+      ctx,
+      view,
+      it.points,
+      null,
+      picked?.id === it.id ? picked.index : null,
+      whole.has(it.id),
+    );
   }
 }
 
 /** The path being laid down: what is there, and the leg the cursor is on the
  * end of. */
 function laying(ctx: CanvasRenderingContext2D, view: View, w: Walk): void {
-  tape(ctx, view, w.points, w.at, null);
+  tape(ctx, view, w.points, w.at, null, false);
 }
 
 /**
@@ -3551,6 +3733,10 @@ function tape(
   points: readonly Point[],
   to: Point | null,
   picked: number | null,
+  /** Whether the whole walk is picked, which is the state a transform acts on.
+   * Drawn as the picked colour rather than as an outline round it: a tape is a
+   * line, and a line round a line is two lines. */
+  whole: boolean,
 ): void {
   if (points.length === 0) return;
 
@@ -3560,8 +3746,8 @@ function tape(
   ctx.beginPath();
   screen.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
 
-  ctx.strokeStyle = theme.path;
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = whole ? theme.picked : theme.path;
+  ctx.lineWidth = whole ? 2 : 1.5;
   ctx.lineJoin = 'round';
   ctx.setLineDash(DASH);
   ctx.stroke();
@@ -3586,7 +3772,7 @@ function tape(
   for (const p of screen) {
     ctx.rect(Math.round(p.x) - 2.5, Math.round(p.y) - 2.5, 5, 5);
   }
-  ctx.fillStyle = theme.path;
+  ctx.fillStyle = whole ? theme.picked : theme.path;
   ctx.fill();
 
   if (picked !== null && screen[picked] !== undefined) {

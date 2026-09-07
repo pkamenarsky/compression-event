@@ -40,6 +40,8 @@ import {
   affine,
   copied,
   csg,
+  pathAt,
+  pathsIn,
   runs,
   editAt,
   hitEdge,
@@ -57,10 +59,12 @@ import {
   unplace,
   withEdit,
 } from './scene';
+import { addPath } from './paths';
 import {
   EMPTY_TRANSFORM,
   GroupId,
   Id,
+  PathId,
   PolygonId,
   PolygonType,
   Transform,
@@ -1316,6 +1320,106 @@ describe('a group moves what is in it', () => {
 
     expect(p.x).toBeCloseTo(0, 9);
     expect(p.y).toBeCloseTo(10, 9);
+  });
+});
+
+describe('a group holds a measuring path', () => {
+  /** A room, a tape across it, and the group over the two. */
+  function taped(): { world: World, room: PolygonId, walk: PathId, group: GroupId } {
+    const room = addPolygon(emptyWorld(), 'level', rect(0, 0, 100, 100), 0, TOP);
+    const walk = addPath(room.world, [{ x: 10, y: 10 }, { x: 90, y: 10 }], 0, TOP);
+    const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
+
+    return { world: made.world, room: room.id, walk: walk.id, group: made.id };
+  }
+
+  test('the group carries it, and the versions before the move do not', () => {
+    const { world, walk, group } = taped();
+
+    const w = withEdit(world, 2, group, {
+      ...editAt(world, 2, group, 0),
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 0, y: 200 } },
+    });
+
+    expect(pathAt(w, walk, 1)).toEqual([{ x: 10, y: 10 }, { x: 90, y: 10 }]);
+    expect(pathAt(w, walk, 2)).toEqual([{ x: 10, y: 210 }, { x: 90, y: 210 }]);
+  });
+
+  test('a turn of the group turns the walk about the group, not about itself', () => {
+    const { world, walk, group } = taped();
+
+    const w = withEdit(world, 0, group, {
+      ...editAt(world, 0, group, 0),
+      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
+    });
+
+    const there = pathAt(w, walk, 0)!;
+
+    // A quarter turn about the origin: (10, 10) goes to (-10, 10).
+    expect(there[0].x).toBeCloseTo(-10);
+    expect(there[0].y).toBeCloseTo(10);
+    expect(there[1].x).toBeCloseTo(-10);
+    expect(there[1].y).toBeCloseTo(90);
+  });
+
+  test('taking the group apart leaves the walk exactly where it stood', () => {
+    const { world, walk, group } = taped();
+
+    const w = withEdit(world, 1, group, {
+      ...editAt(world, 1, group, 0),
+      transform: { translation: { x: 3, y: 7 }, rotation: 0.4, scale: { x: 2, y: 2 }, erosion: 0 },
+    });
+
+    const apart = ungrouped(w, group)!;
+
+    for (let v = 0; v < VERSIONS; v++) {
+      const before = pathAt(w, walk, v as VersionId)!;
+      const after = pathAt(apart, walk, v as VersionId)!;
+
+      after.forEach((p, i) => {
+        expect(p.x).toBeCloseTo(before[i].x, 9);
+        expect(p.y).toBeCloseTo(before[i].y, 9);
+      });
+    }
+  });
+
+  test('deleting the group takes the walk with it, from that version on', () => {
+    const { world, walk, group } = taped();
+    const gone = removeAt(world, 3, [group]);
+
+    expect(pathAt(gone, walk, 2)).not.toBe(null);
+    expect(pathAt(gone, walk, 3)).toBe(null);
+  });
+
+  test('a copy of the group brings the walk across, where it stood', () => {
+    const { world, walk, group } = taped();
+
+    const w = withEdit(world, 0, group, {
+      ...editAt(world, 0, group, 0),
+      transform: { ...EMPTY_TRANSFORM, translation: { x: 50, y: 0 } },
+    });
+
+    const clips = copied(w, 0, [group]);
+    const put = pasted(w, 0, clips, { x: 0, y: 0 }, TOP);
+
+    // One new path, running where the original does at the version it was
+    // taken at.
+    const made = [...put.world.paths.keys()].filter(id => id !== walk);
+
+    expect(made).toHaveLength(1);
+    expect(pathAt(put.world, made[0], 0)).toEqual(pathAt(w, walk, 0));
+
+    // And it is a member of the pasted group rather than loose beside it.
+    expect(put.paths).toEqual([]);
+    expect(pathsIn(put.world, put.ids)).toEqual(made);
+  });
+
+  test('a path copied on its own comes back as one', () => {
+    const { world, walk } = taped();
+    const put = pasted(world, 0, copied(world, 0, [walk]), { x: 0, y: 0 }, TOP);
+
+    expect(put.paths).toHaveLength(1);
+    expect(put.ids).toEqual([]);
   });
 });
 

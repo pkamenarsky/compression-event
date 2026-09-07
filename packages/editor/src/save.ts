@@ -22,7 +22,6 @@ import {
   Group,
   GroupId,
   Id,
-  Path,
   PathId,
   Polygon,
   PolygonId,
@@ -53,6 +52,12 @@ import { Affine, facingAt, placeAt } from './scene';
  * global until now, so anything a format-12 file no longer holds is not in it
  * at all. It reads as everything living to the last version, which is what it
  * did.
+ *
+ * 16: a measuring path is born into a version and taken out at one, and a
+ * version's layer may carry a transform for it — so a path can be a member of
+ * a group and go where the group goes. A format-15 file's paths are in no
+ * version's layer and stood over the whole chain, which is exactly what a
+ * birth at the root and no death reads as, so nothing about one is guessed at.
  *
  * 12: a version's layer may hold a depth for single corners as well as one for
  * the whole polygon. A format-11 file holds none, which is a world where every
@@ -113,7 +118,7 @@ import { Affine, facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 15;
+export const FORMAT = 16;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -129,6 +134,9 @@ export interface Saved {
   selection: PolygonId[]
   /** The picked artefacts. Absent before format 6. */
   artefacts?: ArtefactId[]
+  /** The picked paths. Absent before format 16, where a path could not be
+   * picked whole. */
+  paths?: PathId[]
   settings: Settings
   view: View
   world: {
@@ -140,12 +148,22 @@ export interface Saved {
     /** Absent before format 6, where there were none. Each one's places go out
      * as entries for the same reason a version's edits do. */
     artefacts?: [ArtefactId, SavedArtefact][]
-    /** Absent before format 8, where there were none. */
-    paths?: [PathId, Path][]
+    /** Absent before format 8, where there were none. A format-15 file's
+     * entries carry points alone — see `FORMAT`. */
+    paths?: [PathId, SavedPath][]
     /** Absent before format 11, where it was an artefact — see `FORMAT`. */
     start?: Start
     versions: SavedVersion[]
   }
+}
+
+export interface SavedPath {
+  /** Absent before format 16, where a path was in no version — see `FORMAT`. */
+  birth?: VersionId
+  /** Absent before format 16, and absent since wherever it is nothing. */
+  death?: VersionId | null
+  /** The walk in the path's own frame, before any version's transform. */
+  points: Point[]
 }
 
 export interface SavedArtefact {
@@ -195,6 +213,7 @@ export function saved(state: EditorState): Saved {
     currentVersion: state.currentVersion,
     selection: state.selection.polygons,
     artefacts: state.selection.artefacts,
+    paths: state.selection.paths,
     settings: state.settings,
     view: state.view,
     world: {
@@ -209,7 +228,9 @@ export function saved(state: EditorState): Saved {
           at: a.at,
         }],
       ),
-      paths: [...state.world.paths],
+      paths: [...state.world.paths].map(
+        ([id, p]) => [id, { birth: p.birth, death: p.death ?? undefined, points: p.points }],
+      ),
       start: state.world.start,
       versions: state.world.versions.map(savedVersion),
     },
@@ -276,7 +297,14 @@ export function restored(file: Saved): EditorState {
     ),
     artefacts,
     start: file.world.start ?? { at: { x: 0, y: 0 }, facing: 0 },
-    paths: new Map(file.world.paths ?? []),
+    paths: new Map((file.world.paths ?? []).map(([id, p]) => [id, {
+      // A format-15 path was in no version at all, which is the same thing as
+      // one standing over the whole chain: born at the root and never taken
+      // out. See `FORMAT`.
+      birth: p.birth ?? 0,
+      death: p.death ?? null,
+      points: p.points,
+    }])),
     nextId: file.world.nextId,
     versions,
   };
@@ -297,6 +325,7 @@ export function restored(file: Saved): EditorState {
       // now. Dropped rather than turned into `start: true`: which of them was
       // picked is about the sitting the file was written in, not the world.
       artefacts: (file.artefacts ?? []).filter(id => artefacts.has(id)),
+      paths: (file.paths ?? []).filter(id => world.paths.has(id)),
       start: false,
     },
     // Only the fields there are. A format-8 file has a `snapToGrid` beside

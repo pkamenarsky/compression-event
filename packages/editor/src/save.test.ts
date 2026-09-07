@@ -2,8 +2,18 @@ import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
 import { FORMAT, restored, saved } from './save';
 import { resolveAt } from './scene';
-import { TOP, addArtefact, addPolygon, editAt, grouped, placeAt, removeAt, withEdit } from './scene';
-import { EMPTY_TRANSFORM, EditorState, emptyWorld, initialState } from './types';
+import {
+  TOP,
+  addArtefact,
+  addPolygon,
+  editAt,
+  grouped,
+  pathAt,
+  placeAt,
+  removeAt,
+  withEdit,
+} from './scene';
+import { EMPTY_TRANSFORM, EditorState, VERSIONS, emptyWorld, initialState } from './types';
 
 function world(): EditorState {
   const a = addPolygon(emptyWorld(), 'level', [
@@ -36,7 +46,7 @@ function world(): EditorState {
 
   return {
     ...initialState(w),
-    selection: { polygons: [b.id], vertices: [], artefacts: [], start: false },
+    selection: { polygons: [b.id], vertices: [], artefacts: [], paths: [], start: false },
     tool: 'polygon',
     currentVersion: 2,
   };
@@ -132,18 +142,61 @@ describe('save', () => {
       .toEqual(0);
   });
 
+  test('a format-15 path stood over the whole chain, and reads as one that does', () => {
+    const before = world();
+    const drawn: EditorState = {
+      ...before,
+      world: addPath(
+        before.world,
+        [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+        before.currentVersion,
+        TOP,
+      ).world,
+    };
+
+    const file = saved(drawn);
+    const id = [...drawn.world.paths.keys()][0];
+
+    // What one looked like before there was a version to be born into.
+    const old = {
+      ...file,
+      format: 15,
+      world: {
+        ...file.world,
+        paths: [[id, { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] }]],
+      },
+    };
+
+    const back = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    expect(back.world.paths.get(id)).toEqual({
+      birth: 0,
+      death: null,
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+    });
+
+    // Born at the root and never taken out, which is standing everywhere.
+    expect(pathAt(back.world, id, 0)).not.toBe(null);
+    expect(pathAt(back.world, id, VERSIONS - 1)).not.toBe(null);
+  });
+
   test('measuring paths survive the trip, and a format-7 file has none', () => {
     const before = world();
     const drawn: EditorState = {
       ...before,
-      world: addPath(before.world, [{ x: 0, y: 0 }, { x: 100, y: 0 }]).world,
+      world: addPath(
+        before.world,
+        [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+        before.currentVersion,
+        TOP,
+      ).world,
     };
 
     const file = saved(drawn);
     const after = restored(JSON.parse(JSON.stringify(file)) as typeof file);
 
     expect([...after.world.paths.values()]).toEqual([
-      { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
+      { birth: before.currentVersion, death: null, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
     ]);
 
     // And the tool it was drawing with was called something else then. The

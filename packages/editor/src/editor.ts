@@ -475,7 +475,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           clipboard: copied(
             s.world,
             s.currentVersion,
-            [...s.selection.polygons, ...s.selection.artefacts],
+            [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths],
           ),
         }));
       }
@@ -494,7 +494,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // version. Plain paste brings the whole chain across.
           // Into the group standing open, if one is: a paste lands where the
           // author is working, and in here that is inside the group.
-          const { world, ids, artefacts } = e.shiftKey
+          const { world, ids, artefacts, paths } = e.shiftKey
             ? stamped(s.world, s.currentVersion, s.clipboard, at, where)
             : pasted(s.world, s.currentVersion, s.clipboard, at, where);
 
@@ -502,7 +502,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
             {
               ...s,
               world,
-              selection: { ...s.selection, polygons: ids, artefacts, start: false },
+              selection: { ...s.selection, polygons: ids, artefacts, paths, start: false },
             },
             s.world,
           );
@@ -520,7 +520,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
  * question — does this hear from upstream — asked both ways round.
  */
 function loosened(s: EditorState, back: boolean): EditorState {
-  const ids = [...s.selection.polygons, ...s.selection.artefacts];
+  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
   const how = back ? rechained : unchained;
 
   return marked({ ...s, world: how(s.world, s.currentVersion, ids) }, s.world);
@@ -534,13 +534,13 @@ function gridded(s: EditorState, gridSize: number): EditorState {
 
 /** The picked things made one, and picked as one. */
 function together(s: EditorState): EditorState {
-  // Artefacts are members like anything else: a room and the key in it is the
-  // group worth having, and holding them together is what makes the key go
-  // where the room goes.
+  // Artefacts and paths are members like anything else: a room, the key in it
+  // and the tape across it is the group worth having, and holding them
+  // together is what makes the key and the measurement go where the room goes.
   const made = grouped(
     s.world,
     s.currentVersion,
-    [...s.selection.polygons, ...s.selection.artefacts],
+    [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths],
     landing(s.world, s.currentVersion, s.inside),
   );
 
@@ -550,7 +550,13 @@ function together(s: EditorState): EditorState {
     {
       ...s,
       world: made.world,
-      selection: { ...s.selection, polygons: [made.id], artefacts: [], start: false },
+      selection: {
+        ...s.selection,
+        polygons: [made.id],
+        artefacts: [],
+        paths: [],
+        start: false,
+      },
     },
     s.world,
   );
@@ -584,18 +590,19 @@ function apart(s: EditorState): EditorState {
   }
 
   // What came out goes back to the list it belongs in, since a group's members
-  // are of both kinds and the selection is not.
+  // are of every kind and the selection is not.
   return marked(
     {
       ...s,
       world,
       selection: {
         ...s.selection,
-        polygons: picked.filter(id => !world.artefacts.has(id)),
+        polygons: picked.filter(id => !world.artefacts.has(id) && !world.paths.has(id)),
         artefacts: [
           ...s.selection.artefacts,
           ...picked.filter(id => world.artefacts.has(id)),
         ],
+        paths: [...s.selection.paths, ...picked.filter(id => world.paths.has(id))],
       },
     },
     s.world,
@@ -959,7 +966,7 @@ function versionStrip(
  * did — where does this stop hearing from upstream.
  */
 function unchains(world: World, index: VersionId, selection: Selection): boolean {
-  return [...selection.polygons, ...selection.artefacts].some(
+  return [...selection.polygons, ...selection.artefacts, ...selection.paths].some(
     id => within(world, id).some(m => unchainedAt(world, index, m)),
   );
 }

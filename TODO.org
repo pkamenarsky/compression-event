@@ -35,8 +35,6 @@
 
 * edge mode
 
-* paths in groups?
-
 * selection of overlapping vertices
 
 * visible versions can be a strip instead of individual lines
