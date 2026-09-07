@@ -433,8 +433,6 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
 
   const readings = readingAt(world, v, id);
 
-  if (readings.length === 0) return null;
-
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.
   //
@@ -488,6 +486,12 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
   // An outline and the holes in it are one polygon. A hole whose outline is not
   // here — which the geometry cannot produce, since a hole needs something to
   // be a hole in — would otherwise be a ring nobody draws.
+  //
+  // None of them at all is an answer, not a refusal. A group of nothing but
+  // pillars makes no set — a pillar is a hole in something and there is nothing
+  // here for it to be a hole in — so what it resolves to is nothing, and it
+  // goes. Anything else would be a gesture that did what it said on some
+  // groups and quietly declined on others.
   for (const outer of readings.filter(r => !r.hole)) {
     const parts = [outer, ...readings.filter(r => r.hole && readings[r.owner!] === outer)];
     const mine = next;
@@ -501,8 +505,6 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
     made.push(mine);
     next++;
   }
-
-  if (made.length === 0) return null;
 
   // The rings go in where the members were, and the group comes apart round
   // them. Everything the group's own layers were doing is carried onto them by

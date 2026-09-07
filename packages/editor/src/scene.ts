@@ -167,6 +167,43 @@ export interface Resolved {
   keep?: readonly Point[]
 }
 
+/**
+ * The middle of what is picked: the centre of the box round it.
+ *
+ * The box rather than the average of the points, which is what this was and
+ * what made a resolve feel like it had moved something. An average is a
+ * question about where the corners are, and a shape can be handed the same
+ * ground with its corners arranged quite differently — two rooms unioned come
+ * back as one ring, and a corner sitting on a straight edge because that is
+ * where a neighbour ended counts as much as a corner the shape actually turns
+ * at. Resolving redistributes corners by construction, so the average slid
+ * across a shape that had not changed at all.
+ *
+ * The box does not care how many corners sit where, only how far the thing
+ * reaches — and how far it reaches is exactly what does not change when the
+ * same ground is written down another way.
+ *
+ * A single point is its own middle, which is what the start wants: turning it
+ * leaves the place alone and changes only the facing.
+ */
+export function middle(points: readonly Point[]): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+
+  for (const p of points) {
+    x0 = Math.min(x0, p.x);
+    y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x);
+    y1 = Math.max(y1, p.y);
+  }
+
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+}
+
+/** The average of a ring's corners. Somewhere inside a convex ring and
+ * somewhere near a concave one, which is all `budding` needs of it — it is not
+ * where a gesture turns about, and `middle` says why. */
 export function centroid(ring: Ring): Point {
   if (ring.length === 0) return { x: 0, y: 0 };
 

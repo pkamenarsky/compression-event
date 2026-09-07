@@ -14,6 +14,7 @@ import {
   hitEdge,
   hitPolygon,
   landing,
+  middle,
   placeAt,
   removeVertices,
   resolveAt,
@@ -574,18 +575,46 @@ describe('the group does not survive being resolved', () => {
     expect(it.corners.length).toBe(6);
   });
 
-  test('a group of pillars alone has nothing to resolve to, and is left alone', () => {
+  test('a group of pillars alone resolves to nothing, and goes', () => {
     const { world, ids } = drawn(
       ['solid', rect(0, 0, 100, 100)],
       ['solid', rect(60, 0, 100, 100)],
     );
 
     const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
 
     // A pillar is a hole in something, and there is nothing here for it to be
-    // a hole in. Better a gesture that did not happen than one that emptied
-    // the group.
-    expect(resolveGroup(made.world, 0, made.id)).toBeNull();
+    // a hole in — so the set it makes is empty and that is what it becomes.
+    // The alternative is a gesture that does what it says on some groups and
+    // quietly declines on others.
+    expect(out.ids).toEqual([]);
+    expect(out.world.polygons.size).toBe(0);
+    expect(out.world.groups.size).toBe(0);
+  });
+
+  test('a solid that swallows its room takes the room with it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(40, 40, 20, 20)],
+      ['solid', rect(0, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(out.ids).toEqual([]);
+    expect(out.world.polygons.size).toBe(0);
+  });
+
+  test('an artefact still comes out of a group that resolved to nothing', () => {
+    const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
+    const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
+    const made = grouped(dropped.world, 0, [ids[0], dropped.id], landing(dropped.world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(out.world.polygons.size).toBe(0);
+    expect(out.world.groups.size).toBe(0);
+    expect(placeAt(out.world, dropped.id, 0)).toEqual({ x: 50, y: 50 });
   });
 
   test('rooms that do not touch come to one polygon each', () => {
@@ -837,5 +866,49 @@ describe('floors are clipped to the ground', () => {
 
     expect(shapeArea(floor.shape)).toBeCloseTo(shapeArea(level.shape), 6);
     expect(shapeArea(floor.shape)).toBeCloseTo(190 * 100 - 30 * 20, 6);
+  });
+});
+
+describe('resolving does not move where a gesture turns about', () => {
+  /** What a transform gesture takes as its pivot: see `middle` and the turn in
+   * `canvas.ts`, which builds this out of exactly these points. */
+  const pivotOf = (world: World, v: VersionId) =>
+    middle(resolveAt(world, v).flatMap(it => it.source));
+
+  test('the same ground written another way turns about the same point', () => {
+    // The small room sits inside the big one and shares its bottom edge, so
+    // the set is exactly the big room — but the union walks that edge through
+    // two extra corners, and the polygon comes out with six.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(60, 0, 20, 20)],
+    );
+
+    const before = pivotOf(world, 0);
+    const out = resolveInto(world, 0, ids, TOP)!;
+
+    expect(resolveAt(out.world, 0)[0].corners.length).toBe(6);
+    expect(shapeArea(resolveAt(out.world, 0)[0].shape)).toBeCloseTo(100 * 100, 6);
+
+    expect(before).toEqual({ x: 50, y: 50 });
+    expect(pivotOf(out.world, 0)).toEqual(before);
+  });
+
+  test('a corner sitting on a straight edge does not drag it', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const it = resolveAt(world, 0)[0];
+
+    const before = pivotOf(world, 0);
+    const grown = addVertex(world, 0, it, 0, { x: 90, y: 0 }).world;
+
+    // Seven corners against four, six of them along the bottom: an average
+    // would have slid a long way down and to the right.
+    const more = [1, 2, 3, 4].reduce(
+      (w, i) => addVertex(w, 0, resolveAt(w, 0)[0], i, { x: 10 * i + 20, y: 0 }).world,
+      grown,
+    );
+
+    expect(resolveAt(more, 0)[0].corners.length).toBe(9);
+    expect(pivotOf(more, 0)).toEqual(before);
   });
 });

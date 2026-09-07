@@ -32,7 +32,7 @@ import {
   addPolygon,
   landing,
   addVertex,
-  centroid,
+  middle,
   editAt,
   hitEdge,
   hitPolygons,
@@ -550,7 +550,11 @@ export function worldCanvas(
       // is, which is the gesture the start wants — the place is unchanged and
       // the facing is not. Every other kind has no facing to change, so it is
       // a turn that does nothing, which is what a turn of a point should be.
-      const pivot = centroid([
+      //
+      // The middle of the box round it all rather than the average of the
+      // points: see `middle`, and see what it does to a shape somebody has just
+      // resolved.
+      const pivot = middle([
         ...items.flatMap(it => it.source),
         ...places,
         ...(beginning ? [was.start.at] : []),
