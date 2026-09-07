@@ -331,7 +331,39 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     resize,
     render(): void {
+      // Turned by a hair before it draws, and turned back.
+      //
+      // A triangle that spans the eye plane — two corners behind the camera and
+      // one in front — is dropped outright by the near-plane clip when the edge
+      // between the two behind it is *exactly* parallel to the view. It never
+      // rasterises: not one pixel, whatever the material, and three's own
+      // `MeshBasicMaterial` does it too, so it is the clipper rather than
+      // anything of ours.
+      //
+      // Exactly parallel is reachable, and reachable from the one place a
+      // player is most likely to stand. A floor is authored on the grid, so its
+      // edges are axis-aligned; the walk starts facing north, where `rotation.y`
+      // is 0 and the view matrix is exactly the identity; and the fill is one
+      // shape spanning the room, so a triangle of it very often has corners
+      // both behind and in front. Then an edge running due north lines up to
+      // the bit, and a wedge of floor is missing until the view turns. It is
+      // only ever the *exact* value: a yaw of 1e-7 draws it, and so does every
+      // other cardinal direction, since `cos(pi/2)` is 6e-17 rather than 0.
+      //
+      // A hundredth of a milliradian is two thousandths of a pixel across this
+      // viewport, which is nothing to look at and enough to break the tie. It
+      // goes on and comes off around the draw rather than being written into
+      // the camera, so anything that reads where the camera is pointing — the
+      // walk, the collision, the HUD — reads what it was told.
+      const was = camera.rotation.y;
+
+      camera.rotation.y = was + 1e-5;
+      camera.updateMatrixWorld(true);
+
       dither.apply(scene, camera);
+
+      camera.rotation.y = was;
+      camera.updateMatrixWorld(true);
     },
 
     blank(): void {
