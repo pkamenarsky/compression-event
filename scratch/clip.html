@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>near-plane clip probe</title>
+  <style>
+    html, body { margin: 0; background: #111; color: #ddd; font: 12px ui-monospace, monospace; }
+    canvas { display: block; width: 800px; height: 450px; background: #000; }
+    pre { padding: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="800" height="450"></canvas>
+  <pre id="out">running</pre>
+  <script>
+// A triangle that spans the eye plane is dropped, whole, when the edge between
+// its two corners *behind* the camera is exactly parallel to the view.
+//
+// Nothing here is three.js: hand-written shaders, a hand-built projection, and
+// the option of handing clip-space coordinates straight to `gl_Position`. The
+// numbers are the ones out of the level — editor units through SCALE, camera at
+// eye height, facing north — where the floor set has an edge at exactly x = 200
+// because the polygon cutting it was never rotated.
+//
+// See the commit `turn the view a hair before drawing it`.
+const S = 1 / 25;
+const EYE = [0, 1.6, 0];
+
+// The floor set's corners, in editor units. 3 and 4 share an x exactly, which
+// is the hole's unrotated left edge.
+const TRI = [[200, 200], [200, 706.073], [-102.512, -592.09]];
+
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
+
+const NEAR = 0.1, FAR = 200, FOV = 70 * Math.PI / 180;
+const aspect = canvas.width / canvas.height;
+const f = 1 / Math.tan(FOV / 2);
+
+/** World point -> clip, by hand: view is a yaw about the eye, then the same
+ * perspective three builds. */
+function clipOf(p, yaw) {
+  const x = p[0] * S - EYE[0], y = 0 - EYE[1], z = p[1] * S - EYE[2];
+
+  // Inverse of a yaw rotation, applied to the point in eye-relative space.
+  const c = Math.cos(-yaw), s = Math.sin(-yaw);
+  const xv = c * x + s * z;
+  const zv = -s * x + c * z;
+
+  return [
+    (f / aspect) * xv,
+    f * y,
+    ((FAR + NEAR) / (NEAR - FAR)) * zv + (2 * FAR * NEAR / (NEAR - FAR)),
+    -zv,
+  ];
+}
+
+const vsClip = `#version 300 es
+in vec4 aClip;
+void main() { gl_Position = aClip; }`;
+
+const vsMatrix = `#version 300 es
+in vec3 aWorld;
+uniform mat4 uProjView;
+void main() { gl_Position = uProjView * vec4(aWorld, 1.0); }`;
+
+const fs = `#version 300 es
+precision highp float;
+out vec4 c;
+void main() { c = vec4(1.0, 0.0, 0.0, 1.0); }`;
+
+function build(vsSrc) {
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
+  const fsh = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fsh, fs); gl.compileShader(fsh);
+  const p = gl.createProgram();
+  gl.attachShader(p, vs); gl.attachShader(p, fsh); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const progClip = build(vsClip);
+const progMatrix = build(vsMatrix);
+const buf = gl.createBuffer();
+
+function litPixels() {
+  const px = new Uint8Array(canvas.width * canvas.height * 4);
+  gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let n = 0;
+  for (let i = 0; i < px.length; i += 4) if (px[i] > 100) n++;
+  return n;
+}
+
+/** Draw with clip coordinates handed straight to gl_Position. */
+function drawClip(yaw) {
+  const data = new Float32Array(TRI.flatMap(p => clipOf(p, yaw)));
+  gl.useProgram(progClip);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(progClip, 'aClip');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 0, 0);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  return litPixels();
+}
+
+/** The same triangle, with the matrix multiply left to the shader. */
+function drawMatrix(yaw) {
+  const c = Math.cos(-yaw), s = Math.sin(-yaw);
+  const A = (FAR + NEAR) / (NEAR - FAR), B = 2 * FAR * NEAR / (NEAR - FAR);
+
+  // proj * view, column-major, with the view a yaw about the eye.
+  const m = [
+    (f / aspect) * c, 0, A * -s, s,
+    0, f, 0, 0,
+    (f / aspect) * s, 0, A * c, -c,
+    (f / aspect) * (-c * EYE[0] - s * EYE[2]), f * -EYE[1],
+    A * (s * EYE[0] - c * EYE[2]) + B, -s * EYE[0] + c * EYE[2],
+  ];
+
+  const data = new Float32Array(TRI.flatMap(p => [p[0] * S, 0, p[1] * S]));
+  gl.useProgram(progMatrix);
+  gl.uniformMatrix4fv(gl.getUniformLocation(progMatrix, 'uProjView'), false, new Float32Array(m));
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(progMatrix, 'aWorld');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  return litPixels();
+}
+
+/** Any three world points, at any yaw, through the clip-space path. */
+function drawTri(pts, yaw) {
+  return drawRaw(pts.map(p => clipOf(p, yaw)));
+}
+
+/** Three raw clip-space vertices straight through, for the minimal case. */
+function drawRaw(clips) {
+  const data = new Float32Array(clips.flat());
+  gl.useProgram(progClip);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(progClip, 'aClip');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 0, 0);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  return litPixels();
+}
+
+globalThis.probe = { drawClip, drawMatrix, drawTri, drawRaw, clipOf, litPixels, TRI };
+
+// -----------------------------------------------------------------------------
+// The battery
+// -----------------------------------------------------------------------------
+
+const rows = [];
+const say = (label, n) => rows.push(`  ${label.padEnd(44)} ${String(n).padStart(7)} px`);
+
+rows.push(`renderer: ${gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)}`);
+rows.push('');
+rows.push('The triangle out of the level, at a few yaws. The projection is done');
+rows.push('on the CPU in one column and in the shader in the other, to show that');
+rows.push('where the multiply happens makes no difference.');
+rows.push('');
+
+for (const yaw of [0, 1e-7, 1e-5, 0.01, -0.01]) {
+  rows.push(`  yaw ${String(yaw).padEnd(10)} clip-space ${String(drawClip(yaw)).padStart(7)}   via matrix ${String(drawMatrix(yaw)).padStart(7)}`);
+}
+
+rows.push('');
+rows.push('How far apart the two corners behind the eye have to be, in editor');
+rows.push('units, before it draws. The threshold is float32 quantisation of');
+rows.push('clip.x at this distance, not exact equality.');
+rows.push('');
+
+for (const d of [0, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3]) {
+  say(`shared x + ${d}`, drawTri([[200, 200], [200 + d, 706.073], [-102.512, -592.09]], 0));
+}
+
+rows.push('');
+rows.push('What the configuration needs. Raw clip-space vertices: two behind the');
+rows.push('eye with bitwise-equal x and y, one in front.');
+rows.push('');
+
+const A = [6.4267, -2.285, -8.2081, -8], B = [6.4267, -2.285, -28.4713, -28.2429];
+const C = [-3.2941, -2.285, 23.5072, 23.6836];
+const vary = (v, i, d) => v.map((n, k) => (k === i ? n + d : n));
+
+say('as measured', drawRaw([A, B, C]));
+say('either behind corner moved in x', drawRaw([A, vary(B, 0, 1e-3), C]));
+say('either behind corner moved in y', drawRaw([A, vary(B, 1, 1e-3), C]));
+say('the front corner moved in y', drawRaw([A, B, vary(C, 1, 1e-3)]));
+say('behind corner moved in z', drawRaw([A, vary(B, 2, 1e-3), C]));
+say('behind corner moved in w', drawRaw([A, [B[0], B[1], B[2], B[3] * 0.999], C]));
+say('winding reversed', drawRaw([B, A, C]));
+say('only one corner behind the eye', drawTri([[200, 200], [200, -100], [-102.512, -592.09]], 0));
+say('all three corners behind the eye', drawTri([[200, 200], [200, 706], [400, 300]], 0));
+
+rows.push('');
+rows.push('And it is not the clipped result landing outside the viewport: the');
+rows.push('shared x is scaled down here and it goes on failing.');
+rows.push('');
+
+for (const a of [6.4267, 1, 0.1, 0.01, 0]) {
+  say(`shared clip.x = ${a}`, drawRaw([
+    [a, -2.285, -8.2081, -8], [a, -2.285, -28.4713, -28.2429], C,
+  ]));
+}
+
+document.getElementById('out').textContent = rows.join('\n');
+
+  </script>
+</body>
+</html>
