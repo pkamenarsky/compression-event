@@ -1121,6 +1121,51 @@ describe('what a click lands on', () => {
     expect(hitting(g.world, 0, items, [], { x: 150, y: 150 })).toEqual([]);
   });
 
+  test('a hole cut in the floor is taken out of what the group draws', () => {
+    // The floor is a set of its own, and this is the half of it the level
+    // cannot say: a doorway through the floor of a room whose walls stay put.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['floor', rect(0, 0, 100, 100)],
+      ['hole', rect(40, 40, 20, 20)],
+    );
+
+    const g = grouped(world, 0, ids, TOP)!;
+    const shown = occupying(g.world, 0, resolveAt(g.world, 0), [])[0];
+
+    // The level is whole — a hole in a floor is not a hole in a room — and the
+    // floor has the doorway in it.
+    expect(shapeArea(shown.shape)).toBeCloseTo(100 * 100, 6);
+    expect(shapeArea(shown.floor)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+  });
+
+  test('a group of nothing but floor is drawn as its floor, not as nothing', () => {
+    // The same reason a group of nothing but pillars is drawn as the pillars.
+    // A group is the thing being picked and dragged, and one has to be visible
+    // to be either.
+    const { world, ids } = drawn(
+      ['floor', rect(0, 0, 100, 100)],
+      ['hole', rect(40, 40, 20, 20)],
+    );
+
+    const g = grouped(world, 0, ids, TOP)!;
+    const items = resolveAt(g.world, 0);
+    const shown = occupying(g.world, 0, items, []);
+
+    expect(shown).toHaveLength(1);
+    expect(shown[0].kind).toEqual(kind('floor'));
+
+    // No level side at all, so nothing to clip the floor to and nothing to
+    // draw as an outline but the floor itself.
+    expect(shown[0].shape).toEqual([]);
+    expect(shapeArea(shown[0].floor)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+
+    // And it is what a click lands on, since it is what is on screen.
+    expect(hitting(g.world, 0, items, [], { x: 20, y: 20 })).toEqual([g.id]);
+    expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
+    expect(hitting(g.world, 0, items, [], { x: 150, y: 150 })).toEqual([]);
+  });
+
   test('a floor stops at the hole a pillar left, as the group does', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],

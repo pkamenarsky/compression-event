@@ -3590,12 +3590,10 @@ const TAIL = 7;
  * if it disagrees with the outline underneath it at the moment it arrives, the
  * bake and the editor disagree, and it is the bake the game will get.
  *
- * Two lines, because there are two kinds of run and they mean different things.
- * The set is thinner and brighter than the editor's own answer sitting under
- * it, so the two can be told apart where they differ. A floor is in no set: it
- * gets the line an unselected floor gets standing still, so that a moving one
- * reads as the same shape it was drawn as rather than as a piece of outline in
- * the one colour that means outline.
+ * Two lines, because there are two sets and they are two answers. Each is
+ * thinner and brighter than the editor's own outline sitting under it, so the
+ * two can be told apart where they differ, and each is in the colour its set
+ * is drawn in everywhere else — yellow for the level, orange for the floor.
  *
  * A floor in a group is clipped to where that group's level reaches at the
  * version being walked towards — which is already on screen, still, the whole
