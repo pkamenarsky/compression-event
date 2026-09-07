@@ -104,7 +104,36 @@ import {
 /** The three sides a group contributes to, in the order the CSG reads them.
  * The same list `sideOf` numbers, and for the same reason: a room's boundary
  * and a pillar's are not one boundary. */
-const SIDES: readonly PolygonType[] = ['level', 'solid', 'floor'];
+/**
+ * The three sides a group can contribute to, and what each is cut by.
+ *
+ * A group holding a room and a pillar is not two shapes that happen to be
+ * grouped. It is a room with a pillar in it, and what it puts into the level is
+ * `level - solid`. So that is what resolving it produces: the level side is the
+ * rooms with the pillars taken out of them — a hole, now that a polygon can
+ * have one — and the solid side is whatever of the pillars was never in a room
+ * to begin with.
+ *
+ * Which is the group's own contribution exactly. `(L - S) - (S - L)` is `L - S`,
+ * because `L - S` never met `S`; nothing about what the group puts into the set
+ * has moved.
+ *
+ * What does move is the reach of the part that went. A group's solid cuts the
+ * rooms *around* it too, and the piece of it that has become a hole cuts
+ * nothing any more — so a room outside the group that overlapped a pillar
+ * inside it fills that pillar in where it used to be cut by it. That is the
+ * price of the shape being one shape, and it is the thing resolving was asked
+ * for. A pillar reaching out of its own group into a neighbour's room is an odd
+ * construction to have drawn on purpose.
+ *
+ * A floor takes no part in the set — see `sideOf` — so nothing cuts it and it
+ * cuts nothing.
+ */
+const SIDES: readonly { kind: PolygonType, cut: PolygonType | null }[] = [
+  { kind: 'level', cut: 'solid' },
+  { kind: 'solid', cut: 'level' },
+  { kind: 'floor', cut: null },
+];
 
 // -----------------------------------------------------------------------------
 // The union, as rings
@@ -196,19 +225,33 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
 }
 
 /** One side's union, as closed rings in world units. */
-function rings(items: readonly Contributed[], kind: PolygonType): NamedRing[] {
-  const mine: Member[] = items
-    .filter(it => it.kind === kind && it.shape.length !== 0)
-    // Everybody a `level`, so that what comes back is the plain union rather
-    // than `level - solid`. Which side of the set they are actually on is the
-    // caller's question and was answered before this was called.
-    .map(it => ({ id: it.id, kind: 'level', shape: it.shape }));
+function rings(
+  items: readonly Contributed[],
+  kind: PolygonType,
+  cut: PolygonType | null,
+): NamedRing[] {
+  // Renamed rather than reasoned about: `boundaryRuns` answers one question,
+  // which is the boundary of `level - solid`, so which side a contributor is
+  // put on here is which part it plays in *this* reading. The solid side is the
+  // same question with the two swapped over.
+  const mine: Member[] = [];
 
-  if (mine.length === 0) return [];
+  for (const it of items) {
+    if (it.shape.length === 0) continue;
+    if (it.kind === kind) mine.push({ id: it.id, kind: 'level', shape: it.shape });
+    else if (it.kind === cut) mine.push({ id: it.id, kind: 'solid', shape: it.shape });
+  }
+
+  // Nothing of this kind is nothing to take anything out of. The cutters alone
+  // bound no material.
+  if (!mine.some(m => m.kind === 'level')) return [];
 
   const on = ground(mine);
   const out: NamedRing[] = [];
 
+  // Every member, cutters included: a hole's edge lies on the polygon that cut
+  // it, so the solids own their share of the boundary exactly as the rooms own
+  // theirs. This is `worldset` asked about one neighbourhood.
   for (const m of mine) {
     for (const run of boundaryRuns(m, mine.filter(o => o.id !== m.id), on)) {
       out.push(run.points.map((p, i) => ({ at: p, key: named(run.whence[i]) })));
@@ -308,16 +351,16 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
   const frame = groupFrame(world, v, id);
   const out: Reading[] = [];
 
-  for (const kind of SIDES) {
+  for (const side of SIDES) {
     // Into the group's frame first, since that is where the winding is read.
-    const mine = rings(items, kind)
+    const mine = rings(items, side.kind, side.cut)
       .map(ring => ring.map(p => ({ at: unplace(frame, p.at), key: p.key })));
 
     const how = nested(mine);
     const base = out.length;
 
     mine.forEach((ring, i) => out.push({
-      kind,
+      kind: side.kind,
       hole: how[i].hole,
       owner: how[i].owner === null ? null : base + how[i].owner!,
       ring: ring.map(p => p.at),
