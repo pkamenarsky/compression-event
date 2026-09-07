@@ -95,7 +95,7 @@ function frames(riders: Map<Id, Rider>, slots: Slots): Float32Array {
   const all = chains(riders);
 
   for (const [id, slot] of slots) {
-    const { base, layer, holders } = all.get(id)!;
+    const { base, into, layer, holders } = all.get(id)!;
     const held = pivot(layer);
     const o = slot * FRAME_STRIDE;
 
@@ -119,6 +119,19 @@ function frames(riders: Map<Id, Rider>, slots: Slots): Float32Array {
     // The chain, one link at a time. Everything above this slot is that
     // slot's business, and it says so the same way.
     out[o + 14] = holders.length === 0 ? -1 : slots.get(holders[0].id) ?? -1;
+
+    // Where the base lands at the far end. The base itself wherever the far end
+    // inherits it, which is everywhere nothing was unchained — the shader lerps
+    // between the two unconditionally, and this is what makes that a no-op. See
+    // `Rider.into`.
+    const far = into ?? base;
+
+    out[o + 16] = far.a;
+    out[o + 17] = far.b;
+    out[o + 18] = far.c;
+    out[o + 19] = far.d;
+    out[o + 20] = far.tx;
+    out[o + 21] = far.ty;
   }
 
   return out;

@@ -35,8 +35,9 @@
 import { Point } from './world';
 
 /**
- * Sixteen floats per polygon: the chain it already stood in as an affine, the
- * version in flight in components, and that layer's fixed point.
+ * Twenty-four floats per polygon: the chain it already stood in as an affine,
+ * where that chain lands at the far end, the version in flight in components,
+ * and that layer's fixed point.
  *
  *   0..5   base affine a, b, c, d, tx, ty
  *   6, 7   the layer's translation
@@ -46,6 +47,15 @@ import { Point } from './world';
  *   12, 13 that fixed point
  *   14     the slot of the group holding this one, or -1
  *   15     spare
+ *   16..21 the base at the far end, a, b, c, d, tx, ty
+ *   22, 23 spare
+ *
+ * The far base is the base itself for everything that stands on what its base
+ * handed it, which is everything but a thing unchained at the far version — see
+ * `Rider.into` in the editor. So the walk between the two is a lerp that is a
+ * no-op nearly always, and is a matrix lerp when it is not: the two ends are
+ * then a discontinuity the author asked for rather than two readings of one
+ * motion, and there is no motion to interpolate along.
  *
  * A group is a slot like any other: an identity base, the group's own layer in
  * flight, and its own holder above it. A vertex rides the chain up to the top
@@ -60,7 +70,7 @@ import { Point } from './world';
  * translation is taken in a straight line instead, which for a translation is
  * exactly right anyway.
  */
-export const FRAME_STRIDE = 16;
+export const FRAME_STRIDE = 24;
 
 /**
  * Eight floats per entry of the table crossings are solved from.
@@ -310,9 +320,11 @@ export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
   const tx = held ? px - (a * px + c * py) : f[o + 6] * t;
   const ty = held ? py - (b * px + d * py) : f[o + 7] * t;
 
-  // The eased layer, after the base.
-  const ba = f[o], bb = f[o + 1], bc = f[o + 2], bd = f[o + 3];
-  const bx = f[o + 4], by = f[o + 5];
+  // The eased layer, after the base — which is itself part way to the far
+  // end's, where the two differ. See `FRAME_STRIDE`.
+  const ba = mix(f[o], f[o + 16], t), bb = mix(f[o + 1], f[o + 17], t);
+  const bc = mix(f[o + 2], f[o + 18], t), bd = mix(f[o + 3], f[o + 19], t);
+  const bx = mix(f[o + 4], f[o + 20], t), by = mix(f[o + 5], f[o + 21], t);
 
   return {
     a: a * ba + c * bb,

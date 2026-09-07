@@ -16,7 +16,16 @@
 import { describe, expect, test } from 'vitest';
 import { Point, SCALE } from '@ce/game/world';
 import { BakedSpan, CROSSING, FRAME_STRIDE, Hulls, outline, placeAt, signedArea } from '@ce/game';
-import { Frame, artefactsDuring, bakeSpan, riding, sample, stretchAt, truth } from './bake';
+import {
+  Frame,
+  Span,
+  artefactsDuring,
+  bakeSpan,
+  riding,
+  sample,
+  stretchAt,
+  truth,
+} from './bake';
 import { artefactsShipped, bakedSpan, versionOf } from './export';
 import {
   TOP,
@@ -36,6 +45,7 @@ import {
   removeAt,
   removeVertices,
   resolveAt,
+  unchained,
   withEdit,
 } from './scene';
 import { ArtefactId, EMPTY_TRANSFORM, Id, PolygonId, PolygonType, Transform, VersionId, World, emptyWorld } from './types';
@@ -571,7 +581,7 @@ describe('what the buffers are', () => {
     );
     const flat = bakedSpan(run(bakeSpan(transformed(world, 1, ids[1], { rotation: 1.1 }), 0)));
 
-    expect(flat.frames.length / 16).toBe(2);
+    expect(flat.frames.length / FRAME_STRIDE).toBe(2);
     expect([...flat.slots].every(s => s === 0 || s === 1)).toBe(true);
   });
 });
@@ -849,9 +859,17 @@ describe('the source rings a version resolves to', () => {
 function shaderFrame(frames: Float32Array, depth: number, slot: number, t: number): Affine {
   const link = (at: number): Affine => {
     const o = at * FRAME_STRIDE;
+    // Part way to where the base lands at the far end, which is the base
+    // itself unless something was unchained there. See `FRAME_STRIDE`.
+    const mix = (u: number, v: number): number => u + (v - u) * t;
+
     const base: Affine = {
-      a: frames[o], b: frames[o + 1], c: frames[o + 2],
-      d: frames[o + 3], tx: frames[o + 4], ty: frames[o + 5],
+      a: mix(frames[o], frames[o + 16]),
+      b: mix(frames[o + 1], frames[o + 17]),
+      c: mix(frames[o + 2], frames[o + 18]),
+      d: mix(frames[o + 3], frames[o + 19]),
+      tx: mix(frames[o + 4], frames[o + 20]),
+      ty: mix(frames[o + 5], frames[o + 21]),
     };
 
     const layer: Transform = {
@@ -952,25 +970,57 @@ describe('the chain a vertex rides', () => {
     const span = run(bakeSpan(world, 0));
     const flat = bakedSpan(span);
 
-    // The slots are the riders and their holders, by id in order.
-    const slots = new Map(
-      [...new Set([
-        ...span.riders.keys(),
-        ...[...span.riders.values()].flatMap(r => r.holders.map(h => h.id)),
-      ])].sort((a, b) => a - b).map((id, i) => [id, i]),
-    );
-
     for (const t of [0, 0.13, 0.5, 0.77, 1]) {
       for (const id of ids) {
         near(
-          shaderFrame(flat.frames, flat.depth, slots.get(id)!, t),
+          shaderFrame(flat.frames, flat.depth, slotted(span).get(id)!, t),
           riding(span.riders.get(id)!, t),
         );
       }
     }
   });
 
+  /**
+   * A footing at the far version is the one thing that puts a slot's two ends
+   * on different bases, and the table has to carry both — the near base alone
+   * leaves the shader holding the room still for the whole span and snapping it
+   * into place at the end of it, which is what the 3D view did.
+   */
+  test('and across an unchain point, where the two bases differ', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const id = ids[0];
+
+    const loose = unchained(world, 1, [id]);
+    const moved = transformed(loose, 0, id, { translation: { x: 400, y: 0 }, rotation: 0.4 });
+
+    const span = run(bakeSpan(moved, 0));
+    const flat = bakedSpan(span);
+    const slot = slotted(span).get(id)!;
+
+    for (const t of [0, 0.13, 0.5, 0.77, 1]) {
+      near(shaderFrame(flat.frames, flat.depth, slot, t), riding(span.riders.get(id)!, t));
+    }
+
+    // And it is a walk rather than a jump at the end: the two bases are far
+    // apart, so the frame half way is nowhere near either of them.
+    const half = shaderFrame(flat.frames, flat.depth, slot, 0.5);
+
+    expect(half.tx).toBeGreaterThan(1);
+    expect(half.tx).toBeLessThan(399);
+  });
+
 });
+
+/** The slots `bakedSpan` lays out: the riders and their holders, by id in
+ * order. */
+function slotted(span: Span): Map<Id, number> {
+  return new Map(
+    [...new Set([
+      ...span.riders.keys(),
+      ...[...span.riders.values()].flatMap(r => r.holders.map(h => h.id)),
+    ])].sort((a, b) => a - b).map((id, i) => [id, i]),
+  );
+}
 
 /**
  * The two sources of geometry have to draw the same verticals.

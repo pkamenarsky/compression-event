@@ -79,11 +79,13 @@ const shaderFor = (depth: number): string => /* glsl */ `
    * Column-major, so that \`m * vec3(p, 1.0)\` is the point placed.
    */
   mat3 linkAt(int slot, float t) {
-    int o = slot * 4;
+    int o = slot * 6;
     vec4 f0 = fetch(uFrames, o);
     vec4 f1 = fetch(uFrames, o + 1);
     vec4 f2 = fetch(uFrames, o + 2);
     vec4 f3 = fetch(uFrames, o + 3);
+    vec4 f4 = fetch(uFrames, o + 4);
+    vec4 f5 = fetch(uFrames, o + 5);
 
     float rot = f2.x * t;
     float sx = mix(1.0, f2.y, t);
@@ -101,7 +103,12 @@ const shaderFor = (depth: number): string => /* glsl */ `
       ? p - vec2(a * p.x + c * p.y, b * p.x + d * p.y)
       : f1.zw * t;
 
-    vec2 ba = f0.xy, bc = f0.zw, bt = f1.xy;
+    // The chain it stood in, part way to where it stands at the far end. The
+    // two are the same matrix for everything that inherits its base, which is
+    // everything but a thing unchained at the far version.
+    vec2 ba = mix(f0.xy, f4.xy, t);
+    vec2 bc = mix(f0.zw, f4.zw, t);
+    vec2 bt = mix(f1.xy, f5.xy, t);
 
     return mat3(
       vec3(a * ba.x + c * ba.y, b * ba.x + d * ba.y, 0.0),
@@ -124,7 +131,7 @@ const shaderFor = (depth: number): string => /* glsl */ `
     mat3 m = linkAt(slot, t);
 
     for (int i = 1; i < DEPTH; i++) {
-      slot = int(fetch(uFrames, slot * 4 + 3).z);
+      slot = int(fetch(uFrames, slot * 6 + 3).z);
 
       if (slot < 0) break;
 
