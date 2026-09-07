@@ -22,6 +22,23 @@
 // eye height, facing north — where the floor set has an edge at exactly x = 200
 // because the polygon cutting it was never rotated.
 //
+// Nothing in either WebGL specification licenses this. The word "clip" appears
+// nine times in WebGL 1.0 and twice in WebGL 2.0, and the only latitude either
+// grants is for *points*: "POINTS primitives may or may not be discarded if the
+// vertex lies outside the clip volume, but within the near and far clip planes."
+// Neither says anything about triangles, negative w, or degenerate edges, and
+// WebGL's stated aim runs the other way — "Behavior of the WebGL API should be
+// consistent in cases where the native API spec allows undefined behavior."
+//
+// The requirement is inherited from OpenGL ES 3.0.6 section 2.18, which says a
+// polygon "is passed if every one of its edges lies entirely inside the clip
+// volume and either clipped or discarded otherwise", and then, of what clipping
+// must produce: "If it happens that a polygon intersects an edge of the clip
+// volume's boundary, then the clipped polygon must include a point on this
+// boundary edge." A triangle with a surviving part is to be clipped, not thrown
+// away. The disjunction is loose enough to be read the other way if you try,
+// and no implementation reads it that way.
+//
 // See the commit `turn the view a hair before drawing it`.
 const S = 1 / 25;
 const EYE = [0, 1.6, 0];
@@ -168,6 +185,10 @@ const rows = [];
 const say = (label, n) => rows.push(`  ${label.padEnd(44)} ${String(n).padStart(7)} px`);
 
 rows.push(`renderer: ${gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)}`);
+rows.push('');
+rows.push('Reads the same on an Apple M4 and on an iPhone X, which is an A11 of');
+rows.push('2017 — seven years and a good deal of architecture apart, and still');
+rows.push('Apple either way. Nothing else has been tried.');
 rows.push('');
 rows.push('The triangle out of the level, at a few yaws. The projection is done');
 rows.push('on the CPU in one column and in the shader in the other, to show that');
