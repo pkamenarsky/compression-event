@@ -1,4 +1,8 @@
+* drag in 3d view pans in 2d view
 * erosion should be cumulative i think
+* groups with solids don't get resolved
+** if resolve results in multiple polygons split them so they are selectable individually
+* slow motion animation so user can check for strange frames
 
 * eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 
