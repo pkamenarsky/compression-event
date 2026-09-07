@@ -51,15 +51,29 @@
 // forward; this one rewrites the whole chain, because the thing it replaces
 // spans the whole chain. Undo is what takes it back.
 //
-// Holes
-// -----
-// The union of a ring of corridors is one room with a courtyard in the middle,
-// and that is what it comes out as: one polygon, whose second ring is the
-// courtyard. Not a room and a pillar — a pillar is on the other side of the set
-// and cuts the rooms around it too, so a neighbour built up against the block
-// could never fill the courtyard in, which is not what the group did.
+// What comes out
+// --------------
+// The set the group makes, and the floors clipped to it. Nothing else.
 //
-// This is what `Vertex.ring` was added for. See `types.ts`.
+// A group holding a room and a pillar is not two shapes that happen to be
+// grouped; it is a room with a pillar in it, and what it puts into the level is
+// `level - solid`. So that is the one thing resolving produces on that side,
+// and a solid is a hole in it rather than a polygon of its own. Which is the
+// whole reason a polygon can have more than one ring — see `Vertex.ring` in
+// `types.ts`.
+//
+// Nothing is left over. A pillar reaching out past the room it was in was also
+// cutting the rooms *around* the group, and that goes with it: the price of
+// the shape being one shape, and the shape being one shape is what resolving
+// is. Where there is no room at all — a group of nothing but pillars — there is
+// nothing for a hole to be a hole in, so the gesture does not happen rather
+// than emptying the group.
+//
+// A floor is in no set — see `filling` in `bake.ts` — so it neither cuts nor is
+// cut, and it comes out as `floor and (level - solid)`. A floor reaching past
+// the walls or across a pillar is a floor drawn where there is no room, and it
+// was only ever invisible because a wall stood in front of it. Resolving is
+// where that stops being true.
 // -----------------------------------------------------------------------------
 
 import { PolygonType } from '@ce/game/world';
@@ -72,6 +86,8 @@ import {
   boundaryRuns,
   contains,
   ground,
+  intersect,
+  unionAll,
 } from './geometry';
 import {
   Contributed,
@@ -104,37 +120,6 @@ import {
 /** The three sides a group contributes to, in the order the CSG reads them.
  * The same list `sideOf` numbers, and for the same reason: a room's boundary
  * and a pillar's are not one boundary. */
-/**
- * The three sides a group can contribute to, and what each is cut by.
- *
- * A group holding a room and a pillar is not two shapes that happen to be
- * grouped. It is a room with a pillar in it, and what it puts into the level is
- * `level - solid`. So that is what resolving it produces: the level side is the
- * rooms with the pillars taken out of them — a hole, now that a polygon can
- * have one — and the solid side is whatever of the pillars was never in a room
- * to begin with.
- *
- * Which is the group's own contribution exactly. `(L - S) - (S - L)` is `L - S`,
- * because `L - S` never met `S`; nothing about what the group puts into the set
- * has moved.
- *
- * What does move is the reach of the part that went. A group's solid cuts the
- * rooms *around* it too, and the piece of it that has become a hole cuts
- * nothing any more — so a room outside the group that overlapped a pillar
- * inside it fills that pillar in where it used to be cut by it. That is the
- * price of the shape being one shape, and it is the thing resolving was asked
- * for. A pillar reaching out of its own group into a neighbour's room is an odd
- * construction to have drawn on purpose.
- *
- * A floor takes no part in the set — see `sideOf` — so nothing cuts it and it
- * cuts nothing.
- */
-const SIDES: readonly { kind: PolygonType, cut: PolygonType | null }[] = [
-  { kind: 'level', cut: 'solid' },
-  { kind: 'solid', cut: 'level' },
-  { kind: 'floor', cut: null },
-];
-
 // -----------------------------------------------------------------------------
 // The union, as rings
 //
@@ -173,11 +158,11 @@ function named(w: Whither): string {
 }
 
 /** Twice the signed area, which is what says which way a ring is wound. */
-function signed(ring: readonly Named[]): number {
+function signed(ring: Ring): number {
   let sum = 0;
 
   for (let i = 0; i < ring.length; i++) {
-    const a = ring[i].at, b = ring[(i + 1) % ring.length].at;
+    const a = ring[i], b = ring[(i + 1) % ring.length];
 
     sum += a.x * b.y - b.x * a.y;
   }
@@ -225,33 +210,27 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
 }
 
 /** One side's union, as closed rings in world units. */
-function rings(
-  items: readonly Contributed[],
-  kind: PolygonType,
-  cut: PolygonType | null,
-): NamedRing[] {
-  // Renamed rather than reasoned about: `boundaryRuns` answers one question,
-  // which is the boundary of `level - solid`, so which side a contributor is
-  // put on here is which part it plays in *this* reading. The solid side is the
-  // same question with the two swapped over.
+function rings(items: readonly Contributed[]): NamedRing[] {
   const mine: Member[] = [];
 
   for (const it of items) {
-    if (it.shape.length === 0) continue;
-    if (it.kind === kind) mine.push({ id: it.id, kind: 'level', shape: it.shape });
-    else if (it.kind === cut) mine.push({ id: it.id, kind: 'solid', shape: it.shape });
+    // A floor is in no set — see `filling` in `bake.ts` — so it neither cuts
+    // nor is cut, and it is not what bounds anything here.
+    if (it.shape.length === 0 || it.kind === 'floor') continue;
+
+    mine.push({ id: it.id, kind: it.kind, shape: it.shape });
   }
 
-  // Nothing of this kind is nothing to take anything out of. The cutters alone
-  // bound no material.
+  // Solids with nothing to be taken out of bound no material. The group is
+  // pillars and a pillar on its own is a hole in nothing.
   if (!mine.some(m => m.kind === 'level')) return [];
 
   const on = ground(mine);
   const out: NamedRing[] = [];
 
-  // Every member, cutters included: a hole's edge lies on the polygon that cut
-  // it, so the solids own their share of the boundary exactly as the rooms own
-  // theirs. This is `worldset` asked about one neighbourhood.
+  // Every member, solids included: the edge of a hole lies on the polygon that
+  // cut it, so a solid owns its share of the boundary exactly as a room owns
+  // its own. This is `worldset` asked about one neighbourhood.
   for (const m of mine) {
     for (const run of boundaryRuns(m, mine.filter(o => o.id !== m.id), on)) {
       out.push(run.points.map((p, i) => ({ at: p, key: named(run.whence[i]) })));
@@ -259,6 +238,28 @@ function rings(
   }
 
   return stitched(out);
+}
+
+/**
+ * The group's floors, clipped to the ground it just worked out.
+ *
+ * A floor is a fill drawn where the level is, and a floor reaching out past the
+ * walls or across a pillar is a floor drawn where there is no room — which is
+ * only ever invisible because a wall stands in front of it. Resolving is where
+ * that stops being true, since what comes out is meant to be the shape rather
+ * than the parts it was made of.
+ *
+ * `floor and (level - solid)`, so the pillars appear in the floor as they do in
+ * the walls. Straight out of `intersect`, which hands back an arrangement:
+ * there is nothing here to stitch, because there are no runs — the boundary of
+ * an intersection is not partitioned by source and does not need to be.
+ */
+function floors(items: readonly Contributed[], walls: readonly Ring[]): Ring[] {
+  const mine = items.filter(it => it.kind === 'floor' && it.shape.length !== 0);
+
+  if (mine.length === 0 || walls.length === 0) return [];
+
+  return intersect(unionAll(mine.map(it => it.shape)), [...walls]);
 }
 
 // -----------------------------------------------------------------------------
@@ -292,7 +293,7 @@ interface Reading {
  * the sign that matters is the one *relative to the biggest ring*, which is an
  * outline whichever way round the frame put it.
  */
-function nested(rings: readonly NamedRing[]): { hole: boolean, owner: number | null }[] {
+function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }[] {
   const area = rings.map(signed);
   const biggest = area.reduce((b, a, i) => (Math.abs(a) > Math.abs(area[b]) ? i : b), 0);
   const outward = Math.sign(area[biggest]);
@@ -306,7 +307,7 @@ function nested(rings: readonly NamedRing[]): { hole: boolean, owner: number | n
     let owner: number | null = null;
 
     rings.forEach((other, j) => {
-      if (hole[j] || !contains([other.map(p => p.at)], ring[0].at)) return;
+      if (hole[j] || !contains([other], ring[0])) return;
       if (owner === null || Math.abs(area[j]) < Math.abs(area[owner])) owner = j;
     });
 
@@ -351,19 +352,29 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
   const frame = groupFrame(world, v, id);
   const out: Reading[] = [];
 
-  for (const side of SIDES) {
-    // Into the group's frame first, since that is where the winding is read.
-    const mine = rings(items, side.kind, side.cut)
-      .map(ring => ring.map(p => ({ at: unplace(frame, p.at), key: p.key })));
+  // The set the group makes, and the floors clipped to it. Two kinds rather
+  // than three: what a solid contributes is a hole in the level, and once it is
+  // one there is nothing of the solid left to be. A pillar sticking out past
+  // the room it was in goes with it — it was cutting the rooms *around* the
+  // group as well, and that is what resolving to one shape costs.
+  const walls = rings(items).map(ring => ring.map(p => p.at));
 
+  const sides: [PolygonType, readonly Ring[]][] = [
+    ['level', walls],
+    ['floor', floors(items, walls)],
+  ];
+
+  for (const [kind, side] of sides) {
+    // Into the group's frame first, since that is where the winding is read.
+    const mine = side.map(ring => ring.map(p => unplace(frame, p)));
     const how = nested(mine);
     const base = out.length;
 
     mine.forEach((ring, i) => out.push({
-      kind: side.kind,
+      kind,
       hole: how[i].hole,
       owner: how[i].owner === null ? null : base + how[i].owner!,
-      ring: ring.map(p => p.at),
+      ring,
     }));
   }
 

@@ -551,47 +551,41 @@ describe('the group does not survive being resolved', () => {
     expect(drawnArea(out.world, 0)).toBeCloseTo(before, 6);
   });
 
-  test('a pillar half out of its room keeps the half that was never in it', () => {
-    // The case off disk: a room and a solid overlapping at one corner. What
-    // the group put into the set is the room less the overlap; what is left of
-    // the solid is still cutting whatever else it reaches.
+  test('a pillar half out of its room goes with the half that was in it', () => {
+    // The case off disk: a room and a solid overlapping at one corner.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(60, 60, 100, 100)],
     );
 
     const made = grouped(world, 0, ids, landing(world, 0, null))!;
-    const before = drawnArea(made.world, 0);
     const out = resolveGroup(made.world, 0, made.id)!;
 
+    // One thing, and it is the room with the corner bitten out. What the
+    // pillar was doing to the rooms *around* the group goes with it, which is
+    // what resolving to one shape costs.
     expect(out.world.groups.size).toBe(0);
-    expect(out.ids.map(id => out.world.polygons.get(id)!.type).sort())
-      .toEqual(['level', 'solid']);
+    expect(out.ids.length).toBe(1);
+    expect(out.world.polygons.get(out.ids[0])!.type).toBe('level');
 
-    const level = resolveAt(out.world, 0).find(r => r.polygon.type === 'level')!;
-    const solid = resolveAt(out.world, 0).find(r => r.polygon.type === 'solid')!;
+    const it = resolveAt(out.world, 0)[0];
 
-    // The room with the corner bitten out, and the pillar with that same bite
-    // missing: the two are disjoint, which is what makes the subtraction a
-    // subtraction rather than a redrawing.
-    expect(shapeArea(level.shape)).toBeCloseTo(100 * 100 - 40 * 40, 6);
-    expect(shapeArea(solid.shape)).toBeCloseTo(100 * 100 - 40 * 40, 6);
-    expect(drawnArea(out.world, 0)).toBeCloseTo(before, 6);
+    expect(shapeArea(it.shape)).toBeCloseTo(100 * 100 - 40 * 40, 6);
+    expect(it.corners.length).toBe(6);
   });
 
-  test('a group of pillars alone comes back as pillars', () => {
+  test('a group of pillars alone has nothing to resolve to, and is left alone', () => {
     const { world, ids } = drawn(
       ['solid', rect(0, 0, 100, 100)],
       ['solid', rect(60, 0, 100, 100)],
     );
 
     const made = grouped(world, 0, ids, landing(world, 0, null))!;
-    const out = resolveGroup(made.world, 0, made.id)!;
 
-    // Nothing to cut them out of, so they are the whole of what is left.
-    expect(out.ids.length).toBe(1);
-    expect(out.world.polygons.get(out.ids[0])!.type).toBe('solid');
-    expect(shapeArea(resolveAt(out.world, 0)[0].shape)).toBeCloseTo(100 * 160, 6);
+    // A pillar is a hole in something, and there is nothing here for it to be
+    // a hole in. Better a gesture that did not happen than one that emptied
+    // the group.
+    expect(resolveGroup(made.world, 0, made.id)).toBeNull();
   });
 
   test('rooms that do not touch come to one polygon each', () => {
@@ -772,5 +766,76 @@ describe('a plain selection resolves the same way a group does', () => {
 
     expect(resolveInto(moved, 0, ids, TOP)!.losing).toEqual([3]);
     expect(resolveInto(moved, 3, ids, TOP)!.losing).toEqual([]);
+  });
+});
+
+describe('floors are clipped to the ground', () => {
+  test('a floor larger than its room comes back the size of the room', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['floor', rect(-50, -50, 300, 300)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    const floor = resolveAt(out.world, 0).find(r => r.polygon.type === 'floor')!;
+
+    expect(shapeArea(floor.shape)).toBeCloseTo(100 * 100, 6);
+  });
+
+  test('a pillar shows through the floor as well as through the walls', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+      ['floor', rect(0, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    // `floor and (level - solid)`, so the floor has the courtyard in it too.
+    // A floor drawn across a pillar is a floor where there is no room, and it
+    // was only ever invisible because a wall stood in front of it.
+    expect(out.ids.length).toBe(2);
+
+    for (const kind of ['level', 'floor'] as const) {
+      const it = resolveAt(out.world, 0).find(r => r.polygon.type === kind)!;
+
+      expect(it.rings.length).toBe(2);
+      expect(shapeArea(it.shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+    }
+  });
+
+  test('a floor with no room under it is not ground and does not survive', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['floor', rect(400, 400, 50, 50)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(out.ids.length).toBe(1);
+    expect(out.world.polygons.get(out.ids[0])!.type).toBe('level');
+  });
+
+  test('what the floor is clipped to is the set, not the rooms', () => {
+    // Two rooms meeting, a floor over both, and a pillar across the join.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(90, 0, 100, 100)],
+      ['solid', rect(80, 40, 30, 20)],
+      ['floor', rect(0, 0, 190, 100)],
+    );
+
+    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    const level = resolveAt(out.world, 0).find(r => r.polygon.type === 'level')!;
+    const floor = resolveAt(out.world, 0).find(r => r.polygon.type === 'floor')!;
+
+    expect(shapeArea(floor.shape)).toBeCloseTo(shapeArea(level.shape), 6);
+    expect(shapeArea(floor.shape)).toBeCloseTo(190 * 100 - 30 * 20, 6);
   });
 });
