@@ -127,6 +127,7 @@
 import { angleAt } from '@ce/game/arc';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
+import { Moving as Travelling, alongAt, incidentAt } from './incident';
 import {
   Member,
   Ring,
@@ -134,6 +135,7 @@ import {
   alongOf,
   boundaryRuns,
   betweenOf,
+  erodedCorners,
   ground,
   keeping,
   nextOf,
@@ -1956,6 +1958,29 @@ const BEND = 1e-6;
 
 const MARGIN = 0.5;
 
+/**
+ * How wide an interval has to be before a root is allowed to steer where it is
+ * split. Below this the bisection halves as it always did.
+ *
+ * Not a limit on the solving, which is exact wherever it applies — a limit on
+ * what the *check* can stand. A stretch is accepted on three samples, and that
+ * was calibrated against a bisection: every interval it produced was some
+ * dyadic piece halved until it passed, and three samples of one of those was
+ * enough. Steering the splits changes which intervals are on offer, and near an
+ * event is where the geometry moves fastest — a crossing whose two edges are
+ * going parallel travels at any speed you like. Steered all the way down, six
+ * boxes turning came back with a `worst` a sixth under what the replay actually
+ * strayed, which is the one failure this file is written to prevent.
+ *
+ * So the descent is steered and the endgame is not. That keeps the whole saving
+ * — the long walk down from the width of the span is where the evaluations were
+ * — and hands the last few halvings back to the machinery that was measured
+ * against them. Where the two were compared, the levels to hand cut identically
+ * at this and at no gate at all.
+ */
+const STEERED = 0.03;
+
+
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
   return signature(a.frame) === signature(b.frame) && explained(a, b);
@@ -2566,6 +2591,88 @@ function* fillTrack(
 }
 
 /**
+ * Where the incidence says a corner reaches an edge, over the whole span.
+ *
+ * Hints, and only hints. A stretch still ends where the *measuring* says it
+ * ends — nothing here can keep a cut from happening or make one happen — so a
+ * root that turns out to be no event costs a lopsided split, and an event with
+ * no root behind it is found the way every event was found before: by halving.
+ * That is what lets this be as partial as it is, and `incident.ts` is honest
+ * about how partial that is.
+ *
+ * What it saves is the halving. Pinning a discontinuity to `GAP` costs about
+ * fourteen evaluations of a neighbourhood; landing on one costs two, because
+ * the interval either side of a root is already narrow enough to be handed
+ * straight to the pinning path.
+ *
+ * Pairs involving `id` only. A track is that polygon's share of the boundary,
+ * so its cuts are its own corners against its neighbours' edges and the other
+ * way round; two neighbours meeting each other behind it is a real event for
+ * this track and is left to the measuring, because paying for every pair in a
+ * neighbourhood to catch it costs more than the halving it would save.
+ */
+function seedsFor(sub: readonly Moving[], id: Id): number[] {
+  const mine = sub.filter(m => m.at.id === id);
+  const out: number[] = [];
+
+  for (const a of mine) {
+    for (const b of sub) {
+      reaching(a, b, out);
+
+      if (b.at.id !== id) reaching(b, a, out);
+    }
+  }
+
+  return [...new Set(out)].sort((p, q) => p - q);
+}
+
+/** Every corner of `a` against every edge of `b`, appended to `out`. */
+function reaching(a: Moving, b: Moving, out: number[]): void {
+  const from = eroded(a), to = eroded(b);
+  const n = to[0].length;
+
+  if (n < 2) return;
+
+  for (let i = 0; i < from[0].length; i++) {
+    const p: Travelling = { rider: a, from: from[0][i], to: from[1][i] };
+
+    for (let j = 0; j < n; j++) {
+      const k = (j + 1) % n;
+
+      // A corner cannot reach an edge it is an end of, and a polygon folding
+      // shut on itself is the erosion's own collapse, which is an event the
+      // measuring finds where it happens rather than where a mitre crosses.
+      if (a.at.id === b.at.id && (i === j || i === k)) continue;
+
+      const q1: Travelling = { rider: b, from: to[0][j], to: to[1][j] };
+      const q2: Travelling = { rider: b, from: to[0][k], to: to[1][k] };
+
+      for (const t of incidentAt(p, q1, q2, GAP / 8)) {
+        // On the line is not on the edge. Read off at the root rather than
+        // solved for — both terms are already in hand there.
+        const u = alongAt(p, q1, q2, t);
+
+        if (u >= 0 && u <= 1 && t > 0 && t < 1) out.push(t);
+      }
+    }
+  }
+}
+
+/**
+ * Where a polygon's corners stand at each end of the span, in its own frame and
+ * under its own erosion.
+ *
+ * The two ends and nothing between them, because that is the whole model: a
+ * mitre's direction is fixed by the ring's shape, so a depth eased linearly
+ * puts a corner at exactly the lerp of these two. It is what `entryAt` plays
+ * back, and what `incident.ts` solves against.
+ */
+function eroded(m: Moving): [Ring, Ring] {
+  return [0, 1].map(e =>
+    erodedCorners(m.local[e], m.varying ? m.depths[e] : m.depth[e])) as [Ring, Ring];
+}
+
+/**
  * One polygon's own cut of the span.
  *
  * The measuring is the same as it ever was; what has changed is what is being
@@ -2596,6 +2703,30 @@ function* cutTrack(
   // how much of the span has been settled, which only ever goes forwards.
   const stack: [Taken, Taken][] = [[at(0), at(1)]];
 
+  // Worked out on the first interval that needs one, which on a quiet track is
+  // never. Most polygons are one stretch and one comparison, and a track that
+  // never disagrees with itself should not pay for a search it will not read.
+  let seeds: number[] | null = null;
+
+  /** The root nearest the middle of `(lo, hi)` with room to be bracketed, or
+   * null where there is none and the middle is the best guess going. */
+  const seeded = (lo: number, hi: number): number | null => {
+    seeds ??= seedsFor(sub, id);
+
+    const mid = (lo + hi) / 2;
+
+    let best: number | null = null;
+
+    if (hi - lo < STEERED) return null;
+
+    for (const t of seeds) {
+      if (t - lo <= GAP || hi - t <= GAP) continue;
+      if (best === null || Math.abs(t - mid) < Math.abs(best - mid)) best = t;
+    }
+
+    return best;
+  };
+
   let done = 0;
 
   while (stack.length > 0) {
@@ -2604,6 +2735,19 @@ function* cutTrack(
 
     if (!comparable(a, b)) {
       if (!narrow) {
+        // The two ends have different arrangements, so there is an event in
+        // here somewhere. Where the incidence names one, bracket it and hand
+        // the pinning path an interval that is already narrow; otherwise halve,
+        // which is what every event used to cost.
+        const s = seeded(a.t, b.t);
+
+        if (s !== null) {
+          const lo = at(s - GAP / 2), hi = at(s + GAP / 2);
+
+          stack.push([hi, b], [lo, hi], [a, lo]);
+          continue;
+        }
+
         const m = at((a.t + b.t) / 2);
 
         stack.push([m, b], [a, m]);
