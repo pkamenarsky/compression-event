@@ -76,9 +76,16 @@ const fillShader = /* glsl */ `
 
   ${NEARCLIP}
 
-  /** A corner on the ground plane, in world units. */
+  /**
+   * A corner on the ground plane, in world units.
+   *
+   * Through \`modelMatrix\`, which for a fill is the hair of clearance that
+   * keeps it over the ground tiles and under the walls standing on them. The
+   * walls are at the origin and take \`viewMatrix\` alone; the fill is the one
+   * thing that is placed.
+   */
   vec3 laid(vec2 at) {
-    return vec3(at.x * uScale, 0.0, at.y * uScale);
+    return (modelMatrix * vec4(at.x * uScale, 0.0, at.y * uScale, 1.0)).xyz;
   }
 
   void main() {

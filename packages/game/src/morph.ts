@@ -302,11 +302,19 @@ const fillShaderFor = (depth: number): string => /* glsl */ `
   /** What the whole triangle is alive for, which is the cut it belongs to. */
   attribute vec2 aWindow;
 
-  /** One corner of the triangle, in world units and on the ground plane. */
+  /**
+   * One corner of the triangle, in world units.
+   *
+   * Through \`modelMatrix\`, which for a fill is the hair of clearance that
+   * keeps it over the ground tiles and under the walls standing on them. The
+   * walls take \`viewMatrix\` alone because they are at the origin and have
+   * nothing for a model matrix to say; the fill is the one thing that is
+   * placed, and it is placed here rather than in spite of the shader.
+   */
   vec3 cornerAt(vec4 pts, vec4 meets, vec4 meta, float t) {
     vec2 at = pointAt(pts, meets, meta.xy, t, withinAt(meta.zw, t));
 
-    return vec3(at.x * uScale, 0.0, at.y * uScale);
+    return (modelMatrix * vec4(at.x * uScale, 0.0, at.y * uScale, 1.0)).xyz;
   }
 
   void main() {
