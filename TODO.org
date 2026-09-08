@@ -1,9 +1,12 @@
 * group subtract polys must affect only group, not siblings
+* and floor polys must be contained to group as well
 
 * version view horizontal, like keyframes
-* drag in 3d view pans in 2d view
-* erosion should be cumulative i think
+** bake button right there (also bake button for specific versions only)
 * slow motion animation so user can check for strange frames
+** just drag the arrow in the keyframe strip?
+* bug: drag in 3d view pans in 2d view
+* erosion should be cumulative i think
 * better UI for unchained poly/groups
 
 * eroded group in an eroded group behaves strange, but it's probably correct; but good to check
