@@ -16,17 +16,23 @@
 
 import * as THREE from 'three';
 import {
-  Contour,
-  NEARCLIP,
+  Extent,
   Run,
   Source,
-  VARYINGS,
   WallOptions,
+  covering,
   extrude,
-  fan,
+  laidShader,
   materials,
+  stencilled,
 } from './walls';
 import { Floor, Point } from './world';
+
+/** A floor's rings as this holds them: indices into `mine`, outline first. */
+interface Rings {
+  outer: number[]
+  holes: number[][]
+}
 
 const vertexShader = /* glsl */ `
   uniform float uScale;
@@ -56,57 +62,6 @@ const vertexShader = /* glsl */ `
 `;
 
 /**
- * The floors, which need one thing the walls do not: what triangle a vertex is
- * a corner of.
- *
- * The near plane, and nothing else — see `NEARCLIP` in `walls.ts`. A still is
- * as exposed to it as a span is, and for the same reason: the fill is the one
- * surface whose every vertex sits at one height. The two others ride along as
- * attributes, which is what the fill being unindexed here is for.
- */
-const fillShader = /* glsl */ `
-  uniform float uScale;
-
-  /** The triangle's other two corners, in the same editor units \`position\`
-   * holds this one in. */
-  attribute vec2 aSideA;
-  attribute vec2 aSideB;
-
-  ${VARYINGS}
-
-  ${NEARCLIP}
-
-  /**
-   * A corner on the ground plane, in world units.
-   *
-   * Through \`modelMatrix\`, which for a fill is the hair of clearance that
-   * keeps it over the ground tiles and under the walls standing on them. The
-   * walls are at the origin and take \`viewMatrix\` alone; the fill is the one
-   * thing that is placed.
-   */
-  vec3 laid(vec2 at) {
-    return (modelMatrix * vec4(at.x * uScale, 0.0, at.y * uScale, 1.0)).xyz;
-  }
-
-  void main() {
-    // Flat, unlit, and never part way into existence.
-    vHeightFrac = 0.0;
-    vOpacity = 1.0;
-
-    vec3 own = laid(position.xz);
-
-    // The other two matter only when this corner is behind the eye.
-    if (behindNear(own, viewMatrix, projectionMatrix)) {
-      own = nearClipped(own, laid(aSideA), laid(aSideB), viewMatrix, projectionMatrix);
-    }
-
-    vWorldPosition = own;
-
-    gl_Position = projectionMatrix * viewMatrix * vec4(own, 1.0);
-  }
-`;
-
-/**
  * The level as it stands, in editor units: walls on a set of open boundary
  * runs, and the authored floors filled flat underneath them.
  *
@@ -132,20 +87,20 @@ export function still(
 ): Source {
   const points: Point[] = [];
   const spans = [];
-  const rings: Contour[] = [];
+  const rings: Rings[] = [];
 
   for (const run of runs) {
     spans.push({ first: points.length, count: run.points.length });
     points.push(...run.points);
   }
 
-  // A point per corner of every floor, cut into triangles below. The morph's
-  // fill has the same layout and cuts the same way — see `cutting` there, which
-  // is this over a span's worth of instants rather than one. See `fan`.
+  // A point per corner of every floor, fanned below. The morph's fill has the
+  // same layout and is fanned the same way — see `fanning` there, which is this
+  // over a span.
   //
-  // The rings come already sorted into outlines and holes, which is the one
-  // thing the still has and the morph has to work out: what the still is handed
-  // is the resolved set, and the morph is handed its boundary in pieces.
+  // The rings arrive sorted into outlines and holes, and nothing here needs
+  // them to be: a hole is wound against its outline and counts against it, and
+  // that is all a hole has ever been. See the header of `walls.ts`.
   const mine: number[] = [];
 
   const laid = (ring: readonly Point[]): number[] => {
@@ -167,7 +122,6 @@ export function still(
   }
 
   const shape = extrude(spans);
-  const face = fan(rings, i => points[mine[i]]);
 
   // Per point of the flattened outline, whether a vertical standing on it is
   // telling the truth. Decided where the boundary was computed and carried on
@@ -186,7 +140,7 @@ export function still(
     uWallHeight: { value: options.wallHeight },
   };
 
-  const { wall, line, fill } = materials(vertexShader, options, uniforms, fillShader);
+  const { wall, line, fill } = materials(vertexShader, options, uniforms, laidShader);
 
   const geometry = (
     point: Int32Array,
@@ -221,34 +175,58 @@ export function still(
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
 
-  // A triangle at a time and no index buffer: a vertex carries the other two
-  // corners of its own triangle, and a point shared by two triangles is a
-  // corner of two different ones, so there is nothing an index could share.
-  // See `fillShader`.
-  const fillGeometry = ((): THREE.BufferGeometry => {
+  // One triangle per edge of every ring, fanned to a shared point, and a quad
+  // over the lot: a fill is counted rather than carved. See the header of
+  // `walls.ts`, and `fanning` in `morph.ts`, which is this over a span.
+  //
+  // No index buffer, because a vertex carries the other two corners of its own
+  // triangle and no two of these share a corner in the same role. See
+  // `NEARCLIP`.
+  const fanGeometry = ((): THREE.BufferGeometry => {
     const g = new THREE.BufferGeometry();
-    const position = new Float32Array(face.length * 3);
-    const side = [new Float32Array(face.length * 2), new Float32Array(face.length * 2)];
+    const triangles: [Point, Point, Point][] = [];
 
-    for (let i = 0; i + 2 < face.length; i += 3) {
+    // Anything the fill already holds will do for the apex — the count does not
+    // depend on it — and the first point keeps the cones inside the bounds the
+    // cover is cut to.
+    const apex = points[mine[0]] ?? { x: 0, y: 0 };
+
+    for (const ring of rings) {
+      for (const loop of [ring.outer, ...ring.holes]) {
+        // Closed, and wound as the set means it: a hole runs the other way and
+        // counts the other way, which is the whole of what makes it a hole.
+        for (let i = 0; i < loop.length; i++) {
+          const a = points[mine[loop[i]]], b = points[mine[loop[(i + 1) % loop.length]]];
+
+          triangles.push([apex, a, b]);
+        }
+      }
+    }
+
+    const position = new Float32Array(triangles.length * 9);
+    const side = [
+      new Float32Array(triangles.length * 6),
+      new Float32Array(triangles.length * 6),
+    ];
+
+    triangles.forEach((triangle, i) => {
       for (let k = 0; k < 3; k++) {
-        const v = i + k;
-        const own = points[mine[face[v]]];
+        const v = i * 3 + k;
 
-        position[v * 3] = own.x;
-        position[v * 3 + 2] = own.y;
+        position[v * 3] = triangle[k].x;
+        position[v * 3 + 2] = triangle[k].y;
 
         // The other two in the order they come round the triangle. Which of
         // them is which never matters: the clip asks whether one of them is in
         // front, not which.
         for (let j = 0; j < 2; j++) {
-          const q = points[mine[face[i + (k + 1 + j) % 3]]];
+          const q = triangle[(k + 1 + j) % 3];
 
           side[j][v * 2] = q.x;
           side[j][v * 2 + 1] = q.y;
         }
       }
-    }
+    });
 
     g.setAttribute('position', new THREE.BufferAttribute(position, 3));
     g.setAttribute('aSideA', new THREE.BufferAttribute(side[0], 2));
@@ -257,19 +235,35 @@ export function still(
     return g;
   })();
 
+  /** How far the fill reaches, which is what the cover has to be over. Exact
+   * here: a still does not move. */
+  const extent = ((): Extent | null => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    for (const i of mine) {
+      minX = Math.min(minX, points[i].x);
+      maxX = Math.max(maxX, points[i].x);
+      minY = Math.min(minY, points[i].y);
+      maxY = Math.max(maxY, points[i].y);
+    }
+
+    return isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+  })();
+
+  const coverGeometry = covering(extent);
+
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
-  const filled = new THREE.Mesh(fillGeometry, fill);
 
-  // The shader puts the fill on the ground plane; this is the hair of clearance
-  // that keeps it over the tiles and under the walls standing on it.
-  filled.position.y = options.fillHeight;
+  // The fan, counted, and the cover over it — laid the hair of clearance above
+  // the ground that keeps a fill over the tiles and under the walls standing on
+  // it. See `stencilled`.
+  const filled = stencilled(fanGeometry, coverGeometry, fill, options.fillHeight);
 
   // The heights are applied in the shader, so the box `position` describes is
   // flat and a frustum test against it would drop walls that are on screen.
   walls.frustumCulled = false;
   lines.frustumCulled = false;
-  filled.frustumCulled = false;
 
   return {
     walls,
@@ -279,10 +273,13 @@ export function still(
     dispose(): void {
       wallGeometry.dispose();
       lineGeometry.dispose();
-      fillGeometry.dispose();
+      fanGeometry.dispose();
+      coverGeometry.dispose();
       wall.dispose();
       line.dispose();
-      fill.dispose();
+      fill.up.dispose();
+      fill.down.dispose();
+      fill.cover.dispose();
     },
   };
 }

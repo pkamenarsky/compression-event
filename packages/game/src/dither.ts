@@ -144,7 +144,12 @@ export class DitherPass {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
       depthBuffer: true,
-      stencilBuffer: false,
+
+      // The floors are filled by counting into the stencil — see the header of
+      // `walls.ts` — and the scene is drawn in here rather than on the screen,
+      // so this is the buffer they count into. `clear` takes it back to zero
+      // with the colour and the depth every frame.
+      stencilBuffer: true,
     });
 
     this.bayer = bayerTexture();

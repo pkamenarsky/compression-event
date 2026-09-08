@@ -244,6 +244,57 @@ export const VARYINGS = /* glsl */ `
   varying float vOpacity;
 `;
 
+/**
+ * A fill vertex that is already placed: the ground plane in editor units, and
+ * the triangle it is a corner of.
+ *
+ * Used for the still's fan, which does not move, and for both sources' cover
+ * quad, which does not either. The morph's fan is the same shader with the
+ * point rebuilt from the tables instead of read off an attribute — see
+ * `fillShaderFor` in `morph.ts`.
+ */
+export const laidShader = /* glsl */ `
+  uniform float uScale;
+
+  /** The triangle's other two corners, in the same editor units \`position\`
+   * holds this one in. */
+  attribute vec2 aSideA;
+  attribute vec2 aSideB;
+
+  ${VARYINGS}
+
+  ${NEARCLIP}
+
+  /**
+   * A corner on the ground plane, in world units.
+   *
+   * Through \`modelMatrix\`, which for a fill is the hair of clearance that
+   * keeps it over the ground tiles and under the walls standing on them. The
+   * walls are at the origin and take \`viewMatrix\` alone; the fill is the one
+   * thing that is placed.
+   */
+  vec3 laid(vec2 at) {
+    return (modelMatrix * vec4(at.x * uScale, 0.0, at.y * uScale, 1.0)).xyz;
+  }
+
+  void main() {
+    // Flat, unlit, and never part way into existence.
+    vHeightFrac = 0.0;
+    vOpacity = 1.0;
+
+    vec3 own = laid(position.xz);
+
+    // The other two matter only when this corner is behind the eye.
+    if (behindNear(own, viewMatrix, projectionMatrix)) {
+      own = nearClipped(own, laid(aSideA), laid(aSideB), viewMatrix, projectionMatrix);
+    }
+
+    vWorldPosition = own;
+
+    gl_Position = projectionMatrix * viewMatrix * vec4(own, 1.0);
+  }
+`;
+
 export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
 
@@ -551,21 +602,70 @@ export const fillFragment = /* glsl */ `
   }
 `;
 
+// -----------------------------------------------------------------------------
+// Filling a floor without cutting it up
+//
+// A polygon is filled by counting, not by carving. Fan every edge of every ring
+// to one shared point, and the number of triangles covering a pixel — signed by
+// which way each was wound — is the winding number of the ring at that pixel.
+// The cones between the shared point and the ring cancel exactly, because every
+// internal edge is walked once each way. Fill where the count is not zero and
+// the nonzero rule is what you have drawn.
+//
+// That is a stencil buffer, and three draws: the fan with front faces
+// incrementing, the fan again with back faces decrementing, and a quad over the
+// lot drawn where the count is not zero. Two passes rather than one, and a
+// buffer the renderer has to be asked for.
+//
+// What it is worth
+// ----------------
+// Nothing has to be triangulated, so nothing can be triangulated wrongly. Which
+// diagonals cut a ring is a question with a wrong answer and this asks no such
+// question: an ear clip needs a *simple* polygon, and a ring interpolated part
+// way through a stretch is not always one — the bake's tolerance covers how far
+// the replay sits from the CSG, not whether the ring crosses itself on the way.
+// A count is defined for any closed ring however many times it crosses itself.
+//
+// Rings do not have to be sorted into outlines and holes either, and they do not
+// even have to be stitched. A run's cone cancels against its neighbour's at the
+// point they share, so the runs off several polygons add up to their loop with
+// nobody having worked out which loop that is. See `nesting` and `looped`, which
+// the fill no longer calls.
+//
+// What it costs
+// -------------
+// A stencil buffer on the renderer and on the target the dither pass draws into.
+// Three draws where there was one. A cover quad big enough for everything the
+// fan rasterises, which is why it is sized off the points rather than guessed.
+// And the fill becomes the one thing in the scene with an order of its own.
+// -----------------------------------------------------------------------------
+
+/** What a fill is drawn with: two passes that count and one that fills. */
+export interface FillMaterials {
+  /** Front faces, counting up. */
+  up: THREE.ShaderMaterial
+  /** Back faces, counting down. Two materials rather than two-sided stencil
+   * ops, which three does not expose. */
+  down: THREE.ShaderMaterial
+  /** The colour, wherever the count came out other than zero. */
+  cover: THREE.ShaderMaterial
+}
+
 /**
  * The materials a source draws with: its own vertex shader, the shared fragment
  * ones, and whatever uniforms it needs on top of the colours.
  *
- * The fill takes a vertex shader of its own. It is the same geometry positioned
- * the same way, and it is the one surface that has to know what triangle a
- * vertex is a corner of — see `NEARCLIP` — which is a thing walls and lines
- * have no attributes for and no need of.
+ * The fill takes a vertex shader of its own, and three materials. It is the one
+ * surface that has to know what triangle a vertex is a corner of — see
+ * `NEARCLIP` — which is a thing walls and lines have no attributes for and no
+ * need of, and the one that is drawn by counting rather than by covering.
  */
 export function materials(
   vertexShader: string,
   options: WallOptions,
   uniforms: Record<string, { value: unknown }>,
   fillShader: string = vertexShader,
-): { wall: THREE.ShaderMaterial, line: THREE.ShaderMaterial, fill: THREE.ShaderMaterial } {
+): { wall: THREE.ShaderMaterial, line: THREE.ShaderMaterial, fill: FillMaterials } {
   const wall = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader,
@@ -590,18 +690,160 @@ export function materials(
     depthWrite: false,
   });
 
+  // Counting, not covering: no colour, no depth, and the stencil moved one way
+  // by whichever faces this pass is drawing. Depth is left to the cover — the
+  // fan is flat, so a wall in front of it hides all of it or none of it at a
+  // pixel, and that is a question about one plane rather than about each
+  // triangle of it.
+  const counting = (side: THREE.Side, op: THREE.StencilOp): THREE.ShaderMaterial =>
+    new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: fillShader,
+      fragmentShader: fillFragment,
+      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
+      side,
+      colorWrite: false,
+      depthTest: false,
+      depthWrite: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilFail: op,
+      stencilZFail: op,
+      stencilZPass: op,
+    });
+
   // Flat and unlit, laid on the ground under everything that stands on it. It
   // is a shape rather than a surface: nothing about which way it faces means
   // anything, so nothing shades it.
-  const fill = new THREE.ShaderMaterial({
+  //
+  // Wherever the count came out other than zero, which is the nonzero rule and
+  // is the rule the whole editor means by a shape. And zeroed as it goes, so
+  // the buffer is back where it started for whatever draws next.
+  const cover = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    vertexShader: fillShader,
+    vertexShader: laidShader,
     fragmentShader: fillFragment,
     uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
     side: THREE.DoubleSide,
+    stencilWrite: true,
+    stencilFunc: THREE.NotEqualStencilFunc,
+    stencilRef: 0,
+    stencilFail: THREE.ZeroStencilOp,
+    stencilZFail: THREE.ZeroStencilOp,
+    stencilZPass: THREE.ZeroStencilOp,
   });
 
+  const fill = {
+    up: counting(THREE.FrontSide, THREE.IncrementWrapStencilOp),
+    down: counting(THREE.BackSide, THREE.DecrementWrapStencilOp),
+    cover,
+  };
+
   return { wall, line, fill };
+}
+
+/** How far a fill reaches, in editor units — the plane the floors are authored
+ * in, where x and y are the ground's x and z. */
+export interface Extent {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/** How far outside the fill the cover is taken, in editor units. A fragment
+ * marked and not covered is one left in the buffer for whatever draws next, and
+ * the count is written by triangles whose corners are these bounds exactly. */
+const MARGIN = 1;
+
+/**
+ * The quad the count is read through: a rectangle over everything the fan can
+ * rasterise, on the ground plane.
+ *
+ * Two triangles, and each of its corners carrying the other two, because a
+ * ground-plane rectangle is the near-plane clip's own favourite shape — every
+ * edge axis-aligned, every vertex at one height. See `NEARCLIP`.
+ */
+export function covering(extent: Extent | null): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+
+  if (extent === null) {
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+    g.setAttribute('aSideA', new THREE.BufferAttribute(new Float32Array(0), 2));
+    g.setAttribute('aSideB', new THREE.BufferAttribute(new Float32Array(0), 2));
+
+    return g;
+  }
+
+  const x0 = extent.minX - MARGIN, x1 = extent.maxX + MARGIN;
+  const y0 = extent.minY - MARGIN, y1 = extent.maxY + MARGIN;
+
+  const at: Point[] = [
+    { x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 },
+    { x: x0, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 },
+  ];
+
+  const position = new Float32Array(at.length * 3);
+  const side = [new Float32Array(at.length * 2), new Float32Array(at.length * 2)];
+
+  for (let i = 0; i < at.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const v = i + k;
+
+      position[v * 3] = at[v].x;
+      position[v * 3 + 2] = at[v].y;
+
+      for (let j = 0; j < 2; j++) {
+        const q = at[i + (k + 1 + j) % 3];
+
+        side[j][v * 2] = q.x;
+        side[j][v * 2 + 1] = q.y;
+      }
+    }
+  }
+
+  g.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  g.setAttribute('aSideA', new THREE.BufferAttribute(side[0], 2));
+  g.setAttribute('aSideB', new THREE.BufferAttribute(side[1], 2));
+
+  return g;
+}
+
+/**
+ * A fill, ready to draw: the fan counted twice and the cover over it, in the
+ * order they have to go in.
+ *
+ * One object rather than three, because a fill is hidden and shown as one thing
+ * and half of one on screen is not a fill at all.
+ */
+export function stencilled(
+  fan: THREE.BufferGeometry,
+  cover: THREE.BufferGeometry,
+  fill: FillMaterials,
+  height: number,
+): THREE.Group {
+  const group = new THREE.Group();
+
+  const up = new THREE.Mesh(fan, fill.up);
+  const down = new THREE.Mesh(fan, fill.down);
+  const over = new THREE.Mesh(cover, fill.cover);
+
+  // The count has to be complete before anything reads it. Nothing else in the
+  // scene cares what order it is drawn in — depth sorts the walls — so this is
+  // the one place an order is stated.
+  up.renderOrder = 1;
+  down.renderOrder = 1;
+  over.renderOrder = 2;
+
+  for (const mesh of [up, down, over]) {
+    // Nothing is where its `position` attribute says it is — the shader places
+    // it — so there is no box worth testing against the frustum.
+    mesh.frustumCulled = false;
+    mesh.position.y = height;
+    group.add(mesh);
+  }
+
+  return group;
 }
 
 /** What both sources give the renderer: the meshes and a way to be rid of
@@ -609,8 +851,13 @@ export function materials(
 export interface Source {
   walls: THREE.Mesh
   lines: THREE.LineSegments
-  /** The authored floors, filled and laid flat. Empty where there are none,
-   * which is most levels. */
-  fill: THREE.Mesh
+  /**
+   * The authored floors, filled and laid flat. Empty where there are none,
+   * which is most levels.
+   *
+   * Three meshes rather than one: a fill is counted before it is covered. See
+   * `stencilled`.
+   */
+  fill: THREE.Group
   dispose(): void
 }

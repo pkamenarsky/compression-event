@@ -39,17 +39,17 @@
 import * as THREE from 'three';
 import { BakedSpan, CROSSING, placedAt } from './baked';
 import {
+  Extent,
   NEARCLIP,
   Source,
   Span,
   WallOptions,
+  covering,
   extrude,
-  fan,
-  looped,
   materials,
-  nesting,
+  stencilled,
 } from './walls';
-import { Point, TOLERANCE } from './world';
+import { Point } from './world';
 
 /** Texels across in both tables. Wide enough that a big level is a few rows,
  * narrow enough to be legal everywhere. */
@@ -267,18 +267,18 @@ const shaderFor = (depth: number): string => /* glsl */ `
 `;
 
 /**
- * The floors: a triangle at a time, each corner carrying the other two.
+ * The floors: a triangle of the fan at a time, each corner carrying the other
+ * two.
  *
  * Three corners rather than one because of the near plane — see `NEARCLIP` in
- * `walls.ts`, which is the whole reason the fill is unindexed and cut in
- * advance. The other two are solved only when this one turns out to be behind
- * the camera, which is a handful of vertices on the frames it happens at all
- * and none on any other.
+ * `walls.ts`. The other two are solved only when this one turns out to be
+ * behind the camera, which is a handful of vertices on the frames it happens at
+ * all and none on any other.
  *
- * The window a corner claims is the cut's, not the point's. They are the same
- * thing for a floor that stands through the whole span and are not when a
- * triangulation had to be split part way — see `cutting`. Each corner keeps its
- * own stretch alongside, because how far through *it* is is what places it.
+ * The window a corner claims is its run's stretch, and so is what places it.
+ * There is nothing else for a fill vertex to be gated by now: the fan is the
+ * ring's own edges and it is right for as long as the ring is there. See the
+ * header of `walls.ts` on filling by counting.
  */
 const fillShaderFor = (depth: number): string => /* glsl */ `
   ${tablesFor(depth)}
@@ -299,7 +299,7 @@ const fillShaderFor = (depth: number): string => /* glsl */ `
   attribute vec4 aSideCrossB;
   attribute vec4 aSideMetaB;
 
-  /** What the whole triangle is alive for, which is the cut it belongs to. */
+  /** What the whole triangle is alive for, which is its run's stretch. */
   attribute vec2 aWindow;
 
   /**
@@ -447,7 +447,7 @@ export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
 }
 
 // -----------------------------------------------------------------------------
-// Cutting the floors, once
+// The floors, fanned
 //
 // A wall is the quad between two consecutive points and stays that quad however
 // they move, so `extrude` is answered once and the shader does the rest. Which
@@ -455,200 +455,17 @@ export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
 // where the points *are*, and they move. So the fill used to be recut every
 // frame — the one thing in a span that was.
 //
-// It does not have to be. What a recut answers is only ever one of a handful of
-// answers, each right over a stretch of the walk, so the answers can be found
-// in advance and every one of them put in the buffer at once, each gated by the
-// window it is right over. Which is exactly what the walls already do with
-// their stretches, and the shader already had the gate for it.
+// It is not asked any more. The fill is drawn by counting rather than by
+// carving — see the header of `walls.ts` — and what the count needs is one
+// triangle per *edge* of the ring, fanned to a shared point. An edge is a fact
+// about the run, not about where its points happen to be, so the fan is as
+// static as `extrude` is and for exactly the same reason.
 //
-// How long a cut lasts
-// --------------------
-// Two things end one. The first is a stretch boundary: which runs are alive
-// changes there, so the ring the cut fills is a different ring. Those instants
-// are known — they are on the vertices — and they are the intervals this starts
-// from.
-//
-// The second is the geometry, and it is not known. Inside one interval the ring
-// is stitched out of runs off several polygons, each riding a frame of its own,
-// with crossings solved between them: the points move, and they do not move
-// affinely together. A diagonal that lay inside the ring at one instant can lie
-// outside it at another, and then the cut spills over the edge and leaves a
-// bite out of the middle.
-//
-// So this measures, the way the bake does. Take the interval, cut it in the
-// middle, and check that cut across the interval; if it does not hold, split
-// and ask again. What "holds" means is the exact thing that makes a
-// triangulation a fill: no triangle turns inside out. A set of triangles whose
-// boundary edges cancel to the ring covers the ring exactly once as long as
-// they all keep the same orientation, and covers it wrongly the instant one of
-// them flips — the flipped one is drawn outside the shape and the ground it
-// used to cover is drawn by nobody. The stitching is checked with it, because a
-// cut whose ring has been restitched is filling something else entirely.
-//
-// A floor that is only translated and turned needs one cut for the whole span,
-// which is the common case and costs one triangulation. A reflex corner
-// swinging across its neighbours costs a few.
+// The shared point is a point of the fill, any one of them. Which one changes
+// nothing about the count and only decides how far the cones reach, so it is
+// the first, which keeps them inside the ring's own bounds and so inside the
+// cover.
 // -----------------------------------------------------------------------------
-
-/**
- * How thin an interval has to get before the split gives up and keeps the best
- * cut it has.
- *
- * Six halvings, which is a cap on what a span's floors can cost as much as it
- * is a floor of precision: every split doubles the buffer, and an interval the
- * check will not pass however finely it is cut — endpoints wobbling in and out
- * of the stitch tolerance either side of a converged event would do it — would
- * otherwise take a floor's ring a thousand times over. The bake gives up on
- * width the same way, for the same reason. See `GAP`.
- */
-const THINNEST = 1 / 64;
-
-/** How many instants inside an interval a cut is checked at. The failure it is
- * looking for is a triangle's area passing through zero, which is smooth in
- * `t`: a handful of samples finds it, and the split that follows looks again. */
-const SAMPLES = 8;
-
-/** A triangulation, and the window over which it is the right one. */
-export interface Cut {
-  t0: number
-  t1: number
-  /** Corner after corner, three to a triangle, indexing the fill's own points
-   * — which is what `fills` hands back. */
-  tri: number[]
-}
-
-/** Twice the signed area of a triangle. Sign is all this is read for. */
-function turn(a: Point, b: Point, c: Point): number {
-  return (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
-}
-
-/**
- * Every instant at which the set of floor runs alive can change, in order.
- *
- * The ends of the span included: a cut has to be right from 0 to 1, and a floor
- * standing through the whole of it has no boundary of its own to offer.
- */
-function boundaries(
-  mine: readonly number[],
-  where: readonly number[][],
-  range: Float32Array,
-): number[] {
-  const edge = new Set<number>([0, 1]);
-
-  for (const run of where) {
-    const p = mine[run[0]];
-
-    if (range[p * 2] > 0 && range[p * 2] < 1) edge.add(range[p * 2]);
-    if (range[p * 2 + 1] > 0 && range[p * 2 + 1] < 1) edge.add(range[p * 2 + 1]);
-  }
-
-  return [...edge].sort((a, b) => a - b);
-}
-
-/**
- * The floors of a span cut into triangles, once, as a list of windows.
- *
- * Every cut in the list is right over its own window and the windows cover the
- * span, so the shader picks one by the same half-open rule it picks a stretch
- * by. See the header above.
- */
-export function cutting(
-  span: BakedSpan,
-  mine: readonly number[],
-  where: readonly number[][],
-  range: Float32Array,
-): Cut[] {
-  if (where.length === 0) return [];
-
-  /** Where every one of the fill's points stands at `t`, in world units — the
-   * same arithmetic the shader does, on the CPU. See `placedAt`. */
-  const solve = (t: number): Point[] => mine.map(p => {
-    const a = range[p * 2], b = range[p * 2 + 1];
-    const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
-
-    return placedAt(span, p, t, u);
-  });
-
-  /** The same gate the shader draws by, asked of a whole run: a stretch holds
-   * its start and not its end, and the last one keeps both. */
-  const alive = (run: readonly number[], t: number): boolean => {
-    const a = range[mine[run[0]] * 2], b = range[mine[run[0]] * 2 + 1];
-
-    return t >= a && (t < b || b >= 1);
-  };
-
-  /** The rings a floor set has at `t`: one polygon's share of the boundary at
-   * a time, stitched back into the loops it was cut out of. */
-  const stitch = (at: Point[], t: number): number[][] =>
-    looped(where.filter(run => alive(run, t)), i => at[i], TOLERANCE);
-
-  const triangulate = (rings: number[][], at: Point[]): number[] => {
-    const contours = nesting(rings.map(ring => ring.map(i => at[i]))).map(n => ({
-      outer: rings[n.outer],
-      holes: n.holes.map(h => rings[h]),
-    }));
-
-    return [...fan(contours, i => at[i])];
-  };
-
-  /** Whether a cut is still a fill at `t`: the same rings under it, and not one
-   * triangle turned inside out. */
-  const holds = (tri: number[], rings: number[][], t: number): boolean => {
-    const at = solve(t);
-    const now = stitch(at, t);
-
-    if (now.length !== rings.length) return false;
-
-    for (let i = 0; i < now.length; i++) {
-      if (now[i].length !== rings[i].length) return false;
-      for (let j = 0; j < now[i].length; j++) if (now[i][j] !== rings[i][j]) return false;
-    }
-
-    let sign = 0;
-
-    for (let i = 0; i + 2 < tri.length; i += 3) {
-      // A triangle with no area covers nothing and cannot be wrong about which
-      // side it is on. Two with area disagreeing is one of them inside out.
-      const s = Math.sign(turn(at[tri[i]], at[tri[i + 1]], at[tri[i + 2]]));
-
-      if (s === 0) continue;
-      if (sign === 0) sign = s;
-      else if (s !== sign) return false;
-    }
-
-    return true;
-  };
-
-  const out: Cut[] = [];
-
-  const take = (t0: number, t1: number): void => {
-    const mid = (t0 + t1) / 2;
-    const at = solve(mid);
-    const rings = stitch(at, mid);
-    const tri = triangulate(rings, at);
-
-    // The interval's own start, where the runs alive were decided, and a spread
-    // of instants inside it. Never the far end: at it the next window's runs
-    // are the live ones and this cut is not what is drawn.
-    const when = [t0, t1 - (t1 - t0) * 1e-6];
-
-    for (let k = 1; k < SAMPLES; k++) when.push(t0 + (t1 - t0) * (k / SAMPLES));
-
-    if (t1 - t0 <= THINNEST || when.every(t => holds(tri, rings, t))) {
-      out.push({ t0, t1, tri });
-      return;
-    }
-
-    take(t0, mid);
-    take(mid, t1);
-  };
-
-  const bound = boundaries(mine, where, range);
-
-  for (let i = 0; i + 1 < bound.length; i++) take(bound[i], bound[i + 1]);
-
-  return out;
-}
 
 /** The stretch each point belongs to, so a vertex can be told whether it is
  * alive at the instant being drawn. */
@@ -670,26 +487,35 @@ export function ranges(span: BakedSpan): Float32Array {
 }
 
 /**
- * The fill's buffer: every cut of every floor, a triangle at a time.
+ * The fill's buffer: one triangle per edge of every floor run, fanned to the
+ * first point of the first of them.
  *
  * Unindexed, which is the one thing that looks like waste here and is the whole
  * point. A vertex has to carry the *other two corners of its triangle* — see
- * `NEARCLIP` in `walls.ts` — and a point shared by two triangles is a corner of
- * two different ones, so there is nothing for an index buffer to share. Three
- * vertices a triangle, each holding its triangle.
+ * `NEARCLIP` in `walls.ts` — and no two of these triangles share a corner in
+ * the same role, so there is nothing for an index buffer to share.
  *
  * Six vec4s of that is the two others, and they are only ever read on a vertex
  * that turns out to be behind the eye.
  */
-function filling(
+function fanning(
   span: BakedSpan,
   mine: readonly number[],
-  cuts: readonly Cut[],
+  where: readonly number[][],
   range: Float32Array,
 ): THREE.BufferGeometry {
-  let n = 0;
+  const triangles: [number, number, number][] = [];
 
-  for (const cut of cuts) n += cut.tri.length;
+  // The apex, shared by every cone. Anything the fill already holds will do —
+  // the count does not depend on it — and the first point keeps the cones
+  // inside the bounds the cover is cut to.
+  const apex = 0;
+
+  for (const run of where) {
+    for (let i = 0; i + 1 < run.length; i++) triangles.push([apex, run[i], run[i + 1]]);
+  }
+
+  const n = triangles.length * 3;
 
   const window = new Float32Array(n * 2);
   const points = [new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4)];
@@ -716,20 +542,22 @@ function filling(
 
   let v = 0;
 
-  for (const cut of cuts) {
-    for (let i = 0; i + 2 < cut.tri.length; i += 3) {
+  for (const triangle of triangles) {
+    // The stretch of the edge, which is the run's. The apex is placed by its
+    // own stretch wherever it came from, and where it is does not matter.
+    const edge = mine[triangle[1]];
+
+    for (let k = 0; k < 3; k++) {
+      window[v * 2] = range[edge * 2];
+      window[v * 2 + 1] = range[edge * 2 + 1];
+
       // Each corner in turn as the vertex's own, the other two after it in the
       // order they came round the triangle.
-      for (let k = 0; k < 3; k++) {
-        window[v * 2] = cut.t0;
-        window[v * 2 + 1] = cut.t1;
+      corner(0, v, triangle[k]);
+      corner(1, v, triangle[(k + 1) % 3]);
+      corner(2, v, triangle[(k + 2) % 3]);
 
-        corner(0, v, cut.tri[i + k]);
-        corner(1, v, cut.tri[i + (k + 1) % 3]);
-        corner(2, v, cut.tri[i + (k + 2) % 3]);
-
-        v++;
-      }
+      v++;
     }
   }
 
@@ -750,6 +578,44 @@ function filling(
   g.setAttribute('aSideMetaB', new THREE.BufferAttribute(meta[2], 4));
 
   return g;
+}
+
+/** How many instants the fill's reach is measured over. The cones sweep between
+ * the apex and the ring and both of them move; this is a bound on where they
+ * ever go, not a place they are. */
+const REACH = 33;
+
+/**
+ * How far the fan ever reaches, over the whole span, in editor units.
+ *
+ * The cover has to be over every pixel the count was written to, or a fragment
+ * marked and never covered is one left in the buffer for whatever draws next.
+ * Sampled rather than reasoned about: a point rides a frame through a rotation
+ * and its extreme is not at either end of the stretch.
+ */
+export function reach(
+  span: BakedSpan,
+  mine: readonly number[],
+  range: Float32Array,
+): Extent | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  for (let k = 0; k < REACH; k++) {
+    const t = k / (REACH - 1);
+
+    for (const p of mine) {
+      const a = range[p * 2], b = range[p * 2 + 1];
+      const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+      const q = placedAt(span, p, t, u);
+
+      minX = Math.min(minX, q.x);
+      maxX = Math.max(maxX, q.x);
+      minY = Math.min(minY, q.y);
+      maxY = Math.max(maxY, q.y);
+    }
+  }
+
+  return isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }
 
 /** One span's meshes, sharing one set of uniforms so that seeking is one
@@ -828,21 +694,21 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
-  const fillGeometry = filling(span, mine, cutting(span, mine, where, range), range);
+  const fanGeometry = fanning(span, mine, where, range);
+  const coverGeometry = covering(where.length === 0 ? null : reach(span, mine, range));
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
-  const floors = new THREE.Mesh(fillGeometry, fill);
 
-  // The shader puts the fill on the ground plane; this is the hair of clearance
-  // that keeps it over the tiles and under the walls standing on them.
-  floors.position.y = options.fillHeight;
+  // The fan, counted, and the cover over it — laid the hair of clearance above
+  // the ground that keeps a fill over the tiles and under the walls standing on
+  // them. See `stencilled`.
+  const floors = stencilled(fanGeometry, coverGeometry, fill, options.fillHeight);
 
   // Nothing is where its `position` attribute says it is, so there is no box
   // worth testing against the frustum.
   walls.frustumCulled = false;
   lines.frustumCulled = false;
-  floors.frustumCulled = false;
 
   return {
     walls,
@@ -853,9 +719,8 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     // are positioned by the shader and the floors were cut in advance, each cut
     // gated by the window it is right over. Seeking is three numbers.
     seek(to: number): void {
-      wall.uniforms.uTime.value = to;
-      line.uniforms.uTime.value = to;
-      fill.uniforms.uTime.value = to;
+      // One cell, shared by every material of the span.
+      uniforms.uTime.value = to;
     },
 
     dispose(): void {
@@ -863,10 +728,13 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
       uniforms.uEntries.value.dispose();
       wallGeometry.dispose();
       lineGeometry.dispose();
-      fillGeometry.dispose();
+      fanGeometry.dispose();
+      coverGeometry.dispose();
       wall.dispose();
       line.dispose();
-      fill.dispose();
+      fill.up.dispose();
+      fill.down.dispose();
+      fill.cover.dispose();
     },
   };
 }

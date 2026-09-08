@@ -79,6 +79,28 @@ const OPTIONS: WallOptions = {
   fillHeight: -0.005,
 };
 
+/**
+ * What a fill counts with, which is the geometry of the first of the three
+ * meshes it is. See `stencilled`.
+ *
+ * Structurally typed rather than reached for through three, which is the game
+ * package's dependency and not this one's.
+ */
+interface Attribute {
+  count: number
+  getX(i: number): number
+  getY(i: number): number
+  getZ(i: number): number
+  getW(i: number): number
+}
+
+interface Counting {
+  getAttribute(name: string): Attribute
+}
+
+const fanOf = (it: { fill: { children: readonly unknown[] } }): Counting =>
+  (it.fill.children[0] as { geometry: Counting }).geometry;
+
 describe('the meshes a span builds', () => {
   test('a floor becomes triangles and no walls', () => {
     const { world, ids } = drawn(
@@ -89,18 +111,19 @@ describe('the meshes a span builds', () => {
     const span = bakedSpan(run(bakeSpan(moved(world, 1, ids[1], { x: 90, y: 30 }), 0)));
     const it = morph(span, OPTIONS);
 
-    const point = it.fill.geometry.getAttribute('aOwnPoints');
+    const point = fanOf(it).getAttribute('aOwnPoints');
     const track = span.tracks.find(t => t.fill)!;
     const ring = track.stretches[0].runs[0];
 
     // Three vertices a triangle and no index buffer — each carries the other
-    // two corners of its own triangle, so there is nothing to share. A closed
-    // ring of n + 1 points is n corners and cuts into n - 2 triangles, and this
-    // floor is only moved, so one cut covers the span.
-    expect(point.count).toEqual((ring.count - 1 - 2) * 3);
+    // two corners of its own triangle, so there is nothing to share. One
+    // triangle per edge, and a closed run of n + 1 points has n of them.
+    expect(point.count).toEqual((ring.count - 1) * 3);
 
-    // On the ground, under the walls standing on it.
-    expect(it.fill.position.y).toBeCloseTo(OPTIONS.fillHeight, 9);
+    // On the ground, under the walls standing on it — every mesh of it.
+    for (const mesh of it.fill.children) {
+      expect(mesh.position.y).toBeCloseTo(OPTIONS.fillHeight, 9);
+    }
 
     // And every one of them stands on a point of that ring, never on a wall's.
     const from = new Set<string>();
@@ -115,7 +138,7 @@ describe('the meshes a span builds', () => {
 
     // And the two it carries alongside are corners of the same ring.
     for (const name of ['aSidePointsA', 'aSidePointsB']) {
-      const side = it.fill.geometry.getAttribute(name);
+      const side = fanOf(it).getAttribute(name);
 
       for (let i = 0; i < side.count; i++) {
         expect(from.has(`${side.getX(i)},${side.getY(i)}`)).toBe(true);
@@ -139,8 +162,8 @@ describe('the meshes a span builds', () => {
     expect(two.walls.geometry.getAttribute('aPointA').count)
       .toEqual(one.walls.geometry.getAttribute('aPointA').count);
 
-    expect(one.fill.geometry.getAttribute('aOwnPoints').count).toEqual(0);
-    expect(two.fill.geometry.getAttribute('aOwnPoints').count).toBeGreaterThan(0);
+    expect(fanOf(one).getAttribute('aOwnPoints').count).toEqual(0);
+    expect(fanOf(two).getAttribute('aOwnPoints').count).toBeGreaterThan(0);
 
     one.dispose();
     two.dispose();
@@ -156,11 +179,11 @@ describe('the meshes a span builds', () => {
 
     const span = bakedSpan(run(bakeSpan(moved(world, 1, ids[1], { x: 90, y: 30 }), 0)));
     const it = morph(span, OPTIONS);
-    const window = it.fill.geometry.getAttribute('aWindow');
-    const meta = it.fill.geometry.getAttribute('aOwnMeta');
+    const window = fanOf(it).getAttribute('aWindow');
+    const meta = fanOf(it).getAttribute('aOwnMeta');
 
     for (let i = 0; i < window.count; i++) {
-      // What the triangle is drawn for, which is the cut it belongs to.
+      // What the triangle is drawn for, which is its run's stretch.
       expect(window.getX(i)).toEqual(0);
       expect(window.getY(i)).toEqual(1);
 
@@ -190,10 +213,12 @@ describe('the meshes a span builds', () => {
  * instant it draws. A square floor is four points to one of them and five to
  * the other, and both fill the same square.
  *
- * So this compares what is actually the same question: the ground the triangles
- * cover. Straight off the vertices either way, because both fills are unindexed
- * now — three vertices a triangle, each carrying the other two corners of its
- * own. See `NEARCLIP`.
+ * So this compares what is actually the same question: the ground the fill
+ * counts. Signed, and added up over every triangle — a fan over the edges of a
+ * ring counts the ring's own signed area and counts nothing else, whatever the
+ * ring is shaped like, which is the whole reason a fill is drawn this way. The
+ * triangles themselves are nobody's business: half of them lie outside the
+ * shape and are wound against the ones inside it.
  */
 describe('the standing floors and the bake fill the same ground', () => {
   /**
@@ -206,17 +231,15 @@ describe('the standing floors and the bake fill the same ground', () => {
    * polygon's frame is the identity — which is what lets the two be compared
    * in the first place.
    */
-  function covered(mesh: {
-    geometry: {
-      getAttribute(name: string): {
-        count: number
-        getX(i: number): number
-        getY(i: number): number
-        getZ(i: number): number
-      }
+  function covered(geometry: {
+    getAttribute(name: string): {
+      count: number
+      getX(i: number): number
+      getY(i: number): number
+      getZ(i: number): number
     }
   }, name: string, flat: boolean): number {
-    const g = mesh.geometry.getAttribute(name);
+    const g = geometry.getAttribute(name);
     const at = (i: number): Point => ({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
 
     let out = 0;
@@ -224,23 +247,23 @@ describe('the standing floors and the bake fill the same ground', () => {
     for (let i = 0; i + 2 < g.count; i += 3) {
       const a = at(i), b = at(i + 1), c = at(i + 2);
 
-      out += Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+      out += (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
     }
 
-    return out;
+    return Math.abs(out) / 2;
   }
 
   function same(world: World): void {
     const one = still([], floorsAt(world, 0), OPTIONS);
     const two = morph(bakedSpan(run(bakeSpan(world, 0))), OPTIONS);
 
-    const here = covered(one.fill, 'position', false);
+    const here = covered(fanOf(one), 'position', false);
 
     expect(here).toBeGreaterThan(0);
-    expect(covered(two.fill, 'aOwnPoints', true)).toBeCloseTo(here, 6);
+    expect(covered(fanOf(two), 'aOwnPoints', true)).toBeCloseTo(here, 6);
 
     // And on the same plane, or one draws over the other.
-    expect(two.fill.position.y).toBeCloseTo(one.fill.position.y, 9);
+    expect(two.fill.children[0].position.y).toBeCloseTo(one.fill.children[0].position.y, 9);
 
     one.dispose();
     two.dispose();
@@ -281,7 +304,7 @@ describe('the standing floors and the bake fill the same ground', () => {
 });
 
 /**
- * The fill covers the ring, at every instant and not only where it was cut.
+ * The fill counts the ring, at every instant.
  *
  * The bug this is here for: the triangles were cut once off the near end of the
  * stretch and kept. A wall is the quad between two consecutive points and stays
@@ -291,18 +314,14 @@ describe('the standing floors and the bake fill the same ground', () => {
  * outside itself and a bite missing from the middle, which is what a vanishing
  * triangle was.
  *
- * It is what `cutting` has to answer for now, and it is a harder question of it
- * than it was of a recut: the cuts are taken at load and one of them is what a
- * given instant draws, so a window whose cut stops holding part way through is
- * exactly the bug back again, arrived at from the other side. Which is why the
- * split measures rather than trusting a stretch to be short enough.
- *
- * Measured as area, because that is what "covers it" means and it catches both
- * halves at once: a triangle outside the shape adds area, and one missing takes
- * it away. The ring's own area is the yardstick, off `outline` — the
- * transcription of the shader, so this is the picture the game draws.
+ * Nothing is cut now, so nothing can be cut wrongly: the fan is one triangle
+ * per *edge*, and what a fan over the edges of a ring counts is the ring's own
+ * signed area, identically, wherever its points have got to. This is that
+ * identity asked of the geometry the game actually draws, at instants across
+ * the span — a shape it holds at is a shape nothing in the fill can be wrong
+ * about.
  */
-describe('the fill covers the ring at every instant', () => {
+describe('the fill counts the ring at every instant', () => {
   function signed(points: readonly Point[]): number {
     let out = 0;
 
@@ -322,15 +341,15 @@ describe('the fill covers the ring at every instant', () => {
    * boundary would have called for on its own — for the test that is about the
    * split finding one the stretches did not.
    */
-  function covers(world: World): { cuts: number, stretches: number } {
+  function counts(world: World): void {
     const flat = bakedSpan(run(bakeSpan(world, 0)));
     const it = morph(flat, OPTIONS);
 
-    const own = it.fill.geometry.getAttribute('aOwnPoints');
-    const meta = it.fill.geometry.getAttribute('aOwnMeta');
-    const window = it.fill.geometry.getAttribute('aWindow');
+    const own = fanOf(it).getAttribute('aOwnPoints');
+    const meta = fanOf(it).getAttribute('aOwnMeta');
+    const window = fanOf(it).getAttribute('aWindow');
 
-    // The rings the cuts are meant to fill, off the span's own buffers: a run
+    // The rings the fan is counted against, off the span's own buffers: a run
     // of points, and the stretch it is alive for.
     const rings: { first: number, count: number, t0: number, t1: number }[] = [];
 
@@ -346,7 +365,7 @@ describe('the fill covers the ring at every instant', () => {
     const within = (lo: number, hi: number): number =>
       hi === lo ? 0 : Math.min(Math.max((t - lo) / (hi - lo), 0), 1);
 
-    /** A point of the span at `t`, in the frame the cut is taken in. */
+    /** A point of the span at `t`, in the frame the fan is counted in. */
     const stood = (i: number, u: number): Point => ({
       x: flat.pointsA[i * 2] + (flat.pointsB[i * 2] - flat.pointsA[i * 2]) * u,
       y: flat.pointsA[i * 2 + 1] + (flat.pointsB[i * 2 + 1] - flat.pointsA[i * 2 + 1]) * u,
@@ -363,16 +382,9 @@ describe('the fill covers the ring at every instant', () => {
       };
     };
 
-    /** The gate the shader draws by, which the cuts and the stretches are both
-     * read through: a window holds its start and not its end, and the last one
-     * keeps both. */
+    /** The gate the shader draws by: a window holds its start and not its end,
+     * and the last one keeps both. */
     const drawn = (lo: number, hi: number): boolean => t >= lo && (t < hi || hi >= 1);
-
-    const windows = new Set<string>();
-
-    for (let i = 0; i < window.count; i += 3) {
-      windows.add(`${window.getX(i)},${window.getY(i)}`);
-    }
 
     let t = 0;
 
@@ -381,20 +393,17 @@ describe('the fill covers the ring at every instant', () => {
 
       it.seek(t);
 
-      let cut = 0;
+      // What the fan counts: every triangle it draws, signed. The cones outside
+      // the shape are wound against the ones inside it and cancel.
+      let count = 0;
 
-      // One cut of the several a span may hold is alive at any instant, and the
-      // rest collapse. Whichever it is has to fill the whole ring.
       for (let i = 0; i + 2 < window.count; i += 3) {
         if (!drawn(window.getX(i), window.getY(i))) continue;
 
-        cut += area([where(i), where(i + 1), where(i + 2)]);
+        count += signed([where(i), where(i + 1), where(i + 2)]);
       }
 
-      // The rings the runs alive stitch into, which is what the cut fills. A
-      // floor set's ring is generally made of runs off several polygons — see
-      // `looped`, which is what the cut is taken through as well — so a run is
-      // not a ring and its own shoelace is not an area.
+      // And what it is meant to count: the rings the live runs stitch into.
       const live = rings.filter(r => drawn(r.t0, r.t1));
       const held = new Map<number, Point>();
 
@@ -414,30 +423,17 @@ describe('the fill covers the ring at every instant', () => {
         return out;
       });
 
-      // Signed, and summed: an outline and a hole in it wind opposite ways, so
-      // what is left is the ground actually filled.
       let whole = 0;
 
       for (const ring of looped(runs, i => held.get(i)!, TOLERANCE)) {
         whole += signed(ring.map(i => held.get(i)!));
       }
 
-      whole = Math.abs(whole);
-
-      expect(whole).toBeGreaterThan(0);
-      expect(cut / whole).toBeCloseTo(1, 6);
+      expect(Math.abs(whole)).toBeGreaterThan(0);
+      expect(count / whole).toBeCloseTo(1, 6);
     }
 
     it.dispose();
-
-    const edges = new Set<number>([0, 1]);
-
-    for (const r of rings) {
-      if (r.t0 > 0 && r.t0 < 1) edges.add(r.t0);
-      if (r.t1 > 0 && r.t1 < 1) edges.add(r.t1);
-    }
-
-    return { cuts: windows.size, stretches: edges.size - 1 };
   }
 
   test('a concave floor whose reflex corner swings across the span', () => {
@@ -460,7 +456,7 @@ describe('the fill covers the ring at every instant', () => {
 
     vertices.set(it.corners[1].id, { x: 0, y: 160 });
 
-    covers(withEdit(world, 1, ids[1], { ...edit, vertices }));
+    counts(withEdit(world, 1, ids[1], { ...edit, vertices }));
   });
 
   test('a floor turning and sliding under a room', () => {
@@ -472,21 +468,15 @@ describe('the fill covers the ring at every instant', () => {
       ]],
     );
 
-    covers(moved(world, 1, ids[1], { x: 120, y: -60 }));
+    counts(moved(world, 1, ids[1], { x: 120, y: -60 }));
   });
 
-  test('two notches trading depth, which no one cut covers', () => {
-    // The case the split is for, and the only kind of case there is: a ring
-    // whose points do not move together. A polygon riding its own frame is
-    // moved affinely and an affine map takes a triangulation to a
-    // triangulation, so nothing about a floor being carried around can break
-    // one. A vertex nudged is another matter — that corner goes its own way,
-    // and the rest of the ring does not follow.
-    //
-    // Two notches in the top edge, one deep and one shallow, trading places
-    // across the span. Half way through neither is deep and the cut taken there
-    // spans the top; at either end one notch is down through those diagonals,
-    // and the cut it was taken from fills the wrong ground.
+  test('two notches trading depth, which nothing cut could follow', () => {
+    // What the split in the cut-in-advance version was for, and what a count
+    // does not notice. Two notches in the top edge, one deep and one shallow,
+    // trading places across the span: half way through neither is deep and any
+    // triangulation taken there spans the top, and at either end one notch is
+    // down through those diagonals.
     const { world, ids } = drawn(
       ['level', rect(-400, -400, 800, 800)],
       ['floor', [
@@ -502,11 +492,7 @@ describe('the fill covers the ring at every instant', () => {
     vertices.set(it.corners[3].id, { x: 100, y: -80 });
     vertices.set(it.corners[5].id, { x: -100, y: 90 });
 
-    const out = covers(withEdit(world, 1, ids[1], { ...edit, vertices }));
-
-    // More cuts than the stretches alone would have given, which is the split
-    // having measured something the bake had no reason to.
-    expect(out.cuts).toBeGreaterThan(out.stretches);
+    counts(withEdit(world, 1, ids[1], { ...edit, vertices }));
   });
 
   test('and one eroding, which moves every corner at once', () => {
@@ -521,7 +507,7 @@ describe('the fill covers the ring at every instant', () => {
     const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
     const edit = editAt(world, 1, ids[1], it.erosion);
 
-    covers(withEdit(world, 1, ids[1], {
+    counts(withEdit(world, 1, ids[1], {
       ...edit,
       transform: { ...edit.transform, erosion: 30 },
     }));

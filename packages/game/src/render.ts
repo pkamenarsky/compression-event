@@ -128,7 +128,10 @@ export interface Renderer {
 }
 
 export function renderer(element: HTMLElement, options: RendererOptions = {}): Renderer {
-  const renderer = new THREE.WebGLRenderer({ antialias: false });
+  // Stencil because the floors are filled by counting into it rather than by
+  // being cut into triangles. See the header of `walls.ts`. Three does not ask
+  // for one by default and there is no getting one afterwards.
+  const renderer = new THREE.WebGLRenderer({ antialias: false, stencil: true });
 
   renderer.setPixelRatio(options.pixelRatio ?? 1);
   renderer.setClearColor(0x000000);
