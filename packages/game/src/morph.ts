@@ -431,7 +431,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   floors.frustumCulled = false;
 
   /**
-   * Where one of those vertices stands at `t`, in world units — the same
+   * Where every one of those vertices stands at `t`, in world units — the same
    * arithmetic the shader does, on the CPU. See `placedAt`.
    *
    * World units rather than the polygon's own frame, which is where the points
@@ -442,17 +442,32 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
    * off several polygons, each with a frame of its own, and two of them meeting
    * at a crossing agree about that point in no frame but the world's.
    *
-   * It is a handful of points a frame, being one floor's worth rather than a
-   * level's. The walls, which are the expensive half, are still answered once
-   * and moved by the shader alone.
+   * Solved once a frame into `where they are` and read from there. Stitching,
+   * nesting and cutting each want the same points and would each pay for them:
+   * `placedAt` rebuilds a frame off the table and may solve a crossing, which
+   * is not the lerp this used to be. One pass, and the three of them read.
+   *
+   * It is one floor's worth of points either way, not a level's. The walls,
+   * which are the expensive half, are answered once and moved by the shader
+   * alone — this is the only thing in a span that is worked out again per
+   * frame, and it is worked out again because which diagonals cut a ring is a
+   * question about where its points are and they have just moved. See `fan`.
    */
-  const at = (i: number): Point => {
-    const p = mine[i];
-    const a = range[p * 2], b = range[p * 2 + 1];
-    const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+  const solved: Point[] = mine.map(() => ({ x: 0, y: 0 }));
 
-    return placedAt(span, p, t, u);
+  const place = (): void => {
+    for (let i = 0; i < mine.length; i++) {
+      const p = mine[i];
+      const a = range[p * 2], b = range[p * 2 + 1];
+      const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+      const q = placedAt(span, p, t, u);
+
+      solved[i].x = q.x;
+      solved[i].y = q.y;
+    }
   };
+
+  const at = (i: number): Point => solved[i];
 
   /** The same gate the shader draws by, asked of a whole run: a stretch holds
    * its start and not its end, and the last one keeps both. */
@@ -466,6 +481,8 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   let count = 0;
 
   const recut = (): void => {
+    place();
+
     // Stitched, then nested, then cut. A floor run is one polygon's share of
     // the floor set's boundary, exactly as a wall run is of the level's — see
     // `Track.fill` in the editor's `bake.ts` — so the loop a fill needs is
