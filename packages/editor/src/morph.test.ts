@@ -303,6 +303,136 @@ describe('the standing floors and the bake fill the same ground', () => {
   });
 });
 
+/** Twice the signed area of a ring, halved: the sign carries the winding, and a
+ * hole's winding is what makes it a hole. */
+function signed(points: readonly Point[]): number {
+  let out = 0;
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i], q = points[(i + 1) % points.length];
+
+    out += p.x * q.y - q.x * p.y;
+  }
+
+  return out / 2;
+}
+
+/**
+ * The ground the two sources actually fill is the same ground.
+ *
+ * Not the same triangles, and no longer the same area either — which is why
+ * this samples rather than measures. A floor is no longer cut against its set:
+ * the morph is handed each floor's own ring and the still is handed the set
+ * already resolved, so two floors that overlap are counted twice by one and
+ * once by the other. Twice and once are the same *fill* — nonzero is nonzero —
+ * and the signed areas differ. See `fillTrack` in the editor's `bake.ts`.
+ *
+ * So what is compared is what the stencil compares: the winding at a point.
+ * Over a grid across the level, is this ground filled or is it not.
+ */
+describe('the two sources fill the same ground', () => {
+  /** The winding number of a fan at a point: every triangle it is inside,
+   * signed by which way the triangle is wound. What the stencil holds. */
+  function winding(at: readonly Point[], p: Point): number {
+    let out = 0;
+
+    for (let i = 0; i + 2 < at.length; i += 3) {
+      const a = at[i], b = at[i + 1], c = at[i + 2];
+      const s = signed([a, b, c]);
+
+      if (s === 0) continue;
+
+      // Barycentric sign test, with the triangle's own winding taken out so
+      // that "inside" means the same thing either way round.
+      const w = Math.sign(s);
+      const inside = [[a, b], [b, c], [c, a]].every(([u, v]) =>
+        w * ((v.x - u.x) * (p.y - u.y) - (p.x - u.x) * (v.y - u.y)) >= 0);
+
+      if (inside) out += w;
+    }
+
+    return out;
+  }
+
+  /** A fill mesh's triangle corners, in the ground's two axes. */
+  function corners(mesh: { children: readonly unknown[] }, name: string, flat: boolean): Point[] {
+    const g = (mesh.children[0] as { geometry: Counting }).geometry.getAttribute(name);
+    const out: Point[] = [];
+
+    for (let i = 0; i < g.count; i++) {
+      out.push({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
+    }
+
+    return out;
+  }
+
+  function agree(world: World, reach = 300): void {
+    const one = still([], floorsAt(world, 0), OPTIONS);
+    const two = morph(bakedSpan(run(bakeSpan(world, 0))), OPTIONS);
+
+    const here = corners(one.fill, 'position', false);
+    const there = corners(two.fill, 'aOwnPoints', true);
+
+    let filled = 0, checked = 0;
+
+    // A grid, offset off the round numbers so that no sample lands exactly on
+    // an edge — which is the one place a winding is nobody's business.
+    for (let i = -20; i <= 20; i++) {
+      for (let j = -20; j <= 20; j++) {
+        const p = { x: i * (reach / 20) + 0.317, y: j * (reach / 20) + 0.523 };
+        const a = winding(here, p) !== 0;
+        const b = winding(there, p) !== 0;
+
+        checked++;
+        if (a) filled++;
+
+        expect([p.x, p.y, a]).toEqual([p.x, p.y, b]);
+      }
+    }
+
+    // And the world under test actually has floors in it, or this proves that
+    // two empty fills agree.
+    expect(filled).toBeGreaterThan(checked / 50);
+
+    one.dispose();
+    two.dispose();
+  }
+
+  test('one floor', () => {
+    agree(drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', rect(-200, -150, 400, 300)],
+    ).world);
+  });
+
+  test('two that overlap, which one source counts twice and the other once', () => {
+    agree(drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', rect(-250, -100, 400, 200)],
+      ['floor', rect(-100, -250, 200, 400)],
+    ).world);
+  });
+
+  // The two below fall back to the CSG for their floors, and have to: counting
+  // is additive and a set is not. See `counted` in the editor's `bake.ts`.
+  test('and a hole taken out of one', () => {
+    agree(drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', rect(-250, -250, 500, 500)],
+      ['hole', rect(-100, -100, 200, 200)],
+    ).world);
+  });
+
+  test('and a hole overlapping two of them at once, which counting alone gets wrong', () => {
+    agree(drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', rect(-250, -120, 350, 240)],
+      ['floor', rect(-50, -250, 250, 400)],
+      ['hole', rect(-80, -80, 160, 160)],
+    ).world);
+  });
+});
+
 /**
  * The fill counts the ring, at every instant.
  *
@@ -322,18 +452,6 @@ describe('the standing floors and the bake fill the same ground', () => {
  * about.
  */
 describe('the fill counts the ring at every instant', () => {
-  function signed(points: readonly Point[]): number {
-    let out = 0;
-
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i], q = points[(i + 1) % points.length];
-
-      out += p.x * q.y - q.x * p.y;
-    }
-
-    return out / 2;
-  }
-
   const area = (points: readonly Point[]): number => Math.abs(signed(points));
 
   /**

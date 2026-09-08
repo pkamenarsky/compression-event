@@ -172,6 +172,8 @@ import {
   Id,
   KINDS,
   PolygonId,
+  PolygonKind,
+  PolygonOp,
   PolygonType,
   Transform,
   VersionId,
@@ -1418,6 +1420,15 @@ interface Subject {
   type: PolygonType
   /** See `Track.fill`. */
   fill: boolean
+  /**
+   * What it does to the set its `type` names.
+   *
+   * Only a floor reads it, and only because a floor is no longer cut against
+   * its set: a subtracted one is its rings wound the other way, which is the
+   * whole of what taking it out of the set means when the set is counted rather
+   * than carved. See `fillTrack`.
+   */
+  op: PolygonOp
 }
 
 /** Everything the span's tracks are cut for: a polygon that nothing holds, and
@@ -1427,8 +1438,8 @@ function subjects(cast: Cast): Subject[] {
   const kinds = new Map<Id, Set<string>>();
   const all: Subject[] = [];
 
-  const subject = (id: Id, mine: Moving[], type: PolygonType): Subject =>
-    ({ id, mine, type, fill: type === 'floor' });
+  const subject = (id: Id, mine: Moving[], kind: PolygonKind): Subject =>
+    ({ id, mine, type: kind.type, op: kind.op, fill: kind.type === 'floor' });
 
   for (const m of cast.items) {
     // The outermost group that erodes, or the polygon itself. Everything
@@ -1442,7 +1453,7 @@ function subjects(cast: Cast): Subject[] {
 
   for (const [id, mine] of out) {
     if (!cast.eroding.has(id)) {
-      all.push(subject(id, mine, mine[0].at.polygon.type));
+      all.push(subject(id, mine, mine[0].at.polygon));
       continue;
     }
 
@@ -1452,7 +1463,7 @@ function subjects(cast: Cast): Subject[] {
     // differs.
     for (const kind of KINDS) {
       if (kinds.get(id)?.has(kindKey(kind)) === true) {
-        all.push(subject(sideOf(id, kind), mine, kind.type));
+        all.push(subject(sideOf(id, kind), mine, kind));
       }
     }
   }
@@ -2294,6 +2305,244 @@ interface Cut {
   evaluations: number
 }
 
+// -----------------------------------------------------------------------------
+// Floors are not cut against anything
+//
+// A floor produces no walls and no lines. It produces filled ground and nothing
+// else — `walling` in the game's `morph.ts` skips a fill track outright — and
+// filled ground is counted rather than carved: the nonzero rule over every
+// floor ring, adds wound one way and subtracts the other, *is* the floor set.
+// See the header of the game's `walls.ts`.
+//
+// So the boundary of the floor set is a thing nobody needs. A floor track is
+// the polygon's own rings, exactly as its own erosion left them, and the union
+// with its neighbours happens on the GPU by arithmetic that cannot go wrong.
+// No arrangement, no runs partitioned by source, no crossings to solve, and no
+// topology events — because a ring has none. What is left to end a stretch is
+// the ring itself changing shape: a vertex born or dying, or an erosion deep
+// enough to collapse a corner.
+//
+// What that is worth
+// ------------------
+// Everything, on a level anyone actually draws. A vertex dragged far enough
+// that the ring crosses itself is ordinary authoring, and the boundary of a
+// self-crossing ring is a genuinely eventful thing — the arrangement splits it
+// into loops, the loops appear and vanish, and each of those is a
+// discontinuity the cut has to pin. Measured on `world-2026-09-08T10-43-44Z`,
+// two floors with a vertex each dragged across the shape cost fifty thousand
+// evaluations, two thousand stretches and nine seconds, and reported itself two
+// hundred times outside its own tolerance. The room in the same world cost
+// fifteen evaluations.
+//
+// None of that was the set being hard. It was the boundary of the set being
+// asked for, by something that only ever wanted the area inside it.
+//
+// The ring is still measured
+// --------------------------
+// Not because of topology but because of erosion, which walks a corner along
+// its mitre on a path no lerp of the two ends follows. So a stretch is checked
+// the same way the walls' are — the interpolation against the truth at the
+// middle, split if it is too far — and the check is point against point,
+// because a ring cut this way has the same corners at both ends and knows
+// which is which.
+// -----------------------------------------------------------------------------
+
+/** The rings of one subject's own eroded shape at `t`, in the frame its points
+ * are kept in. No boundary is taken: this is the shape itself. */
+function ringsAt(cast: Cast, mine: Moving[], id: Id, t: number): Ring[] {
+  const table = evaluate(cast, mine, t, id).table.get(id);
+
+  return table === undefined ? [] : table.filter((r): r is Ring => r !== undefined);
+}
+
+/** Whether two readings of a ring set are the same ring set moved: same rings,
+ * same corners, in the same order. Anything else is a vertex arriving or an
+ * erosion taking one away, and neither interpolates. */
+function alike(a: readonly Ring[], b: readonly Ring[]): boolean {
+  return a.length === b.length && a.every((ring, i) => ring.length === b[i].length);
+}
+
+/**
+ * One floor's own rings as a track: closed runs, wound the way its op means.
+ *
+ * `whence` names every point a vertex of the ring it is in, which is what it
+ * is, and what makes the two ends of a stretch pair up point for point. There
+ * are no crossings in here to name — that is the whole difference.
+ *
+ * A subtracted floor is handed over reversed. Wound against the rest, it counts
+ * against the rest, and a hole in a floor is a hole for the same reason a hole
+ * in a polygon is one.
+ */
+function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
+  return rings.map((ring, r) => {
+    const points = op === 'subtract' ? [...ring].reverse() : [...ring];
+
+    // Closed, first point repeated at the end. A fan wants every edge of the
+    // ring and the last one is the one back to the start.
+    return {
+      id,
+      points: [...points, points[0]],
+      corner: points.map(() => true).concat(true),
+      whence: points
+        .map((_unused, i): Origin => ({ kind: 'vertex', at: { id, ring: r, index: i } }))
+        .concat({ kind: 'vertex', at: { id, ring: r, index: 0 } }),
+      fill: true,
+    };
+  });
+}
+
+/**
+ * One stretch of a fill track, over the whole span: the rings at each end, and
+ * nothing else to say about them.
+ *
+ * No table and no origins, because there is nothing in a fill to solve — every
+ * point is a vertex of its own ring and interpolates exactly. No opacity that
+ * means anything either: a fill draws no lines, so nothing here can be wrong
+ * about a corner.
+ */
+function held0(id: Id, a: readonly Ring[], b: readonly Ring[], op: PolygonOp): Stretch {
+  const runs = fillRuns(id, a, op);
+
+  return {
+    t0: 0,
+    t1: 1,
+    a: runs,
+    b: fillRuns(id, b, op),
+    table: new Map(),
+    origins: runs.map(run => run.points.map(() => null)),
+    opacity: [
+      a.map(ring => ring.map(() => 1).concat(1)),
+      b.map(ring => ring.map(() => 1).concat(1)),
+    ],
+  };
+}
+
+/** How far a ring set lerped across a stretch sits from the ring set actually
+ * there, point against point — which is a comparison the walls cannot make and
+ * this can, because both ends are the same corners. */
+function drift(a: readonly Ring[], b: readonly Ring[], now: readonly Ring[], u: number): number {
+  let worst = 0;
+
+  for (let r = 0; r < now.length; r++) {
+    for (let i = 0; i < now[r].length; i++) {
+      const p = a[r][i], q = b[r][i], at = now[r][i];
+
+      worst = Math.max(worst, Math.hypot(p.x + (q.x - p.x) * u - at.x, p.y + (q.y - p.y) * u - at.y));
+    }
+  }
+
+  return worst;
+}
+
+/**
+ * One floor's cut of the span: its own rings, and wherever they stop being the
+ * same rings moved, a split.
+ *
+ * The same shape as `cutTrack` and a great deal less of it. There is no
+ * arrangement to compare, so two readings are comparable when they have the
+ * same corners; and there is no boundary to measure against, so the check is
+ * the lerp against the ring itself.
+ */
+function* fillTrack(
+  cast: Cast,
+  mine: Moving[],
+  id: Id,
+  op: PolygonOp,
+  tol: number,
+): Generator<number, Cut, void> {
+  // Nothing eroding it: then the shape *is* the ring as drawn, and `spanning`
+  // has already written both ends over the same corners — invented ones
+  // included, sitting on the edge between their neighbours, which a fan counts
+  // as the nothing they are. One stretch, no evaluations, and no arrangement is
+  // ever asked what the ring decomposes into.
+  //
+  // This is the path a floor takes in practice, and it is the whole of the
+  // saving. Erosion is what the fallback below is for: a mitre is not a corner
+  // moving, and eroding a ring that crosses itself is an arrangement whichever
+  // way it is asked.
+  const solo = mine.length === 1 && mine[0].at.id === id ? mine[0] : null;
+
+  if (solo !== null && solo.depth[0] === 0 && solo.depth[1] === 0) {
+    const bounds = ringsOf(solo.corners);
+
+    const cut = (ring: Ring): Ring[] => bounds.map((first, r) =>
+      ring.slice(first, bounds[r + 1] ?? ring.length));
+
+    yield 1;
+
+    return {
+      stretches: [held0(id, cut(solo.local[0]), cut(solo.local[1]), op)],
+      jumps: [],
+      worst: 0,
+      evaluations: 0,
+    };
+  }
+
+  const out: Stretch[] = [];
+  const jumps: Stretch[] = [];
+
+  let evaluations = 0;
+  let worst = 0;
+
+  const at = (t: number): { t: number, rings: Ring[] } => {
+    evaluations++;
+
+    return { t, rings: ringsAt(cast, mine, id, t) };
+  };
+
+  const held = (a: { t: number, rings: Ring[] }, b: { t: number, rings: Ring[] }): Stretch =>
+    ({ ...held0(id, a.rings, b.rings, op), t0: a.t, t1: b.t });
+
+  const stack: [{ t: number, rings: Ring[] }, { t: number, rings: Ring[] }][] = [[at(0), at(1)]];
+
+  let done = 0;
+
+  while (stack.length > 0) {
+    const [a, b] = stack.pop()!;
+    const narrow = b.t - a.t <= GAP;
+
+    if (!alike(a.rings, b.rings)) {
+      if (!narrow) {
+        const m = at((a.t + b.t) / 2);
+
+        stack.push([m, b], [a, m]);
+        continue;
+      }
+
+      // A corner arriving or leaving. Both sides kept, as a discontinuity.
+      jumps.push(held(a, a), held(b, b));
+
+      done = b.t;
+      yield done;
+      continue;
+    }
+
+    const m = at((a.t + b.t) / 2);
+    const off = alike(a.rings, m.rings) ? drift(a.rings, b.rings, m.rings, 0.5) : Infinity;
+
+    if (off > tol * MARGIN && b.t - a.t > BEND) {
+      stack.push([m, b], [a, m]);
+      continue;
+    }
+
+    worst = Math.max(worst, Number.isFinite(off) ? off : 0);
+    out.push(held(a, b));
+
+    done = b.t;
+    yield done;
+  }
+
+  out.sort((x, y) => x.t0 - y.t0);
+  jumps.sort((x, y) => x.t0 - y.t0);
+
+  // The same closing `cutTrack` does, and safe here for the reason it argues
+  // there and then checks: half a gap is smaller than the tolerance the gap
+  // converged to. It checks anyway because a crossing can move at any speed
+  // inside a gap, and there are no crossings in a floor — every point of one is
+  // a vertex of its own ring, and a vertex moves at the speed it moves at.
+  return { stretches: abutting(out.filter(wide)), jumps, worst, evaluations };
+}
+
 /**
  * One polygon's own cut of the span.
  *
@@ -2690,12 +2939,26 @@ export function* cutSome(
   let worst = 0;
   let evaluations = 0;
 
+  // Whether the floors can be left uncut. Counting is additive and a set is
+  // not: two floors that overlap count two, and a hole through both of them
+  // takes one away and leaves the ground filled. Where a floor set has anything
+  // subtracted from it, the union has to be resolved before the hole is taken
+  // out of it, and only the CSG does that. See `fillTrack`.
+  const counted = !at.items.some(s => s.fill && s.op === 'subtract');
+
   for (let k = 0; k < which.length; k++) {
     const i = which[k];
     const { id, fill } = at.items[i];
 
+    // A floor is not cut against anything — see `fillTrack`, and the header
+    // above it. Everything else is its share of a boundary and is measured
+    // against the CSG.
     const cut = yield* weighted(
-      cutTrack(at.cast, at.near[i], id, at.riders, tol),
+      fill && counted
+        // Its own members, and nothing else: a floor is not cut against its
+        // neighbours, so resolving them would be work nobody reads.
+        ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].op, tol)
+        : cutTrack(at.cast, at.near[i], id, at.riders, tol),
       k / which.length,
       1 / which.length,
     );
