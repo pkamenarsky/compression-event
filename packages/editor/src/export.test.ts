@@ -14,6 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
+import { turnAt } from '@ce/game/arc';
 import { Point, SCALE, TOLERANCE } from '@ce/game/world';
 import {
   BakedSpan,
@@ -905,10 +906,9 @@ function shaderFrame(frames: Float32Array, depth: number, slot: number, t: numbe
       erosion: 0,
     };
 
-    const rot = layer.rotation * t;
     const sx = 1 + (layer.scale.x - 1) * t;
     const sy = 1 + (layer.scale.y - 1) * t;
-    const cos = Math.cos(rot), sin = Math.sin(rot);
+    const { cos, sin } = turnAt(layer.rotation, t);
     const m = { a: cos * sx, b: sin * sx, c: -sin * sy, d: cos * sy, tx: 0, ty: 0 };
 
     const fixed = frames[o + 11] !== 0 && t !== 0 && t !== 1;

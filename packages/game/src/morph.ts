@@ -37,6 +37,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import { TURN_GLSL } from './arc';
 import { BakedSpan, CROSSING, placedAt } from './baked';
 import {
   Extent,
@@ -83,6 +84,8 @@ const tablesFor = (depth: number): string => /* glsl */ `
 
   const int DEPTH = ${depth};
 
+${TURN_GLSL}
+
   /**
    * One slot's own frame: the version in flight eased from identity to itself,
    * composed onto the chain it already stood in.
@@ -98,11 +101,11 @@ const tablesFor = (depth: number): string => /* glsl */ `
     vec4 f4 = fetch(uFrames, o + 4);
     vec4 f5 = fetch(uFrames, o + 5);
 
-    float rot = f2.x * t;
+    vec2 turn = turnAt(f2.x, t);
     float sx = mix(1.0, f2.y, t);
     float sy = mix(1.0, f2.z, t);
 
-    float co = cos(rot), si = sin(rot);
+    float co = turn.x, si = turn.y;
     float a = co * sx, b = si * sx, c = -si * sy, d = co * sy;
 
     // A turn goes round the layer's own fixed point; a layer that has none

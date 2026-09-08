@@ -32,6 +32,7 @@
 // four and the padding is deliberate rather than left over.
 // -----------------------------------------------------------------------------
 
+import { turnAt } from './arc';
 import { Point } from './world';
 
 /**
@@ -304,19 +305,20 @@ function onto(outer: Affine, inner: Affine): Affine {
  * One link of that chain: the layer this slot is in the middle of receiving,
  * eased from identity to itself, composed onto the frame it already stood in.
  *
- * Rotation and scale ease on their own terms; the translation is then whatever
- * holds the fixed point still. Easing it in a straight line instead is what
- * makes a turning room swing out on a great arc and come back, since the
+ * Rotation and scale ease on their own terms — the rotation through `turnAt`,
+ * which is the bake's own easing and is rational in `t`; the translation is
+ * then whatever holds the fixed point still. Easing that in a straight line
+ * instead is what makes a turning room swing out on a great arc and come back,
+ * since the
  * translation a turn leaves behind is its pivot carried round a circle and a
  * chord is not a circle.
  */
 export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
   const f = span.frames, o = slot * FRAME_STRIDE;
 
-  const rotation = f[o + 8] * t;
+  const { cos, sin } = turnAt(f[o + 8], t);
   const sx = mix(1, f[o + 9], t), sy = mix(1, f[o + 10], t);
 
-  const cos = Math.cos(rotation), sin = Math.sin(rotation);
   const a = cos * sx, b = sin * sx, c = -sin * sy, d = cos * sy;
 
   // Both ends are unmoved by the choice: at 0 the map is the identity and at 1

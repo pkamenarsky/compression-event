@@ -124,6 +124,7 @@
 // bake simply does not carry one across instants.
 // -----------------------------------------------------------------------------
 
+import { angleAt } from '@ce/game/arc';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
@@ -1037,14 +1038,20 @@ export function pivot(layer: Transform): Point | null {
  * The layer eased on, in components. Identity at 0, itself at 1.
  *
  * Rotation and scale ease on their own terms, and the translation is then
- * whatever holds the pivot still: `T(t) = f - A(t) f`. Easing it in a straight
- * line instead is what makes a turning polygon swing out on a great arc and
- * come back — the translation a rotation gesture leaves behind is the pivot
- * carried round a circle, and a chord is not a circle. Both ends are unmoved by
+ * whatever holds the pivot still: `T(t) = f - A(t) f`. Easing that in a
+ * straight line instead is what makes a turning polygon swing out on a great
+ * arc and come back — the translation a rotation gesture leaves behind is the
+ * pivot carried round a circle, and a chord is not a circle. Both ends are unmoved by
  * this, since `A(0)` is the identity and `A(1) f` is `f - T` by construction.
+ *
+ * The rotation's own terms are `angleAt` and not `rotation * t`: the same turn
+ * through the same angle about the same pivot, taken at a slightly uneven rate,
+ * which buys the one thing a linear angle cannot give. Every coordinate in the
+ * span is then a ratio of polynomials in `t`, so *when* something happens is a
+ * root rather than a search. See `arc.ts`, and `incident.ts` for the use.
  */
 function easing(layer: Transform, t: number): Transform {
-  const rotation = layer.rotation * t;
+  const rotation = angleAt(layer.rotation, t);
   const scale = { x: mix(1, layer.scale.x, t), y: mix(1, layer.scale.y, t) };
   const held = t === 0 || t === 1 ? null : pivot(layer);
 
