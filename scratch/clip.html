@@ -329,6 +329,62 @@ say('the same fan a ten-thousandth off axis', fanFrom(0, 1e-4));
 say('fanned from a corner behind, yaw 0', fanFrom(2, 0));
 say('fanned from another behind, yaw 0', fanFrom(4, 0));
 
+rows.push('');
+rows.push('How wide the failure is. Sweeping either coordinate of a behind');
+rows.push('corner through zero, the band is one float32 step and no wider, and');
+rows.push('it is the same in x and in y. Three thousand random triangles with');
+rows.push('two corners behind found nothing else: 726 of them drew nothing, and');
+rows.push('every one came back empty when nudged too, so all 726 were genuinely');
+rows.push('off screen rather than wrongly dropped.');
+rows.push('');
+
+const RA = [6.4267, -2.285, -8.2081, -8], RB = [6.4267, -2.285, -28.4713, -28.2429];
+const RC = [-3.2941, -2.285, 23.5072, 23.6836];
+
+for (const axis of [0, 1]) {
+  for (const d of [-1e-6, -1e-7, 0, 1e-7, 1e-6]) {
+    const b = RB.slice();
+    b[axis] += d;
+    say(`${axis === 0 ? 'x' : 'y'} apart by ${d}`, drawRaw([RA, b, RC]));
+  }
+}
+
+rows.push('');
+rows.push('The walls cannot meet it, and not by luck. A wall triangle does get');
+rows.push('two corners behind — one ground point behind puts both of the');
+rows.push('vertices standing on it behind — but those two are one point at two');
+rows.push('heights, so they differ in clip.y by the height of the wall. Only a');
+rows.push('wall of no height would fail, and there is no such thing.');
+rows.push('');
+
+const EYE_Y = 1.6, WALL = 7;
+const stand = (ex, ey, h) => {
+  const xv = ex * S, yv = h - EYE_Y, zv = ey * S;
+
+  return [
+    (f / aspect) * xv,
+    f * yv,
+    ((FAR + NEAR) / (NEAR - FAR)) * zv + (2 * FAR * NEAR / (NEAR - FAR)),
+    -zv,
+  ];
+};
+
+say('floor: two behind at one height', drawRaw([stand(200, 200, 0), stand(200, 706.073, 0), stand(-102.512, -592.09, 0)]));
+say('wall: one ground point behind, two heights', drawRaw([stand(200, 200, 0), stand(200, 200, WALL), stand(-102.512, -592.09, 0)]));
+say('a wall of no height, which does not exist', drawRaw([stand(200, 200, 0), stand(200, 200, 1e-6), stand(-102.512, -592.09, 0)]));
+
+rows.push('');
+rows.push('And a shear on the projection lifts it, which is the one prediction');
+rows.push('the edge-equation guess makes: adding s*w to clip.x separates two');
+rows.push('corners that differ only in w. A millionth is four ten-thousandths of');
+rows.push('a pixel across this viewport.');
+rows.push('');
+
+for (const sh of [0, 1e-9, 1e-8, 1e-7, 1e-6, 1e-4]) {
+  const put = v => [v[0] + sh * v[3], v[1], v[2], v[3]];
+  say(`projection sheared by ${sh}`, drawRaw([put(RA), put(RB), put(RC)]));
+}
+
 document.getElementById('out').textContent = rows.join('\n');
 
 

@@ -1,3 +1,5 @@
+* group subtract polys must affect only group, not siblings
+
 * version view horizontal, like keyframes
 * drag in 3d view pans in 2d view
 * erosion should be cumulative i think
