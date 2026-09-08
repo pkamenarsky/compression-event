@@ -18,6 +18,15 @@
 // frame, two per entry, `texelFetch` throughout — no filtering, no mipmaps, and
 // no normalised coordinates to get half a texel wrong.
 //
+// The floors are the same, now
+// ----------------------------
+// They were the one thing left being written per frame: which diagonals cut a
+// ring into triangles is a question about where its points are, and they move.
+// `cutting` answers it in advance instead — every triangulation the span ever
+// needs, in the same buffer, each gated by the window it is right over, which
+// is the gate the stretches already had. Nothing in a span is written after
+// load, and `seek` is three numbers.
+//
 // The same walls as the still source
 // ----------------------------------
 // The topology and the shading are `walls.ts`, called from here and from
@@ -30,6 +39,7 @@
 import * as THREE from 'three';
 import { BakedSpan, CROSSING, placedAt } from './baked';
 import {
+  NEARCLIP,
   Source,
   Span,
   WallOptions,
@@ -46,28 +56,20 @@ import { Point, TOLERANCE } from './world';
 const WIDTH = 512;
 
 /**
+ * Everything both of a span's vertex shaders are built on: the tables, the walk
+ * up the chain of frames, and where one point of the bake stands at an instant.
+ *
  * Built per span rather than once, because how deep the chain of groups goes is
  * a fact about the level and the walk up it is per vertex. A bounded loop is
  * unrolled and its register cost is known; `while (slot >= 0)` would be legal
  * and would leave that to the driver.
  */
-const shaderFor = (depth: number): string => /* glsl */ `
+const tablesFor = (depth: number): string => /* glsl */ `
   uniform sampler2D uFrames;
   uniform sampler2D uEntries;
   uniform float uTime;
   uniform float uScale;
   uniform float uWallHeight;
-
-  attribute vec2 aPointA;
-  attribute vec2 aPointB;
-  attribute float aSlot;
-  attribute float aKind;
-  attribute vec4 aCross;
-  attribute vec2 aRange;
-  attribute float aHeight;
-  /** How solid this point is at each end of the stretch, and whether the line
-   * standing on it is the vertical that can be wrong about it. */
-  attribute vec3 aFade;
 
   varying vec3 vWorldPosition;
   varying float vHeightFrac;
@@ -157,48 +159,28 @@ const shaderFor = (depth: number): string => /* glsl */ `
     return (frameAt(int(e1.x), t) * vec3(mix(e0.xy, e0.zw, u), 1.0)).xy;
   }
 
-  void main() {
-    float t = uTime;
-
-    // Everything outside its own stretch collapses. One buffer, one draw, and
-    // the frame's worth of it that is alive is chosen here.
-    //
-    // Half-open, and both halves matter. A stretch holds its start and not its
-    // end, so the instant two of them share belongs to the later one and to
-    // nothing else; the gaps a converged event used to leave are closed in the
-    // bake — see \`abutting\` — so there is no instant without an owner either.
-    // The ends abut exactly, and without this rule both sides claim the instant
-    // they share and a frame landing on one draws the topology from either side
-    // of the event at once.
-    //
-    // A frame lands on one far more often than it looks. The bake cuts by
-    // halving, so its boundaries are dyadic, and a clock at a steady rate lands
-    // on dyadic instants all the time — an ease-out cubes them and they are
-    // dyadic still, pulled in where the cuts are densest. One frame of a
-    // doubled wall, which is exactly how a stray vertical reads.
-    //
-    // The last stretch keeps its end: nothing follows it to take \`t\` on.
-    if (t < aRange.x || (t >= aRange.y && aRange.y < 1.0)) {
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-      return;
-    }
-
-    float u = aRange.y == aRange.x
+  /** How far through its own stretch a point is at \`t\`. The stretch belongs
+   * to the track rather than to the span, so it rides on the vertex. */
+  float withinAt(vec2 range, float t) {
+    return range.y == range.x
       ? 0.0
-      : clamp((t - aRange.x) / (aRange.y - aRange.x), 0.0, 1.0);
+      : clamp((t - range.x) / (range.y - range.x), 0.0, 1.0);
+  }
 
-    // The horizontals along a wall are drawn whatever their ends turn out to
-    // be; only the vertical claims there is a corner here.
-    vOpacity = aFade.z > 0.5 ? mix(aFade.x, aFade.y, u) : 1.0;
-
-    bool solved = false;
-    vec2 at = vec2(0.0);
-
-    if (aKind > 0.5) {
-      vec2 p = entryAt(int(aCross.x), t, u);
-      vec2 q = entryAt(int(aCross.y), t, u);
-      vec2 r = entryAt(int(aCross.z), t, u);
-      vec2 w = entryAt(int(aCross.w), t, u);
+  /**
+   * Where one point of the bake stands at \`t\`, in editor units.
+   *
+   * A crossing is solved from the four entries it is the meeting of, and
+   * anything else — a corner of its own polygon, or a crossing that comes out
+   * parallel — rides its polygon's frame. \`placedAt\` in \`baked.ts\` is this
+   * on the CPU, and is what the cut is taken with.
+   */
+  vec2 pointAt(vec4 pts, vec4 meets, vec2 meta, float t, float u) {
+    if (meta.y > 0.5) {
+      vec2 p = entryAt(int(meets.x), t, u);
+      vec2 q = entryAt(int(meets.y), t, u);
+      vec2 r = entryAt(int(meets.z), t, u);
+      vec2 w = entryAt(int(meets.w), t, u);
 
       vec2 du = q - p, dv = w - r;
       float det = du.x * dv.y - du.y * dv.x;
@@ -207,19 +189,157 @@ const shaderFor = (depth: number): string => /* glsl */ `
       // divide by nothing; the corner path below is what a point the bake could
       // not place does too.
       if (det != 0.0) {
-        at = p + du * (((r.x - p.x) * dv.y - (r.y - p.y) * dv.x) / det);
-        solved = true;
+        return p + du * (((r.x - p.x) * dv.y - (r.y - p.y) * dv.x) / det);
       }
     }
 
-    if (!solved) {
-      at = (frameAt(int(aSlot), t) * vec3(mix(aPointA, aPointB, u), 1.0)).xy;
+    return (frameAt(int(meta.x), t) * vec3(mix(pts.xy, pts.zw, u), 1.0)).xy;
+  }
+
+  /**
+   * Whether a vertex is alive at \`t\`, given the window it claims.
+   *
+   * Half-open, and both halves matter. A stretch holds its start and not its
+   * end, so the instant two of them share belongs to the later one and to
+   * nothing else; the gaps a converged event used to leave are closed in the
+   * bake — see \`abutting\` — so there is no instant without an owner either.
+   * The ends abut exactly, and without this rule both sides claim the instant
+   * they share and a frame landing on one draws the topology from either side
+   * of the event at once.
+   *
+   * A frame lands on one far more often than it looks. The bake cuts by
+   * halving, so its boundaries are dyadic, and a clock at a steady rate lands
+   * on dyadic instants all the time — an ease-out cubes them and they are
+   * dyadic still, pulled in where the cuts are densest. One frame of a doubled
+   * wall, which is exactly how a stray vertical reads.
+   *
+   * The last window keeps its end: nothing follows it to take \`t\` on.
+   */
+  bool aliveAt(vec2 window, float t) {
+    return t >= window.x && (t < window.y || window.y >= 1.0);
+  }
+
+  /** Somewhere no triangle of it can land, for a vertex with nothing to draw. */
+  const vec4 NOWHERE = vec4(2.0, 2.0, 2.0, 1.0);
+`
+
+/**
+ * The walls and the lines: one point, its own stretch, and a height that is a
+ * flag rather than a coordinate.
+ */
+const shaderFor = (depth: number): string => /* glsl */ `
+  ${tablesFor(depth)}
+
+  attribute vec2 aPointA;
+  attribute vec2 aPointB;
+  attribute float aSlot;
+  attribute float aKind;
+  attribute vec4 aCross;
+  attribute vec2 aRange;
+  attribute float aHeight;
+  /** How solid this point is at each end of the stretch, and whether the line
+   * standing on it is the vertical that can be wrong about it. */
+  attribute vec3 aFade;
+
+  void main() {
+    float t = uTime;
+
+    // Everything outside its own stretch collapses. One buffer, one draw, and
+    // the frame's worth of it that is alive is chosen here.
+    if (!aliveAt(aRange, t)) {
+      gl_Position = NOWHERE;
+      return;
     }
+
+    float u = withinAt(aRange, t);
+
+    // The horizontals along a wall are drawn whatever their ends turn out to
+    // be; only the vertical claims there is a corner here.
+    vOpacity = aFade.z > 0.5 ? mix(aFade.x, aFade.y, u) : 1.0;
+
+    vec2 at = pointAt(vec4(aPointA, aPointB), aCross, vec2(aSlot, aKind), t, u);
 
     vWorldPosition = vec3(at.x * uScale, aHeight * uWallHeight, at.y * uScale);
     vHeightFrac = aHeight;
 
     gl_Position = projectionMatrix * viewMatrix * vec4(vWorldPosition, 1.0);
+  }
+`;
+
+/**
+ * The floors: a triangle at a time, each corner carrying the other two.
+ *
+ * Three corners rather than one because of the near plane — see `NEARCLIP` in
+ * `walls.ts`, which is the whole reason the fill is unindexed and cut in
+ * advance. The other two are solved only when this one turns out to be behind
+ * the camera, which is a handful of vertices on the frames it happens at all
+ * and none on any other.
+ *
+ * The window a corner claims is the cut's, not the point's. They are the same
+ * thing for a floor that stands through the whole span and are not when a
+ * triangulation had to be split part way — see `cutting`. Each corner keeps its
+ * own stretch alongside, because how far through *it* is is what places it.
+ */
+const fillShaderFor = (depth: number): string => /* glsl */ `
+  ${tablesFor(depth)}
+
+  ${NEARCLIP}
+
+  /** This corner: the two ends of its stretch, the entries it crosses, and
+   * \`(slot, kind, t0, t1)\`. */
+  attribute vec4 aOwnPoints;
+  attribute vec4 aOwnCross;
+  attribute vec4 aOwnMeta;
+
+  /** The triangle's other two corners, the same three ways over. */
+  attribute vec4 aSidePointsA;
+  attribute vec4 aSideCrossA;
+  attribute vec4 aSideMetaA;
+  attribute vec4 aSidePointsB;
+  attribute vec4 aSideCrossB;
+  attribute vec4 aSideMetaB;
+
+  /** What the whole triangle is alive for, which is the cut it belongs to. */
+  attribute vec2 aWindow;
+
+  /** One corner of the triangle, in world units and on the ground plane. */
+  vec3 cornerAt(vec4 pts, vec4 meets, vec4 meta, float t) {
+    vec2 at = pointAt(pts, meets, meta.xy, t, withinAt(meta.zw, t));
+
+    return vec3(at.x * uScale, 0.0, at.y * uScale);
+  }
+
+  void main() {
+    float t = uTime;
+
+    if (!aliveAt(aWindow, t)) {
+      gl_Position = NOWHERE;
+      return;
+    }
+
+    // The fill is flat and unlit: nothing shades it, and nothing about it is
+    // ever part way into existence.
+    vHeightFrac = 0.0;
+    vOpacity = 1.0;
+
+    vec3 own = cornerAt(aOwnPoints, aOwnCross, aOwnMeta, t);
+
+    // The other two are solved only when this corner is behind the eye, which
+    // is the only case in which it can move at all — a handful of vertices on
+    // the frames it happens on, and none on any other.
+    if (behindNear(own, viewMatrix, projectionMatrix)) {
+      own = nearClipped(
+        own,
+        cornerAt(aSidePointsA, aSideCrossA, aSideMetaA, t),
+        cornerAt(aSidePointsB, aSideCrossB, aSideMetaB, t),
+        viewMatrix,
+        projectionMatrix
+      );
+    }
+
+    vWorldPosition = own;
+
+    gl_Position = projectionMatrix * viewMatrix * vec4(own, 1.0);
   }
 `;
 
@@ -290,9 +410,9 @@ function walling(span: BakedSpan): Span[] {
  * back indexes the fill's own buffer rather than the span's points. `points`
  * maps back the other way, which is what reads the span.
  *
- * Its own function because the index buffer is recut every frame and the
- * buffer it indexes is not, and because a test that stitched its own would be
- * checking something other than what is drawn.
+ * Its own function because what the runs are cut into is answered separately
+ * from what they are — see `cutting` — and because a test that stitched its own
+ * would be checking something other than what is drawn.
  */
 export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
   const points: number[] = [];
@@ -318,6 +438,210 @@ export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
   return { points, runs };
 }
 
+// -----------------------------------------------------------------------------
+// Cutting the floors, once
+//
+// A wall is the quad between two consecutive points and stays that quad however
+// they move, so `extrude` is answered once and the shader does the rest. Which
+// diagonals cut a ring into triangles is not like that: it is a question about
+// where the points *are*, and they move. So the fill used to be recut every
+// frame — the one thing in a span that was.
+//
+// It does not have to be. What a recut answers is only ever one of a handful of
+// answers, each right over a stretch of the walk, so the answers can be found
+// in advance and every one of them put in the buffer at once, each gated by the
+// window it is right over. Which is exactly what the walls already do with
+// their stretches, and the shader already had the gate for it.
+//
+// How long a cut lasts
+// --------------------
+// Two things end one. The first is a stretch boundary: which runs are alive
+// changes there, so the ring the cut fills is a different ring. Those instants
+// are known — they are on the vertices — and they are the intervals this starts
+// from.
+//
+// The second is the geometry, and it is not known. Inside one interval the ring
+// is stitched out of runs off several polygons, each riding a frame of its own,
+// with crossings solved between them: the points move, and they do not move
+// affinely together. A diagonal that lay inside the ring at one instant can lie
+// outside it at another, and then the cut spills over the edge and leaves a
+// bite out of the middle.
+//
+// So this measures, the way the bake does. Take the interval, cut it in the
+// middle, and check that cut across the interval; if it does not hold, split
+// and ask again. What "holds" means is the exact thing that makes a
+// triangulation a fill: no triangle turns inside out. A set of triangles whose
+// boundary edges cancel to the ring covers the ring exactly once as long as
+// they all keep the same orientation, and covers it wrongly the instant one of
+// them flips — the flipped one is drawn outside the shape and the ground it
+// used to cover is drawn by nobody. The stitching is checked with it, because a
+// cut whose ring has been restitched is filling something else entirely.
+//
+// A floor that is only translated and turned needs one cut for the whole span,
+// which is the common case and costs one triangulation. A reflex corner
+// swinging across its neighbours costs a few.
+// -----------------------------------------------------------------------------
+
+/**
+ * How thin an interval has to get before the split gives up and keeps the best
+ * cut it has.
+ *
+ * Six halvings, which is a cap on what a span's floors can cost as much as it
+ * is a floor of precision: every split doubles the buffer, and an interval the
+ * check will not pass however finely it is cut — endpoints wobbling in and out
+ * of the stitch tolerance either side of a converged event would do it — would
+ * otherwise take a floor's ring a thousand times over. The bake gives up on
+ * width the same way, for the same reason. See `GAP`.
+ */
+const THINNEST = 1 / 64;
+
+/** How many instants inside an interval a cut is checked at. The failure it is
+ * looking for is a triangle's area passing through zero, which is smooth in
+ * `t`: a handful of samples finds it, and the split that follows looks again. */
+const SAMPLES = 8;
+
+/** A triangulation, and the window over which it is the right one. */
+export interface Cut {
+  t0: number
+  t1: number
+  /** Corner after corner, three to a triangle, indexing the fill's own points
+   * — which is what `fills` hands back. */
+  tri: number[]
+}
+
+/** Twice the signed area of a triangle. Sign is all this is read for. */
+function turn(a: Point, b: Point, c: Point): number {
+  return (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+}
+
+/**
+ * Every instant at which the set of floor runs alive can change, in order.
+ *
+ * The ends of the span included: a cut has to be right from 0 to 1, and a floor
+ * standing through the whole of it has no boundary of its own to offer.
+ */
+function boundaries(
+  mine: readonly number[],
+  where: readonly number[][],
+  range: Float32Array,
+): number[] {
+  const edge = new Set<number>([0, 1]);
+
+  for (const run of where) {
+    const p = mine[run[0]];
+
+    if (range[p * 2] > 0 && range[p * 2] < 1) edge.add(range[p * 2]);
+    if (range[p * 2 + 1] > 0 && range[p * 2 + 1] < 1) edge.add(range[p * 2 + 1]);
+  }
+
+  return [...edge].sort((a, b) => a - b);
+}
+
+/**
+ * The floors of a span cut into triangles, once, as a list of windows.
+ *
+ * Every cut in the list is right over its own window and the windows cover the
+ * span, so the shader picks one by the same half-open rule it picks a stretch
+ * by. See the header above.
+ */
+export function cutting(
+  span: BakedSpan,
+  mine: readonly number[],
+  where: readonly number[][],
+  range: Float32Array,
+): Cut[] {
+  if (where.length === 0) return [];
+
+  /** Where every one of the fill's points stands at `t`, in world units — the
+   * same arithmetic the shader does, on the CPU. See `placedAt`. */
+  const solve = (t: number): Point[] => mine.map(p => {
+    const a = range[p * 2], b = range[p * 2 + 1];
+    const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+
+    return placedAt(span, p, t, u);
+  });
+
+  /** The same gate the shader draws by, asked of a whole run: a stretch holds
+   * its start and not its end, and the last one keeps both. */
+  const alive = (run: readonly number[], t: number): boolean => {
+    const a = range[mine[run[0]] * 2], b = range[mine[run[0]] * 2 + 1];
+
+    return t >= a && (t < b || b >= 1);
+  };
+
+  /** The rings a floor set has at `t`: one polygon's share of the boundary at
+   * a time, stitched back into the loops it was cut out of. */
+  const stitch = (at: Point[], t: number): number[][] =>
+    looped(where.filter(run => alive(run, t)), i => at[i], TOLERANCE);
+
+  const triangulate = (rings: number[][], at: Point[]): number[] => {
+    const contours = nesting(rings.map(ring => ring.map(i => at[i]))).map(n => ({
+      outer: rings[n.outer],
+      holes: n.holes.map(h => rings[h]),
+    }));
+
+    return [...fan(contours, i => at[i])];
+  };
+
+  /** Whether a cut is still a fill at `t`: the same rings under it, and not one
+   * triangle turned inside out. */
+  const holds = (tri: number[], rings: number[][], t: number): boolean => {
+    const at = solve(t);
+    const now = stitch(at, t);
+
+    if (now.length !== rings.length) return false;
+
+    for (let i = 0; i < now.length; i++) {
+      if (now[i].length !== rings[i].length) return false;
+      for (let j = 0; j < now[i].length; j++) if (now[i][j] !== rings[i][j]) return false;
+    }
+
+    let sign = 0;
+
+    for (let i = 0; i + 2 < tri.length; i += 3) {
+      // A triangle with no area covers nothing and cannot be wrong about which
+      // side it is on. Two with area disagreeing is one of them inside out.
+      const s = Math.sign(turn(at[tri[i]], at[tri[i + 1]], at[tri[i + 2]]));
+
+      if (s === 0) continue;
+      if (sign === 0) sign = s;
+      else if (s !== sign) return false;
+    }
+
+    return true;
+  };
+
+  const out: Cut[] = [];
+
+  const take = (t0: number, t1: number): void => {
+    const mid = (t0 + t1) / 2;
+    const at = solve(mid);
+    const rings = stitch(at, mid);
+    const tri = triangulate(rings, at);
+
+    // The interval's own start, where the runs alive were decided, and a spread
+    // of instants inside it. Never the far end: at it the next window's runs
+    // are the live ones and this cut is not what is drawn.
+    const when = [t0, t1 - (t1 - t0) * 1e-6];
+
+    for (let k = 1; k < SAMPLES; k++) when.push(t0 + (t1 - t0) * (k / SAMPLES));
+
+    if (t1 - t0 <= THINNEST || when.every(t => holds(tri, rings, t))) {
+      out.push({ t0, t1, tri });
+      return;
+    }
+
+    take(t0, mid);
+    take(mid, t1);
+  };
+
+  const bound = boundaries(mine, where, range);
+
+  for (let i = 0; i + 1 < bound.length; i++) take(bound[i], bound[i + 1]);
+
+  return out;
+}
+
 /** The stretch each point belongs to, so a vertex can be told whether it is
  * alive at the instant being drawn. */
 export function ranges(span: BakedSpan): Float32Array {
@@ -337,6 +661,89 @@ export function ranges(span: BakedSpan): Float32Array {
   return out;
 }
 
+/**
+ * The fill's buffer: every cut of every floor, a triangle at a time.
+ *
+ * Unindexed, which is the one thing that looks like waste here and is the whole
+ * point. A vertex has to carry the *other two corners of its triangle* — see
+ * `NEARCLIP` in `walls.ts` — and a point shared by two triangles is a corner of
+ * two different ones, so there is nothing for an index buffer to share. Three
+ * vertices a triangle, each holding its triangle.
+ *
+ * Six vec4s of that is the two others, and they are only ever read on a vertex
+ * that turns out to be behind the eye.
+ */
+function filling(
+  span: BakedSpan,
+  mine: readonly number[],
+  cuts: readonly Cut[],
+  range: Float32Array,
+): THREE.BufferGeometry {
+  let n = 0;
+
+  for (const cut of cuts) n += cut.tri.length;
+
+  const window = new Float32Array(n * 2);
+  const points = [new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4)];
+  const crossings = [new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4)];
+  const meta = [new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4)];
+
+  /** One corner written into one of the three slots a vertex has: where it is
+   * at each end of its own stretch, what it crosses, and which stretch. */
+  const corner = (slot: number, v: number, i: number): void => {
+    const p = mine[i];
+
+    points[slot][v * 4] = span.pointsA[p * 2];
+    points[slot][v * 4 + 1] = span.pointsA[p * 2 + 1];
+    points[slot][v * 4 + 2] = span.pointsB[p * 2];
+    points[slot][v * 4 + 3] = span.pointsB[p * 2 + 1];
+
+    for (let j = 0; j < 4; j++) crossings[slot][v * 4 + j] = span.crossings[p * 4 + j];
+
+    meta[slot][v * 4] = span.slots[p];
+    meta[slot][v * 4 + 1] = span.kinds[p] === CROSSING ? 1 : 0;
+    meta[slot][v * 4 + 2] = range[p * 2];
+    meta[slot][v * 4 + 3] = range[p * 2 + 1];
+  };
+
+  let v = 0;
+
+  for (const cut of cuts) {
+    for (let i = 0; i + 2 < cut.tri.length; i += 3) {
+      // Each corner in turn as the vertex's own, the other two after it in the
+      // order they came round the triangle.
+      for (let k = 0; k < 3; k++) {
+        window[v * 2] = cut.t0;
+        window[v * 2 + 1] = cut.t1;
+
+        corner(0, v, cut.tri[i + k]);
+        corner(1, v, cut.tri[i + (k + 1) % 3]);
+        corner(2, v, cut.tri[i + (k + 2) % 3]);
+
+        v++;
+      }
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+
+  // Positions come out of the shader, so there is nothing to put in
+  // `position`. Something has to be, or three has no vertex count to draw.
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+  g.setAttribute('aWindow', new THREE.BufferAttribute(window, 2));
+  g.setAttribute('aOwnPoints', new THREE.BufferAttribute(points[0], 4));
+  g.setAttribute('aOwnCross', new THREE.BufferAttribute(crossings[0], 4));
+  g.setAttribute('aOwnMeta', new THREE.BufferAttribute(meta[0], 4));
+  g.setAttribute('aSidePointsA', new THREE.BufferAttribute(points[1], 4));
+  g.setAttribute('aSideCrossA', new THREE.BufferAttribute(crossings[1], 4));
+  g.setAttribute('aSideMetaA', new THREE.BufferAttribute(meta[1], 4));
+  g.setAttribute('aSidePointsB', new THREE.BufferAttribute(points[2], 4));
+  g.setAttribute('aSideCrossB', new THREE.BufferAttribute(crossings[2], 4));
+  g.setAttribute('aSideMetaB', new THREE.BufferAttribute(meta[2], 4));
+
+  return g;
+}
+
 /** One span's meshes, sharing one set of uniforms so that seeking is one
  * write. */
 export function morph(span: BakedSpan, options: WallOptions): Morph {
@@ -348,7 +755,12 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     uWallHeight: { value: options.wallHeight },
   };
 
-  const { wall, line, fill } = materials(shaderFor(span.depth), options, uniforms);
+  const { wall, line, fill } = materials(
+    shaderFor(span.depth),
+    options,
+    uniforms,
+    fillShaderFor(span.depth),
+  );
 
   const shape = extrude(walling(span));
   const range = ranges(span);
@@ -406,15 +818,9 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
 
   const { points: mine, runs: where } = fills(span);
 
-  // An outline of n corners with holes of m corners between them cuts into
-  // n + m + 2h - 2 triangles, so every point once and two more per ring covers
-  // whatever the stitching turns these runs into.
-  const most = (mine.length + 2 * where.length) * 3;
-  const face = new Uint32Array(most);
-
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
-  const fillGeometry = geometry(new Int32Array(mine), new Float32Array(mine.length), null, face);
+  const fillGeometry = filling(span, mine, cutting(span, mine, where, range), range);
 
   const walls = new THREE.Mesh(wallGeometry, wall);
   const lines = new THREE.LineSegments(lineGeometry, line);
@@ -430,98 +836,18 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   lines.frustumCulled = false;
   floors.frustumCulled = false;
 
-  /**
-   * Where every one of those vertices stands at `t`, in world units — the same
-   * arithmetic the shader does, on the CPU. See `placedAt`.
-   *
-   * World units rather than the polygon's own frame, which is where the points
-   * are kept and where this used to answer. A triangulation is a question about
-   * which diagonals lie inside the ring and an affine map takes the answer to
-   * the answer, so one frame would do — but only if the whole ring is in it,
-   * and a ring of the floor set generally is not. It is stitched out of runs
-   * off several polygons, each with a frame of its own, and two of them meeting
-   * at a crossing agree about that point in no frame but the world's.
-   *
-   * Solved once a frame into `where they are` and read from there. Stitching,
-   * nesting and cutting each want the same points and would each pay for them:
-   * `placedAt` rebuilds a frame off the table and may solve a crossing, which
-   * is not the lerp this used to be. One pass, and the three of them read.
-   *
-   * It is one floor's worth of points either way, not a level's. The walls,
-   * which are the expensive half, are answered once and moved by the shader
-   * alone — this is the only thing in a span that is worked out again per
-   * frame, and it is worked out again because which diagonals cut a ring is a
-   * question about where its points are and they have just moved. See `fan`.
-   */
-  const solved: Point[] = mine.map(() => ({ x: 0, y: 0 }));
-
-  const place = (): void => {
-    for (let i = 0; i < mine.length; i++) {
-      const p = mine[i];
-      const a = range[p * 2], b = range[p * 2 + 1];
-      const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
-      const q = placedAt(span, p, t, u);
-
-      solved[i].x = q.x;
-      solved[i].y = q.y;
-    }
-  };
-
-  const at = (i: number): Point => solved[i];
-
-  /** The same gate the shader draws by, asked of a whole run: a stretch holds
-   * its start and not its end, and the last one keeps both. */
-  const alive = (run: readonly number[]): boolean => {
-    const a = range[mine[run[0]] * 2], b = range[mine[run[0]] * 2 + 1];
-
-    return t >= a && (t < b || b >= 1);
-  };
-
-  let t = 0;
-  let count = 0;
-
-  const recut = (): void => {
-    place();
-
-    // Stitched, then nested, then cut. A floor run is one polygon's share of
-    // the floor set's boundary, exactly as a wall run is of the level's — see
-    // `Track.fill` in the editor's `bake.ts` — so the loop a fill needs is
-    // generally made of several of them and is put back here, at the instant
-    // it is drawn. The walls never do this: a wall is the quad between two
-    // consecutive points and a run is the whole of what it ever sees.
-    const rings = looped(where.filter(alive), at, TOLERANCE);
-    const contours = nesting(rings.map(ring => ring.map(at))).map(n => ({
-      outer: rings[n.outer],
-      holes: n.holes.map(h => rings[h]),
-    }));
-
-    const cut = fan(contours, at);
-
-    face.set(cut);
-    count = cut.length;
-
-    fillGeometry.getIndex()!.needsUpdate = true;
-    fillGeometry.setDrawRange(0, count);
-  };
-
-  recut();
-
   return {
     walls,
     lines,
     fill: floors,
 
+    // Every buffer in the span is written at load and never again: the walls
+    // are positioned by the shader and the floors were cut in advance, each cut
+    // gated by the window it is right over. Seeking is three numbers.
     seek(to: number): void {
       wall.uniforms.uTime.value = to;
       line.uniforms.uTime.value = to;
       fill.uniforms.uTime.value = to;
-
-      t = to;
-
-      // The walls are answered once and the shader moves them; the floors have
-      // to be cut again, because which triangles fill a ring depends on where
-      // its points are and they have just moved.
-      if (where.length !== 0) recut();
     },
 
     dispose(): void {

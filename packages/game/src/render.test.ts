@@ -33,21 +33,38 @@ const OPTIONS: WallOptions = {
 /**
  * The fill's triangle corners, back in the two axes the ground has.
  *
- * Through the index buffer, because that is where the triangulation is: the
- * vertices are the ring as drawn, and which of them make triangles is the
- * answer under test. The shader takes `position` to world units; this is the
+ * Straight off the vertices, because that is where the triangulation is: the
+ * fill is unindexed and a vertex is a corner of one triangle, three to a
+ * triangle in order. The shader takes `position` to world units; this is the
  * plane it is authored in.
  */
 function laid(points: readonly Point[][]): Point[] {
   const it = still([], points.map(p => ({ points: p })), OPTIONS);
   const p = it.fill.geometry.getAttribute('position');
-  const index = it.fill.geometry.getIndex()!;
   const out: Point[] = [];
 
-  for (let i = 0; i < index.count; i++) {
-    const v = index.getX(i);
+  for (let i = 0; i < p.count; i++) out.push({ x: p.getX(i), y: p.getZ(i) });
 
-    out.push({ x: p.getX(v), y: p.getZ(v) });
+  it.dispose();
+
+  return out;
+}
+
+/** The other two corners a vertex carries, which is what lets the fill clip
+ * itself against the near plane. See `NEARCLIP`. */
+function sides(points: readonly Point[][]): { own: Point, a: Point, b: Point }[] {
+  const it = still([], points.map(p => ({ points: p })), OPTIONS);
+  const g = it.fill.geometry;
+  const p = g.getAttribute('position');
+  const a = g.getAttribute('aSideA'), b = g.getAttribute('aSideB');
+  const out = [];
+
+  for (let i = 0; i < p.count; i++) {
+    out.push({
+      own: { x: p.getX(i), y: p.getZ(i) },
+      a: { x: a.getX(i), y: a.getY(i) },
+      b: { x: b.getX(i), y: b.getY(i) },
+    });
   }
 
   it.dispose();
@@ -106,6 +123,29 @@ describe('an authored floor', () => {
     expect(laid([square, square]).length).toEqual(laid([square]).length * 2);
   });
 
+  test('and every vertex carries the other two corners of its triangle', () => {
+    // What the near-plane clip is done with: a corner behind the eye walks up
+    // its own edge to the plane, and the edge is the one to the corner in
+    // front. See `NEARCLIP`.
+    const at = sides([square]);
+
+    expect(at.length).toEqual(laid([square]).length);
+
+    for (let i = 0; i < at.length; i += 3) {
+      const triangle = [at[i].own, at[i + 1].own, at[i + 2].own];
+
+      // Each of the three names the other two, whichever way round.
+      for (let k = 0; k < 3; k++) {
+        const named = [at[i + k].a, at[i + k].b];
+        const others = triangle.filter((_unused, j) => j !== k);
+
+        for (const q of others) {
+          expect(named.some(n => n.x === q.x && n.y === q.y)).toBe(true);
+        }
+      }
+    }
+  });
+
   test('and a level with none of them still draws its walls', () => {
     const it = still(
       [{ points: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }], corner: [true, true, true] }],
@@ -113,7 +153,6 @@ describe('an authored floor', () => {
       OPTIONS,
     );
 
-    expect(it.fill.geometry.getIndex()!.count).toEqual(0);
     expect(it.fill.geometry.getAttribute('position').count).toEqual(0);
     expect(it.walls.geometry.getAttribute('position').count).toBeGreaterThan(0);
 

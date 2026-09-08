@@ -150,6 +150,93 @@ export function extrude(spans: Iterable<Span>): Extruded {
 // the derivative is exact and it is free.
 // -----------------------------------------------------------------------------
 
+/**
+ * The near plane, done by hand, for the one surface the hardware drops.
+ *
+ * A triangle spanning the eye plane — two corners behind the camera, one in
+ * front — is dropped whole by the near-plane clip when the two behind it agree
+ * exactly in `clip.x` or `clip.y`. Not one pixel of it rasterises, at any
+ * `side`, and three's own `MeshBasicMaterial` does it too. The failure band is
+ * one float32 step wide and it is reachable from the likeliest place to stand:
+ * a floor is authored on the grid, the walk starts facing due north, and the
+ * fill is one shape spanning the room, so an edge running north lines up to the
+ * bit. See `scratch/clip.html`.
+ *
+ * The floor is the only thing exposed. A wall has two corners behind whenever
+ * one ground point is, but those two are one point at two heights and so differ
+ * in `clip.y` by the height of the wall; a floor is the one surface whose every
+ * vertex sits at one height, which hands over half the condition for nothing.
+ *
+ * So the fill clips itself, and only in the case that is broken. Of a triangle
+ * with two corners behind the near plane, what survives the clip is exactly the
+ * triangle made by the front corner and the two points where its edges cross
+ * the plane — three corners in, three corners out, which is the one case a
+ * vertex shader can do at all, because no vertex has to become two. Each behind
+ * corner walks up its own edge to the plane and the triangle is the clipped one
+ * before the hardware ever sees it.
+ *
+ * The other cases are left alone. One corner behind clips to a quad and cannot
+ * be done here — and does not need to be, because the hardware gets it right;
+ * three behind is nothing on screen either way.
+ *
+ * Attributes interpolate over the repaired triangle exactly as they would have
+ * over the clipped one: the corners keep their true `w`, and a clip walks its
+ * edges linearly too.
+ */
+export const NEARCLIP = /* glsl */ `
+  /** How far past the near plane a walked corner lands, as a fraction of it.
+   * Far enough that rounding cannot leave it behind the plane it was moved to,
+   * and thousandths of a pixel across a viewport. */
+  const float PAST = 1.0001;
+
+  /** The near distance, out of the projection three built. */
+  float nearPlane(mat4 projection) {
+    return projection[3][2] / (projection[2][2] - 1.0);
+  }
+
+  /**
+   * Whether a point is behind the near plane, which is the only case in which
+   * anything below has anything to do.
+   *
+   * False under an orthographic projection whatever the point: w is 1
+   * everywhere, there is no eye plane to span, and no triangle is at risk.
+   */
+  bool behindNear(vec3 at, mat4 view, mat4 projection) {
+    return projection[2][3] == -1.0
+      && (view * vec4(at, 1.0)).z > -nearPlane(projection);
+  }
+
+  /**
+   * This corner, moved up its own edge onto the near plane — if exactly one of
+   * the other two is behind the plane as well.
+   *
+   * All three in world units, and the answer in them too. \`own\` is behind the
+   * plane already: the caller asked \`behindNear\` before solving the other two,
+   * because on almost every frame nothing is and there is nothing to solve.
+   *
+   * Both others behind is a triangle wholly behind the eye, and neither of them
+   * behind is the case the hardware gets right. The factor is worked out in the
+   * view, where the plane is a plane, and applied in the world, where the point
+   * is: the view is affine, so the two are the same walk along the same edge.
+   */
+  vec3 nearClipped(vec3 own, vec3 a, vec3 b, mat4 view, mat4 projection) {
+    float edge = -nearPlane(projection);
+
+    float zo = (view * vec4(own, 1.0)).z;
+    float za = (view * vec4(a, 1.0)).z;
+    float zb = (view * vec4(b, 1.0)).z;
+
+    bool behindA = za > edge, behindB = zb > edge;
+
+    if (behindA == behindB) return own;
+
+    vec3 front = behindA ? b : a;
+    float zf = behindA ? zb : za;
+
+    return mix(own, front, (edge * PAST - zo) / (zf - zo));
+  }
+`;
+
 /** What both vertex shaders promise the fragment shader. */
 export const VARYINGS = /* glsl */ `
   varying vec3 vWorldPosition;
@@ -237,10 +324,10 @@ export interface Contour {
  * was a triangle vanishing as the transition ran out.
  *
  * A stretch fixes a ring's combinatorics; it does not fix its geometry. So a
- * still cuts once, because it does not move, and a morph cuts every frame off
- * the points at that instant. It is a handful of small rings and an ear clip is
- * quadratic in the small: the level's walls are the expensive half and they are
- * still answered once.
+ * still cuts once, because it does not move, and a morph cuts once per window
+ * it measured a cut to hold over — see `cutting` in `morph.ts`, which is this
+ * called at load rather than at the instant of drawing. It is a handful of
+ * small rings and an ear clip is quadratic in the small either way.
  */
 export function fan(contours: Iterable<Contour>, at: (i: number) => Point): Int32Array {
   const out: number[] = [];
@@ -464,12 +551,20 @@ export const fillFragment = /* glsl */ `
   }
 `;
 
-/** The materials a source draws with: its own vertex shader, the shared
- * fragment ones, and whatever uniforms it needs on top of the colours. */
+/**
+ * The materials a source draws with: its own vertex shader, the shared fragment
+ * ones, and whatever uniforms it needs on top of the colours.
+ *
+ * The fill takes a vertex shader of its own. It is the same geometry positioned
+ * the same way, and it is the one surface that has to know what triangle a
+ * vertex is a corner of — see `NEARCLIP` — which is a thing walls and lines
+ * have no attributes for and no need of.
+ */
 export function materials(
   vertexShader: string,
   options: WallOptions,
   uniforms: Record<string, { value: unknown }>,
+  fillShader: string = vertexShader,
 ): { wall: THREE.ShaderMaterial, line: THREE.ShaderMaterial, fill: THREE.ShaderMaterial } {
   const wall = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
@@ -500,7 +595,7 @@ export function materials(
   // anything, so nothing shades it.
   const fill = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    vertexShader,
+    vertexShader: fillShader,
     fragmentShader: fillFragment,
     uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
     side: THREE.DoubleSide,
