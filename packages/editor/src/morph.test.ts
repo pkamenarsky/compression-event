@@ -354,24 +354,71 @@ describe('the two sources fill the same ground', () => {
     return out;
   }
 
-  /** A fill mesh's triangle corners, in the ground's two axes. */
-  function corners(mesh: { children: readonly unknown[] }, name: string, flat: boolean): Point[] {
-    const g = (mesh.children[0] as { geometry: Counting }).geometry.getAttribute(name);
+  /**
+   * A fill mesh's triangle corners at `t`, in the ground's two axes.
+   *
+   * Gated by the window each triangle claims, because a span holds every
+   * stretch of every floor at once and the shader draws one of them. Reading
+   * them all is reading a level's worth of ground that is not there — which is
+   * a mistake this test made, and which made it pass against a fill that was
+   * wrong and fail against one that was right.
+   */
+  function corners(
+    mesh: { children: readonly unknown[] },
+    name: string,
+    flat: boolean,
+    t = 0,
+  ): Point[] {
+    const geometry = (mesh.children[0] as { geometry: Counting }).geometry;
+    const g = geometry.getAttribute(name);
     const out: Point[] = [];
 
-    for (let i = 0; i < g.count; i++) {
-      out.push({ x: g.getX(i), y: flat ? g.getY(i) : g.getZ(i) });
+    if (!flat) {
+      for (let i = 0; i < g.count; i++) out.push({ x: g.getX(i), y: g.getZ(i) });
+
+      return out;
+    }
+
+    const window = geometry.getAttribute('aWindow');
+    const meta = geometry.getAttribute('aOwnMeta');
+
+    for (let i = 0; i + 2 < g.count; i += 3) {
+      const lo = window.getX(i), hi = window.getY(i);
+
+      // The gate the shader draws by: a window holds its start and not its end,
+      // and the last one keeps both.
+      if (!(t >= lo && (t < hi || hi >= 1))) continue;
+
+      for (let k = 0; k < 3; k++) {
+        const v = i + k;
+        const a = meta.getZ(v), b = meta.getW(v);
+        const u = b === a ? 0 : Math.min(Math.max((t - a) / (b - a), 0), 1);
+
+        out.push({
+          x: g.getX(v) + (g.getZ(v) - g.getX(v)) * u,
+          y: g.getY(v) + (g.getW(v) - g.getY(v)) * u,
+        });
+      }
     }
 
     return out;
   }
 
   function agree(world: World, reach = 300): void {
-    const one = still([], floorsAt(world, 0), OPTIONS);
+    for (const [t, v] of [[0, 0], [1, 1]] as const) at(world, reach, t, v);
+  }
+
+  /** Both ends of the span, because a floor that agrees where it starts and
+   * not where it stops is a floor that jumps at the version boundary — which
+   * is the crossing the whole shape of this is for. */
+  function at(world: World, reach: number, t: number, v: number): void {
+    const one = still([], floorsAt(world, v), OPTIONS);
     const two = morph(bakedSpan(run(bakeSpan(world, 0))), OPTIONS);
 
+    two.seek(t);
+
     const here = corners(one.fill, 'position', false);
-    const there = corners(two.fill, 'aOwnPoints', true);
+    const there = corners(two.fill, 'aOwnPoints', true, t);
 
     let filled = 0, checked = 0;
 
@@ -420,6 +467,22 @@ describe('the two sources fill the same ground', () => {
       ['level', rect(-400, -400, 800, 800)],
       ['floor', rect(-250, -250, 500, 500)],
       ['hole', rect(-100, -100, 200, 200)],
+    ).world);
+  });
+
+  test('one that crosses itself, whose lobes are wound against each other', () => {
+    // The case that decides what a fill track carries. A bowtie's two lobes are
+    // wound opposite ways: the set fills both — nonzero is nonzero — and a
+    // count of the ring as drawn puts -1 over one of them, which cancels a
+    // neighbour's +1 and takes ground away that nothing took away. So a floor
+    // is handed over resolved, as the simple rings around what it fills. See
+    // `fillTrack` in the editor's `bake.ts`.
+    agree(drawn(
+      ['level', rect(-400, -400, 800, 800)],
+      ['floor', [
+        { x: -200, y: -100 }, { x: 200, y: 100 }, { x: 200, y: -100 }, { x: -200, y: 100 },
+      ]],
+      ['floor', rect(-120, -160, 240, 320)],
     ).world);
   });
 

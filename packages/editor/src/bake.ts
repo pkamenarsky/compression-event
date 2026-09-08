@@ -2331,20 +2331,36 @@ interface Cut {
 // discontinuity the cut has to pin. Measured on `world-2026-09-08T10-43-44Z`,
 // two floors with a vertex each dragged across the shape cost fifty thousand
 // evaluations, two thousand stretches and nine seconds, and reported itself two
-// hundred times outside its own tolerance. The room in the same world cost
-// fifteen evaluations.
+// hundred times outside its own tolerance. The same world cuts in a tenth of a
+// second now, inside its tolerance. The room in it cost fifteen evaluations
+// either way.
 //
 // None of that was the set being hard. It was the boundary of the set being
 // asked for, by something that only ever wanted the area inside it.
 //
-// The ring is still measured
-// --------------------------
-// Not because of topology but because of erosion, which walks a corner along
-// its mitre on a path no lerp of the two ends follows. So a stretch is checked
-// the same way the walls' are — the interpolation against the truth at the
-// middle, split if it is too far — and the check is point against point,
-// because a ring cut this way has the same corners at both ends and knows
-// which is which.
+// The ring is still resolved, and still measured
+// ----------------------------------------------
+// Resolved, because it is the polygon's own arrangement that is handed over
+// and not its ring as drawn. A count is additive where a set is not: a ring
+// that crosses itself has lobes wound against each other, and a lobe at -1
+// cancels a neighbouring floor's +1 over the ground they share, where the set
+// says filled. Resolved, a polygon is simple rings around the region it fills,
+// wound together by `fillRuns`, and it contributes the one or the nothing it
+// ought to however it was drawn.
+//
+// The ring as drawn is tempting and is worth naming as a dead end: it needs no
+// evaluations at all and it makes a self-crossing floor one stretch instead of
+// forty. It is sound exactly when the ring is simple — and a simple ring *is*
+// its own arrangement, so the case it would have paid for is the case it gets
+// wrong. What it saves on a ring that never crosses itself is three
+// evaluations.
+//
+// Measured, not because of topology but because of erosion, which walks a
+// corner along its mitre on a path no lerp of the two ends follows. So a
+// stretch is checked the same way the walls' are — the interpolation against
+// the truth at the middle, split if it is too far — and the check is point
+// against point, because a ring cut this way has the same corners at both ends
+// and knows which is which.
 // -----------------------------------------------------------------------------
 
 /** The rings of one subject's own eroded shape at `t`, in the frame its points
@@ -2369,13 +2385,40 @@ function alike(a: readonly Ring[], b: readonly Ring[]): boolean {
  * is, and what makes the two ends of a stretch pair up point for point. There
  * are no crossings in here to name — that is the whole difference.
  *
- * A subtracted floor is handed over reversed. Wound against the rest, it counts
- * against the rest, and a hole in a floor is a hole for the same reason a hole
- * in a polygon is one.
+ * Wound, and that word is doing all the work. A count is *additive* where a set
+ * is not: two floors over the same ground count two, and it is only because
+ * two is not zero that this draws the union at all. Let one of them be wound
+ * the other way — a ring drawn clockwise, which nothing stops an author doing —
+ * and the two cancel to nothing over the ground they share, where the set says
+ * filled. So the sign is not taken as drawn: every polygon is turned to face
+ * the way its op means, adds one way and subtracts the other, and then the only
+ * thing a sum can do is grow.
+ *
+ * Which is also why this is handed the polygon's *resolved* rings rather than
+ * its ring as drawn. A ring that crosses itself has lobes wound against each
+ * other — a figure eight has one of each — and those cancel against a
+ * neighbour exactly as a clockwise floor would. Resolved, a polygon is simple
+ * rings around the region it fills, wound together, and it contributes the one
+ * or the nothing it ought to.
  */
 function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
+  let area = 0;
+
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length; i++) {
+      const p = ring[i], q = ring[(i + 1) % ring.length];
+
+      area += p.x * q.y - q.x * p.y;
+    }
+  }
+
+  // A shape with no area at all has no sense of which way it faces, and turning
+  // it round would be a coin toss. It counts nothing either way.
+  const facing = op === 'subtract' ? -1 : 1;
+  const turn = area !== 0 && Math.sign(area) !== facing;
+
   return rings.map((ring, r) => {
-    const points = op === 'subtract' ? [...ring].reverse() : [...ring];
+    const points = turn ? [...ring].reverse() : [...ring];
 
     // Closed, first point repeated at the end. A fan wants every edge of the
     // ring and the last one is the one back to the start.
@@ -2392,8 +2435,8 @@ function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
 }
 
 /**
- * One stretch of a fill track, over the whole span: the rings at each end, and
- * nothing else to say about them.
+ * One stretch of a fill track: the rings at each end, and nothing else to say
+ * about them.
  *
  * No table and no origins, because there is nothing in a fill to solve — every
  * point is a vertex of its own ring and interpolates exactly. No opacity that
@@ -2450,34 +2493,6 @@ function* fillTrack(
   op: PolygonOp,
   tol: number,
 ): Generator<number, Cut, void> {
-  // Nothing eroding it: then the shape *is* the ring as drawn, and `spanning`
-  // has already written both ends over the same corners — invented ones
-  // included, sitting on the edge between their neighbours, which a fan counts
-  // as the nothing they are. One stretch, no evaluations, and no arrangement is
-  // ever asked what the ring decomposes into.
-  //
-  // This is the path a floor takes in practice, and it is the whole of the
-  // saving. Erosion is what the fallback below is for: a mitre is not a corner
-  // moving, and eroding a ring that crosses itself is an arrangement whichever
-  // way it is asked.
-  const solo = mine.length === 1 && mine[0].at.id === id ? mine[0] : null;
-
-  if (solo !== null && solo.depth[0] === 0 && solo.depth[1] === 0) {
-    const bounds = ringsOf(solo.corners);
-
-    const cut = (ring: Ring): Ring[] => bounds.map((first, r) =>
-      ring.slice(first, bounds[r + 1] ?? ring.length));
-
-    yield 1;
-
-    return {
-      stretches: [held0(id, cut(solo.local[0]), cut(solo.local[1]), op)],
-      jumps: [],
-      worst: 0,
-      evaluations: 0,
-    };
-  }
-
   const out: Stretch[] = [];
   const jumps: Stretch[] = [];
 
