@@ -32,7 +32,7 @@ import {
 } from '@ce/game';
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
+import { Contributed, IDENTITY, contributing, placeAt, resolveAt, settled } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, VersionId, World, slotOf } from './types';
 
 // -----------------------------------------------------------------------------
@@ -357,17 +357,10 @@ export function setAt(world: World, v: VersionId, set: SetName): Shape {
     slots[slot] = union(slots[slot], shapeOf(it));
   }
 
-  // The rule worked from the inside out, which is what the nesting is:
-  // `level - (solid - void)` for the level, `floor - void` for the floor. Each
-  // slot has the one below it taken out of it, and the answer is the outermost.
-  // See `inside` in the game's `world.ts`, which says the same thing pointwise.
-  let out = slots[slots.length - 1];
-
-  for (let k = slots.length - 2; k >= 0; k--) {
-    out = out.length === 0 || slots[k].length === 0 ? slots[k] : subtract(slots[k], out);
-  }
-
-  return out;
+  // The same fold a scope makes of its own slots, and it has to be the same
+  // one: this is the set the game is shipped and that is the set the editor
+  // draws. See `settled` in `scene.ts`.
+  return settled(slots);
 }
 
 /** The level: what collision and the walls are made of. */

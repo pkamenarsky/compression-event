@@ -663,7 +663,7 @@ function enclosed(world: World, ids: readonly Id[], where: Landing): {
   const groups = new Map(world.groups);
   const parent = where.into === null ? undefined : groups.get(where.into);
 
-  groups.set(id, { birth: 0, death: null, members: [...ids] });
+  groups.set(id, { birth: 0, death: null, members: [...ids], kind: { type: 'level' } });
 
   // Taken out of wherever they were, so nothing is claimed twice.
   if (where.into !== null && parent !== undefined) {

@@ -1317,7 +1317,7 @@ export interface Cast {
   items: Moving[]
   /** Group to its depth at each end of the span, for the groups that have one
    * at either end. A depth arriving is a depth in flight like any other. */
-  eroding: Map<GroupId, [number, number]>
+  scopes: Map<GroupId, [number, number]>
   /**
    * What each eroding group's own points ride: its frame at the near version,
    * its layer in flight over the span, and whatever holds it.
@@ -1348,19 +1348,23 @@ export interface Cast {
 
 function casting(world: World, from: VersionId): Cast {
   const a = depths(world, from), b = depths(world, from + 1);
-  const eroding = new Map<GroupId, [number, number]>();
+  const scopes = new Map<GroupId, [number, number]>();
 
+  // Every group, whatever its depth. It used to be only the ones with a depth
+  // on them, because erosion was the only thing a group did that the CSG could
+  // see. A group is a scope now — its solids and voids cut inside it and its
+  // floor is cut to it — and that is true of one at depth zero as much as of
+  // one eroding, so the bake has to stand for all of them or it bakes a
+  // different world from the one the editor draws.
   for (const id of world.groups.keys()) {
-    const pair: [number, number] = [a.get(id) ?? 0, b.get(id) ?? 0];
-
-    if (pair[0] !== 0 || pair[1] !== 0) eroding.set(id, pair);
+    scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
   const next = world.versions[from + 1];
   const there = new Set(chain(world, from + 1));
   const riders = new Map<GroupId, Rider>();
 
-  for (const id of eroding.keys()) {
+  for (const id of scopes.keys()) {
     riders.set(id, {
       base: groupFrame(world, from, id),
       into: footed(world, from + 1, id),
@@ -1375,7 +1379,7 @@ function casting(world: World, from: VersionId): Cast {
     });
   }
 
-  return { world, items: moving(world, from), eroding, riders, folds: new Map() };
+  return { world, items: moving(world, from), scopes, riders, folds: new Map() };
 }
 
 /** How many instants' worth of group projections to hold at once. */
@@ -1404,7 +1408,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
     // group that handed its members back there would change what the boundary
     // is made of half way through a stretch.
     id => {
-      const both = cast.eroding.get(id);
+      const both = cast.scopes.get(id);
 
       if (both === undefined) return null;
 
@@ -1467,7 +1471,7 @@ function subjects(cast: Cast): Subject[] {
   for (const m of cast.items) {
     // The outermost group that erodes, or the polygon itself. Everything
     // between them is transparent and hands its members on.
-    const up = enclosing(cast.world, m.at.id).filter(g => cast.eroding.has(g));
+    const up = enclosing(cast.world, m.at.id).filter(g => cast.scopes.has(g));
     const id = up[up.length - 1] ?? m.at.id;
 
     (out.get(id) ?? out.set(id, []).get(id)!).push(m);
@@ -1477,7 +1481,7 @@ function subjects(cast: Cast): Subject[] {
   }
 
   for (const [id, mine] of out) {
-    if (!cast.eroding.has(id)) {
+    if (!cast.scopes.has(id)) {
       // A polygon in two sets is two tracks, under the ids `parts` named its
       // contributions by. See `parts` in `scene.ts`.
       parts(kindOf(mine[0].at.polygon)).forEach((kind, k) => {

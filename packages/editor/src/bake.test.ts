@@ -121,6 +121,21 @@ function length(frame: Frame): number {
  * shared ends and the mean counts some corners twice — which reads as a drift
  * of its own.
  */
+/**
+ * The half of a frame on the far side of the line `x + y = 0`.
+ *
+ * A group is a scope, so what a grouped polygon contributes is part of the
+ * group's track and carries the group's id, not its own — there is no run to
+ * pick out by asking whose it is. Two rooms placed opposite each other through
+ * the origin stay opposite each other under any turn about it, so which side
+ * of that line a point is on says which room it came off, at every instant.
+ */
+function beyond(frame: Frame): Frame {
+  return frame
+    .map(r => ({ ...r, points: r.points.filter(p => p.x + p.y > 0) }))
+    .filter(r => r.points.length !== 0);
+}
+
 function middle(frame: Frame): Point {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
@@ -754,7 +769,7 @@ describe('keyframes', () => {
     // A quarter turn about the origin takes (200, 0) to (0, 200), so half of it
     // takes the newborn's middle to the diagonal. Growing where it will end up
     // instead would leave it sitting at (200, 0) the whole way.
-    const half = middle(sample(span, 0.5).filter(r => r.id === added.id));
+    const half = middle(beyond(sample(span, 0.5)));
 
     expect(half.x).toBeCloseTo(200 / Math.SQRT2, 4);
     expect(half.y).toBeCloseTo(200 / Math.SQRT2, 4);
@@ -819,7 +834,7 @@ describe('keyframes', () => {
     const w = transformed(gone, 1, group.id, { rotation: Math.PI / 2 });
 
     const span = run(bakeSpan(w, 0));
-    const half = middle(sample(span, 0.5).filter(r => r.id === ids[1]));
+    const half = middle(beyond(sample(span, 0.5)));
 
     expect(half.x).toBeCloseTo(200 / Math.SQRT2, 4);
     expect(half.y).toBeCloseTo(200 / Math.SQRT2, 4);

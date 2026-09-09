@@ -44,6 +44,7 @@ import {
   onBoundary,
   simplify,
   sliced,
+  intersect,
   subtract,
   unionAll,
 } from './geometry';
@@ -60,6 +61,7 @@ import {
   Id,
   KINDS,
   SETS,
+  SLOT_KINDS,
   SLOTS,
   SOLID,
   Path,
@@ -1730,7 +1732,7 @@ export function grouped(
   const id = world.nextId;
   const groups = new Map(world.groups);
 
-  groups.set(id, { birth: v, death: null, members: tops });
+  groups.set(id, { birth: v, death: null, members: tops, kind: { type: 'level' } });
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
@@ -2076,14 +2078,16 @@ export function contributing(
 ): Contributed[] {
   const depth = depths(world, v);
 
-  // At a version, a group with no depth on it is doing nothing at all, so it
-  // hands its members over. The bake reads it differently, and has to — see
-  // `Standing`.
-  return contributed(world, items, id => {
-    const d = depth.get(id) ?? 0;
-
-    return d === 0 ? null : { depth: d };
-  });
+  // Every group stands, whether or not it is eroding. A group is a scope: what
+  // its solids and voids cut, they cut inside it, and what leaves it is one
+  // shape per set with nothing left in it that cuts.
+  //
+  // It used to hand its members over unless it had a depth on it, on the
+  // grounds that a group doing nothing to its own geometry was doing nothing at
+  // all. That is true of erosion and false of everything else — a pillar in a
+  // group was cutting the rooms *outside* the group, and a floor in one was
+  // being drawn across them, neither of which anybody asked for by grouping.
+  return contributed(world, items, id => ({ depth: depth.get(id) ?? 0 }));
 }
 
 /**
@@ -2148,6 +2152,24 @@ export function parts(kind: PolygonKind): PolygonKind[] {
     : [kind];
 }
 
+/**
+ * One set from its slots, the rule worked from the inside out.
+ *
+ * `level - (solid - void)`, `floor - void`: each slot has the one below it
+ * taken out of it, and the answer is the outermost. The pointwise version of
+ * the same rule is `inside` in the game's `world.ts`, and the two have to
+ * agree — this is what the shapes say and that is what a point query says.
+ */
+export function settled(slots: readonly Shape[]): Shape {
+  let out = slots[slots.length - 1];
+
+  for (let k = slots.length - 2; k >= 0; k--) {
+    out = out.length === 0 || slots[k].length === 0 ? slots[k] : subtract(slots[k], out);
+  }
+
+  return out;
+}
+
 export interface Standing {
   depth: number
   /**
@@ -2186,38 +2208,106 @@ export function contributed(
    * ask — for the bake, the same instant.
    */
   held?: Map<string, Shape>,
+  /**
+   * Whether a scope that resolves to nothing should be given anyway, as the
+   * solids it is made of.
+   *
+   * Drawing asks for this and the CSG does not, and the difference is the
+   * point of scoping. A group of nothing but pillars puts nothing into the
+   * level — there is no room in it for them to be holes in, and outside it
+   * there is nothing of its to cut — so the set is right to be handed nothing.
+   * But it is still the thing being picked and dragged, and a thing that
+   * cannot be seen cannot be let go of. See `Occupied`.
+   */
+  visible?: boolean,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
 
   /** What one member offers of a kind, projected if it is an eroding group. */
-  const offer = (id: Id, kind: PolygonKind): Shape => {
+  /**
+   * What one member puts into slot `k` of `set`, in the scope that is asking.
+   *
+   * A polygon puts its shape into the one slot its kind names. A group that
+   * stands puts in what it *resolved to*, at the slot its own kind names —
+   * whatever cut inside it was spent inside it, so what arrives here is a
+   * shape with a part to play and nothing else, exactly like a polygon's. A
+   * group that is open has no scope of its own for the moment and hands its
+   * members up into this one.
+   */
+  const from = (id: Id, set: SetName, k: number): Shape[] => {
     const it = mine.get(id);
 
-    if (it !== undefined) return sameKind(it.polygon, kind) ? it.shape : [];
+    if (it !== undefined) {
+      return slotOf(kindOf(it.polygon), set) === k ? [it.shape] : [];
+    }
 
     const group = world.groups.get(id);
 
     if (group === undefined) return [];
 
-    const key = `${id}:${kindKey(kind)}`;
+    if (standing(id) !== null) {
+      return slotOf(group.kind, set) === k ? [resolves(id, set)] : [];
+    }
+
+    return group.members.flatMap(m => from(m, set, k));
+  };
+
+  /** One slot of one scope, offset by that scope's own depth the way the
+   * slot's place in the rule means. */
+  const slotted = (id: Id, set: SetName, k: number): Shape => {
+    const group = world.groups.get(id);
+
+    if (group === undefined) return [];
+
+    const all = unionAll(group.members.flatMap(m => from(m, set, k)));
+    const d = standing(id)?.depth ?? 0;
+
+    // What is taken away goes the other way, and this is not a choice — it is
+    // what eroding the scope as one shape *means*: eroding a complement is
+    // dilating, so the sign alternates with how deeply a slot is nested. See
+    // `inverted` in the game's `world.ts` for the identity.
+    //
+    // The slots are eroded apart and folded after, which is what lets them come
+    // out as though they had been eroded together. A pillar shrunk along with
+    // its room leaves a gap that never narrows.
+    const depth = inverted(SLOT_KINDS[set][k]) ? -d : d;
+
+    return depth === 0 || all.length === 0 ? all : erode(all, depth);
+  };
+
+  /**
+   * What one scope puts into `set`: its slots folded by the rule, and, for the
+   * floor, clipped to what the same scope puts into the level.
+   *
+   * The clip is what makes a group a scope rather than a bag. A floor running
+   * out past the walls it belongs to is floor laid where the group is not, and
+   * it was only ever invisible because a wall stood in front of it. This is the
+   * same `(floor - void) and (level - (solid - void))` that resolving a group
+   * has always produced — see the header of `resolve.ts` — now taken without
+   * the group having to be destroyed to get it.
+   *
+   * A scope with no level keeps its floor whole. There is nothing there for the
+   * clip to mean, and clipping to an outline that is not there would resolve
+   * the floor out of existence.
+   */
+  const resolves = (id: Id, set: SetName): Shape => {
+    const key = `${id}:${set}`;
     const known = held?.get(key);
 
     if (known !== undefined) return known;
 
-    const all = unionAll(group.members.map(m => offer(m, kind)));
-    const d = standing(id)?.depth ?? 0;
+    const slots: Shape[] = [];
 
-    // What is taken away goes the other way, and this is not a choice — it is
-    // what eroding the group as one shape *means*: eroding a complement is
-    // dilating, so the sign alternates with how deeply a slot is nested. See
-    // `inverted` in the game's `world.ts` for the identity.
-    //
-    // The slots have to be kept apart for the CSG — a group's walls cut the
-    // rooms around it, not only its own — so the identity is what lets them be
-    // eroded apart and still come out as though they had been eroded together.
-    const depth = inverted(kind) ? -d : d;
-    const out = depth === 0 || all.length === 0 ? all : erode(all, depth);
+    for (let k = 0; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
+
+    let out = settled(slots);
+
+    if (set === 'floor' && out.length !== 0) {
+      const level = resolves(id, 'level');
+
+      if (level.length !== 0) out = intersect(out, level);
+    }
 
     held?.set(key, out);
 
@@ -2244,24 +2334,66 @@ export function contributed(
     }
 
     const how = standing(id);
+    const group = world.groups.get(id);
 
-    if (world.groups.get(id) === undefined || how === null) return;
+    if (group === undefined || how === null) return;
 
-    for (const side of SIDES) {
-      const shape = offer(id, side);
+    // One contribution per set at most, and both under the group's own kind: a
+    // scope publishes what it *is*, not what it is made of. Whatever cut inside
+    // it has been spent inside it, so there is nothing here for a sibling's
+    // room to be cut by — which is the whole of what scoping means.
+    //
+    // A group whose kind is in only one of the sets puts nothing into the
+    // other. A block assembled out of parts has floors inside it and they are
+    // inside a block, which is not somewhere a floor is drawn.
+    let gave = false;
+
+    for (const set of SETS) {
+      // The group's kind where it says something about this set, and the plain
+      // kind of the set where it does not. A group has a level *and* a floor,
+      // which is one more thing than a polygon has, so its kind cannot name
+      // both: it names the one it is about, and the other is what it would
+      // have been anyway. A `solid` group is a block whose floors are floors;
+      // a `void` over the floors cuts them and its level is a level.
+      const slot = slotOf(group.kind, set) ?? 0;
+      const shape = resolves(id, set);
 
       if (shape.length === 0) continue;
 
-      for (const kind of parts(side)) {
-        out.push({
-          id: sideOf(id, kind),
-          kind,
-          shape,
-          frame: how.frame ?? IDENTITY,
-          simple: true,
-        });
-      }
+      // The slot's own kind rather than the group's, which is the same thing
+      // said in one set's terms: a `level` group publishes a level here and a
+      // floor there, and a void over both publishes the half of itself that
+      // belongs to each. Exactly what `parts` does for a polygon, and for the
+      // same reason — everything downstream reads a contributor as belonging
+      // to one set. It is also what keeps the two ids apart.
+      const kind = SLOT_KINDS[set][slot];
+
+      out.push({
+        id: sideOf(id, kind),
+        kind,
+        shape,
+        frame: how.frame ?? IDENTITY,
+        simple: true,
+      });
+
+      gave = true;
     }
+
+    if (gave || visible !== true) return;
+
+    const solids = settled([slotted(id, 'level', 1), slotted(id, 'level', 2)]);
+
+    if (solids.length === 0) return;
+
+    const kind: PolygonKind = { type: 'solid' };
+
+    out.push({
+      id: sideOf(id, kind),
+      kind,
+      shape: solids,
+      frame: how.frame ?? IDENTITY,
+      simple: true,
+    });
   };
 
   // Upwards from what is actually here, rather than down from the top.
@@ -2312,8 +2444,12 @@ export function showing(
   const depth = depths(world, v);
   const open = new Set<Id>(path);
 
-  return contributed(world, items, id =>
-    open.has(id) ? null : { depth: depth.get(id) ?? 0 },
+  return contributed(
+    world,
+    items,
+    id => (open.has(id) ? null : { depth: depth.get(id) ?? 0 }),
+    undefined,
+    true,
   );
 }
 
@@ -2456,43 +2592,34 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
 
   const out: Occupied[] = [];
 
-  /** One set taken out of another, which is what every step of the rule is. */
-  const settled = (add: Shape, cut: Shape): Shape =>
-    add.length === 0 || cut.length === 0 ? add : subtract(add, cut);
-
-  const LEVEL: PolygonKind = { type: 'level' };
-  const SOLIDS: PolygonKind = { type: 'solid' };
-  const FLOORS: PolygonKind = { type: 'floor' };
-
   for (const [id, side] of sides) {
     const at = (k: PolygonKind): Shape => side.get(kindKey(k)) ?? [];
 
-    // The rule from the inside out, which is what the nesting is: the solids
-    // with their voids taken out, then that taken out of the level. See
-    // `inside` in the game's `world.ts`.
-    const solids = settled(at(SOLIDS), at({ type: 'void', from: SOLID }));
-    const level = settled(at(LEVEL), solids);
-    const floor = settled(at(FLOORS), at({ type: 'void', from: FLOOR }));
+    // Nothing is folded or clipped here any more. A scope arrives resolved —
+    // one shape per set, its solids and voids already spent inside it and its
+    // floor already cut to it — because that is what it hands the CSG too, and
+    // the two must not be two answers. See `resolves` in `contributed`.
+    const floor = at({ type: 'floor' });
 
-    if (level.length !== 0) {
-      out.push({ id, kind: LEVEL, shape: level, floor });
-      continue;
+    for (const kind of [
+      { type: 'level' } as const,
+      { type: 'solid' } as const,
+      { type: 'void', from: SOLID } as const,
+    ]) {
+      const shape = at(kind);
+
+      if (shape.length !== 0) {
+        out.push({ id, kind, shape, floor });
+        break;
+      }
     }
 
-    // No level side to take the pillars out of, so the pillars are what it is.
-    // A group must be visible: it is the thing being picked and dragged, and
-    // one made of holes is still a thing.
-    if (solids.length !== 0) {
-      out.push({ id, kind: SOLIDS, shape: solids, floor });
-      continue;
-    }
-
-    // Nor any level at all. Then the floor is the whole of it, and it is drawn
-    // as a floor rather than as nothing — the same reason a group of pillars
-    // is drawn as pillars. `shape` empty is what says so on top of `kind`, and
-    // it is what stops the drawing clipping the floor to an outline that is
-    // not there.
-    out.push({ id, kind: FLOORS, shape: [], floor });
+    // Nothing in the level at all. Then the floor is the whole of it, and it is
+    // drawn as a floor rather than as nothing — the same reason a group of
+    // pillars is drawn as pillars. `shape` empty is what says so on top of
+    // `kind`, and it is what stops the drawing clipping the floor to an outline
+    // that is not there.
+    if (!out.some(o => o.id === id)) out.push({ id, kind: { type: 'floor' }, shape: [], floor });
   }
 
   return out;
@@ -3439,6 +3566,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
 
       return members.length === 0 ? [] : [{
         kind: 'group',
+        of: group.kind,
         members,
         death: outliving(group, v),
         edits: layers(id, null, deep.get(id) ?? 0),
@@ -3585,7 +3713,7 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: v, death: dying(out, v, clip.death), members });
+    groups.set(id, { birth: v, death: dying(out, v, clip.death), members, kind: clip.of });
     out = { ...out, groups, nextId: id + 1 };
 
     return { world: written(out, v, id, clip.edits, new Map(), m, by), id };

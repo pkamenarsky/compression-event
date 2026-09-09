@@ -56,7 +56,17 @@ import { Affine, facingAt, placeAt } from './scene';
  * at all. It reads as everything living to the last version, which is what it
  * did.
  *
- * 18: a polygon is one of four kinds — `level`, `solid`, `floor` or `void`,
+ * 18: a group carries what it is to whatever holds it, and a polygon is one of
+ * four kinds.
+ *
+ * A group is a scope: its solids and its voids cut inside it and reach no
+ * further, and what comes out is one shape per set. `Group.kind` is which slot
+ * that shape lands in one level up — which is what lets a group be a block, or
+ * a hole in one, and lets the nesting go as deep as anybody nests. A file
+ * written before the question could be asked has every group publishing what
+ * it held, which is a `level`, and reads as one.
+ *
+ * As for the polygon: it is one of four kinds — `level`, `solid`, `floor` or `void`,
  * the last saying which of the other two it cuts — rather than a set crossed
  * with a direction. The product was never real: a subtraction from the level
  * and an addition to the solids were two spellings of one thing, and the one
@@ -165,7 +175,7 @@ export interface Saved {
     /** Entries rather than a map, which is all `JSON` will take. */
     polygons: [PolygonId, Polygon][]
     /** Absent before format 5, where there were none. */
-    groups?: [GroupId, Group][]
+    groups?: [GroupId, Group & { kind?: PolygonKind }][]
     /** Absent before format 6, where there were none. Each one's places go out
      * as entries for the same reason a version's edits do. */
     artefacts?: [ArtefactId, SavedArtefact][]
@@ -314,7 +324,16 @@ export function restored(file: Saved): EditorState {
   const world: World = {
     polygons: new Map(file.world.polygons.map(([id, p]) => [id, standingThroughout(p)])),
     groups: new Map(
-      (file.world.groups ?? []).map(([id, g]) => [id, { ...g, death: g.death ?? null }]),
+      (file.world.groups ?? []).map(([id, g]) => [id, {
+        ...g,
+        death: g.death ?? null,
+
+        // A group that says nothing about what it is to its parent is a
+        // `level`, which is what every group written before a group could be
+        // anything else was: it published what it held and the question had
+        // not been asked. See `Group.kind`.
+        kind: g.kind ?? { type: 'level' as const },
+      }]),
     ),
     artefacts,
     start: file.world.start ?? { at: { x: 0, y: 0 }, facing: 0 },

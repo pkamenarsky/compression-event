@@ -948,7 +948,7 @@ function near(a: Affine, b: Affine): void {
 describe('the chain a vertex rides', () => {
   /** Two rooms in a group, the group in another group, and every level of it
    * doing something at v1 that does not commute with the others. */
-  function nested(): { world: World, ids: PolygonId[] } {
+  function nested(): { world: World, ids: PolygonId[], outer: Id } {
     const { world, ids } = drawn(
       ['level', rect(-200, -60, 400, 120)],
       ['level', rect(-40, -200, 80, 400)],
@@ -973,16 +973,27 @@ describe('the chain a vertex rides', () => {
     return {
       world: transformed(squashed, 1, ids[0], { translation: { x: 30, y: 0 } }),
       ids,
+      outer: outer.id,
     };
   }
 
-  test('the table says how deep it goes, and the groups have slots of their own', () => {
+  test('the table says how deep it goes, and a scope is one slot', () => {
     const span = run(bakeSpan(nested().world, 0));
     const flat = bakedSpan(span);
 
-    // Three polygons, two groups, and a walk of three links from the deepest.
-    expect(flat.frames.length / FRAME_STRIDE).toEqual(5);
-    expect(flat.depth).toEqual(3);
+    // One slot and one link: the outer group. It used to be five and three —
+    // three polygons and two groups, each riding its own frame — because a
+    // group with no depth on it handed its members over and they went into the
+    // bake one by one.
+    //
+    // A scope resolves instead, so what its members were doing separately is
+    // in the *shape* at each instant rather than in a chain of frames. That is
+    // the same trade an eroding group has always made, now made by every
+    // group: the motion is followed to `TOLERANCE` by subdividing rather than
+    // carried exactly, and a member turning inside a scope costs stretches
+    // where it used to cost nothing. See the header of `resolve.ts`.
+    expect(flat.frames.length / FRAME_STRIDE).toEqual(1);
+    expect(flat.depth).toEqual(1);
 
     // Nothing grouped is one link and no parents at all.
     const plain = bakedSpan(run(bakeSpan(
@@ -994,18 +1005,19 @@ describe('the chain a vertex rides', () => {
     expect(plain.frames[14]).toEqual(-1);
   });
 
-  test('walking it gives what the bake places the polygon by', () => {
-    const { world, ids } = nested();
+  test('walking it gives what the bake places the scope by', () => {
+    // By the scope rather than by each polygon: a grouped polygon has no slot
+    // of its own any more, because it has no track of its own. What rides the
+    // table is the thing whose boundary it is.
+    const { world, outer } = nested();
     const span = run(bakeSpan(world, 0));
     const flat = bakedSpan(span);
 
     for (const t of [0, 0.13, 0.5, 0.77, 1]) {
-      for (const id of ids) {
-        near(
-          shaderFrame(flat.frames, flat.depth, slotted(span).get(id)!, t),
-          riding(span.riders.get(id)!, t),
-        );
-      }
+      near(
+        shaderFrame(flat.frames, flat.depth, slotted(span).get(outer)!, t),
+        riding(span.riders.get(outer)!, t),
+      );
     }
   });
 

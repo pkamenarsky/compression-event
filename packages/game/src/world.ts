@@ -131,7 +131,7 @@ export const KINDS: readonly PolygonKind[] = [
 ];
 
 /**
- * How many slots a set is resolved out of.
+ * Which kind fills each slot of each set, and so how many slots there are.
  *
  * A slot is one side of one set — the polygons playing one part in it — and a
  * point is in the set or not according to which slots cover it. The level has
@@ -141,8 +141,22 @@ export const KINDS: readonly PolygonKind[] = [
  * The count is here rather than inferred because `ground` has to lay out one
  * tree per slot before it has seen a single member, and a set with nothing in
  * one of its slots still has that slot.
+ *
+ * The kinds are the way back: `slotOf` says which slot a kind fills, and this
+ * says which kind a slot is for, which is what tells a scope's erosion which
+ * way to offset each of them. A void over both sets appears here as the void
+ * of whichever set the slot belongs to — the two halves erode alike, being at
+ * the same depth in their own set's rule.
  */
-export const SLOTS: Record<SetName, number> = { level: 3, floor: 2 };
+export const SLOT_KINDS: Record<SetName, readonly PolygonKind[]> = {
+  level: [{ type: 'level' }, { type: 'solid' }, { type: 'void', from: SOLID }],
+  floor: [{ type: 'floor' }, { type: 'void', from: FLOOR }],
+};
+
+export const SLOTS: Record<SetName, number> = {
+  level: SLOT_KINDS.level.length,
+  floor: SLOT_KINDS.floor.length,
+};
 
 /**
  * Which slot of `set` a polygon of this kind fills, or nothing where it has no

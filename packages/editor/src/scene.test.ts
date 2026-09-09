@@ -40,6 +40,7 @@ import {
   affine,
   copied,
   csg,
+  csgFloor,
   pathAt,
   pathsIn,
   runs,
@@ -1095,10 +1096,16 @@ describe('what a click lands on', () => {
     expect(hitting(g.world, 0, items, [], { x: 20, y: 90 })).toEqual([g.id]);
   });
 
-  test('a floor in one is drawn where the group is, and only there', () => {
+  test('a floor in one is cut to the group, not handed over whole', () => {
     // A floor is in no set at all, so it neither adds to the group nor takes
     // anything from it. What is left of it is paint, and paint stops where the
     // thing it is on does.
+    //
+    // It used to be handed over whole on the grounds that the canvas clips it
+    // to `shape` for free. That is true of the canvas and false of everything
+    // else: the same floor went into the world set uncut and was drawn across
+    // the rooms next door, which is floor laid where the group is not. The clip
+    // is the group's, so it happens where the group is resolved.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['floor', rect(50, 50, 200, 200)],
@@ -1107,13 +1114,9 @@ describe('what a click lands on', () => {
     const items = resolveAt(g.world, 0);
     const shown = occupying(g.world, 0, items, [])[0];
 
-    // Handed over whole, because the canvas clips it to `shape` for free.
-    expect(shapeArea(shown.floor)).toBeCloseTo(200 * 200, 6);
+    // The overlap, and nothing of the 200 units of floor outside the room.
     expect(shapeArea(shown.shape)).toBeCloseTo(100 * 100, 6);
-
-    // The overlap, and nothing of the 200 units of floor outside the room:
-    // what the two of them say together, and what ends up drawn.
-    expect(shapeArea(intersect(shown.shape, shown.floor))).toBeCloseTo(50 * 50, 6);
+    expect(shapeArea(shown.floor)).toBeCloseTo(50 * 50, 6);
 
     // And it is paint, so it picks nothing the group does not pick anyway.
     expect(hitting(g.world, 0, items, [], { x: 75, y: 75 })).toEqual([g.id]);
@@ -1877,14 +1880,15 @@ describe('a group erodes as one shape', () => {
     expect(shapeArea(apart)).toBeLessThan(150 * 10);
   });
 
-  test('a group at depth zero hands its members over one by one', () => {
-    // Not a special case for speed: the union of a set is what the CSG does
-    // with them anyway. It is what keeps an edit inside a plain group as cheap
-    // as an edit outside one.
-    const { world, ids, group } = corridor();
+  test('a group stands for its members at depth zero too', () => {
+    // It used to hand them over unless it was eroding, on the grounds that a
+    // group doing nothing to its own geometry was doing nothing at all. That
+    // is true of erosion and false of everything else: a group is a scope, and
+    // what its solids and voids cut they cut inside it whatever its depth.
+    const { world, group } = corridor();
 
-    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id).sort())
-      .toEqual([...ids].sort());
+    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id))
+      .toEqual([group]);
 
     expect(contributing(
       moved(world, 0, group, { erosion: 5 }),
@@ -1893,10 +1897,12 @@ describe('a group erodes as one shape', () => {
     ).map(c => c.id)).toEqual([group]);
   });
 
-  test('the two kinds are unioned apart', () => {
-    // A room and a pillar is one group, but the room's boundary and the
-    // pillar's are not one boundary, and there is no shape that is the union
-    // of a thing and a hole in it.
+  test('the slots are eroded apart and folded after', () => {
+    // A room and a pillar is one group, and what leaves it is one shape: the
+    // room with the hole in it. But the two cannot be *eroded* as one shape —
+    // there is no offset of `level - solid` that is an offset of either — so
+    // they are eroded apart, each the way its place in the rule means, and
+    // folded once that is done.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
@@ -1906,13 +1912,13 @@ describe('a group erodes as one shape', () => {
     const w = moved(made.world, 0, made.id, { erosion: 5 });
     const out = contributing(w, 0, resolveAt(w, 0));
 
-    expect(out.map(c => c.kind.type).sort()).toEqual(['level', 'solid']);
+    // One contribution, and it is a level: nothing that cuts leaves a scope.
+    expect(out.map(c => c.kind.type)).toEqual(['level']);
 
     // The room pulls in and the pillar pushes out. Eroding the group as one
     // shape pulls in the boundary of `level - solid`, and the boundary of a
     // hole pulled inward is the hole getting bigger.
-    expect(shapeArea(out.find(c => c.kind.type === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
-    expect(shapeArea(out.find(c => c.kind.type === 'solid')!.shape)).toBeCloseTo(30 * 30, 6);
+    expect(shapeArea(out[0].shape)).toBeCloseTo(90 * 90 - 30 * 30, 6);
   });
 
   test('what the group is eroded by is the width of what it walls off', () => {
@@ -1934,11 +1940,10 @@ describe('a group erodes as one shape', () => {
     expect(shapeArea(csg(w, 0))).toBeCloseTo(2 * (80 - 2 * d) * (100 - 2 * d), 6);
   });
 
-  test('a group holding both kinds contributes to both sides of the set', () => {
-    // One id names one contributor, and these are two boundaries: the level
-    // union and the solid union take different tracks and are told apart
-    // everywhere downstream by nothing but the number. The solid side gets one
-    // of its own.
+  test('a group holding both kinds contributes one shape, not two sides', () => {
+    // It used to be two: the level union and the solid union, each with an id
+    // of its own, both handed to the CSG so that the pillar could cut the rooms
+    // outside the group as well as its own. That is the thing scoping stops.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 200, 120)],
       ['solid', rect(60, 40, 60, 40)],
@@ -1950,11 +1955,10 @@ describe('a group erodes as one shape', () => {
 
     const out = contributing(w, 0, resolveAt(w, 0));
 
-    expect(out.map(c => c.id)).toEqual([made.id, sideOf(made.id, kind('solid'))]);
-    expect(sidedWith(sideOf(made.id, kind('solid')))).toEqual(made.id);
+    expect(out.map(c => c.id)).toEqual([made.id]);
 
-    // And the set is what those two say it is: the room pulled in by the depth,
-    // with the pillar — pushed out by it — taken back out of that.
+    // And the set is what it says it is: the room pulled in by the depth, with
+    // the pillar — pushed out by it — taken back out of that.
     expect(shapeArea(csg(w, 0)))
       .toBeCloseTo((200 - 2 * d) * (120 - 2 * d) - (60 + 2 * d) * (40 + 2 * d), 6);
   });
@@ -1973,11 +1977,14 @@ describe('a group erodes as one shape', () => {
     const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
     const w = moved(outer.world, 0, inner.id, { erosion: 12 });
 
-    // Handed only the far room, which is inside the transparent outer group and
-    // nowhere near the eroding inner one.
+    // Handed only the far room. What is answered for is the scope it is in —
+    // the outer group — and not the inner one, which nothing in hand belongs
+    // to and which would otherwise be resolved out of nothing.
     const far = resolveAt(w, 0).filter(it => it.id === ids[2]);
+    const out = contributing(w, 0, far);
 
-    expect(contributing(w, 0, far).map(c => c.id)).toEqual([ids[2]]);
+    expect(out.map(c => c.id)).toEqual([outer.id]);
+    expect(shapeArea(out[0].shape)).toBeCloseTo(100 * 100, 6);
   });
 
   test('a group inside an eroding group is projected first', () => {
@@ -2127,12 +2134,15 @@ describe('going inside a group', () => {
     expect(hitPolygon(items, { x: 50, y: 50 })).toBe(null);
   });
 
-  test('a group draws as one shape even at depth zero', () => {
-    // The CSG only cares about groups that erode. Drawing cares about every
-    // group, because a group is one thing to the hand whatever its depth.
+  test('a group is one shape to the CSG and to the hand alike', () => {
+    // These used to be two different answers: the CSG cared only about groups
+    // that eroded and took everything else apart, while drawing cared about
+    // every group. Now a group is a scope to both, and the only question the
+    // two still differ on is whether it is *open* — which is a fact about the
+    // hand and about nothing else.
     const { world, group } = pair();
 
-    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id)).toHaveLength(2);
+    expect(contributing(world, 0, resolveAt(world, 0)).map(c => c.id)).toEqual([group]);
     expect(showing(world, 0, resolveAt(world, 0), []).map(c => c.id)).toEqual([group]);
   });
 
@@ -2261,7 +2271,7 @@ describe('going inside a group', () => {
     expect(occupying(made.world, 0, resolveAt(made.world, 0), [made.id])).toEqual([]);
   });
 
-  test('the two sides stay apart for the CSG, which needs them apart', () => {
+  test('a scope resolves to one shape, and nothing that cuts leaves it', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
@@ -2270,10 +2280,53 @@ describe('going inside a group', () => {
     const made = grouped(world, 0, ids, TOP)!;
     const shown = showing(made.world, 0, resolveAt(made.world, 0), []);
 
-    // Two contributors under one group: there is no shape that is the union of
-    // a room and the pillar standing in it.
-    expect(shown.map(c => c.kind.type).sort()).toEqual(['level', 'solid']);
-    expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id, made.id]);
+    // One contributor under one group, and it is a level: the room with the
+    // hole in it. There used to be two, kept apart so that the pillar could
+    // cut the rooms outside the group as well as its own.
+    expect(shown.map(c => c.kind.type)).toEqual(['level']);
+    expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id]);
+    expect(shapeArea(shown[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+  });
+
+  test('a pillar in a group does not cut the room next door', () => {
+    // The whole of what grouping now means. The pillar overlaps both rooms and
+    // is grouped with one of them; it bites the room it is grouped with, and
+    // the other is untouched.
+    //
+    // Before scoping it cut both, which is not something anybody asked for by
+    // grouping — a group was a handle for moving things together and it was
+    // quietly also a hole punched through the neighbours.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+      ['solid', rect(80, 20, 40, 40)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[2]], TOP)!;
+
+    // The grouped room keeps its own bite — 20 wide, being the half of the
+    // pillar inside it — and the room next door keeps all of itself.
+    expect(shapeArea(csg(made.world, 0))).toBeCloseTo(2 * 100 * 100 - 20 * 40, 6);
+
+    // Ungrouped, the same three polygons: the pillar cuts both rooms, which is
+    // what it did when it was in a group too.
+    expect(shapeArea(csg(world, 0))).toBeCloseTo(2 * 100 * 100 - 40 * 40, 6);
+  });
+
+  test('a floor in a group is not drawn over the room next door', () => {
+    // The same for the other set, and it is the half that showed: a floor in a
+    // group used to be handed over uncut and painted across whatever it
+    // overlapped, group or not.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 0, 100, 100)],
+      ['floor', rect(50, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, [ids[0], ids[2]], TOP)!;
+
+    // Half the floor, being the half inside the room it is grouped with.
+    expect(shapeArea(csgFloor(made.world, 0).map(r => [...r, r[0]]))).toBeCloseTo(50 * 100, 6);
   });
 });
 

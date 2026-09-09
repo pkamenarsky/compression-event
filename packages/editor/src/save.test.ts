@@ -24,6 +24,8 @@ import { EMPTY_TRANSFORM, EditorState, FLOOR, VERSIONS, emptyWorld, initialState
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
+const LEVEL: PolygonKind = { type: 'level' };
+
 const kind = (k: Named): PolygonKind =>
   k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
@@ -135,7 +137,7 @@ describe('save', () => {
       ...before,
       world: {
         ...before.world,
-        groups: new Map([[100, { birth: 0, death: null, members: ids }]]),
+        groups: new Map([[100, { birth: 0, death: null, members: ids, kind: LEVEL }]]),
         nextId: 101,
       },
     };
@@ -143,7 +145,7 @@ describe('save', () => {
     const after = restored(JSON.parse(JSON.stringify(saved(grouped))));
 
     expect(after.world.groups).toBeInstanceOf(Map);
-    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids });
+    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids, kind: LEVEL });
 
     // A file written before there were any says nothing about them rather than
     // saying there are none, and both read the same way.

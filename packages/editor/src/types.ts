@@ -12,6 +12,7 @@ import {
   SCALE,
   TILE_SIZE,
   SLOTS,
+  SLOT_KINDS,
   inside,
   inverted,
   kindKey,
@@ -22,7 +23,7 @@ import type { Bake } from './bake';
 import type { Affine } from './scene';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
-export { FLOOR, KINDS, SETS, SLOTS, SOLID, inside, inverted, kindKey, sameKind, slotOf };
+export { FLOOR, KINDS, SETS, SLOTS, SLOT_KINDS, SOLID, inside, inverted, kindKey, sameKind, slotOf };
 
 /** The kinds, in the order the number keys pick them. */
 export const ARTEFACTS: ArtefactType[] = [
@@ -545,6 +546,24 @@ export interface Group {
    */
   death: VersionId | null
   members: Id[]
+  /**
+   * What the group is to whatever holds it: the kind its resolved shape enters
+   * its parent scope as.
+   *
+   * A group is a scope — what its solids and voids cut, they cut inside it, and
+   * what comes out is one shape per set. This says which slot that shape lands
+   * in one level up, and it is a polygon's own kind because there is no
+   * difference at that point between a resolved group and a drawn polygon: both
+   * are a shape with a part to play.
+   *
+   * `level` is the ordinary case and what grouping produces. `solid` is a group
+   * that is a block — a pillar assembled out of parts — and one marked so puts
+   * no floor into its parent either, its floors being inside a block. `void`
+   * over the solids is what gives the nesting no bottom: a scope that cuts the
+   * solids of the scope holding it, which is a hole in a hole in a hole, and so
+   * on for as deep as anybody cares to nest.
+   */
+  kind: PolygonKind
 }
 
 /**
@@ -842,7 +861,14 @@ export type Clipping =
       death?: number
       edits: [number, Edit][]
     } & PolygonKind)
-  | { kind: 'group', members: Clipping[], death?: number, edits: [number, Edit][] }
+  | {
+      kind: 'group'
+      members: Clipping[]
+      death?: number
+      edits: [number, Edit][]
+      /** What the group is to whatever holds it. See `Group.kind`. */
+      of: PolygonKind
+    }
   /** An artefact, the same way round as a polygon: where it stood at the copy
    * version in world units, and every layer after it keyed by how far past the
    * copy it was. */
