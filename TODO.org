@@ -121,3 +121,78 @@ Nothing here comes from the recent branches — floor and level behave identical
 * marketing
 ** https://www.youtube.com/watch?v=90ImoX_e8nE
 
+
+* understand the 0.3952 before wiring `bentAt` into the bake
+  `surd.ts` and `bentAt` in `incident.ts` solve a corner reaching an edge when
+  the ring is nudged while it erodes — the case `Moving` cannot model. The roots
+  are right: `incident.test.ts` holds `bendingOn` against `erodedCorners` itself
+  and `bentAt` against a 20000-step scan. Steering `seedsFor` by them is what
+  goes wrong, and until it is understood they stay unused.
+
+** what it looked like
+   Divergence case `nudge into a neighbour, eroding`:
+
+   | seeds                       | stretches | csg | worst  |
+   | straight only (shipped)     |       136 | 582 | 0.0193 |
+   | + bent                      |        25 | 138 | 0.3952 |
+   | + bent, non-incidences cut  |        94 | 414 | 0.3952 |
+
+   `worst` is 0.39517031766278166 to every digit under all three gates, so it is
+   one fixed instant. `TOLERANCE` is 0.05, so this is 8x over. Raising the
+   acceptance check's confirmation samples twenty-fold (interior samples per
+   0.005 of width instead of the two quarters) moved neither the stretch count
+   nor `worst` — so it is not a wide stretch being under-sampled.
+
+** the wiring, which was reverted and is not in git
+   In `reaching` in `bake.ts`, before the corner loop:
+
+   #+begin_src ts
+   const bent = nudging(a) || nudging(b);   // local[0] differs from local[1]
+   #+end_src
+
+   and inside, in place of the `incidentAt` block:
+
+   #+begin_src ts
+   const bp = turningOf(a, i), b1 = turningOf(b, j), b2 = turningOf(b, k);
+
+   for (const t of bentAt(bp, b1, b2, GAP / 8)) {
+     const u = withinBent(bp, b1, b2, t);
+
+     if (u !== null && u >= 0 && u <= 1 && t > 0 && t < 1) out.push(t);
+   }
+   #+end_src
+
+   `turningOf` is already exported from `bake.ts` for this.
+
+** instruments, in order
+   1. *Where.* `check` in `divergence.test.ts` takes a max over 998 instants;
+      print the argmax and which polygon. Then print the stretches and jumps
+      around it, the way the `DBG` branch in `bake.test.ts` did while the
+      seeding regression was being chased. That says whether the instant sits
+      inside a kept stretch, inside a window `abutting` gave away, or beside a
+      pinned jump.
+   2. *Are the seeds real?* `probe.test.ts` already enumerates every instant a
+      signature changes, bisected to adjacent doubles. Run it on this world and
+      diff that set against the bent seeds. A seed with no signature change near
+      it is spurious; a change with no seed near it is missed. Either answer
+      names the bug.
+   3. *Is it the gap?* The post-hoc `strayed` check in `cutTrack` measures only
+      the two endpoints of each grown window, not inside it. A spurious pinned
+      jump leaves a `GAP`-wide hole whose interior nothing looks at. Sample the
+      interior and see if `worst` jumps to 0.3952 with the bent path *off* too —
+      if it does, the seeds are innocent and this is a hole in the measurement
+      that was always there.
+
+** two hypotheses
+   - *A pinned jump where nothing happens.* A bent root that `withinBent` lets
+     through gets bracketed and pinned; `abutting` closes the hole and the
+     replay draws across it. Favoured by the confirmation samples changing
+     nothing, and by instrument 3 being the one place `worst` does not look.
+   - *The halving was doing double duty.* Nudge-and-erode is exactly the case
+     where the *bend* sets the error, not the event placement — `nudge and
+     erode` alone sits at 0.0250 with no events in it at all. Seeding removes
+     the halving, and the halving was the only thing subdividing the bend. Test
+     by capping stretch width on nudging tracks; if `worst` returns to ~0.02
+     while some saving survives, the fix is a width cap and not a solver fix.
+     Argued against by the confirmation samples changing nothing, so check
+     instrument 1 before spending on this.
