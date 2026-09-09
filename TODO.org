@@ -1,12 +1,4 @@
-* adaptive tables - don't subdivide to smallest event, make it per polygon (chaining more precise table to parent table?)
-
-* slow motion animation so user can check for strange frames
-** just drag the arrow in the keyframe strip?
-* bug: drag in 3d view pans in 2d view
 * erosion should be cumulative i think
-* better UI for unchained poly/groups
-
-* eroded group in an eroded group behaves strange, but it's probably correct; but good to check
 
 * a shape in both create and select mode has handles to scale, rotate and erode
 ** TODO exact shape and form
@@ -36,29 +28,30 @@
 ** polyline
 ** also artifacts? would make sense
 
-* edge mode
-
-* selection of overlapping vertices
-
+* better UI for unchained poly/groups
 * version view horizontal, like keyframes
+** version management
 ** bake button right there (also bake button for specific versions only)
 ** visible versions can be a strip instead of individual lines
 ** button: none/all/next/subsequent/strip (current version is always visible)
 ** draw red line in timeline at topology events after baking
+** slow motion animation so user can check for strange frames
+*** just drag the arrow in the keyframe strip?
 * show/hide floor polygons
 * fix the 3d view - super bad ergonomics right now
+** bug: drag in 3d view pans in 2d view
 * make it more clear when drilled into group
 * write rotation degrees when rotating (and maybe when doing any kind of transformation)
 ** in the same style as n-gon point count arrow
 * statusbar shows action + available modifier keys to modify action
-
-* locking of polygons? unlock works then with cmd + click
-* version management
-
 * settings
 ** autobake
 ** grid size
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
+
+* selection of overlapping vertices
+* locking of polygons? unlock works then with cmd + click
+* adaptive tables? - don't subdivide to smallest event, make it per polygon (chaining more precise table to parent table?)
 
 * shortcuts
   c - create shape; cr - rect; cn - n-gon; cv - polyline; ca - artefact; cp - path
