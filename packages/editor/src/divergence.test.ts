@@ -161,9 +161,10 @@ function report(name: string, w: World) {
     `  miss ${String(broken).padStart(3)}/${N + 1}` +
     `  jump ${j.replay.toFixed(2).padStart(7)} vs ${j.world.toFixed(2).padStart(7)}` +
     `  stretches ${String(span.tracks.reduce((n, t) => n + t.stretches.length, 0)).padStart(4)}` +
-    `  csg ${String(span.evaluations).padStart(4)}  ${String(ms).padStart(4)}ms`);
+    `  csg ${String(span.evaluations).padStart(4)}` +
+    `  says ${span.worst.toFixed(4).padStart(8)}  ${String(ms).padStart(4)}ms`);
 
-  return { worst, broken, jump: j };
+  return { worst, broken, jump: j, says: span.worst };
 }
 
 test('the replay never strays far from csg(t)', () => {
@@ -174,6 +175,13 @@ test('the replay never strays far from csg(t)', () => {
     // keyframe the two sides genuinely have different geometry, and landing on
     // one is landing on a moment of zero duration.
     if (r.worst > TOLERANCE) bad.push(`${name}: ${r.worst} from the truth`);
+
+    // And what the bake says about itself, which is the sharper of the two: it
+    // measures where it looked, and where it looked is where the trouble is.
+    // This grid steps a thousandth and the window an event goes wrong in is a
+    // tenth of that, so `Span.worst` saw a case sitting at 0.3247 for as long as
+    // the column above read 0.0193. See `pinning`.
+    if (r.says > TOLERANCE) bad.push(`${name}: says ${r.says} of itself`);
     if (r.broken > 12) bad.push(`${name}: ${r.broken} mismatched instants`);
 
     // No jumpier than the world it is reproducing, give or take the tolerance.

@@ -122,87 +122,58 @@ Nothing here comes from the recent branches — floor and level behave identical
 ** https://www.youtube.com/watch?v=90ImoX_e8nE
 
 
-* the 0.3952 is the half-gap, not the seeds
-  Settled. `surd.ts` and `bentAt` in `incident.ts` solve a corner reaching an
-  edge while the ring is nudged and eroded — the case `Moving` cannot model.
-  Steering `seedsFor` by them took the divergence case `nudge into a neighbour,
-  eroding` from `worst` 0.0193 to 0.3952, and that read as the seeds being
-  wrong. They are not. They are right, and what they did was uncover a hole
-  that was always there.
+* the speed-aware bracket
+  Done, in `pinning` in `bake.ts`. The 0.3952 was never the bent seeds: the
+  argmax sat one half-gap after a real event, where the truth gains the
+  neighbour's own corner and that corner leaves down the neighbour's edge at
+  some 7900 units per unit `t`. `abutting` drops the two pinned instants and
+  closes the bracket from both sides, so each neighbour is drawn across half of
+  it having been measured over none of it — and half of `GAP` at that speed is
+  four tenths of a unit. The seeds only centred the bracket on the event, which
+  made both sides comparable and let the grid see what `Span.worst` had been
+  reporting all along.
 
-** what is at 0.3952
-   The argmax sits at t = 0.15806, which is exactly where a stretch begins, one
-   half-gap after a pinned pair of instants at 0.158012 and 0.158112. The truth
-   at that instant gains a point:
+** what changed
+   `GAP` is the cap now, not the answer. An event is pinned when the outline
+   travels less than `tol * MARGIN` across the half the growth will cover, and
+   goes on splitting to `BEND` when it travels more.
 
-   | t          | truth | replay | apart  |
-   | b - 1e-6   |   5   |    5   | 0.0107 |
-   | b + 1e-9   |   6   |    5   | inf    |
-   | b + 1e-6   |   6   |    6   | 0.4191 |
-   | b + 1e-3   |   6   |    6   | 0.3616 |
+   Measured on *one* side. Across the whole bracket sits the jump itself, and a
+   jump does not shrink however far the search splits — taking the two ends
+   together sent every event with any size to it down to `BEND` for nothing,
+   half as much again in evaluations across the table and sixteen times on the
+   level below. So it is read off the half the event is not in: `m` is the split
+   that was going to happen anyway, and whichever of the two ends still compares
+   with it is on the continuous side.
 
-   The birth is at 0.158061604, bisected to adjacent doubles, and the point
-   born is the neighbour's own corner, (150.00, 20.00). It then races down the
-   neighbour's left edge: y is 20.01 at b+1e-6, 20.84 at b+1e-4, 99.58 at
-   b+1e-2 — about 7900 units per unit of `t`.
+   Where neither end compares with `m` there is no continuous side to read, and
+   that falls back to the width rule. On a level whose rings genuinely re-cut at
+   every scale it would otherwise descend forever.
 
-   `abutting` grows the stretch after the event back over half a gap to meet
-   the jump. Half of `GAP` = 1e-4 times 7900 is 0.395. That is the whole of it:
-   the replay places that corner where the rings at the stretch's *measured*
-   start put it, and the measured start is 5e-5 past a birth the outline leaves
-   at eight thousand units a second.
+** what it bought
+   Across the divergence table, `Span.worst`:
 
-** why the shipped number is 0.0193 and not this
-   It is not that the shipped path avoids the defect. It is that nothing looks
-   at it. With the bent seeds off the bake's own `Span.worst` on this case is
-   *0.3247* — it has been saying so all along. The divergence grid steps 1e-3
-   and the bad window is 1e-4 wide, so its 998 instants step straight over it;
-   the two nearest land where the error has decayed to 0.0002 and 0.115.
+   | max Span.worst  | 0.3247 | -> | 0.0250 |
+   | csg evaluations |   2470 | -> |   2699 |
 
-   What the seeds change is where the window sits. Unseeded, the halving pins
-   the event to a `GAP`-wide bracket somewhere off to one side, and the replay
-   flips its run count late, so the instants in the bad region compare `!==`
-   in run count and `apart` throws them out as infinite. Seeded, the bracket is
-   centred on the event to within 4e-7, both sides are comparable, and the grid
-   sees what `Span.worst` had been reporting. The seeds made the bake honest,
-   and honest looked like a regression.
+   `nudge into a neighbour, eroding` goes 0.3247 to 0.0192 for 28 more
+   evaluations. Nothing in the grid column moved, because the grid never saw any
+   of this — which is why `divergence.test.ts` now fails on `Span.worst` as well
+   as on its own sampling.
 
-** so both hypotheses were wrong
-   Not a pinned jump where nothing happens: the event is real, a genuine 5 to 6
-   point change, and the seed named it to 4e-7. Not the halving doing double
-   duty on the bend either: the error is at one instant beside one event, not
-   spread over a curve.
+   On `scratch/world-2026-09-08T15-27-59Z`, 10.88 to 6.43 for 4.4x the
+   evaluations. That level is the self-intersecting floor ring below and is
+   still nowhere near tolerance; the gain is real but it is not the fix for it.
 
-** what it costs to fix, measured
-   The seeded bracket is `s ± GAP/2` only because `GAP` was the only width
-   around. A root that is isolated to 1e-8 deserves a bracket of that order.
-   Sweeping the half-width `h` on this case, with the bent path on:
-
-   | h     | stretches | csg | grid worst | Span.worst |
-   | 5e-5  |        94 | 414 |     0.3952 |     0.4192 |
-   | 1e-6  |       114 | 496 |     0.1822 |     0.0238 |
-   | 1e-7  |       135 | 578 |     0.0200 |     0.0200 |
-   | 1e-8  |       135 | 578 |     0.0200 |     0.0200 |
-
-   `worst` is `h` times the crossing's speed, exactly. Tightening the root
-   isolation to 1e-8 as well so the bracket actually straddles the event gives
-   63 stretches and 295 evaluations at grid worst 0.0239 — half the shipped
-   cost and an honest number.
-
-   It is not free elsewhere. The same `h` = 1e-7 across the whole table takes
-   `six boxes, turning only` from 91 stretches to 317 and `sliding through`
-   from 28 to 71, and puts `nudge into a neighbour, eroding and turning` at
-   0.0563, over `TOLERANCE`. A tight bracket leaves the intervals either side
-   of it ending *at* the event, where the outline moves fastest, so they
-   subdivide. That cost is honest, but it is a cost.
-
-** what to do
-   The knob is not `GAP` and not the solver. It is that a bracket's width has
-   to be paid for at the speed the outline moves through it, and one constant
-   cannot serve a corner drifting and a crossing at 7900 units per unit `t`.
-   Bracket an event to `min(GAP, tol / speed)` with the speed read off the two
-   ends of the bracket, and both the seeded and the halved path get a width
-   they can afford. That would also take `Span.worst` on the shipped path down
-   from 0.3247, which is the number that matters — it is over `TOLERANCE` today
-   and has been.
-
+** still to do
+   - `bentAt` is still unwired. The seeds were never the problem, so wiring them
+     is now a question of cost and nothing else: with the bracket honest, the
+     bent path on that case ran 63 stretches and 295 evaluations against 610, at
+     a grid worst of 0.0239. Worth doing.
+   - A bent version of the three-lines determinant, which only exists on the
+     straight `Moving` path.
+   - `six boxes, all moving` has a corner that arrives inside an accepted
+     stretch with its two positions 122 units apart, `explained` by a fade it
+     cannot possibly interpolate. Deeper bisection surfaces it and no bisection
+     depth fixes it; it is a jump wearing a fade. Not reached today, and only
+     found because an earlier draft of `pinning` split past it.

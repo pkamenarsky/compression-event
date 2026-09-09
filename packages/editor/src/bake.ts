@@ -1964,9 +1964,10 @@ export { TOLERANCE };
  * what this value was once reasoned from — but a *crossing* has no such bound:
  * two edges going parallel send their meeting point off at any speed you like,
  * and near one of those the outline has been measured moving eight units inside
- * a single gap. So this is not a value anybody can argue is enough, and it is
- * not claimed to be. It is the depth the search gives up at, and everything it
- * gives up on now goes into `worst` — which is where to look.
+ * a single gap. So on the pinning side it is no longer the answer, only the cap:
+ * `pinning` measures how far the outline actually travels and splits past this
+ * where it travels too far. On the chasing side it still is the answer, and
+ * everything the search gives up on goes into `worst` — which is where to look.
  *
  * What the levels to hand say, measured rather than guessed. A tenth of this is
  * cheap and useless on a quiet level and ruinous on a busy one: 28s against 45s
@@ -2018,6 +2019,54 @@ const MARGIN = 0.5;
  * at this and at no gate at all.
  */
 const STEERED = 0.03;
+
+/**
+ * Whether an event has been pinned as tightly as it needs to be, given how fast
+ * the outline is moving through it.
+ *
+ * `GAP` used to answer this on its own, and a width is the wrong unit for the
+ * question. `abutting` drops the two pinned instants and closes the bracket
+ * from both sides, so each neighbouring stretch is drawn across half of it
+ * having been measured over none of it. What that costs is not the width — it
+ * is how far the outline travels in it. A corner drifting covers nothing in
+ * 1e-4. A crossing does not: the case that found this had a run gain the
+ * neighbour's own corner and leave down the neighbour's edge at some eight
+ * thousand units per unit of `t`, so half of `GAP` was four tenths of a unit,
+ * eight times `TOLERANCE`, in a window a tenth as wide as the grid that was
+ * meant to catch it. `Span.worst` had been saying so all along.
+ *
+ * So the distance is measured rather than the width, and `GAP` becomes the cap
+ * rather than the answer: nothing is pinned wider than it was, and an event the
+ * outline races through is pinned tighter until what the growth covers is
+ * inside the same margin every accepted stretch is held to.
+ *
+ * Measured on one side and not across the whole bracket, which is the part that
+ * is easy to get wrong. Across it sits the jump itself, and a jump does not
+ * shrink however far this splits — take the two ends together and every event
+ * with any size to it descends to `BEND` for nothing, which measured at half as
+ * much again in evaluations across the table. Only the travel is the growth's
+ * to pay for, so it is read off the half the event is *not* in: `m` is the
+ * split that is about to happen anyway, and whichever of `a` or `b` it still
+ * compares with is on the continuous side of the event.
+ *
+ * Neither, and there is no continuous side to read: either the split landed on
+ * the event, or the arrangement is re-cutting itself at every scale and will go
+ * on doing so however far this descends. The first wants one more halving and
+ * the second cannot be given one — a level whose rings genuinely change at every
+ * scale took sixteen times the evaluations to reach the same answer. So an
+ * unmeasurable bracket falls back to the width rule, which is what it was
+ * before any of this, and the post-hoc check on the grown windows still reports
+ * whatever it costs.
+ */
+function pinning(a: Taken, m: Taken, b: Taken, tol: number): boolean {
+  if (b.t - a.t > GAP) return false;
+
+  const side = comparable(a, m) ? strayed(a.out, m.out)
+    : comparable(m, b) ? strayed(m.out, b.out)
+      : 0;
+
+  return side <= tol * MARGIN;
+}
 
 
 /** Two evaluations that could be the ends of one stretch, or could not. */
@@ -2904,10 +2953,9 @@ function* cutTrack(
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
-    const narrow = b.t - a.t <= GAP;
 
     if (!comparable(a, b)) {
-      if (!narrow) {
+      if (b.t - a.t > BEND) {
         // The two ends have different arrangements, so there is an event in
         // here somewhere. Where the incidence names one, bracket it and hand
         // the pinning path an interval that is already narrow; otherwise halve,
@@ -2923,8 +2971,12 @@ function* cutTrack(
 
         const m = at((a.t + b.t) / 2);
 
-        stack.push([m, b], [a, m]);
-        continue;
+        // The split is made whatever happens next, so `pinning` is asked with
+        // it in hand rather than paying for its own.
+        if (!pinning(a, m, b, tol)) {
+          stack.push([m, b], [a, m]);
+          continue;
+        }
       }
 
       // Pinned as far as it is worth pinning: a discontinuity, and the two
