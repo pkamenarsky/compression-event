@@ -48,9 +48,22 @@
 
 import { breaksOf, piecesOf } from '@ce/game/arc';
 import { Point } from '@ce/game/world';
-import { Rider, pivot } from './bake';
+import { Rider, pivot, riding } from './bake';
+import { Ring, erodedCorners, isCCW } from './geometry';
 import { Poly, add, at, constant, linear, mul, ratAt, roots, scale, sub } from './poly';
-import { Affine } from './scene';
+import { Affine, place } from './scene';
+import {
+  Basis,
+  Surd,
+  add as add2,
+  basis,
+  flat,
+  mul as mulS,
+  radicand,
+  rooted,
+  roots as rootsS,
+  sub as subS,
+} from './surd';
 import { Transform } from './types';
 
 /**
@@ -91,7 +104,7 @@ export interface Moving {
  * layer that acts on it. These are the cuts that makes necessary, and they are
  * known from the layer chain without evaluating anything — the cheap kind.
  */
-export function breaksIn(...movers: Moving[]): number[] {
+export function breaksIn(...movers: { rider: Rider }[]): number[] {
   const out = new Set<number>();
 
   for (const m of movers) {
@@ -481,4 +494,265 @@ export function meetingWithin(e1: Edge, e2: Edge, e3: Edge, t: number): Point | 
   };
 
   return inside(e1) && inside(e2) && inside(e3) ? p : null;
+}
+
+// -----------------------------------------------------------------------------
+// A corner whose ring is changing shape under it
+//
+// `Moving` says a vertex is a straight line in its own frame, and that covers a
+// nudge alone and an erosion alone. Both at once it does not: the nudge turns the
+// corner angle, the mitre turns with it, and the corner's path bends. That is the
+// case `bake.ts` files under *Between events the geometry is not straight*, and
+// nudging while eroding is the ordinary way to author.
+//
+// The bend is algebraic. A mitre corner is where the two offset lines meet, and
+// scaling each row by the length it was divided by leaves `sqrt(e . e)` as the
+// only irrational thing in it — one per edge, entering linearly. `surd.ts` is the
+// arithmetic; this is the construction.
+//
+// What it costs is the term count. A corner carries two roots, an incidence
+// touches three corners and so up to five distinct roots, and a cross product of
+// those reaches every subset of them. So this is not the road for a ring that is
+// holding still: `Moving` stays, and is what `seedsFor` reaches for wherever the
+// two ends of the span have the same ring.
+// -----------------------------------------------------------------------------
+
+/**
+ * One corner of a ring that is itself changing shape across the span.
+ *
+ * The whole ring rather than the corner, because a mitre is a fact about three
+ * vertices — the corner and its two neighbours — and about the two edge lengths
+ * between them. `at` picks which corner of it this is.
+ */
+export interface Turning {
+  rider: Rider
+  /** The source ring at each end of the span, index for index. */
+  ring: [Ring, Ring]
+  at: number
+  /** The depth at that corner at each end. */
+  depth: [number, number]
+}
+
+/** A point of the span with roots in it: homogeneous, so that a mitre whose two
+ * edges have gone parallel is a point at infinity rather than a division by
+ * nothing. */
+export interface Bent {
+  x: Surd
+  y: Surd
+  w: Surd
+}
+
+function by(base: Basis, s: Surd, p: Poly): Surd {
+  return mulS(base, s, flat(p));
+}
+
+/**
+ * Where a turning corner stands over `[lo, hi]`, homogeneous and with its two
+ * roots in it.
+ *
+ * Cramer on
+ *
+ *   m_{i-1} . x = m_{i-1} . v + d L_{i-1}      m_i . x = m_i . v + d L_i
+ *
+ * which is the pair of offset lines with the normalisation multiplied back out.
+ * `D` is the determinant of that pair and is the homogeneous weight — zero
+ * exactly where the two edges are parallel, which is where the corner has no
+ * mitre and `corners` in `geometry.ts` falls back to the wall's own normal.
+ *
+ * The winding is settled the way `erodedCorners` settles it, and has to be: the
+ * inward normal of a clockwise ring is the other one, and a corner built off the
+ * wrong one erodes outwards.
+ */
+export function bendingOn(c: Turning, lo: number, hi: number, base: Basis): Bent {
+  const t = span(lo, hi);
+  const n = c.ring[0].length;
+  const flip = !isCCW(c.ring[0]);
+
+  // Index into the ring as `erodedCorners` reads it, which is reversed where the
+  // ring is clockwise. Corner `i` is still corner `i` at both ends of that.
+  const k = (j: number): number => {
+    const w = ((j % n) + n) % n;
+
+    return flip ? n - 1 - w : w;
+  };
+
+  const px = (j: number): Poly =>
+    add(constant(c.ring[0][k(j)].x), scale(t, c.ring[1][k(j)].x - c.ring[0][k(j)].x));
+  const py = (j: number): Poly =>
+    add(constant(c.ring[0][k(j)].y), scale(t, c.ring[1][k(j)].y - c.ring[0][k(j)].y));
+
+  // The edge out of corner `j`, a quarter turn on, which is the inward normal
+  // before it is divided by its own length.
+  const turn = (j: number): { x: Poly, y: Poly, l: number } => {
+    const ex = sub(px(j + 1), px(j)), ey = sub(py(j + 1), py(j));
+
+    return {
+      x: scale(ey, -1),
+      y: ex,
+      l: radicand(base, add(mul(ex, ex), mul(ey, ey))),
+    };
+  };
+
+  const i = flip ? n - 1 - c.at : c.at;
+  const a = turn(i - 1), b = turn(i);
+  const vx = px(i), vy = py(i);
+
+  const det = sub(mul(a.x, b.y), mul(a.y, b.x));
+  // In `t` and not in `s`: the depth eases over the whole span, and a piece is
+  // only part of it.
+  const d = add(constant(c.depth[0]), scale(t, c.depth[1] - c.depth[0]));
+
+  // The right-hand side, which is where the roots come in and the only place
+  // they do.
+  const r1 = add2(flat(add(mul(a.x, vx), mul(a.y, vy))), rooted(d, a.l));
+  const r2 = add2(flat(add(mul(b.x, vx), mul(b.y, vy))), rooted(d, b.l));
+
+  const x1 = subS(by(base, r1, b.y), by(base, r2, a.y));
+  const x2 = subS(by(base, r2, a.x), by(base, r1, b.x));
+
+  // Out to the world, which is rational and so joins as an ordinary coefficient.
+  const f = frameOn(c.rider, lo, hi);
+
+  return {
+    x: add2(add2(by(base, x1, f.a), by(base, x2, f.c)), flat(mul(f.tx, det))),
+    y: add2(add2(by(base, x1, f.b), by(base, x2, f.d)), flat(mul(f.ty, det))),
+    w: flat(mul(f.w, det)),
+  };
+}
+
+/**
+ * `cross(q2 - q1, p - q1)`, with the roots kept.
+ *
+ * The same statement `incidenceOn` makes, in the arithmetic that can carry a
+ * bending corner. The denominators are cleared the same way and dropped for the
+ * same reason — each is a product of `1 + u²` terms and a mitre determinant, and
+ * a determinant *can* vanish, which puts a root of its own here. Those are the
+ * instants a corner has no mitre; `withinBent` throws them out by asking where
+ * the corner actually is, which at one of them is nowhere.
+ */
+function bentIncidenceOn(
+  p: Turning,
+  q1: Turning,
+  q2: Turning,
+  lo: number,
+  hi: number,
+  base: Basis,
+): Surd {
+  const P = bendingOn(p, lo, hi, base);
+  const A = bendingOn(q1, lo, hi, base);
+  const B = bendingOn(q2, lo, hi, base);
+
+  const cross = (ux: Surd, uy: Surd, vx: Surd, vy: Surd): Surd =>
+    subS(mulS(base, ux, vy), mulS(base, uy, vx));
+
+  const over = (u: Bent, v: Bent, which: 'x' | 'y'): Surd =>
+    subS(mulS(base, u[which], v.w), mulS(base, v[which], u.w));
+
+  return cross(
+    over(B, A, 'x'), over(B, A, 'y'),
+    over(P, A, 'x'), over(P, A, 'y'),
+  );
+}
+
+/**
+ * Every instant in `[0, 1]` at which a bending corner is on the line through two
+ * others, piece by piece and put back in `t`.
+ *
+ * Complete on the same terms as `incidentAt`, and looser: the bound a sum of
+ * terms carries overestimates, so more intervals survive to be split. What comes
+ * back is still every root and never a claim that an interval is empty when it is
+ * not.
+ *
+ * Not wired into `seedsFor`, and this is the reason rather than an oversight.
+ * Steering the bisection by these roots does cut the work — a nudged polygon
+ * eroding into a neighbour went from 136 stretches and 582 evaluations to 94 and
+ * 414 — and it took `worst` from 0.0193 to 0.3952, which is eight times
+ * `TOLERANCE`. Filtering the roots that are not incidences at all (`withinBent`)
+ * recovered most of the stretches and none of the error: `worst` came back at
+ * 0.39517031766278166 to every digit under three different gates, so it is one
+ * fixed instant rather than a sampling accident, and it is not the acceptance
+ * check either — raising its samples twenty-fold moved nothing.
+ *
+ * Which is a mechanism nobody has found yet, so the roots stay unused. They are
+ * right: `incident.test.ts` holds them against a scan of twenty thousand steps,
+ * and holds the corner they are taken of against `erodedCorners` itself. What is
+ * missing is an account of what goes wrong downstream of them.
+ */
+export function bentAt(p: Turning, q1: Turning, q2: Turning, eps = 1e-9): number[] {
+  const cuts = [0, ...breaksIn(p, q1, q2), 1];
+  const out: number[] = [];
+
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const lo = cuts[i], hi = cuts[i + 1];
+
+    if (hi - lo <= 0) continue;
+
+    const base = basis();
+    const f = bentIncidenceOn(p, q1, q2, lo, hi, base);
+
+    for (const s of rootsS(base, f, eps / (hi - lo))) {
+      const t = lo + s * (hi - lo);
+
+      if (out.length === 0 || t - out[out.length - 1] > eps) out.push(t);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Where a turning corner stands at one instant, by the route the bake and the
+ * game take.
+ *
+ * `erodedCorners` and not the mitre written out again: it is the authority on
+ * where an eroded corner goes, winding and hairpins and all, and holding the
+ * algebra against it is the only way to know the algebra is the same corner.
+ */
+export function turningAt(c: Turning, t: number): Point {
+  const lerp = (u: number, v: number): number => u + (v - u) * t;
+
+  const ring = c.ring[0].map((p, i) => ({
+    x: lerp(p.x, c.ring[1][i].x),
+    y: lerp(p.y, c.ring[1][i].y),
+  }));
+
+  const moved = erodedCorners(ring, lerp(c.depth[0], c.depth[1]));
+
+  return place(riding(c.rider, t), [moved[c.at]])[0];
+}
+
+/**
+ * How far along `q1 -> q2` the foot of `p` sits, for three bending corners — or
+ * null where this root is not an incidence at all.
+ *
+ * Two ways it might not be. The determinant of a corner's own mitre is a factor
+ * of the condition, so an instant where a corner's two edges go parallel and it
+ * has no mitre is a root of the polynomial and nothing at all on the ground; and
+ * `roots` reports an interval it could not clear rather than dropping it, so a
+ * bound too loose to settle comes back as a root too. Both are thrown out the
+ * same way: by asking what the incidence actually *is* here.
+ *
+ * That check is the one thing between the algebra and the bake. Left out, these
+ * came through as seeds, the bisection was steered to instants where nothing was
+ * happening, and a nudged polygon eroding into a neighbour came back with a
+ * `worst` of 0.40 against the 0.02 that halving alone gave it.
+ */
+export function withinBent(p: Turning, q1: Turning, q2: Turning, t: number): number | null {
+  const a = turningAt(p, t), b = turningAt(q1, t), c = turningAt(q2, t);
+
+  if (![a, b, c].every(v => Number.isFinite(v.x) && Number.isFinite(v.y))) return null;
+
+  const ux = c.x - b.x, uy = c.y - b.y;
+  const len = Math.hypot(ux, uy);
+
+  if (len === 0) return null;
+
+  // How far off the line the corner actually is, as a distance rather than as an
+  // area, so it is comparable with the geometry it came from.
+  const off = Math.abs(ux * (a.y - b.y) - uy * (a.x - b.x)) / len;
+  const reach = Math.max(len, Math.hypot(a.x - b.x, a.y - b.y));
+
+  if (off > reach * 1e-6) return null;
+
+  return ((a.x - b.x) * ux + (a.y - b.y) * uy) / (len * len);
 }

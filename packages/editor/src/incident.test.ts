@@ -4,6 +4,11 @@ import { Rider, riding } from './bake';
 import {
   Edge,
   Moving,
+  Turning,
+  bentAt,
+  bendingOn as bendingHomogeneous,
+  turningAt,
+  withinBent,
   affineAt,
   alongAt,
   breaksIn,
@@ -13,6 +18,7 @@ import {
   meetingWithin,
   pointAt,
 } from './incident';
+import { at as surdAt, basis as surdBasis } from './surd';
 import { Transform } from './types';
 
 const rng = (seed: number) => {
@@ -73,7 +79,7 @@ describe('the polynomial frame', () => {
 
     for (let k = 0; k < 60; k++) {
       const it = rider(r, k % 3);
-      const cuts = [0, ...breaksIn({ rider: it, from: point(r), to: point(r) }), 1];
+      const cuts = [0, ...breaksIn({ rider: it }), 1];
 
       for (let i = 0; i + 1 < cuts.length; i++) {
         const lo = cuts[i], hi = cuts[i + 1];
@@ -274,6 +280,118 @@ describe('three edges through one point', () => {
 
         expect(got.x).toBeCloseTo(want.x, 8);
         expect(got.y).toBeCloseTo(want.y, 8);
+      }
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+
+/** A convex ring of `n` corners, and a nudged version of it. */
+function turning(r: () => number, n: number, at: number): Turning {
+  const ring = (jitter: number): Point[] =>
+    Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2;
+      const reach = 60 + jitter * (r() - 0.5) * 40;
+
+      return { x: Math.cos(a) * reach, y: Math.sin(a) * reach };
+    });
+
+  return {
+    rider: rider(r, 0),
+    ring: [ring(0), ring(1)],
+    at,
+    depth: [2 + r() * 6, 2 + r() * 14],
+  };
+}
+
+describe('a corner whose ring turns under it', () => {
+  // The whole point of the algebra is that it is the same corner `erodedCorners`
+  // produces. If it is not, nothing downstream of it means anything.
+  test('is the corner `erodedCorners` puts there', () => {
+    const r = rng(41);
+
+    for (let k = 0; k < 40; k++) {
+      const n = 3 + (k % 5);
+      const c = turning(r, n, k % n);
+
+      // Piece by piece: a rational turn is one polynomial per piece, and the
+      // construction is only right inside one of them.
+      const cuts = [0, ...breaksIn(c), 1];
+
+      for (let j = 0; j + 1 < cuts.length; j++) {
+        const lo = cuts[j], hi = cuts[j + 1];
+        const base = surdBasis();
+        const p = bendingHomogeneous(c, lo, hi, base);
+
+        for (let i = 0; i <= 8; i++) {
+          const u = i / 8;
+          const want = turningAt(c, lo + u * (hi - lo));
+          const w = surdAt(base, p.w, u);
+
+          expect(Math.abs(w)).toBeGreaterThan(1e-9);
+          expect(surdAt(base, p.x, u) / w).toBeCloseTo(want.x, 6);
+          expect(surdAt(base, p.y, u) / w).toBeCloseTo(want.y, 6);
+        }
+      }
+    }
+  });
+
+  test('bends, so the lerp of its two ends is not where it goes', () => {
+    const r = rng(43);
+
+    let bent = 0;
+
+    for (let k = 0; k < 20; k++) {
+      const c = turning(r, 5, 2);
+      const a = turningAt(c, 0), b = turningAt(c, 1), m = turningAt(c, 0.5);
+      const chord = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+
+      if (Math.hypot(m.x - chord.x, m.y - chord.y) > 1e-3) bent++;
+    }
+
+    // If these all travelled straight there would be nothing here to solve.
+    expect(bent).toBeGreaterThan(15);
+  });
+
+  test('finds every sign change a fine scan sees', () => {
+    const r = rng(47);
+    const STEPS = 20000;
+
+    for (let k = 0; k < 12; k++) {
+      const p = turning(r, 4, 1), q1 = turning(r, 4, 0), q2 = turning(r, 4, 2);
+
+      const cross = (t: number): number => {
+        const a = turningAt(p, t), b = turningAt(q1, t), c = turningAt(q2, t);
+
+        return (c.x - b.x) * (a.y - b.y) - (c.y - b.y) * (a.x - b.x);
+      };
+
+      const scanned: number[] = [];
+
+      for (let i = 0; i < STEPS; i++) {
+        const lo = i / STEPS, hi = (i + 1) / STEPS;
+
+        if (cross(lo) * cross(hi) < 0) scanned.push((lo + hi) / 2);
+      }
+
+      const found = bentAt(p, q1, q2, 1e-9);
+
+      for (const t of scanned) {
+        expect(found.some(f => Math.abs(f - t) < 2 / STEPS)).toBe(true);
+      }
+
+      // Roots of the mitre determinants come through too — those are instants a
+      // corner has no mitre, not incidences — so what is checked is that every
+      // root the caller would keep really is one.
+      for (const t of found) {
+        if (withinBent(p, q1, q2, t) === null) continue;
+
+        let size = 0;
+
+        for (let i = 0; i <= 20; i++) size = Math.max(size, Math.abs(cross(i / 20)));
+
+        expect(Math.abs(cross(t)) / Math.max(size, 1)).toBeLessThan(1e-5);
       }
     }
   });

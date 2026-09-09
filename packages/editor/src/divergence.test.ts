@@ -349,6 +349,31 @@ test('the replay never strays far from csg(t)', () => {
     check('nudge, erode and turn', transformed(nudged, 1, ids[0], { erosion: 22, rotation: 0.4 }));
   }
   {
+    // A nudge and an erosion together against a *neighbour*, which is the case
+    // the other two are not: alone, a nudged polygon's corners never reach
+    // anything, so there are no events to find and what is left is the bend. Put
+    // something in the way and the corners have edges to cross, and where they
+    // cross them is a corner travelling along a mitre that is itself turning. See
+    // `Turning` in `incident.ts`.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 120, 120)],
+      ['level', rect(150, 20, 60, 200)],
+    );
+    const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
+    const edit = editAt(world, 1, ids[0], 0);
+    const vertices = new Map(edit.vertices);
+
+    vertices.set(it.polygon.points[1].id, { x: 210, y: 30 });
+    vertices.set(it.polygon.points[2].id, { x: 190, y: 150 });
+
+    const nudged = withEdit(world, 1, ids[0], { ...edit, vertices });
+
+    check('nudge into a neighbour, eroding',
+      transformed(nudged, 1, ids[0], { erosion: 18 }));
+    check('nudge into a neighbour, eroding and turning',
+      transformed(nudged, 1, ids[0], { erosion: 18, rotation: 0.3 }));
+  }
+  {
     // A depth arriving on one corner alone over the span, which is the case the
     // uniform offset never had: the two edges meeting there tilt as it deepens,
     // so the boundary is not a set of parallel translates of the source and the

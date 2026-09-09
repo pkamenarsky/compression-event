@@ -130,6 +130,7 @@ import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
   Edge as Reaching,
   Moving as Travelling,
+  Turning,
   alongAt,
   concurrentAt,
   incidentAt,
@@ -2779,6 +2780,23 @@ function converging(sub: readonly Moving[], id: Id, out: number[]): void {
       }
     }
   }
+}
+
+/**
+ * One corner of a polygon whose ring is in flight, for `bentAt`.
+ *
+ * Not reached from here yet, and `incident.ts` says why: the roots are right and
+ * steering the bisection by them made a nudged polygon's `worst` twenty times
+ * worse. It is exported shape rather than dead code — what the wiring will need
+ * when the rest of that is understood.
+ */
+export function turningOf(m: Moving, i: number): Turning {
+  return {
+    rider: m,
+    ring: m.local,
+    at: i,
+    depth: m.varying ? [m.depths[0][i], m.depths[1][i]] : m.depth,
+  };
 }
 
 /** Every corner of `a` against every edge of `b`, appended to `out`. */
