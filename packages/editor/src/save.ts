@@ -363,6 +363,7 @@ export function restored(file: Saved): EditorState {
     world: out,
     currentVersion: file.currentVersion,
     inside: null,
+    status: null,
     selection: {
       polygons: file.selection,
       vertices: [],

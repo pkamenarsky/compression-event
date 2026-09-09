@@ -1447,7 +1447,9 @@ export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id
  * is *made of* half way along — the same reason a group's standing is settled
  * for a whole span rather than asked at each instant.
  *
- * Eroding one seals it without this being called: see `withEdit`.
+ * Eroding a loose group does not do this. A depth is an offset of a union and
+ * a loose group has none, so the gesture is refused rather than granted by
+ * quietly turning the group into something else — see `erodible`.
  */
 export function sealing(world: World, id: GroupId, sealed: boolean): World {
   const group = world.groups.get(id);
@@ -1468,22 +1470,7 @@ export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World 
   edits.set(id, edit);
   versions[v] = { ...versions[v], edits };
 
-  const out = { ...world, versions };
-  const group = world.groups.get(id);
-
-  // Eroding a group seals it, here rather than in the gesture that wrote the
-  // depth, because this is where the depth arrives however it was written. A
-  // depth is an offset of a *union*, and a loose group has none — its members
-  // are in the set one by one and there is no single boundary for a depth to
-  // move. So the two cannot come apart, and asking for one is asking for the
-  // other. See `Group.sealed`.
-  if (group === undefined || group.sealed || edit.transform.erosion === 0) return out;
-
-  const groups = new Map(world.groups);
-
-  groups.set(id, { ...group, sealed: true });
-
-  return { ...out, groups };
+  return { ...world, versions };
 }
 
 // -----------------------------------------------------------------------------
@@ -2207,6 +2194,22 @@ export function settled(slots: readonly Shape[]): Shape {
   return out;
 }
 
+/**
+ * A scope's floor, cut to the level that scope makes.
+ *
+ * The whole of what sealing does to a floor, in one place because two things
+ * do it: the reader that hands the floor to the CSG and to the drawing, and
+ * the gesture that bakes a scope into polygons. Two cuts that could disagree
+ * would be a floor drawn in one place and shipped in another.
+ *
+ * A scope with no level keeps its floor whole. There is nothing there for the
+ * clip to mean, and clipping to an outline that is not there would resolve the
+ * floor out of existence — which is a group of nothing but floors vanishing.
+ */
+export function underfoot(floor: Shape, level: Shape): Shape {
+  return floor.length === 0 || level.length === 0 ? floor : intersect(floor, level);
+}
+
 export interface Standing {
   depth: number
   /**
@@ -2330,13 +2333,9 @@ export function contributed(
 
     for (let k = 0; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
-    let out = settled(slots);
-
-    if (set === 'floor' && out.length !== 0) {
-      const level = resolves(id, 'level');
-
-      if (level.length !== 0) out = intersect(out, level);
-    }
+    const out = set === 'floor'
+      ? underfoot(settled(slots), resolves(id, 'level'))
+      : settled(slots);
 
     held?.set(key, out);
 
@@ -2456,21 +2455,23 @@ export function showing(
 export interface Occupied {
   id: GroupId
   /**
-   * Whether `shape` is the group's extent standing in for a contribution it
-   * does not make.
+   * Why the group has no boundary of its own, where it has none. `shape` is
+   * then the union of everything it holds — where the group *is* — rather than
+   * an edge of any set.
    *
-   * Two groups are drawn this way. A loose one puts nothing into the set of its
-   * own — its members are in it one by one and their outlines are already on
-   * screen — and a sealed one can resolve to nothing, a group of pillars having
-   * no room in it for them to be holes in. Neither has a boundary, and both are
-   * still the thing being picked and dragged.
+   * `loose` is a handle. Its members are in the set one by one and their own
+   * outlines are on screen in their own right, so this is drawn round them and
+   * nothing about them changes: what it says is *these are held together*.
    *
-   * So what stands in is the union of what the group holds, drawn the way a
-   * shape eroded away to nothing is drawn: as the outline of where the thing
-   * is, rather than as an edge of the level. What can be picked is what is
-   * drawn, which is the rule everywhere else too — see `standingFor`.
+   * `empty` is a scope that came to nothing — a group of pillars, which has no
+   * room in it for them to be holes in, or one eroded past its own middle.
+   * Nothing else of it is on screen at all, so this is the whole of what says
+   * it is there, and it is drawn the way an eroded-away polygon is.
+   *
+   * Either way what can be picked is what is drawn, which is the rule
+   * everywhere else too — see `standingFor`.
    */
-  gone?: boolean
+  gone?: 'loose' | 'empty'
   /**
    * Which of the two sets `shape` is the group's contribution to, and which
    * way it goes.
@@ -2618,7 +2619,15 @@ function withExtents(
   for (const id of missing) {
     const shape = extent(world, mine, id);
 
-    if (shape.length !== 0) shown.push({ id, kind: { type: 'level' }, shape, floor: [], gone: true });
+    if (shape.length === 0) continue;
+
+    shown.push({
+      id,
+      kind: { type: 'level' },
+      shape,
+      floor: [],
+      gone: world.groups.get(id)?.sealed === true ? 'empty' : 'loose',
+    });
   }
 
   return shown;
@@ -2752,7 +2761,12 @@ export function outlining(
 export function swallowed(world: World, id: Id, path: readonly GroupId[]): boolean {
   const open = new Set<Id>(path);
 
-  return enclosing(world, id).some(g => !open.has(g));
+  // Only a sealed one. Shutting a scope takes several outlines away and leaves
+  // one, which is the whole of what it does to the eye — but a loose group
+  // takes nothing away, because its members are in the set in their own right
+  // and their outlines are the set's. Hiding them would leave a green ring
+  // round an empty patch of level that is demonstrably still there.
+  return enclosing(world, id).some(g => !open.has(g) && world.groups.get(g)?.sealed === true);
 }
 
 /**

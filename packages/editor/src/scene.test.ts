@@ -2136,7 +2136,7 @@ describe('going inside a group', () => {
     // it is. See `Occupied.gone`.
     const [shown] = occupying(gone, 0, items, []);
 
-    expect(shown.gone).toBe(true);
+    expect(shown.gone).toBe('empty');
     expect(shapeArea(shown.shape)).toBeCloseTo(2 * 10 * 10, 6);
 
     // And it is still there to be picked, over the ground it started on and
@@ -2284,8 +2284,28 @@ describe('going inside a group', () => {
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
-    expect(out[0].gone).toBe(true);
+    expect(out[0].gone).toBe('empty');
     expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
+  });
+
+  test('a loose group does not swallow its members, so they keep their fills', () => {
+    // Shutting a scope takes several outlines away and leaves one, which is
+    // what it does to the eye. A loose group takes nothing away: its members
+    // are in the set in their own right and their outlines are the set's, so
+    // they go on being drawn as the kinds they are. A pillar in one keeps its
+    // hatch.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const handle = grouped(world, 0, ids, TOP)!;
+    const scope = sealing(handle.world, handle.id, true);
+
+    for (const id of ids) {
+      expect(swallowed(handle.world, id, [])).toBe(false);
+      expect(swallowed(scope, id, [])).toBe(true);
+    }
   });
 
   test('a loose group occupies nothing either, and stands in the same way', () => {
@@ -2302,7 +2322,7 @@ describe('going inside a group', () => {
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
-    expect(out[0].gone).toBe(true);
+    expect(out[0].gone).toBe('loose');
 
     // And the pillar is still a hole in the room, because nothing about the
     // set changed when the handle was made.

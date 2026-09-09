@@ -929,8 +929,14 @@ export function marked(s: EditorState, was: World): EditorState {
 
   return {
     ...s,
+    status: null,
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
+}
+
+/** The editor saying why it did not do the thing. See `EditorState.status`. */
+export function saying(s: EditorState, status: string): EditorState {
+  return { ...s, status };
 }
 
 export function undone(s: EditorState): EditorState {
@@ -1029,6 +1035,23 @@ export interface EditorState {
    */
   inside: GroupId | null
 
+  /**
+   * What the editor last had to say for itself, or nothing.
+   *
+   * A gesture that will not happen has to say why, or it reads as the editor
+   * being broken. There are three ways such a gesture can go — do it, do
+   * something else instead, or refuse — and the third is only tolerable out
+   * loud. Eroding a loose group is the case that asked for this: it briefly
+   * sealed the group and eroded that, which is doing something else instead,
+   * and the author's hand was on neither.
+   *
+   * Cleared by the next thing that actually changes the world, which is what
+   * `marked` is. So it stays up while the author is looking at the state that
+   * caused it and goes the moment they move on: no timer, and nothing to
+   * arrive late over the top of something else.
+   */
+  status: string | null
+
   settings: Settings
   view: View
   tool: Tool
@@ -1076,6 +1099,7 @@ export function initialState(world: World): EditorState {
     currentVersion: 0,
     selection: EMPTY_SELECTION,
     inside: null,
+    status: null,
     settings: defaultSettings,
     view: defaultView,
     tool: 'point',

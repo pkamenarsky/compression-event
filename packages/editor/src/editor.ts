@@ -15,6 +15,7 @@ import {
   pasted,
   reaching,
   rechained,
+  sealing,
   stamped,
   unchained,
   unchainedAt,
@@ -46,6 +47,7 @@ import {
   initialState,
   opened,
   marked,
+  saying,
   within,
   redone,
   undone,
@@ -111,6 +113,7 @@ export function editor(initial: World): VNode {
           ),
 
           breadcrumb(s.world, s.inside, update),
+          statusbar(s.status),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           versionStrip(s.world, s.selection, s.currentVersion, update),
@@ -396,7 +399,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       const e = yield* keyPressed(
         input,
         'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyE', 'KeyG',
-        'KeyU',
+        'KeyU', 'KeyL',
         'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
@@ -461,6 +464,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
       else if (e.code === 'KeyU') {
         update(s => loosened(s, e.shiftKey));
+      }
+      else if (e.code === 'KeyL') {
+        update(s => shut(s, !e.shiftKey));
       }
       else if (e.code === 'KeyE') {
         // Read out here rather than inside the update, because it asks a
@@ -645,6 +651,28 @@ function flattened(s: EditorState): EditorState | null {
     },
     s.world,
   );
+}
+
+/**
+ * Seal the picked groups, or let them loose again.
+ *
+ * On the groups picked *as* groups, which inside an open one is whatever the
+ * pick reaches at that level. Nothing picked, or nothing among it that is a
+ * group, and there is nothing to say yes or no to — so it says so, rather than
+ * appearing to have done something.
+ */
+function shut(s: EditorState, sealed: boolean): EditorState {
+  const path = opened(s.world, s.inside);
+  const groups = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))]
+    .filter(id => s.world.groups.has(id));
+
+  if (groups.length === 0) {
+    return saying(s, 'Nothing picked that is a group. Cmd+L seals a group; Cmd+Shift+L lets one loose.');
+  }
+
+  const world = groups.reduce((w, id) => sealing(w, id, sealed), s.world);
+
+  return marked({ ...s, world }, s.world);
 }
 
 /**
@@ -1270,6 +1298,47 @@ function previewButton(showing: Value<boolean>, update: Update): VNode {
 }
 
 const BUTTON_ROW = 24 + 2 * PADDING;
+
+/**
+ * What the editor last had to say for itself.
+ *
+ * There is one thing it needs to say and it is always the same shape: *that
+ * did not happen, and here is why*. A gesture the editor will not perform has
+ * three ways to go — do it, do something else instead, or refuse — and the
+ * third is only tolerable out loud. Eroding a loose group is the case that
+ * asked for this: it used to seal the group and erode that, which is doing
+ * something else instead, and the author's hand was on neither.
+ *
+ * Along the bottom, absent when there is nothing to say, for the reason the
+ * breadcrumb is absent at the top level: a bar that is always there is a bar
+ * nobody reads, and it appearing *is* the signal.
+ */
+function statusbar(status: Value<string | null>): VNode {
+  return show(
+    () => status() !== null,
+    div(
+      {
+        style: {
+          position: 'absolute',
+          left: '12px',
+          bottom: '12px',
+          padding: '6px 10px',
+          borderRadius: '8px',
+          background: theme.panel,
+          border: `1px solid ${theme.border}`,
+          boxShadow: `0 6px 18px ${theme.panelShadow}`,
+          font: '12px system-ui, sans-serif',
+          color: theme.text,
+
+          // Nothing is clickable in it, and a bar along the bottom edge is
+          // exactly where a marquee is being dragged from.
+          pointerEvents: 'none',
+        },
+      },
+      [dynamic(() => status() ?? '', at => textNode(at))],
+    ),
+  );
+}
 
 /**
  * Where the cursor is standing, when it is standing inside a group.

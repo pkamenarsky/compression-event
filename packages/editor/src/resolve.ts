@@ -92,7 +92,6 @@ import {
   boundaryRuns,
   contains,
   ground,
-  intersect,
 } from './geometry';
 import {
   Contributed,
@@ -104,6 +103,7 @@ import {
   joined,
   resolveAt,
   standingIn,
+  underfoot,
   ungrouped,
   unplace,
 } from './scene';
@@ -268,11 +268,7 @@ function rings(items: readonly Contributed[], set: SetName): NamedRing[] {
  * is on screen is a floor, so what it resolves to is that floor.
  */
 function floors(items: readonly Contributed[], walls: readonly Ring[]): Ring[] {
-  const mine = rings(items, 'floor').map(ring => ring.map(p => p.at));
-
-  if (mine.length === 0 || walls.length === 0) return mine;
-
-  return intersect(mine, [...walls]);
+  return underfoot(rings(items, 'floor').map(ring => ring.map(p => p.at)), [...walls]);
 }
 
 // -----------------------------------------------------------------------------
@@ -349,16 +345,19 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
   const items = contributed(
     world,
     resolveAt(world, v).filter(it => inside.has(it.id)),
-    // The group itself is transparent: what is being asked for is the union of
-    // what is under it, not the shape it already offers. A nested group that
-    // erodes stands for its members, exactly as it does for the CSG — its
-    // union is a real shape and pulling it apart here would resolve it too.
+    // The group itself is transparent, sealed or not: what is being asked for
+    // is the union of what is under it, not the shape it already offers. Which
+    // is also why resolving works the same on a loose group as on a scope —
+    // the gesture is *make this one shape*, and whether it already was one is
+    // not the question.
+    //
+    // A sealed group nested inside it stands for its members, exactly as it
+    // does for the CSG: its shape is a real shape and pulling it apart here
+    // would resolve it too, which is not what was asked.
     g => {
       if (g === id || !inside.has(g)) return null;
 
-      const d = depth.get(g) ?? 0;
-
-      return d === 0 ? null : { depth: d };
+      return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0 } : null;
     },
   );
 
@@ -446,13 +445,6 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
   const group = world.groups.get(id);
 
   if (group === undefined) return null;
-
-  // Only a scope. Resolving turns what a group *puts into the set* into
-  // polygons, and a loose group puts in nothing of its own — its members are
-  // already in it one by one, and folding them into `level - solid` would be
-  // resolving a shape the group was never standing for. There is nothing there
-  // to bake, so there is nothing to do. See `Group.sealed`.
-  if (!group.sealed) return null;
 
   const readings = readingAt(world, v, id);
 

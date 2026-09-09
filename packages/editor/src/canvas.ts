@@ -138,6 +138,7 @@ import {
   onGrid,
   toStep,
   marked,
+  saying,
   opened,
   panBy,
   parentOf,
@@ -551,6 +552,17 @@ export function worldCanvas(
       const walks = code === 'KeyE' ? [] : selection().paths;
 
       const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing, ...walks];
+
+      // A depth is an offset of a *union*, and a loose group has none: its
+      // members are in the set one by one, and there is no single boundary for
+      // a depth to move. Refused, rather than granted by sealing the group
+      // underneath the hand — sealing changes what the level looks like, and it
+      // is a thing an author asks for. See `Group.sealed`.
+      if (code === 'KeyE' && ids.some(id => world().groups.get(id)?.sealed === false)) {
+        update(s => saying(s, 'A loose group has no outline to erode \u2014 Cmd+L seals it.'));
+
+        return;
+      }
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
@@ -2996,6 +3008,30 @@ function polygons(
 }
 
 /**
+ * A loose group's ring: round what it holds, in the green that means *held by
+ * a group*, and never filled.
+ *
+ * Unfilled is the whole of the care here. Its members are drawn underneath in
+ * their own kinds — a pillar hatched, a floor stippled — and a fill over the
+ * top of them would say the group is a shape in the set, which it is not. What
+ * it is is a handle, and a handle is an edge round things rather than a thing.
+ */
+function held(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  shape: Shape,
+  picked: boolean,
+): void {
+  ctx.beginPath();
+
+  for (const ring of shape) trace(ctx, view, ring);
+
+  ctx.strokeStyle = picked ? theme.picked : theme.grouped;
+  ctx.lineWidth = picked ? 2 : 1;
+  ctx.stroke();
+}
+
+/**
  * The boundary an erosion started from, dashed under the projection it made.
  *
  * One ring for a polygon and any number for a group, which is the whole of the
@@ -3239,14 +3275,24 @@ function groups(
   for (const g of shown) {
     const here = reach(g.id);
 
-    // A group with no boundary of its own — loose, or a scope that resolved to
-    // nothing — is drawn where it *is* rather than as an edge of the level.
-    // Its members' own outlines are already on screen (or there is nothing left
-    // to draw), so a stroked outline here would be a line the set does not
-    // have. The dashed ring is the same one an eroded-away shape gets, and for
-    // the same reason: it is what makes the thing findable. See `Occupied.gone`.
-    if (g.gone === true) {
-      source(ctx, view, g.shape, picking.has(g.id) ? theme.source : theme.gone);
+    // A group with no boundary of its own is drawn where it *is* rather than as
+    // an edge of the level, and the two reasons it can have none are drawn
+    // differently because they are different statements. See `Occupied.gone`.
+    if (g.gone !== undefined) {
+      if (g.gone === 'loose') {
+        // A ring round its members, who are drawing themselves underneath in
+        // their own kinds and their own fills. Unfilled and in the group green:
+        // it is not an edge of any set and must not read as one — what it says
+        // is that these are held together.
+        held(ctx, view, g.shape, picking.has(g.id));
+      }
+      else {
+        // Nothing else of it is on screen, so this is all there is. Dashed, and
+        // exactly the ring an eroded-away polygon gets, because it is the same
+        // statement about a bigger shape.
+        source(ctx, view, g.shape, picking.has(g.id) ? theme.source : theme.gone);
+      }
+
       continue;
     }
 
