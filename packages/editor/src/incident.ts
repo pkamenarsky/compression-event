@@ -321,3 +321,164 @@ export function alongAt(p: Moving, q1: Moving, q2: Moving, t: number): number {
 
   return len === 0 ? 0 : ((px - ax) * ux + (py - ay) * uy) / len;
 }
+
+// -----------------------------------------------------------------------------
+// When three edges pass through one point
+//
+// The other condition, and the one the probe found by counting: a crossing does
+// not only come and go by running off the end of one of its two edges. It can
+// stay a crossing and stop being on the *outline*, because a third polygon's
+// edge arrives over it and buries it — or leaves and exposes it. That is three
+// edges through one point, and it is one change in six on the levels measured.
+// `probe.test.ts` is where the counting is.
+//
+// It is a determinant, not a cross product. A point of the span is already
+// homogeneous — `PointP` carries its own denominator — so the line through two
+// of them is their cross product, and three lines meet exactly where the
+// determinant of the three vanishes:
+//
+//   L_i = A_i x B_i,   det [L_1; L_2; L_3] = 0
+//
+// Nothing is divided anywhere in that, which is the whole reason to work in
+// homogeneous coordinates here: the denominators the incidence had to be careful
+// to cancel never appear, and a point at infinity — two edges going parallel,
+// which is exactly the configuration that sends a crossing off at any speed —
+// is an ordinary value rather than a division by nothing.
+//
+// The degree is 24 against the incidence's 12, and it is 24 for the same reason
+// either is what it is: a line's first two coefficients carry one denominator
+// and its third carries two, so every term of the determinant sums to the same
+// 7 + 7 + 10. That is high enough to be worth checking rather than assuming, and
+// `incident.test.ts` checks it the same way it checks the incidence — against a
+// scan fine enough to have found anything that was missed.
+// -----------------------------------------------------------------------------
+
+/** Two ends of one moving edge. `Span` is taken, and means the whole interval
+ * between two versions. */
+export type Edge = [Moving, Moving];
+
+/**
+ * A line, homogeneous: `a x + b y + c w = 0`.
+ *
+ * Up to scale, like any homogeneous quantity, and nothing here depends on which
+ * scale — the determinant vanishes or it does not.
+ */
+interface LineP {
+  a: Poly
+  b: Poly
+  c: Poly
+}
+
+/** The line through two points of the span, as their cross product. */
+function lineOn(p: PointP, q: PointP): LineP {
+  return {
+    a: sub(mul(p.y, q.w), mul(p.w, q.y)),
+    b: sub(mul(p.w, q.x), mul(p.x, q.w)),
+    c: sub(mul(p.x, q.y), mul(p.y, q.x)),
+  };
+}
+
+/**
+ * `det [e1; e2; e3]`, as one polynomial in `s` over `[0, 1]`: zero exactly where
+ * the three edges' lines pass through one point.
+ *
+ * Their *lines*. Whether the meeting is inside all three segments is
+ * `meetingWithin`, asked at each root rather than solved for — the same division
+ * of labour `incidenceOn` and `alongAt` have.
+ */
+export function concurrenceOn(e1: Edge, e2: Edge, e3: Edge, lo: number, hi: number): Poly {
+  const l = [e1, e2, e3].map(e => lineOn(placedOn(e[0], lo, hi), placedOn(e[1], lo, hi)));
+
+  const minor = (i: number, j: number): Poly => {
+    const rows = [0, 1, 2].filter(r => r !== i);
+    const cols: ('a' | 'b' | 'c')[] = (['a', 'b', 'c'] as const).filter((_c, k) => k !== j);
+
+    return sub(
+      mul(l[rows[0]][cols[0]], l[rows[1]][cols[1]]),
+      mul(l[rows[0]][cols[1]], l[rows[1]][cols[0]]),
+    );
+  };
+
+  return add(
+    sub(mul(l[0].a, minor(0, 0)), mul(l[0].b, minor(0, 1))),
+    mul(l[0].c, minor(0, 2)),
+  );
+}
+
+/**
+ * Every instant in `[0, 1]` at which the three edges' lines pass through one
+ * point, piece by piece and put back in `t`.
+ *
+ * Complete on the same terms as `incidentAt`: an interval that does not come
+ * back kept a strict sign across its whole Bernstein hull, which is a proof.
+ */
+export function concurrentAt(e1: Edge, e2: Edge, e3: Edge, eps = 1e-9): number[] {
+  const cuts = [0, ...breaksIn(...e1, ...e2, ...e3), 1];
+  const out: number[] = [];
+
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const lo = cuts[i], hi = cuts[i + 1];
+
+    if (hi - lo <= 0) continue;
+
+    for (const s of roots(concurrenceOn(e1, e2, e3, lo, hi), eps / (hi - lo))) {
+      const t = lo + s * (hi - lo);
+
+      if (out.length === 0 || t - out[out.length - 1] > eps) out.push(t);
+    }
+  }
+
+  return out;
+}
+
+/** Where a point of the span stands at one instant, by the route the
+ * polynomials take rather than by `riding` — so a test can hold the two
+ * against each other. */
+export function pointAt(m: Moving, t: number): Point {
+  const cuts = [0, ...breaksIn(m), 1];
+
+  let i = 0;
+  while (i + 2 < cuts.length && t > cuts[i + 1]) i++;
+
+  const lo = cuts[i], hi = cuts[i + 1];
+  const s = hi > lo ? (t - lo) / (hi - lo) : 0;
+  const p = placedOn(m, lo, hi);
+
+  return { x: ratAt({ n: p.x, d: p.w }, s), y: ratAt({ n: p.y, d: p.w }, s) };
+}
+
+/**
+ * Whether three concurrent lines meet inside all three of their segments, and
+ * where.
+ *
+ * Evaluated at a root that is already in hand. Null where the first two are
+ * parallel, which at a root means all three are and there is no one point to be
+ * inside anything.
+ */
+export function meetingWithin(e1: Edge, e2: Edge, e3: Edge, t: number): Point | null {
+  const at = (e: Edge): [Point, Point] => [pointAt(e[0], t), pointAt(e[1], t)];
+  const [a, b] = at(e1), [c, d] = at(e2);
+
+  const ux = b.x - a.x, uy = b.y - a.y;
+  const vx = d.x - c.x, vy = d.y - c.y;
+  const det = ux * vy - uy * vx;
+
+  if (det === 0) return null;
+
+  const s = ((c.x - a.x) * vy - (c.y - a.y) * vx) / det;
+  const p = { x: a.x + ux * s, y: a.y + uy * s };
+
+  const inside = (e: Edge): boolean => {
+    const [f, g] = at(e);
+    const wx = g.x - f.x, wy = g.y - f.y;
+    const len = wx * wx + wy * wy;
+
+    if (len === 0) return false;
+
+    const u = ((p.x - f.x) * wx + (p.y - f.y) * wy) / len;
+
+    return u >= 0 && u <= 1;
+  };
+
+  return inside(e1) && inside(e2) && inside(e3) ? p : null;
+}

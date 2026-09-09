@@ -127,7 +127,14 @@
 import { angleAt } from '@ce/game/arc';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
-import { Moving as Travelling, alongAt, incidentAt } from './incident';
+import {
+  Edge as Reaching,
+  Moving as Travelling,
+  alongAt,
+  concurrentAt,
+  incidentAt,
+  meetingWithin,
+} from './incident';
 import {
   Member,
   Ring,
@@ -2654,7 +2661,124 @@ function seedsFor(sub: readonly Moving[], id: Id): number[] {
     }
   }
 
+  converging(sub, id, out);
+
   return [...new Set(out)].sort((p, q) => p - q);
+}
+
+/** One edge of the span, with the ground it covers over the whole of it. */
+interface Sweeping {
+  edge: Reaching
+  id: Id
+  /** Its index in the ring, and how long that ring is: enough to say whether two
+   * of these share a corner. */
+  at: number
+  of: number
+  box: AABB
+}
+
+/** How many instants an edge's swept box is taken over. The same reasoning as
+ * `reach`: enough to bound where it can be, and it only ever prunes. */
+const SWEPT = 8;
+
+/** Every edge of every polygon in the neighbourhood, and where each of them can
+ * reach across the span. */
+function sweeping(sub: readonly Moving[]): Sweeping[] {
+  const out: Sweeping[] = [];
+
+  for (const m of sub) {
+    const ends = eroded(m);
+    const n = ends[0].length;
+
+    if (n < 2) continue;
+
+    // Every corner at every probe, so an edge's box is its two ends' walk.
+    const walk: Point[][] = [];
+
+    for (let k = 0; k <= SWEPT; k++) {
+      const t = k / SWEPT;
+      const frame = riding(m, t);
+
+      walk.push(ends[0].map((p, i) => place(frame, [{
+        x: mix(p.x, ends[1][i].x, t),
+        y: mix(p.y, ends[1][i].y, t),
+      }])[0]));
+    }
+
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+
+      let box: AABB = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+
+      for (const at of walk) {
+        for (const p of [at[i], at[j]]) {
+          box = {
+            minX: Math.min(box.minX, p.x), minY: Math.min(box.minY, p.y),
+            maxX: Math.max(box.maxX, p.x), maxY: Math.max(box.maxY, p.y),
+          };
+        }
+      }
+
+      out.push({
+        edge: [
+          { rider: m, from: ends[0][i], to: ends[1][i] },
+          { rider: m, from: ends[0][j], to: ends[1][j] },
+        ],
+        id: m.at.id,
+        at: i,
+        of: n,
+        box,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Where three edges pass through one point, appended to `out`.
+ *
+ * A crossing can stop being on the outline without stopping being a crossing: a
+ * third polygon's edge arrives over it and buries it. `probe.test.ts` counts
+ * that as one change in six, so leaving it out leaves a sixth of the events to
+ * be halved to.
+ *
+ * Triples are cubic and a neighbourhood has a hundred edges, so the pruning is
+ * the whole of whether this can be afforded. Two edges that share a corner are
+ * skipped outright — a third line through a shared corner is a corner reaching
+ * an edge, which `reaching` already has — and the rest have to have swept boxes
+ * that mutually overlap, since three edges that never all reach one region never
+ * all reach one point.
+ */
+function converging(sub: readonly Moving[], id: Id, out: number[]): void {
+  const edges = sweeping(sub);
+
+  // Adjacent in the same ring, or the same edge: their meeting is a corner and
+  // a third line through it is somebody reaching that corner's own edges.
+  const touching = (a: Sweeping, b: Sweeping): boolean =>
+    a.id === b.id
+    && (a.at === b.at || (a.at + 1) % a.of === b.at || (b.at + 1) % b.of === a.at);
+
+  for (let i = 0; i < edges.length; i++) {
+    if (edges[i].id !== id) continue;
+
+    for (let j = 0; j < edges.length; j++) {
+      if (j === i || touching(edges[i], edges[j]) || !overlaps(edges[i].box, edges[j].box)) continue;
+
+      for (let k = j + 1; k < edges.length; k++) {
+        if (k === i || touching(edges[i], edges[k]) || touching(edges[j], edges[k])) continue;
+        if (!overlaps(edges[i].box, edges[k].box) || !overlaps(edges[j].box, edges[k].box)) continue;
+
+        for (const t of concurrentAt(edges[i].edge, edges[j].edge, edges[k].edge, GAP / 8)) {
+          // Three lines meeting is not three edges meeting, and only the second
+          // is an event. Read off at the root, as ever.
+          if (t > 0 && t < 1 && meetingWithin(edges[i].edge, edges[j].edge, edges[k].edge, t) !== null) {
+            out.push(t);
+          }
+        }
+      }
+    }
+  }
 }
 
 /** Every corner of `a` against every edge of `b`, appended to `out`. */

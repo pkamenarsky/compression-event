@@ -1,7 +1,18 @@
 import { Point } from '@ce/game/world';
 import { describe, expect, test } from 'vitest';
 import { Rider, riding } from './bake';
-import { Moving, affineAt, alongAt, breaksIn, frameOn, incidentAt } from './incident';
+import {
+  Edge,
+  Moving,
+  affineAt,
+  alongAt,
+  breaksIn,
+  concurrentAt,
+  frameOn,
+  incidentAt,
+  meetingWithin,
+  pointAt,
+} from './incident';
 import { Transform } from './types';
 
 const rng = (seed: number) => {
@@ -161,5 +172,109 @@ describe('a corner reaching an edge', () => {
     q1.to = { x: 1, y: 1 };
 
     expect(incidentAt(p, q1, q2)).toEqual([]);
+  });
+});
+
+describe('three edges through one point', () => {
+  // The determinant is degree 24, which is high enough that its roots are worth
+  // holding against a scan rather than trusting.
+  test('finds every sign change a fine scan sees', () => {
+    const r = rng(23);
+    const STEPS = 20000;
+
+    for (let k = 0; k < 30; k++) {
+      const e: Edge[] = [
+        [moving(r, 0), moving(r, 0)],
+        [moving(r, 0), moving(r, 0)],
+        [moving(r, 0), moving(r, 0)],
+      ];
+
+      // `det [L1; L2; L3]` read straight off the placed points, which is the
+      // same quantity the polynomials are a rewriting of.
+      const det = (t: number): number => {
+        const l = e.map(([a, b]) => {
+          const p = placed(a, t), q = placed(b, t);
+
+          return [p.y - q.y, q.x - p.x, p.x * q.y - p.y * q.x];
+        });
+
+        return l[0][0] * (l[1][1] * l[2][2] - l[1][2] * l[2][1])
+          - l[0][1] * (l[1][0] * l[2][2] - l[1][2] * l[2][0])
+          + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0]);
+      };
+
+      const scanned: number[] = [];
+
+      for (let i = 0; i < STEPS; i++) {
+        const lo = i / STEPS, hi = (i + 1) / STEPS;
+
+        if (det(lo) * det(hi) < 0) scanned.push((lo + hi) / 2);
+      }
+
+      const found = concurrentAt(e[0], e[1], e[2], 1e-9);
+
+      for (const t of scanned) {
+        expect(found.some(f => Math.abs(f - t) < 2 / STEPS)).toBe(true);
+      }
+
+      // And nothing invented. Scaled against the size the determinant reaches
+      // over the span, since a degree-24 quantity of world coordinates is a
+      // very large number and an absolute threshold would say nothing.
+      let size = 0;
+
+      for (let i = 0; i <= 20; i++) size = Math.max(size, Math.abs(det(i / 20)));
+
+      for (const t of found) expect(Math.abs(det(t)) / Math.max(size, 1)).toBeLessThan(1e-6);
+    }
+  });
+
+  test('places the meeting where all three segments agree', () => {
+    const r = rng(29);
+
+    let seen = 0;
+
+    for (let k = 0; k < 60 && seen < 4; k++) {
+      const e: Edge[] = [
+        [moving(r, 1), moving(r, 1)],
+        [moving(r, 1), moving(r, 1)],
+        [moving(r, 1), moving(r, 1)],
+      ];
+
+      for (const t of concurrentAt(e[0], e[1], e[2])) {
+        const p = meetingWithin(e[0], e[1], e[2], t);
+
+        if (p === null) continue;
+
+        seen++;
+
+        // On all three lines, which is what the root said and what the point
+        // was solved from only two of.
+        for (const [a, b] of e) {
+          const f = pointAt(a, t), g = pointAt(b, t);
+          const reach = Math.hypot(g.x - f.x, g.y - f.y);
+          const off = Math.abs((g.x - f.x) * (p.y - f.y) - (g.y - f.y) * (p.x - f.x)) / reach;
+
+          expect(off).toBeLessThan(1e-6 * Math.max(1, reach));
+        }
+      }
+    }
+
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  test('agrees with `riding` about where a point is', () => {
+    const r = rng(31);
+
+    for (let k = 0; k < 40; k++) {
+      const m = moving(r, k % 3);
+
+      for (let i = 0; i <= 10; i++) {
+        const t = i / 10;
+        const got = pointAt(m, t), want = placed(m, t);
+
+        expect(got.x).toBeCloseTo(want.x, 8);
+        expect(got.y).toBeCloseTo(want.y, 8);
+      }
+    }
   });
 });
