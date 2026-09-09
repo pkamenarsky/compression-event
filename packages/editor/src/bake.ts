@@ -1982,12 +1982,20 @@ export const LIMITS: Limits = { gap: GAP, bend: BEND };
 /**
  * As far as a re-cut will ever go, whatever the measure says.
  *
- * A `t` is a double here and a float32 in the shader, so a width this side of a
- * float32 step is a width the replay cannot tell from zero — there is nothing
- * below this to find. Nothing reaches it in practice; `PAYING` stops a track
- * long before. It is the floor that makes the loop obviously finite.
+ * Three decades below `LIMITS`, and it is a real bound rather than a formality.
+ * `PAYING` stops a track whose error has stopped falling, which is the case it
+ * was written for; it does not stop one whose error keeps falling towards a
+ * tolerance it will never reach. That track chases every decade, and a decade
+ * of `bend` is a decade of bisection depth on every stretch that bends — the
+ * work grows ten times faster than the error falls. Asked for a tolerance of
+ * 1e-14, six turning boxes ran the heap out rather than finishing.
+ *
+ * Three is what the levels to hand ever wanted: on the worst of them the two
+ * strained tracks stopped at one decade and at two. A track that has spent
+ * three and is still outside is asking for a tolerance the bake cannot afford,
+ * and the honest answer to that is `Span.strained` rather than the heap.
  */
-const FINEST = 1e-9;
+const FINEST = 1e-7;
 
 /**
  * How much of the error a decade of depth has to remove to earn the next one.
