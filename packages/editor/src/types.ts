@@ -547,23 +547,29 @@ export interface Group {
   death: VersionId | null
   members: Id[]
   /**
-   * What the group is to whatever holds it: the kind its resolved shape enters
-   * its parent scope as.
+   * Whether the group is a set of its own, or only a handle.
    *
-   * A group is a scope — what its solids and voids cut, they cut inside it, and
-   * what comes out is one shape per set. This says which slot that shape lands
-   * in one level up, and it is a polygon's own kind because there is no
-   * difference at that point between a resolved group and a drawn polygon: both
-   * are a shape with a part to play.
+   * These are two different things to want and there is no reading of one that
+   * gives the other, so a group says which it is.
    *
-   * `level` is the ordinary case and what grouping produces. `solid` is a group
-   * that is a block — a pillar assembled out of parts — and one marked so puts
-   * no floor into its parent either, its floors being inside a block. `void`
-   * over the solids is what gives the nesting no bottom: a scope that cuts the
-   * solids of the scope holding it, which is a hole in a hole in a hole, and so
-   * on for as deep as anybody cares to nest.
+   * A loose group — `false`, and what grouping produces — is strictly about
+   * moving geometry together. Its members go into the set one by one exactly as
+   * they would if it were not there: a pillar in one still cuts the rooms
+   * around it and a floor in one is still drawn wherever it reaches. It has no
+   * boundary of its own, and nothing about the picture changes when one is
+   * made or unmade.
+   *
+   * A sealed group is a scope. Its slots are resolved within it — `level -
+   * (solid - void)`, and `floor - void` cut to that level — and what leaves it
+   * is one shape per set with nothing left in it that cuts. That is the whole
+   * of the difference, and it is a thing an author asks for rather than a thing
+   * that happens to them.
+   *
+   * Eroding a group seals it. A depth is an offset of a union and there is no
+   * union until the members are resolved into one, so the two cannot come
+   * apart: see `withEdit`.
    */
-  kind: PolygonKind
+  sealed: boolean
 }
 
 /**
@@ -866,8 +872,8 @@ export type Clipping =
       members: Clipping[]
       death?: number
       edits: [number, Edit][]
-      /** What the group is to whatever holds it. See `Group.kind`. */
-      of: PolygonKind
+      /** Whether it is a set of its own. See `Group.sealed`. */
+      sealed: boolean
     }
   /** An artefact, the same way round as a polygon: where it stood at the copy
    * version in world units, and every layer after it keyed by how far past the

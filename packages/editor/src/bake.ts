@@ -1350,14 +1350,16 @@ function casting(world: World, from: VersionId): Cast {
   const a = depths(world, from), b = depths(world, from + 1);
   const scopes = new Map<GroupId, [number, number]>();
 
-  // Every group, whatever its depth. It used to be only the ones with a depth
-  // on them, because erosion was the only thing a group did that the CSG could
-  // see. A group is a scope now — its solids and voids cut inside it and its
-  // floor is cut to it — and that is true of one at depth zero as much as of
-  // one eroding, so the bake has to stand for all of them or it bakes a
-  // different world from the one the editor draws.
-  for (const id of world.groups.keys()) {
-    scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
+  // Every sealed group, whatever its depth, and no loose one. It used to be the
+  // ones with a depth on them, because erosion was the only thing a group did
+  // that the CSG could see; sealing is that question asked outright, and a
+  // scope is a scope at depth zero as much as at any other.
+  //
+  // A loose group is not here at all, and must not be: its members go into the
+  // set one by one, and standing for them would bake a different world from
+  // the one the editor draws.
+  for (const [id, group] of world.groups) {
+    if (group.sealed) scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
   const next = world.versions[from + 1];

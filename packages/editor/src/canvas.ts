@@ -3239,6 +3239,17 @@ function groups(
   for (const g of shown) {
     const here = reach(g.id);
 
+    // A group with no boundary of its own — loose, or a scope that resolved to
+    // nothing — is drawn where it *is* rather than as an edge of the level.
+    // Its members' own outlines are already on screen (or there is nothing left
+    // to draw), so a stroked outline here would be a line the set does not
+    // have. The dashed ring is the same one an eroded-away shape gets, and for
+    // the same reason: it is what makes the thing findable. See `Occupied.gone`.
+    if (g.gone === true) {
+      source(ctx, view, g.shape, picking.has(g.id) ? theme.source : theme.gone);
+      continue;
+    }
+
     outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.groupFill);
 
     // Drawn as the floor it is, and never as picked: the group's own outline

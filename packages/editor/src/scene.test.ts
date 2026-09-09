@@ -16,6 +16,7 @@ import {
   live,
   centroid,
   grouped,
+  sealing,
   IDENTITY,
   depths,
   occupying,
@@ -160,6 +161,21 @@ function outlineOf(items: Resolved[]): number {
   return shape.reduce((t, r) => t + r.reduce(
     (u, p, i) => u + Math.hypot(
       p.x - r[(i + 1) % r.length].x, p.y - r[(i + 1) % r.length].y), 0), 0);
+}
+
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
 }
 
 describe('csg', () => {
@@ -399,7 +415,7 @@ describe('a depth per corner', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(100, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const bent = deepened(g.world, 0, ids[0], [0], 30);
     const both = withEdit(bent, 0, g.id, editAt(bent, 0, g.id, 8));
 
@@ -781,7 +797,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const clips = copied(turned, 0, [g.id]);
@@ -802,7 +818,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const d = 6;
     const before = moved(g.world, 0, g.id, { erosion: d });
 
@@ -819,7 +835,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
     const after = pasted(before, 0, copied(before, 0, [g.id]), { x: 0, y: 500 }, TOP);
@@ -836,7 +852,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const before = moved(g.world, 1, g.id, { erosion: 10 });
 
     const after = stamped(before, 1, copied(before, 1, [g.id]), { x: 0, y: 500 }, TOP);
@@ -856,7 +872,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2, translation: { x: 400, y: 0 } });
 
     const after = stamped(turned, 0, copied(turned, 0, [g.id]), { x: 0, y: 400 }, TOP);
@@ -912,7 +928,7 @@ describe('copy and paste', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, [ids[0]].concat(ids[1]), TOP)!;
+    const g = sealed(world, 0, [ids[0]].concat(ids[1]), TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const clip = copied(turned, 0, [ids[0]]);
@@ -954,7 +970,7 @@ describe('drilled into a group, everything happens in there', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const turned = moved(g.world, 0, g.id, { rotation: Math.PI / 2 });
 
     const where = landing(turned, 0, g.id);
@@ -978,9 +994,9 @@ describe('drilled into a group, everything happens in there', () => {
       ['level', rect(200, 0, 100, 100)],
       ['level', rect(400, 0, 100, 100)],
     );
-    const outer = grouped(world, 0, ids, TOP)!;
+    const outer = sealed(world, 0, ids, TOP)!;
 
-    const inner = grouped(
+    const inner = sealed(
       outer.world,
       0,
       [ids[0], ids[1]],
@@ -998,13 +1014,13 @@ describe('drilled into a group, everything happens in there', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
 
     // Out here the same picking is refused because both reach the group over
     // them; in there it has to be refused outright, or it wraps the pair in a
     // group of exactly the group's own extent.
-    expect(grouped(g.world, 0, ids, TOP)).toEqual(null);
-    expect(grouped(g.world, 0, ids, landing(g.world, 0, g.id))).toEqual(null);
+    expect(sealed(g.world, 0, ids, TOP)).toEqual(null);
+    expect(sealed(g.world, 0, ids, landing(g.world, 0, g.id))).toEqual(null);
   });
 
   test('grouping some of them is, and it lands in there', () => {
@@ -1013,9 +1029,9 @@ describe('drilled into a group, everything happens in there', () => {
       ['level', rect(200, 0, 100, 100)],
       ['level', rect(400, 0, 100, 100)],
     );
-    const outer = grouped(world, 0, ids, TOP)!;
+    const outer = sealed(world, 0, ids, TOP)!;
     const where = landing(outer.world, 0, outer.id);
-    const inner = grouped(outer.world, 0, [ids[0], ids[1]], where)!;
+    const inner = sealed(outer.world, 0, [ids[0], ids[1]], where)!;
 
     expect(inner.world.groups.get(outer.id)!.members).toEqual([ids[2], inner.id]);
   });
@@ -1026,11 +1042,11 @@ describe('drilled into a group, everything happens in there', () => {
       ['level', rect(200, 0, 100, 100)],
       ['level', rect(400, 0, 100, 100)],
     );
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
 
     // Picking a member out here is picking the group over it, so grouping it
     // with the third polygon groups the group.
-    const outer = grouped(inner.world, 0, [ids[0], ids[2]], TOP)!;
+    const outer = sealed(inner.world, 0, [ids[0], ids[2]], TOP)!;
 
     expect(outer.world.groups.get(outer.id)!.members).toEqual([inner.id, ids[2]]);
   });
@@ -1042,7 +1058,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const d = 20;
     const w = moved(g.world, 0, g.id, { erosion: d });
 
@@ -1067,7 +1083,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 40, 20, 20)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
 
     expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
@@ -1087,7 +1103,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 100, 100)],
       ['solid', rect(40, 80, 20, 40)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
 
     expect(hitting(g.world, 0, items, [], { x: 50, y: 90 })).toEqual([]);
@@ -1110,7 +1126,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 100, 100)],
       ['floor', rect(50, 50, 200, 200)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
     const shown = occupying(g.world, 0, items, [])[0];
 
@@ -1132,7 +1148,7 @@ describe('what a click lands on', () => {
       ['hole', rect(40, 40, 20, 20)],
     );
 
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const shown = occupying(g.world, 0, resolveAt(g.world, 0), [])[0];
 
     // The level is whole — a hole in a floor is not a hole in a room — and the
@@ -1150,7 +1166,7 @@ describe('what a click lands on', () => {
       ['hole', rect(40, 40, 20, 20)],
     );
 
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
     const shown = occupying(g.world, 0, items, []);
 
@@ -1174,7 +1190,7 @@ describe('what a click lands on', () => {
       ['solid', rect(40, 40, 20, 20)],
       ['floor', rect(0, 0, 100, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const shown = occupying(g.world, 0, resolveAt(g.world, 0), [])[0];
 
     // The hole is `shape`'s, so the floor keeps it by being drawn inside it.
@@ -1193,7 +1209,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 0, 30, 100)],
       ['level', rect(70, 0, 30, 100)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
 
     expect(hitting(g.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
@@ -1211,7 +1227,7 @@ describe('what a click lands on', () => {
       ['level', rect(70, 0, 30, 100)],
       ['solid', rect(10, 10, 10, 10)],
     );
-    const g = grouped(world, 0, ids, TOP)!;
+    const g = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(g.world, 0);
 
     expect(hitting(g.world, 0, items, [], { x: 15, y: 15 })).toEqual([]);
@@ -1229,7 +1245,7 @@ describe('what a click lands on', () => {
       ['level', rect(0, 200, 100, 100)],
       ['level', rect(400, 0, 100, 100)],
     );
-    const g = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const g = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const items = resolveAt(g.world, 0);
     const path = opened(g.world, g.id);
 
@@ -1279,7 +1295,7 @@ function pair(): { world: World, ids: PolygonId[], group: GroupId } {
     ['level', rect(20, 0, 10, 10)],
   );
 
-  const made = grouped(world, 0, ids, TOP)!;
+  const made = sealed(world, 0, ids, TOP)!;
 
   return { world: made.world, ids, group: made.id };
 }
@@ -1330,7 +1346,7 @@ describe('a group moves what is in it', () => {
       return { world: added.world, ids: [added.id] };
     })();
 
-    const top = grouped(outer, 0, [group, more[0]], TOP)!;
+    const top = sealed(outer, 0, [group, more[0]], TOP)!;
 
     const w = moved(
       moved(top.world, 0, group, { translation: { x: 1, y: 0 } }),
@@ -1353,7 +1369,7 @@ describe('a group moves what is in it', () => {
       ['level', rect(20, 0, 10, 10)],
     );
 
-    const made = grouped(world, 2, ids, TOP)!;
+    const made = sealed(world, 2, ids, TOP)!;
 
     for (let v = 0; v < 4; v++) {
       expect(at(made.world, v as VersionId, ids[0])[0]).toEqual({ x: 0, y: 0 });
@@ -1393,7 +1409,7 @@ describe('born into a group that was already moved', () => {
    */
   function moved(): { world: World, group: GroupId, at: VersionId } {
     const a = drawn(['level', rect(0, 0, 10, 10)], ['level', rect(20, 0, 10, 10)]);
-    const g = grouped(a.world, 0, a.ids, TOP)!;
+    const g = sealed(a.world, 0, a.ids, TOP)!;
 
     const world = withEdit(g.world, 0, g.id, {
       ...editAt(g.world, 0, g.id, 0),
@@ -1468,7 +1484,7 @@ describe('a group holds a measuring path', () => {
   function taped(): { world: World, room: PolygonId, walk: PathId, group: GroupId } {
     const room = addPolygon(emptyWorld(), kind('level'), rect(0, 0, 100, 100), 0, TOP);
     const walk = addPath(room.world, [{ x: 10, y: 10 }, { x: 90, y: 10 }], 0, TOP);
-    const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
+    const made = sealed(walk.world, 0, [room.id, walk.id], TOP)!;
 
     return { world: made.world, room: room.id, walk: walk.id, group: made.id };
   }
@@ -1567,10 +1583,10 @@ describe('making and taking apart', () => {
   test('a group of fewer than two things is not a group', () => {
     const { world, ids } = pair();
 
-    expect(grouped(world, 0, [ids[0]], TOP)).toEqual(null);
+    expect(sealed(world, 0, [ids[0]], TOP)).toEqual(null);
 
     // Nor is grouping something with what already holds it.
-    expect(grouped(world, 0, ids, TOP)).toEqual(null);
+    expect(sealed(world, 0, ids, TOP)).toEqual(null);
   });
 
   test('members leave exactly where they stood, at every version', () => {
@@ -1643,7 +1659,7 @@ describe('making and taking apart', () => {
   test('a group nested inside another takes its place in the holder', () => {
     const { world, ids, group } = pair();
     const added = addPolygon(world, kind('level'), rect(40, 0, 10, 10), 0, TOP);
-    const top = grouped(added.world, 0, [group, added.id], TOP)!;
+    const top = sealed(added.world, 0, [group, added.id], TOP)!;
 
     const apart = ungrouped(top.world, group)!;
 
@@ -1706,7 +1722,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 2, [made.id]);
 
     expect(there(gone, 1)).toEqual([...ids].sort());
@@ -1724,7 +1740,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 2, [ids[1]]);
 
     expect(there(gone, 2)).toEqual([ids[0]]);
@@ -1737,7 +1753,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const one = removeAt(made.world, 1, [ids[1]]);
     const both = removeAt(one, 3, [made.id]);
 
@@ -1751,7 +1767,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 2, [made.id]);
     const apart = ungrouped(gone, made.id)!;
 
@@ -1770,7 +1786,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 3, [made.id]);
     const added = addPolygon(gone, kind('level'), rect(600, 0, 100, 100), 1, landing(gone, 1, made.id));
 
@@ -1786,7 +1802,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
       ['level', rect(300, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const gone = removeAt(made.world, 3, [made.id]);
     const put = addArtefact(gone, 'key', { x: 50, y: 50 }, 1, landing(gone, 1, made.id));
 
@@ -1847,7 +1863,7 @@ describe('a group erodes as one shape', () => {
       ['level', rect(80, 0, 100, 40)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
 
     return { world: made.world, ids, group: made.id };
   }
@@ -1908,7 +1924,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const w = moved(made.world, 0, made.id, { erosion: 5 });
     const out = contributing(w, 0, resolveAt(w, 0));
 
@@ -1931,7 +1947,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(80, 0, 40, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const d = 10;
     const w = moved(made.world, 0, made.id, { erosion: d });
 
@@ -1949,7 +1965,7 @@ describe('a group erodes as one shape', () => {
       ['solid', rect(60, 40, 60, 40)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const d = 10;
     const w = moved(made.world, 0, made.id, { erosion: d });
 
@@ -1973,8 +1989,8 @@ describe('a group erodes as one shape', () => {
       ['level', rect(400, 0, 100, 100)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
     const w = moved(outer.world, 0, inner.id, { erosion: 12 });
 
     // Handed only the far room. What is answered for is the scope it is in —
@@ -1990,7 +2006,7 @@ describe('a group erodes as one shape', () => {
   test('a group inside an eroding group is projected first', () => {
     const { world, group: inner } = corridor();
     const third = addPolygon(world, kind('level'), rect(300, 0, 40, 40), 0, TOP);
-    const outer = grouped(third.world, 0, [inner, third.id], TOP)!;
+    const outer = sealed(third.world, 0, [inner, third.id], TOP)!;
 
     const w = moved(moved(outer.world, 0, inner, { erosion: 15 }), 0, outer.id, { erosion: 2 });
     const out = contributing(w, 0, resolveAt(w, 0));
@@ -2069,7 +2085,7 @@ describe('going inside a group', () => {
       ['level', rect(10, 0, 10, 10)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(made.world, 0);
     const reached = new Set(polygonsIn(made.world, [made.id]));
 
@@ -2095,7 +2111,7 @@ describe('going inside a group', () => {
       ['level', rect(40, 40, 10, 10)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const items = resolveAt(made.world, 0);
     const reached = new Set(polygonsIn(made.world, [made.id]));
 
@@ -2114,8 +2130,14 @@ describe('going inside a group', () => {
     const gone = moved(world, 0, group, { erosion: 40 });
     const items = resolveAt(gone, 0);
 
-    // Nothing is drawn for it at all — that is what being eroded away means.
-    expect(occupying(gone, 0, items, [])).toEqual([]);
+    // No boundary of its own — that is what being eroded away means — so its
+    // extent stands in, exactly as it does for a group that never had one.
+    // The three cases are one case: a group with nothing to draw draws where
+    // it is. See `Occupied.gone`.
+    const [shown] = occupying(gone, 0, items, []);
+
+    expect(shown.gone).toBe(true);
+    expect(shapeArea(shown.shape)).toBeCloseTo(2 * 10 * 10, 6);
 
     // And it is still there to be picked, over the ground it started on and
     // nowhere else.
@@ -2153,8 +2175,8 @@ describe('going inside a group', () => {
       ['level', rect(40, 0, 10, 10)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
     const w = outer.world;
 
     // Shut: a click anywhere reaches the outer group.
@@ -2179,7 +2201,7 @@ describe('going inside a group', () => {
       ['level', rect(40, 0, 10, 10)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const w = made.world;
 
     expect(ids.map(id => reachable(w, id, null))).toEqual([true, true, true]);
@@ -2211,7 +2233,7 @@ describe('going inside a group', () => {
       ['level', rect(60, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
 
     for (const v of [0, 1, 4]) {
       const out = occupying(made.world, v, resolveAt(made.world, v), []);
@@ -2232,7 +2254,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
@@ -2244,20 +2266,47 @@ describe('going inside a group', () => {
     expect(shapeArea(out[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
 
-  test('a group of nothing but walls is drawn as the walls', () => {
-    // There is no level side to take them out of, and a group has to be
-    // visible: it is the thing being picked and dragged.
+  test('a scope of nothing but walls occupies nothing, and stands in for it', () => {
+    // There is no room in it for the pillars to be holes in, and outside it
+    // there is nothing of its to cut, so it puts nothing into the set — and
+    // the set is right to be handed nothing. It is still the thing being
+    // picked and dragged, so its extent stands in for the boundary it has not
+    // got, the way a shape eroded away to nothing does.
     const { world, ids } = drawn(
       ['solid', rect(0, 0, 20, 20)],
       ['solid', rect(40, 0, 20, 20)],
+    );
+
+    const made = sealed(world, 0, ids, TOP)!;
+
+    expect(contributing(made.world, 0, resolveAt(made.world, 0))).toEqual([]);
+
+    const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].gone).toBe(true);
+    expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
+  });
+
+  test('a loose group occupies nothing either, and stands in the same way', () => {
+    // It is a handle and nothing else: its members are in the set one by one
+    // and their own outlines are already on screen, so there is no boundary of
+    // the group's to draw. What it needs is to be findable, which is the same
+    // need and gets the same answer.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
     );
 
     const made = grouped(world, 0, ids, TOP)!;
     const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
 
     expect(out).toHaveLength(1);
-    expect(out[0].kind).toEqual(kind('solid'));
-    expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
+    expect(out[0].gone).toBe(true);
+
+    // And the pillar is still a hole in the room, because nothing about the
+    // set changed when the handle was made.
+    expect(shapeArea(csg(made.world, 0))).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
 
   test('an open group occupies nothing: its members draw for themselves', () => {
@@ -2266,7 +2315,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
 
     expect(occupying(made.world, 0, resolveAt(made.world, 0), [made.id])).toEqual([]);
   });
@@ -2277,7 +2326,7 @@ describe('going inside a group', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const shown = showing(made.world, 0, resolveAt(made.world, 0), []);
 
     // One contributor under one group, and it is a level: the room with the
@@ -2302,7 +2351,7 @@ describe('going inside a group', () => {
       ['solid', rect(80, 20, 40, 40)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[2]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[2]], TOP)!;
 
     // The grouped room keeps its own bite — 20 wide, being the half of the
     // pillar inside it — and the room next door keeps all of itself.
@@ -2323,7 +2372,7 @@ describe('going inside a group', () => {
       ['floor', rect(50, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[2]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[2]], TOP)!;
 
     // Half the floor, being the half inside the room it is grouped with.
     expect(shapeArea(csgFloor(made.world, 0).map(r => [...r, r[0]]))).toBeCloseTo(50 * 100, 6);
@@ -2341,7 +2390,7 @@ describe('a gesture writes into the frame it is read in', () => {
       ['level', rect(120, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const w = moved(made.world, 0, made.id, { erosion: 8 });
 
     expect(starting(w, 1, [made.id]).get(made.id)!.transform.erosion).toEqual(8);

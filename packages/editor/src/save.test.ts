@@ -137,7 +137,7 @@ describe('save', () => {
       ...before,
       world: {
         ...before.world,
-        groups: new Map([[100, { birth: 0, death: null, members: ids, kind: LEVEL }]]),
+        groups: new Map([[100, { birth: 0, death: null, members: ids, sealed: false }]]),
         nextId: 101,
       },
     };
@@ -145,7 +145,7 @@ describe('save', () => {
     const after = restored(JSON.parse(JSON.stringify(saved(grouped))));
 
     expect(after.world.groups).toBeInstanceOf(Map);
-    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids, kind: LEVEL });
+    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids, sealed: false });
 
     // A file written before there were any says nothing about them rather than
     // saying there are none, and both read the same way.

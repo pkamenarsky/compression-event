@@ -19,6 +19,7 @@ import {
   addPolygon,
   removeAt,
   grouped,
+  sealing,
   addVertex,
   csg,
   editAt,
@@ -209,6 +210,21 @@ function cuts(world: World, from = 0): number[] {
 /** What the bake says its own error was, which is the number that matters. */
 function worst(world: World, from = 0): number {
   return run(bakeSpan(world, from)).worst;
+}
+
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
 }
 
 describe('the ends of a span', () => {
@@ -478,7 +494,7 @@ describe('the two ends of a stretch are the same arrangement', () => {
       ['solid', rect(-60, -60, 120, 120)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const turned = transformed(made.world, 1, ids[1], { rotation: 0.7 });
 
     holds(transformed(turned, 1, made.id, { erosion: 20 }));
@@ -554,7 +570,7 @@ describe('the replay never leaves the truth, as a shape', () => {
       ['solid', rect(120, 40, 80, 80)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
 
     follows(transformed(made.world, 1, made.id, { erosion: 24 }), 0);
   });
@@ -569,7 +585,7 @@ describe('the replay never leaves the truth, as a shape', () => {
       ['level', rect(100, -100, 200, 200)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
     const eroding = transformed(made.world, 0, made.id, { erosion: 20 });
 
     follows(removeAt(eroding, 1, [made.id]), 0);
@@ -758,10 +774,31 @@ describe('keyframes', () => {
     expect(drift(added.world)).toBeLessThan(TOLERANCE);
   });
 
+  test('a loose group is not a scope to the bake either', () => {
+    // The editor and the bake have to answer this the same way or the bake is
+    // of a different world. A loose group's members go into the set one by one,
+    // so each of them is a track of its own and the group is none.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const w = transformed(made.world, 1, ids[0], { rotation: 0.3 });
+
+    expect(run(bakeSpan(w, 0)).tracks.map(t => t.id).sort()).toEqual([...ids].sort());
+
+    // Sealed, the same world is one track: the scope's own boundary.
+    const shut = sealing(made.world, made.id, true);
+
+    expect(run(bakeSpan(transformed(shut, 1, ids[0], { rotation: 0.3 }), 0)).tracks
+      .map(t => t.id)).toEqual([made.id]);
+  });
+
   test('one born into a group that turns rides the group while it grows', () => {
     const { world, ids } = drawn(['level', rect(-300, -100, 200, 200)]);
     const added = addPolygon(world, kind('level'), rect(100, -100, 200, 200), 1, TOP);
-    const group = grouped(added.world, 0, [ids[0], added.id], TOP)!;
+    const group = sealed(added.world, 0, [ids[0], added.id], TOP)!;
     const w = transformed(group.world, 1, group.id, { rotation: Math.PI / 2 });
 
     const span = run(bakeSpan(w, 0));
@@ -829,7 +866,7 @@ describe('keyframes', () => {
       ['level', rect(100, -100, 200, 200)],
     );
 
-    const group = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const group = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const gone = removeAt(group.world, 1, [ids[1]]);
     const w = transformed(gone, 1, group.id, { rotation: Math.PI / 2 });
 
@@ -1499,7 +1536,7 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
       ['floor', rect(-120, -80, 240, 160)],
     );
 
-    const made = grouped(world, 0, ids, TOP)!;
+    const made = sealed(world, 0, ids, TOP)!;
 
     // The group turns and erodes; the floor slides and erodes inside it.
     const turning = withEdit(made.world, 1, made.id, {
@@ -1563,7 +1600,7 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
       ['floor', rect(-50, -50, 100, 100)],
     );
 
-    const held = grouped(world, 0, ids, TOP)!;
+    const held = sealed(world, 0, ids, TOP)!;
     const eroding = transformed(held.world, 1, held.id, { erosion: 20 });
     const span = run(bakeSpan(eroding, 0));
     const side = sideOf(held.id, kind('floor'));

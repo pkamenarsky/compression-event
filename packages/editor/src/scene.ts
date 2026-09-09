@@ -1438,6 +1438,29 @@ export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id
   );
 }
 
+/**
+ * Seal a group, or let it loose again.
+ *
+ * The gesture behind the two kinds of group. Not a layer and not versioned:
+ * which of the two a group is, it is over the whole chain, because a group
+ * that were one thing at v0 and another at v4 would change what the boundary
+ * is *made of* half way along — the same reason a group's standing is settled
+ * for a whole span rather than asked at each instant.
+ *
+ * Eroding one seals it without this being called: see `withEdit`.
+ */
+export function sealing(world: World, id: GroupId, sealed: boolean): World {
+  const group = world.groups.get(id);
+
+  if (group === undefined || group.sealed === sealed) return world;
+
+  const groups = new Map(world.groups);
+
+  groups.set(id, { ...group, sealed });
+
+  return { ...world, groups };
+}
+
 export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World {
   const versions = [...world.versions];
   const edits = new Map(versions[v].edits);
@@ -1445,7 +1468,22 @@ export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World 
   edits.set(id, edit);
   versions[v] = { ...versions[v], edits };
 
-  return { ...world, versions };
+  const out = { ...world, versions };
+  const group = world.groups.get(id);
+
+  // Eroding a group seals it, here rather than in the gesture that wrote the
+  // depth, because this is where the depth arrives however it was written. A
+  // depth is an offset of a *union*, and a loose group has none — its members
+  // are in the set one by one and there is no single boundary for a depth to
+  // move. So the two cannot come apart, and asking for one is asking for the
+  // other. See `Group.sealed`.
+  if (group === undefined || group.sealed || edit.transform.erosion === 0) return out;
+
+  const groups = new Map(world.groups);
+
+  groups.set(id, { ...group, sealed: true });
+
+  return { ...out, groups };
 }
 
 // -----------------------------------------------------------------------------
@@ -1732,7 +1770,7 @@ export function grouped(
   const id = world.nextId;
   const groups = new Map(world.groups);
 
-  groups.set(id, { birth: v, death: null, members: tops, kind: { type: 'level' } });
+  groups.set(id, { birth: v, death: null, members: tops, sealed: false });
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
@@ -2078,15 +2116,14 @@ export function contributing(
 ): Contributed[] {
   const depth = depths(world, v);
 
-  // Every group stands, whether or not it is eroding. A group is a scope: what
-  // its solids and voids cut, they cut inside it, and what leaves it is one
-  // shape per set with nothing left in it that cuts.
+  // Every sealed group stands, whether or not it is eroding: a scope is a scope
+  // at depth zero as much as at any other, and what its solids and voids cut
+  // they cut inside it either way.
   //
-  // It used to hand its members over unless it had a depth on it, on the
-  // grounds that a group doing nothing to its own geometry was doing nothing at
-  // all. That is true of erosion and false of everything else — a pillar in a
-  // group was cutting the rooms *outside* the group, and a floor in one was
-  // being drawn across them, neither of which anybody asked for by grouping.
+  // A loose one is not here at all, `contributed` having walked past it to its
+  // members. It used to be the depth that decided this — a group with none was
+  // taken to be doing nothing — which asked erosion to stand for a question it
+  // is not about. Sealing is that question, asked outright.
   return contributed(world, items, id => ({ depth: depth.get(id) ?? 0 }));
 }
 
@@ -2208,18 +2245,6 @@ export function contributed(
    * ask — for the bake, the same instant.
    */
   held?: Map<string, Shape>,
-  /**
-   * Whether a scope that resolves to nothing should be given anyway, as the
-   * solids it is made of.
-   *
-   * Drawing asks for this and the CSG does not, and the difference is the
-   * point of scoping. A group of nothing but pillars puts nothing into the
-   * level — there is no room in it for them to be holes in, and outside it
-   * there is nothing of its to cut — so the set is right to be handed nothing.
-   * But it is still the thing being picked and dragged, and a thing that
-   * cannot be seen cannot be let go of. See `Occupied`.
-   */
-  visible?: boolean,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
@@ -2246,8 +2271,12 @@ export function contributed(
 
     if (group === undefined) return [];
 
-    if (standing(id) !== null) {
-      return slotOf(group.kind, set) === k ? [resolves(id, set)] : [];
+    // A sealed scope puts in one shape, in the first slot: whatever cut inside
+    // it was spent inside it, so what arrives is a level or a floor and nothing
+    // that cuts. A loose group, or one standing open, has no scope of its own
+    // and hands its members up into this one.
+    if (group.sealed && standing(id) !== null) {
+      return k === 0 ? [resolves(id, set)] : [];
     }
 
     return group.members.flatMap(m => from(m, set, k));
@@ -2336,7 +2365,10 @@ export function contributed(
     const how = standing(id);
     const group = world.groups.get(id);
 
-    if (group === undefined || how === null) return;
+    // A loose group contributes nothing of its own. It is a handle, and its
+    // members are already here in their own right — `tops` walked past it to
+    // find them, exactly as it walks past an open one.
+    if (group === undefined || how === null || !group.sealed) return;
 
     // One contribution per set at most, and both under the group's own kind: a
     // scope publishes what it *is*, not what it is made of. Whatever cut inside
@@ -2346,27 +2378,15 @@ export function contributed(
     // A group whose kind is in only one of the sets puts nothing into the
     // other. A block assembled out of parts has floors inside it and they are
     // inside a block, which is not somewhere a floor is drawn.
-    let gave = false;
-
+    // One contribution per set, both plain: a scope publishes what it *is*, not
+    // what it is made of, so a level here and a floor there and nothing that
+    // cuts either. Two ids, because they are two boundaries.
     for (const set of SETS) {
-      // The group's kind where it says something about this set, and the plain
-      // kind of the set where it does not. A group has a level *and* a floor,
-      // which is one more thing than a polygon has, so its kind cannot name
-      // both: it names the one it is about, and the other is what it would
-      // have been anyway. A `solid` group is a block whose floors are floors;
-      // a `void` over the floors cuts them and its level is a level.
-      const slot = slotOf(group.kind, set) ?? 0;
       const shape = resolves(id, set);
 
       if (shape.length === 0) continue;
 
-      // The slot's own kind rather than the group's, which is the same thing
-      // said in one set's terms: a `level` group publishes a level here and a
-      // floor there, and a void over both publishes the half of itself that
-      // belongs to each. Exactly what `parts` does for a polygon, and for the
-      // same reason — everything downstream reads a contributor as belonging
-      // to one set. It is also what keeps the two ids apart.
-      const kind = SLOT_KINDS[set][slot];
+      const kind = SLOT_KINDS[set][0];
 
       out.push({
         id: sideOf(id, kind),
@@ -2375,25 +2395,7 @@ export function contributed(
         frame: how.frame ?? IDENTITY,
         simple: true,
       });
-
-      gave = true;
     }
-
-    if (gave || visible !== true) return;
-
-    const solids = settled([slotted(id, 'level', 1), slotted(id, 'level', 2)]);
-
-    if (solids.length === 0) return;
-
-    const kind: PolygonKind = { type: 'solid' };
-
-    out.push({
-      id: sideOf(id, kind),
-      kind,
-      shape: solids,
-      frame: how.frame ?? IDENTITY,
-      simple: true,
-    });
   };
 
   // Upwards from what is actually here, rather than down from the top.
@@ -2405,7 +2407,8 @@ export function contributed(
   const tops = new Set<Id>();
 
   for (const it of items) {
-    const up = enclosing(world, it.id).filter(g => standing(g) !== null);
+    const up = enclosing(world, it.id)
+      .filter(g => standing(g) !== null && world.groups.get(g)?.sealed === true);
 
     tops.add(up[up.length - 1] ?? it.id);
   }
@@ -2444,18 +2447,30 @@ export function showing(
   const depth = depths(world, v);
   const open = new Set<Id>(path);
 
-  return contributed(
-    world,
-    items,
-    id => (open.has(id) ? null : { depth: depth.get(id) ?? 0 }),
-    undefined,
-    true,
+  return contributed(world, items, id =>
+    open.has(id) ? null : { depth: depth.get(id) ?? 0 },
   );
 }
 
 /** One shut group as it is drawn: its whole contribution, as one boundary. */
 export interface Occupied {
   id: GroupId
+  /**
+   * Whether `shape` is the group's extent standing in for a contribution it
+   * does not make.
+   *
+   * Two groups are drawn this way. A loose one puts nothing into the set of its
+   * own — its members are in it one by one and their outlines are already on
+   * screen — and a sealed one can resolve to nothing, a group of pillars having
+   * no room in it for them to be holes in. Neither has a boundary, and both are
+   * still the thing being picked and dragged.
+   *
+   * So what stands in is the union of what the group holds, drawn the way a
+   * shape eroded away to nothing is drawn: as the outline of where the thing
+   * is, rather than as an edge of the level. What can be picked is what is
+   * drawn, which is the rule everywhere else too — see `standingFor`.
+   */
+  gone?: boolean
   /**
    * Which of the two sets `shape` is the group's contribution to, and which
    * way it goes.
@@ -2545,7 +2560,68 @@ export function occupying(
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Occupied[] {
-  return occupied(world, showing(world, v, items, path));
+  return withExtents(world, items, path, occupied(world, showing(world, v, items, path)));
+}
+
+/**
+ * The shut groups `items` reaches, outermost first for each of them.
+ *
+ * `contributed` walks the same way but stops at scopes; this stops at whatever
+ * the hand would grab, which is any shut group, loose or sealed.
+ */
+function shutGroups(
+  world: World,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+): Set<GroupId> {
+  const open = new Set<Id>(path);
+  const out = new Set<GroupId>();
+
+  for (const it of items) {
+    const up = enclosing(world, it.id).filter(g => !open.has(g));
+    const top = up[up.length - 1];
+
+    if (top !== undefined) out.add(top);
+  }
+
+  return out;
+}
+
+/** Everything a group holds, unioned, whatever slot any of it fills: where the
+ * group *is*, for a group that has no boundary of its own. */
+function extent(world: World, mine: ReadonlyMap<Id, Resolved>, id: Id): Shape {
+  const it = mine.get(id);
+
+  if (it !== undefined) return it.shape;
+
+  const group = world.groups.get(id);
+
+  if (group === undefined) return [];
+
+  return unionAll(group.members.map(m => extent(world, mine, m)));
+}
+
+/** The shut groups that occupy nothing, given their extent to stand in. */
+function withExtents(
+  world: World,
+  items: readonly Resolved[],
+  path: readonly GroupId[],
+  shown: Occupied[],
+): Occupied[] {
+  const held = new Set(shown.map(o => o.id));
+  const missing = [...shutGroups(world, items, path)].filter(id => !held.has(id));
+
+  if (missing.length === 0) return shown;
+
+  const mine = new Map(items.map(it => [it.id as Id, it]));
+
+  for (const id of missing) {
+    const shape = extent(world, mine, id);
+
+    if (shape.length !== 0) shown.push({ id, kind: { type: 'level' }, shape, floor: [], gone: true });
+  }
+
+  return shown;
 }
 
 /**
@@ -3566,7 +3642,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
 
       return members.length === 0 ? [] : [{
         kind: 'group',
-        of: group.kind,
+        sealed: group.sealed,
         members,
         death: outliving(group, v),
         edits: layers(id, null, deep.get(id) ?? 0),
@@ -3713,7 +3789,7 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: v, death: dying(out, v, clip.death), members, kind: clip.of });
+    groups.set(id, { birth: v, death: dying(out, v, clip.death), members, sealed: clip.sealed });
     out = { ...out, groups, nextId: id + 1 };
 
     return { world: written(out, v, id, clip.edits, new Map(), m, by), id };

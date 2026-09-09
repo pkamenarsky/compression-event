@@ -54,6 +54,7 @@ import {
   deepen,
   editAt,
   grouped,
+  sealing,
   live,
   sourced,
   removeAt,
@@ -167,6 +168,21 @@ function agrees(world: World, from: VersionId): number {
   return worst;
 }
 
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
+}
+
 describe('a flattened span replays as its span does', () => {
   test('a room eroding', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 160)]);
@@ -215,7 +231,7 @@ describe('a flattened span replays as its span does', () => {
       ['level', rect(220, 40, 120, 120)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[1]], TOP)!;
 
     expect(agrees(moved(made.world, 1, made.id, { rotation: 0.7 }), 0)).toBeLessThan(SLACK);
   });
@@ -227,8 +243,8 @@ describe('a flattened span replays as its span does', () => {
       ['level', rect(60, 220, 140, 100)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
 
     let w = moved(outer.world, 1, inner.id, { rotation: 0.5 });
 
@@ -277,7 +293,7 @@ describe('a flattened span replays as its span does', () => {
       ['level', rect(220, 40, 120, 120)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const added = addPolygon(made.world, kind('level'), rect(60, 220, 140, 100), 1, TOP);
     const held = {
       ...added.world,
@@ -333,7 +349,7 @@ describe('the shipped set is the set the editor draws', () => {
       ['level', rect(180, 40, 200, 160)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const w = moved(made.world, 1, made.id, { erosion: 30 });
 
     const before = versionOf(w, 0).polygons;
@@ -359,7 +375,7 @@ describe('the shipped set is the set the editor draws', () => {
       ['level', rect(380, 120, 200, 160)],
     );
 
-    const made = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const made = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const w = moved(made.world, 1, made.id, { erosion: 60 });
 
     // A spot inside the room and inside the band the erosion takes back.
@@ -376,7 +392,7 @@ describe('an artefact rides the frame table like everything else', () => {
     const at = { x: 200, y: 0 };
     const drew = addPolygon(emptyWorld(), kind('level'), [{ x: 0, y: 0 }, at, { x: 200, y: 200 }], 0, TOP);
     const put = addArtefact(drew.world, 'key', at, 0, TOP);
-    const made = grouped(put.world, 0, [drew.id, put.id], TOP)!;
+    const made = sealed(put.world, 0, [drew.id, put.id], TOP)!;
 
     return { world: moved(made.world, 1, made.id, layer), key: put.id };
   }
@@ -955,8 +971,8 @@ describe('the chain a vertex rides', () => {
       ['level', rect(150, 150, 120, 120)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
-    const outer = grouped(inner.world, 0, [inner.id, ids[2]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
 
     const turned = withEdit(outer.world, 1, inner.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 5 },

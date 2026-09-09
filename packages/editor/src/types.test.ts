@@ -27,8 +27,8 @@ function nested(groups: [Id, Group][]): World {
 
 // 10 ⊃ 20 ⊃ { 1, 2 }, and 3 on its own.
 const w = nested([
-  [10, { birth: 0, death: null, members: [20], kind: { type: 'level' } }],
-  [20, { birth: 0, death: null, members: [1, 2], kind: { type: 'level' } }],
+  [10, { birth: 0, death: null, members: [20], sealed: false }],
+  [20, { birth: 0, death: null, members: [1, 2], sealed: false }],
 ]);
 
 describe('groups', () => {
@@ -67,8 +67,8 @@ describe('groups', () => {
     // Joining is what makes this unrepresentable. Reading it is not the place
     // for the loop to be discovered, so it ends where it came in.
     const bad = nested([
-      [10, { birth: 0, death: null, members: [20], kind: { type: 'level' } }],
-      [20, { birth: 0, death: null, members: [10], kind: { type: 'level' } }],
+      [10, { birth: 0, death: null, members: [20], sealed: false }],
+      [20, { birth: 0, death: null, members: [10], sealed: false }],
     ]);
 
     expect(enclosing(bad, 10)).toEqual([20]);

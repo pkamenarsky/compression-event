@@ -11,6 +11,7 @@ import {
   depths,
   editAt,
   grouped,
+  sealing,
   hitEdge,
   hitPolygon,
   landing,
@@ -90,7 +91,7 @@ function pair(): { world: World, a: number, b: number, group: number } {
     ['level', rect(60, 0, 100, 100)],
   );
 
-  const made = grouped(world, 0, ids, landing(world, 0, null))!;
+  const made = sealed(world, 0, ids, landing(world, 0, null))!;
 
   return { world: made.world, a: ids[0], b: ids[1], group: made.id };
 }
@@ -106,6 +107,21 @@ function areas(world: World): number[] {
 function drawnArea(world: World, v: VersionId): number {
   return showing(world, v, resolveAt(world, v), [])
     .reduce((s, it) => s + (it.kind.type === 'solid' ? -1 : 1) * shapeArea(it.shape), 0);
+}
+
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
 }
 
 describe('resolving a group', () => {
@@ -236,7 +252,7 @@ describe('resolving a group', () => {
       ['level', rect(80, 0, 20, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const before = drawnArea(made.world, 0);
     const out = resolveGroup(made.world, 0, made.id)!;
 
@@ -267,7 +283,7 @@ describe('resolving a group', () => {
       ['level', rect(80, 0, 20, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const eroded = transformed(made.world, 3, made.id, { erosion: 4 });
     const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
     const out = resolveGroup(eroded, 0, made.id)!;
@@ -287,7 +303,7 @@ describe('resolving a group', () => {
       return { world: added.world, id: added.id };
     })();
 
-    const held = grouped(withKey, 0, [group, key], landing(withKey, 0, null))!;
+    const held = sealed(withKey, 0, [group, key], landing(withKey, 0, null))!;
     const out = resolveGroup(held.world, 0, group)!;
 
     // The outer group still holds what it held: the resolved thing, and the
@@ -339,7 +355,7 @@ describe('a group made later than what is in it', () => {
    * a regression against is a shape of history the editor makes and the tests
    * above did not: the geometry outlives the handle on it.
    */
-  const world = restored(
+  const loaded = restored(
     JSON.parse(
       readFileSync(
         new URL('../../../scratch/world-2026-09-06T15-01-45Z.json', import.meta.url),
@@ -349,6 +365,12 @@ describe('a group made later than what is in it', () => {
   ).world;
 
   const group = 10;
+
+  // The file predates sealing, so its group opens loose — which is what keeps
+  // every world written before the question existed looking exactly as it did.
+  // Resolving is a thing done to a scope, so this seals it first, which is
+  // what an author reaching for the gesture would have done.
+  const world = sealing(loaded, group, true);
 
   test('the rooms it was made of stand before it did', () => {
     expect(world.groups.get(group)!.birth).toBe(1);
@@ -397,7 +419,7 @@ function holed(): { world: World, id: PolygonId } {
     ['level', rect(80, 0, 20, 100)],
   );
 
-  const made = grouped(world, 0, ids, landing(world, 0, null))!;
+  const made = sealed(world, 0, ids, landing(world, 0, null))!;
   const out = resolveGroup(made.world, 0, made.id)!;
 
   return { world: out.world, id: [...out.world.polygons.keys()][0] };
@@ -549,7 +571,7 @@ describe('the group does not survive being resolved', () => {
       ['solid', rect(40, 40, 20, 20)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const before = drawnArea(made.world, 0);
     const out = resolveGroup(made.world, 0, made.id)!;
 
@@ -574,7 +596,7 @@ describe('the group does not survive being resolved', () => {
       ['solid', rect(60, 60, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     // One thing, and it is the room with the corner bitten out. What the
@@ -596,7 +618,7 @@ describe('the group does not survive being resolved', () => {
       ['solid', rect(60, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     // A pillar is a hole in something, and there is nothing here for it to be
@@ -614,7 +636,7 @@ describe('the group does not survive being resolved', () => {
       ['solid', rect(0, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     expect(out.ids).toEqual([]);
@@ -624,7 +646,7 @@ describe('the group does not survive being resolved', () => {
   test('an artefact still comes out of a group that resolved to nothing', () => {
     const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const made = grouped(dropped.world, 0, [ids[0], dropped.id], landing(dropped.world, 0, null))!;
+    const made = sealed(dropped.world, 0, [ids[0], dropped.id], landing(dropped.world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     expect(out.world.polygons.size).toBe(0);
@@ -639,7 +661,7 @@ describe('the group does not survive being resolved', () => {
       ['level', rect(60, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     // Two of them overlap and merge; the third is nowhere near either.
@@ -662,7 +684,7 @@ describe('the group does not survive being resolved', () => {
   test('the group is left standing only where it cannot come apart', () => {
     const { world, group } = pair();
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+    const held = sealed(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
 
     // A squash on the outer group and a turn on the artefact under it: squash,
     // turn, squash is a shear, and no layer says shear. See `composed`.
@@ -678,7 +700,7 @@ describe('the group does not survive being resolved', () => {
   test("an artefact's own moves are none of a resolve's business", () => {
     const { world, group } = pair();
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+    const held = sealed(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
     const moved = transformed(held.world, 2, dropped.id, { translation: { x: 7, y: 11 } });
 
     const out = resolveInto(moved, 0, [held.id], landing(moved, 0, null))!;
@@ -702,7 +724,7 @@ describe('the group does not survive being resolved', () => {
   test('an artefact under it comes out where it stood', () => {
     const { world, group } = pair();
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const held = grouped(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+    const held = sealed(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
     const turned = transformed(held.world, 1, held.id, { rotation: 0.5 });
 
     const was = [0, 1, 2].map(v => placeAt(turned, dropped.id, v)!);
@@ -742,7 +764,7 @@ describe('a plain selection resolves the same way a group does', () => {
     );
 
     const loose = resolveInto(world, 0, ids, TOP)!;
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const held = resolveGroup(made.world, 0, made.id)!;
 
     const shapes = (w: World) => resolveAt(w, 0)
@@ -761,7 +783,7 @@ describe('a plain selection resolves the same way a group does', () => {
       ['level', rect(400, 0, 10, 10)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const where = landing(made.world, 0, made.id);
     const out = resolveInto(made.world, 0, [ids[0], ids[1]], where)!;
 
@@ -781,7 +803,7 @@ describe('a plain selection resolves the same way a group does', () => {
       ['level', rect(400, 0, 10, 10)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const turned = transformed(made.world, 1, made.id, { rotation: 0.4 });
     const before = [0, 1, 2].map(v => drawnArea(turned, v));
 
@@ -820,7 +842,7 @@ describe('floors are clipped to the ground', () => {
       ['floor', rect(-50, -50, 300, 300)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     const floor = resolveAt(out.world, 0).find(r => r.polygon.type === 'floor')!;
@@ -835,7 +857,7 @@ describe('floors are clipped to the ground', () => {
       ['floor', rect(0, 0, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     // `floor and (level - solid)`, so the floor has the courtyard in it too.
@@ -857,7 +879,7 @@ describe('floors are clipped to the ground', () => {
       ['floor', rect(400, 400, 50, 50)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     expect(out.ids.length).toBe(1);
@@ -873,7 +895,7 @@ describe('floors are clipped to the ground', () => {
       ['floor', rect(0, 0, 190, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     const level = resolveAt(out.world, 0).find(r => r.polygon.type === 'level')!;
@@ -900,7 +922,7 @@ describe('resolving does not move where a gesture turns about', () => {
       ['solid', rect(60, 60, 400, 400)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
 
     expect(pivotOf(made.world, 0)).toEqual({ x: 50, y: 50 });
     expect(middle(resolveAt(made.world, 0).flatMap(it => it.source)))
@@ -919,7 +941,7 @@ describe('resolving does not move where a gesture turns about', () => {
       ['solid', rect(100, 100, 100, 100)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
 
     // No level side to take them out of, so the walls are what it draws and
     // the walls are where it is. See `occupied`.
@@ -932,7 +954,7 @@ describe('resolving does not move where a gesture turns about', () => {
       ['solid', rect(60, 60, 400, 400)],
     );
 
-    const made = grouped(world, 0, ids, landing(world, 0, null))!;
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const inside = resolveAt(made.world, 0).filter(it => it.id === ids[1]);
 
     // The group is open, so nothing is drawing for the pillar and the pillar

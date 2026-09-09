@@ -21,7 +21,7 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
-import { TOP, addPolygon, addVertex, deepen, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
+import { TOP, addPolygon, addVertex, deepen, grouped, removeVertices, sealing, resolveAt, editAt, withEdit } from './scene';
 import { EMPTY_TRANSFORM, FLOOR, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
 
 /**
@@ -56,7 +56,7 @@ function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Trans
 /** A group over these, and whatever the version does to it. Groups carry no
  * geometry, so there is no resolved depth to seed from. */
 function held(world: World, ids: Id[], v: VersionId, t: Partial<Transform>): World {
-  const made = grouped(world, 0, ids, TOP)!;
+  const made = sealed(world, 0, ids, TOP)!;
 
   return withEdit(made.world, v, made.id, {
     transform: { ...EMPTY_TRANSFORM, ...t },
@@ -220,7 +220,7 @@ test('the replay never strays far from csg(t)', () => {
       ['level', rect(150,150,120,120)],
     );
 
-    const inner = grouped(world, 0, [ids[0], ids[1]], TOP)!;
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const w = withEdit(inner.world, 1, inner.id, {
       transform: { ...EMPTY_TRANSFORM, rotation: Math.PI/5 },
       vertices: new Map(),
@@ -418,3 +418,18 @@ test('the replay never strays far from csg(t)', () => {
   console.log('\n' + rows.join('\n') + '\n');
   expect(bad).toEqual([]);
 }, 60_000);
+
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
+}

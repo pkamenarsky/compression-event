@@ -447,6 +447,13 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
 
   if (group === undefined) return null;
 
+  // Only a scope. Resolving turns what a group *puts into the set* into
+  // polygons, and a loose group puts in nothing of its own — its members are
+  // already in it one by one, and folding them into `level - solid` would be
+  // resolving a shape the group was never standing for. There is nothing there
+  // to bake, so there is nothing to do. See `Group.sealed`.
+  if (!group.sealed) return null;
+
   const readings = readingAt(world, v, id);
 
   // Every version any of the geometry is there at, rather than every version
@@ -663,7 +670,7 @@ function enclosed(world: World, ids: readonly Id[], where: Landing): {
   const groups = new Map(world.groups);
   const parent = where.into === null ? undefined : groups.get(where.into);
 
-  groups.set(id, { birth: 0, death: null, members: [...ids], kind: { type: 'level' } });
+  groups.set(id, { birth: 0, death: null, members: [...ids], sealed: true });
 
   // Taken out of wherever they were, so nothing is claimed twice.
   if (where.into !== null && parent !== undefined) {

@@ -13,6 +13,7 @@ import {
   copied,
   editAt,
   grouped,
+  sealing,
   hitArtefact,
   landing,
   movedStart,
@@ -68,6 +69,21 @@ function moved(world: World, v: number, ids: number[], by: Point): World {
   }
 
   return out;
+}
+
+
+/**
+ * A group that is a scope.
+ *
+ * Grouping produces a loose one now — a handle and nothing else — so every
+ * test about what a group *does* to the set has to say so. See `Group.sealed`.
+ */
+function sealed(
+  ...args: Parameters<typeof grouped>
+): { world: World, id: number } | null {
+  const made = grouped(...args);
+
+  return made === null ? null : { id: made.id, world: sealing(made.world, made.id, true) };
 }
 
 describe('an artefact is a point, and the versions do to it what they do', () => {
@@ -180,7 +196,7 @@ describe('a group takes one with it, because it is a member like any other', () 
     ], 0, TOP);
 
     const put = addArtefact(drawn.world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const made = grouped(put.world, 0, [drawn.id, put.id], TOP)!;
+    const made = sealed(put.world, 0, [drawn.id, put.id], TOP)!;
 
     return { world: made.world, artefact: put.id, group: made.id };
   }
@@ -269,7 +285,7 @@ function turningRoom(): { world: World, artefact: number, group: number } {
   ], 0, TOP);
 
   const put = addArtefact(drawn.world, 'key', { x: 100, y: 0 }, 0, TOP);
-  const made = grouped(put.world, 0, [drawn.id, put.id], TOP)!;
+  const made = sealed(put.world, 0, [drawn.id, put.id], TOP)!;
 
   const world = withEdit(made.world, 1, made.id, {
     transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
@@ -407,7 +423,7 @@ describe('a walk moves them on the walls’ clock', () => {
       { x: 200, y: 100 },
     ], 0, TOP);
 
-    const made = grouped(b.world, 0, [a.id, b.id], TOP)!;
+    const made = sealed(b.world, 0, [a.id, b.id], TOP)!;
 
     // Drilled into the group, at the version that also turns it: there is
     // nowhere for the key to come from, and a room for it to come round in.
@@ -454,7 +470,7 @@ describe('a walk moves them on the walls’ clock', () => {
       { x: 200, y: 100 },
     ], 0, TOP);
 
-    const made = grouped(b.world, 0, [a.id, b.id], TOP)!;
+    const made = sealed(b.world, 0, [a.id, b.id], TOP)!;
     const put = addArtefact(
       made.world,
       'key',
@@ -678,7 +694,7 @@ describe('and it keeps step with the walls it stands among', () => {
     ], 0, TOP);
 
     const put = addArtefact(drawn.world, 'anchor', corner, 0, TOP);
-    const made = grouped(put.world, 0, [drawn.id, put.id], TOP)!;
+    const made = sealed(put.world, 0, [drawn.id, put.id], TOP)!;
 
     const world = withEdit(made.world, 1, made.id, {
       transform: {

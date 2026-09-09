@@ -56,15 +56,19 @@ import { Affine, facingAt, placeAt } from './scene';
  * at all. It reads as everything living to the last version, which is what it
  * did.
  *
- * 18: a group carries what it is to whatever holds it, and a polygon is one of
+ * 18: a group says whether it is a set of its own, and a polygon is one of
  * four kinds.
  *
- * A group is a scope: its solids and its voids cut inside it and reach no
- * further, and what comes out is one shape per set. `Group.kind` is which slot
- * that shape lands in one level up — which is what lets a group be a block, or
- * a hole in one, and lets the nesting go as deep as anybody nests. A file
- * written before the question could be asked has every group publishing what
- * it held, which is a `level`, and reads as one.
+ * A sealed group is a scope: its solids and voids cut inside it and reach no
+ * further, and what comes out is one shape per set with its floor cut to its
+ * level. A loose one is a handle and nothing else — its members go into the
+ * set one by one, exactly as they would if it were not there.
+ *
+ * A file written before the question could be asked has every group loose,
+ * because that is what every group in one did: a pillar in one cut the rooms
+ * around it and a floor in one was drawn across them. So an older world opens
+ * looking exactly as it did, down to the last edge, and sealing is a thing its
+ * author asks for rather than a thing that happens to them.
  *
  * As for the polygon: it is one of four kinds — `level`, `solid`, `floor` or `void`,
  * the last saying which of the other two it cuts — rather than a set crossed
@@ -175,7 +179,7 @@ export interface Saved {
     /** Entries rather than a map, which is all `JSON` will take. */
     polygons: [PolygonId, Polygon][]
     /** Absent before format 5, where there were none. */
-    groups?: [GroupId, Group & { kind?: PolygonKind }][]
+    groups?: [GroupId, Group & { sealed?: boolean }][]
     /** Absent before format 6, where there were none. Each one's places go out
      * as entries for the same reason a version's edits do. */
     artefacts?: [ArtefactId, SavedArtefact][]
@@ -328,11 +332,12 @@ export function restored(file: Saved): EditorState {
         ...g,
         death: g.death ?? null,
 
-        // A group that says nothing about what it is to its parent is a
-        // `level`, which is what every group written before a group could be
-        // anything else was: it published what it held and the question had
-        // not been asked. See `Group.kind`.
-        kind: g.kind ?? { type: 'level' as const },
+        // A group that says nothing is loose, which is what every group
+        // written before the question could be asked was: its members went
+        // into the set one by one, and a pillar in one cut the rooms around
+        // it. So an older world opens looking exactly as it did, and sealing
+        // is something its author does when they want it. See `Group.sealed`.
+        sealed: g.sealed ?? false,
       }]),
     ),
     artefacts,
