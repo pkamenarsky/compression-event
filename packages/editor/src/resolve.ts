@@ -212,7 +212,7 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
 }
 
 /** One set's union, as closed rings in world units. */
-function rings(items: readonly Contributed[], set: SetName): NamedRing[] {
+export function rings(items: readonly Contributed[], set: SetName): NamedRing[] {
   const mine: Member[] = [];
 
   for (const it of items) {

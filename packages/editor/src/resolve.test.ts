@@ -4,9 +4,11 @@ import { Point } from '@ce/game/world';
 import { nextOf, shapeArea } from './geometry';
 import {
   TOP,
+  Contributed,
   addArtefact,
   addPolygon,
   addVertex,
+  contributing,
   csg,
   depths,
   editAt,
@@ -21,11 +23,14 @@ import {
   removeVertices,
   resolveAt,
   showing,
+  sidedWith,
+  underfoot,
   withEdit,
 } from './scene';
 import {
   PolygonId,
   FLOOR,
+  SOLID,
   PolygonKind,
   Transform,
   VERSIONS,
@@ -40,7 +45,7 @@ import {
 } from './types';
 import { Frame, truth } from './bake';
 import { FORMAT, Saved, restored, saved } from './save';
-import { resolveGroup, resolveInto } from './resolve';
+import { resolveGroup, resolveInto, rings } from './resolve';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -49,10 +54,12 @@ import { resolveGroup, resolveInto } from './resolve';
  * Three of them are the kind's own name. `hole` is a void over the floors,
  * which is what a hole in one is. See `PolygonKind`.
  */
-type Named = 'level' | 'solid' | 'floor' | 'hole';
+type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { type: 'void', from: FLOOR }
+    : k === 'void' ? { type: 'void', from: SOLID }
+      : { type: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -999,4 +1006,90 @@ describe('resolving does not move where a gesture turns about', () => {
     expect(resolveAt(more, 0)[0].corners.length).toBe(9);
     expect(pivotOf(more, 0)).toEqual(before);
   });
+});
+
+describe('the two ways to a scope agree', () => {
+  /**
+   * A scope's set is computed twice by two different routes, and they have to
+   * be one answer.
+   *
+   * `contributed` folds it out of shapes — each slot unioned, then
+   * `level - (solid - void)` by boolean — because that is what the CSG and the
+   * bake ask for and they ask per instant. `resolve` walks it out of
+   * `boundaryRuns` per member and stitches the runs, because it needs every
+   * point *named* to give the polygons it produces corners with identity, and
+   * a name is not recoverable from a shape.
+   *
+   * So the two cannot be one function without one of them paying for what the
+   * other needs. Measured on a room with pillars in it, the named walk is
+   * about half the cost at four members and about half again *more* at twenty
+   * — it goes as members times neighbours where the fold goes as slots — and
+   * the bake's scopes are the large ones. What they share is the rule:
+   * `settled` folds the slots and `underfoot` cuts the floor, and both call
+   * those.
+   *
+   * What is left is two routes to one set, which is exactly the shape of thing
+   * that drifts. This is what stops it.
+   */
+  const both = (world: World, id: number): [number, number][] => {
+    const items = resolveAt(world, 0);
+    const mine = contributing(world, 0, items);
+
+    /** What the scope put into `set`, by the id its side goes by. */
+    const at = (set: 'level' | 'floor') => shapeArea(
+      mine.filter(c => (sidedWith(c.id) ?? c.id) === id && c.kind.type === set)
+        .flatMap(c => c.shape),
+    );
+
+    // The same members, as `readingAt` hands them over: the scope transparent,
+    // so what comes back is what is under it rather than what it offers.
+    const inner: Contributed[] = items.map(it => ({
+      id: it.id,
+      kind: it.polygon,
+      shape: it.shape,
+      frame: it.frame,
+      simple: false,
+    }));
+
+    const walls = rings(inner, 'level').map(r => r.map(p => p.at));
+    const floor = underfoot(rings(inner, 'floor').map(r => r.map(p => p.at)), [...walls]);
+
+    return [[at('level'), shapeArea([...walls])], [at('floor'), shapeArea(floor)]];
+  };
+
+  const cases: [string, ['level' | 'solid' | 'floor' | 'hole' | 'void', number[]][]][] = [
+    ['a room with a pillar', [['level', [0, 0, 100, 100]], ['solid', [40, 40, 20, 20]]]],
+    ['a pillar with a void across it', [
+      ['level', [0, 0, 100, 100]],
+      ['solid', [20, 20, 40, 40]],
+      ['void', [30, 30, 40, 20]],
+    ]],
+    ['a floor running past the walls', [
+      ['level', [0, 0, 100, 100]],
+      ['floor', [50, 50, 200, 200]],
+    ]],
+    ['a floor with a hole, inside a room', [
+      ['level', [0, 0, 100, 100]],
+      ['floor', [0, 0, 100, 100]],
+      ['hole', [40, 40, 20, 20]],
+    ]],
+    ['two rooms over one pillar', [
+      ['level', [0, 0, 100, 100]],
+      ['level', [50, 0, 100, 100]],
+      ['solid', [60, 20, 20, 20]],
+    ]],
+  ];
+
+  for (const [name, specs] of cases) {
+    test(name, () => {
+      const { world, ids } = drawn(...specs.map(([k, r]) =>
+        [k, rect(r[0], r[1], r[2], r[3])] as [typeof k, Point[]]));
+
+      const made = sealed(world, 0, ids, TOP)!;
+
+      for (const [fold, walk] of both(made.world, made.id)) {
+        expect(fold).toBeCloseTo(walk, 4);
+      }
+    });
+  }
 });
