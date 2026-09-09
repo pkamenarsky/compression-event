@@ -1,12 +1,5 @@
-* CHURN? does chase buy us anything?
-* group subtract polys must affect only group, not siblings
-* and floor polys must be contained to group as well
-* poly types: level, solid, floor, void (solid|floor)
-* draw red line in timeline at topology events after baking
 * adaptive tables - don't subdivide to smallest event, make it per polygon (chaining more precise table to parent table?)
 
-* version view horizontal, like keyframes
-** bake button right there (also bake button for specific versions only)
 * slow motion animation so user can check for strange frames
 ** just drag the arrow in the keyframe strip?
 * bug: drag in 3d view pans in 2d view
@@ -47,8 +40,11 @@
 
 * selection of overlapping vertices
 
-* visible versions can be a strip instead of individual lines
+* version view horizontal, like keyframes
+** bake button right there (also bake button for specific versions only)
+** visible versions can be a strip instead of individual lines
 ** button: none/all/next/subsequent/strip (current version is always visible)
+** draw red line in timeline at topology events after baking
 * show/hide floor polygons
 * fix the 3d view - super bad ergonomics right now
 * make it more clear when drilled into group
