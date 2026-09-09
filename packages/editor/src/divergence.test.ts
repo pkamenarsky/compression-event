@@ -22,21 +22,19 @@ import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
 import { TOP, addPolygon, addVertex, deepen, grouped, removeVertices, resolveAt, editAt, withEdit } from './scene';
-import { EMPTY_TRANSFORM, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+import { EMPTY_TRANSFORM, FLOOR, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
  * floor, and a hole cut in a floor.
  *
- * The four are two questions — which set, and which way — and writing the pair
- * out at every call would bury what each test is about. See `PolygonKind`.
+ * Three of them are the kind's own name. `hole` is a void over the floors,
+ * which is what a hole in one is. See `PolygonKind`.
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
-const kind = (k: Named): PolygonKind => ({
-  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
-  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
-});
+const kind = (k: Named): PolygonKind =>
+  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

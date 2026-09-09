@@ -1,21 +1,28 @@
 import {
   ArtefactType,
+  FLOOR,
+  SOLID,
   IconType,
   KINDS,
   Point,
+  SETS,
   PolygonKind,
-  PolygonOp,
   PolygonType,
+  SetName,
   SCALE,
   TILE_SIZE,
+  SLOTS,
+  inside,
+  inverted,
   kindKey,
   sameKind,
+  slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Affine } from './scene';
 
-export type { ArtefactType, IconType, Point, PolygonKind, PolygonOp, PolygonType };
-export { KINDS, kindKey, sameKind };
+export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
+export { FLOOR, KINDS, SETS, SLOTS, SOLID, inside, inverted, kindKey, sameKind, slotOf };
 
 /** The kinds, in the order the number keys pick them. */
 export const ARTEFACTS: ArtefactType[] = [
@@ -341,16 +348,19 @@ export function ringsOf(corners: readonly Vertex[]): number[] {
  * `Vertex.ring` for why the boundary is on the corner rather than here, and
  * `ringsOf` for how it is read back.
  */
-export interface Polygon {
-  type: PolygonType
-  /** What it does to the set its `type` names. See `PolygonOp`. */
-  op: PolygonOp
+export type Polygon = PolygonKind & {
   /** The version whose layer introduced it. Nothing before it may name it. */
   birth: VersionId
   /** The version whose layer took it out, or nothing while it stands. Exactly
    * a corner's `death`, one level up: see `standing`. */
   death: VersionId | null
   points: Vertex[]
+}
+
+/** A polygon's kind on its own, for the places that hold one without the
+ * geometry it belongs to. A polygon *is* a kind — this only narrows it. */
+export function kindOf(p: PolygonKind): PolygonKind {
+  return p.type === 'void' ? { type: 'void', from: p.from } : { type: p.type };
 }
 
 /**
@@ -826,14 +836,12 @@ export function togglePicked(some: readonly number[], id: number): number[] {
  * it was copied from and is born where it lands, so its birth is always 0.
  */
 export type Clipping =
-  | {
+  | ({
       kind: 'polygon'
-      type: PolygonType
-      op: PolygonOp
       points: Vertex[]
       death?: number
       edits: [number, Edit][]
-    }
+    } & PolygonKind)
   | { kind: 'group', members: Clipping[], death?: number, edits: [number, Edit][] }
   /** An artefact, the same way round as a polygon: where it stood at the copy
    * version in world units, and every layer after it keyed by how far past the

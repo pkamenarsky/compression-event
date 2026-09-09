@@ -82,7 +82,7 @@
 // resolving it out of existence.
 // -----------------------------------------------------------------------------
 
-import { PolygonKind, PolygonType } from '@ce/game/world';
+import { PolygonKind, SLOTS, SetName, inside, slotOf } from '@ce/game/world';
 import {
   Member,
   Point,
@@ -212,29 +212,33 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
 }
 
 /** One set's union, as closed rings in world units. */
-function rings(items: readonly Contributed[], type: PolygonType): NamedRing[] {
+function rings(items: readonly Contributed[], set: SetName): NamedRing[] {
   const mine: Member[] = [];
 
   for (const it of items) {
+    const slot = slotOf(it.kind, set);
+
     // The other set is another question entirely: a pillar does not cut a
     // floor and a hole in a floor does not cut a room.
-    if (it.shape.length === 0 || it.kind.type !== type) continue;
+    if (it.shape.length === 0 || slot === null) continue;
 
-    mine.push({ id: it.id, kind: it.kind.op, shape: it.shape });
+    mine.push({ id: it.id, slot, shape: it.shape });
   }
 
   // What is taken away with nothing to be taken out of bounds no material.
   // The group is pillars, and a pillar on its own is a hole in nothing.
-  if (!mine.some(m => m.kind === 'add')) return [];
+  if (!mine.some(m => m.slot === 0)) return [];
 
-  const on = ground(mine);
+  const slots = SLOTS[set];
+  const rule = (on: readonly boolean[]) => inside(set, on);
+  const on = ground(mine, slots);
   const out: NamedRing[] = [];
 
-  // Every member, solids included: the edge of a hole lies on the polygon that
-  // cut it, so a solid owns its share of the boundary exactly as a room owns
-  // its own. This is `worldset` asked about one neighbourhood.
+  // Every member, solids and voids included: the edge of a hole lies on the
+  // polygon that cut it, so a solid owns its share of the boundary exactly as
+  // a room owns its own. This is `worldset` asked about one neighbourhood.
   for (const m of mine) {
-    for (const run of boundaryRuns(m, mine.filter(o => o.id !== m.id), on)) {
+    for (const run of boundaryRuns(m, mine.filter(o => o.id !== m.id), slots, rule, on)) {
       out.push(run.points.map((p, i) => ({ at: p, key: named(run.whence[i]) })));
     }
   }
@@ -368,12 +372,12 @@ function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
   // group as well, and that is what resolving to one shape costs.
   const walls = rings(items, 'level').map(ring => ring.map(p => p.at));
 
-  // Both come out added: what a pillar contributed is a hole in the level and
-  // what a floor's hole contributed is a hole in the floor, and once either is
-  // a ring of the shape there is nothing subtracted left for it to be.
+  // Both come out as the plain kind of their set: what a pillar contributed is
+  // a hole in the level and what a void contributed is a hole in that hole,
+  // and once either is a ring of the shape there is nothing left for it to cut.
   const sides: [PolygonKind, readonly Ring[]][] = [
-    [{ type: 'level', op: 'add' }, walls],
-    [{ type: 'floor', op: 'add' }, floors(items, walls)],
+    [{ type: 'level' }, walls],
+    [{ type: 'floor' }, floors(items, walls)],
   ];
 
   for (const [kind, side] of sides) {

@@ -27,6 +27,7 @@ import {
   PolygonId,
   Settings,
   Figure,
+  FLOOR,
   Tool,
   Transform,
   Version,
@@ -35,6 +36,7 @@ import {
   VertexId,
   View,
   Point,
+  PolygonKind,
   World,
   IconType,
   Start,
@@ -53,6 +55,16 @@ import { Affine, facingAt, placeAt } from './scene';
  * global until now, so anything a format-12 file no longer holds is not in it
  * at all. It reads as everything living to the last version, which is what it
  * did.
+ *
+ * 18: a polygon is one of four kinds — `level`, `solid`, `floor` or `void`,
+ * the last saying which of the other two it cuts — rather than a set crossed
+ * with a direction. The product was never real: a subtraction from the level
+ * and an addition to the solids were two spellings of one thing, and the one
+ * thing neither could say is a hole cut in a solid, which is what a `void`
+ * exists for. A format-17 file's `level`/`add` is a `level`, its
+ * `level`/`subtract` is a `solid`, its `floor`/`add` is a `floor` and its
+ * `floor`/`subtract` is a `void` over the floors. Nothing is guessed at: those
+ * four are all a format-17 file could hold, and each says exactly one of these.
  *
  * 17: a polygon is a set and a direction — `level` or `floor`, added or
  * subtracted — rather than one of three kinds. A format-16 file's `level` and
@@ -127,7 +139,7 @@ import { Affine, facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 17;
+export const FORMAT = 18;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -434,13 +446,43 @@ function settling(a: SavedArtefact, id: ArtefactId, versions: Version[]): Point 
  * The ring a corner is in comes from here too. Before format 14 there was one,
  * so every corner is a corner of it — see `Vertex.ring`.
  */
+/**
+ * A polygon's kind, however the file it came out of said it.
+ *
+ * Three spellings, and each is exact rather than guessed at. A format-18 file
+ * says one of the four names outright. A format-17 file says a set and a
+ * direction, and all four of those pairs are one of the names. A format-16
+ * file says one of three kinds, whose `solid` meant a room taken back out —
+ * which is the `solid` of today, under the name it had before it briefly
+ * stopped being a name at all.
+ *
+ * A `void` over both sets can only come from a file that already had one, so
+ * there is nothing older to read it out of.
+ */
+function kindRead(polygon: Polygon & { op?: string }): PolygonKind {
+  if (polygon.op === undefined) {
+    return polygon.type === 'void'
+      ? { type: 'void', from: polygon.from }
+      : { type: polygon.type };
+  }
+
+  if (polygon.op === 'add') return { type: polygon.type === 'floor' ? 'floor' : 'level' };
+
+  return polygon.type === 'floor'
+    ? { type: 'void', from: FLOOR }
+    : { type: 'solid' };
+}
+
 function standingThroughout(polygon: Polygon): Polygon {
+  // The kind's own fields are dropped before the read one goes on, rather than
+  // being spread over: a format-17 file's `op` and a stale `from` are both
+  // fields of a kind this no longer is, and leaving either in place would put
+  // an older format's spelling back into a world that has moved past it.
+  const { op: _op, from: _from, ...rest } = polygon as Polygon & { op?: string, from?: number };
+
   return {
-    ...polygon,
-    // A format-16 `solid` said *level, taken back out*, which is what it is
-    // read as. See `FORMAT`.
-    type: (polygon.type as string) === 'solid' ? 'level' : polygon.type,
-    op: polygon.op ?? ((polygon.type as string) === 'solid' ? 'subtract' : 'add'),
+    ...rest,
+    ...kindRead(polygon),
     death: polygon.death ?? null,
     points: polygon.points.map(c => ({
       ...c,

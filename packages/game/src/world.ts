@@ -69,7 +69,7 @@ export const TILE_SIZE = 4;
 export const TOLERANCE = 0.05;
 
 /**
- * Which of the two sets a polygon is about.
+ * Which of the two sets a polygon ends up in.
  *
  * A `level` is somewhere to stand and a `floor` is somewhere to look at: the
  * first is resolved into the set collision and the walls are made of, the
@@ -78,54 +78,148 @@ export const TOLERANCE = 0.05;
  * in a list of its own — so this describes the editor's side of the agreement,
  * and nothing shipped carries it.
  */
-export type PolygonType = 'level' | 'floor';
+export type SetName = 'level' | 'floor';
+
+/** Both of them, wherever something has to be done to each in turn. */
+export const SETS: readonly SetName[] = ['level', 'floor'];
 
 /**
- * What a polygon does to the set it is about.
+ * What a polygon is, as it was drawn.
  *
- * Orthogonal to which set that is, and it was not always: a pillar used to be
- * a *kind*, `solid`, and there was no way to say the same thing about a floor
- * at all. A floor could only ever be added to, so a doorway cut through the
- * floor of a room meant drawing the floor as the pieces around the hole.
+ * Four names rather than a set crossed with a direction, because the product
+ * is not real: a subtraction from the level and an addition to the solids
+ * would be two spellings of one thing, and there is no sense to be made of a
+ * polygon that is a level and a floor at once. These are the states that
+ * exist.
  *
- * Two questions rather than one, then, and the pair is what everything
- * downstream switches on. `level`/`subtract` is the old `solid`, exactly.
+ * `level` is somewhere to stand. `solid` is what stands in it — a pillar, a
+ * wall, a block. `floor` is somewhere to look at. `void` is the one that took
+ * a restructure to say: it cuts, and what it cuts is the solids and the
+ * floors rather than the level. A pillar with a void across its edge is a
+ * U-shaped pillar, which is a hole in a hole and a thing no flat sum of adds
+ * and subtracts can express.
  */
-export type PolygonOp = 'add' | 'subtract';
+export type PolygonType = 'level' | 'solid' | 'floor' | 'void';
+
+/** What a `void` may cut, as flags, because it may cut both at once. */
+export const SOLID = 1, FLOOR = 2;
 
 /**
- * The pair: which set, and which way.
+ * A polygon's type and, for the one type that has more than one thing to say,
+ * what it says.
  *
- * An interface rather than the four flat names it could have been spelled as,
- * because the two halves are asked about separately far more often than
- * together — the CSG only wants the op, the drawing only wants the type — and
- * a flat name makes every one of those a test against two alternatives instead
- * of one. `Polygon` in the editor's `types.ts` carries the two fields
- * directly, so a polygon *is* one of these without being wrapped.
+ * A union rather than an interface with an optional mask, so that the
+ * invariant is the type's rather than a convention: `from` exists exactly
+ * where it means something. Nothing but a `void` has a choice of what to act
+ * on — `level`, `solid` and `floor` each name one thing outright — and a mask
+ * on those would be inventing options nobody can use.
  */
-export interface PolygonKind {
-  type: PolygonType
-  op: PolygonOp
+export type PolygonKind =
+  | { type: 'level' }
+  | { type: 'solid' }
+  | { type: 'floor' }
+  | { type: 'void', from: number }
+
+/** The kinds the editor offers, in the order the number keys pick them. */
+export const KINDS: readonly PolygonKind[] = [
+  { type: 'level' },
+  { type: 'solid' },
+  { type: 'floor' },
+  { type: 'void', from: SOLID },
+  { type: 'void', from: FLOOR },
+  { type: 'void', from: SOLID | FLOOR },
+];
+
+/**
+ * How many slots a set is resolved out of.
+ *
+ * A slot is one side of one set — the polygons playing one part in it — and a
+ * point is in the set or not according to which slots cover it. The level has
+ * three: what is added, what stands in it, and what is taken back out of what
+ * stands in it. The floor has two.
+ *
+ * The count is here rather than inferred because `ground` has to lay out one
+ * tree per slot before it has seen a single member, and a set with nothing in
+ * one of its slots still has that slot.
+ */
+export const SLOTS: Record<SetName, number> = { level: 3, floor: 2 };
+
+/**
+ * Which slot of `set` a polygon of this kind fills, or nothing where it has no
+ * part in that set at all.
+ *
+ * The one place the authored names and the resolution's slots are related, so
+ * that `inside` below can be read against it and nothing else has to know.
+ */
+export function slotOf(kind: PolygonKind, set: SetName): number | null {
+  if (set === 'level') {
+    if (kind.type === 'level') return 0;
+    if (kind.type === 'solid') return 1;
+    if (kind.type === 'void' && (kind.from & SOLID) !== 0) return 2;
+
+    return null;
+  }
+
+  if (kind.type === 'floor') return 0;
+  if (kind.type === 'void' && (kind.from & FLOOR) !== 0) return 1;
+
+  return null;
 }
 
-/** The four of them, in the order everything that iterates them uses: the
- * level's two sides first, then the floor's. */
-export const KINDS: readonly PolygonKind[] = [
-  { type: 'level', op: 'add' },
-  { type: 'level', op: 'subtract' },
-  { type: 'floor', op: 'add' },
-  { type: 'floor', op: 'subtract' },
-];
+/**
+ * Whether a point covered by exactly these slots is in the set.
+ *
+ * ```
+ * level = level − (solid − void)
+ * floor = floor − void
+ * ```
+ *
+ * Each slot is read on its own — nonzero over that slot's members and nothing
+ * else — and only then are the answers combined. That is not the same as
+ * summing the windings across slots and asking whether the total is nonzero,
+ * and the difference is not academic: two rooms overlapping under one pillar
+ * sum to `2 − 1 = 1` and the pillar stops cutting. Keeping the slots apart is
+ * what makes the rule mean what it says at every depth.
+ *
+ * Which is also why the nesting costs nothing to name. The arrangement is cut
+ * from the authored edges whatever this rule says about them — a boolean over
+ * polygons never invents a boundary point that is not a corner of one or a
+ * crossing of two — so a hole in a hole is a deeper rule over the same points,
+ * not deeper geometry. See `Whither` in the editor's `geometry.ts`.
+ */
+export function inside(set: SetName, on: readonly boolean[]): boolean {
+  return set === 'level'
+    ? on[0] && !(on[1] && !on[2])
+    : on[0] && !on[1];
+}
+
+/**
+ * Whether offsetting a set by `d` offsets this kind's own union by `-d`.
+ *
+ * Eroding a whole set is eroding each of its slots, and the sign alternates
+ * with how deeply the slot is nested, because eroding a complement is dilating:
+ *
+ * ```
+ * erode(L − (S − V), d) = erode(L, d) − (erode(S, −d) − erode(V, d))
+ * ```
+ *
+ * So the level and the floor erode with the set, the solids erode against it —
+ * a pillar shrunk along with its room leaves a gap that never narrows — and a
+ * void, being a hole in a hole, comes back round to eroding with it.
+ */
+export function inverted(kind: PolygonKind): boolean {
+  return kind.type === 'solid';
+}
 
 /** One kind as a string, for the maps and sets that have to key by one.
  * Nothing but a key: it is never parsed back and never written to a file. */
 export function kindKey(k: PolygonKind): string {
-  return `${k.type}_${k.op}`;
+  return k.type === 'void' ? `void_${k.from}` : k.type;
 }
 
 /** Whether two kinds are the one kind. */
 export function sameKind(a: PolygonKind, b: PolygonKind): boolean {
-  return a.type === b.type && a.op === b.op;
+  return kindKey(a) === kindKey(b);
 }
 
 export type ArtefactType = 'exit' | 'key' | 'delay' | 'decompress' | 'anchor' | 'compass';

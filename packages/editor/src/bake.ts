@@ -156,6 +156,7 @@ import {
   facing,
   groupFrame,
   placeAt,
+  parts,
   sidedWith,
   sideOf,
   live,
@@ -173,16 +174,19 @@ import {
   KINDS,
   PolygonId,
   PolygonKind,
-  PolygonOp,
-  PolygonType,
+  SLOTS,
+  SetName,
   Transform,
   VersionId,
   Vertex,
   VertexId,
   World,
   enclosing,
+  inside,
   kindKey,
+  kindOf,
   ringsOf,
+  slotOf,
 } from './types';
 import { WorldSet, pieces } from './worldset';
 
@@ -1427,18 +1431,24 @@ interface Subject {
   mine: Moving[]
   /** Which set this track's boundary belongs to. A track is only ever cut
    * against the other members of its own set. */
-  type: PolygonType
+  set: SetName
   /** See `Track.fill`. */
   fill: boolean
   /**
-   * What it does to the set its `type` names.
+   * Which slot of `set` it fills.
    *
    * Only a floor reads it, and only because a floor is no longer cut against
-   * its set: a subtracted one is its rings wound the other way, which is the
-   * whole of what taking it out of the set means when the set is counted rather
-   * than carved. See `fillTrack`.
+   * its set: a void is its rings wound the other way, which is the whole of
+   * what taking it out of the set means when the set is counted rather than
+   * carved. See `fillTrack`.
    */
-  op: PolygonOp
+  slot: number
+}
+
+/** Which set a kind is in. Every contributor is in exactly one: a void that
+ * cuts both was split into two before it got here. See `parts` in `scene.ts`. */
+function setOf(kind: PolygonKind): SetName {
+  return slotOf(kind, 'level') !== null ? 'level' : 'floor';
 }
 
 /** Everything the span's tracks are cut for: a polygon that nothing holds, and
@@ -1448,8 +1458,11 @@ function subjects(cast: Cast): Subject[] {
   const kinds = new Map<Id, Set<string>>();
   const all: Subject[] = [];
 
-  const subject = (id: Id, mine: Moving[], kind: PolygonKind): Subject =>
-    ({ id, mine, type: kind.type, op: kind.op, fill: kind.type === 'floor' });
+  const subject = (id: Id, mine: Moving[], kind: PolygonKind): Subject => {
+    const set = setOf(kind);
+
+    return { id, mine, set, slot: slotOf(kind, set)!, fill: set === 'floor' };
+  };
 
   for (const m of cast.items) {
     // The outermost group that erodes, or the polygon itself. Everything
@@ -1458,12 +1471,18 @@ function subjects(cast: Cast): Subject[] {
     const id = up[up.length - 1] ?? m.at.id;
 
     (out.get(id) ?? out.set(id, []).get(id)!).push(m);
-    (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(kindKey(m.at.polygon));
+    for (const kind of parts(kindOf(m.at.polygon))) {
+      (kinds.get(id) ?? kinds.set(id, new Set()).get(id)!).add(kindKey(kind));
+    }
   }
 
   for (const [id, mine] of out) {
     if (!cast.eroding.has(id)) {
-      all.push(subject(id, mine, mine[0].at.polygon));
+      // A polygon in two sets is two tracks, under the ids `parts` named its
+      // contributions by. See `parts` in `scene.ts`.
+      parts(kindOf(mine[0].at.polygon)).forEach((kind, k) => {
+        all.push(subject(k === 0 ? id : sideOf(id, kind), mine, kind));
+      });
       continue;
     }
 
@@ -1488,15 +1507,17 @@ function subjects(cast: Cast): Subject[] {
  * Nothing where it is in the other set. A pillar does not cut a floor and a
  * hole in a floor does not cut a room, so the two are never in one another's
  * neighbourhoods at all. */
-function memberOf(it: Contributed, type: PolygonType): Member | null {
-  if (it.kind.type !== type) return null;
+function memberOf(it: Contributed, set: SetName): Member | null {
+  const slot = slotOf(it.kind, set);
+
+  if (slot === null) return null;
 
   // A source ring as drawn is allowed to cross itself, so it goes through an
   // arrangement here — and an arrangement drops the vertices it does not turn
   // at, this one included. Anything already simple is spared it.
   const shape = it.simple ? it.shape : keeping(simplify(it.shape), it.keep ?? []);
 
-  return shape.length === 0 ? null : { id: it.id, kind: it.kind.op, shape };
+  return shape.length === 0 ? null : { id: it.id, slot, shape };
 }
 
 /**
@@ -1515,14 +1536,14 @@ function share(at: readonly Contributed[], only: Id): Frame {
 
   if (mine === undefined) return [];
 
-  const type = mine.kind.type;
-  const fill = type === 'floor';
+  const set = setOf(mine.kind);
+  const fill = set === 'floor';
   const members: Member[] = [];
 
   let subject: Member | null = null;
 
   for (const it of at) {
-    const m = memberOf(it, type);
+    const m = memberOf(it, set);
 
     if (m === null) continue;
     if (m.id === only) subject = m;
@@ -1535,7 +1556,10 @@ function share(at: readonly Contributed[], only: Id): Frame {
   const box = ofRings(subject.shape);
   const others = members.filter(m => m.id !== only && overlaps(box, ofRings(m.shape)));
 
-  return boundaryRuns(subject, others, ground([subject, ...others]))
+  const slots = SLOTS[set];
+  const rule = (on: readonly boolean[]) => inside(set, on);
+
+  return boundaryRuns(subject, others, slots, rule, ground([subject, ...others], slots))
     .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence, fill }));
 }
 
@@ -1672,7 +1696,7 @@ function neighbourhoods(all: Subject[]): Moving[][] {
   // members along: they are the same members, and a neighbourhood holding
   // every one of them twice would put every ring into the arrangement twice.
   return all.map((s, i) => {
-    const near = search(tree, boxes[i]).filter(j => j !== i && all[j].type === s.type);
+    const near = search(tree, boxes[i]).filter(j => j !== i && all[j].set === s.set);
     const seen = new Set<Id>();
     const out: Moving[] = [];
 
@@ -2545,8 +2569,8 @@ function alike(a: readonly Ring[], b: readonly Ring[]): boolean {
  * the other way — a ring drawn clockwise, which nothing stops an author doing —
  * and the two cancel to nothing over the ground they share, where the set says
  * filled. So the sign is not taken as drawn: every polygon is turned to face
- * the way its op means, adds one way and subtracts the other, and then the only
- * thing a sum can do is grow.
+ * the way its slot means, floors one way and voids the other, and then the
+ * only thing a sum can do is grow.
  *
  * Which is also why this is handed the polygon's *resolved* rings rather than
  * its ring as drawn. A ring that crosses itself has lobes wound against each
@@ -2555,7 +2579,7 @@ function alike(a: readonly Ring[], b: readonly Ring[]): boolean {
  * rings around the region it fills, wound together, and it contributes the one
  * or the nothing it ought to.
  */
-function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
+function fillRuns(id: Id, rings: readonly Ring[], slot: number): Frame {
   let area = 0;
 
   for (const ring of rings) {
@@ -2568,7 +2592,7 @@ function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
 
   // A shape with no area at all has no sense of which way it faces, and turning
   // it round would be a coin toss. It counts nothing either way.
-  const facing = op === 'subtract' ? -1 : 1;
+  const facing = slot === 0 ? 1 : -1;
   const turn = area !== 0 && Math.sign(area) !== facing;
 
   return rings.map((ring, r) => {
@@ -2597,14 +2621,14 @@ function fillRuns(id: Id, rings: readonly Ring[], op: PolygonOp): Frame {
  * means anything either: a fill draws no lines, so nothing here can be wrong
  * about a corner.
  */
-function held0(id: Id, a: readonly Ring[], b: readonly Ring[], op: PolygonOp): Stretch {
-  const runs = fillRuns(id, a, op);
+function held0(id: Id, a: readonly Ring[], b: readonly Ring[], slot: number): Stretch {
+  const runs = fillRuns(id, a, slot);
 
   return {
     t0: 0,
     t1: 1,
     a: runs,
-    b: fillRuns(id, b, op),
+    b: fillRuns(id, b, slot),
     table: new Map(),
     origins: runs.map(run => run.points.map(() => null)),
     opacity: [
@@ -2644,7 +2668,7 @@ function* fillTrack(
   cast: Cast,
   mine: Moving[],
   id: Id,
-  op: PolygonOp,
+  slot: number,
   tol: number,
   limits: Limits,
 ): Generator<number, Cut, void> {
@@ -2661,7 +2685,7 @@ function* fillTrack(
   };
 
   const held = (a: { t: number, rings: Ring[] }, b: { t: number, rings: Ring[] }): Stretch =>
-    ({ ...held0(id, a.rings, b.rings, op), t0: a.t, t1: b.t });
+    ({ ...held0(id, a.rings, b.rings, slot), t0: a.t, t1: b.t });
 
   const stack: [{ t: number, rings: Ring[] }, { t: number, rings: Ring[] }][] = [[at(0), at(1)]];
 
@@ -3179,7 +3203,7 @@ function* chased(
     const inner = fill
       // Its own members, and nothing else: a floor is not cut against its
       // neighbours, so resolving them would be work nobody reads.
-      ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].op, tol, limits)
+      ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits)
       : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits);
 
     let cut: Cut | null = null;
@@ -3240,7 +3264,7 @@ export function* cutSome(
   // takes one away and leaves the ground filled. Where a floor set has anything
   // subtracted from it, the union has to be resolved before the hole is taken
   // out of it, and only the CSG does that. See `fillTrack`.
-  const counted = !at.items.some(s => s.fill && s.op === 'subtract');
+  const counted = !at.items.some(s => s.fill && s.slot !== 0);
 
   for (let k = 0; k < which.length; k++) {
     const i = which[k];

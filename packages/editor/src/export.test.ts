@@ -38,7 +38,8 @@ import {
   stretchAt,
   truth,
 } from './bake';
-import { artefactsShipped, bakedSpan, floorsAt, versionOf } from './export';
+import { shapeArea } from './geometry';
+import { artefactsShipped, bakedSpan, floorsAt, setAt, unionAt, versionOf } from './export';
 import {
   TOP,
   Affine,
@@ -49,6 +50,7 @@ import {
   affine,
   compose,
   contributing,
+  csg,
   deepen,
   editAt,
   grouped,
@@ -60,21 +62,22 @@ import {
   unchained,
   withEdit,
 } from './scene';
-import { ArtefactId, EMPTY_TRANSFORM, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+import { ArtefactId, EMPTY_TRANSFORM, FLOOR, Id, SOLID, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
- * floor, and a hole cut in a floor.
+ * floor, a hole cut in a floor, a void cut in a pillar, and one that cuts both.
  *
- * The four are two questions — which set, and which way — and writing the pair
- * out at every call would bury what each test is about. See `PolygonKind`.
+ * Three of them are the kind's own name; the rest are voids, which differ only
+ * in what they are pointed at. See `PolygonKind`.
  */
-type Named = 'level' | 'solid' | 'floor' | 'hole';
+type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void' | 'both';
 
-const kind = (k: Named): PolygonKind => ({
-  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
-  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
-});
+const kind = (k: Named): PolygonKind =>
+  k === 'hole' ? { type: 'void', from: FLOOR }
+    : k === 'void' ? { type: 'void', from: SOLID }
+      : k === 'both' ? { type: 'void', from: SOLID | FLOOR }
+        : { type: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -1137,6 +1140,112 @@ describe('the standing walls and the bake agree about every vertical', () => {
 // set the still is handed, or a floor jumps at the version boundary, which is
 // exactly the place a walk stops and the still takes over.
 // -----------------------------------------------------------------------------
+
+describe('a void is a hole in a hole', () => {
+  const area = (world: World, v: VersionId = 0) => shapeArea(unionAt(world, v));
+
+  test('a pillar with a void across its edge is a U, and the level says so', () => {
+    // The case the whole restructure exists for: `room - (pillar - void)`,
+    // which is three levels deep and is not any sum of adds and subtracts.
+    // The void straddles the pillar's edge, so what it takes out of the pillar
+    // is a bite and what is left of the pillar is a U.
+    const { world } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(20, 20, 40, 40)],
+      ['void', rect(30, 30, 40, 20)],
+    );
+
+    // The void reaches from x=30 to x=70 and the pillar ends at x=60, so the
+    // bite is 30 wide, not 40: the half of it hanging outside the pillar has
+    // nothing to take away and puts nothing back.
+    expect(area(world)).toBeCloseTo(100 * 100 - (40 * 40 - 30 * 20), 6);
+  });
+
+  test('what it puts back is inside the room, not out of it', () => {
+    // A void sticking out past the room it is in is the difference between
+    // `room - (pillar - void)` and `(room - pillar) + void`. The second would
+    // lay level down outside the room, which is not what a hole in a hole is.
+    const { world } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(80, 40, 40, 20)],
+      ['void', rect(90, 40, 40, 20)],
+    );
+
+    // The pillar bites 20 x 20 out of the room's edge and the void gives back
+    // 10 x 20 of that. Everything either of them does past x=100 is outside
+    // the room and does nothing at all.
+    expect(area(world)).toBeCloseTo(100 * 100 - 20 * 20 + 10 * 20, 6);
+  });
+
+  test('it cuts every solid it overlaps, not one it was paired with', () => {
+    // The rule is a set difference over a slot, not a pairing: nothing anywhere
+    // says which pillar a void belongs to, and it belongs to all of them.
+    const { world } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['solid', rect(20, 20, 40, 40)],
+      ['solid', rect(120, 20, 40, 40)],
+      ['void', rect(30, 30, 120, 20)],
+    );
+
+    // 30 x 20 back out of each, being the part of the void over each pillar:
+    // it reaches x=30 into the first and x=150 into the second, and both end
+    // 30 short of where it stops.
+    expect(area(world)).toBeCloseTo(200 * 100 - 2 * (40 * 40 - 30 * 20), 6);
+  });
+
+  test('a void over no solid at all does nothing', () => {
+    const { world } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['void', rect(20, 20, 40, 40)],
+    );
+
+    expect(area(world)).toBeCloseTo(100 * 100, 6);
+  });
+
+  test('two rooms over one pillar: the pillar still cuts', () => {
+    // The reason the slots are read one at a time and only then combined. Summed
+    // instead — two rooms and a pillar as `2 - 1` — this comes out nonzero and
+    // the pillar stops cutting where the rooms overlap.
+    const { world } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(50, 0, 100, 100)],
+      ['solid', rect(60, 20, 20, 20)],
+    );
+
+    expect(area(world)).toBeCloseTo(150 * 100 - 20 * 20, 6);
+  });
+
+  test('a void may cut the solids and the floors at once', () => {
+    const { world } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(20, 20, 40, 40)],
+      ['floor', rect(0, 0, 100, 100)],
+      ['both', rect(30, 30, 20, 20)],
+    );
+
+    // One polygon, two sets, and it is read as a member of each: the pillar
+    // gets a hole and so does the floor. See `parts` in `scene.ts`.
+    expect(area(world)).toBeCloseTo(100 * 100 - (40 * 40 - 20 * 20), 6);
+    expect(shapeArea(setAt(world, 0, 'floor'))).toBeCloseTo(100 * 100 - 20 * 20, 6);
+  });
+
+  test('the editor draws the same set the export ships', () => {
+    // Two ways to the one answer: `setAt` unions the slots whole and nests the
+    // differences, and `csg` goes through `worldset`, where every polygon's
+    // share is a question about its own neighbourhood. They have to agree.
+    const { world } = drawn(
+      ['level', rect(0, 0, 200, 100)],
+      ['solid', rect(20, 20, 40, 40)],
+      ['solid', rect(120, 20, 40, 40)],
+      ['void', rect(30, 30, 120, 20)],
+    );
+
+    const length = (runs: readonly Point[][]) => runs.reduce((t, r) => t + r.slice(1)
+      .reduce((u, p, i) => u + Math.hypot(p.x - r[i].x, p.y - r[i].y), 0), 0);
+
+    expect(length(csg(world, 0))).toBeCloseTo(length(unionAt(world, 0).map(r => [...r, r[0]])), 6);
+  });
+});
 
 describe('the floor set', () => {
   /** A room, a floor inside it with a hole in the middle, and the floor moved

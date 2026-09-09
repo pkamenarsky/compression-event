@@ -1,16 +1,16 @@
 // -----------------------------------------------------------------------------
 // One set's boundary, kept up to date incrementally
 //
-// What is wanted is the outline of one set: every `add` polygon unioned, with
-// every `subtract` polygon taken back out. Recomputing that from scratch is
-// nowhere near a frame at ten thousand polygons, so an edit has to be able to
-// touch a bounded amount of work.
+// What is wanted is the outline of one set: each slot of it unioned on its own,
+// and a rule over which slots cover a point deciding whether the point is in.
+// Recomputing that from scratch is nowhere near a frame at ten thousand
+// polygons, so an edit has to be able to touch a bounded amount of work.
 //
-// Which set is none of this module's business. The level is one — rooms added,
-// pillars taken back out — and the floor is another, kept alongside it and
-// answered by the same code. A polygon says only which way it goes; what it
-// goes into is decided by whoever hands it over. See `PolygonKind` in the
-// game's `world.ts`.
+// Which set is none of this module's business. The level is one — rooms, the
+// solids standing in them, and the voids cut back out of those — and the floor
+// is another, kept alongside it and answered by the same code. A polygon says
+// only which slot it fills; what that slot means is carried on the set and
+// settled by whoever built it. See `inside` in the game's `world.ts`.
 //
 // What makes that possible is that the outline is *partitioned by source*.
 // Every piece of it lies on some polygon's edge and belongs to that polygon
@@ -64,20 +64,21 @@
 
 import { AABB, Tree, emptyTree, ofRings } from './aabb';
 import * as aabb from './aabb';
-import { Member, Point, Shape, Whither, boundaryRuns, ground, simplify } from './geometry';
+import { Member, Point, Rule, Shape, Whither, boundaryRuns, ground, simplify } from './geometry';
 
 export type Id = number;
 
 /** Minted here, and never confused with an `Id`. */
 export type PieceId = number;
 
-/** Which way a polygon goes, which is the whole of what this needs told. The
- * same word `geometry.Member` uses, and it has to be: an entry becomes one. */
-export type Kind = 'add' | 'subtract';
+/** Which part of the set a polygon plays, which is the whole of what this
+ * needs told. The same word `geometry.Member` uses, and it has to be: an entry
+ * becomes one. */
+export type Slot = number;
 
 export interface Entry {
   id: Id
-  kind: Kind
+  slot: Slot
   /** The points that came in, untouched. The editor's to draw and to edit. */
   source: Shape
   /**
@@ -133,6 +134,17 @@ export interface WorldSet {
   /** Each polygon's share of the outline. */
   runs: Map<Id, Piece[]>
   nextPiece: PieceId
+  /**
+   * How many slots this set is resolved out of, and what covering which of
+   * them means.
+   *
+   * Carried rather than known, because what the set is *about* still does not
+   * reach this file — a level has three slots and a floor two, and the only
+   * difference that makes here is the number handed to `ground` and the
+   * function handed to `boundaryRuns`. See `inside` in the game's `world.ts`.
+   */
+  slots: number
+  rule: Rule
 }
 
 /**
@@ -146,16 +158,22 @@ export interface WorldSet {
  * is the same work over again on every polygon of every frame the bake takes.
  */
 export type Edit =
-  | { op: 'insert', id: Id, kind: Kind, shape: Shape, simple?: boolean }
+  | { op: 'insert', id: Id, slot: Slot, shape: Shape, simple?: boolean }
   | { op: 'update', id: Id, shape: Shape, simple?: boolean }
   | { op: 'remove', id: Id };
 
-export const emptyWorldSet: WorldSet = {
-  entries: new Map(),
-  tree: emptyTree,
-  runs: new Map(),
-  nextPiece: 1,
-};
+/** An empty set of the shape `slots` and `rule` describe. A function rather
+ * than a constant now that there is more than one shape of set to be empty. */
+export function emptyWorldSet(slots: number, rule: Rule): WorldSet {
+  return {
+    entries: new Map(),
+    tree: emptyTree,
+    runs: new Map(),
+    nextPiece: 1,
+    slots,
+    rule,
+  };
+}
 
 // -----------------------------------------------------------------------------
 // Reading the result
@@ -187,8 +205,8 @@ export function overlapping(set: WorldSet, b: AABB): Id[] {
 // Editing
 // -----------------------------------------------------------------------------
 
-export function insert(set: WorldSet, id: Id, kind: Kind, s: Shape): Change {
-  return apply(set, [{ op: 'insert', id, kind, shape: s }]);
+export function insert(set: WorldSet, id: Id, slot: Slot, s: Shape): Change {
+  return apply(set, [{ op: 'insert', id, slot, shape: s }]);
 }
 
 /** A move, a rotation, a scale, a dragged vertex: all of them are new points. */
@@ -247,10 +265,10 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
 
     if (e.op === 'remove') continue;
 
-    // An update carries no kind, so it keeps the one it had — and one naming
+    // An update carries no slot, so it keeps the one it had — and one naming
     // a polygon this set has never held has nothing to keep, and is dropped.
-    const kind = e.op === 'insert' ? e.kind : was?.kind;
-    if (kind === undefined) continue;
+    const slot = e.op === 'insert' ? e.slot : was?.slot;
+    if (slot === undefined) continue;
 
     // Self-intersections are resolved once, here, rather than every time the
     // polygon takes part in a boundary. The points that came in are kept as
@@ -262,11 +280,11 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     const box = ofRings(e.shape);
 
     // The entry goes in whether or not there is any geometry left. Dropping it
-    // for an empty shape loses the kind, which is the one thing an update
+    // for an empty shape loses the slot, which is the one thing an update
     // cannot supply — so a polygon eroded away to nothing could never be
     // eroded back, and the caller had no way to know it had to insert instead.
     // A version scrubbing a depth past a collapse and back does exactly that.
-    entries.set(e.id, { id: e.id, kind, source: e.shape, shape, box });
+    entries.set(e.id, { id: e.id, slot, source: e.shape, shape, box });
 
     // The tree is about what can bury something, so nothing goes in it. An
     // empty box would be unfindable by the search that removes it, too.
@@ -280,7 +298,7 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     dirty.add(e.id);
   }
 
-  return rebuild(set, { entries, tree, runs, nextPiece: set.nextPiece }, dirty);
+  return rebuild(set, { ...set, entries, tree, runs }, dirty);
 }
 
 // -----------------------------------------------------------------------------
@@ -288,7 +306,7 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
 // -----------------------------------------------------------------------------
 
 function member(e: Entry): Member {
-  return { id: e.id, kind: e.kind, shape: e.shape };
+  return { id: e.id, slot: e.slot, shape: e.shape };
 }
 
 /**
@@ -347,10 +365,10 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
     work.push({ subject, others });
   }
 
-  const on = ground(taking.values());
+  const on = ground(taking.values(), next.slots);
 
   for (const { subject, others } of work) {
-    const mine = boundaryRuns(subject, others, on).map(r => ({
+    const mine = boundaryRuns(subject, others, next.slots, next.rule, on).map(r => ({
       id: nextPiece++,
       source: subject.id,
       points: r.points,
@@ -369,18 +387,23 @@ function rebuild(before: WorldSet, next: WorldSet, dirty: Set<Id>): Change {
 
 /** Everything at once, for loading a world. */
 export function fromEntries(
-  items: readonly { id: Id, kind: Kind, shape: Shape }[],
+  slots: number,
+  rule: Rule,
+  items: readonly { id: Id, slot: Slot, shape: Shape }[],
 ): WorldSet {
-  return apply(emptyWorldSet, items.map(i => ({ op: 'insert' as const, ...i }))).set;
+  return apply(
+    emptyWorldSet(slots, rule),
+    items.map(i => ({ op: 'insert' as const, ...i })),
+  ).set;
 }
 
 /** The set as it would come out of a full rebuild — a check on the incremental
  * path, and the way back if one is ever needed. */
 export function recomputed(set: WorldSet): WorldSet {
-  return fromEntries(sources(set));
+  return fromEntries(set.slots, set.rule, sources(set));
 }
 
 /** Every source polygon, as it was handed in. */
-export function sources(set: WorldSet): { id: Id, kind: Kind, shape: Shape }[] {
-  return [...set.entries.values()].map(e => ({ id: e.id, kind: e.kind, shape: e.source }));
+export function sources(set: WorldSet): { id: Id, slot: Slot, shape: Shape }[] {
+  return [...set.entries.values()].map(e => ({ id: e.id, slot: e.slot, shape: e.source }));
 }

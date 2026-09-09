@@ -19,9 +19,19 @@ import {
   update,
 } from './worldset';
 import { box } from './aabb';
+import { SLOTS, inside } from '@ce/game/world';
 
-const level = 'add' as const;
-const solid = 'subtract' as const;
+// The level's slots, by the names the level calls them. This file is about the
+// bookkeeping and not about what a slot means, so two of the three are enough.
+const level = 0;
+const solid = 1;
+
+/** An empty level: three slots, and the level's own rule over them. */
+const empty = () => emptyWorldSet(SLOTS.level, on => inside('level', on));
+
+/** The same, filled. */
+const from = (items: readonly { id: Id, slot: number, shape: Shape }[]) =>
+  fromEntries(SLOTS.level, on => inside('level', on), items);
 
 const rect = (x: number, y: number, w: number, h: number): Shape =>
   [[{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]];
@@ -46,7 +56,7 @@ const held = (set: WorldSet) => new Map(pieces(set).map(p => [p.id, p.points]));
 
 describe('the set', () => {
   test('a lone polygon contributes its whole outline', () => {
-    const { set, diff } = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10));
+    const { set, diff } = insert(empty(), 1, level, rect(0, 0, 10, 10));
 
     expect(diff.removed).toEqual([]);
     expect(diff.inserted.length).toBeGreaterThan(0);
@@ -56,18 +66,18 @@ describe('the set', () => {
 
   test('overlapping polygons share the outline instead of doubling it', () => {
     // 10x10 and 10x10 overlapping by 5: the union is 15x10, perimeter 50.
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(5, 0, 10, 10) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(5, 0, 10, 10) },
     ]);
 
     expect(length(set)).toBeCloseTo(50, 6);
   });
 
   test('a polygon buried whole contributes nothing', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 20, 20) },
-      { id: 2, kind: level, shape: rect(5, 5, 4, 4) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 20, 20) },
+      { id: 2, slot: level, shape: rect(5, 5, 4, 4) },
     ]);
 
     expect(pieces(set).filter(p => p.source === 2)).toEqual([]);
@@ -75,9 +85,9 @@ describe('the set', () => {
   });
 
   test('a solid cuts a hole and contributes its own outline', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 20, 20) },
-      { id: 2, kind: solid, shape: rect(8, 8, 4, 4) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 20, 20) },
+      { id: 2, slot: solid, shape: rect(8, 8, 4, 4) },
     ]);
 
     expect(length(set)).toBeCloseTo(80 + 16, 6);
@@ -87,7 +97,7 @@ describe('the set', () => {
     // An update carries no kind, so there is nothing to read one off for a
     // polygon that has never been inserted. Which set a polygon belongs to is
     // the caller's business — this one only ever knows which way it goes.
-    const set = apply(emptyWorldSet, [{ op: 'update', id: 1, shape: rect(0, 0, 4, 4) }]).set;
+    const set = apply(empty(), [{ op: 'update', id: 1, shape: rect(0, 0, 4, 4) }]).set;
 
     expect(entry(set, 1)).toBeUndefined();
     expect(pieces(set)).toEqual([]);
@@ -97,13 +107,13 @@ describe('the set', () => {
 describe('sources', () => {
   test('the points that came in come back out untouched', () => {
     const cw: Shape = [[{ x: 0, y: 0 }, { x: 0, y: 4 }, { x: 4, y: 4 }, { x: 4, y: 0 }]];
-    const set = insert(emptyWorldSet, 1, level, cw).set;
+    const set = insert(empty(), 1, level, cw).set;
 
     expect(entry(set, 1)!.source[0]).toEqual(cw[0]);
   });
 
   test('editing goes source in, source out, round after round', () => {
-    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+    let set = insert(empty(), 1, level, rect(0, 0, 10, 10)).set;
 
     for (let k = 1; k <= 5; k++) {
       set = update(set, 1, rect(k, 0, 10, 10)).set;
@@ -112,9 +122,9 @@ describe('sources', () => {
   });
 
   test('picking finds the polygons whose box covers a point', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(50, 50, 10, 10) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(50, 50, 10, 10) },
     ]);
 
     expect(overlapping(set, box(1, 1, 2, 2))).toEqual([1]);
@@ -134,9 +144,9 @@ describe('incremental equals rebuilt', () => {
   }
 
   test('after a move that leaves the neighbours alone', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(100, 0, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(100, 0, 10, 10) },
     ]);
 
     set = update(set, 1, rect(2, 2, 10, 10)).set;
@@ -144,9 +154,9 @@ describe('incremental equals rebuilt', () => {
   });
 
   test('after a move into and back out of an overlap', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(40, 0, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(40, 0, 10, 10) },
     ]);
 
     set = update(set, 1, rect(35, 0, 10, 10)).set;
@@ -158,10 +168,10 @@ describe('incremental equals rebuilt', () => {
 
   test('across a chain, where the edit never touches the far end', () => {
     // A-B-C: moving A must leave C's share alone and still come out right.
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(8, 0, 10, 10) },
-      { id: 3, kind: level, shape: rect(16, 0, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(8, 0, 10, 10) },
+      { id: 3, slot: level, shape: rect(16, 0, 10, 10) },
     ]);
 
     const far = pieces(set).filter(p => p.source === 3).map(p => p.id);
@@ -173,7 +183,7 @@ describe('incremental equals rebuilt', () => {
   });
 
   test('after inserting and removing, over and over', () => {
-    let set = fromEntries([{ id: 1, kind: level, shape: rect(0, 0, 20, 20) }]);
+    let set = from([{ id: 1, slot: level, shape: rect(0, 0, 20, 20) }]);
 
     for (let k = 0; k < 6; k++) {
       set = insert(set, 2, solid, rect(5 + k, 5, 4, 4)).set;
@@ -185,10 +195,10 @@ describe('incremental equals rebuilt', () => {
   });
 
   test('several edits at once match the same edits rebuilt', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(8, 0, 10, 10) },
-      { id: 3, kind: solid, shape: rect(4, 4, 3, 3) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(8, 0, 10, 10) },
+      { id: 3, slot: solid, shape: rect(4, 4, 3, 3) },
     ]);
 
     const edits: Edit[] = [
@@ -210,7 +220,7 @@ describe('a polygon with nothing left', () => {
   // gone for the rest of the session.
 
   test('an update to nothing empties its share of the outline', () => {
-    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+    let set = insert(empty(), 1, level, rect(0, 0, 10, 10)).set;
 
     set = update(set, 1, []).set;
 
@@ -219,7 +229,7 @@ describe('a polygon with nothing left', () => {
   });
 
   test('and an update back brings it back', () => {
-    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+    let set = insert(empty(), 1, level, rect(0, 0, 10, 10)).set;
 
     set = update(set, 1, []).set;
     set = update(set, 1, rect(0, 0, 10, 10)).set;
@@ -231,7 +241,7 @@ describe('a polygon with nothing left', () => {
   test('scrubbing a depth down through nothing and back, one step at a time', () => {
     // A drag, frame by frame. Every step goes in as an update, because from
     // the caller's side the polygon never stopped existing.
-    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 100, 100)).set;
+    let set = insert(empty(), 1, level, rect(0, 0, 100, 100)).set;
 
     const at = (d: number): Shape => (d >= 50 ? [] : rect(d, d, 100 - 2 * d, 100 - 2 * d));
 
@@ -246,14 +256,14 @@ describe('a polygon with nothing left', () => {
     // The kind is the thing an update cannot supply, so losing it is what made
     // the polygon unrecoverable. What was subtracted has to come back
     // subtracted.
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 20, 20) },
-      { id: 2, kind: solid, shape: rect(5, 5, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 20, 20) },
+      { id: 2, slot: solid, shape: rect(5, 5, 10, 10) },
     ]);
 
     set = update(set, 2, []).set;
 
-    expect(entry(set, 2)?.kind).toBe(solid);
+    expect(entry(set, 2)?.slot).toBe(solid);
     expect(entry(set, 2)?.shape).toEqual([]);
 
     // Nothing to bury the room, so the room is whole.
@@ -266,7 +276,7 @@ describe('a polygon with nothing left', () => {
   });
 
   test('it is not returned by an overlap search while it is empty', () => {
-    let set = insert(emptyWorldSet, 1, level, rect(0, 0, 10, 10)).set;
+    let set = insert(empty(), 1, level, rect(0, 0, 10, 10)).set;
 
     expect(overlapping(set, box(0, 0, 10, 10))).toEqual([1]);
 
@@ -276,9 +286,9 @@ describe('a polygon with nothing left', () => {
   });
 
   test('removing one that is already empty leaves the set alone', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(100, 0, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(100, 0, 10, 10) },
     ]);
 
     set = update(set, 2, []).set;
@@ -291,7 +301,7 @@ describe('a polygon with nothing left', () => {
 
 describe('the diff', () => {
   test('replaying every diff lands where the set is', () => {
-    let set = emptyWorldSet;
+    let set = empty();
     let state = new Map<PieceId, Point[]>();
 
     const step = (edits: Edit[]) => {
@@ -303,10 +313,10 @@ describe('the diff', () => {
       expect(new Set(state.keys())).toEqual(new Set(held(set).keys()));
     };
 
-    step([{ op: 'insert', id: 1, kind: level, shape: rect(0, 0, 10, 10) }]);
-    step([{ op: 'insert', id: 2, kind: level, shape: rect(5, 0, 10, 10) }]);
+    step([{ op: 'insert', id: 1, slot: level, shape: rect(0, 0, 10, 10) }]);
+    step([{ op: 'insert', id: 2, slot: level, shape: rect(5, 0, 10, 10) }]);
     step([{ op: 'update', id: 1, shape: rect(0, 2, 10, 10) }]);
-    step([{ op: 'insert', id: 3, kind: solid, shape: rect(6, 3, 2, 2) }]);
+    step([{ op: 'insert', id: 3, slot: solid, shape: rect(6, 3, 2, 2) }]);
     step([{ op: 'remove', id: 2 }]);
     step([{ op: 'remove', id: 1 }]);
     step([{ op: 'remove', id: 3 }]);
@@ -315,9 +325,9 @@ describe('the diff', () => {
   });
 
   test('a polygon the edit never reaches keeps its pieces', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(200, 0, 10, 10) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(200, 0, 10, 10) },
     ]);
 
     const far = pieces(set).filter(p => p.source === 2).map(p => p.id);
@@ -328,9 +338,9 @@ describe('the diff', () => {
   });
 
   test('removing a polygon frees its neighbour, and says so', () => {
-    let set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 20, 20) },
-      { id: 2, kind: level, shape: rect(10, 0, 20, 20) },
+    let set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 20, 20) },
+      { id: 2, slot: level, shape: rect(10, 0, 20, 20) },
     ]);
 
     const { set: after, diff } = remove(set, 2);
@@ -340,7 +350,7 @@ describe('the diff', () => {
   });
 
   test('piece ids are never handed out twice', () => {
-    let set = fromEntries([{ id: 1, kind: level, shape: rect(0, 0, 10, 10) }]);
+    let set = from([{ id: 1, slot: level, shape: rect(0, 0, 10, 10) }]);
     const seen = new Set<PieceId>(pieces(set).map(p => p.id));
 
     for (let k = 1; k <= 8; k++) {
@@ -358,10 +368,10 @@ describe('the diff', () => {
 
 describe('runs', () => {
   test('every piece belongs to exactly one source, and it exists', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(8, 0, 10, 10) },
-      { id: 3, kind: solid, shape: rect(4, 4, 2, 2) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(8, 0, 10, 10) },
+      { id: 3, slot: solid, shape: rect(4, 4, 2, 2) },
     ]);
 
     for (const p of pieces(set)) {
@@ -370,9 +380,9 @@ describe('runs', () => {
   });
 
   test('a run is open and carries at least one edge', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(5, 0, 10, 10) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(5, 0, 10, 10) },
     ]);
 
     for (const p of pieces(set)) {
@@ -381,9 +391,9 @@ describe('runs', () => {
   });
 
   test('every run lies on its own polygon and nowhere else', () => {
-    const set = fromEntries([
-      { id: 1, kind: level, shape: rect(0, 0, 10, 10) },
-      { id: 2, kind: level, shape: rect(6, 0, 10, 10) },
+    const set = from([
+      { id: 1, slot: level, shape: rect(0, 0, 10, 10) },
+      { id: 2, slot: level, shape: rect(6, 0, 10, 10) },
     ]);
 
     for (const p of pieces(set)) {

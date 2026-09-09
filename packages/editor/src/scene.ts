@@ -56,26 +56,34 @@ import {
   Footing,
   GroupId,
   IconType,
+  FLOOR,
   Id,
   KINDS,
+  SETS,
+  SLOTS,
+  SOLID,
   Path,
   PathId,
   Vertex,
   Polygon,
   PolygonId,
   PolygonKind,
-  PolygonType,
+  SetName,
   Transform,
   Version,
   VersionId,
   VertexId,
   World,
   enclosing,
+  inside,
+  kindOf,
   kindKey,
   opened,
   parentOf,
   ringsOf,
+  inverted,
   sameKind,
+  slotOf,
   standing,
   within,
 } from './types';
@@ -2089,33 +2097,55 @@ export function contributing(
  * would change what the boundary is *made of* half way through a stretch,
  * which no interpolation describes.
  */
-/** The four sides a group can contribute to, in the order `sideOf` numbers
- * them. Level-add keeps the group's own id; the other three are given one. */
+/** The kinds a group can contribute as, in the order `sideOf` numbers them.
+ * The first keeps the group's own id; the rest are given one. */
 const SIDES: readonly PolygonKind[] = KINDS;
 
 /**
  * The id one side of a group goes by.
  *
- * A group holding a room and a pillar contributes to both sides of the level,
- * and one id names one contributor: the added union and the subtracted union
- * have different boundaries, take different tracks, and are told apart
- * everywhere downstream by nothing but this number. Its floor is two more of
- * them again, and for the same reason.
+ * A group holding a room and a pillar contributes as both a level and a solid,
+ * and one id names one contributor: the two unions have different boundaries,
+ * take different tracks, and are told apart everywhere downstream by nothing
+ * but this number. Its floor and its voids are more of them again, and for the
+ * same reason.
  *
  * So every side but the first gets an id of its own, and the first keeps the
  * group's. Negative, because ids come from a counter that only counts up, so
  * nothing authored can ever collide with one — and reversible, so what it
  * belongs to can always be read back.
  */
-export function sideOf(id: GroupId, kind: PolygonKind): Id {
+export function sideOf(id: Id, kind: PolygonKind): Id {
   const at = SIDES.findIndex(k => sameKind(k, kind));
 
   return at <= 0 ? id : -(id * SIDES.length + at);
 }
 
 /** Whose side that is, or nothing where the id is an ordinary one. */
-export function sidedWith(id: Id): GroupId | null {
+export function sidedWith(id: Id): Id | null {
   return id < 0 ? Math.floor(-id / SIDES.length) : null;
+}
+
+/**
+ * One kind as the parts it plays, one per set it takes part in, each narrowed
+ * to that set.
+ *
+ * All but one kind is in a single set and comes back as itself. The exception
+ * is a void cutting the solids and the floors at once, which is two members of
+ * two sets that happen to have been drawn once — and everything downstream is
+ * built on a contributor belonging to one set, because for every other kind
+ * that is simply true. So the split happens here, where the contribution is
+ * made, rather than being carried the whole way down.
+ *
+ * The first part keeps the thing's own id; a second is minted by `sideOf` the
+ * way a group's sides are. Which means only the floor half of a void that cuts
+ * both is ever renamed, and a polygon's own id still names the polygon
+ * everywhere it did before.
+ */
+export function parts(kind: PolygonKind): PolygonKind[] {
+  return kind.type === 'void' && kind.from === (SOLID | FLOOR)
+    ? [{ type: 'void', from: SOLID }, { type: 'void', from: FLOOR }]
+    : [kind];
 }
 
 export interface Standing {
@@ -2179,18 +2209,14 @@ export function contributed(
     const d = standing(id)?.depth ?? 0;
 
     // What is taken away goes the other way, and this is not a choice — it is
-    // what eroding the group as one shape *means*. What the group puts into a
-    // set is `add - subtract`, and pulling that boundary in by `d` pulls it in
-    // around the holes too, which is the holes getting bigger:
+    // what eroding the group as one shape *means*: eroding a complement is
+    // dilating, so the sign alternates with how deeply a slot is nested. See
+    // `inverted` in the game's `world.ts` for the identity.
     //
-    //   erode(A - B, d) = erode(A, d) - erode(B, -d)
-    //
-    // exactly, since eroding a complement is dilating. The two sides have to
-    // be kept apart for the CSG — a group's walls cut the rooms around it, not
-    // only its own — so the identity is what lets them be eroded apart and
-    // still come out as though they had been eroded together. A pillar shrunk
-    // along with its room leaves a gap that never narrows.
-    const depth = kind.op === 'subtract' ? -d : d;
+    // The slots have to be kept apart for the CSG — a group's walls cut the
+    // rooms around it, not only its own — so the identity is what lets them be
+    // eroded apart and still come out as though they had been eroded together.
+    const depth = inverted(kind) ? -d : d;
     const out = depth === 0 || all.length === 0 ? all : erode(all, depth);
 
     held?.set(key, out);
@@ -2202,14 +2228,16 @@ export function contributed(
     const it = mine.get(id);
 
     if (it !== undefined) {
-      out.push({
-        id,
-        kind: { type: it.polygon.type, op: it.polygon.op },
-        shape: it.shape,
-        frame: it.frame,
-        // Already an arrangement, whatever its depth. See `plainly`.
-        simple: true,
-        keep: it.keep,
+      parts(kindOf(it.polygon)).forEach((kind, k) => {
+        out.push({
+          id: k === 0 ? id : sideOf(id, kind),
+          kind,
+          shape: it.shape,
+          frame: it.frame,
+          // Already an arrangement, whatever its depth. See `plainly`.
+          simple: true,
+          keep: it.keep,
+        });
       });
 
       return;
@@ -2219,10 +2247,12 @@ export function contributed(
 
     if (world.groups.get(id) === undefined || how === null) return;
 
-    for (const kind of SIDES) {
-      const shape = offer(id, kind);
+    for (const side of SIDES) {
+      const shape = offer(id, side);
 
-      if (shape.length !== 0) {
+      if (shape.length === 0) continue;
+
+      for (const kind of parts(side)) {
         out.push({
           id: sideOf(id, kind),
           kind,
@@ -2426,28 +2456,34 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
 
   const out: Occupied[] = [];
 
-  /** One set from the two sides of it, which is the same sum either set is. */
+  /** One set taken out of another, which is what every step of the rule is. */
   const settled = (add: Shape, cut: Shape): Shape =>
     add.length === 0 || cut.length === 0 ? add : subtract(add, cut);
+
+  const LEVEL: PolygonKind = { type: 'level' };
+  const SOLIDS: PolygonKind = { type: 'solid' };
+  const FLOORS: PolygonKind = { type: 'floor' };
 
   for (const [id, side] of sides) {
     const at = (k: PolygonKind): Shape => side.get(kindKey(k)) ?? [];
 
-    const level = settled(at(KINDS[0]), at(KINDS[1]));
-    const floor = settled(at(KINDS[2]), at(KINDS[3]));
+    // The rule from the inside out, which is what the nesting is: the solids
+    // with their voids taken out, then that taken out of the level. See
+    // `inside` in the game's `world.ts`.
+    const solids = settled(at(SOLIDS), at({ type: 'void', from: SOLID }));
+    const level = settled(at(LEVEL), solids);
+    const floor = settled(at(FLOORS), at({ type: 'void', from: FLOOR }));
 
     if (level.length !== 0) {
-      out.push({ id, kind: KINDS[0], shape: level, floor });
+      out.push({ id, kind: LEVEL, shape: level, floor });
       continue;
     }
 
     // No level side to take the pillars out of, so the pillars are what it is.
     // A group must be visible: it is the thing being picked and dragged, and
     // one made of holes is still a thing.
-    const cut = at(KINDS[1]);
-
-    if (cut.length !== 0) {
-      out.push({ id, kind: KINDS[1], shape: cut, floor });
+    if (solids.length !== 0) {
+      out.push({ id, kind: SOLIDS, shape: solids, floor });
       continue;
     }
 
@@ -2456,7 +2492,7 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
     // is drawn as pillars. `shape` empty is what says so on top of `kind`, and
     // it is what stops the drawing clipping the floor to an outline that is
     // not there.
-    out.push({ id, kind: KINDS[2], shape: [], floor });
+    out.push({ id, kind: FLOORS, shape: [], floor });
   }
 
   return out;
@@ -2650,9 +2686,9 @@ export function reaching(world: World, id: Id, path: readonly GroupId[]): Id {
 /** Resolved polygons as contributors, one for one. What the CSG sees wherever
  * no group is eroding, and what the bake works in. */
 export function plainly(items: readonly Resolved[]): Contributed[] {
-  return items.map(it => ({
-    id: it.id,
-    kind: { type: it.polygon.type, op: it.polygon.op },
+  return items.flatMap(it => parts(kindOf(it.polygon)).map((kind, k) => ({
+    id: k === 0 ? it.id : sideOf(it.id, kind),
+    kind,
     shape: it.shape,
     frame: it.frame,
     keep: it.keep,
@@ -2664,7 +2700,7 @@ export function plainly(items: readonly Resolved[]): Contributed[] {
     // costs an arrangement per polygon per evaluation, for an answer that is
     // already in hand.
     simple: true,
-  }));
+  })));
 }
 
 /**
@@ -2707,9 +2743,13 @@ export interface Live {
   seen: Map<Id, Contributed>
 }
 
+/** An empty set of each, each knowing the shape of the set it is. */
+export const emptySet = (set: SetName): WorldSet =>
+  emptyWorldSet(SLOTS[set], on => inside(set, on));
+
 export const EMPTY_LIVE: Live = {
-  level: emptyWorldSet,
-  floor: emptyWorldSet,
+  level: emptySet('level'),
+  floor: emptySet('floor'),
   seen: new Map(),
 };
 
@@ -2751,7 +2791,7 @@ export function sourced(l: Live): { points: Point[], corner: boolean[] }[] {
  */
 export function live(previous: Live, items: readonly Contributed[]): Live {
   const seen = new Map<Id, Contributed>();
-  const edits = new Map<PolygonType, SetEdit[]>([['level', []], ['floor', []]]);
+  const edits = new Map<SetName, SetEdit[]>([['level', []], ['floor', []]]);
 
   for (const it of items) {
     seen.set(it.id, it);
@@ -2760,22 +2800,39 @@ export function live(previous: Live, items: readonly Contributed[]): Live {
     const moved = was === undefined || !unmoved(was.shape, it.shape);
     const retyped = was !== undefined && !sameKind(was.kind, it.kind);
 
-    if (retyped && was.kind.type !== it.kind.type) {
-      edits.get(was.kind.type)!.push({ op: 'remove', id: it.id });
+    // Each set on its own, because one kind can be in both: a void cutting the
+    // solids and the floors alike is a member of each, under the same id and
+    // in slots that have nothing to do with one another. The two sets are two
+    // id spaces, so there is nothing to tell apart.
+    for (const set of SETS) {
+      const slot = slotOf(it.kind, set);
+      const before = was === undefined ? null : slotOf(was.kind, set);
+
+      // Gone from this set — a retype that dropped it, or one that never had
+      // it. Either way it is removed and nothing is inserted.
+      if (slot === null) {
+        if (before !== null) edits.get(set)!.push({ op: 'remove', id: it.id });
+        continue;
+      }
+
+      if (!moved && slot === before) continue;
+
+      // A slot it did not have has to go in as an insert: an update keeps the
+      // slot it had.
+      edits.get(set)!.push(
+        before === null || slot !== before
+          ? { op: 'insert', id: it.id, slot, shape: it.shape, simple: it.simple }
+          : { op: 'update', id: it.id, shape: it.shape, simple: it.simple },
+      );
     }
-
-    if (!moved && !retyped) continue;
-
-    // A retype has to go in as an insert: an update keeps the kind it had.
-    edits.get(it.kind.type)!.push(
-      was === undefined || retyped
-        ? { op: 'insert', id: it.id, kind: it.kind.op, shape: it.shape, simple: it.simple }
-        : { op: 'update', id: it.id, shape: it.shape, simple: it.simple },
-    );
   }
 
   for (const [id, was] of previous.seen) {
-    if (!seen.has(id)) edits.get(was.kind.type)!.push({ op: 'remove', id });
+    if (seen.has(id)) continue;
+
+    for (const set of SETS) {
+      if (slotOf(was.kind, set) !== null) edits.get(set)!.push({ op: 'remove', id });
+    }
   }
 
   const level = edits.get('level')!, floor = edits.get('floor')!;
@@ -3406,8 +3463,7 @@ export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping
 
     return [{
       kind: 'polygon',
-      type: it.polygon.type,
-      op: it.polygon.op,
+      ...kindOf(it.polygon),
       points,
       death: outliving(it.polygon, v),
       edits: layers(id, it.frame, it.erosion, it.over),
@@ -3556,8 +3612,7 @@ function restore(
   const polygons = new Map(world.polygons);
 
   polygons.set(id, {
-    type: clip.type,
-    op: clip.op,
+    ...kindOf(clip),
     birth: v,
     death: dying(world, v, clip.death),
     points,

@@ -66,6 +66,7 @@ import {
   Id,
   PathId,
   PolygonId,
+  FLOOR,
   PolygonKind,
   Transform,
   VERSIONS,
@@ -86,15 +87,13 @@ function oneRing(ring: Point[]): Vertex[] {
  * A polygon kind by the short name these tests call it: a room, a pillar, a
  * floor, and a hole cut in a floor.
  *
- * The four are two questions — which set, and which way — and writing the pair
- * out at every call would bury what each test is about. See `PolygonKind`.
+ * Three of them are the kind's own name. `hole` is a void over the floors,
+ * which is what a hole in one is. See `PolygonKind`.
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
-const kind = (k: Named): PolygonKind => ({
-  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
-  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
-});
+const kind = (k: Named): PolygonKind =>
+  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -151,8 +150,8 @@ const runLength = (runs: Point[][]) =>
 
 /** The perimeter the outline ought to have, taken the ring way round. */
 function outlineOf(items: Resolved[]): number {
-  const level = items.filter(i => i.polygon.op === 'add').flatMap(i => i.shape);
-  const solid = items.filter(i => i.polygon.op === 'subtract').flatMap(i => i.shape);
+  const level = items.filter(i => i.polygon.type === 'level').flatMap(i => i.shape);
+  const solid = items.filter(i => i.polygon.type === 'solid').flatMap(i => i.shape);
   const shape: Shape = solid.length === 0
     ? simplify(level)
     : combine(level, solid, OpSubtract);
@@ -1907,13 +1906,13 @@ describe('a group erodes as one shape', () => {
     const w = moved(made.world, 0, made.id, { erosion: 5 });
     const out = contributing(w, 0, resolveAt(w, 0));
 
-    expect(out.map(c => c.kind.op).sort()).toEqual(['add', 'subtract']);
+    expect(out.map(c => c.kind.type).sort()).toEqual(['level', 'solid']);
 
     // The room pulls in and the pillar pushes out. Eroding the group as one
     // shape pulls in the boundary of `level - solid`, and the boundary of a
     // hole pulled inward is the hole getting bigger.
-    expect(shapeArea(out.find(c => c.kind.op === 'add')!.shape)).toBeCloseTo(90 * 90, 6);
-    expect(shapeArea(out.find(c => c.kind.op === 'subtract')!.shape)).toBeCloseTo(30 * 30, 6);
+    expect(shapeArea(out.find(c => c.kind.type === 'level')!.shape)).toBeCloseTo(90 * 90, 6);
+    expect(shapeArea(out.find(c => c.kind.type === 'solid')!.shape)).toBeCloseTo(30 * 30, 6);
   });
 
   test('what the group is eroded by is the width of what it walls off', () => {
@@ -2273,7 +2272,7 @@ describe('going inside a group', () => {
 
     // Two contributors under one group: there is no shape that is the union of
     // a room and the pillar standing in it.
-    expect(shown.map(c => c.kind.op).sort()).toEqual(['add', 'subtract']);
+    expect(shown.map(c => c.kind.type).sort()).toEqual(['level', 'solid']);
     expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id, made.id]);
   });
 });

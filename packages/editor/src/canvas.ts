@@ -105,6 +105,8 @@ import {
   ArtefactId,
   FIGURES,
   KINDS,
+  inverted,
+  slotOf,
   NGON_MAX,
   NGON_MIN,
   EMPTY_SELECTION,
@@ -2115,8 +2117,9 @@ export function worldCanvas(
                 yield* transforming(e.code, mode);
               }
               else {
-                // The four in the order `KINDS` names them: room, pillar,
-                // floor, hole in the floor.
+                // In the order `KINDS` names them: room, pillar, floor, and
+                // then the three voids — over the solids, over the floors,
+                // and over both.
                 const n = Number(e.code.match(/^Digit([1-9])$/)?.[1] ?? NaN);
 
                 if (n >= 1 && n <= KINDS.length) retype(KINDS[n - 1]);
@@ -3199,7 +3202,7 @@ function moved(
     out.set(g.id, {
       was: g.shape,
       now: now.get(g.id) ?? [],
-      depth: g.kind.op === 'subtract' ? -d : d,
+      depth: inverted(g.kind) ? -d : d,
     });
   }
 
@@ -3332,7 +3335,10 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
     return null;
   }
 
-  if (kind.type === 'level') {
+  // Hatched where it cuts the level, dotted where it cuts the floor — a void
+  // is drawn as whatever it is pointed at, and one pointed at both is drawn
+  // in the level's terms, that being the picture it is mostly read against.
+  if (slotOf(kind, 'level') !== null) {
     on.strokeStyle = theme.solidHatch;
     on.lineWidth = 1;
 
@@ -3368,9 +3374,11 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
  * with anything. The path is the caller's: it is traced once and used for the
  * fill, the picked fill over it and the stroke over that. */
 function shaded(ctx: CanvasRenderingContext2D, kind: PolygonKind): void {
-  if (kind.op === 'add') {
-    if (kind.type === 'level') return;
+  // A room is the plain case and is left unfilled. A floor is filled flat.
+  // What cuts — a solid, a void — is hatched, so that a hole reads as one.
+  if (kind.type === 'level') return;
 
+  if (kind.type === 'floor') {
     ctx.fillStyle = theme.floorFill;
     ctx.fill();
 

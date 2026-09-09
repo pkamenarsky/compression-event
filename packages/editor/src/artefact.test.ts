@@ -30,22 +30,20 @@ import {
   ungrouped,
   withEdit,
 } from './scene';
-import { ARTEFACTS, Clipping, EMPTY_TRANSFORM, World, emptyWorld, within, PolygonKind } from './types';
+import { ARTEFACTS, Clipping, EMPTY_TRANSFORM, FLOOR, World, emptyWorld, within, PolygonKind } from './types';
 
 /** One artefact, put down at `v` and nowhere else. */
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
  * floor, and a hole cut in a floor.
  *
- * The four are two questions — which set, and which way — and writing the pair
- * out at every call would bury what each test is about. See `PolygonKind`.
+ * Three of them are the kind's own name. `hole` is a void over the floors,
+ * which is what a hole in one is. See `PolygonKind`.
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
-const kind = (k: Named): PolygonKind => ({
-  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
-  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
-});
+const kind = (k: Named): PolygonKind =>
+  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
 function dropped(v = 0, x = 10, y = 20): { world: World, id: number } {
   return addArtefact(emptyWorld(), 'key', { x, y }, v, TOP);

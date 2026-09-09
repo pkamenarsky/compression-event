@@ -33,7 +33,7 @@ import {
 import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, IDENTITY, contributing, placeAt, resolveAt } from './scene';
-import { ArtefactId, Id, PolygonId, PolygonType, VersionId, World } from './types';
+import { ArtefactId, Id, PolygonId, SLOTS, SetName, VersionId, World, slotOf } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -326,8 +326,8 @@ function shapeOf(it: Contributed): Shape {
 }
 
 /**
- * One set at one version, as closed rings: everything added unioned, and
- * everything subtracted taken back out.
+ * One set at one version, as closed rings: each slot unioned on its own, and
+ * `inside` deciding what covering which of them means.
  *
  * The same set the bake cuts into stretches, evaluated at one instant and left
  * whole instead of being cut into runs. Runs are what the drawing wants,
@@ -340,8 +340,8 @@ function shapeOf(it: Contributed): Shape {
  * would be nothing for a diff to skip, and this runs once where the editor's
  * own set runs once a frame.
  */
-export function setAt(world: World, v: VersionId, type: PolygonType): Shape {
-  let added: Shape = [], cut: Shape = [];
+export function setAt(world: World, v: VersionId, set: SetName): Shape {
+  const slots: Shape[] = Array.from({ length: SLOTS[set] }, () => []);
 
   // Through `contributing`, which is what makes this the same set the editor
   // draws rather than a second one that usually agrees. A group with a depth on
@@ -350,15 +350,24 @@ export function setAt(world: World, v: VersionId, type: PolygonType): Shape {
   // at all: it read each polygon's own erosion, found none, and shipped the
   // version before it under the next version's name.
   for (const it of contributing(world, v, resolveAt(world, v))) {
-    if (it.kind.type !== type) continue;
+    const slot = slotOf(it.kind, set);
 
-    if (it.kind.op === 'add') added = union(added, shapeOf(it));
-    else cut = union(cut, shapeOf(it));
+    if (slot === null) continue;
+
+    slots[slot] = union(slots[slot], shapeOf(it));
   }
 
-  if (added.length === 0) return [];
+  // The rule worked from the inside out, which is what the nesting is:
+  // `level - (solid - void)` for the level, `floor - void` for the floor. Each
+  // slot has the one below it taken out of it, and the answer is the outermost.
+  // See `inside` in the game's `world.ts`, which says the same thing pointwise.
+  let out = slots[slots.length - 1];
 
-  return cut.length === 0 ? added : subtract(added, cut);
+  for (let k = slots.length - 2; k >= 0; k--) {
+    out = out.length === 0 || slots[k].length === 0 ? slots[k] : subtract(slots[k], out);
+  }
+
+  return out;
 }
 
 /** The level: what collision and the walls are made of. */

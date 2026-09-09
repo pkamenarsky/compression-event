@@ -1,5 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
+import { SLOTS, inside } from '@ce/game/world';
 import {
   Member,
   ngon,
@@ -1251,11 +1252,17 @@ describe('morph', () => {
 // boundaryRuns
 // -----------------------------------------------------------------------------
 
-const member = (id: number, kind: 'add' | 'subtract', r: Ring): Member =>
-  ({ id, kind, shape: [r] });
+const member = (id: number, slot: number, r: Ring): Member => ({ id, slot, shape: [r] });
 
-const lv = (id: number, r: Ring): Member => member(id, 'add', r);
-const sd = (id: number, r: Ring): Member => member(id, 'subtract', r);
+/** A room and a pillar: the level's first two slots, which is as much of the
+ * rule as these tests are about. */
+const lv = (id: number, r: Ring): Member => member(id, 0, r);
+const sd = (id: number, r: Ring): Member => member(id, 1, r);
+
+/** The level's rule and how many slots it is over, which every call here is
+ * asked under. See `inside` in the game's `world.ts`. */
+const SLOT_COUNT = SLOTS.level;
+const rule = (on: readonly boolean[]) => inside('level', on);
 
 /** Total length of a set of open runs. */
 const runLength = (runs: readonly { points: Point[] }[]) =>
@@ -1268,7 +1275,7 @@ const perimeter = (r: Ring) =>
 
 /** Every member's share, added up: the whole outline, each piece once. */
 const wholeOutline = (ms: Member[]) => ms.reduce(
-  (t, m) => t + runLength(boundaryRuns(m, ms.filter(o => o.id !== m.id))), 0);
+  (t, m) => t + runLength(boundaryRuns(m, ms.filter(o => o.id !== m.id), SLOT_COUNT, rule)), 0);
 
 describe('boundaryRuns', () => {
   test('a self-crossing outline names each crossing one way, not two', () => {
@@ -1281,7 +1288,7 @@ describe('boundaryRuns', () => {
       { x: 800, y: 600 }, { x: 280.4, y: 300 }, { x: 1400, y: 500 },
     ];
 
-    const runs = boundaryRuns({ id: 0, kind: 'add', shape: simplify([tangle]) }, []);
+    const runs = boundaryRuns({ id: 0, slot: 0, shape: simplify([tangle]) }, [], SLOT_COUNT, rule);
     const named = new Map<string, string>();
 
     for (const run of runs) {
@@ -1302,14 +1309,14 @@ describe('boundaryRuns', () => {
   });
 
   test('a lone polygon keeps its whole boundary', () => {
-    expect(runLength(boundaryRuns(lv(0, rect(0, 0, 10, 10)), []))).toBeCloseTo(40, 6);
+    expect(runLength(boundaryRuns(lv(0, rect(0, 0, 10, 10)), [], SLOT_COUNT, rule))).toBeCloseTo(40, 6);
   });
 
   test('a polygon swallowed whole contributes nothing', () => {
     const inner = lv(1, rect(2, 2, 2, 2)), outer = lv(0, rect(0, 0, 10, 10));
 
-    expect(runLength(boundaryRuns(inner, [outer]))).toBeCloseTo(0, 6);
-    expect(runLength(boundaryRuns(outer, [inner]))).toBeCloseTo(40, 6);
+    expect(runLength(boundaryRuns(inner, [outer], SLOT_COUNT, rule))).toBeCloseTo(0, 6);
+    expect(runLength(boundaryRuns(outer, [inner], SLOT_COUNT, rule))).toBeCloseTo(40, 6);
   });
 
   test('overlapping squares split the outline between them, once each', () => {
@@ -1327,7 +1334,7 @@ describe('boundaryRuns', () => {
     const b = lv(1, rect(8, 0, 10, 10));
     const c = lv(2, rect(16, 0, 10, 10));
 
-    expect(runLength(boundaryRuns(a, [b, c]))).toBeCloseTo(runLength(boundaryRuns(a, [b])), 6);
+    expect(runLength(boundaryRuns(a, [b, c], SLOT_COUNT, rule))).toBeCloseTo(runLength(boundaryRuns(a, [b], SLOT_COUNT, rule)), 6);
   });
 
   test('every share together rebuilds the whole outline', () => {
@@ -1346,14 +1353,14 @@ describe('boundaryRuns', () => {
   test('a solid cuts the level that contains it', () => {
     const room = lv(0, rect(0, 0, 20, 20)), pillar = sd(1, rect(8, 8, 4, 4));
 
-    expect(runLength(boundaryRuns(room, [pillar]))).toBeCloseTo(80, 6);
-    expect(runLength(boundaryRuns(pillar, [room]))).toBeCloseTo(16, 6);
+    expect(runLength(boundaryRuns(room, [pillar], SLOT_COUNT, rule))).toBeCloseTo(80, 6);
+    expect(runLength(boundaryRuns(pillar, [room], SLOT_COUNT, rule))).toBeCloseTo(16, 6);
   });
 
   test('a solid outside every level contributes nothing', () => {
     const room = lv(0, rect(0, 0, 20, 20)), away = sd(1, rect(50, 50, 4, 4));
 
-    expect(runLength(boundaryRuns(away, [room]))).toBeCloseTo(0, 6);
+    expect(runLength(boundaryRuns(away, [room], SLOT_COUNT, rule))).toBeCloseTo(0, 6);
   });
 
   test('id order decides a shared edge, not argument order', () => {
@@ -1361,7 +1368,7 @@ describe('boundaryRuns', () => {
     // shared edge belongs to the same one of them.
     const a = lv(0, rect(0, 0, 10, 10)), b = lv(1, rect(10, 0, 10, 10));
 
-    expect(runLength(boundaryRuns(a, [b])) + runLength(boundaryRuns(b, [a]))).toBeCloseTo(60, 6);
+    expect(runLength(boundaryRuns(a, [b], SLOT_COUNT, rule)) + runLength(boundaryRuns(b, [a], SLOT_COUNT, rule))).toBeCloseTo(60, 6);
   });
 
   test('two polygons on exactly the same ground are counted once', () => {
@@ -1369,8 +1376,8 @@ describe('boundaryRuns', () => {
     // claimed twice unless rank settles it. The lower id takes the lot.
     const a = lv(3, rect(0, 0, 10, 10)), b = lv(7, rect(0, 0, 10, 10));
 
-    expect(runLength(boundaryRuns(a, [b]))).toBeCloseTo(40, 6);
-    expect(runLength(boundaryRuns(b, [a]))).toBeCloseTo(0, 6);
+    expect(runLength(boundaryRuns(a, [b], SLOT_COUNT, rule))).toBeCloseTo(40, 6);
+    expect(runLength(boundaryRuns(b, [a], SLOT_COUNT, rule))).toBeCloseTo(0, 6);
   });
 
   test('a shared ground gives the same answer as a private one', () => {
@@ -1382,13 +1389,13 @@ describe('boundaryRuns', () => {
       sd(4, rect(1, 1, 2, 2)),
     ];
 
-    const on = ground(ms);
+    const on = ground(ms, SLOT_COUNT);
 
     for (const m of ms) {
       const others = ms.filter(o => o.id !== m.id);
 
-      expect(runLength(boundaryRuns(m, others, on)))
-        .toBeCloseTo(runLength(boundaryRuns(m, others)), 6);
+      expect(runLength(boundaryRuns(m, others, SLOT_COUNT, rule, on)))
+        .toBeCloseTo(runLength(boundaryRuns(m, others, SLOT_COUNT, rule)), 6);
     }
   });
 });
@@ -1448,7 +1455,7 @@ describe('a crossing reached by two routes is one point', () => {
 
 /** The flags for one member's share, run by run. */
 const cornersOf = (m: Member, others: Member[] = []) =>
-  boundaryRuns(m, others).map(r => r.corner);
+  boundaryRuns(m, others, SLOT_COUNT, rule).map(r => r.corner);
 
 describe('what counts as a corner', () => {
   test('a lone room turns at every point of it', () => {
@@ -1499,7 +1506,7 @@ describe('what counts as a corner', () => {
     const spur = lv(1, rect(100, 20, 60, 40));
 
     for (const [m, others] of [[room, [spur]], [spur, [room]]] as [Member, Member[]][]) {
-      const ends = boundaryRuns(m, others)
+      const ends = boundaryRuns(m, others, SLOT_COUNT, rule)
         .map(r => [r.corner[0], r.corner[r.corner.length - 1]]);
 
       expect(ends.flat()).toEqual(ends.flat().map(() => true));
@@ -1534,7 +1541,7 @@ describe('what counts as a corner', () => {
       { x: -351.984375, y: -197.96875 },
     ]);
 
-    const at = boundaryRuns(solid, rooms);
+    const at = boundaryRuns(solid, rooms, SLOT_COUNT, rule);
 
     // A triangle has three corners, however many times the rooms cut its ring
     // on the way round. Ten points came back, and seven of them are flat.

@@ -13,21 +13,19 @@ import {
   removeAt,
   withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, EditorState, VERSIONS, emptyWorld, initialState, PolygonKind } from './types';
+import { EMPTY_TRANSFORM, EditorState, FLOOR, VERSIONS, emptyWorld, initialState, PolygonKind } from './types';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
  * floor, and a hole cut in a floor.
  *
- * The four are two questions — which set, and which way — and writing the pair
- * out at every call would bury what each test is about. See `PolygonKind`.
+ * Three of them are the kind's own name. `hole` is a void over the floors,
+ * which is what a hole in one is. See `PolygonKind`.
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
-const kind = (k: Named): PolygonKind => ({
-  type: k === 'floor' || k === 'hole' ? 'floor' : 'level',
-  op: k === 'solid' || k === 'hole' ? 'subtract' : 'add',
-});
+const kind = (k: Named): PolygonKind =>
+  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
 function world(): EditorState {
   const a = addPolygon(emptyWorld(), kind('level'), [
@@ -359,6 +357,46 @@ describe('save', () => {
     expect(opened.world.artefacts.size).toEqual(0);
     expect(opened.selection.artefacts).toEqual([]);
     expect(opened.selection.start).toBe(false);
+  });
+
+  test('a format-17 polygon is a set and a direction, and each pair is a kind', () => {
+    // Four pairs, and every one of them says exactly one of the four names —
+    // so nothing here is guessed at. See `FORMAT`.
+    // A world with one of each of the four, so that all four pairs are read.
+    let w = emptyWorld();
+
+    for (const k of ['level', 'solid', 'floor', 'hole'] as const) {
+      w = addPolygon(w, kind(k), [
+        { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 },
+      ], 0, TOP).world;
+    }
+
+    const file = saved({ ...world(), world: w });
+    const was: Record<string, [string, string]> = {
+      level: ['level', 'add'],
+      solid: ['level', 'subtract'],
+      floor: ['floor', 'add'],
+      void: ['floor', 'subtract'],
+    };
+
+    const old = {
+      ...file,
+      format: 17,
+      world: {
+        ...file.world,
+        polygons: file.world.polygons.map(([id, p]) => {
+          const [type, op] = was[p.type === 'void' ? 'void' : p.type];
+
+          return [id, { ...p, type, op, from: undefined }];
+        }),
+      },
+    };
+
+    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
+
+    for (const [id, p] of after.world.polygons) {
+      expect(p).toEqual(file.world.polygons.find(([q]) => q === id)![1]);
+    }
   });
 
   test('a format-3 file opens, with every corner standing throughout', () => {

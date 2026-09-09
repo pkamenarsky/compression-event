@@ -125,12 +125,24 @@ export type Cut = Shape & { readonly [walked]: true };
 export type Op = (a: boolean, b: boolean) => boolean;
 
 /**
+ * The same question asked of any number of operands: which of them cover the
+ * point, and whether that puts it in the answer.
+ *
+ * `Op` is the two-operand case and stays, because `union` and `subtract` really
+ * do have two operands and reading them as arrays would say otherwise. A set
+ * resolved out of slots has as many as it has — three for the level — and its
+ * rule is not a composition of binary ones. See `inside` in the game's
+ * `world.ts`.
+ */
+export type Rule = (on: readonly boolean[]) => boolean;
+
+/**
  * Where in the input something came from: which operand, which of its rings,
  * and which vertex or edge of that ring. Vertices and edges share a numbering —
  * edge `i` runs from vertex `i` to vertex `i + 1`.
  */
 export interface SourceRef {
-  shape: 0 | 1
+  shape: number
   ring: number
   index: number
 }
@@ -215,12 +227,12 @@ export function unionAll(shapes: readonly Shape[]): Cut {
 
   // One field over all of them, and a point is in the union when it is in any:
   // the same reading `covers` gives a neighbourhood's level side.
-  const on = ground(live.map((shape, id) => ({ id, kind: 'add' as const, shape })));
+  const slots = ground(live.map((shape, id) => ({ id, slot: 0, shape })), 1);
 
   // The arrangement's own output, which is what `Cut` means. This and
   // `combine` are the only two places one is made.
   return chain(
-    arranged(p => covers(on.add, p), () => false, OpUnion, split(raw, snap), snap),
+    arranged([p => covers(slots[0], p)], on => on[0], split(raw, snap), snap),
     snap,
   ).rings as Cut;
 }
@@ -992,7 +1004,7 @@ function scaleOf(segs: Seg[]): number {
  * `ranks` gives each ring its owner, for a shape that is several polygons
  * concatenated. A shape that is one operand is one owner, which is `which`.
  */
-function segments(shape: Shape, which: 0 | 1, ranks?: readonly number[]): Seg[] {
+function segments(shape: Shape, which: number, ranks?: readonly number[]): Seg[] {
   const out: Seg[] = [];
 
   for (let r = 0; r < shape.length; r++) {
@@ -1368,7 +1380,12 @@ export function combineTagged(
   const fa = field(a), fb = field(b);
 
   return chain(
-    arranged(p => fill(fa, p), p => fill(fb, p), op, split(raw, snap), snap),
+    arranged(
+      [p => fill(fa, p), p => fill(fb, p)],
+      on => op(on[0], on[1]),
+      split(raw, snap),
+      snap,
+    ),
     snap,
   );
 }
@@ -1439,6 +1456,30 @@ function toSegment(s: Seg, x: number, y: number): number {
 }
 
 /**
+ * Whether a point is in the set, by asking each slot and handing the answers to
+ * the rule.
+ *
+ * `where` is the caller's scratch array, filled again per point rather than
+ * built. This runs twice per segment of every arrangement in the editor and
+ * the bake alike, and there is no reason to allocate an array per call in a
+ * loop that size. The rule reads it and does not keep it.
+ *
+ * It is not where the slots cost anything, measured: a level's third slot is
+ * worth about two percent of the bake whether this allocates or not, and
+ * skipping the empty ones outright bought nothing either.
+ */
+function reading(
+  on: readonly ((p: Point) => boolean)[],
+  rule: Rule,
+  where: boolean[],
+  p: Point,
+): boolean {
+  for (let k = 0; k < on.length; k++) where[k] = on[k](p);
+
+  return rule(where);
+}
+
+/**
  * The pieces of the arrangement that belong to the answer, each turned so the
  * answer's interior is on its left.
  *
@@ -1448,9 +1489,8 @@ function toSegment(s: Seg, x: number, y: number): number {
  * in its own way of asking whether a point is inside one rather than a shape.
  */
 function arranged(
-  inA: (p: Point) => boolean,
-  inB: (p: Point) => boolean,
-  op: Op,
+  on: readonly ((p: Point) => boolean)[],
+  rule: Rule,
   segs: Seg[],
   snap: number,
 ): Seg[] {
@@ -1461,6 +1501,7 @@ function arranged(
   const seen = new Set<string>();
   const weld = welder(snap);
   const room = clearance(segs, scale * 1e-7, snap);
+  const where = new Array<boolean>(on.length);
 
   for (let k = 0; k < segs.length; k++) {
     const s = segs[k];
@@ -1479,8 +1520,8 @@ function arranged(
     const left = { x: mx + nx, y: my + ny };
     const right = { x: mx - nx, y: my - ny };
 
-    const inLeft = op(inA(left), inB(left));
-    const inRight = op(inA(right), inB(right));
+    const inLeft = reading(on, rule, where, left);
+    const inRight = reading(on, rule, where, right);
 
     if (inLeft === inRight) continue;
 
@@ -1547,15 +1588,15 @@ function arranged(
 /**
  * A polygon taking part in the set, as `boundaryRuns` needs to see it.
  *
- * `kind` is which way it goes and nothing else. It used to be named for what a
- * level is made of — `level` and `solid` — which was the same two things read
- * as one kind of thing; a floor is now a set of its own with two sides of its
- * own, and it goes through here on exactly this machinery. What the set is
- * *about* never reaches this file.
+ * `slot` is which part of the set it plays and nothing else. It used to be a
+ * direction — added or subtracted — which was the two-slot case written out as
+ * though two were all there could be. A level is resolved out of three and a
+ * floor out of two, and both go through here on exactly this machinery: what
+ * the slots *mean* is settled by the `Rule` and never reaches this file.
  */
 export interface Member {
   id: number
-  kind: 'add' | 'subtract'
+  slot: number
   shape: Shape
 }
 
@@ -1574,46 +1615,52 @@ export interface Member {
  * Nothing in here is a tolerance. Those stay local, worked out from the
  * neighbourhood actually being asked about.
  */
-export interface Ground {
-  add: Side
-  subtract: Side
-}
+export type Ground = readonly Slot[];
 
-/** One kind's members, each prepared on its own and findable by where it is. */
-interface Side {
+/** One slot's members, each prepared on its own and findable by where it is. */
+interface Slot {
   tree: Tree
   parts: Field[]
 }
 
-export function ground(members: Iterable<Member>): Ground {
-  const sides: Side[] = [{ tree: emptyTree, parts: [] }, { tree: emptyTree, parts: [] }];
-  const boxes: { id: number, box: AABB }[][] = [[], []];
+/**
+ * `slots` rather than however many the members happen to fill, because a set
+ * with nothing in one of its slots still has that slot: the rule asks about it
+ * either way, and an empty one answers no.
+ */
+export function ground(members: Iterable<Member>, slots: number): Ground {
+  const all: Slot[] = [];
+  const boxes: { id: number, box: AABB }[][] = [];
+
+  for (let k = 0; k < slots; k++) {
+    all.push({ tree: emptyTree, parts: [] });
+    boxes.push([]);
+  }
 
   for (const m of members) {
     if (m.shape.length === 0) continue;
 
-    const which = m.kind === 'add' ? 0 : 1;
-    const side = sides[which];
+    const slot = all[m.slot];
 
-    boxes[which].push({ id: side.parts.length, box: ofRings(m.shape) });
-    side.parts.push(field(m.shape));
+    boxes[m.slot].push({ id: slot.parts.length, box: ofRings(m.shape) });
+    slot.parts.push(field(m.shape));
   }
 
-  for (const which of [0, 1]) sides[which].tree = build(boxes[which]);
+  for (let k = 0; k < slots; k++) all[k].tree = build(boxes[k]);
 
-  return { add: sides[0], subtract: sides[1] };
+  return all;
 }
 
 /**
- * Nonzero fill over a whole side. Winding is additive over rings, and a member
+ * Nonzero fill over a whole slot. Winding is additive over rings, and a member
  * that does not have `p` in its box contributes none of it, so the tree hands
  * back the one or two members that could and the rest are never read.
  */
-function covers(side: Side, p: Point): boolean {
+function covers(slot: Slot, p: Point): boolean {
   let w = 0;
 
-  each(side.tree, box(p.x, p.y, p.x, p.y), i => {
-    w += fieldWinding(side.parts[i], p);
+  each(slot.tree, box(p.x, p.y, p.x, p.y), i => {
+    w += fieldWinding(slot.parts[i], p);
   });
 
   return w !== 0;
@@ -1665,8 +1712,8 @@ export interface BoundaryRun {
 
 /**
  * The parts of `subject`'s edges that lie on the boundary of the set the
- * members make — every `add` unioned, every `subtract` taken back out — as
- * open runs in the order they are walked.
+ * members make — each slot unioned on its own and `rule` deciding what the
+ * slots together mean — as open runs in the order they are walked.
  *
  * `others` is everything overlapping `subject`; nothing further away can make a
  * difference, which is the point.
@@ -1678,7 +1725,7 @@ export interface BoundaryRun {
  *
  * Where two polygons share an edge exactly, only one of them may claim it or
  * the boundary would be counted twice. Rank settles it: the members are ordered
- * by kind and then by id, and a piece with something lower-ranked lying along
+ * by slot and then by id, and a piece with something lower-ranked lying along
  * it is dropped. Two coincident edges are the same geometry, so they classify
  * alike and the loser would have been kept or dropped for the same reason the
  * winner was — which is why the loser never has to be classified to know it
@@ -1690,29 +1737,32 @@ export interface BoundaryRun {
 export function boundaryRuns(
   subject: Member,
   others: readonly Member[],
+  slots: number,
+  rule: Rule,
   on?: Ground,
 ): BoundaryRun[] {
   const all = [subject, ...others];
-  const a: Shape = [], b: Shape = [];
-  const ranks: number[][] = [[], []];
+  const shapes: Shape[] = [];
+  const ranks: number[][] = [];
 
   let rank = 0, mine = -1;
 
   // Which member each ring of each operand came off, so that what the
   // arrangement names in its own terms can be handed back in the level's.
-  const whose: { id: number, ring: number }[][] = [[], []];
+  const whose: { id: number, ring: number }[][] = [];
 
-  for (const kind of ['add', 'subtract'] as const) {
-    const which = kind === 'add' ? 0 : 1;
-    const into = which === 0 ? a : b;
+  for (let slot = 0; slot < slots; slot++) {
+    shapes.push([]);
+    ranks.push([]);
+    whose.push([]);
 
-    for (const m of all.filter(x => x.kind === kind).sort((p, q) => p.id - q.id)) {
+    for (const m of all.filter(x => x.slot === slot).sort((p, q) => p.id - q.id)) {
       if (m.id === subject.id) mine = rank;
 
       m.shape.forEach((ring, r) => {
-        into.push(ring);
-        ranks[which].push(rank);
-        whose[which].push({ id: m.id, ring: r });
+        shapes[slot].push(ring);
+        ranks[slot].push(rank);
+        whose[slot].push({ id: m.id, ring: r });
       });
 
       rank++;
@@ -1721,25 +1771,24 @@ export function boundaryRuns(
 
   // Subject first, so that `split` can cut it and leave the rest alone. The
   // order no longer decides anything: rank does.
-  const raw = [...segments(a, 0, ranks[0]), ...segments(b, 1, ranks[1])];
+  const raw = shapes.flatMap((shape, slot) => segments(shape, slot, ranks[slot]));
   const ours = raw.filter(s => s.rank === mine);
   const rest = raw.filter(s => s.rank !== mine);
 
   const snap = scaleOf(raw) * 1e-9;
-  const shared = on ?? ground(all);
+  const shared = on ?? ground(all, slots);
 
-  const inAdd = (p: Point) => covers(shared.add, p);
-  const inSubtract = (p: Point) => covers(shared.subtract, p);
+  const inSlot = shared.map(slot => (p: Point) => covers(slot, p));
 
   const made = runs(
-    arranged(inAdd, inSubtract, OpSubtract, split([...ours, ...rest], snap, ours.length), snap),
+    arranged(inSlot, rule, split([...ours, ...rest], snap, ours.length), snap),
     snap,
   );
 
   // Against everything taking part rather than against `ours`: which way the
   // boundary carries on past the end of a run is exactly the question the
   // neighbours are here to answer.
-  const turning = cornering(made.map(r => r.points), raw, inAdd, inSubtract, OpSubtract, snap);
+  const turning = cornering(made.map(r => r.points), raw, inSlot, rule, snap);
 
   const named = (ref: SourceRef): Whence => {
     const from = whose[ref.shape][ref.ring];
@@ -1766,8 +1815,8 @@ export function boundaryRuns(
   // point are two names, and rightly.
   const settled = new Map<string, SourceRef>();
 
-  for (const which of [0, 1] as const) {
-    (which === 0 ? a : b).forEach((ring, r) => {
+  for (let which = 0; which < slots; which++) {
+    shapes[which].forEach((ring, r) => {
       const from = whose[which][r];
 
       ring.forEach((p, i) => {
@@ -1786,7 +1835,7 @@ export function boundaryRuns(
   /** `named`, with a self-crossing always named by the same one of its two
    * vertices. Vertices only: an edge belongs to one ring and is not doubled. */
   const naming = (ref: SourceRef): Whence => {
-    const at = (ref.shape === 0 ? a : b)[ref.ring][ref.index];
+    const at = shapes[ref.shape][ref.ring][ref.index];
 
     return named(settled.get(`${whose[ref.shape][ref.ring].id}|${at.x}|${at.y}`) ?? ref);
   };
@@ -1894,9 +1943,8 @@ interface Way {
 function cornering(
   runs: readonly Point[][],
   segs: readonly Seg[],
-  inA: (p: Point) => boolean,
-  inB: (p: Point) => boolean,
-  op: Op,
+  on: readonly ((p: Point) => boolean)[],
+  rule: Rule,
   snap: number,
 ): boolean[][] {
   if (runs.length === 0) return [];
@@ -1904,6 +1952,7 @@ function cornering(
   // `snap` was scaled off the input the same way, so this recovers it.
   const scale = snap / 1e-9;
   const weld = welder(snap);
+  const where = new Array<boolean>(on.length);
 
   /** `d` added to `into` unless something already points that way, keeping
    * whichever of the two has less edge to go. */
@@ -2025,7 +2074,7 @@ function cornering(
 
       const s = { x: p.x + Math.cos(mid) * step, y: p.y + Math.sin(mid) * step };
 
-      return op(inA(s), inB(s));
+      return reading(on, rule, where, s);
     });
 
     // A direction separates two wedges, and is on the boundary exactly when
