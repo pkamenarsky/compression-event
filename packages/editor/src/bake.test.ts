@@ -1792,3 +1792,103 @@ describe('a corner arriving right beside one that is leaving', () => {
     }
   });
 });
+
+describe('the bake chases its own error', () => {
+  // `Span.worst` used to be a number the bake reported and did nothing about: a
+  // level came back at eleven and a half against a tolerance of five hundredths
+  // and the only lever was `GAP`, which charges every track for the depth two of
+  // them need. Now a track outside the tolerance is cut again a decade finer,
+  // and only that track pays. See `chased`.
+
+  /** Six overlapping boxes turning against each other, which is where the
+   * boundary bends hardest: the crossings between them travel, and a chord
+   * across one of those is what `worst` is measuring. */
+  function turning(): World {
+    let world = emptyWorld();
+    const ids: PolygonId[] = [];
+
+    for (let i = 0; i < 6; i++) {
+      const made = addPolygon(
+        world,
+        kind(i % 3 === 2 ? 'solid' : 'level'),
+        rect(-140 + 60 * i, -90 + 40 * (i % 3), 150, 130),
+        0,
+        TOP,
+      );
+
+      world = made.world;
+      ids.push(made.id);
+    }
+
+    ids.forEach((id, i) => {
+      world = transformed(world, 1, id, { rotation: (i % 2 ? 1 : -1) * 0.6 });
+    });
+
+    return world;
+  }
+
+  test('a tolerance the first cut misses is reached by cutting again', () => {
+    const world = turning();
+    const tol = 1e-3;
+
+    // Outside at the widths every track starts at — otherwise this test is
+    // measuring nothing, so it is asserted rather than assumed.
+    expect(run(bakeSpan(world, 0)).worst).toBeGreaterThan(tol);
+
+    const span = run(bakeSpan(world, 0, tol));
+
+    expect(span.worst).toBeLessThanOrEqual(tol);
+    expect(span.strained).toEqual([]);
+  });
+
+  test('and a tolerance it reaches is not paid for by a tolerance it does not', () => {
+    // The chase goes a decade at a time and stops when a decade stops paying,
+    // so what it costs is bounded by how far it actually got — a track it
+    // cannot help is one wasted decade, not five. Asking for four more digits
+    // than the default costs a handful of times the work, not thousands.
+    const world = turning();
+
+    const loose = run(bakeSpan(world, 0));
+    const tight = run(bakeSpan(world, 0, 1e-6));
+
+    expect(tight.worst).toBeLessThanOrEqual(1e-6);
+    expect(tight.evaluations).toBeLessThan(loose.evaluations * 20);
+  });
+
+  test('and what it gives up on it names, so nothing is buried', () => {
+    // The invariant, which is the whole point of the field: a span that names
+    // nothing is a span that is inside its tolerance. `divergence.test.ts`
+    // checks it again across every world it draws.
+    //
+    // No world here strains it — the levels that do are pathological and slow,
+    // and the numbers from one are recorded against `PAYING`. What is checked
+    // here is the promise, on a level that keeps it.
+    for (const tol of [TOLERANCE, 1e-3, 1e-5]) {
+      const span = run(bakeSpan(turning(), 0, tol));
+      const strained = span.strained ?? [];
+
+      if (strained.length === 0) {
+        expect(span.worst).toBeLessThanOrEqual(tol);
+        continue;
+      }
+
+      expect(Math.max(...strained.map(s => s.worst))).toBeCloseTo(span.worst, 10);
+
+      for (const s of strained) {
+        expect(s.worst).toBeGreaterThan(tol);
+        // Re-cut at least once, so the number is a verdict and not a first guess.
+        expect(s.gap).toBeLessThan(1e-4);
+        expect(span.tracks.some(t => t.id === s.id)).toBe(true);
+      }
+    }
+  });
+
+  test('and a track that is already inside it is cut once', () => {
+    // The property the whole thing rests on: a level that behaves pays nothing.
+    const { world, ids } = drawn(['level', rect(0, 0, 200, 200)]);
+    const w = transformed(world, 1, ids[0], { translation: { x: 40, y: 0 } });
+
+    expect(run(bakeSpan(w, 0)).evaluations).toEqual(run(bakeSpan(w, 0, TOLERANCE)).evaluations);
+    expect(run(bakeSpan(w, 0)).strained).toEqual([]);
+  });
+});

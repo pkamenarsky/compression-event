@@ -455,8 +455,18 @@ export interface Span {
    * The bake states its own error rather than resting on an argument about
    * which topology events exist. Nothing consults it — it is here to be read,
    * and to fail a test if it ever grows.
+   *
+   * It is now a number the bake acts on rather than only reports: a track
+   * outside the tolerance is re-cut finer until it is inside, so anything left
+   * above `TOLERANCE` here is named in `strained` as well. See `chased`.
    */
   worst: number
+  /**
+   * The tracks that would not come inside the tolerance however finely they
+   * were cut, by id. Empty on a level that behaves, and absent on a span baked
+   * before the bake chased its own error.
+   */
+  strained?: Strain[]
   /**
    * Thread-milliseconds spent resolving the span and then cutting it, added up
    * over however many threads did it. Nothing reads these; against the wall
@@ -1872,8 +1882,8 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
 // The recursion stops on width as well as on error, and that is what finds the
 // discontinuities: at a genuine event the two sides never come to agree however
 // narrow the interval gets, so the interval keeps halving until it is thinner
-// than `GAP` and is then handed back as a gap between two stretches rather than
-// as a stretch. That is the same keyframe the event search was there to place —
+// than the track's `gap` and is then handed back as a gap between two stretches
+// rather than as a stretch. That is the same keyframe the event search was there to place —
 // arrived at from the other side, and without needing to know what kind of
 // event it was.
 //
@@ -1887,7 +1897,10 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
 //
 // What it buys is the guarantee itself: `Span.worst` is how far the replay was
 // ever measured to be from the truth, so the bake states its own error instead
-// of resting on an argument about which events exist.
+// of resting on an argument about which events exist — and, because it is a
+// measure rather than an argument, it is something the bake can be driven by.
+// A track outside the tolerance is re-cut finer until it is inside; one that
+// will not come inside at any width is named in `Span.strained`. See `chased`.
 // -----------------------------------------------------------------------------
 
 /** How far the replay may sit from the CSG before a stretch is split. In
@@ -1923,10 +1936,12 @@ export { TOLERANCE };
  * What the levels to hand say, measured rather than guessed. A tenth of this is
  * cheap and useless on a quiet level and ruinous on a busy one: 28s against 45s
  * for a `worst` of 1.70 against 0.10, which is thirty-four times the tolerance.
- * A tenth the other way brings that level inside tolerance at 59s. So it sits
- * here, and a level whose `worst` has crept past `TOLERANCE` is a level that
- * wants it smaller — which is now a thing the bake can be asked rather than a
- * thing to be guessed at.
+ * A tenth the other way brings that level inside tolerance at 59s.
+ *
+ * That trade is what makes this a starting depth rather than a setting. Charging
+ * a whole level for the depth two crossings need is the wrong shape, so a track
+ * that comes back outside the tolerance is cut again a decade finer and only
+ * that track pays. This is where it begins; see `chased` for where it ends.
  */
 const GAP = 1e-4;
 
@@ -1946,6 +1961,59 @@ const GAP = 1e-4;
  * paying the price of the few places that needed the depth.
  */
 const BEND = 1e-6;
+
+/**
+ * The two widths a bisection stops at, together, because a track is cut at a
+ * pair of them and the pair is what a re-cut makes finer.
+ *
+ * They were module constants, which said the depth of the search was a property
+ * of the bake rather than of the track. It is not: a track whose crossings race
+ * wants a depth the rest of the level would be ruined by paying for. See
+ * `chased`.
+ */
+export interface Limits {
+  gap: number
+  bend: number
+}
+
+/** What a track is cut at until it gives the bake reason to go finer. */
+export const LIMITS: Limits = { gap: GAP, bend: BEND };
+
+/**
+ * As far as a re-cut will ever go, whatever the measure says.
+ *
+ * A `t` is a double here and a float32 in the shader, so a width this side of a
+ * float32 step is a width the replay cannot tell from zero — there is nothing
+ * below this to find. Nothing reaches it in practice; `PAYING` stops a track
+ * long before. It is the floor that makes the loop obviously finite.
+ */
+const FINEST = 1e-9;
+
+/**
+ * How much of the error a decade of depth has to remove to earn the next one.
+ *
+ * The stopping rule, and it took a measurement to find. Chasing every track that
+ * was outside the tolerance all the way to `FINEST` was the obvious thing and it
+ * is a bad bargain: on the worst level to hand it took the bake from 7.5s to 97s
+ * and the error from 11.30 to 5.86 — thirteen times the work to stay a hundred
+ * times outside the tolerance. Dearer and still wrong.
+ *
+ * What the two offending tracks showed is that they were not the same case. One
+ * went 11.30 to 4.11 and was still coming down, which is a crossing racing
+ * through a stretch: continuous, so halving the interval does halve the chord,
+ * so depth is the answer and it is only a question of how much. The other went
+ * 5.866 to 5.863 across five decades, which is not a bend at any depth — it is a
+ * discontinuity that `comparable` accepted, and no width makes the two sides of
+ * one agree. Five decades of bisection bought three thousandths.
+ *
+ * So the question a re-cut asks is not "is there width left" but "did the last
+ * decade pay". An error that is the search's own falls when the search deepens.
+ * One that is not, does not, and says so immediately and cheaply.
+ */
+const PAYING = 0.7;
+
+/** A decade deeper, both of them. */
+const finer = (l: Limits): Limits => ({ gap: l.gap / 10, bend: l.bend / 10 });
 
 const MARGIN = 0.5;
 
@@ -2492,6 +2560,7 @@ function* fillTrack(
   id: Id,
   op: PolygonOp,
   tol: number,
+  limits: Limits,
 ): Generator<number, Cut, void> {
   const out: Stretch[] = [];
   const jumps: Stretch[] = [];
@@ -2514,7 +2583,7 @@ function* fillTrack(
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
-    const narrow = b.t - a.t <= GAP;
+    const narrow = b.t - a.t <= limits.gap;
 
     if (!alike(a.rings, b.rings)) {
       if (!narrow) {
@@ -2535,7 +2604,7 @@ function* fillTrack(
     const m = at((a.t + b.t) / 2);
     const off = alike(a.rings, m.rings) ? drift(a.rings, b.rings, m.rings, 0.5) : Infinity;
 
-    if (off > tol * MARGIN && b.t - a.t > BEND) {
+    if (off > tol * MARGIN && b.t - a.t > limits.bend) {
       stack.push([m, b], [a, m]);
       continue;
     }
@@ -2573,6 +2642,7 @@ function* cutTrack(
   id: Id,
   riders: Map<Id, Rider>,
   tol: number,
+  limits: Limits,
 ): Generator<number, Cut, void> {
   const out: Stretch[] = [];
 
@@ -2593,7 +2663,7 @@ function* cutTrack(
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
-    const narrow = b.t - a.t <= GAP;
+    const narrow = b.t - a.t <= limits.gap;
 
     if (!comparable(a, b)) {
       if (!narrow) {
@@ -2640,7 +2710,7 @@ function* cutTrack(
       }
     }
 
-    if (off > tol * MARGIN && b.t - a.t > BEND) {
+    if (off > tol * MARGIN && b.t - a.t > limits.bend) {
       stack.push([m, b], [a, m]);
       continue;
     }
@@ -2777,9 +2847,35 @@ function wide(s: Stretch): boolean {
 // -----------------------------------------------------------------------------
 
 /** Some of a span's tracks, and what cutting them measured. */
+/**
+ * A track the search could not bring inside the tolerance, and how far it got.
+ *
+ * `Span.worst` says how wrong the bake is; this says *where*, and how hard the
+ * bake tried. A track named here was cut again at least one decade finer and
+ * still measured `worst` from the truth, so what is left is not depth the
+ * bisection declined to spend — see `PAYING`.
+ *
+ * `gap` is the reading to go by. A track that stopped at `LIMITS.gap` the decade
+ * below — 1e-5 — bought nothing by deepening, which means its error is a
+ * discontinuity rather than a bend and a person has to look at the level. One
+ * that went several decades down was coming closer the whole way and ran out of
+ * patience rather than out of argument, which is a tolerance question.
+ */
+export interface Strain {
+  id: PolygonId
+  /** What the best of the attempts measured. */
+  worst: number
+  /** The widths that best attempt was cut at, by its `gap`. Never `LIMITS.gap`:
+   * a track only lands here after a re-cut. */
+  gap: number
+}
+
 export interface Slice {
   tracks: Track[]
   worst: number
+  /** The tracks that would not come inside the tolerance. Empty on a level
+   * that behaves. */
+  strained: Strain[]
   evaluations: number
   /** Milliseconds spent resolving the world before any of it could be cut. Not
    * used for anything; it is here because it is the part a thread cannot share
@@ -2943,6 +3039,95 @@ export function ready(world: World, from: VersionId): Ready {
  * one in a corner where three rooms are all eroding is a hundred. Dealt out in
  * advance, one thread draws the short straw and everybody waits for it.
  */
+/**
+ * One track, cut as finely as it takes to keep the bake's own promise.
+ *
+ * `Span.worst` used to be a number the bake reported and then did nothing
+ * about. A level came back at eleven and a half against a tolerance of five
+ * hundredths and the only thing to do was to reach for `GAP` by hand, which
+ * charges the whole level for the depth two crossings needed.
+ *
+ * So the depth is per track and it is driven by the measure. Cut at `LIMITS`;
+ * if what comes back is outside the tolerance, cut the same track again a
+ * decade finer, and again, until it is inside or the widths reach `FINEST`.
+ *
+ * How far is "finer" allowed to go is the whole question, and the first answer —
+ * as far as the numbers can represent — was wrong. The argument for it was that
+ * `worst` only ever holds a continuous error, because a genuine event is
+ * incomparable and gets pinned and excluded rather than measured. That argument
+ * is false, and the measurement says so: one of the two bad tracks on the worst
+ * level to hand went 5.866 to 5.863 across five decades. A discontinuity
+ * `comparable` accepts is a discontinuity all the same, and no width makes its
+ * two sides agree.
+ *
+ * So the loop stops on whether the last decade paid rather than on whether there
+ * is width left. See `PAYING`. A track whose error is the search's own sees it
+ * fall when the search deepens; a track whose error is not sees nothing, once,
+ * and is named in `Span.strained` for a person to look at.
+ *
+ * The cost is paid where it is owed. A track inside the tolerance is cut once
+ * and never looked at again, which is nearly every track on every level — the
+ * healthy levels to hand bake to the evaluation exactly as before. A track that
+ * is outside pays for its own depth and no one else's, and pays one speculative
+ * decade to find out that depth is not the answer. Every attempt's evaluations
+ * are counted, the discarded ones included: a re-cut is work the bake did.
+ */
+function* chased(
+  at: Ready,
+  i: number,
+  fill: boolean,
+  tol: number,
+): Generator<number, Cut & { limits: Limits }, void> {
+  const { id } = at.items[i];
+
+  let limits = LIMITS;
+  let best: (Cut & { limits: Limits }) | null = null;
+  let was = Infinity;
+  let spent = 0;
+  let seen = 0;
+
+  while (true) {
+    const inner = fill
+      // Its own members, and nothing else: a floor is not cut against its
+      // neighbours, so resolving them would be work nobody reads.
+      ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].op, tol, limits)
+      : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits);
+
+    let cut: Cut | null = null;
+
+    // A re-cut starts its own progress at zero. What the caller is shown is how
+    // far this track has ever got, so an attempt being made again reads as a
+    // pause rather than as ground given back.
+    while (cut === null) {
+      const step = inner.next();
+
+      if (step.done) {
+        cut = step.value;
+      }
+      else {
+        seen = Math.max(seen, step.value);
+        yield seen;
+      }
+    }
+
+    spent += cut.evaluations;
+
+    // The best of the attempts, not the last. A finer cut splits in different
+    // places and is not bound to beat a coarser one everywhere; what the span
+    // promises is the smallest error the bake managed, so that is what it keeps.
+    if (best === null || cut.worst < best.worst) best = { ...cut, limits };
+
+    // Inside the tolerance, out of width, or a decade that did not pay for
+    // itself. The last of those is the one that does the work — see `PAYING`.
+    if (best.worst <= tol || limits.gap <= FINEST || cut.worst > PAYING * was) {
+      return { ...best, evaluations: spent };
+    }
+
+    was = cut.worst;
+    limits = finer(limits);
+  }
+}
+
 export function* cutSome(
   at: Ready,
   which: readonly number[],
@@ -2950,6 +3135,7 @@ export function* cutSome(
 ): Generator<number, Slice, void> {
   const began = now();
   const tracks: Track[] = [];
+  const strained: Strain[] = [];
 
   let worst = 0;
   let evaluations = 0;
@@ -2969,22 +3155,22 @@ export function* cutSome(
     // above it. Everything else is its share of a boundary and is measured
     // against the CSG.
     const cut = yield* weighted(
-      fill && counted
-        // Its own members, and nothing else: a floor is not cut against its
-        // neighbours, so resolving them would be work nobody reads.
-        ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].op, tol)
-        : cutTrack(at.cast, at.near[i], id, at.riders, tol),
+      chased(at, i, fill && counted, tol),
       k / which.length,
       1 / which.length,
     );
 
     tracks.push({ id, fill, stretches: cut.stretches, jumps: cut.jumps });
 
+    // Cut as deep as it is worth cutting and still outside the tolerance. The
+    // bake has nothing further to offer here and says so by name.
+    if (cut.worst > tol) strained.push({ id, worst: cut.worst, gap: cut.limits.gap });
+
     worst = Math.max(worst, cut.worst);
     evaluations += cut.evaluations;
   }
 
-  return { tracks, worst, evaluations, setup: 0, cut: now() - began };
+  return { tracks, worst, strained, evaluations, setup: 0, cut: now() - began };
 }
 
 function now(): number {
@@ -3024,6 +3210,7 @@ export function joined(
     tracks,
     riders,
     worst: Math.max(0, ...slices.map(s => s.worst)),
+    strained: slices.flatMap(s => s.strained).sort((p, q) => p.id - q.id),
     evaluations: slices.reduce((n, s) => n + s.evaluations, 0),
     setup: slices.reduce((n, s) => n + s.setup, 0),
     cut: slices.reduce((n, s) => n + s.cut, 0),

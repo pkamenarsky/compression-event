@@ -155,6 +155,12 @@ function report(name: string, w: World) {
   }
   const j = jumps(span, w);
 
+  // What the chase promises: a track outside the tolerance is re-cut until it
+  // is inside, or named. So an empty `strained` is a claim that `Span.worst` is
+  // inside — and a chase that gave up quietly would break it here, on fifteen
+  // worlds at once, rather than on a level nobody has drawn yet. See `chased`.
+  const strained = span.strained ?? [];
+
   rows.push(
     `${name.padEnd(38)} worst ${worst.toFixed(4).padStart(8)}` +
     `  miss ${String(broken).padStart(3)}/${N + 1}` +
@@ -162,7 +168,7 @@ function report(name: string, w: World) {
     `  stretches ${String(span.tracks.reduce((n, t) => n + t.stretches.length, 0)).padStart(4)}` +
     `  csg ${String(span.evaluations).padStart(4)}  ${String(ms).padStart(4)}ms`);
 
-  return { worst, broken, jump: j };
+  return { worst, broken, jump: j, strained, said: span.worst };
 }
 
 test('the replay never strays far from csg(t)', () => {
@@ -174,6 +180,14 @@ test('the replay never strays far from csg(t)', () => {
     // one is landing on a moment of zero duration.
     if (r.worst > TOLERANCE) bad.push(`${name}: ${r.worst} from the truth`);
     if (r.broken > 12) bad.push(`${name}: ${r.broken} mismatched instants`);
+
+    if (r.strained.length === 0 && r.said > TOLERANCE) {
+      bad.push(`${name}: says ${r.said} and names nothing`);
+    }
+
+    for (const s of r.strained) {
+      bad.push(`${name}: gave up on ${s.id} at ${s.gap}, still ${s.worst}`);
+    }
 
     // No jumpier than the world it is reproducing, give or take the tolerance.
     if (r.jump.replay > r.jump.world + TOLERANCE) {
