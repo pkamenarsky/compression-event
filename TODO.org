@@ -1,3 +1,5 @@
+* bring transform one version up
+
 * erosion should be cumulative i think
 
 * a shape in both create and select mode has handles to scale, rotate and erode
