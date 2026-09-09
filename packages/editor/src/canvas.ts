@@ -3008,30 +3008,6 @@ function polygons(
 }
 
 /**
- * A loose group's ring: round what it holds, in the green that means *held by
- * a group*, and never filled.
- *
- * Unfilled is the whole of the care here. Its members are drawn underneath in
- * their own kinds — a pillar hatched, a floor stippled — and a fill over the
- * top of them would say the group is a shape in the set, which it is not. What
- * it is is a handle, and a handle is an edge round things rather than a thing.
- */
-function held(
-  ctx: CanvasRenderingContext2D,
-  view: View,
-  shape: Shape,
-  picked: boolean,
-): void {
-  ctx.beginPath();
-
-  for (const ring of shape) trace(ctx, view, ring);
-
-  ctx.strokeStyle = picked ? theme.picked : theme.grouped;
-  ctx.lineWidth = picked ? 2 : 1;
-  ctx.stroke();
-}
-
-/**
  * The boundary an erosion started from, dashed under the projection it made.
  *
  * One ring for a polygon and any number for a group, which is the whole of the
@@ -3278,21 +3254,21 @@ function groups(
     // A group with no boundary of its own is drawn where it *is* rather than as
     // an edge of the level, and the two reasons it can have none are drawn
     // differently because they are different statements. See `Occupied.gone`.
-    if (g.gone !== undefined) {
-      if (g.gone === 'loose') {
-        // A ring round its members, who are drawing themselves underneath in
-        // their own kinds and their own fills. Unfilled and in the group green:
-        // it is not an edge of any set and must not read as one — what it says
-        // is that these are held together.
-        held(ctx, view, g.shape, picking.has(g.id));
-      }
-      else {
-        // Nothing else of it is on screen, so this is all there is. Dashed, and
-        // exactly the ring an eroded-away polygon gets, because it is the same
-        // statement about a bigger shape.
-        source(ctx, view, g.shape, picking.has(g.id) ? theme.source : theme.gone);
-      }
+    // A scope that came to nothing has nothing else on screen, so its extent is
+    // all there is to say it is there. Dashed, and exactly the ring an
+    // eroded-away polygon gets, because it is the same statement about a
+    // bigger shape. See `Occupied.gone`.
+    if (g.gone === 'empty') {
+      source(ctx, view, g.shape, picking.has(g.id) ? theme.source : theme.gone);
+      continue;
+    }
 
+    // A loose group is drawn like any other, and picks out orange rather than
+    // green. The colour is the whole of what tells the two apart on screen, and
+    // they are worth telling apart: one is a shape in the set and the other is
+    // a handle round shapes that are in it on their own account.
+    if (g.gone === 'loose') {
+      outlined(ctx, view, g.shape, g.kind, picking.has(g.id), here, theme.looseFill);
       continue;
     }
 

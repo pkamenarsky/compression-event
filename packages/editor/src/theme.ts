@@ -80,6 +80,14 @@ export const theme = {
    * several polygons. */
   groupFill: 'rgba(95, 185, 138, 0.16)',
   /**
+   * Under a picked *loose* group, which is a different thing and says so in a
+   * different colour. A sealed group is a shape in the set and fills green
+   * with the rest of what a group means; a loose one is a handle round shapes
+   * that are in the set on their own account, and orange is what says the two
+   * are not the same kind of thing at a glance.
+   */
+  looseFill: 'rgba(214, 148, 78, 0.16)',
+  /**
    * The same green as a line, for the things that are picked by way of a group
    * rather than in themselves.
    *
