@@ -1,3 +1,4 @@
+* CHURN? does chase buy us anything?
 * group subtract polys must affect only group, not siblings
 * and floor polys must be contained to group as well
 * poly types: level, solid, floor, void (solid|floor)
