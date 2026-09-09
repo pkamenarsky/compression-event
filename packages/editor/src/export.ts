@@ -268,6 +268,7 @@ export function bakedSpan(span: Span, carrying: readonly ArtefactId[] = []): Bak
 
   const tracks: BakedTrack[] = span.tracks.map(track => ({
     fill: track.fill,
+    hole: track.hole,
     stretches: track.stretches.map(flatten),
     jumps: track.jumps.map(flatten),
   }));

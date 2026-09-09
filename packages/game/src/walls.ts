@@ -617,6 +617,11 @@ export const fillFragment = /* glsl */ `
 // lot drawn where the count is not zero. Two passes rather than one, and a
 // buffer the renderer has to be asked for.
 //
+// Three more where the floor set has holes in it, a count being additive where
+// a set is not: what the floors filled is marked, the holes are counted inside
+// that mark, and the quad goes down where the mark is left standing. See
+// `FillMaterials`.
+//
 // What it is worth
 // ----------------
 // Nothing has to be triangulated, so nothing can be triangulated wrongly. Which
@@ -640,16 +645,49 @@ export const fillFragment = /* glsl */ `
 // And the fill becomes the one thing in the scene with an order of its own.
 // -----------------------------------------------------------------------------
 
-/** What a fill is drawn with: two passes that count and one that fills. */
+/**
+ * What a fill is drawn with: two passes that count, one that fills, and the
+ * three more a hole costs.
+ *
+ * A hole cannot be counted with the floors. A count is additive where a set is
+ * not — two floors over the same ground count two, and a hole through both of
+ * them takes one away and leaves it filled — so the two go into the same
+ * buffer one after the other, with a bit set aside to carry the first answer
+ * across the second.
+ *
+ * The high bit is that mark and the low seven are the count, which is a
+ * winding number and never comes near the roof. So: the floors are counted, the
+ * mark is written wherever that count stood and the count wiped as it goes, the
+ * holes are counted inside the mark, and the colour goes down where the mark
+ * stands and nothing was counted over it. Six draws where there are holes and
+ * three where there are none — for the whole floor set, however much is in it.
+ */
 export interface FillMaterials {
   /** Front faces, counting up. */
   up: THREE.ShaderMaterial
   /** Back faces, counting down. Two materials rather than two-sided stencil
    * ops, which three does not expose. */
   down: THREE.ShaderMaterial
-  /** The colour, wherever the count came out other than zero. */
+  /** What the floors filled, marked, and their count wiped under it. */
+  mark: THREE.ShaderMaterial
+  /** The holes' own count, taken only inside the mark. */
+  holeUp: THREE.ShaderMaterial
+  holeDown: THREE.ShaderMaterial
+  /** The colour, wherever the count came out other than zero. Where there are
+   * no holes, which is one draw rather than four. */
   cover: THREE.ShaderMaterial
+  /** The colour where the mark stands and no hole was counted over it. */
+  holed: THREE.ShaderMaterial
 }
+
+/** The high bit of the stencil, which carries what the floors filled across the
+ * holes' count. */
+const MARK = 0x80;
+
+/** The rest of it, which is where a count goes. A winding number over one
+ * level's floors does not come near the roof, and the ops wrap rather than
+ * clamp, so the mark is never trodden on. */
+const COUNT = 0x7f;
 
 /**
  * The materials a source draws with: its own vertex shader, the shared fragment
@@ -695,7 +733,14 @@ export function materials(
   // fan is flat, so a wall in front of it hides all of it or none of it at a
   // pixel, and that is a question about one plane rather than about each
   // triangle of it.
-  const counting = (side: THREE.Side, op: THREE.StencilOp): THREE.ShaderMaterial =>
+  const counting = (
+    side: THREE.Side,
+    op: THREE.StencilOp,
+    /** Where this pass counts at all. The floors count everywhere; the holes
+     * count only inside what the floors filled, so that a hole hanging off the
+     * edge of one takes nothing away from ground no floor laid. */
+    within: boolean,
+  ): THREE.ShaderMaterial =>
     new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: fillShader,
@@ -706,37 +751,73 @@ export function materials(
       depthTest: false,
       depthWrite: false,
       stencilWrite: true,
-      stencilFunc: THREE.AlwaysStencilFunc,
-      stencilFail: op,
+      stencilFunc: within ? THREE.EqualStencilFunc : THREE.AlwaysStencilFunc,
+      stencilRef: MARK,
+      stencilFuncMask: MARK,
+
+      // The mark is left alone: it is the answer this pass is being read
+      // against, and a count that trod on it would wipe the question.
+      stencilWriteMask: COUNT,
+      stencilFail: within ? THREE.KeepStencilOp : op,
       stencilZFail: op,
       stencilZPass: op,
     });
 
-  // Flat and unlit, laid on the ground under everything that stands on it. It
-  // is a shape rather than a surface: nothing about which way it faces means
-  // anything, so nothing shades it.
-  //
-  // Wherever the count came out other than zero, which is the nonzero rule and
-  // is the rule the whole editor means by a shape. And zeroed as it goes, so
-  // the buffer is back where it started for whatever draws next.
-  const cover = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
-    vertexShader: laidShader,
-    fragmentShader: fillFragment,
-    uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
-    side: THREE.DoubleSide,
-    stencilWrite: true,
-    stencilFunc: THREE.NotEqualStencilFunc,
-    stencilRef: 0,
-    stencilFail: THREE.ZeroStencilOp,
-    stencilZFail: THREE.ZeroStencilOp,
-    stencilZPass: THREE.ZeroStencilOp,
-  });
+  /**
+   * What the cover quad is drawn with, in whichever of its two jobs.
+   *
+   * Flat and unlit, laid on the ground under everything that stands on it. It
+   * is a shape rather than a surface: nothing about which way it faces means
+   * anything, so nothing shades it.
+   *
+   * `over` writes the colour and puts the buffer back as it goes — zeroed
+   * whatever the test said, depth-failed fragments included, or a wall standing
+   * in front of a floor would leave the count behind it for whatever draws
+   * next. The marking pass writes no colour and replaces instead: `stencilRef`
+   * is both what a stencil test compares against and what `Replace` writes, so
+   * the one number says *where the floors filled* and *what to leave there*.
+   */
+  const reading = (
+    func: THREE.StencilFunc,
+    ref: number,
+    mask: number,
+    over: boolean,
+  ): THREE.ShaderMaterial =>
+    new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: laidShader,
+      fragmentShader: fillFragment,
+      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
+      side: THREE.DoubleSide,
+      colorWrite: over,
+      depthTest: over,
+      depthWrite: over,
+      stencilWrite: true,
+      stencilFunc: func,
+      stencilRef: ref,
+      stencilFuncMask: mask,
+      stencilWriteMask: 0xff,
+      stencilFail: THREE.ZeroStencilOp,
+      stencilZFail: THREE.ZeroStencilOp,
+      stencilZPass: over ? THREE.ZeroStencilOp : THREE.ReplaceStencilOp,
+    });
 
   const fill = {
-    up: counting(THREE.FrontSide, THREE.IncrementWrapStencilOp),
-    down: counting(THREE.BackSide, THREE.DecrementWrapStencilOp),
-    cover,
+    up: counting(THREE.FrontSide, THREE.IncrementWrapStencilOp, false),
+    down: counting(THREE.BackSide, THREE.DecrementWrapStencilOp, false),
+
+    // Where the floors' count stands, and nowhere else: the mark goes on and
+    // the count comes off in the one pass, so the holes start theirs from zero
+    // over ground the floors laid.
+    mark: reading(THREE.NotEqualStencilFunc, MARK, COUNT, false),
+    holeUp: counting(THREE.FrontSide, THREE.IncrementWrapStencilOp, true),
+    holeDown: counting(THREE.BackSide, THREE.DecrementWrapStencilOp, true),
+    cover: reading(THREE.NotEqualStencilFunc, 0, 0xff, true),
+
+    // The mark still standing with nothing counted over it: filled by a floor
+    // and holed by nothing. Anything else the quad passes over is zeroed on the
+    // way, which is what leaves the buffer as it was found.
+    holed: reading(THREE.EqualStencilFunc, MARK, 0xff, true),
   };
 
   return { wall, line, fill };
@@ -810,32 +891,49 @@ export function covering(extent: Extent | null): THREE.BufferGeometry {
 }
 
 /**
- * A fill, ready to draw: the fan counted twice and the cover over it, in the
- * order they have to go in.
+ * A fill, ready to draw: the fan counted twice and the cover over it — and,
+ * where there are holes, their own fan counted between the two.
  *
- * One object rather than three, because a fill is hidden and shown as one thing
- * and half of one on screen is not a fill at all.
+ * One object rather than three or six, because a fill is hidden and shown as
+ * one thing and half of one on screen is not a fill at all.
+ *
+ * Three draws or six, and never more: what they cost is the ground they cover,
+ * not how many floors or holes went into them. See `FillMaterials`.
  */
 export function stencilled(
   fan: THREE.BufferGeometry,
+  /** The holes' fan, or nothing where the floor set has none — which is most
+   * levels, and the three-draw case. */
+  holes: THREE.BufferGeometry | null,
   cover: THREE.BufferGeometry,
   fill: FillMaterials,
   height: number,
 ): THREE.Group {
   const group = new THREE.Group();
 
-  const up = new THREE.Mesh(fan, fill.up);
-  const down = new THREE.Mesh(fan, fill.down);
-  const over = new THREE.Mesh(cover, fill.cover);
+  const meshes = holes === null
+    ? [
+      new THREE.Mesh(fan, fill.up),
+      new THREE.Mesh(fan, fill.down),
+      new THREE.Mesh(cover, fill.cover),
+    ]
+    : [
+      new THREE.Mesh(fan, fill.up),
+      new THREE.Mesh(fan, fill.down),
+      new THREE.Mesh(cover, fill.mark),
+      new THREE.Mesh(holes, fill.holeUp),
+      new THREE.Mesh(holes, fill.holeDown),
+      new THREE.Mesh(cover, fill.holed),
+    ];
 
-  // The count has to be complete before anything reads it. Nothing else in the
-  // scene cares what order it is drawn in — depth sorts the walls — so this is
-  // the one place an order is stated.
-  up.renderOrder = 1;
-  down.renderOrder = 1;
-  over.renderOrder = 2;
+  // The whole mechanism is the order. Each pass reads what the one before it
+  // left in the buffer, and any two of them swapped is a floor set that is
+  // simply wrong rather than one drawn a little differently. Nothing else in
+  // the scene cares what order it is drawn in — depth sorts the walls — so this
+  // is the one place an order is stated.
+  meshes.forEach((mesh, i) => (mesh.renderOrder = i + 1));
 
-  for (const mesh of [up, down, over]) {
+  for (const mesh of meshes) {
     // Nothing is where its `position` attribute says it is — the shader places
     // it — so there is no box worth testing against the frustum.
     mesh.frustumCulled = false;
@@ -855,8 +953,8 @@ export interface Source {
    * The authored floors, filled and laid flat. Empty where there are none,
    * which is most levels.
    *
-   * Three meshes rather than one: a fill is counted before it is covered. See
-   * `stencilled`.
+   * Three meshes rather than one — six where the floor set has holes in it —
+   * because a fill is counted before it is covered. See `stencilled`.
    */
   fill: THREE.Group
   dispose(): void

@@ -435,6 +435,21 @@ export interface Track {
    * own closed rings. That is why the flag is on the run as well as the track.
    */
   fill: boolean
+  /**
+   * A hole cut in the floors rather than floor: the other slot of the floor
+   * set, and the whole of what the reader needs to tell the two apart.
+   *
+   * A floor is never cut against its set — see `fillTrack` — so what arrives is
+   * every floor's own ring and every hole's own ring, and which is which is not
+   * a thing the rings themselves say. It is not the winding: `fillRuns` turns
+   * every ring to face the way its slot means, so a hole comes out wound
+   * against the floors and would cancel one of them where they overlap, which
+   * is a count and not a set. Whatever draws these counts the two apart. See
+   * `stencilled` in the game's `walls.ts`.
+   *
+   * False on everything else, a wall having no such question.
+   */
+  hole: boolean
   stretches: Stretch[]
   /** By `t`, ascending. Never an interval — see above. */
   jumps: Stretch[]
@@ -2495,8 +2510,17 @@ interface Cut {
 // A floor produces no walls and no lines. It produces filled ground and nothing
 // else — `walling` in the game's `morph.ts` skips a fill track outright — and
 // filled ground is counted rather than carved: the nonzero rule over every
-// floor ring, adds wound one way and subtracts the other, *is* the floor set.
-// See the header of the game's `walls.ts`.
+// floor ring *is* the floor set. See the header of the game's `walls.ts`.
+//
+// The holes are counted apart from the floors, and have to be. A count is
+// additive where a set is not: two floors over the same ground count two, and a
+// hole through both of them takes one away and leaves the ground filled, where
+// the set says bare. So one count is not enough for both — the floors are
+// counted and what they filled is marked, and the holes are then counted inside
+// that mark and taken back out. Two counts and a mask, on the GPU, at a cost
+// that does not move with how much is in them. That is what `Track.hole` is
+// there to say, and it is why a floor set with a hole in it is no longer a
+// reason to give up and cut the boundary after all.
 //
 // So the boundary of the floor set is a thing nobody needs. A floor track is
 // the polygon's own rings, exactly as its own erosion left them, and the union
@@ -3265,27 +3289,20 @@ export function* cutSome(
   let worst = 0;
   let evaluations = 0;
 
-  // Whether the floors can be left uncut. Counting is additive and a set is
-  // not: two floors that overlap count two, and a hole through both of them
-  // takes one away and leaves the ground filled. Where a floor set has anything
-  // subtracted from it, the union has to be resolved before the hole is taken
-  // out of it, and only the CSG does that. See `fillTrack`.
-  const counted = !at.items.some(s => s.fill && s.slot !== 0);
-
   for (let k = 0; k < which.length; k++) {
     const i = which[k];
-    const { id, fill } = at.items[i];
+    const { id, fill, slot } = at.items[i];
 
     // A floor is not cut against anything — see `fillTrack`, and the header
     // above it. Everything else is its share of a boundary and is measured
     // against the CSG.
     const cut = yield* weighted(
-      chased(at, i, fill && counted, tol),
+      chased(at, i, fill, tol),
       k / which.length,
       1 / which.length,
     );
 
-    tracks.push({ id, fill, stretches: cut.stretches, jumps: cut.jumps });
+    tracks.push({ id, fill, hole: fill && slot !== 0, stretches: cut.stretches, jumps: cut.jumps });
 
     // Cut as deep as it is worth cutting and still outside the tolerance. The
     // bake has nothing further to offer here and says so by name.

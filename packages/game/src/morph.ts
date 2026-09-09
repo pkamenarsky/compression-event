@@ -422,9 +422,14 @@ function walling(span: BakedSpan): Span[] {
  * from what they are — see `cutting` — and because a test that stitched its own
  * would be checking something other than what is drawn.
  */
-export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
+export function fills(span: BakedSpan): {
+  points: number[]
+  runs: number[][]
+  holes: number[][]
+} {
   const points: number[] = [];
   const runs: number[][] = [];
+  const holes: number[][] = [];
 
   for (const track of span.tracks) {
     if (!track.fill) continue;
@@ -438,12 +443,12 @@ export function fills(span: BakedSpan): { points: number[], runs: number[][] } {
           points.push(run.first + i);
         }
 
-        runs.push(ring);
+        (track.hole ? holes : runs).push(ring);
       }
     }
   }
 
-  return { points, runs };
+  return { points, runs, holes };
 }
 
 // -----------------------------------------------------------------------------
@@ -690,11 +695,18 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
     return g;
   };
 
-  const { points: mine, runs: where } = fills(span);
+  const { points: mine, runs: where, holes: cut } = fills(span);
 
   const wallGeometry = geometry(shape.wallPoint, shape.wallHeight, null, shape.index);
   const lineGeometry = geometry(shape.linePoint, shape.lineHeight, shape.lineVertical, null);
   const fanGeometry = fanning(span, mine, where, range);
+
+  // Nothing to take out of ground no floor laid: with no floors there is no
+  // mark for a hole's count to stand in, and the whole set is empty anyway.
+  const holeGeometry = where.length === 0 || cut.length === 0
+    ? null
+    : fanning(span, mine, cut, range);
+
   const coverGeometry = covering(where.length === 0 ? null : reach(span, mine, range));
 
   const walls = new THREE.Mesh(wallGeometry, wall);
@@ -703,7 +715,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   // The fan, counted, and the cover over it — laid the hair of clearance above
   // the ground that keeps a fill over the tiles and under the walls standing on
   // them. See `stencilled`.
-  const floors = stencilled(fanGeometry, coverGeometry, fill, options.fillHeight);
+  const floors = stencilled(fanGeometry, holeGeometry, coverGeometry, fill, options.fillHeight);
 
   // Nothing is where its `position` attribute says it is, so there is no box
   // worth testing against the frustum.
@@ -729,12 +741,11 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
       wallGeometry.dispose();
       lineGeometry.dispose();
       fanGeometry.dispose();
+      holeGeometry?.dispose();
       coverGeometry.dispose();
       wall.dispose();
       line.dispose();
-      fill.up.dispose();
-      fill.down.dispose();
-      fill.cover.dispose();
+      for (const m of Object.values(fill)) m.dispose();
     },
   };
 }

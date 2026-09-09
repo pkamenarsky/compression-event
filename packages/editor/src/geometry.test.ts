@@ -18,6 +18,7 @@ import {
   combineTagged,
   contains,
   decompose,
+  encloses,
   erode,
   erodeAt,
   erodedCorners,
@@ -1713,5 +1714,67 @@ describe('survived', () => {
 
   test('nothing at all survives an outline that is empty', () => {
     expect(survived([])({ x: 0, y: 0 })).toBe(false);
+  });
+});
+
+describe('encloses', () => {
+  const rect = (x: number, y: number, w: number, h: number): Ring => [
+    { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h },
+  ];
+
+  const room = [rect(0, 0, 100, 100)];
+
+  test('a floor well inside its room is inside it', () => {
+    expect(encloses(room, [rect(20, 20, 60, 60)])).toBe(true);
+  });
+
+  test('one that runs out past a wall is not', () => {
+    expect(encloses(room, [rect(60, 20, 60, 60)])).toBe(false);
+  });
+
+  test('one wholly outside is not, however far away', () => {
+    expect(encloses(room, [rect(200, 200, 10, 10)])).toBe(false);
+  });
+
+  test('one flush against the walls is not, and is meant not to be', () => {
+    // It *is* inside, and the clip on it is the identity. Saying so would mean
+    // reading a winding at a point sitting exactly on the boundary, which is
+    // the one place there is no answer to read — so this says what it can
+    // stand behind and the caller pays for the intersect. See `encloses`.
+    expect(encloses(room, [rect(0, 0, 100, 100)])).toBe(false);
+  });
+
+  test('a floor laid over a pillar is not inside the level the pillar holes', () => {
+    // The case the boundary rule is there for. Every corner of this floor is a
+    // corner of the hole it sits in, so every question about which side it is
+    // on is asked at a point on the boundary — and the honest answer is that
+    // the floor is not in the level at all.
+    const holed = [rect(0, 0, 100, 100), [...rect(40, 40, 20, 20)].reverse()];
+
+    expect(encloses(holed, [rect(40, 40, 20, 20)])).toBe(false);
+  });
+
+  test('a chord across a notch is out, both its ends being in', () => {
+    // An L, and a triangle from one end of the notch to the other. Both of its
+    // corners are corners of the L and its middle is out in the notch.
+    const ell = [[
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 },
+      { x: 40, y: 40 }, { x: 40, y: 100 }, { x: 0, y: 100 },
+    ]];
+
+    expect(encloses(ell, [[
+      { x: 100, y: 40 }, { x: 40, y: 100 }, { x: 20, y: 20 },
+    ]])).toBe(false);
+  });
+
+  test('a hole in the floor changes nothing: every ring of it is asked', () => {
+    const donut = [rect(20, 20, 60, 60), [...rect(40, 40, 20, 20)].reverse()];
+
+    expect(encloses(room, donut)).toBe(true);
+  });
+
+  test('nothing is inside anything, and nothing holds nothing', () => {
+    expect(encloses(room, [])).toBe(true);
+    expect(encloses([], [rect(0, 0, 10, 10)])).toBe(false);
   });
 });

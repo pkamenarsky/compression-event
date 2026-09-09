@@ -78,8 +78,9 @@ const OPTIONS: WallOptions = {
 };
 
 /**
- * What a fill counts with, which is the geometry of the first of the three
- * meshes it is. See `stencilled`.
+ * What a fill counts with, which is the geometry of the first of the meshes it
+ * is — three of them, or six where the floor set has a hole in it. See
+ * `stencilled`.
  *
  * Structurally typed rather than reached for through three, which is the game
  * package's dependency and not this one's.
@@ -366,8 +367,15 @@ describe('the two sources fill the same ground', () => {
     name: string,
     flat: boolean,
     t = 0,
+    /** Which of the fans: the floors', or the holes' where the fill has one.
+     * See `stencilled` in the game's `walls.ts` for the order. */
+    which = 0,
   ): Point[] {
-    const geometry = (mesh.children[0] as { geometry: Counting }).geometry;
+    const child = mesh.children[which] as { geometry: Counting } | undefined;
+
+    if (child === undefined) return [];
+
+    const geometry = child.geometry;
     const g = geometry.getAttribute(name);
     const out: Point[] = [];
 
@@ -418,6 +426,14 @@ describe('the two sources fill the same ground', () => {
     const here = corners(one.fill, 'position', false);
     const there = corners(two.fill, 'aOwnPoints', true, t);
 
+    // The holes' fan, which is the fourth mesh where there is one and nothing
+    // at all where there is not. Ground is filled where the floors counted
+    // something and the holes counted nothing — which is what the stencil says,
+    // in the order it says it. See `FillMaterials`.
+    const holed = two.fill.children.length === 6
+      ? corners(two.fill, 'aOwnPoints', true, t, 3)
+      : [];
+
     let filled = 0, checked = 0;
 
     // A grid, offset off the round numbers so that no sample lands exactly on
@@ -426,7 +442,7 @@ describe('the two sources fill the same ground', () => {
       for (let j = -20; j <= 20; j++) {
         const p = { x: i * (reach / 20) + 0.317, y: j * (reach / 20) + 0.523 };
         const a = winding(here, p) !== 0;
-        const b = winding(there, p) !== 0;
+        const b = winding(there, p) !== 0 && winding(holed, p) === 0;
 
         checked++;
         if (a) filled++;
@@ -458,8 +474,9 @@ describe('the two sources fill the same ground', () => {
     ).world);
   });
 
-  // The two below fall back to the CSG for their floors, and have to: counting
-  // is additive and a set is not. See `counted` in the editor's `bake.ts`.
+  // The two below are the ones a single count gets wrong, and they are drawn
+  // with two: the floors counted, and the holes counted inside what they filled
+  // and taken back out. See `FillMaterials` in the game's `walls.ts`.
   test('and a hole taken out of one', () => {
     agree(drawn(
       ['level', rect(-400, -400, 800, 800)],
@@ -690,5 +707,116 @@ describe('the fill counts the ring at every instant', () => {
       ...edit,
       transform: { ...edit.transform, erosion: 30 },
     }));
+  });
+});
+
+describe('a hole in the floor is counted apart from the floor', () => {
+  /** The meshes of a fill, as much of them as a test without a GL context can
+   * see: what each is drawn from, and what it does to the stencil. */
+  interface Drawn {
+    geometry: { getAttribute(name: string): Attribute }
+    renderOrder: number
+    material: {
+      colorWrite: boolean
+      stencilFunc: number
+      stencilRef: number
+      stencilFuncMask: number
+      stencilWriteMask: number
+      stencilZPass: number
+    }
+  }
+
+  const meshes = (it: { fill: { children: readonly unknown[] } }): Drawn[] =>
+    it.fill.children as Drawn[];
+
+  function span(...specs: [Named, Point[]][]) {
+    const { world, ids } = drawn(...specs);
+
+    return bakedSpan(run(bakeSpan(moved(world, 1, ids[1], { x: 40, y: 10 }), 0)));
+  }
+
+  test('a floor set with no hole in it is three draws', () => {
+    const it = morph(span(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-100, -100, 200, 200)],
+    ), OPTIONS);
+
+    expect(meshes(it).length).toBe(3);
+    expect(meshes(it).map(m => m.material.colorWrite)).toEqual([false, false, true]);
+
+    it.dispose();
+  });
+
+  test('and one with a hole is six, counted, marked, counted again, covered', () => {
+    const it = morph(span(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-100, -100, 200, 200)],
+      ['hole', rect(-40, -40, 80, 80)],
+    ), OPTIONS);
+
+    const all = meshes(it);
+
+    expect(all.length).toBe(6);
+
+    // Nothing on screen until the last of them: the four in the middle are
+    // arithmetic in the stencil buffer, and each reads what the one before it
+    // left there. The order is stated, and it is the whole mechanism.
+    expect(all.map(m => m.material.colorWrite)).toEqual([false, false, false, false, false, true]);
+    expect(all.map(m => m.renderOrder)).toEqual([1, 2, 3, 4, 5, 6]);
+
+    // Two fans, and the second is the hole's: the floors are counted by the
+    // first pair off one geometry and the hole by the second pair off another.
+    expect(all[1].geometry).toBe(all[0].geometry);
+    expect(all[4].geometry).toBe(all[3].geometry);
+    expect(all[3].geometry).not.toBe(all[0].geometry);
+
+    // The hole's fan is the hole's ring and nothing else: one triangle per edge
+    // of it, three vertices apiece.
+    const hole = all[3].geometry.getAttribute('aOwnPoints');
+
+    expect(hole.count).toBe(4 * 3);
+
+    // A count never treads on the mark, and the two passes that read it — the
+    // marking one and the cover — read the whole byte and put it back.
+    for (const m of [all[0], all[1], all[3], all[4]]) {
+      expect(m.material.stencilWriteMask).toBe(0x7f);
+    }
+
+    expect(all[2].material.stencilZPass).not.toBe(all[5].material.stencilZPass);
+    expect(all[5].material.stencilRef).toBe(0x80);
+    expect(all[5].material.stencilFuncMask).toBe(0xff);
+
+    // And the hole counts only inside what the floors filled, which is what
+    // keeps a hole hanging over the edge of a floor from taking ground away
+    // that no floor laid.
+    for (const m of [all[3], all[4]]) {
+      expect([m.material.stencilRef, m.material.stencilFuncMask]).toEqual([0x80, 0x80]);
+    }
+
+    it.dispose();
+  });
+
+  test('and the floors are carried uncut, hole or no hole', () => {
+    // The whole point of counting the two apart. A hole used to mean the floor
+    // set was cut by the CSG after all — its boundary resolved at every instant
+    // the cut looked at — and the tracks that came out were arcs of that
+    // boundary rather than the polygons\' own rings.
+    const holed = span(
+      ['level', rect(-200, -200, 400, 400)],
+      ['floor', rect(-100, -100, 200, 200)],
+      ['hole', rect(-40, -40, 80, 80)],
+    );
+
+    const fills = holed.tracks.filter(t => t.fill);
+
+    expect(fills.map(t => t.hole)).toEqual([false, true]);
+
+    // A rectangle is four corners, and a run closed for the fan repeats the
+    // first. Cut against its neighbour, neither of them would be.
+    for (const track of fills) {
+      for (const s of track.stretches) {
+        expect(s.runs.map(r => r.count)).toEqual([5]);
+      }
+    }
   });
 });

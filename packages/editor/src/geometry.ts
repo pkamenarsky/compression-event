@@ -20,7 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { AABB, Tree, box, build, each, emptyTree, expand, ofRings } from './aabb';
+import { AABB, Tree, box, build, containsBox, each, emptyTree, expand, ofRings } from './aabb';
 
 export type { Point };
 
@@ -929,6 +929,93 @@ export function fieldContains(f: Field, p: Point): boolean {
 /** Nonzero fill. Points exactly on an edge are not to be relied on. */
 export function contains(shape: Shape, p: Point): boolean {
   return winding(shape, p) !== 0;
+}
+
+/**
+ * Whether `inner` lies wholly inside `outer` — and *strictly* inside, nothing
+ * of it touching the boundary.
+ *
+ * Answered so that a `false` costs almost nothing and never lies the other way:
+ * it is asked in front of an `intersect` to find out whether that intersect
+ * would be the identity, so a `true` has to mean the clip changes nothing and a
+ * `false` need only mean *cannot say cheaply*. The caller then pays the boolean
+ * it was going to pay anyway.
+ *
+ * Three things are checked, over the edge tree the outer shape is already
+ * indexed by, so each is a query about one edge's neighbourhood rather than a
+ * walk over the whole boundary:
+ *
+ * - No edge of `inner` meets an edge of `outer`. A ring that never crosses the
+ *   boundary is wholly on one side of it.
+ * - Nothing of `inner` lies *on* the boundary, within the same hair the rest of
+ *   this file measures coincidence by. That is where a winding number is
+ *   nobody's business, and a floor drawn exactly around a pillar — every corner
+ *   of it on the hole's own ring — is the case that turns on it: it is outside
+ *   the level everywhere, and asking a point of it which side it is on is
+ *   asking a question with no answer.
+ * - Every corner and every edge's midpoint is inside. The corners alone are not
+ *   enough: a chord from one corner of a concave outline to another has both
+ *   ends inside and its middle out in the notch. It crosses two edges getting
+ *   there and the first test has it — the midpoint is what stands behind that
+ *   for the case where the crossing is exactly through a vertex.
+ *
+ * A floor drawn flush against the walls of its room is the price: it lies on
+ * the boundary and this says no, so the clip is taken. It is the one answer a
+ * cheap test cannot give, and the shape that has to be intersected there is the
+ * simplest one there is.
+ */
+export function encloses(outer: Shape, inner: Shape): boolean {
+  if (inner.length === 0) return true;
+  if (outer.length === 0) return false;
+  if (!containsBox(ofRings(outer), ofRings(inner))) return false;
+
+  const f = field(outer);
+  const e = f.edges;
+  const eps = extentOf(outer) * 1e-7;
+
+  for (const ring of inner) {
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+
+      let clear = true;
+
+      each(
+        f.tree,
+        expand(box(
+          Math.min(a.x, b.x),
+          Math.min(a.y, b.y),
+          Math.max(a.x, b.x),
+          Math.max(a.y, b.y),
+        ), eps),
+        id => {
+          if (!clear) return;
+
+          const at = id * 4;
+          const c = { x: e[at], y: e[at + 1] }, d = { x: e[at + 2], y: e[at + 3] };
+
+          clear = met(a, b, c, d) === null && !hugs(a, c, d, eps) && !hugs(mid, c, d, eps);
+        },
+      );
+
+      if (!clear) return false;
+      if (!fieldContains(f, a) || !fieldContains(f, mid)) return false;
+    }
+  }
+
+  return true;
+}
+
+/** Whether `p` is within `eps` of the segment `a`-`b`, ends included. */
+function hugs(p: Point, a: Point, b: Point, eps: number): boolean {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+
+  if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y) <= eps;
+
+  const t = Math.min(Math.max(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0), 1);
+
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t)) <= eps;
 }
 
 function cross(a: Point, b: Point, p: Point): number {

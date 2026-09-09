@@ -157,6 +157,19 @@ export interface BakedTrack {
    * `looped` in `walls.ts`.
    */
   fill: boolean
+  /**
+   * A hole cut in the floors rather than floor.
+   *
+   * The floor set is drawn by counting, and a count is additive where a set is
+   * not: two floors over the same ground count two, and a hole through both of
+   * them takes one away and leaves it filled. So the holes cannot go into the
+   * floors' count, and they are not wound to. They are counted on their own,
+   * inside what the floors filled, and taken back out of it — see `stencilled`
+   * in `walls.ts`, which is the only reader of this.
+   *
+   * False on a wall, which has no such question.
+   */
+  hole: boolean
   stretches: BakedStretch[]
   /** By `t`, ascending. Always `t0 === t1`. */
   jumps: BakedStretch[]

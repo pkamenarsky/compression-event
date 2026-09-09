@@ -1291,10 +1291,13 @@ describe('the floor set', () => {
     });
   }
 
-  /** The floor set the morph draws at `t`, as closed rings in world units.
-   * Through the very plumbing the fill is cut from — see `fills`. */
-  function stitched(span: BakedSpan, t: number): Point[][] {
-    const { points, runs } = fills(span);
+  /**
+   * The floor set the morph draws at `t`, as closed rings in world units, with
+   * the holes kept apart from the floors the way the fill keeps them. Through
+   * the very plumbing the fill is cut from — see `fills`.
+   */
+  function stitched(span: BakedSpan, t: number): { floors: Point[][], holes: Point[][] } {
+    const { points, runs, holes } = fills(span);
     const range = ranges(span);
 
     const at = (i: number): Point => {
@@ -1311,7 +1314,10 @@ describe('the floor set', () => {
       return t >= a && (t < b || b >= 1);
     };
 
-    return looped(runs.filter(alive), at, TOLERANCE).map(run => run.map(at));
+    const closed = (of: readonly number[][]): Point[][] =>
+      looped(of.filter(alive), at, TOLERANCE).map(run => run.map(at));
+
+    return { floors: closed(runs), holes: closed(holes) };
   }
 
   const area = (rings: readonly (readonly Point[])[]): number =>
@@ -1326,17 +1332,20 @@ describe('the floor set', () => {
     }
   });
 
-  test('the runs close into the same two rings at every instant', () => {
+  test('the floor and the hole arrive apart, one ring each, at every instant', () => {
     const span = bakedSpan(run(bakeSpan(laid(), 0)), []);
 
     for (let k = 0; k <= 20; k++) {
-      const rings = stitched(span, k / 20);
+      const { floors, holes } = stitched(span, k / 20);
 
-      // The floor and the hole both move rigidly, so the two areas are the two
-      // they started as the whole way across. A stitch that failed gives no
-      // rings at all; one that joined the wrong ends gives the wrong areas.
-      expect(rings.length).toBe(2);
-      expect(area(rings)).toBeCloseTo(900 * 900 + 200 * 200, 3);
+      // Apart, because a hole is not cut out of the floor any more: it is its
+      // own ring, counted on its own and taken back out on the GPU. Both move
+      // rigidly, so the two areas are the two they started as the whole way
+      // across — a stitch that failed gives no rings at all, and one that
+      // joined the wrong ends gives the wrong areas.
+      expect([floors.length, holes.length]).toEqual([1, 1]);
+      expect(area(floors)).toBeCloseTo(900 * 900, 3);
+      expect(area(holes)).toBeCloseTo(200 * 200, 3);
     }
   });
 
@@ -1346,9 +1355,13 @@ describe('the floor set', () => {
 
     for (const [t, v] of [[0, 0], [1, 1]] as const) {
       const shown = floorsAt(world, v);
+      const { floors, holes } = stitched(span, t);
 
-      expect(area(stitched(span, t)))
-        .toBeCloseTo(area([shown[0].points, ...(shown[0].holes ?? [])]), 3);
+      // The still is handed the set resolved — an outline with the hole cut in
+      // it — and the span is handed the same two rings with the cutting left
+      // undone. Ring for ring, they are the same rings.
+      expect(area(floors)).toBeCloseTo(area([shown[0].points]), 3);
+      expect(area(holes)).toBeCloseTo(area(shown[0].holes ?? []), 3);
     }
   });
 });

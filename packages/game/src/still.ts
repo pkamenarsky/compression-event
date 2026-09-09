@@ -258,7 +258,12 @@ export function still(
   // The fan, counted, and the cover over it — laid the hair of clearance above
   // the ground that keeps a fill over the tiles and under the walls standing on
   // it. See `stencilled`.
-  const filled = stencilled(fanGeometry, coverGeometry, fill, options.fillHeight);
+  //
+  // No hole fan, and never one: a still is handed the set already resolved, so
+  // its holes are rings of that set wound against their outlines and they count
+  // themselves out. It is the span that has floors and holes still apart, that
+  // being what lets a floor be carried uncut. Three draws here, always.
+  const filled = stencilled(fanGeometry, null, coverGeometry, fill, options.fillHeight);
 
   // The heights are applied in the shader, so the box `position` describes is
   // flat and a frustum test against it would drop walls that are on screen.
@@ -277,9 +282,7 @@ export function still(
       coverGeometry.dispose();
       wall.dispose();
       line.dispose();
-      fill.up.dispose();
-      fill.down.dispose();
-      fill.cover.dispose();
+      for (const m of Object.values(fill)) m.dispose();
     },
   };
 }

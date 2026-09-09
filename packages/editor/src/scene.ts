@@ -35,6 +35,7 @@ import {
   Ring,
   Shape,
   contains,
+  encloses,
   erode,
   erodeAt,
   erodeRingsAt,
@@ -2336,9 +2337,20 @@ export function settled(slots: readonly Shape[]): Shape {
  * A scope with no level keeps its floor whole. There is nothing there for the
  * clip to mean, and clipping to an outline that is not there would resolve the
  * floor out of existence — which is a group of nothing but floors vanishing.
+ *
+ * And a floor already inside its walls keeps its floor whole too, because there
+ * the clip *is* the identity and the intersect would hand back the shape it was
+ * given. That is the ordinary case — a room with ground laid in it — and it is
+ * the case the bake pays for over and over: this runs at every instant the cut
+ * evaluates, and every one of them would otherwise be an arrangement built to
+ * discover that nothing crosses. `encloses` asks that question directly and
+ * says no where it cannot tell, so what is left to the boolean is the floors
+ * that really do run past the walls, and the ones drawn flush against them.
  */
 export function underfoot(floor: Shape, level: Shape): Shape {
-  return floor.length === 0 || level.length === 0 ? floor : intersect(floor, level);
+  if (floor.length === 0 || level.length === 0) return floor;
+
+  return encloses(level, floor) ? floor : intersect(floor, level);
 }
 
 export interface Standing {
