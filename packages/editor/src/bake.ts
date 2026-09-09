@@ -2020,6 +2020,38 @@ const FINEST = 1e-7;
  */
 const PAYING = 0.7;
 
+/**
+ * How many events a track may pin, against the stretches it keeps, and still be
+ * offered another decade.
+ *
+ * `PAYING` asks whether the last decade reduced the error. That is the right
+ * question and it is not the only one, because a decade does not cost every
+ * track the same. On the level this was found on, a track deepened from 4,801
+ * stretches and 705 events to 5,906 and 734: the error fell from 11.30 to 4.11
+ * for a fifth again the work. On another, a track went from 73 stretches and
+ * 3,931 events to 335 and *30,437* — the error fell too, from 6.97 to 2.55, so
+ * `PAYING` waved the next decade through, and the next one is three hundred
+ * thousand events and the heap.
+ *
+ * The counts say what the difference is. Pinning a fixed set of events finer
+ * adds a few evaluations to each and leaves the count where it was; a count that
+ * multiplies means the finer look is finding events that were not there before.
+ * Those are not topology — they are a ring that crosses itself, whose
+ * arrangement fragments and reassembles continuously as it moves, so every depth
+ * finds more churn than the last and none of them finds the bottom. The error
+ * falls the whole way down and never arrives.
+ *
+ * So a track whose cover is mostly events is not offered a decade. The two
+ * populations are two orders of magnitude apart either side of this — 0.15 and
+ * 0.13 against 54 — so it is a line drawn through empty space rather than a
+ * number tuned against a level.
+ *
+ * What it costs is the tracks that would have come good: none observed. What it
+ * buys is that a self-crossing polygon makes the bake say so in a second instead
+ * of running the heap out. See `Span.strained`.
+ */
+const CHURN = 1;
+
 /** A decade deeper, both of them. */
 const finer = (l: Limits): Limits => ({ gap: l.gap / 10, bend: l.bend / 10 });
 
@@ -2859,22 +2891,25 @@ function wide(s: Stretch): boolean {
  * A track the search could not bring inside the tolerance, and how far it got.
  *
  * `Span.worst` says how wrong the bake is; this says *where*, and how hard the
- * bake tried. A track named here was cut again at least one decade finer and
- * still measured `worst` from the truth, so what is left is not depth the
- * bisection declined to spend — see `PAYING`.
+ * bake tried. `gap` is the reading to go by, and it says which of three things
+ * happened:
  *
- * `gap` is the reading to go by. A track that stopped at `LIMITS.gap` the decade
- * below — 1e-5 — bought nothing by deepening, which means its error is a
- * discontinuity rather than a bend and a person has to look at the level. One
- * that went several decades down was coming closer the whole way and ran out of
- * patience rather than out of argument, which is a tolerance question.
+ * - `LIMITS.gap` — never re-cut at all, because the track pins more events than
+ *   it keeps stretches. Its ring crosses itself; the arrangement is churning
+ *   rather than moving, and depth would find more churn rather than less error.
+ *   The polygon is what wants fixing, not the bake. See `CHURN`.
+ * - One decade below — deepened once and it bought nothing, so the error is a
+ *   discontinuity `comparable` accepted rather than a bend. Also a level to look
+ *   at, for a different reason. See `PAYING`.
+ * - Several decades below — it was coming closer the whole way and ran out of
+ *   patience rather than out of argument. That one is a tolerance question, and
+ *   the answer might be to ask for less.
  */
 export interface Strain {
   id: PolygonId
   /** What the best of the attempts measured. */
   worst: number
-  /** The widths that best attempt was cut at, by its `gap`. Never `LIMITS.gap`:
-   * a track only lands here after a re-cut. */
+  /** The widths that best attempt was cut at, by its `gap`. */
   gap: number
 }
 
@@ -3125,9 +3160,15 @@ function* chased(
     // promises is the smallest error the bake managed, so that is what it keeps.
     if (best === null || cut.worst < best.worst) best = { ...cut, limits };
 
-    // Inside the tolerance, out of width, or a decade that did not pay for
-    // itself. The last of those is the one that does the work — see `PAYING`.
-    if (best.worst <= tol || limits.gap <= FINEST || cut.worst > PAYING * was) {
+    // Inside the tolerance, out of width, a decade that did not pay for itself,
+    // or a track that pins more events than it keeps stretches — which is a
+    // decade nobody can afford however well it would pay. See `PAYING`, `CHURN`.
+    if (
+      best.worst <= tol
+      || limits.gap <= FINEST
+      || cut.worst > PAYING * was
+      || cut.jumps.length > CHURN * cut.stretches.length
+    ) {
       return { ...best, evaluations: spent };
     }
 
