@@ -1,3 +1,5 @@
+* fog when dying in order to not see "behind the walls"
+* clear erosion
 * bring transform one version up
 * multierosion in multiple versions
 
