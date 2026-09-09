@@ -434,4 +434,33 @@ describe('save', () => {
     for (const [, g] of after.world.groups) expect(g.death).toEqual(null);
     for (const [, a] of after.world.artefacts) expect(a.death).toEqual(null);
   });
+
+  test('a file written when the chain was shorter comes back at full length', () => {
+    // `VERSIONS` is fixed and everything reads it as fixed: the strip draws that
+    // many rows and each one reads its own version out of the world. A file from
+    // before it was raised came back short, and the first row past the end read
+    // `undefined.name` — the whole editor, on load, before anything else could
+    // go wrong.
+    const file = JSON.parse(JSON.stringify(saved(world())));
+
+    file.world.versions = file.world.versions.slice(0, 5);
+
+    const after = restored(file);
+
+    expect(after.world.versions.length).toEqual(VERSIONS);
+    expect(after.world.versions.every(v => typeof v.name === 'string')).toBe(true);
+
+    // Chained on and empty: the world the file described is unchanged, and the
+    // spans they add are spans in which nothing moves.
+    for (let i = 5; i < VERSIONS; i++) {
+      expect(after.world.versions[i].base).toEqual(i - 1);
+      expect(after.world.versions[i].edits.size).toEqual(0);
+      expect(after.world.versions[i].footings.size).toEqual(0);
+    }
+
+    // What was there is untouched.
+    for (let i = 0; i < 5; i++) {
+      expect(after.world.versions[i].name).toEqual(file.world.versions[i].name);
+    }
+  });
 });

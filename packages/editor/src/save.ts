@@ -30,6 +30,7 @@ import {
   Tool,
   Transform,
   Version,
+  VERSIONS,
   VersionId,
   VertexId,
   View,
@@ -277,7 +278,7 @@ export function restored(file: Saved): EditorState {
     throw new Error(`state file is format ${file.format}, and this reads ${OLDEST} to ${FORMAT}`);
   }
 
-  const versions = file.world.versions.map(restoredVersion);
+  const versions = chained(file.world.versions.map(restoredVersion));
 
   // The starts among them come in with the rest and are taken back out below:
   // where one stood is a question about the world it was in, so the world has
@@ -448,6 +449,43 @@ function standingThroughout(polygon: Polygon): Polygon {
       death: c.death ?? null,
     })),
   };
+}
+
+/**
+ * The chain at the length everything reads it at.
+ *
+ * `VERSIONS` is fixed: the strip draws that many rows and each reads its own
+ * version out of the world, `bakeAll` cuts that many spans less one, and
+ * `emptyWorld` builds exactly that many. A file holds however many there were
+ * when it was written, and that number has gone up — so an older file came back
+ * short and the first row past its end read `undefined.name` before anything
+ * else got a chance to go wrong.
+ *
+ * Padded rather than refused, and padded with versions that do nothing: chained
+ * to the one before, holding no edits, which is what a version nobody has
+ * authored anything at looks like. The world it describes is unchanged, and the
+ * spans they add are spans in which nothing moves.
+ *
+ * Longer than `VERSIONS` cannot be written by this and would have nowhere to be
+ * drawn, so it is cut back — with the same reasoning in reverse, and it has
+ * never happened.
+ */
+function chained(versions: Version[]): Version[] {
+  if (versions.length === VERSIONS) return versions;
+
+  const out = versions.slice(0, VERSIONS);
+
+  for (let i = out.length; i < VERSIONS; i++) {
+    out.push({
+      name: `v${i}`,
+      base: i === 0 ? null : i - 1,
+      visible: true,
+      edits: new Map(),
+      footings: new Map(),
+    });
+  }
+
+  return out;
 }
 
 function restoredVersion(v: SavedVersion): Version {
