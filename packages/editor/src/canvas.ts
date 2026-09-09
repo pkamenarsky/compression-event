@@ -70,6 +70,8 @@ import {
   outlining,
   removeAt,
   retypeArtefacts,
+  retypable,
+  retypedPolygons,
   shownAt,
   startPlaced,
   turnedStart,
@@ -106,7 +108,6 @@ import {
   FIGURES,
   KINDS,
   inverted,
-  slotOf,
   NGON_MAX,
   NGON_MIN,
   EMPTY_SELECTION,
@@ -770,16 +771,13 @@ export function worldCanvas(
     }
 
     function retype(kind: PolygonKind): void {
-      update(s => {
-        const polygons = new Map(s.world.polygons);
-
-        for (const id of polygonsIn(s.world, s.selection.polygons)) {
-          const p = polygons.get(id);
-          if (p !== undefined) polygons.set(id, { ...p, ...kind });
-        }
-
-        return marked({ ...s, world: { ...s.world, polygons } }, s.world);
-      });
+      update(s => marked(
+        {
+          ...s,
+          world: retypedPolygons(s.world, retypable(s.world, s.selection.polygons), kind),
+        },
+        s.world,
+      ));
     }
 
     function retypeArtefact(type: ArtefactType): void {
@@ -2794,7 +2792,7 @@ function layers(
   // The floor first and the level over it, which is the order the two stand
   // in: a wall is built on the floor, and where a floor's edge runs along a
   // wall it is the wall that is there to be seen.
-  out.push(ctx => outlines(ctx, view, floor, theme.csgFloor));
+  out.push(ctx => outlines(ctx, view, floor, theme.csgFloor, true));
   out.push(ctx => outlines(ctx, view, outline, theme.csg));
 
   // Over the editor's own answer, so the two can be read against each other:
@@ -3307,7 +3305,9 @@ function groups(
  * A room is left plain, being the ordinary case on its side. A floor is not,
  * and that is the one asymmetry: a floor is drawn inside a room and a hole in a
  * floor is drawn inside the floor, so an unfilled floor and the hole in it are
- * the same picture. The fill is faint enough to leave the room under it legible.
+ * the same picture. Three textures, then, and each is faint enough to leave
+ * what it is drawn over legible: dots for the floor, a diagonal hatch for the
+ * solid, and horizontal rules for the void that cuts either of them.
  *
  * Texture rather than geometry, so it does not zoom with the level: a pattern
  * the view's transform stretched would go from hatching to stripes on the way
@@ -3335,10 +3335,23 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
     return null;
   }
 
-  // Hatched where it cuts the level, dotted where it cuts the floor — a void
-  // is drawn as whatever it is pointed at, and one pointed at both is drawn
-  // in the level's terms, that being the picture it is mostly read against.
-  if (slotOf(kind, 'level') !== null) {
+  // One texture per way of going, and the three are told apart by direction
+  // before they are told apart by colour: a solid hatches diagonally, a floor
+  // stipples, and a void rules straight across. Direction is what survives
+  // being drawn one inside another, which is the ordinary case here — a void
+  // is nearly always sitting inside the floor or the solid it cuts.
+  if (kind.type === 'void') {
+    on.strokeStyle = theme.voidLines;
+    on.lineWidth = 1;
+
+    // Half a pixel off the seam, so the line lands on a pixel row rather than
+    // between two of them and comes out one solid rule instead of two grey.
+    on.beginPath();
+    on.moveTo(0, step / 2 + 0.5);
+    on.lineTo(step, step / 2 + 0.5);
+    on.stroke();
+  }
+  else if (kind.type === 'solid') {
     on.strokeStyle = theme.solidHatch;
     on.lineWidth = 1;
 
@@ -3374,16 +3387,9 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
  * with anything. The path is the caller's: it is traced once and used for the
  * fill, the picked fill over it and the stroke over that. */
 function shaded(ctx: CanvasRenderingContext2D, kind: PolygonKind): void {
-  // A room is the plain case and is left unfilled. A floor is filled flat.
-  // What cuts — a solid, a void — is hatched, so that a hole reads as one.
+  // A room is the plain case and is left unfilled. Everything else carries a
+  // texture, and which texture it is says which way it goes.
   if (kind.type === 'level') return;
-
-  if (kind.type === 'floor') {
-    ctx.fillStyle = theme.floorFill;
-    ctx.fill();
-
-    return;
-  }
 
   const pattern = patterned(kind);
 
@@ -3448,6 +3454,12 @@ function outlines(
   view: View,
   runs: Point[][],
   colour: string,
+  /** Stitched rather than solid. The floor's answer is drawn this way and the
+   * level's is not: the two run along each other wherever a floor reaches a
+   * wall, and two solid lines of the same weight there are one line whose
+   * colour is whichever was drawn last. A stitch leaves the line under it
+   * showing through the gaps, so both are still readable where they agree. */
+  stitched = false,
 ): void {
   if (runs.length === 0) return;
 
@@ -3468,7 +3480,16 @@ function outlines(
   ctx.strokeStyle = colour;
   ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
+
+  // Butt caps under the dash, so a stitch is a bar of the width it is set to
+  // rather than a lozenge half again as long.
+  if (stitched) {
+    ctx.lineCap = 'butt';
+    ctx.setLineDash([7, 4]);
+  }
+
   ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /**

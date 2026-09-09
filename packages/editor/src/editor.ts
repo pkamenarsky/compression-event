@@ -14,7 +14,10 @@ import {
   landing,
   pasted,
   reaching,
+  kindsOf,
   rechained,
+  retypable,
+  retypedPolygons,
   sealing,
   stamped,
   unchained,
@@ -41,7 +44,10 @@ import {
   World,
   Figure,
   FIGURES,
+  FLOOR,
   GroupId,
+  PolygonKind,
+  SOLID,
   coarser,
   finer,
   initialState,
@@ -116,6 +122,7 @@ export function editor(initial: World): VNode {
           statusbar(s.status),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
+          typeBar(s.world, s.selection, s.tool, update),
           versionStrip(s.world, s.selection, s.currentVersion, update),
           bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
@@ -905,6 +912,205 @@ function button(
           'stroke-linejoin': 'round',
         },
         icon,
+      ),
+    ],
+  );
+}
+
+// -----------------------------------------------------------------------------
+// The type bar
+//
+// What the picked polygons *are*, along the top, under the transform tool and
+// nowhere else. The digits already retype — the bar is not a second way of
+// saying it so much as the answer to the question the digits leave unasked:
+// what is it now. A level with a hundred shapes in it says which kind each one
+// is by texture alone, and a texture read through a selection fill is not
+// something to be sure about.
+// -----------------------------------------------------------------------------
+
+const TYPE_BUTTON = 30;
+const TYPE_WIDTH = 62;
+
+/** One button's worth of the bar: the kind it sets, and the flag it toggles
+ * where it is one of the two void halves. */
+interface TypeSpec {
+  label: string
+  kind: PolygonKind
+  /** Which polygons it lights up for. A plain kind matches itself; a void half
+   * matches every void that cuts that set, whether or not it cuts the other. */
+  holds: (k: PolygonKind) => boolean
+}
+
+const TYPES: TypeSpec[] = [
+  { label: 'level', kind: { type: 'level' }, holds: k => k.type === 'level' },
+  { label: 'solid', kind: { type: 'solid' }, holds: k => k.type === 'solid' },
+  { label: 'floor', kind: { type: 'floor' }, holds: k => k.type === 'floor' },
+
+  // The two halves of a void, which are one button each because a void is the
+  // one kind with something further to say: it may cut the solids, the floors,
+  // or both, and both is a state neither of the other two spellings reaches.
+  // So they are independent of each other and exclusive with everything to
+  // their left — which is what the rule in the bar draws, and what `voided`
+  // below works out.
+  {
+    label: 'void solid',
+    kind: { type: 'void', from: SOLID },
+    holds: k => k.type === 'void' && (k.from & SOLID) !== 0,
+  },
+  {
+    label: 'void floor',
+    kind: { type: 'void', from: FLOOR },
+    holds: k => k.type === 'void' && (k.from & FLOOR) !== 0,
+  },
+];
+
+/**
+ * What clicking a void half means, given what is picked.
+ *
+ * Against the mask every picked polygon agrees on, so the button reads as a
+ * toggle where the selection is already a void of one shape and as a plain
+ * *make it this* where it is anything else. Turning off the last flag is not a
+ * state — a void that cuts nothing is not a kind — so it comes back as the
+ * flag itself, and the click is the no-op it looks like.
+ */
+function voided(kinds: readonly PolygonKind[], flag: number): PolygonKind {
+  const every = kinds.length > 0
+    && kinds.every(k => k.type === 'void')
+    && kinds.reduce((m, k) => m & (k.type === 'void' ? k.from : 0), SOLID | FLOOR);
+
+  const from = (every === false ? 0 : every) ^ flag;
+
+  return { type: 'void', from: from === 0 ? flag : from };
+}
+
+/**
+ * The bar itself, centred along the top.
+ *
+ * Centred rather than tucked beside a tool, unlike the figure bar: that one is
+ * a second question about the tool it sits next to, and this is a statement
+ * about what is picked out in the middle of the canvas. It is also the one
+ * piece of chrome that is read while the eye is on the drawing.
+ *
+ * Away entirely when nothing it could retype is picked. An empty bar would be
+ * five buttons saying nothing, and the space over the level is worth more than
+ * that.
+ */
+function typeBar(
+  world: Value<World>,
+  selection: Value<Selection>,
+  tool: Value<Tool>,
+  update: Update,
+): VNode {
+  // What a click would land on, which is also what the buttons report: a
+  // sealed group is a scope stating its own rule and the descent stops at it,
+  // so its members are neither retyped nor counted. See `retypable`.
+  const reached = () => retypable(world(), selection().polygons);
+  const kinds = () => kindsOf(world(), reached());
+
+  const retype = (kind: PolygonKind) =>
+    update(s => marked(
+      { ...s, world: retypedPolygons(s.world, retypable(s.world, s.selection.polygons), kind) },
+      s.world,
+    ));
+
+  const width = TYPES.length * TYPE_WIDTH + (TYPES.length - 1) * GAP + 2 * PADDING;
+  const height = TYPE_BUTTON + 2 * PADDING;
+
+  return show(
+    () => tool() === 'polygon' && reached().length > 0,
+    svg(
+      {
+        width,
+        height,
+        viewBox: `0 0 ${width} ${height}`,
+        style: {
+          position: 'absolute',
+          left: '50%',
+          top: '12px',
+          transform: 'translateX(-50%)',
+          filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
+        },
+      },
+      [
+        rect({
+          x: 0.5,
+          y: 0.5,
+          width: width - 1,
+          height: height - 1,
+          rx: 8,
+          fill: theme.panel,
+          stroke: theme.border,
+        }),
+
+        ...TYPES.map((spec, index) => typeButton(spec, index, kinds, retype)),
+
+        // The rule between the three plain kinds and the two void halves: what
+        // is to the left of it is one choice of one thing, and what is to the
+        // right is two flags that go on and off on their own.
+        line({
+          x1: PADDING + 3 * (TYPE_WIDTH + GAP) - GAP / 2,
+          y1: PADDING + 5,
+          x2: PADDING + 3 * (TYPE_WIDTH + GAP) - GAP / 2,
+          y2: PADDING + TYPE_BUTTON - 5,
+          stroke: theme.border,
+          'stroke-width': 1,
+        }),
+      ],
+    ),
+  );
+}
+
+/**
+ * One labelled button, in one of three states.
+ *
+ * Filled where every polygon the bar reaches is of this kind, outlined where
+ * only some of them are, and plain where none is. The middle state is the one
+ * the bar exists for as much as the first: a selection spanning two kinds has
+ * to say so, and a bar that showed the first polygon's kind would be a
+ * confident answer to a question with two.
+ */
+function typeButton(
+  spec: TypeSpec,
+  index: number,
+  kinds: Value<readonly PolygonKind[]>,
+  retype: (kind: PolygonKind) => void,
+): VNode {
+  const some = () => kinds().some(spec.holds);
+  const all = () => kinds().length > 0 && kinds().every(spec.holds);
+
+  const click = () => retype(
+    spec.kind.type === 'void' ? voided(kinds(), spec.kind.from) : spec.kind,
+  );
+
+  return g(
+    {
+      transform: `translate(${PADDING + index * (TYPE_WIDTH + GAP)}, ${PADDING})`,
+      style: { cursor: 'pointer' },
+      onclick: click,
+    },
+    [
+      rect({
+        width: TYPE_WIDTH,
+        height: TYPE_BUTTON,
+        rx: 6,
+        fill: () => (all() ? theme.accent : 'transparent'),
+        stroke: () => (some() && !all() ? theme.accent : 'transparent'),
+      }),
+
+      text(
+        {
+          x: TYPE_WIDTH / 2,
+          y: TYPE_BUTTON / 2 + 4,
+          'text-anchor': 'middle',
+          fill: () => {
+            if (all()) return theme.onAccent;
+
+            return some() ? theme.accent : theme.muted;
+          },
+          'font-family': 'system-ui, sans-serif',
+          'font-size': '11px',
+        },
+        spec.label,
       ),
     ],
   );

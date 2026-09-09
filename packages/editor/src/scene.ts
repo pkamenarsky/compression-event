@@ -2034,6 +2034,72 @@ export function polygonsIn(world: World, ids: readonly Id[]): PolygonId[] {
   return [...out];
 }
 
+/**
+ * The polygons a retype is allowed to reach.
+ *
+ * `polygonsIn` with one stop in it: a sealed group is a set of its own, and
+ * what it resolves to is `level - (solid - void)` over the members it has.
+ * Retyping through one would rewrite that rule from outside the scope that
+ * states it — the handle says *this shape*, not *these parts of it* — so the
+ * descent stops at a sealed group and its members keep their kinds. A loose
+ * group is only a handle round polygons that are in the set on their own
+ * account, so it passes the retype straight through.
+ *
+ * A polygon named in its own right is always reached, sealed group around it
+ * or not: command-click picked that one polygon, and what is picked is what
+ * the next gesture acts on.
+ */
+export function retypable(world: World, ids: readonly Id[]): PolygonId[] {
+  const out = new Set<PolygonId>();
+
+  const descend = (id: Id): void => {
+    const group = world.groups.get(id);
+
+    if (group === undefined) {
+      if (world.polygons.has(id)) out.add(id);
+
+      return;
+    }
+
+    if (!group.sealed) group.members.forEach(descend);
+  };
+
+  for (const id of ids) descend(id);
+
+  return [...out];
+}
+
+/** Every kind among `ids`, deduplicated. One entry says the selection agrees
+ * about what it is; more than one is what the type buttons draw as mixed. */
+export function kindsOf(world: World, ids: readonly PolygonId[]): PolygonKind[] {
+  const out = new Map<string, PolygonKind>();
+
+  for (const id of ids) {
+    const p = world.polygons.get(id);
+
+    if (p !== undefined) out.set(kindKey(p), kindOf(p));
+  }
+
+  return [...out.values()];
+}
+
+/** `ids` made `kind`, and nothing else touched. */
+export function retypedPolygons(
+  world: World,
+  ids: readonly PolygonId[],
+  kind: PolygonKind,
+): World {
+  const polygons = new Map(world.polygons);
+
+  for (const id of ids) {
+    const p = world.polygons.get(id);
+
+    if (p !== undefined) polygons.set(id, { ...p, ...kind });
+  }
+
+  return { ...world, polygons };
+}
+
 /** The same, for artefacts: what a gesture over a selection actually moves,
  * including the ones inside a group it names. */
 export function artefactsIn(world: World, ids: readonly Id[]): ArtefactId[] {

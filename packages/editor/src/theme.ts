@@ -51,13 +51,8 @@ export const theme = {
    * says which side of the line the material is on, which a ring alone never
    * did. Faint, because a pillar should not out-shout the room it stands in. */
   solidHatch: 'rgba(176, 112, 95, 0.42)',
-  /** A hole cut in a floor, stippled. Read against `solidHatch` rather than
-   * against the canvas — the two are what say which way a shape goes, so they
-   * differ in texture before they differ in colour. */
-  floorDots: 'rgba(196, 132, 74, 0.55)',
   /**
-   * A floor, filled — faintly, because it is the ordinary case on its side of
-   * the drawing the way a room is on the other.
+   * A floor, stippled.
    *
    * A room is left unfilled and a floor is not, which is not an inconsistency:
    * a floor lies *inside* something, and one drawn as an outline alone inside
@@ -65,7 +60,16 @@ export const theme = {
    * A ring that is a hole and a ring that is an island look the same until one
    * of them is filled.
    */
-  floorFill: 'rgba(196, 132, 74, 0.10)',
+  floorDots: 'rgba(196, 132, 74, 0.55)',
+  /**
+   * A void, ruled straight across.
+   *
+   * Read against `solidHatch` and `floorDots` before it is read against the
+   * canvas: the three are what say which way a shape goes, and a void is
+   * nearly always drawn inside one of the other two, so they differ in
+   * direction first and in colour second.
+   */
+  voidLines: 'rgba(190, 122, 88, 0.45)',
   /** An artefact. Not a kind of shape, so none of the polygon strokes would be
    * right for it — and nothing else in the level is this colour, which is what
    * a handful of small things scattered over a drawing needs. */
