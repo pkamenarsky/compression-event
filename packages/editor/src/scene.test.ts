@@ -17,6 +17,7 @@ import {
   centroid,
   grouped,
   sealing,
+  unchained,
   IDENTITY,
   depths,
   occupying,
@@ -2740,5 +2741,145 @@ describe('a projection is the same shape wherever it is taken', () => {
       ),
       { numRuns: 400 },
     );
+  });
+});
+
+describe('moving something at one version moves it at the versions after it', () => {
+  /**
+   * The compensation `carried` makes, from the outside: a drag says *this is a
+   * hundred units further right*, and every version it reaches hears the same
+   * sentence rather than the sentence its own layer would turn it into.
+   */
+  const middle = (world: World, v: VersionId, id: Id): Point => {
+    const pts = resolveAt(world, v).find(r => r.id === id)!.shape.flat();
+
+    return {
+      x: (Math.min(...pts.map(p => p.x)) + Math.max(...pts.map(p => p.x))) / 2,
+      y: (Math.min(...pts.map(p => p.y)) + Math.max(...pts.map(p => p.y))) / 2,
+    };
+  };
+
+  const box = () => drawn(['level', rect(-10, -10, 20, 20)]);
+
+  test('a turn at a later version does not re-aim the drag', () => {
+    // The case this is all for. Left alone, the quarter turn at v1 acts on v0's
+    // translation as much as on the geometry, and the room dragged right at v0
+    // goes *up* at v1.
+    const { world, ids } = box();
+    const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
+    const out = transformed(turned, 0, ids[0], { translation: { x: 100, y: 0 } });
+
+    expect(middle(out, 0, ids[0])).toEqual({ x: 100, y: 0 });
+    expect(middle(out, 1, ids[0]).x).toBeCloseTo(100, 6);
+    expect(middle(out, 1, ids[0]).y).toBeCloseTo(0, 6);
+
+    // And it is still turned there — the compensation is about where the room
+    // is, and says nothing about which way it faces.
+    const at = resolveAt(out, 1).find(r => r.id === ids[0])!.shape[0];
+
+    expect(shapeArea([at])).toBeCloseTo(20 * 20, 6);
+  });
+
+  test('a scale at a later version does not stretch the drag', () => {
+    // The same thing said with the other half of a layer's linear part: a room
+    // doubled at v1 would otherwise be dragged twice as far there.
+    const { world, ids } = box();
+    const bigger = transformed(world, 1, ids[0], { scale: { x: 2, y: 2 } });
+    const out = transformed(bigger, 0, ids[0], { translation: { x: 100, y: 0 } });
+
+    expect(middle(out, 1, ids[0]).x).toBeCloseTo(100, 6);
+    expect(shapeArea(resolveAt(out, 1).find(r => r.id === ids[0])!.shape))
+      .toBeCloseTo(40 * 40, 6);
+  });
+
+  test('a member turned at a later version rides its group being moved', () => {
+    // The same bug wearing a group: the group's move at v0 sits inside the
+    // member's turn at v1, so the turned member left the rest of the group
+    // behind. The untouched member always went where it should, which is what
+    // says the group's own transform was never the thing at fault.
+    const { world, ids } = drawn(
+      ['level', rect(-10, -10, 20, 20)],
+      ['level', rect(190, -10, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const turned = transformed(made.world, 1, ids[0], { rotation: Math.PI / 2 });
+    const out = moved(turned, 0, made.id, { translation: { x: 100, y: 0 } });
+
+    for (const id of ids) {
+      expect(middle(out, 1, id).x).toBeCloseTo(middle(out, 0, id).x, 6);
+      expect(middle(out, 1, id).y).toBeCloseTo(middle(out, 0, id).y, 6);
+    }
+  });
+
+  test('a group turning at a later version still carries what is in it', () => {
+    // The case deliberately left alone. Here the turn is the *group's* and the
+    // drag is one member's, so the member is riding a frame that turns — and a
+    // thing attached to something that turns turning with it is not the
+    // surprise. Compensating would have to move the group's turn, which moves
+    // every other member with it.
+    const { world, ids } = drawn(
+      ['level', rect(-10, -10, 20, 20)],
+      ['level', rect(190, -10, 20, 20)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    const turned = moved(made.world, 1, made.id, { rotation: Math.PI / 2 });
+    const out = transformed(turned, 0, ids[0], { translation: { x: 100, y: 0 } });
+
+    // Dragged right at v0, and at v1 the group's quarter turn has taken it up.
+    expect(middle(out, 0, ids[0]).x).toBeCloseTo(100, 6);
+    expect(middle(out, 1, ids[0]).x).toBeCloseTo(0, 6);
+    expect(middle(out, 1, ids[0]).y).toBeCloseTo(100, 6);
+  });
+
+  test('nothing is carried past a footing', () => {
+    // A footing says *ignore what the base handed over*, so the drag never
+    // reaches the layer beyond one and there is nothing there to take back out.
+    // Compensating anyway would move a version that was explicitly cut loose.
+    const { world, ids } = box();
+    const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
+    const loose = unchained(turned, 1, [ids[0]]);
+
+    const before = middle(loose, 1, ids[0]);
+    const out = transformed(loose, 0, ids[0], { translation: { x: 100, y: 0 } });
+
+    expect(middle(out, 0, ids[0]).x).toBeCloseTo(100, 6);
+    expect(middle(out, 1, ids[0]).x).toBeCloseTo(before.x, 6);
+    expect(middle(out, 1, ids[0]).y).toBeCloseTo(before.y, 6);
+  });
+
+  test('a drag in steps lands where the same drag in one go lands', () => {
+    // A gesture writes the whole transform on every pointer move, so this runs
+    // once per frame of a drag and compensates for that frame's step alone.
+    // Translations compose, so the steps have to add up to the same answer the
+    // single move gives — otherwise a slow hand and a fast one end somewhere
+    // different.
+    const { world, ids } = box();
+    const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
+
+    let stepped = turned;
+
+    for (const x of [20, 45, 70, 100]) {
+      stepped = transformed(stepped, 0, ids[0], { translation: { x, y: 0 } });
+    }
+
+    const once = transformed(turned, 0, ids[0], { translation: { x: 100, y: 0 } });
+
+    for (const v of [0, 1]) {
+      expect(middle(stepped, v, ids[0]).x).toBeCloseTo(middle(once, v, ids[0]).x, 6);
+      expect(middle(stepped, v, ids[0]).y).toBeCloseTo(middle(once, v, ids[0]).y, 6);
+    }
+  });
+
+  test('a turn at an earlier version is inherited, as it always was', () => {
+    // Only a move is compensated. Turning something at v0 turns it at v1 too,
+    // which is inheritance doing exactly what it is for and what nobody is
+    // confused by.
+    const { world, ids } = drawn(['level', rect(90, -10, 20, 20)]);
+    const out = transformed(world, 0, ids[0], { rotation: Math.PI / 2 });
+
+    expect(middle(out, 1, ids[0]).x).toBeCloseTo(0, 6);
+    expect(middle(out, 1, ids[0]).y).toBeCloseTo(100, 6);
   });
 });

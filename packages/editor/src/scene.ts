@@ -1464,13 +1464,144 @@ export function sealing(world: World, id: GroupId, sealed: boolean): World {
 }
 
 export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World {
+  const was = world.versions[v].edits.get(id)?.transform ?? EMPTY_TRANSFORM;
   const versions = [...world.versions];
   const edits = new Map(versions[v].edits);
 
   edits.set(id, edit);
   versions[v] = { ...versions[v], edits };
 
-  return { ...world, versions };
+  return carried({ ...world, versions }, v, id, was, edit.transform);
+}
+
+/**
+ * Whether two transforms differ in where a thing is and in nothing else.
+ *
+ * The compensation below is derived for a translation and is right for
+ * nothing else, so it asks rather than assuming. Which costs nothing in
+ * practice: a gesture writes one kind of transform at a time — `t` moves, `r`
+ * turns, `s` scales — so a drag that moves something changes this and only
+ * this.
+ */
+function onlyMoved(was: Transform, now: Transform): boolean {
+  return was.rotation === now.rotation
+    && was.scale.x === now.scale.x
+    && was.scale.y === now.scale.y
+    && was.erosion === now.erosion
+    && (was.translation.x !== now.translation.x || was.translation.y !== now.translation.y);
+}
+
+/**
+ * Moving something at one version, carried through the versions after it.
+ *
+ * A version's layer applies on top of everything before it, so a rotation at
+ * v1 acts on v0's translation as much as on the geometry: drag a room right at
+ * v0 with a quarter turn on it at v1 and it goes *up* at v1. That is what
+ * composing layers means and it is not a mistake in the composition, but it is
+ * not what anybody drags for. What the hand said was "this is a hundred units
+ * further right", and every version it reaches should hear the same sentence.
+ *
+ * The frame at a later version is `L . D . Mv`, where `D` is the displacement
+ * the drag made and `L` is everything the later versions add over the top. The
+ * wanted frame is `D . L . Mv`, and the two agree exactly when `L` is replaced
+ * by `D L D-inverse` — so each later layer is conjugated by the displacement.
+ * For a layer `T . R . S` and a translation `D` that is
+ *
+ *   T' = T + d - RS(d)
+ *
+ * which touches the translation and nothing else, so it stays inside
+ * `Transform` and no shear can appear. A layer with no turn and no scale in it
+ * has `RS(d) = d` and is left exactly as it was, which is most of them.
+ *
+ * What gets conjugated is every later layer of the thing moved *and of
+ * everything inside it*, because those are the layers composing over the top of
+ * this one. Nothing outside it is touched: moving a polygon inside a group that
+ * turns at a later version leaves the group's turn alone, and the polygon rides
+ * it. A thing attached to something that turns turning with it is not the
+ * surprise — a thing re-aiming its own earlier drag is.
+ *
+ * It stops at a footing, which is the one thing that says *ignore what the base
+ * handed over*. The displacement does not reach past one, so there is nothing
+ * there to compensate for.
+ *
+ * This is the one place that writes into a version other than the one being
+ * edited, and it is worth saying why that is allowed here. Inheritance is the
+ * whole design and rewriting downstream is what `Footing` exists to avoid — but
+ * what is written here is what those layers already meant. A turn at v1 means
+ * *this room, turned*; it went on meaning that, and the numbers are what
+ * changed under it.
+ */
+function carried(world: World, v: VersionId, id: Id, was: Transform, now: Transform): World {
+  if (!onlyMoved(was, now)) return world;
+
+  const step = {
+    x: now.translation.x - was.translation.x,
+    y: now.translation.y - was.translation.y,
+  };
+
+  // Into world units. A layer's own translation is read in the frame its groups
+  // make at that version — see `under` — and the displacement has to be in the
+  // space the later layers compose in, which is the world.
+  const h = held(world, world.versions[v], id);
+  const d = {
+    x: h.a * step.x + h.c * step.y,
+    y: h.b * step.x + h.d * step.y,
+  };
+
+  const mine = new Set(within(world, id));
+  const versions = [...world.versions];
+  const done = new Set<Id>();
+
+  let touched = false;
+
+  for (let k = v + 1; k < versions.length; k++) {
+    // Only the versions this one is actually upstream of. Membership rather
+    // than `k > v`, for the reason `standing` gives: versions happen to be
+    // numbered in order today and forks would end that.
+    if (!chain(world, k).includes(v)) continue;
+
+    let edits: Map<Id, Edit> | null = null;
+
+    for (const t of mine) {
+      // Past a footing the base is not what this stands on, so the move never
+      // reached here and there is nothing to take back out.
+      if (done.has(t)) continue;
+      if (versions[k].footings.has(t)) {
+        done.add(t);
+        continue;
+      }
+
+      const layer = versions[k].edits.get(t);
+
+      if (layer === undefined) continue;
+
+      const m = affine({ ...layer.transform, translation: { x: 0, y: 0 } });
+      const turned = { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
+
+      // No turn and no scale, so the layer carries the move unchanged and has
+      // nothing to say about it.
+      if (turned.x === d.x && turned.y === d.y) continue;
+
+      edits ??= new Map(versions[k].edits);
+      edits.set(t, {
+        ...layer,
+        transform: {
+          ...layer.transform,
+          translation: {
+            x: layer.transform.translation.x + d.x - turned.x,
+            y: layer.transform.translation.y + d.y - turned.y,
+          },
+        },
+      });
+    }
+
+    if (edits !== null) {
+      versions[k] = { ...versions[k], edits };
+      touched = true;
+    }
+  }
+
+  return touched ? { ...world, versions } : world;
 }
 
 // -----------------------------------------------------------------------------
