@@ -1882,16 +1882,17 @@ describe('the bake chases its own error', () => {
     }
   });
 
-  test('and a ring that crosses itself is given up on rather than chased', () => {
+  test('and a ring that crosses itself does not need chasing at all', () => {
     // Straight out of a level that hung the bake at thirteen percent: a hexagon
-    // with one vertex dragged across it, so the ring crosses itself five ways
-    // and its arrangement fragments and reassembles the whole way through the
-    // span. Nothing else in the world — it does this on its own.
+    // with one vertex dragged across it, so the ring crosses itself five ways.
+    // Nothing else in the world — it did this on its own.
     //
-    // The events it pins are not topology. Looking a decade closer found 30,437
-    // of them where there had been 3,931, and the error fell the whole way down
-    // without ever arriving, so `PAYING` waved each decade through until the
-    // heap gave out. `CHURN` is what reads the shape of that and declines.
+    // It came back as 11,922 discontinuities and an error of 7.6, and looking a
+    // decade closer found 30,437 of them, so the chase kept paying for depth
+    // until the heap gave out. None of them were events: a self-crossing is one
+    // point of the boundary and two vertices of the arrangement, and the walk
+    // named it by whichever it arrived through. Six now, and inside tolerance.
+    // See `boundaryRuns`.
     const tangle = [[800, -600], [1319.6, -300], [1319.6, 300], [800, 600], [280.4, 300], [1400, 500]];
     const { world, ids } = drawn(['level', tangle.map(([x, y]) => ({ x, y }))]);
 
@@ -1904,17 +1905,13 @@ describe('the bake chases its own error', () => {
     const span = run(bakeSpan(withEdit(world, 1, ids[0], { ...edit, vertices }), 0));
     const track = span.tracks[0];
 
-    // The condition itself, so that a test claiming to cover the gate does not
-    // quietly stop reaching it.
-    expect(track.jumps.length).toBeGreaterThan(track.stretches.length);
+    expect(span.worst).toBeLessThan(TOLERANCE);
+    expect(span.strained).toEqual([]);
 
-    // Named, and never re-cut: `LIMITS.gap` is the gate saying depth is not the
-    // answer here, as against a decade below saying it was tried and did not pay.
-    expect(span.strained).toEqual([{ id: track.id, worst: span.worst, gap: 1e-4 }]);
-
-    // And it said so cheaply. One decade of this track was 7.5 times the work
-    // for an error still fifty times the tolerance; the next was the heap.
-    expect(span.evaluations).toBeLessThan(40_000);
+    // The numbers, because the tolerance alone would pass on a bake that got
+    // there by pinning ten thousand things that are not there.
+    expect(track.jumps.length).toBeLessThan(50);
+    expect(span.evaluations).toBeLessThan(2_000);
   }, 20_000);
 
   test('and a track that is already inside it is cut once', () => {

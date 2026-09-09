@@ -2036,19 +2036,24 @@ const PAYING = 0.7;
  * The counts say what the difference is. Pinning a fixed set of events finer
  * adds a few evaluations to each and leaves the count where it was; a count that
  * multiplies means the finer look is finding events that were not there before.
- * Those are not topology — they are a ring that crosses itself, whose
- * arrangement fragments and reassembles continuously as it moves, so every depth
- * finds more churn than the last and none of them finds the bottom. The error
- * falls the whole way down and never arrives.
  *
  * So a track whose cover is mostly events is not offered a decade. The two
- * populations are two orders of magnitude apart either side of this — 0.15 and
+ * populations were two orders of magnitude apart either side of this — 0.15 and
  * 0.13 against 54 — so it is a line drawn through empty space rather than a
  * number tuned against a level.
  *
- * What it costs is the tracks that would have come good: none observed. What it
- * buys is that a self-crossing polygon makes the bake say so in a second instead
- * of running the heap out. See `Span.strained`.
+ * Where the second track's events came from is now known and fixed: a
+ * self-crossing was one point of the boundary with two names, and the walk chose
+ * between them freely, so the bake read a name changing and pinned it. That
+ * level bakes in a second and a half now, with 118 events and nothing strained.
+ * See `boundaryRuns`.
+ *
+ * Which leaves this a guard rather than a working part — nothing to hand reaches
+ * it. It is kept because what it guards against is not that bug. Any polygon
+ * whose combinatorial state churns faster than the search resolves it makes the
+ * same shape of cover, and what that cost was not a bad bake but a bake that
+ * never finished. A comparison against a number in empty space is worth having
+ * on that road even with nothing on it. See `Span.strained`.
  */
 const CHURN = 1;
 

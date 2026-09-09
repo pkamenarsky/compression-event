@@ -1747,11 +1747,55 @@ export function boundaryRuns(
     return { id: from.id, ring: from.ring, index: ref.index };
   };
 
+  // Where a member's outline crosses itself, that point is one point of the
+  // boundary and two vertices of the shape: resolving the crossing closes one
+  // lobe and opens the next, so the same coordinates come back in both rings,
+  // and either ring's index is a true name for it.
+  //
+  // Which one the walk arrives through is not a fact about the boundary. It is
+  // a fact about where the walk started, and it flips between one instant and
+  // the next for no reason the geometry can see — so the bake read the name
+  // changing, called it an event, and pinned it. A hexagon with one vertex
+  // dragged across itself came back as 11,922 discontinuities in one span, and
+  // looking a decade closer found 30,437: not events, the same handful of
+  // crossings renaming themselves over and over.
+  //
+  // So one of the two is chosen and it is always the same one. Exact, not near:
+  // the two vertices are the one crossing computed once and handed to both
+  // lobes, equal to the bit. Only within a member — two members touching at a
+  // point are two names, and rightly.
+  const settled = new Map<string, SourceRef>();
+
+  for (const which of [0, 1] as const) {
+    (which === 0 ? a : b).forEach((ring, r) => {
+      const from = whose[which][r];
+
+      ring.forEach((p, i) => {
+        const key = `${from.id}|${p.x}|${p.y}`;
+        const was = settled.get(key);
+
+        // Every entry under one key is the same member, so its own ring order
+        // is this one and the first met is the first in it.
+        if (was === undefined || r < was.ring || (r === was.ring && i < was.index)) {
+          settled.set(key, { shape: which, ring: r, index: i });
+        }
+      });
+    });
+  }
+
+  /** `named`, with a self-crossing always named by the same one of its two
+   * vertices. Vertices only: an edge belongs to one ring and is not doubled. */
+  const naming = (ref: SourceRef): Whence => {
+    const at = (ref.shape === 0 ? a : b)[ref.ring][ref.index];
+
+    return named(settled.get(`${whose[ref.shape][ref.ring].id}|${at.x}|${at.y}`) ?? ref);
+  };
+
   return made.map((run, i) => ({
     points: run.points,
     corner: turning[i],
     whence: run.tags.map(tag => tag.kind === 'vertex'
-      ? { kind: 'vertex' as const, at: named(tag.at) }
+      ? { kind: 'vertex' as const, at: naming(tag.at) }
       : { kind: 'cross' as const, a: named(tag.a), b: named(tag.b) }),
   }));
 }

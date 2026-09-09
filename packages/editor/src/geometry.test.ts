@@ -1271,6 +1271,36 @@ const wholeOutline = (ms: Member[]) => ms.reduce(
   (t, m) => t + runLength(boundaryRuns(m, ms.filter(o => o.id !== m.id))), 0);
 
 describe('boundaryRuns', () => {
+  test('a self-crossing outline names each crossing one way, not two', () => {
+    // Resolving a self-crossing closes one lobe and opens the next, so the
+    // crossing comes back as a vertex of both — one point of the boundary with
+    // two true names. Which one the walk arrives through is a fact about where
+    // the walk started, and the bake reads a name changing as an event.
+    const tangle: Ring = [
+      { x: 800, y: -600 }, { x: 646, y: 144 }, { x: 1319.6, y: 300 },
+      { x: 800, y: 600 }, { x: 280.4, y: 300 }, { x: 1400, y: 500 },
+    ];
+
+    const runs = boundaryRuns({ id: 0, kind: 'add', shape: simplify([tangle]) }, []);
+    const named = new Map<string, string>();
+
+    for (const run of runs) {
+      run.points.forEach((p, i) => {
+        const w = run.whence[i];
+        const name = w.kind === 'vertex'
+          ? `v${w.at.id}.${w.at.ring}.${w.at.index}`
+          : `x${w.a.ring}.${w.a.index}|${w.b.ring}.${w.b.index}`;
+        const was = named.get(`${p.x},${p.y}`);
+
+        expect(was ?? name).toEqual(name);
+        named.set(`${p.x},${p.y}`, name);
+      });
+    }
+
+    // And the shape really does cross itself, so this is reaching the case.
+    expect(simplify([tangle]).length).toBeGreaterThan(1);
+  });
+
   test('a lone polygon keeps its whole boundary', () => {
     expect(runLength(boundaryRuns(lv(0, rect(0, 0, 10, 10)), []))).toBeCloseTo(40, 6);
   });
