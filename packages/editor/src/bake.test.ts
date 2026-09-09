@@ -1793,6 +1793,70 @@ describe('a corner arriving right beside one that is leaving', () => {
   });
 });
 
+describe('a crossing is rebuilt from the edges it was named against', () => {
+  // A crossing is not a position, it is two edges, and `drawn` rebuilds it at
+  // every instant by indexing into each polygon's own shape. So the index has to
+  // mean the same vertex at both ends of a stretch — and the boundary's names
+  // agreeing does not say that. A shape can gain a vertex somewhere the boundary
+  // does not reach, and then one end's index 6 and the other's are two different
+  // edges, the stretch interpolates between them, and the error is however far
+  // apart those edges happen to be. Nothing to do with the width of the interval,
+  // so bisecting never touched it: a level sat at 5.86 against 0.05 with the
+  // offending stretch's two ends 6e-8 apart. See `numbered`.
+
+  /** Every crossing in the bake, checked against the shapes it will be rebuilt
+   * from: the ring it names must be the same length at both ends of its
+   * stretch, or the two indices are not the same vertex. */
+  function mismatched(span: Span): number {
+    let n = 0;
+
+    for (const track of span.tracks) {
+      for (const s of [...track.stretches, ...track.jumps]) {
+        for (const run of s.origins) {
+          for (const o of run) {
+            if (o === null || o.kind !== 'cross') continue;
+
+            for (const r of [o.a, o.b]) {
+              const both = s.table.get(r.id);
+
+              if (both === undefined) continue;
+              if ((both.a[r.ring]?.length ?? 0) !== (both.b[r.ring]?.length ?? 0)) n++;
+            }
+          }
+        }
+      }
+    }
+
+    return n;
+  }
+
+  test('so a stretch never spans a change in its own vertex numbering', () => {
+    // A wedge with one shallow corner. Eroding it kills that vertex partway
+    // through the span, so the polygon's own count changes; the neighbour turning
+    // across it supplies the crossings. Without the check these come back with
+    // four to eight crossings rebuilt from mismatched edges.
+    const wedge = [
+      { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 },
+      { x: 120, y: 108 }, { x: 40, y: 100 }, { x: 0, y: 100 },
+    ];
+
+    for (const depth of [50, 52, 56, 70]) {
+      const { world, ids } = drawn(['level', wedge], ['level', rect(60, 20, 240, 200)]);
+      const w = transformed(
+        transformed(world, 1, ids[0], { erosion: depth }),
+        1,
+        ids[1],
+        { rotation: 0.4 },
+      );
+
+      const span = run(bakeSpan(w, 0));
+
+      expect(mismatched(span)).toEqual(0);
+      expect(span.worst).toBeLessThan(TOLERANCE);
+    }
+  });
+});
+
 describe('the bake chases its own error', () => {
   // `Span.worst` used to be a number the bake reported and did nothing about: a
   // level came back at eleven and a half against a tolerance of five hundredths

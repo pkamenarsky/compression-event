@@ -2064,7 +2064,48 @@ const MARGIN = 0.5;
 
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
-  return signature(a.frame) === signature(b.frame) && explained(a, b);
+  return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b);
+}
+
+/**
+ * Whether the two readings number their shapes the same way, for every polygon
+ * a crossing names an edge of.
+ *
+ * A crossing is not a position, it is two edges — `drawn` rebuilds it at every
+ * instant from their four endpoints, and it finds those endpoints by index into
+ * the polygon's own shape. So the index has to mean the same vertex at both ends
+ * of a stretch, and `signature` does not say that: it compares the *boundary's*
+ * names, and two readings can name the boundary identically while the shape
+ * under it has gained a vertex somewhere the boundary does not reach.
+ *
+ * When that happened the stretch was built anyway and every crossing in it was
+ * rebuilt from one edge at one end and a different edge at the other. The error
+ * is whatever the two edges happen to be apart — nothing to do with the width of
+ * the interval, so bisecting never touched it. A level came back at 5.86 against
+ * a tolerance of 0.05 with the two ends of the offending stretch 6e-8 apart:
+ * seven vertices at one, eight at the other, and `entry` reaching for index 6 of
+ * each and getting two different edges.
+ *
+ * Only the polygons a crossing actually names. Every polygon in the table would
+ * be simpler and would end stretches for a neighbour's vertex count changing
+ * where nothing refers to it.
+ */
+function numbered(a: Taken, b: Taken): boolean {
+  const same = (r: Ref): boolean => {
+    const p = a.table.get(r.id)?.[r.ring], q = b.table.get(r.id)?.[r.ring];
+
+    return p !== undefined && q !== undefined && p.length === q.length;
+  };
+
+  for (const it of [a, b]) {
+    for (const run of it.out) {
+      for (const o of run.whence) {
+        if (o.kind === 'cross' && !(same(o.a) && same(o.b))) return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -3375,9 +3416,13 @@ function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
 
     if (a === undefined || b === undefined) return null;
 
-    const p = a[r.index % a.length], q = b[r.index % b.length];
+    // In range of both, rather than wrapped into it. A ring that is not the
+    // length the origin was named against is not this ring any more, and a
+    // silently wrapped index reads a different edge with no sign that it did —
+    // which is what `numbered` is there to keep from ever reaching here.
+    const p = a[r.index], q = b[r.index];
 
-    if (p === undefined || q === undefined) return null;
+    if (p === undefined || q === undefined || a.length !== b.length) return null;
 
     return place(frameOf(r.id), [{ x: mix(p.x, q.x, u), y: mix(p.y, q.y, u) }])[0];
   };
