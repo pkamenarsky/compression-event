@@ -1,4 +1,5 @@
 * bring transform one version up
+* multierosion in multiple versions
 
 * erosion should be cumulative i think
 
