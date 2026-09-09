@@ -14,8 +14,9 @@
 // cases in it are the ones that broke earlier designs: a pillar turning inside
 // a wall, which an event search that counts crossings cannot see; a nudge and
 // an erosion sharing a stretch, where the true path bends and no keyframe helps;
-// and six overlapping boxes, where the CSG's own run decomposition shifts with
-// no geometric coincidence anywhere near it.
+// and six overlapping boxes, where the CSG's own run decomposition was thought to
+// shift with no geometric coincidence anywhere near it — see `probe.test.ts`,
+// which asks that directly and finds a coincidence sitting on every one of them.
 // -----------------------------------------------------------------------------
 
 import { expect, test } from 'vitest';

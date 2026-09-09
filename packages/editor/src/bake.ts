@@ -1268,6 +1268,20 @@ export function truth(world: World, from: VersionId, t: number): Frame {
   return evaluate(cast, cast.items, t, null).out;
 }
 
+/** `truth`, with the eroded shapes it was taken from. A probe: nothing in the
+ * bake reads this, and it is here so that a signature change can be asked what
+ * geometry, if any, was near it. */
+export function probed(
+  world: World,
+  from: VersionId,
+  t: number,
+): { frame: Frame, shapes: Map<Id, Shape> } {
+  const cast = casting(world, from);
+  const at = evaluate(cast, cast.items, t, null);
+
+  return { frame: at.out, shapes: at.world };
+}
+
 // -----------------------------------------------------------------------------
 // Evaluating
 // -----------------------------------------------------------------------------
@@ -1857,11 +1871,28 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
 // - **Not every change in the output is a change in the geometry.** The CSG
 //   reports its boundary as runs, and where several runs meet, which one
 //   carries on through the junction is decided by a walk rather than by the
-//   shape. That can change with no vertex near any edge and no three edges
-//   concurrent — measured on six overlapping boxes, at a moment whose nearest
-//   coincidence was 0.05 world units away.
+//   shape. That was recorded here as changing with no vertex near any edge and
+//   no three edges concurrent, measured on six overlapping boxes at a moment
+//   whose nearest coincidence was 0.05 world units away.
 //
-// Measuring answers both, because it does not care why two things differ.
+//   **That did not reproduce.** `probe.test.ts` asks it directly: every instant
+//   where the signature changes is bisected to where two adjacent doubles
+//   disagree, and each name that arrived or left is asked whether *its own*
+//   degeneracy holds there. Over six cases and forty thousand samples apiece,
+//   every change had one, with a median residual of a millionth of a unit. What
+//   the older measurement looks like is the instrument: the nearest coincidence
+//   *anywhere* in the arrangement is not the question, and this arrangement
+//   holds a pair a millionth of a unit apart for the whole span regardless. Ask
+//   it that way and every event comes back unexplained — which is the mistake
+//   the probe's own first pass made, twice.
+//
+//   So the count of conditions is two, not none: a corner reaching an edge, and
+//   a third polygon's edge arriving over the crossing of two others. The first
+//   is `incident.ts`. The second is not, and would want the determinant of
+//   three edge lines rather than a cross product of two.
+//
+// Measuring still answers the first, because it does not care why two things
+// differ, and the first is the one that has no discrete cause to find.
 //
 // How it goes
 // -----------
