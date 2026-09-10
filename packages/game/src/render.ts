@@ -489,11 +489,28 @@ function floor(b: Bounds | null): THREE.Object3D[] {
 //
 // Frames drawn per second, in the corner opposite the game's own line: counted
 // over half a second at a time, which is long enough to be readable and short
-// enough that a hitch shows.
+// enough that a hitch shows. Beside it, the longest gap between two frames in
+// that time — a dropped frame is a gap of two, and says so where an average
+// of 58 only hints at it.
+//
+// Timed off the frame, not off the clock at the moment of drawing. A frame's
+// time is when the display began it, the same number `requestAnimationFrame`
+// is handed; `performance.now()` after the drawing is that plus however long
+// the drawing took, and a frame that took a few milliseconds longer than the
+// last read as the frames coming further apart — a morph changes how much
+// work a frame is, so it moved the number whether or not a frame was missed.
 // -----------------------------------------------------------------------------
 
 /** How often the number is brought up to date, in milliseconds. */
 const METERED = 500;
+
+/** When the frame being drawn began. Outside an animation frame there is no
+ * such time, and now is the nearest thing to it. */
+function framed(): number {
+  const at = document.timeline.currentTime;
+
+  return typeof at === 'number' ? at : performance.now();
+}
 
 function fps(host: HTMLElement): { tick(): void, dispose(): void } {
   const shown = document.createElement('div');
@@ -509,20 +526,28 @@ function fps(host: HTMLElement): { tick(): void, dispose(): void } {
 
   host.append(shown);
 
-  let since = performance.now();
+  let since = framed();
+  let last = since;
   let frames = 0;
+  let longest = 0;
 
   return {
     tick(): void {
-      frames++;
+      const now = framed();
 
-      const now = performance.now();
+      // Drawn twice in one frame is one frame.
+      if (now === last) return;
+
+      frames++;
+      longest = Math.max(longest, now - last);
+      last = now;
 
       if (now - since < METERED) return;
 
-      shown.textContent = `${Math.round(frames * 1000 / (now - since))} fps`;
+      shown.textContent = `${Math.round(frames * 1000 / (now - since))} fps  ${Math.round(longest)}ms`;
       since = now;
       frames = 0;
+      longest = 0;
     },
 
     dispose(): void {
