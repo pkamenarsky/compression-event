@@ -113,6 +113,13 @@ export interface Renderer {
    */
   dither(on: boolean): void
 
+  /**
+   * Bend the picture: which warp out of `WARPS`, how hard (signed, 0 is none),
+   * how far through the shift driving it, and a clock in seconds. Only the
+   * game calls this; it goes through the dither pass, so it needs that on.
+   */
+  warp(index: number, amount: number, progress: number, time: number): void
+
   resize(): void
   render(): void
 
@@ -324,6 +331,10 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     dither(on: boolean): void {
       dither.enabled = on;
+    },
+
+    warp(index: number, amount: number, progress: number, time: number): void {
+      dither.warp(index, amount, progress, time);
     },
 
     between(u: number): [number, number] {

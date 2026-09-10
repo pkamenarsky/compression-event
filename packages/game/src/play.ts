@@ -52,6 +52,7 @@ import {
   versionShift,
 } from './sound';
 import { Run } from './walls';
+import { WARPS } from './warp';
 import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
 /** Eye height, in world units. Exported because standing in the level is
@@ -106,6 +107,24 @@ const CURVE = EASINGS[REPLAY_EASE];
 /** How near a thing has to be to be named, and to be taken. */
 const NAMED = 3.5;
 const TAKEN = 1.5;
+
+/** How long before a shift the screen starts to feel it, in seconds, and how
+ * far it has got by the time the shift begins. */
+const BRACE = 1.2;
+const BRACED = 0.25;
+
+/**
+ * The vertigo warp, which is a dolly zoom: the camera backs away as the view
+ * narrows, so what is `FOCUS` ahead stays the size it was and everything past
+ * it looms in. At most `PULL` back — less where a wall is nearer than that —
+ * and `PUSH` forwards, widening, the other way round.
+ */
+const PULL = 3;
+const PUSH = 1.5;
+const FOCUS = 2.5;
+
+/** How finely the way back is felt for walls. */
+const FEEL = 0.1;
 
 /** Turn per pixel of mouse. */
 const LOOK = 0.002;
@@ -241,6 +260,20 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * running underneath. Long enough to see which wall did it, and no longer.
    */
   let dying: number | null = null;
+
+  /** Which of `WARPS` bends the picture, walked with `<` and `>`. Starts on
+   * the first one that does anything, since the point for now is to look. */
+  let warp = 1;
+
+  /** Seconds the warp's name stays in the corner after switching to it. */
+  let labelled = 0;
+
+  /** Seconds since the game went up, for the warps that move on their own. */
+  let elapsed = 0;
+
+  /** The view's width with nothing bending it, which the vertigo warp is a
+   * departure from. */
+  const wide = view.camera.fov;
 
   let ambient: SoundHandle | null = null;
   let coming: SoundHandle | null = null;
@@ -602,12 +635,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       }
     }
 
-    view.camera.position.set(player.x, EYE, player.z);
-    view.camera.lookAt(
-      player.x + Math.sin(player.yaw),
-      EYE,
-      player.z - Math.cos(player.yaw),
-    );
+    elapsed += dt;
+    dollied(bent());
 
     crowd.update(dt, view.camera);
 
@@ -615,6 +644,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // there is to draw is the level from the outside.
     if (dying !== null && dying >= SHIFT) view.blank();
     else view.render();
+
+    if (labelled > 0) {
+      labelled -= dt;
+      say.stat(labelled > 0 ? `warp: ${WARPS[warp]}` : null);
+    }
 
     if (options.debug === true) {
       const flight = shifting === null
@@ -625,6 +659,78 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         `v${version}/${world.versions.length - 1}  ${signature(version)}  ${flight}`
         + `  clock ${clock.toFixed(1)}  spans ${spans}  ${why}`,
       );
+    }
+  }
+
+  /**
+   * How hard the picture is bent this frame, and which way.
+   *
+   * Rising over the last of a beat, then over and back off again through the
+   * shift itself; all the way while dying. Opening back up bends the other way
+   * and has nothing to brace for, since it comes of a pickup.
+   */
+  function bent(): number {
+    let amount = 0;
+    let progress = 0;
+
+    if (shifting !== null) {
+      progress = Math.min(shifting / SHIFT, 1);
+
+      const opening = leg.to < leg.from;
+      const swell = Math.sin(Math.PI * progress);
+
+      amount = opening ? -swell : Math.max(swell, BRACED * (1 - progress));
+    }
+    else if (running && dying === null && clock < BRACE) {
+      amount = BRACED * (1 - Math.max(clock, 0) / BRACE);
+    }
+
+    if (dying !== null) amount = Math.max(amount, Math.min(dying / SHIFT, 1));
+
+    view.warp(warp, amount, progress, elapsed);
+
+    return amount;
+  }
+
+  /**
+   * The camera, where the player is — or, under the vertigo warp, backed away
+   * from there with the view narrowed to keep `FOCUS` the same size.
+   *
+   * The way back is felt for in steps against the walls of both ends of the
+   * shift, since the ones drawn are somewhere between the two, and it stops
+   * short of the first one that is not somewhere to stand. The narrowing is
+   * worked out from how far it actually got, so a wall behind the player cuts
+   * the effect short rather than putting the camera through it.
+   */
+  function dollied(amount: number): void {
+    const cam = view.camera;
+    const fx = Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+
+    let back = 0;
+
+    if (WARPS[warp] === 'vertigo' && amount !== 0) {
+      const way = Math.sign(amount);
+      const want = Math.abs(amount) * (amount > 0 ? PULL : PUSH);
+
+      for (let s = FEEL; s <= want + 1e-6; s += FEEL) {
+        const at = { x: player.x - fx * way * s, y: player.z - fz * way * s };
+        const clear = [version, footing].every(v => walls[v]?.standable(at) ?? true);
+
+        if (!clear) break;
+
+        back = s * way;
+      }
+    }
+
+    cam.position.set(player.x - fx * back, EYE, player.z - fz * back);
+    cam.lookAt(cam.position.x + fx, EYE, cam.position.z + fz);
+
+    const half = Math.tan(wide / 2 * Math.PI / 180) * FOCUS / (FOCUS + back);
+    const fov = Math.atan(half) * 2 * 180 / Math.PI;
+
+    if (cam.fov !== fov) {
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
     }
   }
 
@@ -644,6 +750,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const pressed = (e: KeyboardEvent): void => {
     if (e.code === 'Escape') {
       options.leave?.();
+      return;
+    }
+
+    if (e.key === '<' || e.key === '>') {
+      warp = (warp + (e.key === '>' ? 1 : WARPS.length - 1)) % WARPS.length;
+      labelled = 2;
       return;
     }
 

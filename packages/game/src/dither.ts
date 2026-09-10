@@ -13,6 +13,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import { warpGLSL } from './warp';
 
 /** The 4x4 threshold, for a shader that wants to nudge its own colour. */
 export const bayerGLSL = /* glsl */ `
@@ -87,6 +88,8 @@ const fragmentShader = /* glsl */ `
 
   varying vec2 vUv;
 
+  ${warpGLSL}
+
   void main() {
     vec2 uv = vUv;
 
@@ -94,7 +97,7 @@ const fragmentShader = /* glsl */ `
       uv = floor(uv * uResolution / uPixelSize) * uPixelSize / uResolution;
     }
 
-    vec3 color = texture2D(uScene, uv).rgb;
+    vec3 color = warped(uv);
 
     vec2 at = vUv * uResolution;
 
@@ -164,6 +167,11 @@ export class DitherPass {
         uLevels: { value: options.levels ?? 5 },
         uStrength: { value: options.strength ?? 1.1 },
         uPixelSize: { value: options.pixelSize ?? 1 },
+        uWarp: { value: 0 },
+        uAmount: { value: 0 },
+        uProgress: { value: 0 },
+        uTime: { value: 0 },
+        uAspect: { value: width / height },
       },
       depthTest: false,
       depthWrite: false,
@@ -177,6 +185,18 @@ export class DitherPass {
   setSize(width: number, height: number): void {
     this.target.setSize(width, height);
     this.material.uniforms.uResolution.value.set(width, height);
+    this.material.uniforms.uAspect.value = width / height;
+  }
+
+  /** Which warp, and how far into it — see `warp.ts`. Left alone it stays at
+   * none, and the pass reads the scene exactly where it always did. */
+  warp(index: number, amount: number, progress: number, time: number): void {
+    const u = this.material.uniforms;
+
+    u.uWarp.value = index;
+    u.uAmount.value = amount;
+    u.uProgress.value = progress;
+    u.uTime.value = time;
   }
 
   apply(scene: THREE.Scene, camera: THREE.Camera): void {
