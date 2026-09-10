@@ -90,6 +90,20 @@ export interface RenderConfig {
     /** 0 quantises without dithering; 1 is the full Bayer spread. */
     strength: number
   }
+
+  /** The night over the level, in one bit. See `sky.ts`. */
+  sky: {
+    on: boolean
+    /** Share of the sky's cells that have a star in them. */
+    stars: number
+    /** How dense the nebula is at its thickest. */
+    nebula: number
+    /** How much the stars that breathe shrink at the bottom of a breath; 1
+     * puts them out. */
+    twinkle: number
+    /** How fast the sky wheels and the nebula works, against real time. */
+    drift: number
+  }
 }
 
 export const DEFAULT: RenderConfig = {
@@ -109,6 +123,7 @@ export const DEFAULT: RenderConfig = {
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
+  sky: { on: true, stars: 0.3, nebula: 0.45, twinkle: 0.6, drift: 1 },
 };
 
 export const FISHEYE: RenderConfig = {
@@ -154,6 +169,13 @@ export const FISHEYE: RenderConfig = {
     on: true,
     levels: 5,
     strength: 1.1
+  },
+  sky: {
+    on: true,
+    stars: 0.3,
+    nebula: 0.45,
+    twinkle: 0.6,
+    drift: 1
   }
 };
 
@@ -193,6 +215,10 @@ export const RANGES: Record<string, [min: number, max: number, step: number]> = 
   'nudge.spread': [0, 2, 0.05],
   'quantise.levels': [2, 16, 1],
   'quantise.strength': [0, 2, 0.05],
+  'sky.stars': [0, 1, 0.01],
+  'sky.nebula': [0, 1, 0.01],
+  'sky.twinkle': [0, 1, 0.01],
+  'sky.drift': [0, 10, 0.1],
 };
 
 /**

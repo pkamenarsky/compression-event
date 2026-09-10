@@ -32,6 +32,7 @@
 import * as THREE from 'three';
 import { RenderConfig, current } from './config';
 import { ScreenPass } from './screen';
+import { sky } from './sky';
 import { Morph, morph } from './morph';
 import { still } from './still';
 import { flat } from './target';
@@ -179,6 +180,11 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
   screen.configure(current());
   screen.quantised = options.dither ?? true;
+
+  const night = sky();
+
+  night.configure(current());
+  scene.add(night.dome);
 
   const walls: WallOptions = {
     scale: SCALE,
@@ -414,6 +420,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     configure(config: RenderConfig): void {
       screen.configure(config);
+      night.configure(config);
     },
 
     drive(amount: number, time: number): void {
@@ -428,6 +435,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     resize,
     render(): void {
+      night.follow(camera, performance.now() / 1000);
       screen.apply(scene, camera);
       meter.tick();
     },
@@ -448,6 +456,8 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       for (const it of stills) it.dispose();
 
       stills = [];
+      scene.remove(night.dome);
+      night.dispose();
       screen.dispose();
       meter.dispose();
       renderer.dispose();

@@ -235,7 +235,7 @@ export const blur: Stage = {
 
       if (reach <= 0.0 || uTaps < 2) return warped(uv);
 
-      Texel sum = Texel(vec3(0.0), 0.0, 0.0);
+      Texel sum = Texel(vec3(0.0), 0.0, 0.0, 0.0);
       float last = float(uTaps - 1);
 
       for (int i = 0; i < ${MAX_TAPS}; i++) {
@@ -246,11 +246,12 @@ export const blur: Stage = {
         sum.rgb += t.rgb;
         sum.wall += t.wall;
         sum.shade += t.shade;
+        sum.sky += t.sky;
       }
 
       float n = float(uTaps);
 
-      return Texel(sum.rgb / n, sum.wall / n, sum.shade / n);
+      return Texel(sum.rgb / n, sum.wall / n, sum.shade / n, sum.sky / n);
     }
   `,
   uniforms: () => ({ uReach: { value: 0 }, uTaps: { value: 1 } }),

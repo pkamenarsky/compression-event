@@ -19,7 +19,8 @@
 //   - g: a shadow's shade, which gets stippled black where it is over the 4x4
 //     threshold. Offset from zero — see `shadeMark` — so that no shadow and the
 //     faintest one differ;
-//   - b: free.
+//   - b: sky, which the pass takes down to one bit on its own terms rather
+//     than quantising — see `sky.ts`.
 //
 // Blending runs on both at once, with the same factors, but each attachment's
 // source alpha is its own. Which is what lets ordinary blending do everything:
@@ -67,6 +68,10 @@ export const outputsGLSL = /* glsl */ `
   // none.
   vec4 shadeMark(float shade) {
     return vec4(0.0, min(shade + 1.0 / 32.0, 1.0), 0.0, 1.0);
+  }
+
+  vec4 skyMark() {
+    return vec4(0.0, 0.0, 1.0, 1.0);
   }
 `;
 
@@ -119,12 +124,13 @@ export const read: Stage = {
       vec3 rgb;
       float wall;
       float shade;
+      float sky;
     };
 
     Texel read(vec2 uv) {
       vec4 m = texture2D(uMarks, uv);
 
-      return Texel(texture2D(uScene, uv).rgb, m.r, m.g);
+      return Texel(texture2D(uScene, uv).rgb, m.r, m.g, m.b);
     }
   `,
   // The pass's to fill, since it owns the target.

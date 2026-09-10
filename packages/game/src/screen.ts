@@ -12,6 +12,7 @@
 //   nudge     Texel → colour          the walls' pattern, in screen pixels
 //   stipple   colour → colour         the shadows' pattern, likewise
 //   quantise  colour → colour         a handful of levels, 8x8 Bayer between
+//   sky       colour → colour         the sky, to one bit, under the same 8x8
 //
 // Each stage is a GLSL function and the uniforms it reads, declared together
 // in the file the stage belongs to. The list is also the order they are pasted
@@ -26,6 +27,7 @@ import * as THREE from 'three';
 import { stipple } from './artefacts';
 import type { RenderConfig } from './config';
 import { bayer, bayerTexture, nudge, quantise } from './dither';
+import { skyStage } from './sky';
 import { marked, read } from './target';
 import { blur, warp } from './warp';
 
@@ -38,7 +40,7 @@ export interface Stage {
 }
 
 /** The pass, in order. See the header. */
-const STAGES: Stage[] = [read, warp, blur, bayer, nudge, stipple, quantise];
+const STAGES: Stage[] = [read, warp, blur, bayer, nudge, stipple, quantise, skyStage];
 
 const vertexShader = /* glsl */ `
   varying vec2 vUv;
@@ -64,7 +66,9 @@ const main = /* glsl */ `
 
     color = stippled(color, t.shade, floor(pixel));
 
-    gl_FragColor = vec4(quantised(color, pixel), 1.0);
+    color = quantised(color, pixel);
+
+    gl_FragColor = vec4(skied(t, color, pixel), 1.0);
   }
 `;
 
