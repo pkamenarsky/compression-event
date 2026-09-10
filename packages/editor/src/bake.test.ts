@@ -2038,3 +2038,68 @@ describe('the bake chases its own error', () => {
     expect(run(bakeSpan(w, 0)).strained).toEqual([]);
   });
 });
+
+describe('a polygon grown into a neighbour its source never reaches', () => {
+  // A track is cut against the polygons whose boxes meet its own, and the boxes
+  // were taken off the source ring on the reasoning that erosion only shrinks.
+  // A negative depth grows, and so does a group's depth on a solid, so a solid
+  // dilated into a room was never in the room's neighbourhood: the room's
+  // track drew its wall straight through the solid, and ended its runs at
+  // whatever else happened to cross there, with a vertical standing on a flat
+  // wall. The still sees everything and drew neither. See `grown`.
+
+  /** Every point drawn, and whether a vertical stands on it. */
+  function drawnAt(frame: Frame): string[] {
+    return frame
+      .flatMap(r => r.points.map((p, i) => `${p.x.toFixed(3)},${p.y.toFixed(3)}:${r.corner[i]}`))
+      .sort();
+  }
+
+  function agrees(world: World): void {
+    const span = run(bakeSpan(world, 0));
+
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(drawnAt(sample(span, t))).toEqual(drawnAt(truth(world, 0, t)));
+    }
+  }
+
+  test('by a depth of its own', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 400, 400)],
+      ['solid', rect(-50, 250, 100, 100)],
+    );
+
+    // Grown at the near end and held, so that no instant of the span has the
+    // source anywhere near the room.
+    agrees(transformed(world, 0, ids[1], { erosion: -80 }));
+  });
+
+  test('by the depth of a group holding it', () => {
+    // Two rooms grown as one by their group, up into a solid standing clear
+    // of both sources. The solid's track has to see the group to find the
+    // room it now cuts.
+    const { world, ids } = drawn(
+      ['level', rect(-200, -200, 190, 400)],
+      ['level', rect(10, -200, 190, 400)],
+      ['solid', rect(-50, 250, 100, 100)],
+    );
+
+    const held = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+
+    agrees(transformed(held.world, 0, held.id, { erosion: -80 }));
+  });
+
+  test('flush with a wall, and crossed there by a third', () => {
+    // The level that found it: a room grown up to a dilated solid's edge, and
+    // a big room over both whose edge crosses the shared wall. The room's
+    // track, not seeing the solid, ended its wall at that crossing and stood a
+    // vertical there.
+    const { world, ids } = drawn(
+      ['level', rect(-300, -300, 200, 200)],
+      ['solid', rect(-400, 0, 400, 100)],
+      ['level', [{ x: -250, y: -250 }, { x: 300, y: -250 }, { x: 300, y: 300 }, { x: -150, y: 300 }]],
+    );
+
+    agrees(transformed(world, 0, ids[1], { erosion: -100 }));
+  });
+});

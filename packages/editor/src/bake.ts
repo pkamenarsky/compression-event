@@ -134,11 +134,13 @@ import {
   alongOf,
   boundaryRuns,
   betweenOf,
+  erodedRingCorners,
   ground,
   keeping,
   nextOf,
   prevOf,
   simplify,
+  sliced,
 } from './geometry';
 import {
   Affine,
@@ -1693,23 +1695,70 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
 // grown by half the furthest any point travelled between two samples — which is
 // the most a path can bow away from the chord its two samples span.
 //
-// It is taken off the polygon before the erosion, which only ever shrinks it,
-// so the box covers the eroded shape at every depth the span passes through.
-// That matters because erosion is the expensive part and this must not pay for
-// it: reaching for the source ring is a few multiplies per vertex, and the
-// whole sweep costs less than one CSG.
+// It is taken off the polygon before the erosion, because erosion is the
+// expensive part and this must not pay for it: reaching for the source ring is
+// a few multiplies per vertex, and the whole sweep costs less than one CSG.
+//
+// Before the erosion is not the same as ignoring it. It used to be, on the
+// reasoning that erosion only ever shrinks — and a negative depth grows, and so
+// does a group's positive one on the kinds it inverts. A solid dilated flush
+// against a room was left out of the room's neighbourhood, the room's track
+// never saw the wall it shared, and a line stood in the middle of a flat wall
+// for as long as the morph ran while the still, which sees everything, had
+// none. So the box takes in where every corner would go under the most any
+// offset in play could move it, both ways. See `grown`.
 // -----------------------------------------------------------------------------
 
 const PROBES = 16;
 
-function reach(m: Moving): AABB {
+/**
+ * Where a polygon's corners go under the most that any offset in play could
+ * grow it by at `t`, or nothing where nothing can.
+ *
+ * Its own depth grows it only where the depth is negative — the projection
+ * settles which way is in, so a positive one stays inside the source. A sealed
+ * group's grows it either way, since the sign alternates with the kind it lands
+ * on and a solid inside a group is dilated by the depth that erodes its room.
+ * So a group counts by size.
+ *
+ * Moved both ways, because which way the bisector points out is a question of
+ * winding and a box has no use for the answer. The offset moves a corner along
+ * its bisector by an amount linear in the depth, so the corners moved by the
+ * whole of it bound every smaller offset, and the band an offset sweeps is quads
+ * between the source and them. A group's union reaches further out only at its
+ * convex corners, and those are its members' own.
+ */
+function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, placed: Ring, t: number): Point[] {
+  let groups = 0;
+
+  for (const h of m.holders) {
+    const d = scopes.get(h.id);
+
+    if (d !== undefined) groups += Math.abs(mix(d[0], d[1], t));
+  }
+
+  const own = m.varying
+    ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t))
+    : m.corners.map(() => mix(m.depth[0], m.depth[1], t));
+
+  const out = own.map(d => Math.max(0, -d) + groups);
+
+  if (out.every(d => d === 0)) return [];
+
+  const shape = sliced(placed, ringsOf(m.corners));
+
+  return [...erodedRingCorners(shape, out), ...erodedRingCorners(shape, out.map(d => -d))];
+}
+
+function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB {
   let all: AABB | null = null;
   let step = 0;
   let was: Ring | null = null;
 
   for (let k = 0; k <= PROBES; k++) {
     const t = k / PROBES;
-    const now = place(riding(m, t), between(m.local[0], m.local[1], t));
+    const placed = place(riding(m, t), between(m.local[0], m.local[1], t));
+    const now = [...placed, ...grown(m, scopes, placed, t)];
     const box = ofRings([now]);
 
     all = all === null ? box : merge(all, box);
@@ -1738,8 +1787,8 @@ function expandBox(a: AABB, m: number): AABB {
  * question about the whole group: its members are never split across two
  * neighbourhoods, or a track would be cut against half of itself.
  */
-function neighbourhoods(all: Subject[]): Moving[][] {
-  const boxes = all.map(s => s.mine.map(reach).reduce(merge));
+function neighbourhoods(all: Subject[], scopes: ReadonlyMap<GroupId, [number, number]>): Moving[][] {
+  const boxes = all.map(s => s.mine.map(m => reach(m, scopes)).reduce(merge));
 
   const tree: Tree = build(boxes.map((box, id) => ({ id, box })));
 
@@ -3200,7 +3249,7 @@ export function ready(world: World, from: VersionId): Ready {
     from,
     cast,
     items,
-    near: neighbourhoods(items),
+    near: neighbourhoods(items, cast.scopes),
     riders: ridden(cast, items),
     setup: now() - began,
   };
