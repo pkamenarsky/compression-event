@@ -184,7 +184,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   const night = sky();
 
   night.configure(current());
-  scene.add(night.dome);
+  scene.add(night.mesh);
 
   const walls: WallOptions = {
     scale: SCALE,
@@ -456,7 +456,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       for (const it of stills) it.dispose();
 
       stills = [];
-      scene.remove(night.dome);
+      scene.remove(night.mesh);
       night.dispose();
       screen.dispose();
       meter.dispose();

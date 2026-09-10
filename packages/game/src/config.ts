@@ -16,6 +16,7 @@
 // one saved before a field existed picks the field up at its default.
 // -----------------------------------------------------------------------------
 
+import type { Sky } from './sky';
 import type { Warp } from './warp';
 
 export interface RenderConfig {
@@ -91,13 +92,17 @@ export interface RenderConfig {
     strength: number
   }
 
-  /** The night over the level, in one bit. See `sky.ts`. */
+  /** What is over the level, in one bit. See `sky.ts`. */
   sky: {
     on: boolean
-    /** Share of the sky's cells that have a star in them. */
+    /** Which one; `;` and `'` walk them in the game. */
+    kind: Sky
+    /** Share of the sky's cells that have a star in them, in the skies that
+     * have stars. */
     stars: number
-    /** How dense the nebula is at its thickest. */
-    nebula: number
+    /** How much there is of whatever the sky is: the nebula, the disk, the
+     * rain, the tearing. */
+    weight: number
     /** How much the stars that breathe shrink at the bottom of a breath; 1
      * puts them out. */
     twinkle: number
@@ -123,7 +128,7 @@ export const DEFAULT: RenderConfig = {
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
-  sky: { on: true, stars: 0.3, nebula: 0.45, twinkle: 0.6, drift: 1 },
+  sky: { on: true, kind: 'night', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
 };
 
 export const FISHEYE: RenderConfig = {
@@ -172,8 +177,9 @@ export const FISHEYE: RenderConfig = {
   },
   sky: {
     on: true,
+    kind: 'night',
     stars: 0.3,
-    nebula: 0.45,
+    weight: 0.45,
     twinkle: 0.6,
     drift: 1
   }
@@ -216,7 +222,7 @@ export const RANGES: Record<string, [min: number, max: number, step: number]> = 
   'quantise.levels': [2, 16, 1],
   'quantise.strength': [0, 2, 0.05],
   'sky.stars': [0, 1, 0.01],
-  'sky.nebula': [0, 1, 0.01],
+  'sky.weight': [0, 1, 0.01],
   'sky.twinkle': [0, 1, 0.01],
   'sky.drift': [0, 10, 0.1],
 };

@@ -17,6 +17,7 @@
 // -----------------------------------------------------------------------------
 
 import { PRESETS, RANGES, RenderConfig, forget, save, saved } from './config';
+import { SKIES } from './sky';
 import { WARPS } from './warp';
 
 export interface Tweak {
@@ -161,10 +162,11 @@ export function tweak(
 
     if (typeof value === 'number') return number(path, value, commit);
 
-    // The one string there is, and the one there is a list of.
+    // The strings there are, each out of its own list.
     const it = el('select', 'font: inherit; flex: 1;');
+    const kinds: readonly string[] = path[0] === 'sky' ? SKIES : WARPS;
 
-    for (const w of WARPS) it.append(new Option(w, w, false, w === value));
+    for (const w of kinds) it.append(new Option(w, w, false, w === value));
 
     it.addEventListener('change', () => commit(it.value));
 

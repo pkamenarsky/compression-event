@@ -54,6 +54,7 @@ import {
   playSound,
   versionShift,
 } from './sound';
+import { SKIES } from './sky';
 import { WARPS, bracing, narrowed, swelling } from './warp';
 import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
@@ -235,8 +236,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   let dying: number | null = null;
 
   /** How the picture is made, as last left in this browser — tweaked in the
-   * editor's first-person view. `<` and `>` walk its warp here, and that is
-   * handed to the view and remembered too. */
+   * editor's first-person view. `<` and `>` walk its warp here, `;` and `'`
+   * its sky, and that is handed to the view and remembered too. */
   let look = current();
 
   const configured = (next: RenderConfig): void => {
@@ -245,8 +246,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     remember(look);
   };
 
-  /** Seconds the warp's name stays in the corner after switching to it. */
+  /** Seconds the warp's or the sky's name stays in the corner after
+   * switching to it, and which of them it is. */
   let labelled = 0;
+  let label: () => string = () => '';
 
   /** Seconds since the game went up, for the warps that move on their own. */
   let elapsed = 0;
@@ -632,7 +635,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     if (labelled > 0) {
       labelled -= dt;
-      say.stat(labelled > 0 ? `warp: ${look.warp.on ? look.warp.kind : 'off'}` : null);
+      say.stat(labelled > 0 ? label() : null);
     }
 
     if (options.debug === true) {
@@ -711,6 +714,17 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
       configured({ ...look, warp: { ...look.warp, kind } });
       labelled = 2;
+      label = () => `warp: ${look.warp.on ? look.warp.kind : 'off'}`;
+      return;
+    }
+
+    if (e.key === ';' || e.key === "'") {
+      const at = SKIES.indexOf(look.sky.kind);
+      const kind = SKIES[(at + (e.key === "'" ? 1 : SKIES.length - 1)) % SKIES.length];
+
+      configured({ ...look, sky: { ...look.sky, kind } });
+      labelled = 2;
+      label = () => `sky: ${look.sky.on ? look.sky.kind : 'off'}`;
       return;
     }
 
