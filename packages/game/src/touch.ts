@@ -40,6 +40,8 @@ export interface Thumbs {
    * forward, `across` to the right. Nought where it is not down. */
   ahead: number
   across: number
+  /** Let go of both thumbs, as if they had been lifted. */
+  reset(): void
   dispose(): void
 }
 
@@ -50,7 +52,7 @@ export interface Thumbs {
  * view moves in the event rather than a frame after it.
  */
 export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs {
-  const out: Thumbs = { ahead: 0, across: 0, dispose };
+  const out: Thumbs = { ahead: 0, across: 0, reset, dispose };
 
   const ring = document.createElement('div');
   const knob = document.createElement('div');
@@ -94,9 +96,11 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
 
     const at = local(e);
 
+    // A new thumb on a side takes it over from whatever was there. The one
+    // before should have lifted first, but a lift can go missing — a quick
+    // run of taps is enough for iOS to lose one — and a side that waited
+    // for it would be dead until the next restart happened to clear it.
     if (at.x < host.clientWidth / 2) {
-      if (walking !== null) return;
-
       walking = { id: e.pointerId, ...at };
 
       placed(ring, at.x, at.y);
@@ -104,8 +108,6 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
       ring.style.display = knob.style.display = 'block';
     }
     else {
-      if (looking !== null) return;
-
       looking = { id: e.pointerId, x: at.x };
     }
   };
@@ -141,15 +143,27 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
     }
   };
 
-  const up = (e: PointerEvent): void => {
-    if (walking !== null && e.pointerId === walking.id) {
-      walking = null;
-      out.ahead = out.across = 0;
-      ring.style.display = knob.style.display = 'none';
-    }
+  const lifted = (): void => {
+    walking = null;
+    out.ahead = out.across = 0;
+    ring.style.display = knob.style.display = 'none';
+  };
 
+  const up = (e: PointerEvent): void => {
+    if (walking !== null && e.pointerId === walking.id) lifted();
     if (looking !== null && e.pointerId === looking.id) looking = null;
   };
+
+  /** No finger left on the glass at all: whatever either side thought it was
+   * holding, it is not. The same missing lift, caught from the other end. */
+  const bare = (e: TouchEvent): void => {
+    if (e.touches.length === 0) reset();
+  };
+
+  function reset(): void {
+    lifted();
+    looking = null;
+  }
 
   // A held thumb is a long press to the browser, which answers with a menu, a
   // selection or — on iOS, whatever the CSS says — the magnifying loupe. Only
@@ -163,6 +177,8 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
   host.addEventListener('selectstart', refused);
   host.addEventListener('touchstart', refused, active);
   host.addEventListener('touchmove', refused, active);
+  window.addEventListener('touchend', bare);
+  window.addEventListener('touchcancel', bare);
   host.addEventListener('pointerdown', down);
   window.addEventListener('pointermove', moved);
   window.addEventListener('pointerup', up);
@@ -173,6 +189,8 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
     host.removeEventListener('selectstart', refused);
     host.removeEventListener('touchstart', refused);
     host.removeEventListener('touchmove', refused);
+    window.removeEventListener('touchend', bare);
+    window.removeEventListener('touchcancel', bare);
     host.removeEventListener('pointerdown', down);
     window.removeEventListener('pointermove', moved);
     window.removeEventListener('pointerup', up);

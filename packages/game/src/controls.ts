@@ -44,6 +44,11 @@ export const STICK_DEAD = 0.35;
  * screen, with a mouse or a finger. */
 export const RESTART_GAP = 400;
 
+/** How far, in CSS pixels, a press may travel between going down and coming
+ * up and still count as a tap towards that. A thumb that walks or looks is
+ * never one. */
+export const TAP_SLOP = 10;
+
 /** Turn per CSS pixel of right thumb, in radians. Well above the mouse's: a
  * thumb covers a phone's width in a few centimetres, and one swipe across it
  * should be a good way round. */

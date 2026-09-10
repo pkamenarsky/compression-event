@@ -40,7 +40,7 @@ import { Standing, artefacts } from './artefacts';
 import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
-import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, WALK_SPEED } from './controls';
+import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, TAP_SLOP, WALK_SPEED } from './controls';
 import { RenderConfig, current, remember } from './config';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
@@ -724,10 +724,42 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     if (document.pointerLockElement === canvas) player.yaw += e.movementX * MOUSE_LOOK;
   };
 
-  /** When the last few presses came, for the triple one that restarts. */
+  /** When the last few taps came, for the triple one that restarts. */
   let presses: number[] = [];
 
+  /** Every press down, and how far it has travelled since. */
+  const pressing = new Map<number, { x: number, y: number, travel: number }>();
+
+  const began = (e: PointerEvent): void => {
+    pressing.set(e.pointerId, { x: e.clientX, y: e.clientY, travel: 0 });
+  };
+
+  /** How far a press has gone. A locked mouse never changes its client
+   * position, so what it moved is what the browser says it moved. */
+  const dragged = (e: PointerEvent): void => {
+    const it = pressing.get(e.pointerId);
+    if (it === undefined) return;
+
+    it.travel += document.pointerLockElement === canvas
+      ? Math.abs(e.movementX) + Math.abs(e.movementY)
+      : Math.hypot(e.clientX - it.x, e.clientY - it.y);
+
+    it.x = e.clientX;
+    it.y = e.clientY;
+  };
+
+  /** A press the browser took back is not a tap, however still it was. */
+  const dropped = (e: PointerEvent): void => {
+    pressing.delete(e.pointerId);
+  };
+
   const tapped = (e: PointerEvent): void => {
+    const it = pressing.get(e.pointerId);
+
+    pressing.delete(e.pointerId);
+
+    if (it === undefined || it.travel > TAP_SLOP) return;
+
     const now = e.timeStamp;
 
     presses = presses.filter(at => now - at <= RESTART_GAP * 2).concat(now);
@@ -739,7 +771,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     // Not over a message: the title, the end and the black after dying each
     // have their own way on, and a restart under one would race it.
-    if (running && !say.busy()) restart();
+    if (running && !say.busy()) {
+      down.clear();
+      touch?.reset();
+      restart();
+    }
   };
 
   // A window that loses the focus keeps whatever was held down forever.
@@ -751,7 +787,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   host.addEventListener('click', grab);
-  host.addEventListener('pointerdown', tapped);
+  host.addEventListener('pointerdown', began);
+  window.addEventListener('pointermove', dragged);
+  window.addEventListener('pointerup', tapped);
+  window.addEventListener('pointercancel', dropped);
   document.addEventListener('pointerlockchange', locked);
   window.addEventListener('keydown', pressed);
   window.addEventListener('keyup', released);
@@ -794,7 +833,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       if (document.pointerLockElement === canvas) document.exitPointerLock();
 
       host.removeEventListener('click', grab);
-      host.removeEventListener('pointerdown', tapped);
+      host.removeEventListener('pointerdown', began);
+      window.removeEventListener('pointermove', dragged);
+      window.removeEventListener('pointerup', tapped);
+      window.removeEventListener('pointercancel', dropped);
       document.removeEventListener('pointerlockchange', locked);
       window.removeEventListener('keydown', pressed);
       window.removeEventListener('keyup', released);
