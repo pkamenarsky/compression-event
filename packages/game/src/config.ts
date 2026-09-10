@@ -156,7 +156,7 @@ export const DEFAULT: RenderConfig = {
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
   sky: { on: true, kind: 'night', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
-  lights: { on: true, ambient: 0.35, cell: 2, chance: 1, jitter: 1, height: 1 / 3, radius: 12, strength: 1, seed: 0 },
+  lights: { on: false, ambient: 0.35, cell: 2, chance: 1, jitter: 1, height: 1 / 3, radius: 12, strength: 1, seed: 0 },
 };
 
 export const FISHEYE: RenderConfig = {
@@ -215,6 +215,72 @@ export const FISHEYE: RenderConfig = {
   lights: { ...DEFAULT.lights },
 };
 
+export const LIGHTS1: RenderConfig = {
+  warp: {
+    on: true,
+    kind: 'pulse',
+    strength: 1,
+    from: -0.16,
+    to: 0.08,
+    braced: 0.25,
+    pinch: {
+      across: 0.45,
+      up: 0.3
+    },
+    pulse: {
+      depth: 0.2,
+      rate: 1.2,
+      quicken: 2.5
+    },
+    buckle: {
+      shear: 0.05,
+      bands: 22
+    },
+    fisheye: {
+      power: 0.5
+    },
+    vertigo: {
+      narrow: 0.45
+    }
+  },
+  blur: {
+    on: true,
+    reach: 0.02,
+    taps: 2
+  },
+  nudge: {
+    on: true,
+    spread: 1.2
+  },
+  stipple: {
+    on: true
+  },
+  quantise: {
+    on: true,
+    levels: 5,
+    strength: 1.1
+  },
+  sky: {
+    on: true,
+    kind: 'night',
+    stars: 0.3,
+    weight: 0.45,
+    twinkle: 0.6,
+    drift: 1
+  },
+  lights: {
+    on: true,
+    ambient: 0.57,
+    cell: 1,
+    chance: 1,
+    jitter: 1,
+    height: -0.25,
+    radius: 9.5,
+    strength: 0.34,
+    seed: 0
+  }
+};
+
 /** The configurations worth keeping, by name. The first is where a fresh
  * browser starts. */
 export const PRESETS: Record<string, RenderConfig> = {
@@ -225,7 +291,8 @@ export const PRESETS: Record<string, RenderConfig> = {
     blur: { on: false },
   }),
 
-  fisheye: FISHEYE
+  fisheye: FISHEYE,
+  lights1: LIGHTS1
 };
 
 /** The most taps the blur's loop will run, whatever the config asks for. */
