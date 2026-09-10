@@ -115,10 +115,11 @@ export interface Renderer {
 
   /**
    * Bend the picture: which warp out of `WARPS`, how hard (signed, 0 is none),
-   * and a clock in seconds. Only the
+   * a clock in seconds, and how far a radial blur over the top of it reaches
+   * in towards the middle, as a share of the way there. Only the
    * game calls this; it goes through the dither pass, so it needs that on.
    */
-  warp(index: number, amount: number, time: number): void
+  warp(index: number, amount: number, time: number, blur?: number): void
 
   resize(): void
   render(): void
@@ -333,8 +334,8 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       dither.enabled = on;
     },
 
-    warp(index: number, amount: number, time: number): void {
-      dither.warp(index, amount, time);
+    warp(index: number, amount: number, time: number, blur = 0): void {
+      dither.warp(index, amount, time, blur);
     },
 
     between(u: number): [number, number] {

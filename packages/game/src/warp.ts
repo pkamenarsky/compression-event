@@ -7,12 +7,14 @@
 // the same pixels and the same pattern as everything else rather than smeared
 // over the top of them.
 //
-// Every one of them only *moves* the picture. Nothing is darkened, blended or
-// blurred — a colour that was not in the scene is a colour the dither has to
-// make a pattern of, and a pattern that was not in the level is not the level
-// closing in. And every one of them maps the screen onto itself: the edges stay
-// where they are and nothing is read from off it, so the picture always covers
-// the whole of the screen.
+// Every one of them only *moves* the picture, and maps the screen onto itself:
+// the edges stay where they are and nothing is read from off it, so the
+// picture always covers the whole of the screen.
+//
+// Over the top of whichever it is there is a radial blur, reaching in towards
+// the middle as hard as the warp is bending — the room rushing in. It comes
+// before the dither like the warp does, so the tones it makes are dithered in
+// the pixels they are seen in rather than smeared out of them.
 //
 // One number drives it, `amount`: nothing at rest, rising and falling over a
 // shift, a little before one as the beat runs out, and the whole of it while
@@ -50,6 +52,7 @@ export const warpGLSL = /* glsl */ `
   uniform float uAmount;
   uniform float uTime;
   uniform float uAspect;
+  uniform float uBlur;
 
   // One axis bent and its ends left where they were: x in [-h, h] onto
   // itself. Positive k swells the middle and crams the ends; negative does
@@ -130,5 +133,30 @@ export const warpGLSL = /* glsl */ `
     }
 
     return texture2D(uScene, clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0));
+  }
+
+  // What the pass sees at a pixel: the warped scene, with how much of it is
+  // wall in place of the wall's marker — whole or not at all, until the blur
+  // averages it into a share.
+  //
+  // The blur is a run of reads along the line from the pixel in to the middle
+  // of the screen, over the top of whichever warp is on. Every one of them is
+  // nearer the middle than the pixel is, so it never reads from off screen.
+  vec4 seen(vec2 uv) {
+    if (uBlur <= 0.0) {
+      vec4 t = warped(uv);
+
+      return vec4(t.rgb, t.a < 0.75 ? 1.0 : 0.0);
+    }
+
+    vec4 sum = vec4(0.0);
+
+    for (int i = 0; i < 12; i++) {
+      vec4 t = warped(0.5 + (uv - 0.5) * (1.0 - uBlur * float(i) / 11.0));
+
+      sum += vec4(t.rgb, t.a < 0.75 ? 1.0 : 0.0);
+    }
+
+    return sum / 12.0;
   }
 `;

@@ -113,6 +113,11 @@ const TAKEN = 1.5;
 const BRACE = 1.2;
 const BRACED = 0.25;
 
+/** How far in towards the middle of the screen the radial blur reaches at the
+ * height of a shift, as a share of the way there. On whichever warp is on,
+ * `none` included. */
+const BLUR = 0.12;
+
 /** How far the vertigo warp narrows the view at its height: the tangent of
  * half of it, taken down by this much. The other way round it widens. */
 const NARROW = 0.45;
@@ -677,7 +682,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     if (dying !== null) amount = Math.max(amount, Math.min(dying / SHIFT, 1));
 
-    view.warp(warp, amount, elapsed);
+    view.warp(warp, amount, elapsed, BLUR * Math.min(Math.abs(amount), 1));
 
     return amount;
   }

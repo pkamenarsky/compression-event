@@ -112,18 +112,18 @@ const fragmentShader = /* glsl */ `
       uv = floor(uv * uResolution / uPixelSize) * uPixelSize / uResolution;
     }
 
-    vec4 texel = warped(uv);
+    vec4 texel = seen(uv);
     vec3 color = texel.rgb;
 
     vec2 at = vUv * uResolution;
 
     if (uPixelSize > 1.0) at = floor(at / uPixelSize);
 
-    // A wall, by its half alpha: the nudge it would have given itself, here
-    // where it cannot be warped, and clamped where the target would have
-    // clamped it. See \`deferred\`.
-    if (texel.a < 0.75) {
-      color = clamp(color + (bayerDither(floor(at)) - 0.5) * 1.2, 0.0, 1.0);
+    // A wall — or the share of one a blur has smeared over this pixel: the
+    // nudge it would have given itself, here where it cannot be warped, and
+    // clamped where the target would have clamped it. See \`deferred\`.
+    if (texel.a > 0.0) {
+      color = clamp(color + texel.a * (bayerDither(floor(at)) - 0.5) * 1.2, 0.0, 1.0);
     }
 
     float threshold = texture2D(uBayer, at / 8.0).r;
@@ -193,6 +193,7 @@ export class DitherPass {
         uWarp: { value: 0 },
         uAmount: { value: 0 },
         uTime: { value: 0 },
+        uBlur: { value: 0 },
         uAspect: { value: width / height },
       },
       depthTest: false,
@@ -210,11 +211,13 @@ export class DitherPass {
     this.material.uniforms.uAspect.value = width / height;
   }
 
-  /** Which warp, and how far into it — see `warp.ts`. Left alone it stays at
-   * none, and the pass reads the scene exactly where it always did. */
-  warp(index: number, amount: number, time: number): void {
+  /** Which warp, how far into it, and how much radial blur over the top —
+   * see `warp.ts`. Left alone it stays at none, and the pass reads the scene
+   * exactly where it always did. */
+  warp(index: number, amount: number, time: number, blur = 0): void {
     const u = this.material.uniforms;
 
+    u.uBlur.value = blur;
     u.uWarp.value = index;
     u.uAmount.value = amount;
     u.uTime.value = time;
