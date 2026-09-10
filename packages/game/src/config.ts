@@ -265,16 +265,14 @@ const SAVED = 'compression-event:render-configs';
 /** Storage can be refused outright — a private window, a sandboxed page — and
  * a config that cannot be remembered is still a config. */
 function stored<T>(key: string, fallback: T): T {
-  return fallback;
+  try {
+    const it = localStorage.getItem(key);
 
-  // try {
-  //   const it = localStorage.getItem(key);
-
-  //   return it === null ? fallback : JSON.parse(it) as T;
-  // }
-  // catch {
-  //   return fallback;
-  // }
+    return it === null ? fallback : JSON.parse(it) as T;
+  }
+  catch {
+    return fallback;
+  }
 }
 
 function store(key: string, value: unknown): void {
