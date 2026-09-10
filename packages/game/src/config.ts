@@ -100,8 +100,8 @@ export interface RenderConfig {
     /** Share of the sky's cells that have a star in them, in the skies that
      * have stars. */
     stars: number
-    /** How much there is of whatever the sky is: the nebula, the disk, the
-     * rain, the tearing. */
+    /** How much there is of whatever the sky is: for the night, the
+     * nebula. */
     weight: number
     /** How much the stars that breathe shrink at the bottom of a breath; 1
      * puts them out. */

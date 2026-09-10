@@ -181,10 +181,10 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   screen.configure(current());
   screen.quantised = options.dither ?? true;
 
-  const night = sky();
+  const overhead = sky();
 
-  night.configure(current());
-  scene.add(night.mesh);
+  overhead.configure(current());
+  scene.add(overhead.mesh);
 
   const walls: WallOptions = {
     scale: SCALE,
@@ -420,7 +420,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     configure(config: RenderConfig): void {
       screen.configure(config);
-      night.configure(config);
+      overhead.configure(config);
     },
 
     drive(amount: number, time: number): void {
@@ -435,7 +435,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     resize,
     render(): void {
-      night.follow(camera, performance.now() / 1000);
+      overhead.follow(camera, performance.now() / 1000);
       screen.apply(scene, camera);
       meter.tick();
     },
@@ -456,8 +456,8 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       for (const it of stills) it.dispose();
 
       stills = [];
-      scene.remove(night.mesh);
-      night.dispose();
+      scene.remove(overhead.mesh);
+      overhead.dispose();
       screen.dispose();
       meter.dispose();
       renderer.dispose();

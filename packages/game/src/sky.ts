@@ -2,20 +2,18 @@
 // The sky
 //
 // Something over the level, in one bit: white on black and nothing between.
-// Several somethings, in `SKIES`, which `;` and `'` walk in the game:
+// Any of several, in `SKIES`, which `;` and `'` walk in the game:
 //
 // - **night** — stars, a faint nebula along a band, the whole of it wheeling
 //   slowly about a tilted pole while the nebula works on itself.
-// - **rift** — a hole in the sky with a disk of matter going round it, and
-//   the stars behind bent out of its way.
-// - **lattice** — the sky is a box, and its edges show: a grid on the faces
-//   of a cube round the level, a scan going up it, cells that drop out.
-// - **rain** — columns of glyphs falling out of the zenith.
-// - **glitch** — the stars on a display that is failing: bands tearing
-//   sideways and turning over, a bar rolling up it.
-// - **eye** — one, over the horizon, looking about and now and then blinking.
-// - **signal** — rings going out from a point low in the sky, broken where
-//   the transmission is.
+//
+// The pole is every sky's: `d` in the shader is the direction turned with it,
+// `seen` the direction as it is, and a sky picks whichever it wants to stand
+// still or move.
+//
+// Adding one is a name in `SKIES` and a GLSL function of the same name,
+// `float name(vec3 seen, vec3 d, float px, float t)`, returning the density
+// there. The dispatch in `main` is written off the list.
 //
 // Two halves, like the shadows:
 //
@@ -43,16 +41,10 @@ import type { RenderConfig } from './config';
 import type { Stage } from './screen';
 import { outputsGLSL } from './target';
 
-/** The skies in the order `;` and `'` walk them. The shader numbers them from
- * zero. */
+/** The skies in the order `;` and `'` walk them. Each is also the name of its
+ * function in the shader, which numbers them from zero. */
 export const SKIES = [
   'night',
-  'rift',
-  'lattice',
-  'rain',
-  'glitch',
-  'eye',
-  'signal',
 ] as const;
 
 export type Sky = typeof SKIES[number];
@@ -134,15 +126,6 @@ const fragmentShader = /* glsl */ `
     return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
   }
 
-  // Where d lands on the plane touching the sphere at a, in a's own frame:
-  // x across, y up. Only means anything on a's side of the sky.
-  vec2 facing(vec3 d, vec3 a) {
-    vec3 u = normalize(cross(vec3(0.0, 1.0, 0.0), a));
-    vec3 v = cross(a, u);
-
-    return vec2(dot(d, u), dot(d, v)) / max(dot(d, a), 1e-3);
-  }
-
   // Which face of a cube d goes through, and where on it: 0 to 1 across.
   // \`scale\` is how much of the face one unit of direction is at d.
   vec2 cubed(vec3 d, out float face, out float scale) {
@@ -171,12 +154,6 @@ const fragmentShader = /* glsl */ `
     return uv / major * 0.5 + 0.5;
   }
 
-  // Round the horizon, and up from it: how far round, 0 to 1, and how high,
-  // in the same units.
-  vec2 wrapped(vec3 d) {
-    return vec2(atan(d.z, d.x) / TAU, asin(clamp(d.y, -1.0, 1.0)) / TAU);
-  }
-
   // 1 where a star is, 0 elsewhere: a cell of a grid on each face of a cube,
   // a star somewhere inside the cell and well clear of its edges, lit where
   // the pixel is within a pixel or so of it.
@@ -203,7 +180,7 @@ const fragmentShader = /* glsl */ `
 
   // ── night ──
 
-  float night(vec3 d, float px, float t) {
+  float night(vec3 seen, vec3 d, float px, float t) {
     vec3 drift = vec3(0.0, t * 0.011, t * 0.007);
     vec3 q = vec3(fbm(d * 1.7 + drift), fbm(d * 1.7 + drift + 5.2), fbm(d * 1.7 - drift + 9.7));
     float n = fbm(d * 2.6 + q * 1.8 - drift * 0.5);
@@ -215,212 +192,6 @@ const fragmentShader = /* glsl */ `
     return max(uWeight * nebula, star(d, px, t));
   }
 
-  // ── rift ──
-
-  float rift(vec3 d, float px, float t) {
-    const vec3 AT = normalize(vec3(-0.6, 0.55, -0.6));
-    float r0 = 0.1 * (1.0 + 0.06 * sin(t * 0.21));
-
-    float along = dot(d, AT);
-    vec2 q = facing(d, AT);
-    float r = length(q);
-
-    // The stars behind, pushed out from the hole the nearer they are to it.
-    vec3 bent = d;
-
-    if (along > 0.0) {
-      vec3 k = normalize(cross(AT, d) + 1e-5);
-      bent = turn(d, k, r0 * r0 * 2.5 / max(r, r0));
-    }
-
-    float sky = star(bent, px, t);
-
-    if (along <= 0.0) return sky;
-
-    // The disk, tipped towards us and squashed by it, streaming round
-    // faster the closer in.
-    const float TIP = 0.28;
-    float c = cos(0.35), s = sin(0.35);
-    vec2 k = mat2(c, s, -s, c) * q;
-    vec2 e = vec2(k.x, k.y / TIP);
-    float er = length(e);
-    float angle = atan(e.y, e.x);
-    float swirl = noise(vec3(cos(angle - t * 0.4 / er) * 3.0, sin(angle - t * 0.4 / er) * 3.0, er * 40.0));
-    float disk = smoothstep(r0 * 1.2, r0 * 1.6, er) * (1.0 - smoothstep(r0 * 1.8, r0 * 4.0, er));
-
-    disk *= (0.35 + 0.65 * swirl) * uWeight * 1.4;
-
-    // The back half of the disk, bent up over the hole into a ring.
-    float halo = (1.0 - smoothstep(r0 * 1.3, r0 * 1.9, r)) * smoothstep(r0 * 1.05, r0 * 1.2, r);
-    halo *= 0.5 + 0.5 * noise(vec3(atan(q.y, q.x) * 4.0 - t * 0.6, r * 30.0, 0.0));
-
-    float edge = step(abs(r - r0), px * 1.2);
-    float front = k.y < 0.0 ? disk : 0.0;
-    float behind = k.y >= 0.0 ? disk : 0.0;
-
-    if (r < r0) return max(front, edge);
-
-    return max(max(max(sky * smoothstep(r0, r0 * 1.6, r), behind), max(front, uWeight * halo)), edge);
-  }
-
-  // ── lattice ──
-
-  float lattice(vec3 seen, vec3 d, float px, float t) {
-    const float N = 10.0;
-
-    float face, scale;
-    vec2 p = cubed(seen, face, scale) * N;
-    vec2 cell = floor(p);
-    vec2 f = abs(fract(p) - 0.5);
-    float width = px * N * scale;
-
-    float line = step(0.5 - width * 0.8, max(f.x, f.y));
-    float node = step(length(0.5 - f), width * 2.2);
-
-    // A scan going up the sky and wrapping.
-    float h = wrapped(seen).y * 4.0;
-    float scan = fract(t * 0.035);
-    float near = exp(-pow((h - scan) * 18.0, 2.0));
-
-    // Cells that drop out for a while and come back, showing a faint static.
-    float epoch = floor(t * 0.4 + hash13(vec3(cell, face)) * 7.0);
-    float gone = step(0.985, hash13(vec3(cell, face * 13.0 + epoch)));
-    float dropped = gone * step(0.8, hash13(floor(seen * 300.0) + floor(t * 6.0))) * 0.6;
-
-    float grid = max(line * mix(uWeight * 0.5, 1.0, near), node);
-
-    return max(max(grid * (1.0 - gone), dropped), star(d, px, t) * 0.5);
-  }
-
-  // ── rain ──
-
-  float rain(vec3 seen, float t) {
-    const float C = 220.0;
-    const float ROWS = C / 4.0;
-
-    vec2 w = wrapped(seen) * C;
-    vec2 cell = floor(w);
-    vec2 f = fract(w);
-
-    vec3 h = hash33(vec3(cell.x, 7.0, 3.0));
-
-    if (h.x > 0.35 + uWeight * 0.6) return 0.0;
-
-    float speed = 0.04 + 0.08 * h.y;
-    float len = 6.0 + 20.0 * h.z;
-    float head = ROWS * 1.1 - fract(t * speed + h.x * 13.0) * ROWS * 1.5;
-    float behind = cell.y - head;
-
-    if (behind < 0.0) return 0.0;
-
-    float glow = behind < 1.0 ? 1.0 : exp(-behind / len) * 0.85;
-
-    // A glyph: three by five, a gap round it, and every so often another.
-    vec2 sub = floor(f * vec2(4.0, 6.0));
-
-    if (sub.x > 2.0 || sub.y > 4.0) return 0.0;
-
-    float epoch = floor(t * (0.3 + 2.0 * hash13(vec3(cell, 5.0))));
-    float bit = step(0.45, hash13(vec3(cell * 7.0 + sub, epoch)));
-
-    // Out of the zenith, where the columns meet, rather than all at once.
-    return bit * glow * (1.0 - smoothstep(0.85, 1.0, seen.y));
-  }
-
-  // ── glitch ──
-
-  float glitch(vec3 seen, vec3 d, float px, float t) {
-    const float BANDS = 48.0;
-
-    vec2 w = wrapped(seen);
-    float band = floor(w.y * BANDS * 4.0);
-    float tick = floor(t * 1.5);
-    vec3 h = hash33(vec3(band, tick, 1.0));
-
-    float torn = step(h.x, 0.06 + 0.1 * uWeight);
-    float shift = torn * (h.y - 0.5) * 0.5;
-    vec3 moved = turn(d, vec3(0.0, 1.0, 0.0), shift);
-
-    float sky = star(moved, px, t);
-
-    // Snow where it tore, and some bands turned over.
-    float snow = torn * step(0.75, hash13(floor(seen * 260.0) + tick)) * 0.8;
-
-    sky = max(sky, snow);
-
-    if (torn > 0.0 && h.z < 0.3) sky = 0.85 - sky;
-
-    // A bar rolling up it, slowly.
-    float roll = fract(t * 0.025) * 0.35 - 0.05;
-    float bar = exp(-pow((w.y - roll) * 60.0, 2.0)) * 0.35 * uWeight * 2.0;
-
-    return max(sky, bar);
-  }
-
-  // ── eye ──
-
-  float eye(vec3 seen, float px, float t) {
-    const vec3 AT = normalize(vec3(0.0, 0.42, 1.0));
-    const float SIZE = 0.55;
-
-    if (dot(seen, AT) <= 0.0) return 0.0;
-
-    vec2 q = facing(seen, AT) / SIZE;
-    float line = px / SIZE * 1.4;
-
-    // A blink every nine seconds or so, a third of a second long.
-    float b = fract(t / 9.3);
-    float open = clamp(abs(b - 0.97) * 30.0, 0.0, 1.0);
-
-    float lid = (1.0 - q.x * q.x) * 0.5;
-    float top = lid * open;
-    float outline = step(abs(q.x), 1.0) * step(abs(abs(q.y) - top), line);
-
-    // Lashes, off the top lid, when it is open.
-    if (abs(q.x) < 0.8 && q.y > top && q.y < top + 0.12 * open) {
-      float slot = fract(q.x * 10.0 + 0.5);
-      outline = max(outline, step(abs(slot - 0.5), line * 5.0));
-    }
-
-    if (abs(q.x) >= 1.0 || abs(q.y) >= top) return outline;
-
-    // Looking about.
-    vec2 look = vec2(sin(t * 0.13) * 0.35, sin(t * 0.071 + 1.0) * 0.08);
-    vec2 i = q - look;
-    float r = length(i);
-
-    float sclera = 0.12 * uWeight;
-    float iris = 0.3 + 0.5 * uWeight * noise(vec3(atan(i.y, i.x) * 6.0, r * 8.0, t * 0.05));
-    float glint = step(length(i - vec2(-0.07, 0.07)), 0.045);
-
-    float inside = r < 0.42 ? (r < 0.15 ? 0.0 : iris) : sclera;
-
-    inside = max(inside, step(abs(r - 0.42), line));
-
-    return max(max(inside, glint), outline);
-  }
-
-  // ── signal ──
-
-  float signal(vec3 seen, vec3 d, float px, float t) {
-    const vec3 AT = normalize(vec3(0.9, 0.12, 0.2));
-
-    float theta = acos(clamp(dot(seen, AT), -1.0, 1.0));
-    float rings = theta * 7.0 - t * 0.25;
-    float ring = step(abs(fract(rings) - 0.5), px * 7.0 * 1.2);
-
-    // Broken where the transmission is, and the breaks go out with the rings.
-    vec3 k = normalize(cross(AT, seen) + 1e-5);
-    float around = atan(dot(k, vec3(0.0, 1.0, 0.0)), dot(k, normalize(cross(AT, vec3(0.0, 1.0, 0.0)))));
-    float broken = step(0.45, noise(vec3(cos(around) * 3.0, sin(around) * 3.0, floor(rings) * 0.7)));
-
-    float fade = 1.0 / (1.0 + theta * 1.5);
-    float source = step(theta, 0.02 + 0.01 * sin(t * 3.0));
-    float carrier = (1.0 - smoothstep(0.0, 0.25, theta)) * 0.3 * uWeight;
-
-    return max(max(ring * broken * fade * (0.4 + 0.6 * uWeight), max(source, carrier)), star(d, px, t));
-  }
-
   void main() {
     vec3 seen = normalize(vDir);
     vec3 d = turn(seen, POLE, uTime * 0.006);
@@ -428,15 +199,9 @@ const fragmentShader = /* glsl */ `
     float px = length(fwidth(seen)) * 0.7071;
     float above = smoothstep(-0.02, 0.2, seen.y);
 
-    float density;
+    float density = 0.0;
 
-    if (uKind == 1) density = rift(d, px, uTime);
-    else if (uKind == 2) density = lattice(seen, d, px, uTime);
-    else if (uKind == 3) density = rain(seen, uTime);
-    else if (uKind == 4) density = glitch(seen, d, px, uTime);
-    else if (uKind == 5) density = eye(seen, px, uTime);
-    else if (uKind == 6) density = signal(seen, d, px, uTime);
-    else density = night(d, px, uTime);
+    ${SKIES.map((k, i) => `if (uKind == ${i}) density = ${k}(seen, d, px, uTime);`).join('\n    ')}
 
     fragColor = vec4(vec3(clamp(density, 0.0, 1.0) * above), 1.0);
     marks = skyMark();
