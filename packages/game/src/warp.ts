@@ -32,6 +32,7 @@ export const WARPS = [
   'pinch',
   'pulse',
   'buckle',
+  'fisheye',
   'vertigo',
 ] as const;
 
@@ -103,6 +104,29 @@ export const warpGLSL = /* glsl */ `
       float band = sin(p.y * 22.0 + uTime * 7.0) * sin(p.y * 5.0 - uTime * 3.0);
 
       q = held(p, vec2(p.x + band * 0.05 * a * r, p.y), edge);
+    }
+
+    // A lens — the well-worn fisheye shader, after
+    // http://stackoverflow.com/questions/6030814 — the middle bulging out at
+    // the eye going in, and caving away from it coming back out.
+    //
+    // Pinned where it still covers the screen. Bulging, the corners stay put
+    // and every other point reads from further in; caving, the short edge
+    // stays put and nothing reads from past the circle through it, which is
+    // still on screen whichever way it points.
+    else if (uWarp == 4 && r > 0.0) {
+      float corner = length(edge);
+      float power = 3.141593 / (2.0 * corner) * 0.7 * a;
+      vec2 dir = p / r;
+
+      if (power > 0.0) {
+        q = dir * tan(r * power) * corner / tan(corner * power);
+      }
+      else {
+        float k = -power * 10.0;
+
+        q = dir * atan(r * k) * edge.y / atan(edge.y * k);
+      }
     }
 
     return texture2D(uScene, clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0));
