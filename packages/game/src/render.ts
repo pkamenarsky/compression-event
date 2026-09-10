@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import { ScreenPass } from './screen';
 import { Morph, morph } from './morph';
 import { still } from './still';
+import { flat } from './target';
 import { Run, Source, WallOptions } from './walls';
 import { Floor, Point, SCALE, TILE_SIZE, World } from './world';
 
@@ -156,6 +157,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   camera.position.set(0, 1.6, 0);
 
   const screen = new ScreenPass(renderer);
+  const meter = fps(element);
 
   screen.quantised = options.dither ?? true;
 
@@ -349,11 +351,13 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     resize,
     render(): void {
       screen.apply(scene, camera);
+      meter.tick();
     },
 
     blank(): void {
       renderer.setRenderTarget(null);
       renderer.clear();
+      meter.tick();
     },
 
     dispose(): void {
@@ -367,6 +371,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
       standing = null;
       screen.dispose();
+      meter.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },
@@ -439,8 +444,7 @@ function floor(b: Bounds | null): THREE.Object3D[] {
 
   const surface = new THREE.Mesh(
     new THREE.PlaneGeometry(box.maxX - box.minX, box.maxZ - box.minZ),
-    new THREE.MeshBasicMaterial({
-      color: FLOOR_COLOR,
+    flat(FLOOR_COLOR, {
       side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: 1,
@@ -467,8 +471,55 @@ function floor(b: Bounds | null): THREE.Object3D[] {
 
   const lines = new THREE.LineSegments(
     geometry,
-    new THREE.LineBasicMaterial({ color: LINE_COLOR }),
+    flat(LINE_COLOR),
   );
 
   return [surface, lines];
+}
+
+// -----------------------------------------------------------------------------
+// The frame rate
+//
+// Frames drawn per second, in the corner opposite the game's own line: counted
+// over half a second at a time, which is long enough to be readable and short
+// enough that a hitch shows.
+// -----------------------------------------------------------------------------
+
+/** How often the number is brought up to date, in milliseconds. */
+const METERED = 500;
+
+function fps(host: HTMLElement): { tick(): void, dispose(): void } {
+  const shown = document.createElement('div');
+
+  shown.style.cssText = `
+    position: absolute; right: 8px; top: 8px;
+    color: #7f7; font: 11px ui-monospace, monospace;
+    z-index: 9; pointer-events: none;
+  `;
+
+  // Absolutely placed against the host, which has to be a box to be placed in.
+  if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+
+  host.append(shown);
+
+  let since = performance.now();
+  let frames = 0;
+
+  return {
+    tick(): void {
+      frames++;
+
+      const now = performance.now();
+
+      if (now - since < METERED) return;
+
+      shown.textContent = `${Math.round(frames * 1000 / (now - since))} fps`;
+      since = now;
+      frames = 0;
+    },
+
+    dispose(): void {
+      shown.remove();
+    },
+  };
 }

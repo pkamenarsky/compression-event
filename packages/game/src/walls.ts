@@ -22,7 +22,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { markWallGLSL } from './target';
+import { outputsGLSL } from './target';
 import { Point } from './world';
 
 /**
@@ -299,12 +299,7 @@ export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
 
   ${VARYINGS}
-
-  // Under GLSL 3 there is no \`gl_FragColor\` and three does not put one back,
-  // so the output is declared here rather than inherited.
-  layout(location = 0) out vec4 fragColor;
-
-  ${markWallGLSL}
+  ${outputsGLSL}
 
   void main() {
     vec3 n = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
@@ -321,7 +316,8 @@ export const wallFragment = /* glsl */ `
     // The pattern that keeps a wall from banding is the screen pass's to lay
     // down, after the picture has been warped; the wall only says where it
     // goes. See \`target.ts\`.
-    fragColor = markWall(uWallColor * light);
+    fragColor = vec4(uWallColor * light, 1.0);
+    marks = wallMark();
   }
 `;
 
@@ -329,15 +325,17 @@ export const lineFragment = /* glsl */ `
   uniform vec3 uLineColor;
 
   ${VARYINGS}
-
-  layout(location = 0) out vec4 fragColor;
+  ${outputsGLSL}
 
   void main() {
     // A vertical standing at a corner that is not there yet is not drawn at
     // all, and fades in as the corner emerges. Everything else is opaque.
     if (vOpacity < 0.02) discard;
 
+    // Both at its opacity, so a fading line covers the marks under it by as
+    // much as it covers the colour.
     fragColor = vec4(uLineColor, vOpacity);
+    marks = vec4(UNMARKED.rgb, vOpacity);
   }
 `;
 
@@ -595,11 +593,11 @@ export const fillFragment = /* glsl */ `
   uniform vec3 uFillColor;
 
   ${VARYINGS}
-
-  layout(location = 0) out vec4 fragColor;
+  ${outputsGLSL}
 
   void main() {
     fragColor = vec4(uFillColor, 1.0);
+    marks = UNMARKED;
   }
 `;
 

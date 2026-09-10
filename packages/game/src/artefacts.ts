@@ -19,6 +19,8 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import type { Stage } from './screen';
+import { flat, outputsGLSL } from './target';
 import { IconType, SCALE } from './world';
 
 /** Where one artefact stands, in editor units. */
@@ -65,8 +67,8 @@ const BOB_SPEED = Math.PI * 2;
 const SHADOW_Y = 0.005;
 
 export function artefacts(scene: THREE.Scene): Artefacts {
-  const fill = new THREE.MeshBasicMaterial({ color: FILL, side: THREE.DoubleSide });
-  const edge = new THREE.LineBasicMaterial({ color: EDGE });
+  const fill = flat(FILL, { side: THREE.DoubleSide });
+  const edge = flat(EDGE);
 
   // One unit patch for every shadow there will ever be, scaled per artefact.
   // Two materials rather than one, because the fade has to know the shape it
@@ -126,7 +128,11 @@ export function artefacts(scene: THREE.Scene): Artefacts {
 
       patched.rotation.x = -Math.PI / 2;
       patched.scale.set(it.shade.w, it.shade.d, 1);
-      patched.renderOrder = 1;
+
+      // Transparent, so after everything opaque — the ground it keeps — and
+      // first of what else is: a line standing in front of it is drawn over it,
+      // marks and all, rather than stippled by it.
+      patched.renderOrder = -1;
 
       scene.add(patched);
     }
@@ -425,12 +431,13 @@ function body(type: IconType): Body {
 // -----------------------------------------------------------------------------
 // The shadow
 //
-// A patch on the ground that fades out towards its edge. Blended, and yet not
-// soft: the fade is a ramp in the scene target, and the screen pass quantises
-// it into the same pattern of opaque pixels as everything else — laid down in
-// the pixels it is seen in, after the warp, rather than stippled into the scene
-// where the warp would stretch it. An ordinary transparent material, so what
-// it leaves in the target's alpha is what `target.ts` says it should be.
+// A patch on the ground that fades out towards its edge, with the fade stippled
+// rather than blended: the whole look is opaque pixels in a pattern, and an
+// alpha ramp under a floating object is the one place a soft edge would show.
+//
+// The stipple is the screen pass's, laid down after the warp in the pixels it
+// is seen in. The shadow leaves the ground's colour where it is and marks how
+// much shade there is — see `target.ts`, and `stipple` below.
 //
 // Two of them, and they differ only in what "towards its edge" means — the
 // distance from the middle, or the further of the two axes. A round thing over
@@ -439,13 +446,31 @@ function body(type: IconType): Body {
 
 function shadow(fragment: string): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
     vertexShader: shadowVertex,
     fragmentShader: fragment,
     side: THREE.DoubleSide,
     depthWrite: false,
+
+    // Blended, for the one thing blending does with two attachments: a zero
+    // alpha keeps the colour under it and a whole one replaces the marks.
     transparent: true,
   });
 }
+
+/**
+ * The screen pass's stage for shadows: black where the shade is over the 4x4
+ * threshold, which is the stipple the shadow once drew into the scene itself.
+ * Needs `bayerDither` ahead of it; `pixel` is whole pixels.
+ */
+export const stipple: Stage = {
+  glsl: /* glsl */ `
+    vec3 stippled(vec3 color, float shade, vec2 pixel) {
+      return shade > bayerDither(pixel) ? vec3(0.0) : color;
+    }
+  `,
+  uniforms: () => ({}),
+};
 
 const shadowVertex = /* glsl */ `
   varying vec2 vUv;
@@ -462,13 +487,15 @@ const fade = /* glsl */ `
   void shed(float d) {
     if (d > 1.0) discard;
 
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0 - smoothstep(0.0, 1.0, d));
+    fragColor = vec4(0.0);
+    marks = shadeMark(1.0 - smoothstep(0.0, 1.0, d));
   }
 `;
 
 const roundShadow = /* glsl */ `
   varying vec2 vUv;
 
+  ${outputsGLSL}
   ${fade}
 
   void main() {
@@ -479,6 +506,7 @@ const roundShadow = /* glsl */ `
 const boxyShadow = /* glsl */ `
   varying vec2 vUv;
 
+  ${outputsGLSL}
   ${fade}
 
   void main() {

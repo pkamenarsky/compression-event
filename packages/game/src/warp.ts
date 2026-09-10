@@ -161,16 +161,17 @@ export const blur: Stage = {
     Texel blurred(vec2 uv) {
       if (uBlur <= 0.0) return warped(uv);
 
-      Texel sum = Texel(vec3(0.0), 0.0);
+      Texel sum = Texel(vec3(0.0), 0.0, 0.0);
 
       for (int i = 0; i < 12; i++) {
         Texel t = warped(0.5 + (uv - 0.5) * (1.0 - uBlur * float(i) / 11.0));
 
         sum.rgb += t.rgb;
         sum.wall += t.wall;
+        sum.shade += t.shade;
       }
 
-      return Texel(sum.rgb / 12.0, sum.wall / 12.0);
+      return Texel(sum.rgb / 12.0, sum.wall / 12.0, sum.shade / 12.0);
     }
   `,
   uniforms: () => ({ uBlur: { value: 0 } }),
