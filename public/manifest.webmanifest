@@ -1,0 +1,10 @@
+{
+  "name": "compression event",
+  "short_name": "compression",
+  "start_url": "/game.html",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
