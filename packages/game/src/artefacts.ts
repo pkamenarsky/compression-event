@@ -465,11 +465,17 @@ function shadow(fragment: string): THREE.ShaderMaterial {
  */
 export const stipple: Stage = {
   glsl: /* glsl */ `
+    uniform bool uStipple;
+
     vec3 stippled(vec3 color, float shade, vec2 pixel) {
-      return shade > bayerDither(pixel) ? vec3(0.0) : color;
+      return uStipple && shade > bayerDither(pixel) ? vec3(0.0) : color;
     }
   `,
-  uniforms: () => ({}),
+  uniforms: () => ({ uStipple: { value: true } }),
+
+  apply(u, { stipple: s }): void {
+    u.uStipple.value = s.on;
+  },
 };
 
 const shadowVertex = /* glsl */ `

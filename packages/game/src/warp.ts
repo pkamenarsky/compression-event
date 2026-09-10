@@ -28,11 +28,13 @@
 // Experimental, and switched between in the game with `<` and `>`.
 // -----------------------------------------------------------------------------
 
+import * as THREE from 'three';
+import { MAX_TAPS } from './config';
 import type { Stage } from './screen';
 
-/** The warps in the order `<` and `>` walk them, index as the shader sees it. */
+/** The warps in the order `<` and `>` walk them. The shader numbers them from
+ * one, and none is zero. */
 export const WARPS = [
-  'none',
   'pinch',
   'pulse',
   'buckle',
@@ -55,12 +57,20 @@ export const warp: Stage = {
     uniform float uAmount;
     uniform float uTime;
     uniform float uAspect;
+    uniform float uWarpStrength;
+    uniform vec2 uPinch;
+    uniform vec3 uPulse;
+    uniform vec2 uBuckle;
+    uniform float uFisheye;
 
     // One axis bent and its ends left where they were: x in [-h, h] onto
     // itself. Positive k swells the middle and crams the ends; negative does
-    // the opposite. Monotone, so nothing folds, for |k| under a half.
+    // the opposite. Monotone, so nothing folds, for |k| under a half — which
+    // is where it stops, however hard it is asked.
     float bend(float x, float h, float k) {
       float u = x / h;
+
+      k = clamp(k, -0.49, 0.49);
 
       return x * (1.0 - k + k * u * u);
     }
@@ -75,7 +85,7 @@ export const warp: Stage = {
     }
 
     Texel warped(vec2 uv) {
-      float a = clamp(uAmount, -1.0, 1.0);
+      float a = clamp(uAmount, -1.0, 1.0) * uWarpStrength;
 
       if (uWarp == 0 || a == 0.0) return read(uv);
 
@@ -88,16 +98,16 @@ export const warp: Stage = {
       // it: everything that was at the side of the room is now nearer the middle
       // of it.
       if (uWarp == 1) {
-        q = vec2(bend(p.x, edge.x, 0.45 * a), bend(p.y, edge.y, 0.3 * a));
+        q = vec2(bend(p.x, edge.x, uPinch.x * a), bend(p.y, edge.y, uPinch.y * a));
       }
 
       // A pulse in the ears: the whole view throbs, two beats at a time, faster
       // the closer the level is to shut.
       else if (uWarp == 2) {
-        float rate = 1.2 + 2.5 * abs(a);
+        float rate = uPulse.y + uPulse.z * abs(a);
         float t = fract(uTime * rate);
         float beat = exp(-t * 9.0) + 0.6 * exp(-max(t - 0.22, 0.0) * 9.0) * step(0.22, t);
-        float k = 0.4 * a * beat;
+        float k = uPulse.x * a * beat;
 
         q = vec2(bend(p.x, edge.x, k), bend(p.y, edge.y, k));
       }
@@ -106,9 +116,9 @@ export const warp: Stage = {
       // towards the edges where the walls are, as if the screen itself were
       // being pressed out of true.
       else if (uWarp == 3) {
-        float band = sin(p.y * 22.0 + uTime * 7.0) * sin(p.y * 5.0 - uTime * 3.0);
+        float band = sin(p.y * uBuckle.y + uTime * 7.0) * sin(p.y * 5.0 - uTime * 3.0);
 
-        q = held(p, vec2(p.x + band * 0.05 * a * r, p.y), edge);
+        q = held(p, vec2(p.x + band * uBuckle.x * a * r, p.y), edge);
       }
 
       // A lens — the well-worn fisheye shader, after
@@ -121,7 +131,9 @@ export const warp: Stage = {
       // still on screen whichever way it points.
       else if (uWarp == 4 && r > 0.0) {
         float corner = length(edge);
-        float power = 3.141593 / (2.0 * corner) * 0.7 * a;
+        // Short of the whole of it, where the tangent runs off to infinity at
+        // the corners.
+        float power = 3.141593 / (2.0 * corner) * clamp(uFisheye * a, -0.98, 0.98);
         vec2 dir = p / r;
 
         if (power > 0.0) {
@@ -142,7 +154,23 @@ export const warp: Stage = {
     uAmount: { value: 0 },
     uTime: { value: 0 },
     uAspect: { value: 1 },
+    uWarpStrength: { value: 1 },
+    uPinch: { value: new THREE.Vector2() },
+    uPulse: { value: new THREE.Vector3() },
+    uBuckle: { value: new THREE.Vector2() },
+    uFisheye: { value: 0 },
   }),
+
+  // Vertigo has a number and no case in the shader, so it reads the scene
+  // straight: it is the camera that does it.
+  apply(u, { warp: w }): void {
+    u.uWarp.value = w.on ? WARPS.indexOf(w.kind) + 1 : 0;
+    u.uWarpStrength.value = w.strength;
+    u.uPinch.value.set(w.pinch.across, w.pinch.up);
+    u.uPulse.value.set(w.pulse.depth, w.pulse.rate, w.pulse.quicken);
+    u.uBuckle.value.set(w.buckle.shear, w.buckle.bands);
+    u.uFisheye.value = w.fisheye.power;
+  },
 };
 
 /**
@@ -152,27 +180,41 @@ export const warp: Stage = {
  * `warped` ahead of it.
  *
  * Every read is nearer the middle than the pixel is, so it never reads from off
- * screen. `uBlur` is how far in the run reaches, as a share of the way there.
+ * screen. It reaches in as far as the warp's `uAmount` says the level is
+ * closing, times the config's reach.
  */
 export const blur: Stage = {
   glsl: /* glsl */ `
-    uniform float uBlur;
+    uniform float uReach;
+    uniform int uTaps;
 
     Texel blurred(vec2 uv) {
-      if (uBlur <= 0.0) return warped(uv);
+      float reach = uReach * min(abs(uAmount), 1.0);
+
+      if (reach <= 0.0 || uTaps < 2) return warped(uv);
 
       Texel sum = Texel(vec3(0.0), 0.0, 0.0);
+      float last = float(uTaps - 1);
 
-      for (int i = 0; i < 12; i++) {
-        Texel t = warped(0.5 + (uv - 0.5) * (1.0 - uBlur * float(i) / 11.0));
+      for (int i = 0; i < ${MAX_TAPS}; i++) {
+        if (i >= uTaps) break;
+
+        Texel t = warped(0.5 + (uv - 0.5) * (1.0 - reach * float(i) / last));
 
         sum.rgb += t.rgb;
         sum.wall += t.wall;
         sum.shade += t.shade;
       }
 
-      return Texel(sum.rgb / 12.0, sum.wall / 12.0, sum.shade / 12.0);
+      float n = float(uTaps);
+
+      return Texel(sum.rgb / n, sum.wall / n, sum.shade / n);
     }
   `,
-  uniforms: () => ({ uBlur: { value: 0 } }),
+  uniforms: () => ({ uReach: { value: 0 }, uTaps: { value: 1 } }),
+
+  apply(u, { blur: b }): void {
+    u.uReach.value = b.on ? b.reach : 0;
+    u.uTaps.value = Math.min(Math.max(Math.round(b.taps), 1), MAX_TAPS);
+  },
 };

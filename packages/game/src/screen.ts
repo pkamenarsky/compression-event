@@ -24,16 +24,21 @@
 
 import * as THREE from 'three';
 import { stipple } from './artefacts';
-import { DitherOptions, bayer, bayerTexture, nudge, quantise } from './dither';
+import type { RenderConfig } from './config';
+import { bayer, bayerTexture, nudge, quantise } from './dither';
 import { marked, read } from './target';
 import { blur, warp } from './warp';
 
-/** One stage of the pass: its GLSL, and the uniforms that GLSL declares with
- * where they start. */
+/** One stage of the pass: its GLSL, the uniforms that GLSL declares with where
+ * they start, and how its part of the render config sets them. */
 export interface Stage {
   glsl: string
   uniforms: () => Record<string, THREE.IUniform>
+  apply?: (u: Record<string, THREE.IUniform>, config: RenderConfig) => void
 }
+
+/** The pass, in order. See the header. */
+const STAGES: Stage[] = [read, warp, blur, bayer, nudge, stipple, quantise];
 
 const vertexShader = /* glsl */ `
   varying vec2 vUv;
@@ -74,10 +79,16 @@ export class ScreenPass {
   /** Every stage's uniforms, by name, for setting. */
   private u: Record<string, THREE.IUniform>;
 
+  /** Whether the view wants quantising, whatever the config says — see
+   * `quantise`. */
+  private looking = true;
+
+  private config: RenderConfig | null = null;
+
   /** Materials already reported for not writing marks, so each is said once. */
   private reported = new WeakSet<THREE.Material>();
 
-  constructor(private renderer: THREE.WebGLRenderer, options: DitherOptions = {}) {
+  constructor(private renderer: THREE.WebGLRenderer) {
     const size = renderer.getSize(new THREE.Vector2());
     const width = size.x || 1, height = size.y || 1;
 
@@ -97,11 +108,9 @@ export class ScreenPass {
 
     this.bayer = bayerTexture();
 
-    const stages = [read, warp, blur, bayer, nudge, stipple, quantise(options)];
-
     this.u = Object.assign(
       { uResolution: { value: new THREE.Vector2(width, height) } },
-      ...stages.map(s => s.uniforms()),
+      ...STAGES.map(s => s.uniforms()),
     );
 
     this.u.uScene.value = this.target.textures[0];
@@ -111,7 +120,7 @@ export class ScreenPass {
 
     this.material = new THREE.ShaderMaterial({
       vertexShader,
-      fragmentShader: [...stages.map(s => s.glsl), main].join('\n'),
+      fragmentShader: [...STAGES.map(s => s.glsl), main].join('\n'),
       uniforms: this.u,
       depthTest: false,
       depthWrite: false,
@@ -122,10 +131,20 @@ export class ScreenPass {
     this.scene.add(this.quad);
   }
 
-  /** Whether the colour is quantised on the way out. Off is the editor looking
-   * down on a level; everything before it still runs. */
+  /** Whether the view wants the colour quantised on the way out, on top of
+   * the config wanting it. Off is the editor looking down on a level. */
   set quantised(on: boolean) {
-    this.u.uQuantise.value = on;
+    this.looking = on;
+    if (this.config !== null) this.configure(this.config);
+  }
+
+  /** Every stage set from its part of `config`. */
+  configure(config: RenderConfig): void {
+    this.config = config;
+
+    for (const s of STAGES) s.apply?.(this.u, config);
+
+    this.u.uQuantise.value = this.u.uQuantise.value && this.looking;
   }
 
   setSize(width: number, height: number): void {
@@ -134,14 +153,12 @@ export class ScreenPass {
     this.u.uAspect.value = width / height;
   }
 
-  /** Which warp, how far into it, and how much radial blur over the top —
-   * see `warp.ts`. Left alone it stays at none, and the pass reads the scene
-   * exactly where it is. */
-  warp(index: number, amount: number, time: number, blur = 0): void {
-    this.u.uWarp.value = index;
+  /** How far the level is closing, signed, and a clock in seconds — the two
+   * things that move the warp and the blur from one frame to the next. Left
+   * at zero, the pass reads the scene exactly where it is. */
+  drive(amount: number, time: number): void {
     this.u.uAmount.value = amount;
     this.u.uTime.value = time;
-    this.u.uBlur.value = blur;
   }
 
   apply(scene: THREE.Scene, camera: THREE.Camera): void {

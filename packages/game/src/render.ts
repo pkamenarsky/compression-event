@@ -30,6 +30,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import { RenderConfig, current } from './config';
 import { ScreenPass } from './screen';
 import { Morph, morph } from './morph';
 import { still } from './still';
@@ -116,13 +117,14 @@ export interface Renderer {
    */
   dither(on: boolean): void
 
-  /**
-   * Bend the picture: which warp out of `WARPS`, how hard (signed, 0 is none),
-   * a clock in seconds, and how far a radial blur over the top of it reaches
-   * in towards the middle, as a share of the way there. Only the game calls
-   * this.
-   */
-  warp(index: number, amount: number, time: number, blur?: number): void
+  /** How the picture is made — which stages run, and their numbers. See
+   * `config.ts`. Starts at the one last in force in this browser. */
+  configure(config: RenderConfig): void
+
+  /** How far the level is closing (signed, 0 is not at all) and a clock in
+   * seconds, which is what moves the warp and the blur. Only the game calls
+   * this. */
+  drive(amount: number, time: number): void
 
   resize(): void
   render(): void
@@ -159,6 +161,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   const screen = new ScreenPass(renderer);
   const meter = fps(element);
 
+  screen.configure(current());
   screen.quantised = options.dither ?? true;
 
   const walls: WallOptions = {
@@ -338,8 +341,12 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       screen.quantised = on;
     },
 
-    warp(index: number, amount: number, time: number, blur = 0): void {
-      screen.warp(index, amount, time, blur);
+    configure(config: RenderConfig): void {
+      screen.configure(config);
+    },
+
+    drive(amount: number, time: number): void {
+      screen.drive(amount, time);
     },
 
     between(u: number): [number, number] {

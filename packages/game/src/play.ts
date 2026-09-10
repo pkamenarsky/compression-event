@@ -41,6 +41,7 @@ import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
 import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, WALK_SPEED } from './controls';
+import { RenderConfig, current, remember } from './config';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
 import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
@@ -54,6 +55,7 @@ import {
   versionShift,
 } from './sound';
 import { Run } from './walls';
+import { tweak } from './tweak';
 import { WARPS } from './warp';
 import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
@@ -101,20 +103,6 @@ const CURVE = EASINGS[REPLAY_EASE];
 /** How near a thing has to be to be named, and to be taken. */
 const NAMED = 3.5;
 const TAKEN = 1.5;
-
-/** How long before a shift the screen starts to feel it, in seconds, and how
- * far it has got by the time the shift begins. */
-const BRACE = 1.2;
-const BRACED = 0.25;
-
-/** How far in towards the middle of the screen the radial blur reaches at the
- * height of a shift, as a share of the way there. On whichever warp is on,
- * `none` included. */
-const BLUR = 0.12;
-
-/** How far the vertigo warp narrows the view at its height: the tangent of
- * half of it, taken down by this much. The other way round it widens. */
-const NARROW = 0.45;
 
 export interface Game {
   /**
@@ -248,9 +236,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    */
   let dying: number | null = null;
 
-  /** Which of `WARPS` bends the picture, walked with `<` and `>`. Starts on
-   * the first one that does anything, since the point for now is to look. */
-  let warp = 1;
+  /** How the picture is made, as last left in this browser. The tweak panel
+   * changes it and `<` and `>` walk its warp; either way it is handed to the
+   * view and remembered. */
+  let look = current();
+
+  const configured = (next: RenderConfig): void => {
+    look = next;
+    view.configure(look);
+    remember(look);
+  };
 
   /** Seconds the warp's name stays in the corner after switching to it. */
   let labelled = 0;
@@ -637,7 +632,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     if (labelled > 0) {
       labelled -= dt;
-      say.stat(labelled > 0 ? `warp: ${WARPS[warp]}` : null);
+      say.stat(labelled > 0 ? `warp: ${look.warp.on ? look.warp.kind : 'off'}` : null);
     }
 
     if (options.debug === true) {
@@ -657,9 +652,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    *
    * Rising over the last of a beat, then over and back off again through the
    * shift itself; all the way while dying. Opening back up bends the other way
-   * and has nothing to brace for, since it comes of a pickup.
+   * and has nothing to brace for, since it comes of a pickup. Held wherever the
+   * tweak panel says, while it says so.
    */
   function bent(): number {
+    const { brace, braced } = look.warp;
     let amount = 0;
 
     if (shifting !== null) {
@@ -668,15 +665,17 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       const opening = leg.to < leg.from;
       const swell = Math.sin(Math.PI * progress);
 
-      amount = opening ? -swell : Math.max(swell, BRACED * (1 - progress));
+      amount = opening ? -swell : Math.max(swell, braced * (1 - progress));
     }
-    else if (running && dying === null && clock < BRACE) {
-      amount = BRACED * (1 - Math.max(clock, 0) / BRACE);
+    else if (running && dying === null && clock < brace) {
+      amount = braced * (1 - Math.max(clock, 0) / brace);
     }
 
     if (dying !== null) amount = Math.max(amount, Math.min(dying / SHIFT, 1));
 
-    view.warp(warp, amount, elapsed, BLUR * Math.min(Math.abs(amount), 1));
+    amount = panel.held() ?? amount;
+
+    view.drive(amount, elapsed);
 
     return amount;
   }
@@ -689,7 +688,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     cam.position.set(player.x, EYE, player.z);
     cam.lookAt(player.x + Math.sin(player.yaw), EYE, player.z - Math.cos(player.yaw));
 
-    const narrowed = WARPS[warp] === 'vertigo' ? NARROW * amount : 0;
+    const { on, kind, strength, vertigo } = look.warp;
+
+    // Short of closing it altogether, however hard it is turned up.
+    const narrowed = on && kind === 'vertigo' ? Math.min(vertigo.narrow * strength * amount, 0.95) : 0;
     const half = Math.tan(wide / 2 * Math.PI / 180) * (1 - narrowed);
     const fov = Math.atan(half) * 2 * 180 / Math.PI;
 
@@ -716,14 +718,45 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * never having had one is a refusal, and leaves the game up to be clicked. */
   let caught = false;
 
+  /**
+   * The render config, over the game. The pointer has to be let go to use it,
+   * and letting it go is otherwise someone leaving — see `locked` — so the
+   * panel being open is asked first. Closing it takes the pointer back.
+   */
+  const panel = tweak(host, () => look, next => configured(next));
+
+  const tweaking = (): void => {
+    panel.toggle();
+
+    if (panel.open) {
+      down.clear();
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+    }
+    else {
+      grab();
+    }
+  };
+
   const pressed = (e: KeyboardEvent): void => {
     if (e.code === 'Escape') {
       options.leave?.();
       return;
     }
 
+    if (e.code === 'Backquote') {
+      tweaking();
+      return;
+    }
+
+    // Typed into the panel, not at the game.
+    if (panel.holds(e.target)) return;
+
     if (e.key === '<' || e.key === '>') {
-      warp = (warp + (e.key === '>' ? 1 : WARPS.length - 1)) % WARPS.length;
+      const at = WARPS.indexOf(look.warp.kind);
+      const kind = WARPS[(at + (e.key === '>' ? 1 : WARPS.length - 1)) % WARPS.length];
+
+      configured({ ...look, warp: { ...look.warp, kind } });
+      panel.refresh();
       labelled = 2;
       return;
     }
@@ -762,10 +795,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   const locked = (): void => {
     if (document.pointerLockElement === canvas) caught = true;
-    else if (caught) options.leave?.();
+    else if (caught && !panel.open) options.leave?.();
   };
 
-  host.addEventListener('click', grab);
+  // A click on the game while the panel is open is going back to the game.
+  const clicked = (): void => {
+    if (panel.open) tweaking();
+    else grab();
+  };
+
+  host.addEventListener('click', clicked);
   host.addEventListener('pointerdown', tapped);
   document.addEventListener('pointerlockchange', locked);
   window.addEventListener('keydown', pressed);
@@ -808,7 +847,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
       if (document.pointerLockElement === canvas) document.exitPointerLock();
 
-      host.removeEventListener('click', grab);
+      host.removeEventListener('click', clicked);
       host.removeEventListener('pointerdown', tapped);
       document.removeEventListener('pointerlockchange', locked);
       window.removeEventListener('keydown', pressed);
@@ -816,6 +855,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       window.removeEventListener('blur', blurred);
       document.removeEventListener('mousemove', moved);
       touch?.dispose();
+      panel.dispose();
 
       ambient?.stop();
       coming?.stop();

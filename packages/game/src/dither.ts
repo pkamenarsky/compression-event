@@ -79,27 +79,26 @@ export function bayerTexture(): THREE.DataTexture {
  */
 export const nudge: Stage = {
   glsl: /* glsl */ `
+    uniform float uSpread;
+
     vec3 nudged(Texel t, vec2 pixel) {
-      return clamp(t.rgb + t.wall * (bayerDither(pixel) - 0.5) * 1.2, 0.0, 1.0);
+      return clamp(t.rgb + t.wall * (bayerDither(pixel) - 0.5) * uSpread, 0.0, 1.0);
     }
   `,
-  uniforms: () => ({}),
-};
+  uniforms: () => ({ uSpread: { value: 0 } }),
 
-export interface DitherOptions {
-  /** Discrete levels per channel. */
-  levels?: number
-  /** 0 quantises without dithering; 1 is the full Bayer spread. */
-  strength?: number
-}
+  apply(u, { nudge: n }): void {
+    u.uSpread.value = n.on ? n.spread : 0;
+  },
+};
 
 /**
  * Each channel to a handful of levels, the 8x8 threshold choosing which way.
- * Off leaves the colour as it is — the editor looking down on a level rather
- * than standing in it. `uBayer` is the pass's to fill, since it owns the
- * texture.
+ * Off leaves the colour as it is. `uBayer` is the pass's to fill, since it owns
+ * the texture, and so is whether the view wants quantising at all — the editor
+ * looking down on a level rather than standing in it does not.
  */
-export const quantise = (options: DitherOptions = {}): Stage => ({
+export const quantise: Stage = {
   glsl: /* glsl */ `
     uniform sampler2D uBayer;
     uniform float uLevels;
@@ -118,8 +117,14 @@ export const quantise = (options: DitherOptions = {}): Stage => ({
   `,
   uniforms: () => ({
     uBayer: { value: null },
-    uLevels: { value: options.levels ?? 5 },
-    uStrength: { value: options.strength ?? 1.1 },
+    uLevels: { value: 5 },
+    uStrength: { value: 1 },
     uQuantise: { value: true },
   }),
-});
+
+  apply(u, { quantise: q }): void {
+    u.uQuantise.value = q.on;
+    u.uLevels.value = Math.max(Math.round(q.levels), 2);
+    u.uStrength.value = q.strength;
+  },
+};
