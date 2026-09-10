@@ -97,7 +97,7 @@ export function narrowed(wide: number, amount: number, w: Warping): number {
 
 /**
  * The warp stage: `warped(uv)` is the target read at where the warp says `uv`
- * shows. Needs `read` from `target.ts` ahead of it.
+ * shows. Needs `occluded` from `ssao.ts` ahead of it.
  *
  * `p` is centred and square — x runs wider than y by the aspect — so a circle
  * on screen is a circle here, and the screen is the box out to `edge`.
@@ -138,7 +138,7 @@ export const warp: Stage = {
     Texel warped(vec2 uv) {
       float a = clamp(uAmount, -1.0, 1.0) * uWarpStrength;
 
-      if (uWarp == 0 || a == 0.0) return read(uv);
+      if (uWarp == 0 || a == 0.0) return occluded(uv);
 
       vec2 edge = vec2(0.5 * uAspect, 0.5);
       vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
@@ -197,7 +197,7 @@ export const warp: Stage = {
         }
       }
 
-      return read(clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0));
+      return occluded(clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0));
     }
   `,
   uniforms: () => ({

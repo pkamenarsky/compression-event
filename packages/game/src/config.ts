@@ -74,6 +74,22 @@ export interface RenderConfig {
     taps: number
   }
 
+  /** Corners darkened by what closes them off, out of the depth. See
+   * `ssao.ts`. */
+  ssao: {
+    on: boolean
+    /** How far round a point looks for what occludes it, in world units. */
+    radius: number
+    /** How dark a point closed off on every side goes; 1 is black. */
+    strength: number
+    /** How steeply something has to stand over a surface to count, 0 to 1:
+     * keeps a flat floor from shading itself. */
+    bias: number
+    /** How many depths round each pixel are read. More is smoother and costs
+     * more. */
+    samples: number
+  }
+
   /** The walls' Bayer nudge, which keeps a large flat surface from banding.
    * See `dither.ts`. */
   nudge: {
@@ -131,6 +147,7 @@ export const DEFAULT: RenderConfig = {
     vertigo: { narrow: 0.45 },
   },
   blur: { on: true, reach: 0.02, taps: 2 },
+  ssao: { on: true, radius: 1.5, strength: 1, bias: 0.1, samples: 12 },
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
@@ -170,6 +187,13 @@ export const FISHEYE: RenderConfig = {
     reach: 0.12,
     taps: 12
   },
+  ssao: {
+    on: true,
+    radius: 1.5,
+    strength: 1,
+    bias: 0.1,
+    samples: 12
+  },
   nudge: {
     on: true,
     spread: 1.2
@@ -208,6 +232,10 @@ export const PRESETS: Record<string, RenderConfig> = {
 /** The most taps the blur's loop will run, whatever the config asks for. */
 export const MAX_TAPS = 32;
 
+/** The most samples the occlusion's loop will take, whatever the config asks
+ * for. */
+export const MAX_SAMPLES = 32;
+
 /** Where the tweak panel's slider for each number runs, and in what steps, by
  * its path. A number with none gets a range guessed off its default. */
 export const RANGES: Record<string, [min: number, max: number, step: number]> = {
@@ -226,6 +254,10 @@ export const RANGES: Record<string, [min: number, max: number, step: number]> = 
   'warp.vertigo.narrow': [0, 0.9, 0.01],
   'blur.reach': [0, 0.5, 0.01],
   'blur.taps': [1, MAX_TAPS, 1],
+  'ssao.radius': [0.1, 8, 0.1],
+  'ssao.strength': [0, 3, 0.05],
+  'ssao.bias': [0, 0.9, 0.01],
+  'ssao.samples': [1, MAX_SAMPLES, 1],
   'nudge.spread': [0, 2, 0.05],
   'quantise.levels': [2, 16, 1],
   'quantise.strength': [0, 2, 0.05],

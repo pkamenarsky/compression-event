@@ -6,7 +6,8 @@
 // the way out is the list below, and it happens in that order:
 //
 //   read      target → Texel          colour, and the marks: wall and shade
-//   warp      uv → Texel via read     where on the target a pixel shows
+//   ssao      uv → Texel via read     corners darkened, out of the depth
+//   warp      uv → Texel via ssao     where on the target a pixel shows
 //   blur      uv → Texel via warp     a run of warped reads in to the middle
 //   bayer     pixel → threshold       the 4x4 the next two lay down
 //   nudge     Texel → colour          the walls' pattern, in screen pixels
@@ -28,6 +29,7 @@ import { stipple } from './artefacts';
 import type { RenderConfig } from './config';
 import { bayer, bayerTexture, nudge, quantise } from './dither';
 import { skyStage } from './sky';
+import { ssao } from './ssao';
 import { marked, read } from './target';
 import { blur, warp } from './warp';
 
@@ -40,7 +42,7 @@ export interface Stage {
 }
 
 /** The pass, in order. See the header. */
-const STAGES: Stage[] = [read, warp, blur, bayer, nudge, stipple, quantise, skyStage];
+const STAGES: Stage[] = [read, ssao, warp, blur, bayer, nudge, stipple, quantise, skyStage];
 
 const vertexShader = /* glsl */ `
   varying vec2 vUv;
@@ -108,7 +110,13 @@ export class ScreenPass {
       // so this is the buffer they count into. `clear` takes it back to zero
       // with the colour and the depth every frame.
       stencilBuffer: true,
+
+      // Kept as a texture rather than a buffer, for the occlusion to read —
+      // see `ssao.ts`. Depth and stencil together, since there is the one.
+      depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedInt248Type),
     });
+
+    this.target.depthTexture!.format = THREE.DepthStencilFormat;
 
     this.bayer = bayerTexture();
 
@@ -119,6 +127,7 @@ export class ScreenPass {
 
     this.u.uScene.value = this.target.textures[0];
     this.u.uMarks.value = this.target.textures[1];
+    this.u.uDepth.value = this.target.depthTexture;
     this.u.uBayer.value = this.bayer;
     this.u.uAspect.value = width / height;
 
@@ -183,6 +192,7 @@ export class ScreenPass {
 
   apply(scene: THREE.Scene, camera: THREE.Camera): void {
     this.audit(scene);
+    this.look(camera);
     this.renderer.setRenderTarget(this.target);
     this.renderer.clear();
     this.renderer.render(scene, camera);
@@ -194,6 +204,20 @@ export class ScreenPass {
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     this.renderer.autoClear = was;
+  }
+
+  /** What the occlusion needs to rebuild a position from a depth: the
+   * camera's near and far, and how it scales x and y. Read off the projection
+   * rather than the fov, so whatever set it is what is used. */
+  private look(camera: THREE.Camera): void {
+    const p = camera.projectionMatrix.elements;
+
+    this.u.uProject.value.set(p[0], p[5]);
+
+    if (camera instanceof THREE.PerspectiveCamera) {
+      this.u.uNear.value = camera.near;
+      this.u.uFar.value = camera.far;
+    }
   }
 
   /**
