@@ -1,5 +1,9 @@
+* ask yes/no if level unsaved
+* no need to rebake on artifact change
+* locking polys/making them invisible or something
+** hold cursor, polys beneath "come apart"?
 * fog when dying in order to not see "behind the walls"
-* clear erosion
+* clear erosion/transform just here/from here on out
 * bring transform one version up
 * multierosion in multiple versions
 
