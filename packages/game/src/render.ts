@@ -2,7 +2,7 @@
 // The view
 //
 // One function, `renderer(element)`, and everything about drawing a world is
-// behind it. It owns a canvas, a scene, a camera and the dither pass, and it
+// behind it. It owns a canvas, a scene, a camera and the screen pass, and it
 // owns nothing else: no input, no game state, no sound, no notion of a level
 // being finished. That is the whole reason it is shaped this way — the game
 // puts one on the page and the editor puts one in a panel, and neither has to
@@ -30,7 +30,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { DitherPass } from './dither';
+import { ScreenPass } from './screen';
 import { Morph, morph } from './morph';
 import { still } from './still';
 import { Run, Source, WallOptions } from './walls';
@@ -57,9 +57,10 @@ const FLOOR_Y = -0.01;
 const SHAPE_Y = FLOOR_Y / 2;
 
 export interface RendererOptions {
-  /** Where it starts. Off leaves the scene undithered, which is worth having
-   * in the editor where the point is to read the geometry rather than to be
-   * somewhere; `dither` turns it over afterwards. */
+  /** Where it starts. Off leaves the colour unquantised, which is worth
+   * having in the editor where the point is to read the geometry rather than to
+   * be somewhere; `dither` turns it over afterwards. Either way the scene goes
+   * through the same target and the same pass — see `screen.ts`. */
   dither?: boolean
   /** Device pixels per CSS pixel. The jam build pinned this to 1 and the look
    * depends on it: the dither pattern is in pixels. */
@@ -105,7 +106,8 @@ export interface Renderer {
   between(u: number): [number, number]
 
   /**
-   * Whether the screen-space dither is on.
+   * Whether the screen pass quantises. The walls' own pattern stays either
+   * way: it is part of what a wall looks like, dithered or not.
    *
    * The look belongs to being *in* the level: from above, the pattern is a
    * texture over geometry someone is trying to read, and the editor's panel
@@ -116,8 +118,8 @@ export interface Renderer {
   /**
    * Bend the picture: which warp out of `WARPS`, how hard (signed, 0 is none),
    * a clock in seconds, and how far a radial blur over the top of it reaches
-   * in towards the middle, as a share of the way there. Only the
-   * game calls this; it goes through the dither pass, so it needs that on.
+   * in towards the middle, as a share of the way there. Only the game calls
+   * this.
    */
   warp(index: number, amount: number, time: number, blur?: number): void
 
@@ -153,9 +155,9 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
   camera.position.set(0, 1.6, 0);
 
-  const dither = new DitherPass(renderer);
+  const screen = new ScreenPass(renderer);
 
-  dither.enabled = options.dither ?? true;
+  screen.quantised = options.dither ?? true;
 
   const walls: WallOptions = {
     scale: SCALE,
@@ -304,7 +306,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     const height = element.clientHeight || 1;
 
     renderer.setSize(width, height, false);
-    dither.setSize(width * renderer.getPixelRatio(), height * renderer.getPixelRatio());
+    screen.setSize(width * renderer.getPixelRatio(), height * renderer.getPixelRatio());
 
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
@@ -331,11 +333,11 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     walk,
 
     dither(on: boolean): void {
-      dither.enabled = on;
+      screen.quantised = on;
     },
 
     warp(index: number, amount: number, time: number, blur = 0): void {
-      dither.warp(index, amount, time, blur);
+      screen.warp(index, amount, time, blur);
     },
 
     between(u: number): [number, number] {
@@ -346,7 +348,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
     resize,
     render(): void {
-      dither.apply(scene, camera);
+      screen.apply(scene, camera);
     },
 
     blank(): void {
@@ -364,7 +366,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       }
 
       standing = null;
-      dither.dispose();
+      screen.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },

@@ -6,14 +6,15 @@
 // threshold decides which way a value that falls between two of them goes. What
 // the eye reads as shading is the pattern rather than the value.
 //
-// Two pieces, because two things want it. `bayerGLSL` is a 4x4 threshold any
-// shader can mix into its own colour before the quantisation ever happens — the
-// walls do, which is what keeps a large flat surface from banding. `DitherPass`
-// is the screen-space pass that does the quantising.
+// `bayerGLSL` is a 4x4 threshold any shader can mix into its own colour before
+// the quantisation ever happens, and the rest is two stages of the screen pass
+// in `screen.ts`: the walls' nudge, which is that threshold laid over whatever
+// share of a pixel is wall and is what keeps a large flat surface from banding,
+// and the quantising itself.
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { warpGLSL } from './warp';
+import type { Stage } from './screen';
 
 /** The 4x4 threshold, for a shader that wants to nudge its own colour. */
 export const bayerGLSL = /* glsl */ `
@@ -44,20 +45,6 @@ export const bayerGLSL = /* glsl */ `
   }
 `;
 
-/**
- * Whether the scene is being drawn into the pass's target, where the walls
- * leave their nudge to the pass rather than putting it in themselves.
- *
- * The nudge is a pattern in screen space, and a pattern drawn into the scene
- * is one the warp then stretches: cells doubled where it swells, crushed where
- * it squeezes, and a checkerboard of both where it moves. So the walls mark
- * where they are and the pass lays the pattern down after the warp, in the
- * pixels it is going to be seen in. One uniform object shared by every wall
- * material, set only for the length of the pass's own scene render, so a
- * renderer drawing straight to the screen gets the walls as they always were.
- */
-export const deferred = { value: 0 };
-
 /** The 8x8 matrix the pass itself uses, normalised to [0, 1). */
 const BAYER_8X8 = [
   0, 48, 12, 60, 3, 51, 15, 63,
@@ -70,7 +57,7 @@ const BAYER_8X8 = [
   42, 26, 38, 22, 41, 25, 37, 21,
 ];
 
-function bayerTexture(): THREE.DataTexture {
+export function bayerTexture(): THREE.DataTexture {
   const data = new Uint8Array(BAYER_8X8.map(v => Math.round(v / 64 * 255)));
   const tex = new THREE.DataTexture(data, 8, 8, THREE.RedFormat, THREE.UnsignedByteType);
 
@@ -83,177 +70,56 @@ function bayerTexture(): THREE.DataTexture {
   return tex;
 }
 
-const vertexShader = /* glsl */ `
-  varying vec2 vUv;
+/**
+ * The walls' nudge: the 4x4 threshold over as much of the pixel as is wall,
+ * clamped where the target would once have clamped it. Needs `Texel` from
+ * `target.ts`; `pixel` is whole pixels.
+ */
+export const nudge: Stage = {
+  glsl: /* glsl */ `
+    ${bayerGLSL}
 
-  void main() {
-    vUv = uv;
-    gl_Position = vec4(position, 1.0);
-  }
-`;
-
-const fragmentShader = /* glsl */ `
-  uniform sampler2D uScene;
-  uniform sampler2D uBayer;
-  uniform vec2 uResolution;
-  uniform float uLevels;
-  uniform float uStrength;
-  uniform float uPixelSize;
-
-  varying vec2 vUv;
-
-  ${bayerGLSL}
-  ${warpGLSL}
-
-  void main() {
-    vec2 uv = vUv;
-
-    if (uPixelSize > 1.0) {
-      uv = floor(uv * uResolution / uPixelSize) * uPixelSize / uResolution;
+    vec3 nudged(Texel t, vec2 pixel) {
+      return clamp(t.rgb + t.wall * (bayerDither(pixel) - 0.5) * 1.2, 0.0, 1.0);
     }
-
-    vec4 texel = seen(uv);
-    vec3 color = texel.rgb;
-
-    vec2 at = vUv * uResolution;
-
-    if (uPixelSize > 1.0) at = floor(at / uPixelSize);
-
-    // A wall — or the share of one a blur has smeared over this pixel: the
-    // nudge it would have given itself, here where it cannot be warped, and
-    // clamped where the target would have clamped it. See \`deferred\`.
-    if (texel.a > 0.0) {
-      color = clamp(color + texel.a * (bayerDither(floor(at)) - 0.5) * 1.2, 0.0, 1.0);
-    }
-
-    float threshold = texture2D(uBayer, at / 8.0).r;
-    float bias = (threshold - 0.5) * uStrength;
-
-    float steps = max(uLevels - 1.0, 1.0);
-    vec3 quantised = floor((color + bias / steps) * steps + 0.5) / steps;
-
-    gl_FragColor = vec4(clamp(quantised, 0.0, 1.0), 1.0);
-  }
-`;
+  `,
+  uniforms: () => ({}),
+};
 
 export interface DitherOptions {
   /** Discrete levels per channel. */
   levels?: number
   /** 0 quantises without dithering; 1 is the full Bayer spread. */
   strength?: number
-  /** Virtual pixel size. 1 leaves the resolution alone. */
-  pixelSize?: number
 }
 
 /**
- * Render into a target, then quantise it onto the screen.
- *
- * Deliberately not three's `EffectComposer`: one pass, one target, and nothing
- * to configure that this does not already say.
+ * Each channel to a handful of levels, the 8x8 threshold choosing which way.
+ * Off leaves the colour as it is — the editor looking down on a level rather
+ * than standing in it. `uBayer` is the pass's to fill, since it owns the
+ * texture.
  */
-export class DitherPass {
-  private target: THREE.WebGLRenderTarget;
-  private scene = new THREE.Scene();
-  private camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private material: THREE.ShaderMaterial;
-  private quad: THREE.Mesh;
-  private bayer: THREE.DataTexture;
+export const quantise = (options: DitherOptions = {}): Stage => ({
+  glsl: /* glsl */ `
+    uniform sampler2D uBayer;
+    uniform float uLevels;
+    uniform float uStrength;
+    uniform bool uQuantise;
 
-  /** False renders the scene straight to the screen. */
-  enabled = true;
+    vec3 quantised(vec3 color, vec2 pixel) {
+      if (!uQuantise) return color;
 
-  constructor(private renderer: THREE.WebGLRenderer, options: DitherOptions = {}) {
-    const size = renderer.getSize(new THREE.Vector2());
-    const width = size.x || 1, height = size.y || 1;
+      float threshold = texture2D(uBayer, pixel / 8.0).r;
+      float bias = (threshold - 0.5) * uStrength;
+      float steps = max(uLevels - 1.0, 1.0);
 
-    this.target = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
-      depthBuffer: true,
-
-      // The floors are filled by counting into the stencil — see the header of
-      // `walls.ts` — and the scene is drawn in here rather than on the screen,
-      // so this is the buffer they count into. `clear` takes it back to zero
-      // with the colour and the depth every frame.
-      stencilBuffer: true,
-    });
-
-    this.bayer = bayerTexture();
-
-    this.material = new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        uScene: { value: this.target.texture },
-        uBayer: { value: this.bayer },
-        uResolution: { value: new THREE.Vector2(width, height) },
-        uLevels: { value: options.levels ?? 5 },
-        uStrength: { value: options.strength ?? 1.1 },
-        uPixelSize: { value: options.pixelSize ?? 1 },
-        uWarp: { value: 0 },
-        uAmount: { value: 0 },
-        uTime: { value: 0 },
-        uBlur: { value: 0 },
-        uAspect: { value: width / height },
-      },
-      depthTest: false,
-      depthWrite: false,
-    });
-
-    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
-    this.quad.frustumCulled = false;
-    this.scene.add(this.quad);
-  }
-
-  setSize(width: number, height: number): void {
-    this.target.setSize(width, height);
-    this.material.uniforms.uResolution.value.set(width, height);
-    this.material.uniforms.uAspect.value = width / height;
-  }
-
-  /** Which warp, how far into it, and how much radial blur over the top —
-   * see `warp.ts`. Left alone it stays at none, and the pass reads the scene
-   * exactly where it always did. */
-  warp(index: number, amount: number, time: number, blur = 0): void {
-    const u = this.material.uniforms;
-
-    u.uBlur.value = blur;
-    u.uWarp.value = index;
-    u.uAmount.value = amount;
-    u.uTime.value = time;
-  }
-
-  apply(scene: THREE.Scene, camera: THREE.Camera): void {
-    if (!this.enabled) {
-      this.renderer.render(scene, camera);
-      return;
+      return clamp(floor((color + bias / steps) * steps + 0.5) / steps, 0.0, 1.0);
     }
-
-    this.renderer.setRenderTarget(this.target);
-    this.renderer.clear();
-    deferred.value = 1;
-
-    try {
-      this.renderer.render(scene, camera);
-    }
-    finally {
-      deferred.value = 0;
-    }
-
-    this.renderer.setRenderTarget(null);
-
-    const was = this.renderer.autoClear;
-
-    this.renderer.autoClear = false;
-    this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
-    this.renderer.autoClear = was;
-  }
-
-  dispose(): void {
-    this.target.dispose();
-    this.bayer.dispose();
-    this.material.dispose();
-    this.quad.geometry.dispose();
-  }
-}
+  `,
+  uniforms: () => ({
+    uBayer: { value: null },
+    uLevels: { value: options.levels ?? 5 },
+    uStrength: { value: options.strength ?? 1.1 },
+    uQuantise: { value: true },
+  }),
+});

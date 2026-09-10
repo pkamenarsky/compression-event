@@ -22,7 +22,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { bayerGLSL, deferred } from './dither';
+import { markWallGLSL } from './target';
 import { Point } from './world';
 
 /**
@@ -297,7 +297,6 @@ export const laidShader = /* glsl */ `
 
 export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
-  uniform float uDeferred;
 
   ${VARYINGS}
 
@@ -305,7 +304,7 @@ export const wallFragment = /* glsl */ `
   // so the output is declared here rather than inherited.
   layout(location = 0) out vec4 fragColor;
 
-  ${bayerGLSL}
+  ${markWallGLSL}
 
   void main() {
     vec3 n = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
@@ -319,17 +318,10 @@ export const wallFragment = /* glsl */ `
     light = light * 0.6 + 0.4;
     light *= mix(0.7, 1.0, vHeightFrac);
 
-    // Under the dither pass the nudge is the pass's to give, after the picture
-    // has been warped, and the wall only says where it goes: half an alpha,
-    // which nothing else in the scene writes. See \`DitherPass\`.
-    if (uDeferred > 0.5) {
-      fragColor = vec4(uWallColor * light, 0.5);
-      return;
-    }
-
-    vec3 color = uWallColor * light + (bayerDither(gl_FragCoord.xy) - 0.5) * 1.2;
-
-    fragColor = vec4(color, 1.0);
+    // The pattern that keeps a wall from banding is the screen pass's to lay
+    // down, after the picture has been warped; the wall only says where it
+    // goes. See \`target.ts\`.
+    fragColor = markWall(uWallColor * light);
   }
 `;
 
@@ -648,7 +640,7 @@ export const fillFragment = /* glsl */ `
 //
 // What it costs
 // -------------
-// A stencil buffer on the renderer and on the target the dither pass draws into.
+// A stencil buffer on the renderer and on the target the screen pass draws from.
 // Three draws where there was one. A cover quad big enough for everything the
 // fan rasterises, which is why it is sized off the points rather than guessed.
 // And the fill becomes the one thing in the scene with an order of its own.
@@ -717,11 +709,7 @@ export function materials(
     glslVersion: THREE.GLSL3,
     vertexShader,
     fragmentShader: wallFragment,
-    uniforms: {
-      ...uniforms,
-      uWallColor: { value: new THREE.Color(options.wallColor) },
-      uDeferred: deferred,
-    },
+    uniforms: { ...uniforms, uWallColor: { value: new THREE.Color(options.wallColor) } },
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,
