@@ -54,7 +54,6 @@ import {
   playSound,
   versionShift,
 } from './sound';
-import { Run } from './walls';
 import { WARPS, bracing, narrowed, swelling } from './warp';
 import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
@@ -271,27 +270,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     coming = on ? playSound(versionShift({ duration: HOLD })) : null;
   };
 
-  /**
-   * The version on screen, standing still.
-   *
-   * Where a baked span reaches it, that is the walk at rest at its end — the
-   * start of the span leaving it, or for the last one the end of the span
-   * arriving — which is the same geometry the shift was just drawing, exactly,
-   * so arriving swaps nothing. Standing at a version used to rebuild its walls
-   * from the rings on the frame the shift landed, buffers and upload and all,
-   * which a phone did not have a frame's worth of time for.
-   *
-   * Only where the bake does not reach — a bake that stopped short, or a level
-   * of one version with no spans at all — are the walls built from the rings.
-   */
+  /** The version on screen, standing still: its walls as `load` built them,
+   * so arriving builds nothing. See `stand`. */
   const drawn = (v: number): void => {
-    if (spans > 0 && v <= spans) {
-      view.walk(v / spans);
-      return;
-    }
-
-    view.walk(null);
-    view.show(runs(world, v), world.versions[v]?.floors ?? []);
+    view.stand(v);
   };
 
   /** Everything that follows from being at a version: the walls drawn, the
@@ -910,29 +892,4 @@ function riding(
   // The span runs from the earlier version to the later one, so a shift the
   // other way is the same span read backwards.
   return placeAt(span!, slot, it.at, to > from ? t : 1 - t);
-}
-
-/**
- * A version's rings as the wall builder wants them: open runs of points.
- *
- * A ring is closed by repeating its first point, because a wall is a
- * consecutive pair and the pair joining the last corner to the first is a wall
- * like any other. Every corner is a real one — these are the union's own rings
- * rather than one polygon's share of an outline — so every one of them gets its
- * vertical line.
- */
-function runs(world: World, v: number): Run[] {
-  const version = world.versions[v];
-
-  if (version === undefined) return [];
-
-  return version.polygons
-    .filter(p => p.points.length >= 3)
-    .map(p => {
-      const points: Point[] = p.points.map(q => ({ x: q.x, y: q.y }));
-
-      points.push(points[0]);
-
-      return { points, corner: points.map(() => true) };
-    });
 }

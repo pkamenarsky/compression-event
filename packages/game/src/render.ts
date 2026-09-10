@@ -90,8 +90,24 @@ export interface Renderer {
    */
   show(runs: readonly Run[], floors: readonly Floor[]): void
 
-  /** The baked spans, built and held ready. An empty level drops them. */
+  /**
+   * The baked spans, built and held ready, and every version's walls as they
+   * stand, built once for `stand`. An empty level drops them.
+   */
   load(world: World): void
+
+  /**
+   * The walls at version `v` as they stand, out of what `load` built. The
+   * game's way of standing still at a version, which it does after every
+   * shift: nothing is built, and nothing was built on the frame it arrived.
+   *
+   * Not the walk at rest at the end of a span, though that is the same
+   * outline. A span carries every point it needs at any instant, and at its
+   * ends some of them sit exactly on a straight wall — a room turning into
+   * line with a corridor — which a vertical line then stands on. The walls as
+   * they stand have only the corners.
+   */
+  stand(v: number): void
 
   /**
    * Where in the walk from the first version to the last, 0 to 1 — or null to
@@ -173,7 +189,16 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     fillHeight: SHAPE_Y,
   };
 
+  /** Whatever walls are up while nothing is walking: the last `show`, or one
+   * of `stills`. */
   let standing: Source | null = null;
+
+  /** What `show` last built, which is this renderer's to throw away. */
+  let shown: Source | null = null;
+
+  /** Every version's walls as they stand, from `load`, by version. */
+  let stills: Source[] = [];
+
   let morphs: Morph[] = [];
   let ground: THREE.Object3D[] = [];
   let box: Bounds | null = null;
@@ -211,17 +236,32 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     }
   }
 
-  function show(runs: readonly Run[], floors: readonly Floor[]): void {
-    if (standing !== null) {
-      scene.remove(standing.walls, standing.lines, standing.fill);
-      standing.dispose();
-    }
+  /** `next` up as the walls standing, and whatever was up taken down. */
+  function put(next: Source | null): void {
+    if (next === standing) return;
 
-    standing = still(runs, floors, walls);
-    scene.add(standing.walls, standing.lines, standing.fill);
+    if (standing !== null) scene.remove(standing.walls, standing.lines, standing.fill);
+
+    standing = next;
+
+    if (standing !== null) scene.add(standing.walls, standing.lines, standing.fill);
+
+    reconcile(showing);
+  }
+
+  function show(runs: readonly Run[], floors: readonly Floor[]): void {
+    const was = shown;
+
+    shown = still(runs, floors, walls);
+    put(shown);
+    was?.dispose();
 
     grow(bounding([...runs.map(r => r.points), ...floors.map(f => f.points)]));
-    reconcile(showing);
+  }
+
+  function stand(v: number): void {
+    walk(null);
+    put(stills[v] ?? null);
   }
 
   function drop(): void {
@@ -237,6 +277,11 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   function load(next: World): void {
     drop();
 
+    if (standing !== null && stills.includes(standing)) put(null);
+
+    for (const it of stills) it.dispose();
+
+    stills = next.versions.map(v => still(runs(v), v.floors ?? [], walls));
     morphs = next.baked.spans.map(span => morph(span, walls));
 
     for (const version of next.versions) {
@@ -248,23 +293,27 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   }
 
   /**
-   * Every span drawn once, out of sight, as soon as it is held.
+   * Every span and every version's walls drawn once, out of sight, as soon
+   * as they are held.
    *
    * A span is otherwise drawn for the first time at the start of its own
    * shift — and a run plays each once, in order, so every shift of a first run
    * was a first draw: its buffers and float tables uploaded, and on the first
-   * shift its programs compiled, in the frame the level began to move. A
-   * laptop hid that inside the frame; a phone did not. Nothing in a morph is
-   * ever culled, so one draw with all of them in the scene reaches all of it.
+   * shift its programs compiled, in the frame the level began to move. The
+   * walls a shift arrives at, likewise, on the frame it lands. A laptop hid
+   * that inside the frame; a phone did not. Nothing in either is ever culled,
+   * so one draw with all of them in the scene reaches all of it.
    */
   function warm(): void {
-    if (morphs.length === 0) return;
+    const all = [...morphs, ...stills.filter(it => it !== standing)];
 
-    for (const m of morphs) scene.add(m.walls, m.lines, m.fill);
+    if (all.length === 0) return;
+
+    for (const m of all) scene.add(m.walls, m.lines, m.fill);
 
     screen.prime(scene, camera);
 
-    for (const m of morphs) scene.remove(m.walls, m.lines, m.fill);
+    for (const m of all) scene.remove(m.walls, m.lines, m.fill);
   }
 
   /**
@@ -356,6 +405,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     scene,
     show,
     load,
+    stand,
     walk,
 
     dither(on: boolean): void {
@@ -391,19 +441,40 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     dispose(): void {
       watching.disconnect();
       drop();
+      put(null);
+      shown?.dispose();
+      shown = null;
 
-      if (standing !== null) {
-        scene.remove(standing.walls, standing.lines, standing.fill);
-        standing.dispose();
-      }
+      for (const it of stills) it.dispose();
 
-      standing = null;
+      stills = [];
       screen.dispose();
       meter.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },
   };
+}
+
+/**
+ * A version's rings as the wall builder wants them: open runs of points.
+ *
+ * A ring is closed by repeating its first point, because a wall is a
+ * consecutive pair and the pair joining the last corner to the first is a wall
+ * like any other. Every corner is a real one — these are the union's own rings
+ * rather than one polygon's share of an outline — so every one of them gets its
+ * vertical line.
+ */
+function runs(version: World['versions'][number]): Run[] {
+  return version.polygons
+    .filter(p => p.points.length >= 3)
+    .map(p => {
+      const points: Point[] = p.points.map(q => ({ x: q.x, y: q.y }));
+
+      points.push(points[0]);
+
+      return { points, corner: points.map(() => true) };
+    });
 }
 
 // -----------------------------------------------------------------------------
