@@ -53,9 +53,12 @@ const vertexShader = /* glsl */ `
   }
 `;
 
-const main = /* glsl */ `
+/** Ahead of every stage, for any that wants the size of a pixel. */
+const prelude = /* glsl */ `
   uniform vec2 uResolution;
+`;
 
+const main = /* glsl */ `
   varying vec2 vUv;
 
   void main() {
@@ -133,7 +136,7 @@ export class ScreenPass {
 
     this.material = new THREE.ShaderMaterial({
       vertexShader,
-      fragmentShader: [...STAGES.map(s => s.glsl), main].join('\n'),
+      fragmentShader: [prelude, ...STAGES.map(s => s.glsl), main].join('\n'),
       uniforms: this.u,
       depthTest: false,
       depthWrite: false,
