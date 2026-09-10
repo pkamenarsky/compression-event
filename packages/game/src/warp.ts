@@ -16,9 +16,9 @@
 // before the dither like the warp does, so the tones it makes are dithered in
 // the pixels they are seen in rather than smeared out of them.
 //
-// One number drives it, `amount`: nothing at rest, rising and falling over a
-// shift, a little before one as the beat runs out, and the whole of it while
-// dying. Negative is the level opening back up, and every warp is written so
+// One number drives it, `amount`: nothing at rest, rising a little before a
+// beat, over and back off after it — how far either side is the config's, in
+// beats — and the whole of it while dying. Negative is the level opening back up, and every warp is written so
 // that the sign turns it round. At zero the pass reads exactly where it always
 // did, which is why the editor, which never sets it, is untouched.
 //
@@ -49,28 +49,37 @@ type Warping = RenderConfig['warp'];
 
 // ── How hard, and when ──
 //
-// The one number that drives every warp, as a function of where a shift is.
+// The one number that drives every warp, as a function of where the beat is.
 // Here rather than in the game because the editor's first-person view plays
 // transitions too and has to bend them the same way.
 
 /**
- * The run-up: `left` seconds before a shift begins, rising to `braced` over
- * the last `brace` of them. Nothing before that.
- */
-export function bracing(left: number, w: Warping): number {
-  return left < w.brace ? w.braced * (1 - Math.max(left, 0) / w.brace) : 0;
-}
-
-/**
- * The shift itself, `progress` from 0 to 1 on the linear clock: over and back
- * off again, never under where the run-up left it until it has passed. The
- * level opening back up bends the other way and has no run-up, since that
+ * How hard the picture is bent `since` seconds after a beat — negative before
+ * one — on a beat `beat` seconds long.
+ *
+ * The window is the config's, in beats either side of the moment a shift
+ * begins: from `from` (at or before it) a run-up to `braced`, and from the beat
+ * to `to` (at or after it) over and back off again, never under where the
+ * run-up left it until it has passed. Nothing outside it.
+ *
+ * The level opening back up bends the other way and has no run-up, since that
  * comes of a pickup rather than the clock.
  */
-export function swelling(progress: number, opening: boolean, w: Warping): number {
-  const swell = Math.sin(Math.PI * Math.min(Math.max(progress, 0), 1));
+export function beaten(since: number, beat: number, opening: boolean, w: Warping): number {
+  const u = since / beat;
 
-  return opening ? -swell : Math.max(swell, w.braced * (1 - progress));
+  if (u < 0) {
+    const from = Math.min(w.from, 0);
+
+    return from < 0 && u > from ? w.braced * (1 - u / from) : 0;
+  }
+
+  if (u >= w.to) return 0;
+
+  const p = u / w.to;
+  const swell = Math.sin(Math.PI * p);
+
+  return opening ? -swell : Math.max(swell, w.braced * (1 - p));
 }
 
 /**

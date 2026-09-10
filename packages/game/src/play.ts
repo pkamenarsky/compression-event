@@ -44,7 +44,7 @@ import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, TAP_SLOP, WALK_SPEED } from './con
 import { RenderConfig, current, remember } from './config';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
-import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
+import { BEAT_MS, EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
 import {
   SoundHandle,
   drone,
@@ -55,7 +55,7 @@ import {
   versionShift,
 } from './sound';
 import { SKIES } from './sky';
-import { WARPS, bracing, narrowed, swelling } from './warp';
+import { WARPS, beaten, narrowed } from './warp';
 import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 
 /** Eye height, in world units. Exported because standing in the level is
@@ -83,16 +83,8 @@ export function urged(v: Point, want: Point, dt: number): Point {
   return { x: v.x + (want.x - v.x) * k, y: v.y + (want.y - v.y) * k };
 }
 
-/**
- * Seconds from one version arriving to the next, which is the pressure the
- * whole game is made of.
- *
- * The whole beat, the shift included — not the standing-still part of it. A
- * clock that stopped for the length of every shift would make the first beat
- * shorter than all the others and put the escalation leading up to one a shift
- * out of step with it, growing worse the longer the level ran.
- */
-const HOLD = 5;
+/** Seconds from one version arriving to the next. See `BEAT_MS`. */
+const HOLD = BEAT_MS / 1000;
 
 /** How long the arriving takes, and on what curve: the editor's, because it is
  * one motion and it should look the same from either side of it. */
@@ -207,6 +199,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** Which two versions the shift in flight runs between. */
   let leg = { from: 0, to: 0 };
+
+  /** Seconds since the last beat, and whether it opened the level rather
+   * than closed it — for the warp, which can run on past the shift. Null
+   * before the first. */
+  let beat: { since: number, opening: boolean } | null = null;
 
   /** What last moved the version, for the corner line. */
   let why = 'start';
@@ -330,6 +327,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     footing = 0;
     shifting = null;
     clock = HOLD;
+    beat = null;
 
     why = 'restart';
     carrying.clear();
@@ -356,6 +354,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // frame apiece; one cut short by a pickup gets a whole one, which is what
     // being cut short by a pickup is for.
     clock = HOLD + Math.min(0, clock);
+    beat = { since: 0, opening: to < version };
 
     // Backwards or forwards, a shift is a walk from where the level is to
     // where it is going, and the bake reads it the same way either round. What
@@ -580,6 +579,8 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
         clock -= dt;
       }
 
+      if (beat !== null) beat.since += dt;
+
       if (shifting !== null) {
         shifting += dt;
 
@@ -653,14 +654,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   /**
    * How hard the picture is bent this frame, and which way.
    *
-   * Rising over the last of a beat, then over and back off again through the
-   * shift itself; all the way while dying. See `bracing` and `swelling`.
+   * Rising towards a beat, then over and back off again after it, as far
+   * either side as the config says; all the way while dying. See `beaten`.
+   * Past the beat it is the one that went, until its window is over, and
+   * then the run-up to the next.
    */
   function bent(): number {
     let amount = 0;
 
-    if (shifting !== null) amount = swelling(shifting / SHIFT, leg.to < leg.from, look.warp);
-    else if (running && dying === null) amount = bracing(clock, look.warp);
+    if (beat !== null && beat.since < look.warp.to * HOLD) amount = beaten(beat.since, HOLD, beat.opening, look.warp);
+    else if (running && dying === null) amount = beaten(-clock, HOLD, false, look.warp);
 
     if (dying !== null) amount = Math.max(amount, Math.min(dying / SHIFT, 1));
 

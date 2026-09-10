@@ -1086,7 +1086,7 @@ export interface EditorState {
    * Seconds a walk waits at its start before it sets off, while `roaming`.
    *
    * The screen starts bending before a shift in the game — the run-up in
-   * `bracing` — and a walk that set off the moment an arrow was pressed would
+   * `beaten` — and a walk that set off the moment an arrow was pressed would
    * never show it. The first-person view's panel turns this on, as long as the
    * run-up is. Not in the file.
    */

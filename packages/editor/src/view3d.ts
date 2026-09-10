@@ -37,19 +37,20 @@ import { div } from '@incpt/kontinuum-dom/html';
 
 import {
   Artefacts,
+  BEAT_MS,
   EYE,
   Point,
+  REPLAY_MS,
   Renderer,
   SCALE,
   Tweak,
   WALK_SPEED,
   artefacts,
-  bracing,
+  beaten,
   current as remembered,
   narrowed,
   remember,
   renderer,
-  swelling,
   tweak,
   urged,
 } from '@ce/game';
@@ -283,12 +284,17 @@ function panel(
     /**
      * How hard the picture is bent, standing in a walk: through the run-up if
      * it is still waiting to set off, and over the walk itself after. The
-     * game's own curves — see `bracing` and `swelling`.
+     * game's own curve — see `beaten` — on the game's beat, in seconds, with
+     * the walk set off where the game's shift would be. A window running on past the
+     * walk is cut short where the walk ends: there is no replay after it to
+     * bend.
      */
     const bent = (r: Replay | null): number => {
       if (!untracked(roaming) || !playing(r)) return 0;
 
-      return r.before > 0 ? bracing(r.before, look.warp) : swelling(r.through, r.to < r.from, look.warp);
+      const since = r.before > 0 ? -r.before : r.through * REPLAY_MS * Math.abs(r.to - r.from) / 1000;
+
+      return beaten(since, BEAT_MS / 1000, r.to < r.from, look.warp);
     };
 
     const walked = (r: Replay | null): void => {
@@ -513,7 +519,7 @@ function panel(
           // The run-up lasts as long as the config says it does, so changing
           // one changes the other.
           const led = (): void => {
-            const lead = leading ? look.warp.brace : 0;
+            const lead = leading ? -Math.min(look.warp.from, 0) * BEAT_MS / 1000 : 0;
 
             update(st => (st.lead === lead ? st : { ...st, lead }));
           };

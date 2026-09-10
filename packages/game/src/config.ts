@@ -27,9 +27,14 @@ export interface RenderConfig {
     kind: Warp
     /** Everything the level closing does to the picture, scaled. */
     strength: number
-    /** Seconds before a shift the picture starts to feel it. */
-    brace: number
-    /** How far it has got by the time the shift begins, 0 to 1. */
+    /** Where it starts, in beats from the moment a shift begins: at or before
+     * it, so negative. A beat is `BEAT_MS`. */
+    from: number
+    /** Where it has gone again, in beats after the same moment. The shift
+     * itself is `REPLAY_MS` of it, 0.08 of a beat at the time of writing;
+     * past that the level has arrived and the picture is still going. */
+    to: number
+    /** How far the run-up has got by the time the shift begins, 0 to 1. */
     braced: number
     pinch: {
       /** How hard the middle swells, across and up; under a half keeps it
@@ -116,7 +121,8 @@ export const DEFAULT: RenderConfig = {
     on: true,
     kind: 'pulse',
     strength: 1,
-    brace: 1.2,
+    from: -0.24,
+    to: 0.08,
     braced: 0.25,
     pinch: { across: 0.45, up: 0.3 },
     pulse: { depth: 0.2, rate: 1.2, quicken: 2.5 },
@@ -124,7 +130,7 @@ export const DEFAULT: RenderConfig = {
     fisheye: { power: 0.5 },
     vertigo: { narrow: 0.45 },
   },
-  blur: { on: false, reach: 0.12, taps: 4 },
+  blur: { on: true, reach: 0.12, taps: 4 },
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
@@ -136,7 +142,8 @@ export const FISHEYE: RenderConfig = {
     on: true,
     kind: 'fisheye',
     strength: 1,
-    brace: 1.2,
+    from: -0.24,
+    to: 0.08,
     braced: 0.25,
     pinch: {
       across: 0.45,
@@ -205,7 +212,8 @@ export const MAX_TAPS = 32;
  * its path. A number with none gets a range guessed off its default. */
 export const RANGES: Record<string, [min: number, max: number, step: number]> = {
   'warp.strength': [0, 2, 0.01],
-  'warp.brace': [0, 5, 0.1],
+  'warp.from': [-1, 0, 0.01],
+  'warp.to': [0, 1, 0.01],
   'warp.braced': [0, 1, 0.01],
   'warp.pinch.across': [0, 0.49, 0.01],
   'warp.pinch.up': [0, 0.49, 0.01],

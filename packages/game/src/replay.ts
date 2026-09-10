@@ -10,6 +10,18 @@
 // and the game is standing in it, but it is one motion and it has one clock.
 // -----------------------------------------------------------------------------
 
+/**
+ * Milliseconds from one version arriving to the next, which is the pressure the
+ * whole game is made of — and what the warp's window is measured in, in both
+ * the game and the editor.
+ *
+ * The whole beat, the shift included — not the standing-still part of it. A
+ * clock that stopped for the length of every shift would make the first beat
+ * shorter than all the others and put the escalation leading up to one a shift
+ * out of step with it, growing worse the longer the level ran.
+ */
+export const BEAT_MS = 5000;
+
 /** How long one span takes to play, in milliseconds. Slow enough to watch a
  * room pinch in two. */
 export const REPLAY_MS = 400;
