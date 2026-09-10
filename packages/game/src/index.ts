@@ -1,6 +1,7 @@
 export * from './artefacts';
 export * from './baked';
 export * from './coldet';
+export * from './controls';
 export * from './morph';
 export * from './packed';
 export * from './play';

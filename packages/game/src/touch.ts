@@ -7,9 +7,10 @@
 //
 // The left is a stick that is wherever the thumb came down rather than a fixed
 // one drawn in a corner. A thumb does not land where it is told to, and a stick
-// it has to find first is a stick it misses. How far it is dragged from there,
-// up to `REACH`, is how hard the player walks; further than that walks no
-// harder, and the ring follows the thumb so that coming back is immediate.
+// it has to find first is a stick it misses. It is four keys rather than a
+// throttle: far enough along an axis walks full speed that way — see
+// `STICK_DEAD` — and the ring follows the thumb past its edge so that coming
+// back is immediate.
 //
 // The right is a drag: however far it moves across is how far the view turns,
 // the way the mouse does it, with nothing to hold.
@@ -19,12 +20,7 @@
 // click the title screen waits for.
 // -----------------------------------------------------------------------------
 
-/** How far the left thumb goes, in CSS pixels, to walk flat out. */
-const REACH = 56;
-
-/** Turn per CSS pixel of right thumb. Slower than the mouse's pixel is, since a
- * thumb covers more of them to mean the same thing. */
-const LOOK = 0.006;
+import { STICK_DEAD, STICK_REACH as REACH, TOUCH_LOOK } from './controls';
 
 /**
  * Whether this is something held rather than something sat at.
@@ -40,7 +36,7 @@ export function handheld(): boolean {
 }
 
 export interface Thumbs {
-  /** How hard the left thumb is asking to walk, -1 to 1 each way: `ahead`
+  /** Which way the left thumb is asking to walk, -1, 0 or 1 each way: `ahead`
    * forward, `across` to the right. Nought where it is not down. */
   ahead: number
   across: number
@@ -134,11 +130,13 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
 
       placed(knob, at.x, at.y);
 
-      out.across = dx / REACH;
-      out.ahead = -dy / REACH;
+      const dead = STICK_DEAD * REACH;
+
+      out.across = Math.abs(dx) > dead ? Math.sign(dx) : 0;
+      out.ahead = Math.abs(dy) > dead ? -Math.sign(dy) : 0;
     }
     else if (looking !== null && e.pointerId === looking.id) {
-      turned((at.x - looking.x) * LOOK);
+      turned((at.x - looking.x) * TOUCH_LOOK);
       looking.x = at.x;
     }
   };

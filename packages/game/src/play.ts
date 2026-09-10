@@ -40,6 +40,7 @@ import { Standing, artefacts } from './artefacts';
 import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
+import { DRAG, GRIP, MOUSE_LOOK, WALK_SPEED } from './controls';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
 import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
@@ -59,14 +60,6 @@ import { Artefact, ArtefactType, Point, SCALE, World } from './world';
 /** Eye height, in world units. Exported because standing in the level is
  * standing in the level, wherever the walking is being done from. */
 export const EYE = 1.6;
-
-/** How fast the player would go with nothing in the way, in world units per
- * second. */
-export const WALK_SPEED = 10;
-
-/** How sharply that speed is reached and lost. */
-const GRIP = 30;
-const DRAG = 8;
 
 /**
  * One frame of a velocity chasing the speed the keys are asking for: towards
@@ -122,9 +115,6 @@ const BLUR = 0.12;
 /** How far the vertigo warp narrows the view at its height: the tangent of
  * half of it, taken down by this much. The other way round it widens. */
 const NARROW = 0.45;
-
-/** Turn per pixel of mouse. */
-const LOOK = 0.002;
 
 export interface Game {
   /**
@@ -421,10 +411,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     let wx = 0, wz = 0;
 
     if (ahead !== 0 || across !== 0) {
-      // Keys are all or nothing, and a diagonal is as fast as a straight
-      // line. A thumb part way out walks part of the way to full speed.
+      // All or nothing, from the keys and the stick alike, and a diagonal is
+      // as fast as a straight line. Both at once cannot walk faster either.
       const l = Math.hypot(ahead, across);
-      const k = Math.min(l, 1) / l * WALK_SPEED;
+      const k = WALK_SPEED / l;
       const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
 
       wx = (sin * ahead + cos * across) * k;
@@ -746,7 +736,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const moved = (e: MouseEvent): void => {
-    if (document.pointerLockElement === canvas) player.yaw += e.movementX * LOOK;
+    if (document.pointerLockElement === canvas) player.yaw += e.movementX * MOUSE_LOOK;
   };
 
   // A window that loses the focus keeps whatever was held down forever.
