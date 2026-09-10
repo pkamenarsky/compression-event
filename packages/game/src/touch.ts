@@ -151,12 +151,20 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
     if (looking !== null && e.pointerId === looking.id) looking = null;
   };
 
+  // A held thumb is a long press to the browser, which answers with a menu
+  // or a selection unless told there is nothing here to offer either for.
+  const refused = (e: Event): void => e.preventDefault();
+
+  host.addEventListener('contextmenu', refused);
+  host.addEventListener('selectstart', refused);
   host.addEventListener('pointerdown', down);
   window.addEventListener('pointermove', moved);
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
 
   function dispose(): void {
+    host.removeEventListener('contextmenu', refused);
+    host.removeEventListener('selectstart', refused);
     host.removeEventListener('pointerdown', down);
     window.removeEventListener('pointermove', moved);
     window.removeEventListener('pointerup', up);

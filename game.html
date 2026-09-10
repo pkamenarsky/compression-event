@@ -22,7 +22,17 @@
       background-color: #000;
       color: #eee;
       overflow: hidden;
+    }
+
+    /* Nothing on the page is text to pick up. A thumb held down is walking,
+       and iOS otherwise reads it as a long press: a selection, a loupe, a
+       callout menu and a blue flash where it landed. */
+    * {
+      -webkit-user-select: none;
       user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
     }
 
     canvas {
