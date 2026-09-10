@@ -7,6 +7,7 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
+    "server": "node scripts/server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "bench": "vitest run --config bench/vitest.config.ts"

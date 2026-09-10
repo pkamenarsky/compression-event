@@ -41,6 +41,7 @@ import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
 import { renderer } from './render';
+import { handheld, thumbs } from './touch';
 import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
 import {
   SoundHandle,
@@ -414,17 +415,20 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** One frame of standing in it. */
   const stepped = (dt: number): void => {
-    const ahead = (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0);
-    const across = (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0);
+    const ahead = (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0) + (touch?.ahead ?? 0);
+    const across = (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0) + (touch?.across ?? 0);
 
     let wx = 0, wz = 0;
 
     if (ahead !== 0 || across !== 0) {
+      // Keys are all or nothing, and a diagonal is as fast as a straight
+      // line. A thumb part way out walks part of the way to full speed.
       const l = Math.hypot(ahead, across);
+      const k = Math.min(l, 1) / l * WALK_SPEED;
       const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
 
-      wx = (sin * ahead + cos * across) / l * WALK_SPEED;
-      wz = (-cos * ahead + sin * across) / l * WALK_SPEED;
+      wx = (sin * ahead + cos * across) * k;
+      wz = (-cos * ahead + sin * across) * k;
     }
 
     const sped = urged({ x: player.vx, y: player.vz }, { x: wx, y: wz }, dt);
@@ -709,8 +713,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   const canvas = host.querySelector('canvas');
 
+  /** The two thumbs, on something held — which has no pointer to take. See
+   * `touch.ts`. */
+  const touch = handheld() ? thumbs(host, by => player.yaw += by) : null;
+
   const grab = (): void => {
-    if (document.pointerLockElement !== canvas) void (canvas as HTMLCanvasElement | null)?.requestPointerLock?.();
+    if (touch === null && document.pointerLockElement !== canvas) void (canvas as HTMLCanvasElement | null)?.requestPointerLock?.();
   };
 
   /** Whether the pointer was ever actually taken. Escape drops it without a
@@ -770,7 +778,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     // them to a page that merely loaded. Without the title screen there has
     // been a gesture already — whatever asked for the game — and this runs
     // inside it.
-    if (options.title ?? true) await say.say('COMPRESSION EVENT', 0, 'CLICK TO START');
+    if (options.title ?? true) await say.say('COMPRESSION EVENT', 0, touch === null ? 'CLICK TO START' : 'TAP TO START');
 
     if (!live) return;
 
@@ -797,6 +805,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       window.removeEventListener('keyup', released);
       window.removeEventListener('blur', blurred);
       document.removeEventListener('mousemove', moved);
+      touch?.dispose();
 
       ambient?.stop();
       coming?.stop();
