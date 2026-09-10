@@ -114,6 +114,27 @@ export interface RenderConfig {
     /** How fast the sky wheels and the nebula works, against real time. */
     drift: number
   }
+
+  /** Point lights about the level, and the ambient taken down under them.
+   * See `lights.ts`. */
+  lights: {
+    on: boolean
+    /** What is left of the walls' and the ground's own light. */
+    ambient: number
+    /** How far across the cells are, in tiles; a cell has one light or none. */
+    cell: number
+    /** Share of the cells that have a light. */
+    chance: number
+    /** How far from the middle of its cell a light can wander, 0 to 1. */
+    jitter: number
+    /** Where the lights stand, as a share of the walls' height. */
+    height: number
+    /** How far a light reaches, in world units. */
+    radius: number
+    strength: number
+    /** Another throw of where they fall. */
+    seed: number
+  }
 }
 
 export const DEFAULT: RenderConfig = {
@@ -135,6 +156,7 @@ export const DEFAULT: RenderConfig = {
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
   sky: { on: true, kind: 'night', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
+  lights: { on: true, ambient: 0.35, cell: 2, chance: 1, jitter: 1, height: 1 / 3, radius: 12, strength: 1, seed: 0 },
 };
 
 export const FISHEYE: RenderConfig = {
@@ -189,7 +211,8 @@ export const FISHEYE: RenderConfig = {
     weight: 0.45,
     twinkle: 0.6,
     drift: 1
-  }
+  },
+  lights: { ...DEFAULT.lights },
 };
 
 /** The configurations worth keeping, by name. The first is where a fresh
@@ -233,6 +256,14 @@ export const RANGES: Record<string, [min: number, max: number, step: number]> = 
   'sky.weight': [0, 1, 0.01],
   'sky.twinkle': [0, 1, 0.01],
   'sky.drift': [0, 10, 0.1],
+  'lights.ambient': [0, 1, 0.01],
+  'lights.cell': [0.5, 8, 0.25],
+  'lights.chance': [0, 1, 0.01],
+  'lights.jitter': [0, 1, 0.01],
+  'lights.height': [0, 1, 0.01],
+  'lights.radius': [1, 32, 0.5],
+  'lights.strength': [0, 3, 0.01],
+  'lights.seed': [0, 100, 1],
 };
 
 /**

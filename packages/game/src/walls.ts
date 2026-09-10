@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import { LIGHTS_GLSL, LightUniforms, unlit } from './lights';
 import { outputsGLSL } from './target';
 import { Point } from './world';
 
@@ -299,6 +300,7 @@ export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
 
   ${VARYINGS}
+  ${LIGHTS_GLSL}
   ${outputsGLSL}
 
   void main() {
@@ -312,6 +314,7 @@ export const wallFragment = /* glsl */ `
 
     light = light * 0.6 + 0.4;
     light *= mix(0.7, 1.0, vHeightFrac);
+    light = lit(light, vWorldPosition, n);
 
     // The pattern that keeps a wall from banding is the screen pass's to lay
     // down, after the picture has been warped; the wall only says where it
@@ -587,6 +590,9 @@ export interface WallOptions {
   /** Where a filled floor lies, in world units: over the ground and under the
    * walls standing on it. */
   fillHeight: number
+  /** The lights the walls are lit by, shared with whatever else is. Unlit
+   * without. See `lights.ts`. */
+  lighting?: LightUniforms
 }
 
 export const fillFragment = /* glsl */ `
@@ -707,7 +713,11 @@ export function materials(
     glslVersion: THREE.GLSL3,
     vertexShader,
     fragmentShader: wallFragment,
-    uniforms: { ...uniforms, uWallColor: { value: new THREE.Color(options.wallColor) } },
+    uniforms: {
+      ...uniforms,
+      ...(options.lighting ?? unlit()),
+      uWallColor: { value: new THREE.Color(options.wallColor) },
+    },
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,

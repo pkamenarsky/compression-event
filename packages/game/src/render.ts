@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import { RenderConfig, current } from './config';
 import { ScreenPass } from './screen';
 import { sky } from './sky';
+import { LightUniforms, configureLights, litFloor, unlit } from './lights';
 import { Morph, morph } from './morph';
 import { still } from './still';
 import { flat } from './target';
@@ -186,6 +187,12 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   overhead.configure(current());
   scene.add(overhead.mesh);
 
+  // One set, shared by every wall and the ground, so that configuring is
+  // writing these and nothing else.
+  const lighting = unlit();
+
+  configureLights(lighting, current(), WALL_HEIGHT);
+
   const walls: WallOptions = {
     scale: SCALE,
     wallHeight: WALL_HEIGHT,
@@ -193,6 +200,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     lineColor: LINE_COLOR,
     fillColor: SHAPE_COLOR,
     fillHeight: SHAPE_Y,
+    lighting,
   };
 
   /** Whatever walls are up while nothing is walking: the last `show`, or one
@@ -377,7 +385,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       (it.material as THREE.Material | undefined)?.dispose();
     }
 
-    ground = floor(snapped);
+    ground = floor(snapped, lighting);
 
     for (const g of ground) scene.add(g);
   }
@@ -402,7 +410,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
   // Something has to be underfoot before anything has been shown, or an empty
   // panel is a void rather than a room with nothing in it yet.
-  ground = floor(null);
+  ground = floor(null, lighting);
 
   for (const g of ground) scene.add(g);
 
@@ -421,6 +429,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     configure(config: RenderConfig): void {
       screen.configure(config);
       overhead.configure(config);
+      configureLights(lighting, config, WALL_HEIGHT);
     },
 
     drive(amount: number, time: number): void {
@@ -548,12 +557,12 @@ const EMPTY_BOUNDS: Bounds = {
   maxZ: TILE_SIZE,
 };
 
-function floor(b: Bounds | null): THREE.Object3D[] {
+function floor(b: Bounds | null, lighting: LightUniforms): THREE.Object3D[] {
   const box = b ?? EMPTY_BOUNDS;
 
   const surface = new THREE.Mesh(
     new THREE.PlaneGeometry(box.maxX - box.minX, box.maxZ - box.minZ),
-    flat(FLOOR_COLOR, {
+    litFloor(FLOOR_COLOR, lighting, {
       side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: 1,
