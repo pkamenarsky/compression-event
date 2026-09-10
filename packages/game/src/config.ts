@@ -124,7 +124,7 @@ export const DEFAULT: RenderConfig = {
     fisheye: { power: 0.5 },
     vertigo: { narrow: 0.45 },
   },
-  blur: { on: true, reach: 0.12, taps: 4 },
+  blur: { on: false, reach: 0.12, taps: 4 },
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
