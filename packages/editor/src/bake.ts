@@ -124,6 +124,7 @@
 // bake simply does not carry one across instants.
 // -----------------------------------------------------------------------------
 
+import type { BakedLevel } from '@ce/game';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
@@ -526,6 +527,24 @@ export interface Bake {
   spans: Map<VersionId, Span>
   /** 0 to 1 while a bake is running, and null when none is. */
   progress: number | null
+  /**
+   * The bake a level file came with, as the game gets it.
+   *
+   * Only the flat buffers are in a file, and a `Span` cannot be put back
+   * together out of them, so this cannot stand in for `spans` wherever the
+   * editor reads the bake itself — the replay, the 3D panel. What it can stand
+   * in for is what is shipped: playing the level, and writing it out again,
+   * without having to bake what was baked already. See `loadedFor`.
+   *
+   * Stamped like a span, against the whole chain, so the first edit that would
+   * have invalidated any span of it invalidates it.
+   */
+  loaded?: Loaded | null
+}
+
+export interface Loaded {
+  level: BakedLevel
+  stamp: Stamp
 }
 
 export const EMPTY_BAKE: Bake = { spans: new Map(), progress: null };
@@ -544,14 +563,31 @@ export function spanAt(bake: Bake, world: World, from: VersionId): Span | null {
   const span = bake.spans.get(from);
   if (span === undefined) return null;
 
-  const now = stamp(world, from);
+  return stamped(span.stamp, stamp(world, from)) ? span : null;
+}
 
-  if (span.stamp.polygons !== now.polygons) return null;
-  if (span.stamp.groups !== now.groups) return null;
-  if (span.stamp.artefacts !== now.artefacts) return null;
-  if (span.stamp.edits.length !== now.edits.length) return null;
+/** A stamp over every span of the level, which is the chain down to the last
+ * version. */
+export function stampAll(world: World): Stamp {
+  return stamp(world, Math.max(world.versions.length - 2, 0));
+}
 
-  return span.stamp.edits.every((e, i) => e === now.edits[i]) ? span : null;
+function stamped(a: Stamp, b: Stamp): boolean {
+  if (a.polygons !== b.polygons) return false;
+  if (a.groups !== b.groups) return false;
+  if (a.artefacts !== b.artefacts) return false;
+  if (a.edits.length !== b.edits.length) return false;
+
+  return a.edits.every((e, i) => e === b.edits[i]);
+}
+
+/** The bake a file came with, if the world it came with is still the one
+ * standing. */
+export function loadedFor(bake: Bake, world: World): BakedLevel | null {
+  const loaded = bake.loaded;
+  if (loaded === undefined || loaded === null) return null;
+
+  return stamped(loaded.stamp, stampAll(world)) ? loaded.level : null;
 }
 
 /** Every span the edit reached, dropped. Cheaper to ask than to work out, and

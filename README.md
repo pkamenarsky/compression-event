@@ -12,10 +12,22 @@ editor.html        the editor page
 ```bash
 pnpm install
 pnpm dev         # :3000 — /game.html and /editor.html
+pnpm server -- [--port 3000] level.json   # the game, playing that level
 pnpm build       # both pages into dist/
 pnpm typecheck   # tsc over both packages
 pnpm test        # vitest
 ```
+
+## Serving a level
+
+`pnpm server -- level.json` (or `npm run server -- level.json`) serves the game
+at `/` with that file as its level. The file is what the editor writes with
+⌘S; if it was saved after a bake, the bake is in it and the game starts at
+once, and otherwise the page bakes it first. The file is reread on every load,
+so saving over it from the editor and reloading plays the new one.
+
+On a phone or tablet the game takes the two-thumb scheme: the left half of the
+screen is a stick wherever the thumb lands, the right half a drag to look.
 
 ## kontinuum
 

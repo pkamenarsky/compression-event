@@ -30,7 +30,7 @@ import {
   nesting,
   withNormals,
 } from '@ce/game';
-import { Bake, Origin, Ref, Rider, Span, Stretch, pivot, spanAt } from './bake';
+import { Bake, Origin, Ref, Rider, Span, Stretch, loadedFor, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, IDENTITY, contributing, placeAt, resolveAt, settled } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, VersionId, World, slotOf } from './types';
@@ -301,6 +301,10 @@ export function bakedSpan(span: Span, carrying: readonly ArtefactId[] = []): Bak
  * evenly across however many spans come back, so a hole in the middle would
  * silently rescale the walk and play the wrong geometry at the wrong moment. A
  * short level is honest about being short.
+ *
+ * Where the level came out of a file with a bake in it and nothing has been
+ * edited since, that bake is the same answer already worked out — so whichever
+ * of the two covers more of the level is the one that goes.
  */
 export function bakedLevel(bake: Bake, world: World): BakedLevel {
   const spans = [];
@@ -313,7 +317,9 @@ export function bakedLevel(bake: Bake, world: World): BakedLevel {
     spans.push(bakedSpan(span, carrying));
   }
 
-  return { spans };
+  const loaded = loadedFor(bake, world);
+
+  return loaded !== null && loaded.spans.length > spans.length ? loaded : { spans };
 }
 
 /**

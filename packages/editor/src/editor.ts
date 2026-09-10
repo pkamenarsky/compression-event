@@ -290,12 +290,13 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
       e.preventDefault();
 
       if (e.code === 'KeyS') {
-        download(state());
+        void download(state());
       }
       else {
         // The load lands whenever the picker is answered, which is long after
-        // this. Everything the editor keeps is in the file bar the bake, and
-        // `restored` supplies an empty one.
+        // this. Everything the editor keeps is in the file, the bake as the
+        // game gets it rather than as the editor works it out — so a level
+        // opened that way plays at once, and is baked again for the replay.
         upload(loaded => update(() => loaded));
       }
     }
@@ -1642,7 +1643,7 @@ function start(state: Value<EditorState>, update: Update): void {
     }
 
     if (step.done) {
-      update(s => ({ ...s, bake: { spans: step.value, progress: null } }));
+      update(s => ({ ...s, bake: { ...s.bake, spans: step.value, progress: null } }));
       return;
     }
 

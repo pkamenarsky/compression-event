@@ -41,9 +41,17 @@ import {
   IconType,
   Start,
 } from './types';
+import { packed, unpacked } from '@ce/game';
+import { stampAll } from './bake';
+import { bakedLevel } from './export';
 import { Affine, facingAt, placeAt } from './scene';
 
 /**
+ * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
+ * A format-18 file has none, which is a world nobody has baked yet, and it
+ * reads as one: the bake is derived, so leaving it out loses nothing but the
+ * time it takes to do again.
+ *
  * 15: a version's layer may unchain something — hold what it stands on outright
  * rather than inheriting it from its base. A format-14 file has no footings,
  * which is a world where everything is chained all the way back, and it is:
@@ -153,7 +161,7 @@ import { Affine, facingAt, placeAt } from './scene';
  * life — there was no way to say otherwise — so that is what it is read as, and
  * nothing about the file is guessed at.
  */
-export const FORMAT = 18;
+export const FORMAT = 19;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 3;
@@ -190,6 +198,21 @@ export interface Saved {
     start?: Start
     versions: SavedVersion[]
   }
+  /**
+   * The bake, where there was one: every span of it that still stood when the
+   * file was written, as the game is handed them, packed into one string — see
+   * `packed` in the game. Absent before format 19, and absent since wherever
+   * nothing had been baked.
+   *
+   * The flat buffers rather than the editor's spans, for two reasons. They are
+   * what the game needs, so a file with one can be played without the bake
+   * ever being run again; and they are a fraction of the size, the spans being
+   * a graph of maps keyed by id with every neighbourhood the cut looked at.
+   *
+   * Last in the file, so that it is the one long line at the bottom rather than
+   * one in the middle of everything anyone would read.
+   */
+  baked?: string
 }
 
 export interface SavedPath {
@@ -390,8 +413,9 @@ export function restored(file: Saved): EditorState {
     preview: false,
     roaming: false,
 
-    // Not in the file, and deliberately: it is derived, it is large, and it is
-    // stamped against a world that this one only resembles.
+    // The spans are not in the file, and deliberately: they are derived, they
+    // are large, and they are stamped against a world that this one only
+    // resembles. What the game gets is, and `reopened` puts it back.
     bake: { spans: new Map(), progress: null },
 
     // Nor are these, for a different reason: they are about the sitting rather
@@ -581,8 +605,42 @@ function stamp(now: Date): string {
   return now.toISOString().replace(/[:.]/g, '-').replace(/-\d+Z$/, 'Z');
 }
 
-export function download(state: EditorState, now = new Date()): void {
-  const blob = new Blob([JSON.stringify(saved(state), null, 2)], {
+/**
+ * The state as a file, bake and all.
+ *
+ * Apart from `saved` because packing the bake is asynchronous — the deflate is
+ * the browser's own, and it only comes as a stream.
+ */
+export async function written(state: EditorState): Promise<Saved> {
+  const out = saved(state);
+  const level = bakedLevel(state.bake, state.world);
+
+  return level.spans.length === 0 ? out : { ...out, baked: await packed(level) };
+}
+
+/**
+ * A file as the editor's state, with whatever bake came in it standing beside
+ * the world it was baked against.
+ *
+ * Stamped against the world `restored` built, which is the one on screen until
+ * the first edit — and that edit is what should throw it away.
+ */
+export async function reopened(file: Saved): Promise<EditorState> {
+  const state = restored(file);
+  if (file.baked === undefined) return state;
+
+  const level = await unpacked(file.baked);
+
+  return { ...state, bake: { ...state.bake, loaded: { level, stamp: stampAll(state.world) } } };
+}
+
+export async function download(state: EditorState, now = new Date()): Promise<void> {
+  // Indented for everything a person might read, and the bake on one line at
+  // the bottom rather than broken across however many thousand.
+  const { baked, ...rest } = await written(state);
+  const text = JSON.stringify(rest, null, 2);
+
+  const blob = new Blob([baked === undefined ? text : `${text.slice(0, -2)},\n  "baked": ${JSON.stringify(baked)}\n}`], {
     type: 'application/json',
   });
 
@@ -603,8 +661,9 @@ export function download(state: EditorState, now = new Date()): void {
  * thrown away once it has answered.
  *
  * A bad file is refused loudly rather than half-read. `restored` throws on the
- * format, `JSON.parse` throws on anything that is not JSON at all, and neither
- * has touched the editor's state by then, so the world on screen survives.
+ * format, `unpacked` on a bake it cannot read and `JSON.parse` on anything that
+ * is not JSON at all, and none of them has touched the editor's state by then,
+ * so the world on screen survives.
  */
 export function upload(then: (state: EditorState) => void): void {
   const input = document.createElement('input');
@@ -617,7 +676,7 @@ export function upload(then: (state: EditorState) => void): void {
     if (file === undefined) return;
 
     try {
-      then(restored(JSON.parse(await file.text()) as Saved));
+      then(await reopened(JSON.parse(await file.text()) as Saved));
     }
     catch (e) {
       window.alert(`${file.name} is not a world this reads:\n\n${e}`);
