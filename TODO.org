@@ -103,3 +103,7 @@
 * marketing
 ** https://www.youtube.com/watch?v=90ImoX_e8nE
 
+* remove debug output
+** fps counter
+** <, > for shader switching
+
