@@ -42,4 +42,4 @@ export const STICK_DEAD = 0.35;
 /** Turn per CSS pixel of right thumb, in radians. Well above the mouse's: a
  * thumb covers a phone's width in a few centimetres, and one swipe across it
  * should be a good way round. */
-export const TOUCH_LOOK = 0.012;
+export const TOUCH_LOOK = 0.008;
