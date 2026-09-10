@@ -100,13 +100,13 @@ export interface RenderConfig {
     /** Share of the sky's cells that have a star in them, in the skies that
      * have stars. */
     stars: number
-    /** How much there is of whatever the sky is: the nebula, the disk, the
-     * rain, the tearing. */
+    /** How much there is of whatever the sky is: the disk, the rain, the
+     * tearing. */
     weight: number
     /** How much the stars that breathe shrink at the bottom of a breath; 1
      * puts them out. */
     twinkle: number
-    /** How fast the sky wheels and the nebula works, against real time. */
+    /** How fast everything in the sky moves, against real time. */
     drift: number
   }
 }
@@ -128,7 +128,7 @@ export const DEFAULT: RenderConfig = {
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
-  sky: { on: true, kind: 'night', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
+  sky: { on: true, kind: 'rift', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
 };
 
 export const FISHEYE: RenderConfig = {
@@ -177,7 +177,7 @@ export const FISHEYE: RenderConfig = {
   },
   sky: {
     on: true,
-    kind: 'night',
+    kind: 'rift',
     stars: 0.3,
     weight: 0.45,
     twinkle: 0.6,

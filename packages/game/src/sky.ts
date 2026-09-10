@@ -4,8 +4,6 @@
 // Something over the level, in one bit: white on black and nothing between.
 // Several somethings, in `SKIES`, which `;` and `'` walk in the game:
 //
-// - **night** — stars, a faint nebula along a band, the whole of it wheeling
-//   slowly about a tilted pole while the nebula works on itself.
 // - **rift** — a hole in the sky with a disk of matter going round it, and
 //   the stars behind bent out of its way.
 // - **lattice** — the sky is a box, and its edges show: a grid on the faces
@@ -16,6 +14,14 @@
 // - **eye** — one, over the horizon, looking about and now and then blinking.
 // - **signal** — rings going out from a point low in the sky, broken where
 //   the transmission is.
+//
+// Behind all of them the sky wheels slowly about a tilted pole: `d` in the
+// shader is the direction turned with it, `seen` the direction as it is, and
+// a sky picks whichever it wants to stand still or move.
+//
+// Adding one is a name in `SKIES` and a GLSL function of the same name,
+// `float name(vec3 seen, vec3 d, float px, float t)`, returning the density
+// there. The dispatch in `main` is written off the list.
 //
 // Two halves, like the shadows:
 //
@@ -43,10 +49,9 @@ import type { RenderConfig } from './config';
 import type { Stage } from './screen';
 import { outputsGLSL } from './target';
 
-/** The skies in the order `;` and `'` walk them. The shader numbers them from
- * zero. */
+/** The skies in the order `;` and `'` walk them. Each is also the name of its
+ * function in the shader, which numbers them from zero. */
 export const SKIES = [
-  'night',
   'rift',
   'lattice',
   'rain',
@@ -86,7 +91,6 @@ const fragmentShader = /* glsl */ `
   const float TAU = 6.28318;
   const float CELLS = ${CELLS.toFixed(1)};
   const vec3 POLE = normalize(vec3(0.35, 1.0, 0.2));
-  const vec3 BAND = normalize(vec3(0.8, 0.25, -0.55));
 
   float hash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -112,19 +116,6 @@ const fragmentShader = /* glsl */ `
       mix(mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x),
           mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x), f.y),
       f.z);
-  }
-
-  float fbm(vec3 p) {
-    float sum = 0.0;
-    float amp = 0.5;
-
-    for (int i = 0; i < 4; i++) {
-      sum += amp * noise(p);
-      p = p * 2.03 + 17.1;
-      amp *= 0.5;
-    }
-
-    return sum;
   }
 
   // Rodrigues: v about the unit axis k by a.
@@ -201,23 +192,9 @@ const fragmentShader = /* glsl */ `
     return step(length(p - at), r * px * CELLS * scale);
   }
 
-  // ── night ──
-
-  float night(vec3 d, float px, float t) {
-    vec3 drift = vec3(0.0, t * 0.011, t * 0.007);
-    vec3 q = vec3(fbm(d * 1.7 + drift), fbm(d * 1.7 + drift + 5.2), fbm(d * 1.7 - drift + 9.7));
-    float n = fbm(d * 2.6 + q * 1.8 - drift * 0.5);
-
-    float across = dot(d, BAND);
-    float band = exp(-across * across / 0.09);
-    float nebula = smoothstep(0.42, 0.78, n) * mix(0.25, 1.0, band);
-
-    return max(uWeight * nebula, star(d, px, t));
-  }
-
   // ── rift ──
 
-  float rift(vec3 d, float px, float t) {
+  float rift(vec3 seen, vec3 d, float px, float t) {
     const vec3 AT = normalize(vec3(-0.6, 0.55, -0.6));
     float r0 = 0.1 * (1.0 + 0.06 * sin(t * 0.21));
 
@@ -294,7 +271,7 @@ const fragmentShader = /* glsl */ `
 
   // ── rain ──
 
-  float rain(vec3 seen, float t) {
+  float rain(vec3 seen, vec3 d, float px, float t) {
     const float C = 220.0;
     const float ROWS = C / 4.0;
 
@@ -359,7 +336,7 @@ const fragmentShader = /* glsl */ `
 
   // ── eye ──
 
-  float eye(vec3 seen, float px, float t) {
+  float eye(vec3 seen, vec3 d, float px, float t) {
     const vec3 AT = normalize(vec3(0.0, 0.42, 1.0));
     const float SIZE = 0.55;
 
@@ -428,15 +405,9 @@ const fragmentShader = /* glsl */ `
     float px = length(fwidth(seen)) * 0.7071;
     float above = smoothstep(-0.02, 0.2, seen.y);
 
-    float density;
+    float density = 0.0;
 
-    if (uKind == 1) density = rift(d, px, uTime);
-    else if (uKind == 2) density = lattice(seen, d, px, uTime);
-    else if (uKind == 3) density = rain(seen, uTime);
-    else if (uKind == 4) density = glitch(seen, d, px, uTime);
-    else if (uKind == 5) density = eye(seen, px, uTime);
-    else if (uKind == 6) density = signal(seen, d, px, uTime);
-    else density = night(d, px, uTime);
+    ${SKIES.map((k, i) => `if (uKind == ${i}) density = ${k}(seen, d, px, uTime);`).join('\n    ')}
 
     fragColor = vec4(vec3(clamp(density, 0.0, 1.0) * above), 1.0);
     marks = skyMark();
