@@ -1,18 +1,19 @@
 // -----------------------------------------------------------------------------
 // The tweak panel
 //
-// The render config, on screen, while the game runs behind it: a switch for
-// every stage and a slider for every number, built off the config's own shape
+// The render config, on screen, over the editor's first-person view: a switch
+// for every stage and a slider for every number, built off the config's own shape
 // so that a field added to `RenderConfig` turns up here without anyone telling
 // this file. Where each slider runs is `RANGES` in `config.ts`.
 //
 // Along the top: the presets and the configurations saved in this browser, to
 // switch between; saving the one in force under a name; copying it out as a
-// literal to paste into `PRESETS`; and holding the warp at a fixed amount, so
-// that it can be looked at without waiting for the level to close.
+// literal to paste into `PRESETS`; and whatever switches of its own the view
+// hosting it wants to put there.
 //
 // Owns no state but what is on screen. The config is the caller's: the panel
-// asks for it and hands back a changed copy.
+// asks for it and hands back a changed copy. Keys typed into it stay in it, so
+// that a number being typed is not a shortcut to whatever is underneath.
 // -----------------------------------------------------------------------------
 
 import { PRESETS, RANGES, RenderConfig, forget, save, saved } from './config';
@@ -24,13 +25,20 @@ export interface Tweak {
   /** Bring the controls back into line with the config, after it was changed
    * from somewhere else. */
   refresh(): void
-  /** Whether an event happened inside the panel, so that the game can leave
-   * keys typed into it alone. */
-  holds(target: EventTarget | null): boolean
-  /** The amount the warp is held at, or null to let the level drive it. */
-  held(): number | null
   dispose(): void
 }
+
+/** A switch the hosting view puts along the top, for something that is its
+ * own business rather than the config's. */
+export interface Toggle {
+  label: string
+  get(): boolean
+  set(on: boolean): void
+}
+
+/** The keys that still reach the page from inside the panel: the ones that
+ * close it, and leave. */
+const PASSED = ['Backquote', 'Escape'];
 
 type Leaf = boolean | number | string;
 
@@ -38,6 +46,7 @@ export function tweak(
   host: HTMLElement,
   config: () => RenderConfig,
   set: (next: RenderConfig) => void,
+  toggles: Toggle[] = [],
 ): Tweak {
   const panel = document.createElement('div');
 
@@ -51,14 +60,19 @@ export function tweak(
 
   // The host grabs the pointer on a click, and a click on a slider is not one
   // meant for the game.
-  for (const type of ['click', 'mousedown', 'pointerdown']) {
+  for (const type of ['click', 'mousedown', 'pointerdown', 'wheel']) {
     panel.addEventListener(type, e => e.stopPropagation());
+  }
+
+  for (const type of ['keydown', 'keyup'] as const) {
+    panel.addEventListener(type, e => {
+      if (!PASSED.includes(e.code)) e.stopPropagation();
+    });
   }
 
   host.append(panel);
 
   let open = false;
-  let hold: number | null = null;
 
   /** What the list along the top last loaded, so that forgetting knows which. */
   let chosen = '';
@@ -232,24 +246,15 @@ export function tweak(
     top.append(list);
     it.append(top, row('', saving, copying, forgetting));
 
-    // Holding the warp still, so there is something to look at between shifts.
-    const holding = el('input');
+    for (const t of toggles) {
+      const box = el('input');
 
-    holding.type = 'checkbox';
-    holding.checked = hold !== null;
+      box.type = 'checkbox';
+      box.checked = t.get();
+      box.addEventListener('change', () => t.set(box.checked));
 
-    const [slider, exact] = number(['hold'], hold ?? 1, v => {
-      if (hold !== null) hold = v;
-    });
-
-    slider.min = '-1';
-    slider.max = '1';
-
-    holding.addEventListener('change', () => {
-      hold = holding.checked ? Number(slider.value) : null;
-    });
-
-    it.append(row('hold warp', holding, slider, exact));
+      it.append(row(t.label, box));
+    }
 
     return it;
   };
@@ -276,14 +281,6 @@ export function tweak(
 
     refresh(): void {
       if (open) build();
-    },
-
-    holds(target: EventTarget | null): boolean {
-      return target instanceof Node && panel.contains(target);
-    },
-
-    held(): number | null {
-      return hold;
     },
 
     dispose(): void {

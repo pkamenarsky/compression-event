@@ -7,9 +7,10 @@
 // own part of this and nothing else.
 //
 // Presets live here as code, which is where a configuration worth keeping ends
-// up. The game's tweak panel (`tweak.ts`) edits the one in force, saves ones
-// worth coming back to in the browser, and copies any of them out as a literal
-// to paste into `PRESETS`.
+// up. The tweak panel (`tweak.ts`), over the editor's first-person view, edits
+// the one in force, saves ones worth coming back to in the browser, and copies
+// any of them out as a literal to paste into `PRESETS`. The game starts from
+// whichever was last in force.
 //
 // A saved configuration is laid over the default rather than trusted whole, so
 // one saved before a field existed picks the field up at its default.

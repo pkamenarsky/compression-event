@@ -999,8 +999,15 @@ function settled(s: EditorState): EditorState {
 export interface Replay {
   from: VersionId
   to: VersionId
-  /** 0 to 1 over the whole walk, however many versions it crosses. */
+  /** 0 to 1 over the whole walk, however many versions it crosses, on the
+   * curve the walls move by. */
   at: number
+  /** The same, on the clock: linear, for what wants to know how far through
+   * the time it is rather than how far the walls have got. */
+  through: number
+  /** Seconds of run-up still to go before the walk sets off, standing at
+   * `from`. Zero for a walk that goes at once — see `lead`. */
+  before: number
 }
 
 // How a version switch is played — the length, the curves and which one — is
@@ -1076,6 +1083,16 @@ export interface EditorState {
   roaming: boolean
 
   /**
+   * Seconds a walk waits at its start before it sets off, while `roaming`.
+   *
+   * The screen starts bending before a shift in the game — the run-up in
+   * `bracing` — and a walk that set off the moment an arrow was pressed would
+   * never show it. The first-person view's panel turns this on, as long as the
+   * run-up is. Not in the file.
+   */
+  lead: number
+
+  /**
    * What the game would be shipped, for the spans that have been baked. It is
    * derived from the world, but it is expensive enough to be worth keeping and
    * cheap enough to throw away: a span holds the world it was baked against, so
@@ -1107,6 +1124,7 @@ export function initialState(world: World): EditorState {
     replay: null,
     preview: false,
     roaming: false,
+    lead: 0,
     bake: { spans: new Map(), progress: null },
     history: EMPTY_HISTORY,
     clipboard: [],

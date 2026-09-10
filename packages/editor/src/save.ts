@@ -407,11 +407,13 @@ export function restored(file: Saved): EditorState {
     figure: file.figure ?? 'polyline',
 
     // None of these are in the file: a transition that is not running, whether
-    // a panel is open, and whether someone is standing inside it. Opening a
-    // file while walking around one puts you back at the drawing.
+    // a panel is open, whether someone is standing inside it, and how long a
+    // walk waits there. Opening a file while walking around one puts you back
+    // at the drawing.
     replay: null,
     preview: false,
     roaming: false,
+    lead: 0,
 
     // The spans are not in the file, and deliberately: they are derived, they
     // are large, and they are stamped against a world that this one only

@@ -29,7 +29,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { MAX_TAPS } from './config';
+import { MAX_TAPS, RenderConfig } from './config';
 import type { Stage } from './screen';
 
 /** The warps in the order `<` and `>` walk them. The shader numbers them from
@@ -43,6 +43,48 @@ export const WARPS = [
 ] as const;
 
 export type Warp = typeof WARPS[number];
+
+/** The warp's part of the render config: what the envelope below reads. */
+type Warping = RenderConfig['warp'];
+
+// ── How hard, and when ──
+//
+// The one number that drives every warp, as a function of where a shift is.
+// Here rather than in the game because the editor's first-person view plays
+// transitions too and has to bend them the same way.
+
+/**
+ * The run-up: `left` seconds before a shift begins, rising to `braced` over
+ * the last `brace` of them. Nothing before that.
+ */
+export function bracing(left: number, w: Warping): number {
+  return left < w.brace ? w.braced * (1 - Math.max(left, 0) / w.brace) : 0;
+}
+
+/**
+ * The shift itself, `progress` from 0 to 1 on the linear clock: over and back
+ * off again, never under where the run-up left it until it has passed. The
+ * level opening back up bends the other way and has no run-up, since that
+ * comes of a pickup rather than the clock.
+ */
+export function swelling(progress: number, opening: boolean, w: Warping): number {
+  const swell = Math.sin(Math.PI * Math.min(Math.max(progress, 0), 1));
+
+  return opening ? -swell : Math.max(swell, w.braced * (1 - progress));
+}
+
+/**
+ * The camera's field of view, in degrees, under the vertigo warp: `wide`
+ * narrowed as the level closes, and widened as it opens. Short of closing it
+ * altogether, however hard it is turned up. Anything else leaves it alone.
+ */
+export function narrowed(wide: number, amount: number, w: Warping): number {
+  if (!w.on || w.kind !== 'vertigo') return wide;
+
+  const by = Math.min(w.vertigo.narrow * w.strength * amount, 0.95);
+
+  return Math.atan(Math.tan(wide / 2 * Math.PI / 180) * (1 - by)) * 2 * 180 / Math.PI;
+}
 
 /**
  * The warp stage: `warped(uv)` is the target read at where the warp says `uv`

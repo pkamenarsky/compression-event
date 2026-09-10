@@ -158,17 +158,27 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
     // opened, a state restored. Only a walk that says it is going here is one.
     if (walk === null || walk.to !== v) return;
 
-    const started = performance.now();
+    // The run-up first, if the walk asked for one, standing at the start; the
+    // walk's own clock begins where it ends.
+    const started = performance.now() + walk.before * 1000;
     const ms = REPLAY_MS * Math.abs(v - walk.from);
     const curve = EASINGS[REPLAY_EASE];
 
     let frame = requestAnimationFrame(function tick() {
+      const now = performance.now();
+
+      if (now < started) {
+        update(s => ({ ...s, replay: { ...walk, before: (started - now) / 1000 } }));
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+
       // The clock is linear and the walk is not. Whether it is over is a
       // question about the clock, so it is asked of `u` rather than of the
       // curve — a curve that touched 1 early would end the walk early.
-      const u = Math.min(1, (performance.now() - started) / ms);
+      const u = Math.min(1, (now - started) / ms);
 
-      update(s => ({ ...s, replay: u < 1 ? { ...walk, at: curve(u) } : null }));
+      update(s => ({ ...s, replay: u < 1 ? { ...walk, at: curve(u), through: u, before: 0 } : null }));
 
       if (u < 1) frame = requestAnimationFrame(tick);
     });
@@ -266,7 +276,7 @@ function switched(s: EditorState, to: VersionId): EditorState {
   return {
     ...s,
     currentVersion: to,
-    replay: { from: s.currentVersion, to, at: 0 },
+    replay: { from: s.currentVersion, to, at: 0, through: 0, before: s.roaming ? s.lead : 0 },
   };
 }
 

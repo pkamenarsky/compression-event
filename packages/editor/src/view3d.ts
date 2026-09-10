@@ -35,7 +35,24 @@ import { Value, untracked } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
-import { Artefacts, EYE, Point, Renderer, SCALE, WALK_SPEED, artefacts, renderer, urged } from '@ce/game';
+import {
+  Artefacts,
+  EYE,
+  Point,
+  Renderer,
+  SCALE,
+  Tweak,
+  WALK_SPEED,
+  artefacts,
+  bracing,
+  current as remembered,
+  narrowed,
+  remember,
+  renderer,
+  swelling,
+  tweak,
+  urged,
+} from '@ce/game';
 import { Bake, artefactsDuring, spanAt } from './bake';
 import { bakedLevel, floorsAt } from './export';
 import {
@@ -81,6 +98,10 @@ const HEIGHT = 480;
 
 /** Vertical, in radians, and the one the framing is worked out against. */
 const FOV = 60 * Math.PI / 180;
+
+/** The same, in the degrees the camera takes, which is what the vertigo warp
+ * narrows from. */
+const FOV_DEGREES = FOV * 180 / Math.PI;
 
 /**
  * How far back the camera sits, as a multiple of what it has to fit.
@@ -153,6 +174,23 @@ function panel(
    * through the reactive tree to save about a millisecond.
    */
   let set: Live = EMPTY_LIVE;
+
+  /**
+   * The render config, as last left in this browser — the game starts from the
+   * same one — and the panel that tweaks it, over the first-person view: the
+   * backquote key opens it there and nowhere else.
+   *
+   * Standing in the level is where the look belongs to, and the arrows play a
+   * transition through it the way the game would, warp and all. `lead` in the
+   * store is the panel's one switch of its own: the run-up to a shift, which a
+   * walk that set off at once would skip.
+   */
+  let look = remembered();
+  let tweaks: Tweak | null = null;
+  let leading = false;
+
+  /** Seconds the view has been up, for the warps that move on their own. */
+  let elapsed = 0;
 
   /** Where the camera is looking and from how far, in world units. `held` once
    * someone has moved it themselves. */
@@ -241,6 +279,17 @@ function panel(
      */
     const playing = (r: Replay | null): r is Replay =>
       r !== null && Math.max(r.from, r.to) <= spans;
+
+    /**
+     * How hard the picture is bent, standing in a walk: through the run-up if
+     * it is still waiting to set off, and over the walk itself after. The
+     * game's own curves — see `bracing` and `swelling`.
+     */
+    const bent = (r: Replay | null): number => {
+      if (!untracked(roaming) || !playing(r)) return 0;
+
+      return r.before > 0 ? bracing(r.before, look.warp) : swelling(r.through, r.to < r.from, look.warp);
+    };
 
     const walked = (r: Replay | null): void => {
       if (view === null) return;
@@ -458,8 +507,35 @@ function panel(
         effect(() => {
           if (host === undefined) return;
 
-          view = renderer(host, { dither: false, fov: FOV * 180 / Math.PI });
+          view = renderer(host, { dither: false, fov: FOV_DEGREES });
           crowd = artefacts(view.scene);
+
+          // The run-up lasts as long as the config says it does, so changing
+          // one changes the other.
+          const led = (): void => {
+            const lead = leading ? look.warp.brace : 0;
+
+            update(st => (st.lead === lead ? st : { ...st, lead }));
+          };
+
+          tweaks = tweak(
+            host,
+            () => look,
+            next => {
+              look = next;
+              view?.configure(look);
+              remember(look);
+              led();
+            },
+            [{
+              label: 'full animation',
+              get: () => leading,
+              set: on => {
+                leading = on;
+                led();
+              },
+            }],
+          );
 
           peopled(untracked(world), untracked(current), untracked(replay));
 
@@ -472,11 +548,25 @@ function panel(
 
             last = now;
 
+            elapsed += dt;
+
             if (roaming()) stepped(dt);
 
-            // Every frame, walk or no walk: turning and bobbing is what an
-            // artefact does while nothing at all is happening.
-            if (view !== null) crowd?.update(dt, view.camera);
+            if (view !== null) {
+              const amount = bent(untracked(replay));
+              const fov = narrowed(FOV_DEGREES, amount, look.warp);
+
+              view.drive(amount, elapsed);
+
+              if (view.camera.fov !== fov) {
+                view.camera.fov = fov;
+                view.camera.updateProjectionMatrix();
+              }
+
+              // Every frame, walk or no walk: turning and bobbing is what an
+              // artefact does while nothing at all is happening.
+              crowd?.update(dt, view.camera);
+            }
 
             view?.render();
             frame = requestAnimationFrame(tick);
@@ -484,6 +574,8 @@ function panel(
 
           return () => {
             cancelAnimationFrame(frame);
+            tweaks?.dispose();
+            tweaks = null;
             crowd?.dispose();
             crowd = null;
             view?.dispose();
@@ -561,6 +653,21 @@ function panel(
 
           capture();
 
+          // The panel wants the pointer, and giving the pointer up is otherwise
+          // someone leaving — see `locked` — so it is asked about first.
+          // Closing it takes the pointer back.
+          const tweaking = (): void => {
+            tweaks?.toggle();
+
+            if (tweaks?.open === true) {
+              held.clear();
+              if (document.pointerLockElement === host) document.exitPointerLock();
+            }
+            else {
+              capture();
+            }
+          };
+
           const down = (e: KeyboardEvent) => {
             // Escape leaves, and leaves whether or not the pointer was ever
             // captured. Watching the lock alone for this is how a refused capture
@@ -568,6 +675,12 @@ function panel(
             if (e.code === 'Escape') {
               e.preventDefault();
               update(st => ({ ...st, roaming: false }));
+              return;
+            }
+
+            if (e.code === 'Backquote') {
+              e.preventDefault();
+              tweaking();
               return;
             }
 
@@ -602,13 +715,15 @@ function panel(
               return;
             }
 
-            if (caught) update(st => ({ ...st, roaming: false }));
+            if (caught && tweaks?.open !== true) update(st => ({ ...st, roaming: false }));
           };
 
           // Somewhere to click if the capture was refused, and how the pointer
-          // comes back after a tab away.
+          // comes back after a tab away — or, with the panel open, going back
+          // to the level from it.
           const pressed = () => {
-            if (document.pointerLockElement !== host) capture();
+            if (tweaks?.open === true) tweaking();
+            else if (document.pointerLockElement !== host) capture();
           };
 
           // A window that loses the focus keeps whatever was held down forever.
@@ -628,6 +743,9 @@ function panel(
             window.removeEventListener('blur', blurred);
             document.removeEventListener('mousemove', moved);
             document.removeEventListener('pointerlockchange', locked);
+
+            // The panel is the first-person view's, and goes with it.
+            if (tweaks?.open === true) tweaks.toggle();
           };
         }),
 
