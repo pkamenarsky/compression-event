@@ -8,8 +8,9 @@
 //
 // Along the top: the presets and the configurations saved in this browser, to
 // switch between; saving the one in force under a name; copying it out as a
-// literal to paste into `PRESETS`; and holding the warp at a fixed amount, so
-// that it can be looked at without waiting for the level to close.
+// literal to paste into `PRESETS`; holding the warp at a fixed amount, so that
+// it can be looked at without waiting for the level to close; and holding the
+// level itself, part way through a transition or on the way to one.
 //
 // Owns no state but what is on screen. The config is the caller's: the panel
 // asks for it and hands back a changed copy.
@@ -34,10 +35,15 @@ export interface Tweak {
 
 type Leaf = boolean | number | string;
 
+/**
+ * `freeze` is told whenever the level's time is held or let go. What holding
+ * it means — which clocks stop, what the sound does — is the game's.
+ */
 export function tweak(
   host: HTMLElement,
   config: () => RenderConfig,
   set: (next: RenderConfig) => void,
+  freeze: (on: boolean) => void,
 ): Tweak {
   const panel = document.createElement('div');
 
@@ -59,6 +65,7 @@ export function tweak(
 
   let open = false;
   let hold: number | null = null;
+  let frozen = false;
 
   /** What the list along the top last loaded, so that forgetting knows which. */
   let chosen = '';
@@ -250,6 +257,18 @@ export function tweak(
     });
 
     it.append(row('hold warp', holding, slider, exact));
+
+    const freezing = el('input');
+
+    freezing.type = 'checkbox';
+    freezing.checked = frozen;
+
+    freezing.addEventListener('change', () => {
+      frozen = freezing.checked;
+      freeze(frozen);
+    });
+
+    it.append(row('hold transition', freezing));
 
     return it;
   };
