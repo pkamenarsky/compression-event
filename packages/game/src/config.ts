@@ -121,7 +121,7 @@ export const DEFAULT: RenderConfig = {
     on: true,
     kind: 'pulse',
     strength: 1,
-    from: -0.24,
+    from: -0.16,
     to: 0.08,
     braced: 0.25,
     pinch: { across: 0.45, up: 0.3 },
@@ -130,7 +130,7 @@ export const DEFAULT: RenderConfig = {
     fisheye: { power: 0.5 },
     vertigo: { narrow: 0.45 },
   },
-  blur: { on: true, reach: 0.12, taps: 4 },
+  blur: { on: true, reach: 0.02, taps: 2 },
   nudge: { on: true, spread: 1.2 },
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
@@ -265,14 +265,16 @@ const SAVED = 'compression-event:render-configs';
 /** Storage can be refused outright — a private window, a sandboxed page — and
  * a config that cannot be remembered is still a config. */
 function stored<T>(key: string, fallback: T): T {
-  try {
-    const it = localStorage.getItem(key);
+  return fallback;
 
-    return it === null ? fallback : JSON.parse(it) as T;
-  }
-  catch {
-    return fallback;
-  }
+  // try {
+  //   const it = localStorage.getItem(key);
+
+  //   return it === null ? fallback : JSON.parse(it) as T;
+  // }
+  // catch {
+  //   return fallback;
+  // }
 }
 
 function store(key: string, value: unknown): void {
