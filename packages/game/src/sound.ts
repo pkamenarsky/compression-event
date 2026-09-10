@@ -94,26 +94,13 @@ export function stopAll(): void {
  * played can drop it: the handle takes itself out of `_active` when the sound
  * is over, on the length the factory reported. A `FOREVER` one is the
  * exception, and holding its handle is the whole of starting it.
- *
- * `from` starts it part way in, that many seconds after its beginning — for a
- * sound that belongs to something already under way, like the escalation into
- * a shift after the level has been held. The factory is told it began `from`
- * seconds ago, and since every factory schedules in the context's own time,
- * whatever it put before now takes effect at once: envelopes are where they
- * would have got to, layers already in are already sounding, and a transient
- * over and done with before now is not heard at all. A sound asked to start
- * after its own end is not started.
  */
-export function playSound(def: SoundDef, from = 0): SoundHandle {
+export function playSound(def: SoundDef): SoundHandle {
   const ctx = getContext();
-  const startTime = ctx.currentTime - from;
+  const startTime = ctx.currentTime;
 
   // Build the node graph
   const { node: output, over } = def(ctx, startTime);
-
-  // Built and never connected: what it scheduled is all in the past, and goes
-  // with the graph.
-  if (over - from <= 0) return { stop() {} };
 
   // Master gain so we can fade out on stop
   const master = ctx.createGain();
@@ -152,7 +139,7 @@ export function playSound(def: SoundDef, from = 0): SoundHandle {
   // puts on has nothing left to fade by then, and the point of the timer is the
   // bookkeeping rather than the silence.
   if (over !== FOREVER) {
-    ending = setTimeout(() => handle.stop(), (over - from) * 1000 + 50) as unknown as number;
+    ending = setTimeout(() => handle.stop(), over * 1000 + 50) as unknown as number;
   }
 
   return handle;

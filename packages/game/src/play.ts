@@ -265,37 +265,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * after an `await` asks, because between the two it may not be. */
   let live = true;
 
-  /** Whether this beat has an escalation, whether or not it is still
-   * sounding: what letting go of a hold has to pick back up. */
-  let escalating = false;
-
   /** The escalation that says a shift is on its way. Restarted whenever the
-   * clock is, and stopped outright when there is nothing to escalate to.
-   * `from` joins it part way through the beat. */
-  const escalate = (on = true, from = 0): void => {
+   * clock is, and stopped outright when there is nothing to escalate to. */
+  const escalate = (on = true): void => {
     coming?.stop();
-    escalating = on;
-    coming = on ? playSound(versionShift({ duration: HOLD }), from) : null;
-  };
-
-  /**
-   * Whether the level's own time is held, from the tweak panel: the beat, a
-   * shift in flight and a death in progress all stop where they are, and the
-   * player can still walk about in it and look. For looking at the picture
-   * part way through something without it getting away.
-   *
-   * The sound is left to play out rather than cut — nothing new is started by
-   * the level while its clock is still — and letting go joins the escalation
-   * where the beat has got to, so it arrives with the shift again.
-   */
-  let frozen = false;
-
-  const freeze = (on: boolean): void => {
-    if (on === frozen) return;
-
-    frozen = on;
-
-    if (!on && escalating && running) escalate(true, HOLD - clock);
+    coming = on ? playSound(versionShift({ duration: HOLD })) : null;
   };
 
   /** The version on screen, standing still. */
@@ -595,19 +569,16 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     if (running && !say.busy()) {
       // A player who is dying is a spectator: the shift below still runs, and
       // nothing else about standing in the level does.
-      // The level's time, which a hold stops and nothing else does.
-      const ticked = frozen ? 0 : dt;
-
       if (dying === null) {
         stepped(dt);
 
         // Through the shift as well, so that the beat is `HOLD` and not `HOLD`
         // plus however long the picture happens to take.
-        clock -= ticked;
+        clock -= dt;
       }
 
       if (shifting !== null) {
-        shifting += ticked;
+        shifting += dt;
 
         // The end of the picture is the moment the level *is* the next
         // version: the walls that stop the player and the places the
@@ -642,7 +613,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       // Counted after the shift above, so that the frame the level closes on
       // is the frame the black starts from rather than one behind it.
       if (dying !== null) {
-        dying += ticked;
+        dying += dt;
         say.veil(dying / SHIFT);
 
         if (dying >= SHIFT) void ended();
@@ -752,7 +723,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    * and letting it go is otherwise someone leaving — see `locked` — so the
    * panel being open is asked first. Closing it takes the pointer back.
    */
-  const panel = tweak(host, () => look, next => configured(next), freeze);
+  const panel = tweak(host, () => look, next => configured(next));
 
   const tweaking = (): void => {
     panel.toggle();
