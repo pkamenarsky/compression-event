@@ -21,12 +21,12 @@
 // - a wall writes `markWall`;
 // - a transparent material keeps three's normal blending, which leaves
 //   `src + dst * (1 - src)` in alpha — the share under it scaled by what it
-//   leaves showing, which is exactly how much wall is still to be seen.
+//   leaves showing, which is exactly how much wall is still to be seen. The
+//   artefacts' shadows are one: a ramp of black, which the pass quantises into
+//   a pattern like any other colour.
 //
-// One exception, known: the artefacts' shadows fade by discarding in a Bayer
-// stipple of their own, which is drawn into the scene and so does move with
-// a warp. A stipple cannot be deferred — the pass does not know what was under
-// it.
+// Nothing drawn into the scene makes a screen-space pattern of its own. One
+// made there is one the warp stretches; patterns are the pass's to lay down.
 // -----------------------------------------------------------------------------
 
 import type { Stage } from './screen';

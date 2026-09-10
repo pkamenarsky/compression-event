@@ -2,7 +2,7 @@
 // Artefacts, in three dimensions
 //
 // The jam build's look, carried over: a black solid with white edges, floating
-// a little off the ground, turning slowly and bobbing, over a dithered shadow.
+// a little off the ground, turning slowly and bobbing, over a shadow.
 // What changed on the way over is the bookkeeping. There the four kinds were
 // four factories with fifteen options each, and each one owned its meshes, its
 // materials, its shadow and its own copy of the same rotate-and-bob; here a
@@ -19,7 +19,6 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { bayerGLSL } from './dither';
 import { IconType, SCALE } from './world';
 
 /** Where one artefact stands, in editor units. */
@@ -426,9 +425,12 @@ function body(type: IconType): Body {
 // -----------------------------------------------------------------------------
 // The shadow
 //
-// A patch on the ground that fades out towards its edge, with the fade dithered
-// rather than blended: the whole look is opaque pixels in a pattern, and an
-// alpha ramp under a floating object is the one place a soft edge would show.
+// A patch on the ground that fades out towards its edge. Blended, and yet not
+// soft: the fade is a ramp in the scene target, and the screen pass quantises
+// it into the same pattern of opaque pixels as everything else — laid down in
+// the pixels it is seen in, after the warp, rather than stippled into the scene
+// where the warp would stretch it. An ordinary transparent material, so what
+// it leaves in the target's alpha is what `target.ts` says it should be.
 //
 // Two of them, and they differ only in what "towards its edge" means — the
 // distance from the middle, or the further of the two axes. A round thing over
@@ -441,7 +443,7 @@ function shadow(fragment: string): THREE.ShaderMaterial {
     fragmentShader: fragment,
     side: THREE.DoubleSide,
     depthWrite: false,
-    transparent: false,
+    transparent: true,
   });
 }
 
@@ -459,16 +461,14 @@ const shadowVertex = /* glsl */ `
 const fade = /* glsl */ `
   void shed(float d) {
     if (d > 1.0) discard;
-    if (1.0 - smoothstep(0.0, 1.0, d) < bayerDither(gl_FragCoord.xy)) discard;
 
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0 - smoothstep(0.0, 1.0, d));
   }
 `;
 
 const roundShadow = /* glsl */ `
   varying vec2 vUv;
 
-  ${bayerGLSL}
   ${fade}
 
   void main() {
@@ -479,7 +479,6 @@ const roundShadow = /* glsl */ `
 const boxyShadow = /* glsl */ `
   varying vec2 vUv;
 
-  ${bayerGLSL}
   ${fade}
 
   void main() {
