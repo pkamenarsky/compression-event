@@ -243,7 +243,28 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       grow(bounding(version.polygons.map(p => p.points)));
     }
 
+    warm();
     reconcile(-1);
+  }
+
+  /**
+   * Every span drawn once, out of sight, as soon as it is held.
+   *
+   * A span is otherwise drawn for the first time at the start of its own
+   * shift — and a run plays each once, in order, so every shift of a first run
+   * was a first draw: its buffers and float tables uploaded, and on the first
+   * shift its programs compiled, in the frame the level began to move. A
+   * laptop hid that inside the frame; a phone did not. Nothing in a morph is
+   * ever culled, so one draw with all of them in the scene reaches all of it.
+   */
+  function warm(): void {
+    if (morphs.length === 0) return;
+
+    for (const m of morphs) scene.add(m.walls, m.lines, m.fill);
+
+    screen.prime(scene, camera);
+
+    for (const m of morphs) scene.remove(m.walls, m.lines, m.fill);
   }
 
   /**

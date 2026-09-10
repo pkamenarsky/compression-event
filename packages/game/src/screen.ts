@@ -161,6 +161,22 @@ export class ScreenPass {
     this.u.uTime.value = time;
   }
 
+  /**
+   * The scene drawn into the target and not put on screen.
+   *
+   * For getting things onto the GPU before they are wanted: three uploads a
+   * mesh's buffers and textures, and compiles its program, the first time it
+   * is drawn, and the first time should not be a frame anyone is watching.
+   * Into the target rather than anywhere else, because what a program is
+   * compiled for depends on what it is drawn into.
+   */
+  prime(scene: THREE.Scene, camera: THREE.Camera): void {
+    this.renderer.setRenderTarget(this.target);
+    this.renderer.clear();
+    this.renderer.render(scene, camera);
+    this.renderer.setRenderTarget(null);
+  }
+
   apply(scene: THREE.Scene, camera: THREE.Camera): void {
     this.audit(scene);
     this.renderer.setRenderTarget(this.target);

@@ -271,8 +271,25 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     coming = on ? playSound(versionShift({ duration: HOLD })) : null;
   };
 
-  /** The version on screen, standing still. */
+  /**
+   * The version on screen, standing still.
+   *
+   * Where a baked span reaches it, that is the walk at rest at its end — the
+   * start of the span leaving it, or for the last one the end of the span
+   * arriving — which is the same geometry the shift was just drawing, exactly,
+   * so arriving swaps nothing. Standing at a version used to rebuild its walls
+   * from the rings on the frame the shift landed, buffers and upload and all,
+   * which a phone did not have a frame's worth of time for.
+   *
+   * Only where the bake does not reach — a bake that stopped short, or a level
+   * of one version with no spans at all — are the walls built from the rings.
+   */
   const drawn = (v: number): void => {
+    if (spans > 0 && v <= spans) {
+      view.walk(v / spans);
+      return;
+    }
+
     view.walk(null);
     view.show(runs(world, v), world.versions[v]?.floors ?? []);
   };
