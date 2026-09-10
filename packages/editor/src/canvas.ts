@@ -106,6 +106,8 @@ import {
   ARTEFACTS,
   ArtefactId,
   FIGURES,
+  FLOOR,
+  SOLID,
   KINDS,
   inverted,
   NGON_MAX,
@@ -3335,23 +3337,16 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
     return null;
   }
 
-  // One texture per way of going, and the three are told apart by direction
-  // before they are told apart by colour: a solid hatches diagonally, a floor
-  // stipples, and a void rules straight across. Direction is what survives
-  // being drawn one inside another, which is the ordinary case here — a void
-  // is nearly always sitting inside the floor or the solid it cuts.
-  if (kind.type === 'void') {
-    on.strokeStyle = theme.voidLines;
-    on.lineWidth = 1;
-
-    // Half a pixel off the seam, so the line lands on a pixel row rather than
-    // between two of them and comes out one solid rule instead of two grey.
-    on.beginPath();
-    on.moveTo(0, step / 2 + 0.5);
-    on.lineTo(step, step / 2 + 0.5);
-    on.stroke();
-  }
-  else if (kind.type === 'solid') {
+  // The texture of every set the polygon acts in, laid one over the other, and
+  // a void's own rules over those. So a void is drawn as what it takes away —
+  // hatched where it cuts the solids, stippled where it cuts the floors, both
+  // where it cuts both — and the rules through it are what say it is the
+  // taking-away rather than the thing. Three masks, three pictures, and none
+  // of them the picture of a plain solid or a plain floor.
+  //
+  // Direction before colour, which is what survives one being drawn inside
+  // another: a void is nearly always sitting inside the very shape it cuts.
+  if (kind.type === 'solid' || (kind.type === 'void' && (kind.from & SOLID) !== 0)) {
     on.strokeStyle = theme.solidHatch;
     on.lineWidth = 1;
 
@@ -3367,13 +3362,26 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
 
     on.stroke();
   }
-  else {
+
+  if (kind.type === 'floor' || (kind.type === 'void' && (kind.from & FLOOR) !== 0)) {
     // One dot a tile, in the middle of it, so nothing lands on a seam and the
     // grid stays even however the pattern falls on the shape.
     on.fillStyle = theme.floorDots;
     on.beginPath();
     on.arc(step / 2, step / 2, 1, 0, 2 * Math.PI);
     on.fill();
+  }
+
+  if (kind.type === 'void') {
+    on.strokeStyle = theme.voidLines;
+    on.lineWidth = 1;
+
+    // Half a pixel off the middle, so the rule lands on a pixel row rather
+    // than between two of them and comes out one line instead of two grey.
+    on.beginPath();
+    on.moveTo(0, step / 2 + 0.5);
+    on.lineTo(step, step / 2 + 0.5);
+    on.stroke();
   }
 
   const made = on.createPattern(tile, 'repeat');
@@ -3426,9 +3434,14 @@ function outlined(
     trace(ctx, view, ring);
   }
 
-  if (here) shaded(ctx, kind);
+  // Whatever it is, wherever it is. The texture says what kind of thing this
+  // is and the selection fill says whether it is held, and neither is a claim
+  // about whether it can be clicked — that is the stroke's to make, and it
+  // makes it below. A floor outside the group standing open that stopped being
+  // stippled would be a floor that had stopped being a floor.
+  shaded(ctx, kind);
 
-  if (picked && here) {
+  if (picked) {
     ctx.fillStyle = fill;
     ctx.fill();
   }

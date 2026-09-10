@@ -2330,6 +2330,31 @@ describe('going inside a group', () => {
     expect(shapeArea(csg(made.world, 0))).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
 
+  test('a loose group round a scope stands where the scope does, not where its parts do', () => {
+    // The handle's extent is the union of what its members are *on screen as*.
+    // A scope inside it is on screen as the one shape it resolved to, hole and
+    // all, and going past that to the polygons underneath would put the hole's
+    // own rectangle back into the union — a handle bulging out over the very
+    // shape sealing took off the screen.
+    const { world, ids } = drawn(
+      ['floor', rect(0, 0, 100, 100)],
+      ['hole', rect(60, 60, 80, 80)],
+      ['level', rect(0, 0, 10, 10)],
+    );
+
+    const scope = sealed(world, 0, ids.slice(0, 2), TOP)!;
+    const handle = grouped(scope.world, 0, [scope.id, ids[2]], TOP)!;
+
+    const out = occupying(handle.world, 0, resolveAt(handle.world, 0), []);
+    const loose = out.find(o => o.id === handle.id)!;
+
+    expect(loose.gone).toBe('loose');
+
+    // The floor with its corner cut out, and the little room already inside
+    // it: nothing of the hole beyond x = 100 or y = 100.
+    expect(shapeArea(loose.shape)).toBeCloseTo(100 * 100 - 40 * 40, 6);
+  });
+
   test('an open group occupies nothing: its members draw for themselves', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],

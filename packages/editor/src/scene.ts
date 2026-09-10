@@ -2797,20 +2797,6 @@ function shutGroups(
   return out;
 }
 
-/** Everything a group holds, unioned, whatever slot any of it fills: where the
- * group *is*, for a group that has no boundary of its own. */
-function extent(world: World, mine: ReadonlyMap<Id, Resolved>, id: Id): Shape {
-  const it = mine.get(id);
-
-  if (it !== undefined) return it.shape;
-
-  const group = world.groups.get(id);
-
-  if (group === undefined) return [];
-
-  return unionAll(group.members.map(m => extent(world, mine, m)));
-}
-
 /** The shut groups that occupy nothing, given their extent to stand in. */
 function withExtents(
   world: World,
@@ -2818,15 +2804,30 @@ function withExtents(
   path: readonly GroupId[],
   shown: Occupied[],
 ): Occupied[] {
-  const held = new Set(shown.map(o => o.id));
+  const held = new Map<Id, Shape>(shown.map(o => [o.id, occupiedShape(o)]));
   const missing = [...shutGroups(world, items, path)].filter(id => !held.has(id));
 
   if (missing.length === 0) return shown;
 
-  const mine = new Map(items.map(it => [it.id as Id, it]));
+  const mine = new Map(items.map(it => [it.id as Id, it.shape]));
+
+  /**
+   * Everything the group holds, unioned: where it *is*, for a group that has
+   * no boundary of its own.
+   *
+   * What each member is on screen as, rather than what it is made of. A scope
+   * inside the group has already answered that — it is in `held`, as the one
+   * outline it draws — and going past it to the polygons underneath would put
+   * its internal geometry back into the union: a loose group round a sealed
+   * one would bulge out over the hole the scope cut in itself, which is the
+   * very shape sealing took off the screen.
+   */
+  const extent = (id: Id): Shape => held.get(id)
+    ?? mine.get(id)
+    ?? unionAll((world.groups.get(id)?.members ?? []).map(extent));
 
   for (const id of missing) {
-    const shape = extent(world, mine, id);
+    const shape = extent(id);
 
     if (shape.length === 0) continue;
 
