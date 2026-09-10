@@ -44,6 +44,20 @@ export const bayerGLSL = /* glsl */ `
   }
 `;
 
+/**
+ * Whether the scene is being drawn into the pass's target, where the walls
+ * leave their nudge to the pass rather than putting it in themselves.
+ *
+ * The nudge is a pattern in screen space, and a pattern drawn into the scene
+ * is one the warp then stretches: cells doubled where it swells, crushed where
+ * it squeezes, and a checkerboard of both where it moves. So the walls mark
+ * where they are and the pass lays the pattern down after the warp, in the
+ * pixels it is going to be seen in. One uniform object shared by every wall
+ * material, set only for the length of the pass's own scene render, so a
+ * renderer drawing straight to the screen gets the walls as they always were.
+ */
+export const deferred = { value: 0 };
+
 /** The 8x8 matrix the pass itself uses, normalised to [0, 1). */
 const BAYER_8X8 = [
   0, 48, 12, 60, 3, 51, 15, 63,
@@ -88,6 +102,7 @@ const fragmentShader = /* glsl */ `
 
   varying vec2 vUv;
 
+  ${bayerGLSL}
   ${warpGLSL}
 
   void main() {
@@ -97,11 +112,19 @@ const fragmentShader = /* glsl */ `
       uv = floor(uv * uResolution / uPixelSize) * uPixelSize / uResolution;
     }
 
-    vec3 color = warped(uv);
+    vec4 texel = warped(uv);
+    vec3 color = texel.rgb;
 
     vec2 at = vUv * uResolution;
 
     if (uPixelSize > 1.0) at = floor(at / uPixelSize);
+
+    // A wall, by its half alpha: the nudge it would have given itself, here
+    // where it cannot be warped, and clamped where the target would have
+    // clamped it. See \`deferred\`.
+    if (texel.a < 0.75) {
+      color = clamp(color + (bayerDither(floor(at)) - 0.5) * 1.2, 0.0, 1.0);
+    }
 
     float threshold = texture2D(uBayer, at / 8.0).r;
     float bias = (threshold - 0.5) * uStrength;
@@ -169,7 +192,6 @@ export class DitherPass {
         uPixelSize: { value: options.pixelSize ?? 1 },
         uWarp: { value: 0 },
         uAmount: { value: 0 },
-        uProgress: { value: 0 },
         uTime: { value: 0 },
         uAspect: { value: width / height },
       },
@@ -190,12 +212,11 @@ export class DitherPass {
 
   /** Which warp, and how far into it — see `warp.ts`. Left alone it stays at
    * none, and the pass reads the scene exactly where it always did. */
-  warp(index: number, amount: number, progress: number, time: number): void {
+  warp(index: number, amount: number, time: number): void {
     const u = this.material.uniforms;
 
     u.uWarp.value = index;
     u.uAmount.value = amount;
-    u.uProgress.value = progress;
     u.uTime.value = time;
   }
 
@@ -207,7 +228,15 @@ export class DitherPass {
 
     this.renderer.setRenderTarget(this.target);
     this.renderer.clear();
-    this.renderer.render(scene, camera);
+    deferred.value = 1;
+
+    try {
+      this.renderer.render(scene, camera);
+    }
+    finally {
+      deferred.value = 0;
+    }
+
     this.renderer.setRenderTarget(null);
 
     const was = this.renderer.autoClear;

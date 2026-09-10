@@ -22,7 +22,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { bayerGLSL } from './dither';
+import { bayerGLSL, deferred } from './dither';
 import { Point } from './world';
 
 /**
@@ -297,6 +297,7 @@ export const laidShader = /* glsl */ `
 
 export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
+  uniform float uDeferred;
 
   ${VARYINGS}
 
@@ -317,6 +318,14 @@ export const wallFragment = /* glsl */ `
 
     light = light * 0.6 + 0.4;
     light *= mix(0.7, 1.0, vHeightFrac);
+
+    // Under the dither pass the nudge is the pass's to give, after the picture
+    // has been warped, and the wall only says where it goes: half an alpha,
+    // which nothing else in the scene writes. See \`DitherPass\`.
+    if (uDeferred > 0.5) {
+      fragColor = vec4(uWallColor * light, 0.5);
+      return;
+    }
 
     vec3 color = uWallColor * light + (bayerDither(gl_FragCoord.xy) - 0.5) * 1.2;
 
@@ -708,7 +717,11 @@ export function materials(
     glslVersion: THREE.GLSL3,
     vertexShader,
     fragmentShader: wallFragment,
-    uniforms: { ...uniforms, uWallColor: { value: new THREE.Color(options.wallColor) } },
+    uniforms: {
+      ...uniforms,
+      uWallColor: { value: new THREE.Color(options.wallColor) },
+      uDeferred: deferred,
+    },
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,

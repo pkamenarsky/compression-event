@@ -20,8 +20,8 @@
 // that the sign turns it round. At zero the pass reads exactly where it always
 // did, which is why the editor, which never sets it, is untouched.
 //
-// `vertigo` is not here at all: it is a move of the camera, and the game does
-// it. As far as the shader knows it is `none`.
+// `vertigo` is not here at all: it is the camera's view narrowing, and the
+// game does it. As far as the shader knows it is `none`.
 //
 // Experimental, and switched between in the game with `<` and `>`.
 // -----------------------------------------------------------------------------
@@ -30,9 +30,7 @@
 export const WARPS = [
   'none',
   'pinch',
-  'vice',
   'pulse',
-  'shockwave',
   'buckle',
   'vertigo',
 ] as const;
@@ -49,7 +47,6 @@ export type Warp = typeof WARPS[number];
 export const warpGLSL = /* glsl */ `
   uniform int uWarp;
   uniform float uAmount;
-  uniform float uProgress;
   uniform float uTime;
   uniform float uAspect;
 
@@ -71,10 +68,10 @@ export const warpGLSL = /* glsl */ `
     return clamp(p + (q - p) * fade, -edge, edge);
   }
 
-  vec3 warped(vec2 uv) {
+  vec4 warped(vec2 uv) {
     float a = clamp(uAmount, -1.0, 1.0);
 
-    if (uWarp == 0 || a == 0.0) return texture2D(uScene, uv).rgb;
+    if (uWarp == 0 || a == 0.0) return texture2D(uScene, uv);
 
     vec2 edge = vec2(0.5 * uAspect, 0.5);
     vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
@@ -88,18 +85,9 @@ export const warpGLSL = /* glsl */ `
       q = vec2(bend(p.x, edge.x, 0.45 * a), bend(p.y, edge.y, 0.3 * a));
     }
 
-    // The sides press in like a vice: what is at the edges of the screen grows
-    // towards the middle, hardest halfway up, and the middle is squeezed thin
-    // between them.
-    else if (uWarp == 2) {
-      float bow = 1.0 - 0.5 * (p.y / edge.y) * (p.y / edge.y);
-
-      q = vec2(bend(p.x, edge.x, -0.45 * a * bow), p.y);
-    }
-
     // A pulse in the ears: the whole view throbs, two beats at a time, faster
     // the closer the level is to shut.
-    else if (uWarp == 3) {
+    else if (uWarp == 2) {
       float rate = 1.2 + 2.5 * abs(a);
       float t = fract(uTime * rate);
       float beat = exp(-t * 9.0) + 0.6 * exp(-max(t - 0.22, 0.0) * 9.0) * step(0.22, t);
@@ -108,32 +96,15 @@ export const warpGLSL = /* glsl */ `
       q = vec2(bend(p.x, edge.x, k), bend(p.y, edge.y, k));
     }
 
-    // Rings travelling in from the edge of the screen to the middle — out
-    // from it, going the other way — bending the picture as they cross it.
-    else if (uWarp == 4) {
-      vec2 dir = r > 0.0 ? p / r : vec2(0.0);
-      float shift = 0.0;
-
-      for (int i = 0; i < 3; i++) {
-        float phase = fract(uProgress * 1.5 + float(i) / 3.0);
-        float at = a > 0.0 ? 1.1 * (1.0 - phase) : 1.1 * phase;
-        float d = r - at;
-
-        shift += d * exp(-d * d * 180.0);
-      }
-
-      q = held(p, p - dir * shift * 0.9 * abs(a), edge);
-    }
-
     // The walls buckling under it: the picture shears in bands, harder
     // towards the edges where the walls are, as if the screen itself were
     // being pressed out of true.
-    else if (uWarp == 5) {
+    else if (uWarp == 3) {
       float band = sin(p.y * 22.0 + uTime * 7.0) * sin(p.y * 5.0 - uTime * 3.0);
 
       q = held(p, vec2(p.x + band * 0.05 * a * r, p.y), edge);
     }
 
-    return texture2D(uScene, clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0)).rgb;
+    return texture2D(uScene, clamp(q / vec2(uAspect, 1.0) + 0.5, 0.0, 1.0));
   }
 `;

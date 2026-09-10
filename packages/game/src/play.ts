@@ -113,18 +113,9 @@ const TAKEN = 1.5;
 const BRACE = 1.2;
 const BRACED = 0.25;
 
-/**
- * The vertigo warp, which is a dolly zoom: the camera backs away as the view
- * narrows, so what is `FOCUS` ahead stays the size it was and everything past
- * it looms in. At most `PULL` back — less where a wall is nearer than that —
- * and `PUSH` forwards, widening, the other way round.
- */
-const PULL = 3;
-const PUSH = 1.5;
-const FOCUS = 2.5;
-
-/** How finely the way back is felt for walls. */
-const FEEL = 0.1;
+/** How far the vertigo warp narrows the view at its height: the tangent of
+ * half of it, taken down by this much. The other way round it widens. */
+const NARROW = 0.45;
 
 /** Turn per pixel of mouse. */
 const LOOK = 0.002;
@@ -636,7 +627,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     }
 
     elapsed += dt;
-    dollied(bent());
+    looked(bent());
 
     crowd.update(dt, view.camera);
 
@@ -671,10 +662,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
    */
   function bent(): number {
     let amount = 0;
-    let progress = 0;
 
     if (shifting !== null) {
-      progress = Math.min(shifting / SHIFT, 1);
+      const progress = Math.min(shifting / SHIFT, 1);
 
       const opening = leg.to < leg.from;
       const swell = Math.sin(Math.PI * progress);
@@ -687,45 +677,21 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
     if (dying !== null) amount = Math.max(amount, Math.min(dying / SHIFT, 1));
 
-    view.warp(warp, amount, progress, elapsed);
+    view.warp(warp, amount, elapsed);
 
     return amount;
   }
 
-  /**
-   * The camera, where the player is — or, under the vertigo warp, backed away
-   * from there with the view narrowed to keep `FOCUS` the same size.
-   *
-   * The way back is felt for in steps against the walls of both ends of the
-   * shift, since the ones drawn are somewhere between the two, and it stops
-   * short of the first one that is not somewhere to stand. The narrowing is
-   * worked out from how far it actually got, so a wall behind the player cuts
-   * the effect short rather than putting the camera through it.
-   */
-  function dollied(amount: number): void {
+  /** The camera where the player is, looking where they are — and under the
+   * vertigo warp, with the view narrowed as the level closes. */
+  function looked(amount: number): void {
     const cam = view.camera;
-    const fx = Math.sin(player.yaw), fz = -Math.cos(player.yaw);
 
-    let back = 0;
+    cam.position.set(player.x, EYE, player.z);
+    cam.lookAt(player.x + Math.sin(player.yaw), EYE, player.z - Math.cos(player.yaw));
 
-    if (WARPS[warp] === 'vertigo' && amount !== 0) {
-      const way = Math.sign(amount);
-      const want = Math.abs(amount) * (amount > 0 ? PULL : PUSH);
-
-      for (let s = FEEL; s <= want + 1e-6; s += FEEL) {
-        const at = { x: player.x - fx * way * s, y: player.z - fz * way * s };
-        const clear = [version, footing].every(v => walls[v]?.standable(at) ?? true);
-
-        if (!clear) break;
-
-        back = s * way;
-      }
-    }
-
-    cam.position.set(player.x - fx * back, EYE, player.z - fz * back);
-    cam.lookAt(cam.position.x + fx, EYE, cam.position.z + fz);
-
-    const half = Math.tan(wide / 2 * Math.PI / 180) * FOCUS / (FOCUS + back);
+    const narrowed = WARPS[warp] === 'vertigo' ? NARROW * amount : 0;
+    const half = Math.tan(wide / 2 * Math.PI / 180) * (1 - narrowed);
     const fov = Math.atan(half) * 2 * 180 / Math.PI;
 
     if (cam.fov !== fov) {
