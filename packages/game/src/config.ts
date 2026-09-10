@@ -111,6 +111,52 @@ export const DEFAULT: RenderConfig = {
   quantise: { on: true, levels: 5, strength: 1.1 },
 };
 
+export const FISHEYE: RenderConfig = {
+  warp: {
+    on: true,
+    kind: 'fisheye',
+    strength: 1,
+    brace: 1.2,
+    braced: 0.25,
+    pinch: {
+      across: 0.45,
+      up: 0.3
+    },
+    pulse: {
+      depth: 0.4,
+      rate: 1.2,
+      quicken: 2.5
+    },
+    buckle: {
+      shear: 0.05,
+      bands: 22
+    },
+    fisheye: {
+      power: 0.15
+    },
+    vertigo: {
+      narrow: 0.45
+    }
+  },
+  blur: {
+    on: true,
+    reach: 0.12,
+    taps: 12
+  },
+  nudge: {
+    on: true,
+    spread: 1.2
+  },
+  stipple: {
+    on: true
+  },
+  quantise: {
+    on: true,
+    levels: 5,
+    strength: 1.1
+  }
+};
+
 /** The configurations worth keeping, by name. The first is where a fresh
  * browser starts. */
 export const PRESETS: Record<string, RenderConfig> = {
@@ -120,6 +166,8 @@ export const PRESETS: Record<string, RenderConfig> = {
     warp: { on: false },
     blur: { on: false },
   }),
+
+  fisheye: FISHEYE
 };
 
 /** The most taps the blur's loop will run, whatever the config asks for. */
