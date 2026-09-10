@@ -133,7 +133,17 @@ export function hud(host: HTMLElement): Hud {
           clearTimeout(timer);
           screen.style.display = 'none';
           document.removeEventListener('click', over);
+          document.removeEventListener('pointerup', lifted);
           resolve();
+        };
+
+        // A finger as well as a click. On a phone the game cancels its
+        // touches, which is the only thing that keeps iOS from reading a held
+        // thumb as a long press, and a cancelled touch never becomes a click.
+        // A finger lifting still counts as a gesture, so the audio is let
+        // start by it all the same.
+        const lifted = (e: PointerEvent): void => {
+          if (e.pointerType !== 'mouse') over();
         };
 
         // A second message over the first would leave the first's waiter
@@ -145,6 +155,7 @@ export function hud(host: HTMLElement): Hud {
         // a click goes to the canvas, and a message nobody can dismiss is a
         // game nobody can start.
         document.addEventListener('click', over);
+        document.addEventListener('pointerup', lifted);
 
         if (ms > 0) timer = setTimeout(over, ms) as unknown as number;
       });

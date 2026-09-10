@@ -15,9 +15,9 @@
 // The right is a drag: however far it moves across is how far the view turns,
 // the way the mouse does it, with nothing to hold.
 //
-// Pointer events rather than touch events, and `touch-action: none` on the host
-// rather than a `preventDefault` on every touch — which would also swallow the
-// click the title screen waits for.
+// Pointer events rather than touch events, with `touch-action: none` on the
+// host. The touches themselves are cancelled as well, for iOS's sake — see
+// `refused` below.
 // -----------------------------------------------------------------------------
 
 import { STICK_DEAD, STICK_REACH as REACH, TOUCH_LOOK } from './controls';
@@ -151,12 +151,18 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
     if (looking !== null && e.pointerId === looking.id) looking = null;
   };
 
-  // A held thumb is a long press to the browser, which answers with a menu
-  // or a selection unless told there is nothing here to offer either for.
+  // A held thumb is a long press to the browser, which answers with a menu, a
+  // selection or — on iOS, whatever the CSS says — the magnifying loupe. Only
+  // cancelling the touch itself stops that last one. Pointer events still
+  // arrive after it; the click does not, which is why the title screen also
+  // takes a finger lifting. See `say` in `hud.ts`.
   const refused = (e: Event): void => e.preventDefault();
+  const active = { passive: false };
 
   host.addEventListener('contextmenu', refused);
   host.addEventListener('selectstart', refused);
+  host.addEventListener('touchstart', refused, active);
+  host.addEventListener('touchmove', refused, active);
   host.addEventListener('pointerdown', down);
   window.addEventListener('pointermove', moved);
   window.addEventListener('pointerup', up);
@@ -165,6 +171,8 @@ export function thumbs(host: HTMLElement, turned: (by: number) => void): Thumbs 
   function dispose(): void {
     host.removeEventListener('contextmenu', refused);
     host.removeEventListener('selectstart', refused);
+    host.removeEventListener('touchstart', refused);
+    host.removeEventListener('touchmove', refused);
     host.removeEventListener('pointerdown', down);
     window.removeEventListener('pointermove', moved);
     window.removeEventListener('pointerup', up);
