@@ -404,10 +404,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     let wx = 0, wz = 0;
 
     if (ahead !== 0 || across !== 0) {
-      // All or nothing, from the keys and the stick alike, and a diagonal is
-      // as fast as a straight line. Both at once cannot walk faster either.
+      // Keys are all or nothing, and a diagonal is as fast as a straight line.
+      // The stick's strafe is a throttle, so part of the way to the side on
+      // its own is part of full speed; with forward as well it only turns
+      // the walk. Nothing, keys and stick at once included, walks faster.
       const l = Math.hypot(ahead, across);
-      const k = WALK_SPEED / l;
+      const k = Math.min(l, 1) / l * WALK_SPEED;
       const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
 
       wx = (sin * ahead + cos * across) * k;

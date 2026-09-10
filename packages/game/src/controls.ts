@@ -30,12 +30,12 @@ export const MOUSE_LOOK = 0.002;
 export const STICK_REACH = 56;
 
 /**
- * How far along one axis the left thumb has to go before it walks that way, as
- * a share of `STICK_REACH`.
+ * How far forward or back the left thumb has to go before it walks that way,
+ * as a share of `STICK_REACH`.
  *
- * The stick is four keys rather than a throttle: past this on an axis walks
- * full speed along it, short of it does not walk along it at all. So a thumb
- * pushing forward with a little drift to one side walks straight.
+ * Forward and back are keys rather than a throttle: past this walks full speed,
+ * short of it does not walk at all. The sideways has no such line — it strafes
+ * as fast as the thumb is far to the side, all the way to `STICK_REACH`.
  */
 export const STICK_DEAD = 0.35;
 
