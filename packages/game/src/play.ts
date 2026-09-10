@@ -40,7 +40,7 @@ import { Standing, artefacts } from './artefacts';
 import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
-import { DRAG, GRIP, MOUSE_LOOK, WALK_SPEED } from './controls';
+import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, WALK_SPEED } from './controls';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
 import { EASINGS, REPLAY_EASE, REPLAY_MS } from './replay';
@@ -739,6 +739,24 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     if (document.pointerLockElement === canvas) player.yaw += e.movementX * MOUSE_LOOK;
   };
 
+  /** When the last few presses came, for the triple one that restarts. */
+  let presses: number[] = [];
+
+  const tapped = (e: PointerEvent): void => {
+    const now = e.timeStamp;
+
+    presses = presses.filter(at => now - at <= RESTART_GAP * 2).concat(now);
+
+    const [a, b, c] = presses.slice(-3);
+    if (c === undefined || b - a > RESTART_GAP || c - b > RESTART_GAP) return;
+
+    presses = [];
+
+    // Not over a message: the title, the end and the black after dying each
+    // have their own way on, and a restart under one would race it.
+    if (running && !say.busy()) restart();
+  };
+
   // A window that loses the focus keeps whatever was held down forever.
   const blurred = (): void => down.clear();
 
@@ -748,6 +766,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   host.addEventListener('click', grab);
+  host.addEventListener('pointerdown', tapped);
   document.addEventListener('pointerlockchange', locked);
   window.addEventListener('keydown', pressed);
   window.addEventListener('keyup', released);
@@ -790,6 +809,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       if (document.pointerLockElement === canvas) document.exitPointerLock();
 
       host.removeEventListener('click', grab);
+      host.removeEventListener('pointerdown', tapped);
       document.removeEventListener('pointerlockchange', locked);
       window.removeEventListener('keydown', pressed);
       window.removeEventListener('keyup', released);

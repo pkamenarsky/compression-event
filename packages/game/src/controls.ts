@@ -39,6 +39,11 @@ export const STICK_REACH = 56;
  */
 export const STICK_DEAD = 0.35;
 
+/** How close together, in milliseconds, three clicks or taps have to come —
+ * each within this of the one before — to restart the level. Anywhere on the
+ * screen, with a mouse or a finger. */
+export const RESTART_GAP = 400;
+
 /** Turn per CSS pixel of right thumb, in radians. Well above the mouse's: a
  * thumb covers a phone's width in a few centimetres, and one swipe across it
  * should be a good way round. */
