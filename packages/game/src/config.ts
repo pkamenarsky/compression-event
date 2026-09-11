@@ -212,14 +212,12 @@ export const DEFAULT: RenderConfig = {
   camera: { fov: 70 },
 };
 
-/** Pasted out of the panel before most of the config existed, so laid over the
- * default for the rest. */
-export const FISHEYE: RenderConfig = over(DEFAULT, {
+const BLACK: RenderConfig = {
   warp: {
     on: true,
-    kind: 'fisheye',
+    kind: 'pulse',
     strength: 1,
-    from: -0.24,
+    from: -0.16,
     to: 0.08,
     braced: 0.25,
     pinch: {
@@ -227,7 +225,7 @@ export const FISHEYE: RenderConfig = over(DEFAULT, {
       up: 0.3
     },
     pulse: {
-      depth: 0.4,
+      depth: 0.2,
       rate: 1.2,
       quicken: 2.5
     },
@@ -236,7 +234,7 @@ export const FISHEYE: RenderConfig = over(DEFAULT, {
       bands: 22
     },
     fisheye: {
-      power: 0.15
+      power: 0.5
     },
     vertigo: {
       narrow: 0.45
@@ -244,20 +242,20 @@ export const FISHEYE: RenderConfig = over(DEFAULT, {
   },
   blur: {
     on: true,
-    reach: 0.12,
-    taps: 12
+    reach: 0.02,
+    taps: 2
   },
   nudge: {
     on: true,
-    spread: 1.2
+    spread: 0.5
   },
   stipple: {
     on: true
   },
   quantise: {
     on: true,
-    levels: 5,
-    strength: 1.1
+    levels: 12,
+    strength: 0.85
   },
   sky: {
     on: true,
@@ -266,8 +264,37 @@ export const FISHEYE: RenderConfig = over(DEFAULT, {
     weight: 0.45,
     twinkle: 0.6,
     drift: 1
+  },
+  palette: {
+    wall: '#000000',
+    line: '#ffffff',
+    ground: '#4f4f4f',
+    grid: '#ffffff',
+    floor: '#000000',
+    clear: '#000000',
+    shadow: '#ffffff',
+    artefact: '#ffffff',
+    edge: '#000000',
+    stars: '#ffffff',
+    space: '#242424'
+  },
+  light: {
+    ambient: 0.4,
+    key: 0.43,
+    foot: 0.7
+  },
+  walls: {
+    height: 6
+  },
+  artefacts: {
+    spin: 0.25,
+    bob: 0.15,
+    rate: 1
+  },
+  camera: {
+    fov: 70
   }
-});
+};
 
 /** The configurations worth keeping, by name. The first is where a fresh
  * browser starts. */
@@ -279,7 +306,7 @@ export const PRESETS: Record<string, RenderConfig> = {
     blur: { on: false },
   }),
 
-  fisheye: FISHEYE
+  black: BLACK
 };
 
 /** The most taps the blur's loop will run, whatever the config asks for. */
