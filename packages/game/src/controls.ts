@@ -18,6 +18,19 @@ export const WALK_SPEED = 10;
 export const GRIP = 30;
 export const DRAG = 8;
 
+// ── Turning, whatever it is driven by ──
+
+/**
+ * How long the view takes to catch up with a turn asked for, in seconds: the
+ * time constant it closes the gap on, so about two thirds of a flick lands in
+ * this and nearly all of it in three times this.
+ *
+ * Only the turn. It takes the jitter out of a mouse's or a thumb's steps
+ * without changing how far they go; the walk already eases on `GRIP` and
+ * `DRAG`. Nought turns it off.
+ */
+export const TURN_SMOOTH = 0.04;
+
 // ── Keyboard and mouse ──
 
 /** Turn per pixel of mouse, in radians. */

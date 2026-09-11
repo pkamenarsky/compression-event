@@ -40,7 +40,7 @@ import { Standing, artefacts } from './artefacts';
 import { BakedSpan, placeAt } from './baked';
 import { Hulls } from './coldet';
 import { Hud, hud } from './hud';
-import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, TAP_SLOP, WALK_SPEED } from './controls';
+import { DRAG, GRIP, MOUSE_LOOK, RESTART_GAP, TAP_SLOP, TURN_SMOOTH, WALK_SPEED } from './controls';
 import { RenderConfig, current, remember } from './config';
 import { renderer } from './render';
 import { handheld, thumbs } from './touch';
@@ -183,6 +183,10 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   /** Where the player is and which way they are facing, in world units. */
   const player = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
 
+  /** How much turn has been asked for and not yet taken, in radians. The mouse
+   * and the thumb add to it and each frame takes its share — see `TURN_SMOOTH`. */
+  let turning = 0;
+
   /** Which version is drawn and holds the artefacts. During a shift this is
    * still the one being left — see the header. */
   let version = 0;
@@ -317,6 +321,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     player.vx = 0;
     player.vz = 0;
     player.yaw = world.start.facing;
+    turning = 0;
   };
 
   const restart = (): void => {
@@ -624,6 +629,12 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     }
 
     elapsed += dt;
+
+    const share = TURN_SMOOTH > 0 ? 1 - Math.exp(-dt / TURN_SMOOTH) : 1;
+
+    player.yaw += turning * share;
+    turning -= turning * share;
+
     looked(bent());
 
     crowd.update(dt, view.camera);
@@ -693,7 +704,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** The two thumbs, on something held — which has no pointer to take. See
    * `touch.ts`. */
-  const touch = handheld() ? thumbs(host, by => player.yaw += by) : null;
+  const touch = handheld() ? thumbs(host, by => turning += by) : null;
 
   const grab = (): void => {
     if (touch === null && document.pointerLockElement !== canvas) void (canvas as HTMLCanvasElement | null)?.requestPointerLock?.();
@@ -738,7 +749,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const moved = (e: MouseEvent): void => {
-    if (document.pointerLockElement === canvas) player.yaw += e.movementX * MOUSE_LOOK;
+    if (document.pointerLockElement === canvas) turning += e.movementX * MOUSE_LOOK;
   };
 
   /** When the last few taps came, for the triple one that restarts. */
