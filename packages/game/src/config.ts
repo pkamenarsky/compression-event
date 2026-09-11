@@ -299,7 +299,7 @@ const BLACK: RenderConfig = {
 /** The configurations worth keeping, by name. The first is where a fresh
  * browser starts. */
 export const PRESETS: Record<string, RenderConfig> = {
-  default: DEFAULT,
+  default: BLACK,
 
   plain: over(DEFAULT, {
     warp: { on: false },
