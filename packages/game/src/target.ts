@@ -83,7 +83,8 @@ export function marked(material: THREE.Material): boolean {
 }
 
 /** A flat colour, unlit, unmarked: what the scene has in place of three's basic
- * materials. Anything else a material wants — sides, offsets — goes in `params`. */
+ * materials. Anything else a material wants — sides, offsets — goes in `params`.
+ * A `THREE.Color` is held rather than copied, so setting it recolours this. */
 export function flat(color: THREE.ColorRepresentation, params: THREE.ShaderMaterialParameters = {}): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
@@ -102,7 +103,7 @@ export function flat(color: THREE.ColorRepresentation, params: THREE.ShaderMater
         marks = UNMARKED;
       }
     `,
-    uniforms: { uColor: { value: new THREE.Color(color) } },
+    uniforms: { uColor: { value: color instanceof THREE.Color ? color : new THREE.Color(color) } },
     ...params,
   });
 }

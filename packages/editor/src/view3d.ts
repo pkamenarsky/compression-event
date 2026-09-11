@@ -515,6 +515,7 @@ function panel(
 
           view = renderer(host, { dither: false, fov: FOV_DEGREES });
           crowd = artefacts(view.scene);
+          crowd.configure(look);
 
           // The run-up lasts as long as the config says it does, so changing
           // one changes the other.
@@ -530,6 +531,7 @@ function panel(
             next => {
               look = next;
               view?.configure(look);
+              crowd?.configure(look);
               remember(look);
               led();
             },
@@ -560,7 +562,7 @@ function panel(
 
             if (view !== null) {
               const amount = bent(untracked(replay));
-              const fov = narrowed(FOV_DEGREES, amount, look.warp);
+              const fov = narrowed(afoot() ? look.camera.fov : FOV_DEGREES, amount, look.warp);
 
               view.drive(amount, elapsed);
 

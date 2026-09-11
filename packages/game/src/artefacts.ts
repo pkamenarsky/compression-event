@@ -19,6 +19,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';
+import type { RenderConfig } from './config';
 import type { Stage } from './screen';
 import { flat, outputsGLSL } from './target';
 import { IconType, SCALE } from './world';
@@ -49,26 +50,24 @@ export interface Artefacts {
    */
   overhead(on: boolean): void
 
+  /** Their colours and how they move. See `config.ts`. */
+  configure(config: RenderConfig): void
+
   /** Turn and bob. `dt` in seconds. */
   update(dt: number, camera: THREE.Camera): void
   dispose(): void
 }
 
-const FILL = 0x000000;
-const EDGE = 0xffffff;
-
-/** Radians per second about the vertical. */
-const SPIN = Math.PI / 2;
-/** How far it rides up and down, in world units, and how fast. */
-const BOB = 0.15;
-const BOB_SPEED = Math.PI * 2;
-
 /** Where a shadow sits, clear of the ground plane and of an authored floor. */
 const SHADOW_Y = 0.005;
 
 export function artefacts(scene: THREE.Scene): Artefacts {
-  const fill = flat(FILL, { side: THREE.DoubleSide });
-  const edge = flat(EDGE);
+  const fill = flat(0x000000, { side: THREE.DoubleSide });
+  const edge = flat(0xffffff);
+
+  /** Radians per second about the vertical, and how far and how fast in
+   * radians a second it rides up and down. Set by `configure`. */
+  let spin = 0, bob = 0, bobbing = 0;
 
   // One unit patch for every shadow there will ever be, scaled per artefact.
   // Two materials rather than one, because the fade has to know the shape it
@@ -201,6 +200,14 @@ export function artefacts(scene: THREE.Scene): Artefacts {
       for (const it of held.values()) dressed(it);
     },
 
+    configure({ palette: p, artefacts: a }: RenderConfig): void {
+      fill.uniforms.uColor.value.set(p.artefact);
+      edge.uniforms.uColor.value.set(p.edge);
+      spin = a.spin * Math.PI * 2;
+      bob = a.bob;
+      bobbing = a.rate * Math.PI * 2;
+    },
+
     update(dt: number, camera: THREE.Camera): void {
       elapsed += dt;
 
@@ -210,7 +217,7 @@ export function artefacts(scene: THREE.Scene): Artefacts {
         const kind = bodyOf(it.type);
 
         it.group.position.y = kind.bobs
-          ? kind.y + Math.sin(elapsed * BOB_SPEED + it.phase) * BOB
+          ? kind.y + Math.sin(elapsed * bobbing + it.phase) * bob
           : kind.y;
 
         // A flat kind has nothing to turn — turning a disc about its own axis
@@ -219,7 +226,7 @@ export function artefacts(scene: THREE.Scene): Artefacts {
           it.group.quaternion.copy(camera.quaternion);
         }
         else if (kind.motion === 'spin') {
-          const yaw = elapsed * SPIN + it.phase;
+          const yaw = elapsed * spin + it.phase;
 
           it.group.rotation.y = yaw;
 
@@ -459,22 +466,24 @@ function shadow(fragment: string): THREE.ShaderMaterial {
 }
 
 /**
- * The screen pass's stage for shadows: black where the shade is over the 4x4
- * threshold, which is the stipple the shadow once drew into the scene itself.
- * Needs `bayerDither` ahead of it; `pixel` is whole pixels.
+ * The screen pass's stage for shadows: `palette.shadow` where the shade is over
+ * the 4x4 threshold, which is the stipple the shadow once drew into the scene
+ * itself. Needs `bayerDither` ahead of it; `pixel` is whole pixels.
  */
 export const stipple: Stage = {
   glsl: /* glsl */ `
     uniform bool uStipple;
+    uniform vec3 uShadowColor;
 
     vec3 stippled(vec3 color, float shade, vec2 pixel) {
-      return uStipple && shade > bayerDither(pixel) ? vec3(0.0) : color;
+      return uStipple && shade > bayerDither(pixel) ? uShadowColor : color;
     }
   `,
-  uniforms: () => ({ uStipple: { value: true } }),
+  uniforms: () => ({ uStipple: { value: true }, uShadowColor: { value: new THREE.Color() } }),
 
-  apply(u, { stipple: s }): void {
+  apply(u, { stipple: s, palette: p }): void {
     u.uStipple.value = s.on;
+    u.uShadowColor.value.set(p.shadow);
   },
 };
 

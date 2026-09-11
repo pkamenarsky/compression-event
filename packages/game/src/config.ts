@@ -3,8 +3,10 @@
 //
 // Everything about how the picture is made that is worth turning by hand, in
 // one object: which stages of the screen pass run, and the numbers that shape
-// each of them. The stages themselves are in `screen.ts`'s list; each reads its
-// own part of this and nothing else.
+// each of them; and what the scene is drawn with — its colours, the walls'
+// light and height, how artefacts move, the camera's width. The stages
+// themselves are in `screen.ts`'s list; each reads its own part of this and
+// nothing else.
 //
 // Presets live here as code, which is where a configuration worth keeping ends
 // up. The tweak panel (`tweak.ts`), over the editor's first-person view, edits
@@ -114,6 +116,62 @@ export interface RenderConfig {
     /** How fast the sky wheels and the nebula works, against real time. */
     drift: number
   }
+
+  /** Every colour anything is drawn in, as `#rrggbb`. Taken as sRGB and drawn
+   * into the target linear, as three does with a hex literal; the pass then
+   * quantises it, so what shows is the nearest of `quantise.levels`. */
+  palette: {
+    wall: string
+    /** The walls' outlines and the verticals at their corners. */
+    line: string
+    /** The ground under everything, and the grid of tiles over it. */
+    ground: string
+    grid: string
+    /** An authored floor. */
+    floor: string
+    /** Where nothing is drawn at all: what shows with the sky off. */
+    clear: string
+    /** The shadows' stipple. */
+    shadow: string
+    /** An artefact's solid, and the lines along its edges. */
+    artefact: string
+    edge: string
+    /** The sky's one bit, lit and unlit. */
+    stars: string
+    space: string
+  }
+
+  /** How the walls are lit: a key light and a fill, fixed in the world. See
+   * `walls.ts`. */
+  light: {
+    /** The least a wall is lit, facing away from both. */
+    ambient: number
+    /** The key's share of what is left; the fill has the rest. */
+    key: number
+    /** How lit a wall is at its foot, against 1 at the top. */
+    foot: number
+  }
+
+  walls: {
+    /** In world units. The eye is at 1.6. */
+    height: number
+  }
+
+  /** How an artefact moves. See `artefacts.ts`. */
+  artefacts: {
+    /** Turns per second about the vertical. */
+    spin: number
+    /** How far it rides up and down, in world units, and how many times a
+     * second. */
+    bob: number
+    rate: number
+  }
+
+  camera: {
+    /** Vertical, in degrees, standing in the level. The vertigo warp narrows
+     * from this. */
+    fov: number
+  }
 }
 
 export const DEFAULT: RenderConfig = {
@@ -135,9 +193,28 @@ export const DEFAULT: RenderConfig = {
   stipple: { on: true },
   quantise: { on: true, levels: 5, strength: 1.1 },
   sky: { on: true, kind: 'night', stars: 0.3, weight: 0.45, twinkle: 0.6, drift: 1 },
+  palette: {
+    wall: '#fdebeb',
+    line: '#000000',
+    ground: '#bbbbbb',
+    grid: '#000000',
+    floor: '#000000',
+    clear: '#000000',
+    shadow: '#000000',
+    artefact: '#000000',
+    edge: '#ffffff',
+    stars: '#ffffff',
+    space: '#000000',
+  },
+  light: { ambient: 0.4, key: 0.7, foot: 0.7 },
+  walls: { height: 7 },
+  artefacts: { spin: 0.25, bob: 0.15, rate: 1 },
+  camera: { fov: 70 },
 };
 
-export const FISHEYE: RenderConfig = {
+/** Pasted out of the panel before most of the config existed, so laid over the
+ * default for the rest. */
+export const FISHEYE: RenderConfig = over(DEFAULT, {
   warp: {
     on: true,
     kind: 'fisheye',
@@ -190,7 +267,7 @@ export const FISHEYE: RenderConfig = {
     twinkle: 0.6,
     drift: 1
   }
-};
+});
 
 /** The configurations worth keeping, by name. The first is where a fresh
  * browser starts. */
@@ -233,6 +310,14 @@ export const RANGES: Record<string, [min: number, max: number, step: number]> = 
   'sky.weight': [0, 1, 0.01],
   'sky.twinkle': [0, 1, 0.01],
   'sky.drift': [0, 10, 0.1],
+  'light.ambient': [0, 1, 0.01],
+  'light.key': [0, 1, 0.01],
+  'light.foot': [0, 1, 0.01],
+  'walls.height': [0.5, 20, 0.1],
+  'artefacts.spin': [0, 2, 0.01],
+  'artefacts.bob': [0, 1, 0.01],
+  'artefacts.rate': [0, 4, 0.05],
+  'camera.fov': [20, 120, 1],
 };
 
 /**

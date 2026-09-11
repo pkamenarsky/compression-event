@@ -240,8 +240,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   const configured = (next: RenderConfig): void => {
     look = next;
     view.configure(look);
+    crowd.configure(look);
     remember(look);
   };
+
+  crowd.configure(look);
 
   /** Seconds the warp's or the sky's name stays in the corner after
    * switching to it, and which of them it is. */
@@ -250,10 +253,6 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
   /** Seconds since the game went up, for the warps that move on their own. */
   let elapsed = 0;
-
-  /** The view's width with nothing bending it, which the vertigo warp is a
-   * departure from. */
-  const wide = view.camera.fov;
 
   let ambient: SoundHandle | null = null;
   let coming: SoundHandle | null = null;
@@ -680,7 +679,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
     cam.position.set(player.x, EYE, player.z);
     cam.lookAt(player.x + Math.sin(player.yaw), EYE, player.z - Math.cos(player.yaw));
 
-    const fov = narrowed(wide, amount, look.warp);
+    const fov = narrowed(look.camera.fov, amount, look.warp);
 
     if (cam.fov !== fov) {
       cam.fov = fov;

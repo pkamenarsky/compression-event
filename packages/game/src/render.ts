@@ -39,16 +39,6 @@ import { flat } from './target';
 import { Run, Source, WallOptions } from './walls';
 import { Floor, Point, SCALE, TILE_SIZE, World } from './world';
 
-const WALL_HEIGHT = 7;
-
-const WALL_COLOR = 0xfdebeb;
-const LINE_COLOR = 0x000000;
-const FLOOR_COLOR = 0xbbbbbb;
-
-/** What an authored floor is drawn in. Black on the ground's grey, which is
- * the same two the walls and their lines are. */
-const SHAPE_COLOR = 0x000000;
-
 /**
  * The floor sits a hair below zero so that anything standing exactly on the
  * ground plane draws over it whatever order the scene happens to be in.
@@ -164,7 +154,6 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   const renderer = new THREE.WebGLRenderer({ antialias: false, stencil: true });
 
   renderer.setPixelRatio(options.pixelRatio ?? 1);
-  renderer.setClearColor(0x000000);
   renderer.domElement.style.display = 'block';
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
@@ -178,22 +167,55 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   const screen = new ScreenPass(renderer);
   const meter = fps(element);
 
-  screen.configure(current());
   screen.quantised = options.dither ?? true;
 
   const overhead = sky();
 
-  overhead.configure(current());
   scene.add(overhead.mesh);
 
+  /** What every wall, line and floor is drawn with, held by all of them — see
+   * `WallOptions.shared` — so that `configure` is one write however many
+   * sources have been built. Set there. */
+  const shared = {
+    uWallColor: { value: new THREE.Color() },
+    uLineColor: { value: new THREE.Color() },
+    uFillColor: { value: new THREE.Color() },
+    uLight: { value: new THREE.Vector3() },
+    uWallHeight: { value: 0 },
+  };
+
+  /** The ground's two, likewise held by whichever materials `floor` last
+   * built. */
+  const tiles: Tiles = { ground: new THREE.Color(), grid: new THREE.Color() };
+
+  // The height and the colours are placeholders: `shared` is laid over them.
   const walls: WallOptions = {
     scale: SCALE,
-    wallHeight: WALL_HEIGHT,
-    wallColor: WALL_COLOR,
-    lineColor: LINE_COLOR,
-    fillColor: SHAPE_COLOR,
+    wallHeight: 0,
+    wallColor: 0,
+    lineColor: 0,
+    fillColor: 0,
     fillHeight: SHAPE_Y,
+    shared,
   };
+
+  function configure(config: RenderConfig): void {
+    const { palette: p } = config;
+
+    screen.configure(config);
+    overhead.configure(config);
+
+    shared.uWallColor.value.set(p.wall);
+    shared.uLineColor.value.set(p.line);
+    shared.uFillColor.value.set(p.floor);
+    shared.uLight.value.set(config.light.ambient, config.light.foot, config.light.key);
+    shared.uWallHeight.value = config.walls.height;
+    tiles.ground.set(p.ground);
+    tiles.grid.set(p.grid);
+    renderer.setClearColor(p.clear);
+  }
+
+  configure(current());
 
   /** Whatever walls are up while nothing is walking: the last `show`, or one
    * of `stills`. */
@@ -377,7 +399,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       (it.material as THREE.Material | undefined)?.dispose();
     }
 
-    ground = floor(snapped);
+    ground = floor(snapped, tiles);
 
     for (const g of ground) scene.add(g);
   }
@@ -402,7 +424,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
 
   // Something has to be underfoot before anything has been shown, or an empty
   // panel is a void rather than a room with nothing in it yet.
-  ground = floor(null);
+  ground = floor(null, tiles);
 
   for (const g of ground) scene.add(g);
 
@@ -418,10 +440,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       screen.quantised = on;
     },
 
-    configure(config: RenderConfig): void {
-      screen.configure(config);
-      overhead.configure(config);
-    },
+    configure,
 
     drive(amount: number, time: number): void {
       screen.drive(amount, time);
@@ -548,12 +567,18 @@ const EMPTY_BOUNDS: Bounds = {
   maxZ: TILE_SIZE,
 };
 
-function floor(b: Bounds | null): THREE.Object3D[] {
+/** The ground's colours, held by its materials rather than copied into them. */
+interface Tiles {
+  ground: THREE.Color
+  grid: THREE.Color
+}
+
+function floor(b: Bounds | null, colors: Tiles): THREE.Object3D[] {
   const box = b ?? EMPTY_BOUNDS;
 
   const surface = new THREE.Mesh(
     new THREE.PlaneGeometry(box.maxX - box.minX, box.maxZ - box.minZ),
-    flat(FLOOR_COLOR, {
+    flat(colors.ground, {
       side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: 1,
@@ -580,7 +605,7 @@ function floor(b: Bounds | null): THREE.Object3D[] {
 
   const lines = new THREE.LineSegments(
     geometry,
-    flat(LINE_COLOR),
+    flat(colors.grid),
   );
 
   return [surface, lines];

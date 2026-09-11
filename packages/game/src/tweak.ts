@@ -2,9 +2,10 @@
 // The tweak panel
 //
 // The render config, on screen, over the editor's first-person view: a switch
-// for every stage and a slider for every number, built off the config's own shape
-// so that a field added to `RenderConfig` turns up here without anyone telling
-// this file. Where each slider runs is `RANGES` in `config.ts`.
+// for every stage, a slider for every number and a picker for every colour,
+// built off the config's own shape so that a field added to `RenderConfig`
+// turns up here without anyone telling this file. Where each slider runs is
+// `RANGES` in `config.ts`; a string starting `#` is a colour.
 //
 // Along the top: the presets and the configurations saved in this browser, to
 // switch between; saving the one in force under a name; copying it out as a
@@ -161,6 +162,20 @@ export function tweak(
     }
 
     if (typeof value === 'number') return number(path, value, commit);
+
+    if (value.startsWith('#')) {
+      const it = el('input', 'width: 48px; height: 18px; padding: 0; border: 0; background: none;');
+      const exact = el('span', 'color: #999;', value);
+
+      it.type = 'color';
+      it.value = value;
+      it.addEventListener('input', () => {
+        exact.textContent = it.value;
+        commit(it.value);
+      });
+
+      return [it, exact];
+    }
 
     // The strings there are, each out of its own list.
     const it = el('select', 'font: inherit; flex: 1;');

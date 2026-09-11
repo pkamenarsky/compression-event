@@ -298,6 +298,9 @@ export const laidShader = /* glsl */ `
 export const wallFragment = /* glsl */ `
   uniform vec3 uWallColor;
 
+  // Ambient, how lit at the foot, and the key's share against the fill's.
+  uniform vec3 uLight;
+
   ${VARYINGS}
   ${outputsGLSL}
 
@@ -308,10 +311,10 @@ export const wallFragment = /* glsl */ `
     vec3 key = normalize(vec3(0.5, 0.8, 0.3));
     vec3 fill = normalize(vec3(-0.3, 0.4, -0.6));
 
-    float light = max(dot(n, key), 0.0) * 0.7 + max(dot(n, fill), 0.0) * 0.3;
+    float light = max(dot(n, key), 0.0) * uLight.z + max(dot(n, fill), 0.0) * (1.0 - uLight.z);
 
-    light = light * 0.6 + 0.4;
-    light *= mix(0.7, 1.0, vHeightFrac);
+    light = mix(uLight.x, 1.0, light);
+    light *= mix(uLight.y, 1.0, vHeightFrac);
 
     // The pattern that keeps a wall from banding is the screen pass's to lay
     // down, after the picture has been warped; the wall only says where it
@@ -587,7 +590,15 @@ export interface WallOptions {
   /** Where a filled floor lies, in world units: over the ground and under the
    * walls standing on it. */
   fillHeight: number
+  /** Uniforms laid over every material's own, held rather than copied: how
+   * the renderer changes a colour, the light or the height across every source
+   * it has built with one write. */
+  shared?: Record<string, THREE.IUniform>
 }
+
+/** The walls' light when nothing says otherwise: ambient, how lit at the foot,
+ * and the key's share. See `wallFragment`. */
+const LIGHT: [ambient: number, foot: number, key: number] = [0.4, 0.7, 0.7];
 
 export const fillFragment = /* glsl */ `
   uniform vec3 uFillColor;
@@ -707,7 +718,12 @@ export function materials(
     glslVersion: THREE.GLSL3,
     vertexShader,
     fragmentShader: wallFragment,
-    uniforms: { ...uniforms, uWallColor: { value: new THREE.Color(options.wallColor) } },
+    uniforms: {
+      ...uniforms,
+      uWallColor: { value: new THREE.Color(options.wallColor) },
+      uLight: { value: new THREE.Vector3(...LIGHT) },
+      ...options.shared,
+    },
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,
@@ -718,7 +734,7 @@ export function materials(
     glslVersion: THREE.GLSL3,
     vertexShader,
     fragmentShader: lineFragment,
-    uniforms: { ...uniforms, uLineColor: { value: new THREE.Color(options.lineColor) } },
+    uniforms: { ...uniforms, uLineColor: { value: new THREE.Color(options.lineColor) }, ...options.shared },
 
     // A fading vertical is the only thing that is ever part way there, and it
     // is a hairline over a wall it is about to lie flat against, so there is
@@ -744,7 +760,7 @@ export function materials(
       glslVersion: THREE.GLSL3,
       vertexShader: fillShader,
       fragmentShader: fillFragment,
-      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
+      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) }, ...options.shared },
       side,
       colorWrite: false,
       depthTest: false,
@@ -786,7 +802,7 @@ export function materials(
       glslVersion: THREE.GLSL3,
       vertexShader: laidShader,
       fragmentShader: fillFragment,
-      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) } },
+      uniforms: { ...uniforms, uFillColor: { value: new THREE.Color(options.fillColor) }, ...options.shared },
       side: THREE.DoubleSide,
       colorWrite: over,
       depthTest: over,

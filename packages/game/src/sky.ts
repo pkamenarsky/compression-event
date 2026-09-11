@@ -281,15 +281,23 @@ export function sky(): Dome {
  */
 export const skyStage: Stage = {
   glsl: /* glsl */ `
+    uniform vec3 uStarsColor;
+    uniform vec3 uSpaceColor;
+
     vec3 skied(Texel t, vec3 color, vec2 pixel) {
       if (t.sky < 0.5) return color;
 
       float threshold = texture2D(uBayer, pixel / 8.0).r;
 
-      // Half a step up, so that no density is black everywhere and full
-      // density is white everywhere.
-      return vec3(step(threshold + 1.0 / 128.0, t.rgb.r));
+      // Half a step up, so that no density is unlit everywhere and full
+      // density is lit everywhere.
+      return mix(uSpaceColor, uStarsColor, step(threshold + 1.0 / 128.0, t.rgb.r));
     }
   `,
-  uniforms: () => ({}),
+  uniforms: () => ({ uStarsColor: { value: new THREE.Color() }, uSpaceColor: { value: new THREE.Color() } }),
+
+  apply(u, { palette: p }): void {
+    u.uStarsColor.value.set(p.stars);
+    u.uSpaceColor.value.set(p.space);
+  },
 };
