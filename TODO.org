@@ -7,6 +7,8 @@
 * bring transform one version up
 * multierosion in multiple versions
 
+* artefact idea - shrink walls for 5sec
+
 * erosion should be cumulative i think
 
 * a shape in both create and select mode has handles to scale, rotate and erode
