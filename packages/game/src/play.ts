@@ -183,8 +183,9 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   /** Where the player is and which way they are facing, in world units. */
   const player = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
 
-  /** How much turn has been asked for and not yet taken, in radians. The mouse
-   * and the thumb add to it and each frame takes its share — see `TURN_SMOOTH`. */
+  /** How much turn the right thumb has asked for and not yet taken, in radians.
+   * Each frame takes its share — see `TURN_SMOOTH`. The mouse turns the view
+   * directly. */
   let turning = 0;
 
   /** Which version is drawn and holds the artefacts. During a shift this is
@@ -749,7 +750,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
   };
 
   const moved = (e: MouseEvent): void => {
-    if (document.pointerLockElement === canvas) turning += e.movementX * MOUSE_LOOK;
+    if (document.pointerLockElement === canvas) player.yaw += e.movementX * MOUSE_LOOK;
   };
 
   /** When the last few taps came, for the triple one that restarts. */
