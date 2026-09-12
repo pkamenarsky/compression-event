@@ -98,6 +98,7 @@ import {
   outline,
   pieces,
 } from './worldset';
+import { remembered } from './memo';
 
 /** One polygon as a version left it: what edits are made against, and what is
  * drawn. */
@@ -759,12 +760,12 @@ function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): voi
  * later, and the two were interpolated corner-to-neighbour: a square turning
  * into a diamond inscribed in itself.
  */
-export function project(
+export const project = remembered((
   source: Ring,
   rings: readonly number[],
   erosion: number,
   depths: readonly number[] | null,
-): Shape {
+): Shape => {
   // One ring is the case the winding still has to be settled for: a source ring
   // is whatever it was drawn as, and `erodeAt` is what decides which way is in.
   // A source with holes in it has already said, by how its rings are wound, and
@@ -776,24 +777,12 @@ export function project(
   const simple = simplify(sliced(source, rings));
 
   return erosion === 0 ? simple : erode(simple, erosion);
-}
+});
 
 /** The per-corner depths under a frame that scales: an offset is a length and
  * goes through one the way lengths do. */
 function scaled(depths: readonly number[] | null, s: number): readonly number[] | null {
   return depths === null ? null : depths.map(d => d / s);
-}
-
-function sameDepths(a: readonly number[] | null, b: readonly number[] | null): boolean {
-  if (a === null || b === null) return a === b;
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-
-  return true;
 }
 
 /**
@@ -805,75 +794,6 @@ function sameDepths(a: readonly number[] | null, b: readonly number[] | null): b
  * progressively the author raises the depth version by version — 2, 5, 9, 14 —
  * which is more direct to author than compounding and exactly reproducible.
  */
-/**
- * The last projection taken for each polygon, and what it was taken from.
- *
- * `resolveAt` builds a fresh `Resolved` every call, so the laziness in one of
- * them saves nothing across two: a drag resolves the whole world at every
- * pointer move and every polygon's projection is worked out again, including
- * the ones the hand is nowhere near. An arrangement apiece is most of a frame
- * at seven polygons, and `live` then throws all but one of them away, having
- * paid for them to find out they had not moved.
- *
- * A projection is a pure function of the placed ring, the depth and the
- * invented corners, so remembering the last one per polygon answers the
- * repeats. The ring is compared point by point — it is a fresh array either
- * way — which is one pass over the geometry against an arrangement over it.
- *
- * One entry per polygon, so what is held is the size of the world and not of
- * the gesture — and held weakly, so it is not even that for long. See below.
- */
-interface Projection {
-  source: Ring
-  rings: readonly number[]
-  erosion: number
-  depths: readonly number[] | null
-  keep: readonly Point[] | undefined
-  shape: Shape
-}
-
-/**
- * Kept against the `Polygon` itself rather than against its id, so that a
- * polygon the author deletes takes its projection with it. Ids are minted and
- * never reused, so a map keyed by one only ever grows — a session spent drawing
- * and undoing would leave a ring and a shape behind for every id it burned.
- * A polygon whose points change is a new object and gets a new entry; the old
- * one is garbage the moment the world stops naming it, which is exactly when
- * the projection stops being worth anything.
- */
-const projections = new WeakMap<Polygon, Projection>();
-
-/**
- * The same, one frame further in: the projection of a polygon's *local* ring,
- * which is the one thing about it a move does not change.
- *
- * A mitred offset commutes with a rigid motion — every edge moves inward along
- * its own normal, and a rotation takes normals to normals — so a polygon being
- * carried about at a fixed depth has one projection, seen from different
- * places. Taking it in the polygon's own frame and putting the answer where the
- * frame says therefore gives the same shape as offsetting the placed ring, and
- * it is the difference between an arrangement per instant and one per gesture.
- *
- * Under a uniform scale the depth scales with it, which is the `erosion / s`
- * below. Under anything else — a squash, a shear — an offset is genuinely not
- * the same shape seen twice, and the world frame is where it has to be taken.
- * See `similarity`.
- *
- * What this does *not* answer is a depth that is itself moving. A span whose
- * version deepens an erosion has a different shape at every instant of it, and
- * no framing makes two of them one. That is the bake's own cost and it is
- * inherent; this is for the polygon that moves at the depth it already had.
- */
-interface Local {
-  local: Ring
-  rings: readonly number[]
-  erosion: number
-  depths: readonly number[] | null
-  shape: Shape
-}
-
-const locals = new WeakMap<Polygon, Local>();
-
 /**
  * What a frame does to lengths, or nothing when it does different things to
  * different directions.
@@ -899,53 +819,36 @@ function similarity(m: Affine): number | null {
   return s;
 }
 
-/** The projection, taken wherever it is cheapest to take it and always handed
- * back in world units. */
+/**
+ * The projection, taken wherever it is cheapest to take it and always handed
+ * back in world units.
+ *
+ * Which is usually the polygon's own frame: its *local* ring is the one thing
+ * about it a move does not change. A mitred offset commutes with a rigid
+ * motion — every edge moves inward along its own normal, and a rotation takes
+ * normals to normals — so a polygon being carried about at a fixed depth has
+ * one projection, seen from different places. Taken there, `project` has
+ * answered it already, and it is the difference between an arrangement per
+ * instant and one per gesture — and one between every version it stands at
+ * unchanged.
+ *
+ * Under a uniform scale the depth scales with it, which is the `erosion / s`
+ * below. Under anything else — a squash, a shear — an offset is genuinely not
+ * the same shape seen twice, and the world frame is where it has to be taken.
+ * See `similarity`.
+ *
+ * What this does *not* answer is a depth that is itself moving. A span whose
+ * version deepens an erosion has a different shape at every instant of it, and
+ * no framing makes two of them one. That is the bake's own cost and it is
+ * inherent; this is for the polygon that moves at the depth it already had.
+ */
 function projection(at: Omit<Resolved, 'shape'>): Shape {
   const s = similarity(at.frame);
 
   if (s === null) return project(at.source, at.rings, at.erosion, at.depths);
 
-  const erosion = at.erosion / s;
-  const depths = scaled(at.depths, s);
-  const was = locals.get(at.polygon);
-
-  const shape = was !== undefined
-    && was.erosion === erosion
-    && sameDepths(was.depths, depths)
-    && sameRings(was.rings, at.rings)
-    && samePoints(was.local, at.local)
-    ? was.shape
-    : project(at.local, at.rings, erosion, depths);
-
-  if (was === undefined || was.shape !== shape) {
-    locals.set(at.polygon, { local: at.local, rings: at.rings, erosion, depths, shape });
-  }
-
-  return shape.map(ring => place(at.frame, ring));
-}
-
-function samePoints(a: readonly Point[], b: readonly Point[]): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].x !== b[i].x || a[i].y !== b[i].y) return false;
-  }
-
-  return true;
-}
-
-/** The invented corners, which are usually none — and none is a fresh empty
- * array every time it is asked for, so identity is no answer here. */
-function sameKeep(a: readonly Point[] | undefined, b: readonly Point[] | undefined): boolean {
-  return samePoints(a ?? [], b ?? []);
-}
-
-/** Two rings of four corners and one of eight are the same eight points cut two
- * ways, and the projection is not the same shape. */
-function sameRings(a: readonly number[], b: readonly number[]): boolean {
-  return a.length === b.length && a.every((n, i) => n === b[i]);
+  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s))
+    .map(ring => place(at.frame, ring));
 }
 
 /**
@@ -958,32 +861,13 @@ function sameRings(a: readonly number[], b: readonly number[]): boolean {
  */
 export function resolved(at: Omit<Resolved, 'shape' | 'rings'>): Resolved {
   const rings = ringsOf(at.corners);
+  let shape: Shape | null = null;
 
   return {
     ...at,
     rings,
     get shape(): Shape {
-      const was = projections.get(at.polygon);
-
-      if (
-        was !== undefined
-        && was.erosion === at.erosion
-        && sameDepths(was.depths, at.depths)
-        && sameKeep(was.keep, at.keep)
-        && sameRings(was.rings, rings)
-        && samePoints(was.source, at.source)
-      ) {
-        return was.shape;
-      }
-
-      const shape = keeping(projection({ ...at, rings }), at.keep ?? []);
-
-      projections.set(
-        at.polygon,
-        { source: at.source, rings, erosion: at.erosion, depths: at.depths, keep: at.keep, shape },
-      );
-
-      return shape;
+      return shape ??= keeping(projection({ ...at, rings }), at.keep ?? []);
     },
   };
 }
@@ -2443,6 +2327,20 @@ export interface Standing {
  * so handing it a neighbourhood rather than the world gives that
  * neighbourhood's contributors, which is what a track is cut against.
  */
+/**
+ * The union of `shapes`, offset by `depth`: what one slot of a scope comes to.
+ *
+ * Remembered, because a group with erosion on it is two arrangements per slot
+ * and the drawing asks afresh every frame — once for the version being edited
+ * and once more for every ghost on screen, about groups the hand is nowhere
+ * near. See `remembered`.
+ */
+const offsetUnion = remembered((shapes: readonly Shape[], depth: number): Shape => {
+  const all = unionAll(shapes);
+
+  return depth === 0 || all.length === 0 ? all : erode(all, depth);
+});
+
 export function contributed(
   world: World,
   items: readonly Resolved[],
@@ -2501,7 +2399,6 @@ export function contributed(
 
     if (group === undefined) return [];
 
-    const all = unionAll(group.members.flatMap(m => from(m, set, k)));
     const d = standing(id)?.depth ?? 0;
 
     // What is taken away goes the other way, and this is not a choice — it is
@@ -2514,7 +2411,7 @@ export function contributed(
     // its room leaves a gap that never narrows.
     const depth = inverted(SLOT_KINDS[set][k]) ? -d : d;
 
-    return depth === 0 || all.length === 0 ? all : erode(all, depth);
+    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth);
   };
 
   /**
@@ -2824,7 +2721,7 @@ function withExtents(
    */
   const extent = (id: Id): Shape => held.get(id)
     ?? mine.get(id)
-    ?? unionAll((world.groups.get(id)?.members ?? []).map(extent));
+    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0);
 
   for (const id of missing) {
     const shape = extent(id);
