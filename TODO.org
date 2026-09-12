@@ -8,6 +8,8 @@
 * multierosion in multiple versions
 
 * artefact idea - shrink walls for 5sec
+* each level has different wall heights/RenderConfigs
+** even better - different RenderConfig for each version/keyframe
 
 * erosion should be cumulative i think
 
