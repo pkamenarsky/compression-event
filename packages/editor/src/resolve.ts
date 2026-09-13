@@ -107,7 +107,7 @@ import {
   rigOf,
   standingIn,
   underfoot,
-  ungrouped,
+  ungrouping,
   unplace,
 } from './scene';
 import { Entry, Rig, once } from './rig';
@@ -116,6 +116,7 @@ import {
   Id,
   PolygonId,
   KeyframeId,
+  Unrolled,
   Vertex,
   World,
   within,
@@ -426,6 +427,9 @@ export interface Resolution {
    * nothing lost at all.
    */
   losing: KeyframeId[]
+  /** The repeats taking the group apart turned into single entries. See
+   * `carried` in `scene.ts`. */
+  unrolled: Unrolled[]
 }
 
 /**
@@ -575,11 +579,12 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // which no frame gives it cause to — a group's shear on what it held goes
   // into their skews. Should it ever be, the group stays, and what is handed
   // back says so.
-  const apart = ungrouped(held, id);
+  const apart = ungrouping(held, id);
 
   return {
-    world: apart ?? held,
+    world: apart?.world ?? held,
     ids: apart === null ? [id] : made,
+    unrolled: apart?.unrolled ?? [],
     losing: world.keyframes
       .map(k => k.id)
       .filter(k => k !== v && [...gone].some(m => written(rigOf(world, m), k))),

@@ -672,7 +672,7 @@ function flattened(s: EditorState): EditorState | null {
   if (done === null) return null;
   if (done.losing.length > 0 && !agreed(s, done.losing)) return null;
 
-  return marked(
+  const out = marked(
     {
       ...s,
       world: done.world,
@@ -683,6 +683,8 @@ function flattened(s: EditorState): EditorState | null {
     },
     s.world,
   );
+
+  return noting(out, 'Resolved', done.unrolled);
 }
 
 /**

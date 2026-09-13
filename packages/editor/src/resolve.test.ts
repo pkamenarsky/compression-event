@@ -45,7 +45,7 @@ import { Frame, truth } from './bake';
 import { FORMAT, restored, saved } from './save';
 import { resolveGroup, resolveInto, rings } from './resolve';
 import { stateAt } from './rig';
-import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -707,6 +707,23 @@ describe('the group does not survive being resolved', () => {
       expect(now.x).toBeCloseTo(was.x, 6);
       expect(now.y).toBeCloseTo(was.y, 6);
     }
+  });
+
+  test('it says which repeats coming apart took apart', () => {
+    const { world, group } = pair();
+    const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
+    const held = sealed(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
+
+    // A key spinning for ever inside a squash: no spin once the squash is gone.
+    const squashed = transformed(held.world, 0, held.id, { scale: { x: 3, y: 1 } });
+    const spinning = repeated(squashed, 0, dropped.id, spun(0.5));
+
+    const out = resolveInto(spinning, 0, [held.id], landing(spinning, 0, null))!;
+
+    expect(out.unrolled.map(u => [u.id, u.why])).toEqual([[dropped.id, 'squash']]);
+
+    // And nothing to say where there is nothing repeating.
+    expect(resolveInto(squashed, 0, [held.id], landing(squashed, 0, null))!.unrolled).toEqual([]);
   });
 
   test("an artefact's own moves are none of a resolve's business", () => {
