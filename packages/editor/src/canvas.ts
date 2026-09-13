@@ -353,7 +353,7 @@ export function worldCanvas(
       // a room takes what is standing in it as well as the room.
       if (tool() === 'artefact' || tool() === 'polygon') {
         const caught = artefactsWithinBox(
-          artefactsAt(world(), keyframe()),
+          artefactsAt(world(), keyframe()).filter(it => clickable(world(), it.id)),
           box.a,
           box.b,
         );
@@ -2807,8 +2807,9 @@ function ghosts(
 ): void {
   ctx.beginPath();
 
+  // What is hidden from the keyframes is hidden from every one of them.
   for (const it of items) {
-    if (swallowed(world, it.id, [])) continue;
+    if (swallowed(world, it.id, []) || !visible(world, it.id)) continue;
 
     for (const ring of it.shape) {
       trace(ctx, view, ring);
@@ -2816,6 +2817,8 @@ function ghosts(
   }
 
   for (const g of occupying(world, v, items, [])) {
+    if (!visible(world, g.id)) continue;
+
     for (const ring of occupiedShape(g)) {
       trace(ctx, view, ring);
     }
@@ -2824,7 +2827,9 @@ function ghosts(
   // The outline only, and no label: a ghost says where something was, and
   // seven kinds written twice over is not that. Into the same path as the
   // rings, so one stroke draws the whole of what this version was.
-  for (const it of artefactsAt(world, v)) icon(ctx, toScreen(view, it.at), it);
+  for (const it of artefactsAt(world, v)) {
+    if (visible(world, it.id)) icon(ctx, toScreen(view, it.at), it);
+  }
 
   ctx.strokeStyle = stroke;
   ctx.lineWidth = 1;
