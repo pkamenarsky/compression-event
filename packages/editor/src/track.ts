@@ -9,9 +9,10 @@
 
 import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
+import { Cornered, Place, entryAt } from './keys';
 import { Entry, KeyframeId, Op, counted1, indexIn } from './rig';
 import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
-import { Flags, Id, Selection, World, enclosing, flagsOf } from './types';
+import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
 
 export type Kind = Op['kind'];
 
@@ -23,9 +24,13 @@ export type Kind = Op['kind'];
  * and taking one out moves the thing to wherever upstream says it is — a
  * question about the chain, asked with Cmd+U and Cmd+Shift+U, not an entry to
  * be dragged about.
+ *
+ * A corner's row is under its polygon's, and holds its nudges and depths.
  */
 export interface Row {
   id: Id
+  /** The corner the row is about, or nothing for the thing itself. */
+  corner: VertexId | null
   depth: number
   label: string
   flags: Flags
@@ -37,8 +42,8 @@ export interface Row {
 }
 
 export interface Cell {
-  /** Where each entry the row shows is in its keyframe's list. */
-  entries: number[]
+  /** Where each entry the row shows is written. */
+  places: Place[]
   /** Their kinds, one for one. */
   kinds: Kind[]
   /** Whether the thing is there at that keyframe. */
@@ -50,10 +55,10 @@ export interface Cell {
  * waits over, as far as it runs.
  */
 export interface Bar {
-  /** The column its entry is written at, where it is in that list, and where
+  /** The column its entry is written at, where it is written, and where
    * among the row's icons in that column. */
   from: number
-  index: number
+  place: Place
   slot: number
   /** Every column it has reached, the ones it waits over included. */
   steps: { col: number, skip: boolean }[]
@@ -74,14 +79,31 @@ export function rootsOf(world: World, selection: Selection): Id[] {
   return picked.filter(id => !enclosing(world, id).some(g => has.has(g)));
 }
 
-/** Every root's row, and under a group its members', all the way down. */
-export function rowsOf(world: World, roots: readonly Id[]): Row[] {
+/**
+ * Every root's row, and under a group its members', all the way down. With
+ * `corners`, under a polygon a row for each of its corners that has something
+ * written about it, in the order of its ring.
+ */
+export function rowsOf(world: World, roots: readonly Id[], corners = false): Row[] {
   const out: Row[] = [];
 
   const add = (id: Id, depth: number): void => {
     const cells = cellsOf(world, id);
+    const flags = flagsOf(world, id);
 
-    out.push({ id, depth, label: labelOf(world, id), flags: flagsOf(world, id), cells, bars: barsOf(world, id, cells) });
+    out.push({ id, corner: null, depth, label: labelOf(world, id), flags, cells, bars: barsOf(world, cells) });
+
+    if (corners) {
+      const rig = rigOf(world, id);
+
+      world.polygons.get(id)?.points.forEach((c, i) => {
+        if (!rig.nudges.has(c.id) && !rig.depths.has(c.id)) return;
+
+        const cells = cornerCellsOf(world, id, c.id);
+
+        out.push({ id, corner: c.id, depth: depth + 1, label: `corner ${i}`, flags, cells, bars: barsOf(world, cells) });
+      });
+    }
 
     for (const m of world.groups.get(id)?.members ?? []) add(m, depth + 1);
   };
@@ -113,7 +135,31 @@ function cellsOf(world: World, id: Id): Cell[] {
     const list = rig.keys.get(f.id) ?? [];
     const entries = list.flatMap((e, n) => (e.op.kind === 'stand' ? [] : [n]));
 
-    return { entries, kinds: entries.map(n => list[n].op.kind), alive: i >= life.birth && i < life.death };
+    return {
+      places: entries.map(index => ({ id, at: f.id, index })),
+      kinds: entries.map(n => list[n].op.kind),
+      alive: i >= life.birth && i < life.death,
+    };
+  });
+}
+
+/** A corner's nudge and depth at each keyframe, in that order, where it has
+ * them. */
+function cornerCellsOf(world: World, id: Id, corner: VertexId): Cell[] {
+  const rig = rigOf(world, id);
+  const life = lifeOf(world, id);
+  const c = world.polygons.get(id)?.points.find(v => v.id === corner);
+  const birth = c === undefined ? life.birth : Math.max(life.birth, indexIn(world.keyframes, c.birth));
+  const gone = c === undefined || c.death === null ? -1 : indexIn(world.keyframes, c.death);
+  const death = gone < 0 ? life.death : Math.min(life.death, gone);
+
+  return world.keyframes.map((f, i) => {
+    const places: Place[] = [];
+
+    if (rig.nudges.get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: 'move' });
+    if (rig.depths.get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: 'erode' });
+
+    return { places, kinds: places.map(p => (p as Cornered).kind), alive: i >= birth && i < death };
   });
 }
 
@@ -128,16 +174,14 @@ function lifeOf(world: World, id: Id): { birth: number, death: number } {
   return { birth: indexIn(world.keyframes, it.birth), death: death < 0 ? Infinity : death };
 }
 
-/** A thing's repeats, rightmost first. */
-function barsOf(world: World, id: Id, cells: readonly Cell[]): Bar[] {
-  const rig = rigOf(world, id);
+/** A row's repeats, rightmost first. */
+function barsOf(world: World, cells: readonly Cell[]): Bar[] {
   const out: Bar[] = [];
 
-  world.keyframes.forEach((f, j) => {
-    const list = rig.keys.get(f.id) ?? [];
-
-    cells[j].entries.forEach((n, slot) => {
-      const bar = barOf(world, list[n], j, n, slot);
+  cells.forEach((c, j) => {
+    c.places.forEach((p, slot) => {
+      const e = entryAt(world, p);
+      const bar = e === undefined ? null : barOf(world, e, j, p, slot);
 
       if (bar !== null) out.push(bar);
     });
@@ -147,7 +191,7 @@ function barsOf(world: World, id: Id, cells: readonly Cell[]): Bar[] {
 }
 
 /** An entry's bar, or nothing where it happens once. */
-export function barOf(world: World, e: Entry, from: number, index: number, slot = 0): Bar | null {
+export function barOf(world: World, e: Entry, from: number, place: Place, slot = 0): Bar | null {
   if (e.times === 1 || e.op.kind === 'stand') return null;
 
   const keyframes = world.keyframes;
@@ -180,7 +224,7 @@ export function barOf(world: World, e: Entry, from: number, index: number, slot 
     heading = factor(Math.pow(e.op.by.x, n), Math.pow(e.op.by.y, n));
   }
 
-  return { from, index, slot, steps, end, forever, heading };
+  return { from, place, slot, steps, end, forever, heading };
 }
 
 /**

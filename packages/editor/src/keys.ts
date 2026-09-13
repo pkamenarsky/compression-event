@@ -11,13 +11,40 @@
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
 
-import { Entry, Erode, Keyframe, KeyframeId, Move, Op, Rig, counted1, indexIn, skipping, withKeys } from './rig';
+import { Entry, Erode, Keyframe, KeyframeId, Move, Op, Rig, cornered, counted1, indexIn, skipping, withKeys } from './rig';
 import { rigOf, withRig, without } from './scene';
 import { Id, VertexId, World } from './types';
 
-/** An entry by its place in the list, every entry of one kind, or the whole
- * list. */
-export type Which = number | Op['kind'] | 'all';
+/** An entry by its place in the list, several by theirs, every entry of one
+ * kind, or the whole list. */
+export type Which = number | readonly number[] | Op['kind'] | 'all';
+
+/**
+ * Where one entry is written: the `index`-th of what keyframe `at` does to a
+ * thing, or a corner's nudge or depth there, which have maps of their own —
+ * see `Rig`. What the keyframe view picks.
+ */
+export type Place = Listed | Cornered;
+
+export interface Listed {
+  id: Id
+  at: KeyframeId
+  index: number
+}
+
+export interface Cornered {
+  id: Id
+  at: KeyframeId
+  corner: VertexId
+  kind: 'move' | 'erode'
+}
+
+export function samePlace(a: Place, b: Place): boolean {
+  if (a.id !== b.id || a.at !== b.at) return false;
+  if ('index' in a) return 'index' in b && a.index === b.index;
+
+  return 'corner' in b && a.corner === b.corner && a.kind === b.kind;
+}
 
 /** Why a change to a timeline was not made, for the status line. */
 export interface Refused {
@@ -26,8 +53,10 @@ export interface Refused {
 
 function chosen(e: Entry, i: number, which: Which): boolean {
   if (which === 'all') return true;
+  if (typeof which === 'number') return i === which;
+  if (typeof which === 'string') return e.op.kind === which;
 
-  return typeof which === 'number' ? i === which : e.op.kind === which;
+  return which.includes(i);
 }
 
 function listOf(world: World, id: Id, k: KeyframeId): readonly Entry[] {
@@ -121,10 +150,13 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
  * on. How far it runs is changed by saying so — see `timed`.
  */
 export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, at: KeyframeId): World | Refused {
+  return skipToggledAt(world, { id, at: k, index }, at);
+}
+
+export function skipToggledAt(world: World, p: Place, at: KeyframeId): World | Refused {
   const keyframes = world.keyframes;
-  const list = listOf(world, id, k);
-  const e = list[index];
-  const j = indexIn(keyframes, k), i = indexIn(keyframes, at);
+  const e = entryAt(world, p);
+  const j = indexIn(keyframes, p.at), i = indexIn(keyframes, at);
 
   if (e === undefined) return world;
   if (e.op.kind === 'stand') return { refused: 'an unchaining does not repeat' };
@@ -147,9 +179,8 @@ export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, 
 
   const { skip: _was, ...rest } = e;
   const out = { ...rest, times };
-  const now = list.map((x, n) => (n === index ? (skip.size === 0 ? out : { ...out, skip }) : x));
 
-  return withRig(world, id, withKeys(rigOf(world, id), k, now));
+  return rewritten(world, p, skip.size === 0 ? out : { ...out, skip });
 }
 
 /** How many stands a list opens with. */
@@ -161,17 +192,159 @@ function stands(list: readonly Entry[]): number {
 
 /** How many keyframes an entry contributes to: `null` to the end. */
 export function timed(world: World, id: Id, k: KeyframeId, index: number, times: number | null): World | Refused {
+  return timedAt(world, { id, at: k, index }, times);
+}
+
+export function timedAt(world: World, p: Place, times: number | null): World | Refused {
   if (times !== null && !(Number.isInteger(times) && times >= 1)) return { refused: 'a repeat runs once or more' };
 
-  const list = listOf(world, id, k);
-  const e = list[index];
+  const e = entryAt(world, p);
 
   if (e === undefined || e.times === times) return world;
   if (e.op.kind === 'stand') return { refused: 'an unchaining does not repeat' };
 
-  const now = list.map((x, i) => (i === index ? { ...x, times } : x));
+  return rewritten(world, p, { ...e, times });
+}
 
-  return withRig(world, id, withKeys(rigOf(world, id), k, now));
+// -----------------------------------------------------------------------------
+// Entries by where they are written
+//
+// What the keyframe view picks, one entry or several at once, from lists and
+// corners alike. Several in one list go together, since taking one out moves
+// the places of the ones after it.
+// -----------------------------------------------------------------------------
+
+export function entryAt(world: World, p: Place): Entry | undefined {
+  const rig = rigOf(world, p.id);
+
+  if ('index' in p) return rig.keys.get(p.at)?.[p.index];
+
+  return (p.kind === 'move' ? rig.nudges : rig.depths).get(p.corner)?.get(p.at);
+}
+
+/** The entry at `p` written over with `e`, or taken out. */
+function rewritten(world: World, p: Place, e: Entry | null): World {
+  const rig = rigOf(world, p.id);
+
+  if ('index' in p) {
+    const list = rig.keys.get(p.at) ?? [];
+    const now = e === null ? list.filter((_x, i) => i !== p.index) : list.map((x, i) => (i === p.index ? e : x));
+
+    return withRig(world, p.id, withKeys(rig, p.at, now));
+  }
+
+  return withRig(world, p.id, p.kind === 'move'
+    ? { ...rig, nudges: cornered(rig.nudges, p.corner, p.at, e as Entry<Move> | null) }
+    : { ...rig, depths: cornered(rig.depths, p.corner, p.at, e as Entry<Erode> | null) });
+}
+
+/** Places in one thing's list at one keyframe, together, and the corners' one
+ * by one. */
+function split(places: readonly Place[]): { lists: Map<string, Listed[]>, corners: Cornered[] } {
+  const lists = new Map<string, Listed[]>();
+  const corners: Cornered[] = [];
+
+  for (const p of places) {
+    if ('corner' in p) {
+      corners.push(p);
+      continue;
+    }
+
+    const key = `${p.id}:${p.at}`;
+
+    lists.set(key, [...(lists.get(key) ?? []), p]);
+  }
+
+  return { lists, corners };
+}
+
+/** The entries at `places` taken out. */
+export function droppedAt(world: World, places: readonly Place[]): World {
+  const { lists, corners } = split(places);
+  let out = world;
+
+  for (const ps of lists.values()) out = dropped(out, ps[0].id, ps[0].at, ps.map(p => p.index));
+  for (const p of corners) out = rewritten(out, p, null);
+
+  return out;
+}
+
+/** The entries at `places`, each at the keyframe after its own: a list's at
+ * the front of the next one's, and a corner's added to what it has there. */
+export function pushedAt(world: World, places: readonly Place[]): World | Refused {
+  const { lists, corners } = split(places);
+  let out: World = world;
+
+  for (const ps of [...lists.values(), ...corners.map(p => [p])]) {
+    const p = ps[0];
+    const next = after(out, p.at);
+
+    if (next === null) return { refused: 'nothing after the last keyframe to push to' };
+
+    const now: World | Refused = 'corner' in p
+      ? cornerMoved(out, p, next)
+      : pushed(out, p.id, p.at, (ps as Listed[]).map(q => q.index));
+
+    if ('refused' in now) return now;
+
+    out = now;
+  }
+
+  return out;
+}
+
+/** The entries at `places`, each at the end of the keyframe before its own. */
+export function pulledAt(world: World, places: readonly Place[]): World | Refused {
+  const { lists, corners } = split(places);
+  let out: World = world;
+
+  for (const ps of [...lists.values(), ...corners.map(p => [p])]) {
+    const p = ps[0];
+    const i = indexIn(out.keyframes, p.at);
+    const before: KeyframeId | undefined = out.keyframes[i - 1]?.id;
+
+    if (before === undefined) return { refused: 'nothing before the first keyframe to pull into' };
+
+    const next: World | Refused = 'corner' in p
+      ? bornAt(out, p.id) > i - 1 ? { refused: 'not there yet to pull into' } : cornerMoved(out, p, before)
+      : pulled(out, p.id, before, (ps as Listed[]).map(q => q.index));
+
+    if ('refused' in next) return next;
+
+    out = next;
+  }
+
+  return out;
+}
+
+/** A corner's entry moved to keyframe `to`, added to one there that repeats
+ * the same way — a corner has room for one entry of each kind a keyframe. */
+function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused {
+  const e = entryAt(world, p);
+
+  if (e === undefined) return world;
+
+  const there = entryAt(world, { ...p, at: to });
+  const moved = skipping(world.keyframes, e, to);
+  let landed: Entry = moved;
+
+  if (there !== undefined) {
+    if (there.times !== moved.times || !sameSkips(there, moved)) {
+      return { refused: 'a corner would have two repeats at one keyframe' };
+    }
+
+    landed = { ...there, op: added(moved.op as Move | Erode, there.op as Move | Erode) };
+  }
+
+  return rewritten(rewritten(world, p, null), { ...p, at: to }, landed);
+}
+
+/** Two nudges or two depths of one corner, as one. */
+function added<O extends Move | Erode>(a: O, b: O): O {
+  if (a.kind === 'move' && b.kind === 'move') return { kind: 'move', by: { x: a.by.x + b.by.x, y: a.by.y + b.by.y } } as O;
+  if (a.kind === 'erode' && b.kind === 'erode') return { kind: 'erode', by: a.by + b.by } as O;
+
+  return b;
 }
 
 // -----------------------------------------------------------------------------
@@ -288,14 +461,8 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
     if (next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
 
-    const nudges = cornerMaps<Move, Entry<Move>>(rig.nudges, k, next, (a, b) => ({
-      kind: 'move' as const,
-      by: { x: a.by.x + b.by.x, y: a.by.y + b.by.y },
-    }));
-    const depths = cornerMaps<Erode, Entry<Erode>>(rig.depths, k, next, (a, b) => ({
-      kind: 'erode' as const,
-      by: a.by + b.by,
-    }));
+    const nudges = cornerMaps<Move, Entry<Move>>(rig.nudges, k, next, added);
+    const depths = cornerMaps<Erode, Entry<Erode>>(rig.depths, k, next, added);
 
     if (nudges === null || depths === null) {
       return { refused: 'a corner would have two repeats at one keyframe' };

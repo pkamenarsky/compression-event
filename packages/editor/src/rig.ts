@@ -987,7 +987,7 @@ export function deepened(rig: Rig, vertex: VertexId, k: KeyframeId, by: number):
   return { ...rig, depths: cornered(rig.depths, vertex, k, entry) };
 }
 
-function cornered<E>(
+export function cornered<E>(
   maps: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
   vertex: VertexId,
   k: KeyframeId,

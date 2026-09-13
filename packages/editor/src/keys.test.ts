@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
-import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Refused, deleted, dropped, inserted, pulled, pushed, timed } from './keys';
+import { Frame, deepened, framed, nudged, repeating, stateAt, worldFrame } from './rig';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, pulled, pulledAt, pushed, pushedAt, skipToggledAt, timed, timedAt } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -251,5 +251,63 @@ describe('keyframes', () => {
     const world = { ...emptyWorld(), keyframes: [{ id: 0, name: 'v0', visible: true }] };
 
     expect('refused' in deleted(world, 0)).toBe(true);
+  });
+});
+
+describe('places', () => {
+  /** A room with one corner nudged and deepened at 1, and another nudged at
+   * 2; and a list of three at 1. */
+  const rigged = () => {
+    const { world, id } = room();
+    const corners = world.polygons.get(id)!.points.map(c => c.id);
+    let rig = nudged(rigOf(world, id), corners[0], 1, { x: 1, y: 0 });
+
+    rig = deepened(rig, corners[0], 1, 2);
+    rig = nudged(rig, corners[1], 2, { x: 0, y: 1 });
+
+    const w = wrote(withRig(world, id, rig), 1, id, move(1, 0), erode(1), move(0, 1));
+
+    return { w, id, corners };
+  };
+
+  test('several in one list go together, and a corner by its kind', () => {
+    const { w, id, corners } = rigged();
+    const out = droppedAt(w, [{ id, at: 1, index: 0 }, { id, at: 1, index: 2 }, { id, at: 1, corner: corners[0], kind: 'erode' }]);
+
+    expect(listAt(out, 1, id).map(e => e.op)).toEqual([erode(1)]);
+    expect(rigOf(out, id).depths.size).toBe(0);
+    expect(rigOf(out, id).nudges.get(corners[0])?.get(1)?.op).toEqual(move(1, 0));
+  });
+
+  test('a corner pushed along lands on the next keyframe, added to what it has there', () => {
+    const { w, id, corners } = rigged();
+    const nudge: Place = { id, at: 1, corner: corners[0], kind: 'move' };
+    const once = ok(pushedAt(w, [nudge]));
+
+    expect(entryAt(once, nudge)).toBeUndefined();
+    expect(entryAt(once, { ...nudge, at: 2 })?.op).toEqual(move(1, 0));
+
+    const other: Place = { id, at: 1, corner: corners[1], kind: 'move' };
+    const back = ok(pulledAt(w, [{ ...other, at: 2 }]));
+
+    expect(entryAt(back, other)?.op).toEqual(move(0, 1));
+    expect(entryAt(ok(pulledAt(back, [nudge, other])), { ...nudge, at: 0 })?.op).toEqual(move(1, 0));
+  });
+
+  test('a corner repeating unlike the one it would land on stays where it is', () => {
+    const { w, id, corners } = rigged();
+    const nudge: Place = { id, at: 1, corner: corners[1], kind: 'move' };
+    const two = withRig(w, id, nudged(rigOf(w, id), corners[1], 1, { x: 2, y: 0 }));
+
+    expect(pushedAt(ok(timedAt(two, nudge, 3)), [nudge])).toEqual({ refused: 'a corner would have two repeats at one keyframe' });
+    expect(entryAt(ok(pushedAt(two, [nudge])), { ...nudge, at: 2 })?.op).toEqual(move(2, 1));
+  });
+
+  test('a corner repeats and skips like an entry in a list', () => {
+    const { w, id, corners } = rigged();
+    const depth: Place = { id, at: 1, corner: corners[0], kind: 'erode' };
+    const out = ok(skipToggledAt(ok(timedAt(w, depth, 3)), depth, 2));
+
+    expect(entryAt(out, depth)).toEqual({ op: erode(2), times: 2, skip: new Set([2]) });
   });
 });

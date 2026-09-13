@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, grouped, listAt, reachable, unchained } from './scene';
-import { stateAt } from './rig';
+import { TOP, addPolygon, grouped, listAt, reachable, rigOf, unchained, withRig } from './scene';
+import { deepened, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, pushed, skipToggled } from './keys';
 import { barOf, beneath, rootsOf, rowsOf, timesTo } from './track';
 import { erode, move, repeated, scaled, wrote } from './testing';
@@ -32,7 +32,7 @@ describe('rows', () => {
     const rows = rowsOf(w, [made.id]);
 
     expect(rows.map(r => [r.label, r.depth])).toEqual([[`group ${made.id}`, 0], [`level ${a.id}`, 1], [`level ${b.id}`, 1]]);
-    expect(rows[0].cells.map(c => c.entries.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
+    expect(rows[0].cells.map(c => c.places.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
     expect(rows[0].cells[1].kinds).toEqual(['move', 'erode']);
     expect(listAt(w, 2, made.id).map(e => e.op.kind)).toEqual(['stand']);
   });
@@ -62,17 +62,39 @@ describe('rows', () => {
   });
 });
 
+describe('corner rows', () => {
+  test('under the polygon, only asked for, and only the corners written about', () => {
+    const { world, id } = room();
+    const corners = world.polygons.get(id)!.points.map(c => c.id);
+    let rig = deepened(rigOf(world, id), corners[2], 1, 2);
+
+    rig = nudged(rig, corners[2], 1, { x: 1, y: 0 });
+    rig = { ...rig, nudges: new Map([...rig.nudges, [corners[0], new Map([[3, repeating(move(0, 1), 2)]])]]) };
+
+    const w = withRig(world, id, rig);
+
+    expect(rowsOf(w, [id]).length).toBe(1);
+
+    const rows = rowsOf(w, [id], true);
+
+    expect(rows.map(r => [r.label, r.depth, r.corner])).toEqual([[`level ${id}`, 0, null], ['corner 0', 1, corners[0]], ['corner 2', 1, corners[2]]]);
+    expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }, { id, at: 1, corner: corners[2], kind: 'erode' }]);
+    expect(rows[2].cells[1].kinds).toEqual(['move', 'erode']);
+    expect(rows[1].bars.map(b => [b.from, b.end])).toEqual([[3, 4]]);
+  });
+});
+
 describe('bars', () => {
   test('a repeat runs to its last step, waiting over what it skips', () => {
     const { world, id } = room();
     const w = repeated(world, 1, id, move(1, 0), 4);
     const e = listAt(w, 1, id)[0];
 
-    expect(barOf(w, e, 1, 0)).toMatchObject({ end: 4, forever: false });
+    expect(barOf(w, e, 1, { id, at: 1, index: 0 })).toMatchObject({ end: 4, forever: false });
 
     // Waiting over a step leaves where it stops alone.
     const skipped = ok(skipToggled(w, id, 1, 0, 2));
-    const bar = barOf(skipped, listAt(skipped, 1, id)[0], 1, 0)!;
+    const bar = barOf(skipped, listAt(skipped, 1, id)[0], 1, { id, at: 1, index: 0 })!;
 
     expect(bar.steps).toEqual([{ col: 2, skip: true }, { col: 3, skip: false }, { col: 4, skip: false }]);
     expect(bar.end).toBe(4);
@@ -83,22 +105,22 @@ describe('bars', () => {
     expect(listAt(ok(skipToggled(skipped, id, 1, 0, 2)), 1, id)[0]).toEqual(e);
 
     // The last step taken out ends it at the one before.
-    expect(barOf(w, listAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, 0)!.end).toBe(3);
+    expect(barOf(w, listAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, { id, at: 1, index: 0 })!.end).toBe(3);
   });
 
   test('once has no bar, and to the end runs to the last column', () => {
     const { world, id } = room();
     const w = repeated(world, 6, id, move(1, 0), null);
 
-    expect(barOf(w, { op: move(1, 0), times: 1 }, 6, 0)).toBeNull();
-    expect(barOf(w, listAt(w, 6, id)[0], 6, 0)).toMatchObject({ end: 8, forever: true });
+    expect(barOf(w, { op: move(1, 0), times: 1 }, 6, { id, at: 6, index: 0 })).toBeNull();
+    expect(barOf(w, listAt(w, 6, id)[0], 6, { id, at: 6, index: 0 })).toMatchObject({ end: 8, forever: true });
   });
 
   test('a repeating scale says where it is heading', () => {
     const { world, id } = room();
     const w = repeated(world, 0, id, scaled(2, 2), 4);
 
-    expect(barOf(w, listAt(w, 0, id)[0], 0, 0)!.heading).toBe('×16');
+    expect(barOf(w, listAt(w, 0, id)[0], 0, { id, at: 0, index: 0 })!.heading).toBe('×16');
   });
 
   test('dragging the end counts the columns it steps at', () => {
