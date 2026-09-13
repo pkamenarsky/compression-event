@@ -3,7 +3,7 @@ import { Point } from '@ce/game/world';
 import { TOP, addPolygon, grouped, listAt, reachable } from './scene';
 import { stateAt } from './rig';
 import { Refused, dropped, pushed, skipToggled } from './keys';
-import { barOf, rootsOf, rowsOf, timesTo } from './track';
+import { barOf, beneath, rootsOf, rowsOf, timesTo } from './track';
 import { erode, move, repeated, scaled, wrote } from './testing';
 import { restored, saved } from './save';
 import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, initialState, visible } from './types';
@@ -168,6 +168,22 @@ describe('flags', () => {
     const group = flagged(made.world, made.id, 'solo', true);
 
     expect([a.id, b.id, c.id].map(id => visible(group, id))).toEqual([true, true, false]);
+  });
+
+  test('what is under a point is found whatever it is flagged, in its groups', () => {
+    const a = room();
+    const b = room(a.world);
+    const far = addPolygon(b.world, { type: 'solid' }, rect(500, 500, 10, 10), 0, TOP);
+    const made = grouped(far.world, 0, [a.id, far.id], TOP)!;
+    const w = flagged(flagged(made.world, made.id, 'locked', true), b.id, 'hidden', true);
+
+    const under = beneath(w, 0, { x: 50, y: 30 }, 5);
+
+    expect(under).toHaveLength(3);
+    expect(under.find(u => u.id === made.id)!.depth).toBe(0);
+    expect(under.find(u => u.id === a.id)!.depth).toBe(1);
+    expect(under.find(u => u.id === b.id)!.depth).toBe(0);
+    expect(beneath(w, 0, { x: -50, y: -50 }, 5)).toEqual([]);
   });
 
   test('flags are saved', () => {

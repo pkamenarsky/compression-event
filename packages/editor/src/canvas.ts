@@ -105,6 +105,7 @@ import {
   timings,
 } from './paths';
 import { theme } from './theme';
+import { beneath } from './track';
 import { Op as Operation } from './rig';
 import {
   ARTEFACTS,
@@ -1938,6 +1939,15 @@ export function worldCanvas(
           effect(() => el && wheeling(el, update)),
           effect(() => el && noMenu(el)),
 
+          // The right button lists everything under it, what cannot be picked
+          // included — which is how a locked thing is got back.
+          effect(() => el && pressedRight(el, e => {
+            const w = world();
+            const items = beneath(w, keyframe(), at(e), HANDLE / view().zoom);
+
+            update(s => ({ ...s, beneath: items.length === 0 ? null : { x: e.clientX, y: e.clientY, items } }));
+          })),
+
           effect(
             () => [
               world(),
@@ -2517,6 +2527,17 @@ function noMenu(el: HTMLCanvasElement): () => void {
   el.addEventListener('contextmenu', onMenu);
 
   return () => el.removeEventListener('contextmenu', onMenu);
+}
+
+/** The right button going down on the canvas, and only that one. */
+function pressedRight(el: HTMLCanvasElement, then: (e: PointerEvent) => void): () => void {
+  const onDown = (e: PointerEvent): void => {
+    if (e.button === 2) then(e);
+  };
+
+  el.addEventListener('pointerdown', onDown);
+
+  return () => el.removeEventListener('pointerdown', onDown);
 }
 
 /** How big the canvas got is an update like any other, so the draw wakes for it. */

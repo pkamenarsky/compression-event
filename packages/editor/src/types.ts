@@ -1089,6 +1089,13 @@ export interface EditorState {
   history: History
   /** What was last copied. Also not in the file, and for the same reason. */
   clipboard: Clipping[]
+  /**
+   * Everything a right click found under the cursor, locked and hidden
+   * included, listed where it was pressed — or nothing, nearly always. How a
+   * thing that cannot be picked is found to be let go of. See `beneath` in
+   * `track.ts`. Not in the file.
+   */
+  beneath: { x: number, y: number, items: { id: Id, depth: number }[] } | null
 }
 
 /** Everything that writes to the store goes through one of these. */
@@ -1112,5 +1119,6 @@ export function initialState(world: World): EditorState {
     bake: { spans: new Map(), progress: null },
     history: EMPTY_HISTORY,
     clipboard: [],
+    beneath: null,
   };
 }

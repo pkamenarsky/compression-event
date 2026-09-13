@@ -7,8 +7,10 @@
 // one row per kind of operation written about it and then its members.
 // -----------------------------------------------------------------------------
 
-import { Entry, Op, counted1, indexIn } from './rig';
-import { rigOf } from './scene';
+import { Point } from '@ce/game/world';
+import { hitPath } from './paths';
+import { Entry, KeyframeId, Op, counted1, indexIn } from './rig';
+import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
 import { Flags, Id, Selection, World, enclosing, flagsOf, parentOf } from './types';
 
 export type Kind = Op['kind'];
@@ -260,4 +262,48 @@ export function entryLabel(e: Entry): string {
   if (e.times === 1) return what;
 
   return `${what}  ↻ ${e.times === null ? '∞' : e.times}`;
+}
+
+/** One thing under the cursor, and how deep in the groups above it it is. */
+export interface Beneath {
+  id: Id
+  depth: number
+}
+
+/**
+ * Everything at a point at keyframe `k`, whatever its flags: each room there,
+ * topmost first, under the groups that hold it, then the artefacts and the
+ * tape within `reach`.
+ *
+ * The one place a locked or hidden thing can still be found by where it is,
+ * which is how it is found to be let go of.
+ */
+export function beneath(world: World, k: KeyframeId, p: Point, reach: number): Beneath[] {
+  const hit: Id[] = hitPolygons(resolveAt(world, k), p);
+
+  for (const it of artefactsAt(world, k)) {
+    if (Math.hypot(it.at.x - p.x, it.at.y - p.y) <= reach) hit.push(it.id);
+  }
+
+  const tape = hitPath(pathsAt(world, k), p, reach);
+
+  if (tape !== null) hit.push(tape);
+
+  // Each hit with every group over it, laid out as the tree they make: the
+  // outermost in the order they were hit, and under a group what of it is here.
+  const here = new Set(hit.flatMap(id => [id, ...enclosing(world, id)]));
+  const roots = [...new Set(hit.map(id => enclosing(world, id).at(-1) ?? id))];
+  const out: Beneath[] = [];
+
+  const add = (id: Id, depth: number) => {
+    out.push({ id, depth });
+
+    for (const m of world.groups.get(id)?.members ?? []) {
+      if (here.has(m)) add(m, depth + 1);
+    }
+  };
+
+  for (const r of roots) add(r, 0);
+
+  return out;
 }

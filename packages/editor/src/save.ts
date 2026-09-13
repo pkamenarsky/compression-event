@@ -249,6 +249,7 @@ export function restored(file: Saved): EditorState {
     // than about the world, and opening a file is a fresh one.
     history: EMPTY_HISTORY,
     clipboard: [],
+    beneath: null,
   };
 }
 

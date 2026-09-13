@@ -29,6 +29,7 @@ import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
 import { resolveInto } from './resolve';
+import { picker } from './picker';
 import { timeline } from './timeline';
 import { theme } from './theme';
 import {
@@ -119,6 +120,7 @@ export function editor(initial: World): VNode {
           ),
 
           breadcrumb(s.world, s.inside, update),
+          picker(s.beneath, s.world, input, update),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           typeBar(s.world, s.selection, s.tool, update),

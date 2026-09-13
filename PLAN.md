@@ -370,6 +370,10 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   format stays 21. A group's hidden or locked is its members'; a solo keeps
   what holds and what is held by the soloed thing. Locked is out of reach the
   way a thing outside the open group is, so it draws dimmed.
+- A right click on the canvas lists everything under it, in its groups,
+  locked and hidden included (`beneath` in `track.ts`, `picker.ts`): each
+  with its switches, and picked by its name where it can be. That is how a
+  locked thing is got back without finding its row.
 - Corner nudges and depths have no rows yet.
 
 ### 6 — effect stack
