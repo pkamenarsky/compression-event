@@ -31,7 +31,6 @@ import {
   FLOOR,
   SOLID,
   PolygonKind,
-  VERSIONS,
   KeyframeId,
   World,
   GroupId,
@@ -344,7 +343,7 @@ describe('what one reading costs', () => {
       expect(polygon.points.every(p => p.death === polygon.death)).toBe(true);
     }
 
-    for (let v = 0; v < VERSIONS; v++) {
+    for (let v = 0; v < out.world.keyframes.length; v++) {
       const it = resolveAt(out.world, v)[0];
 
       expect(it.corners.length).toBe(it.local.length);

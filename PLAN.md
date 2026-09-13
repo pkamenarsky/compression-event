@@ -200,7 +200,7 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-Done on branch `timelines`: 1, 2, 3 and 3½, and groups made global. Next: 4.
+Done on branch `timelines`: 1, 2, 3, 3½ and 4, and groups made global. Next: 5.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -298,7 +298,7 @@ Done as written, with these on top:
   ungrouping agree at both ends of the span; copying a sheared member out and
   pasting it lands where it was seen.
 
-### 4 — moving operations and keyframe count (`keys.ts`)
+### 4 — moving operations and keyframe count (`keys.ts`) — done
 
 - `drop` an entry or all of one kind at a keyframe; `push` (to the front of
   the next keyframe) and `pull` (the next keyframe's to the end of this one)
@@ -310,6 +310,30 @@ Done as written, with these on top:
 - Remove `VERSIONS`. Insert a keyframe = split every entry at the next one;
   delete = push, moving births and deaths with it. A repeat's span counts steps, so an inserted keyframe inside it
   adds one.
+
+Done as written, with these on top:
+
+- A stand does not push, pull, split or repeat; a push lands behind a stand at
+  the head of the next list. Nothing is pulled to before the thing's birth.
+- A repeating turn, scale or skew does not split: each half's steps would keep
+  to its own centre while the other half moved it. A repeating move or erosion
+  splits into two repeats.
+- Insert cuts only the entries that happen once, and only for things alive
+  before the next keyframe; a repeat begun there begins there still. The first
+  halves all play before the second, so they must commute: where the next list
+  turns, scales or skews about more than one painted point, or mixes them, the
+  thing holds still over the new keyframe and the status line says so. A
+  thing whose next list holds a stand is not cut either. Corner nudges and
+  depths always cut.
+- Delete hands the entries to the front of the next list, `times` one fewer
+  so a repeat ends where it ended; spans running across lose a step. A life
+  left empty goes, corners included. Deleting the last keyframe drops its
+  writing, lets what died there live and drops what was born there. Refused
+  for the only keyframe, and where a corner would end with two entries of
+  different `times` at one keyframe.
+- Keyframes named `v<n>` are renamed to their place. The strip sizes to the
+  count and has insert (after the one on screen) and delete buttons; undo past
+  either lands on the keyframe in its place.
 
 ### 5 — horizontal keyframe view
 
@@ -368,10 +392,12 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
 - **A room drawn into a group after the group's rooms were deleted stays.**
   Deleting a group writes deaths onto what it holds at the time; the group has
   no death of its own to hand on.
+- **Inserting or deleting a keyframe inside a repeat changes what it does.**
+  The span counts steps, so a keyframe put in adds a step and one taken out
+  takes one away; the repeat still ends at the keyframe it ended at.
 - **Files before 20 do not open.** The converter (`pnpm convert`) takes
   formats 18 and 19 and writes 21.
 
 ## Open
 
-1. **Repeat spans across inserted keyframes** — steps (proposed) or a fixed
-   total spread over the span.
+Nothing. (Repeat spans across inserted keyframes: steps, as proposed.)

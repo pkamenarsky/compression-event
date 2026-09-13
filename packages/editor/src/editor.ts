@@ -30,6 +30,7 @@ import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
 import { resolveInto } from './resolve';
+import { deleted, inserted } from './keys';
 import { theme } from './theme';
 import {
   EditorState,
@@ -40,7 +41,6 @@ import {
   Selection,
   Tool,
   Update,
-  VERSIONS,
   Keyframe,
   KeyframeId,
   World,
@@ -126,9 +126,13 @@ export function editor(initial: World): VNode {
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           typeBar(s.world, s.selection, s.tool, update),
-          versionStrip(s.world, s.selection, s.keyframe, update),
-          bakeButton(state, s.world, s.bake, update),
-          previewButton(s.preview, update),
+          // Sized to the keyframes, so made again when there are more or
+          // fewer of them.
+          dynamic(() => s.world().keyframes.length, count => fragment([
+            versionStrip(count, s.world, s.selection, s.keyframe, update),
+            bakeButton(count, state, s.world, s.bake, update),
+            previewButton(count, s.preview, update),
+          ])),
         ],
       ),
     );
@@ -1191,12 +1195,13 @@ const RAIL = 22;
 const STRIP_WIDTH = 132;
 
 function versionStrip(
+  count: number,
   world: Value<World>,
   selection: Value<Selection>,
   current: Value<KeyframeId>,
   update: Update,
 ): VNode {
-  const height = VERSIONS * ROW + 2 * PADDING;
+  const height = stripHeight(count);
 
   return svg(
     {
@@ -1227,14 +1232,14 @@ function versionStrip(
         x1: RAIL,
         y1: PADDING + ROW / 2,
         x2: RAIL,
-        y2: PADDING + (VERSIONS - 0.5) * ROW,
+        y2: PADDING + (count - 0.5) * ROW,
         stroke: theme.border,
         'stroke-width': 2,
       }),
 
-      // The chain is a fixed length, so the rows are made once and each reads
-      // its own version out of the world.
-      ...Array.from({ length: VERSIONS }, (_unused, i) =>
+      // Made again whenever the count changes, so each row reads its own
+      // version out of the world by place.
+      ...Array.from({ length: count }, (_unused, i) =>
         versionRow(
           i,
           () => world().keyframes[i],
@@ -1242,8 +1247,66 @@ function versionStrip(
           current,
           update,
         )),
+
+      g({ transform: `translate(0, ${PADDING + count * ROW})` }, [
+        stripButton(PADDING, '+ insert', () => update(s => insertedAfter(s))),
+        stripButton(STRIP_WIDTH / 2, '− delete', () => update(s => deletedHere(s))),
+      ]),
     ],
   );
+}
+
+/** The strip's height: a row per keyframe, and the row of buttons under them. */
+function stripHeight(count: number): number {
+  return (count + 1) * ROW + 2 * PADDING;
+}
+
+function stripButton(x: number, label: string, onclick: () => void): VNode {
+  const width = STRIP_WIDTH / 2 - PADDING;
+
+  return g({ style: { cursor: 'pointer' }, onclick }, [
+    rect({ x, y: 5, width: width - 2, height: ROW - 10, rx: 6, fill: theme.border }),
+    text(
+      {
+        x: x + width / 2 - 1,
+        y: ROW / 2 + 4,
+        'text-anchor': 'middle',
+        fill: theme.text,
+        'font-family': 'system-ui, sans-serif',
+        'font-size': '12px',
+      },
+      label,
+    ),
+  ]);
+}
+
+/**
+ * A keyframe put in after the one on screen, and stood in: it takes the first
+ * half of what the next one does. See `inserted` in `keys.ts`.
+ */
+function insertedAfter(s: EditorState): EditorState {
+  const out = inserted(s.world, s.keyframe);
+
+  if (out === null) return s;
+
+  const next = marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
+
+  return out.held.length === 0
+    ? next
+    : saying(next, `${out.held.length} held still over the new keyframe: what they do next would not cut in two`);
+}
+
+/** The keyframe on screen taken out, standing in the one after it — or before
+ * it, for the last. See `deleted` in `keys.ts`. */
+function deletedHere(s: EditorState): EditorState {
+  const out = deleted(s.world, s.keyframe);
+
+  if ('refused' in out) return saying(s, out.refused);
+
+  const i = order(s.world, s.keyframe);
+  const to = s.world.keyframes[i + 1] ?? s.world.keyframes[i - 1];
+
+  return marked({ ...s, world: out, keyframe: to.id, replay: null }, s.world);
 }
 
 /**
@@ -1385,12 +1448,13 @@ function eye(version: Value<Keyframe>, update: Update, index: number): VNode {
 const BAKE_HEIGHT = 52;
 
 function bakeButton(
+  count: number,
   state: Value<EditorState>,
   world: Value<World>,
   bake: Value<Bake>,
   update: Update,
 ): VNode {
-  const spans = VERSIONS - 1;
+  const spans = Math.max(1, count - 1);
   const running = () => bake().progress !== null;
 
   const done = () => {
@@ -1416,7 +1480,7 @@ function bakeButton(
       style: {
         position: 'absolute',
         right: '12px',
-        top: `${12 + VERSIONS * ROW + 2 * PADDING + 8}px`,
+        top: `${12 + stripHeight(count) + 8}px`,
         filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
       },
     },
@@ -1501,7 +1565,7 @@ function bakeButton(
  * Under the bake button, because that is what it depends on: a level that has
  * not been baked has nothing to show, and the two read as one thought.
  */
-function previewButton(showing: Value<boolean>, update: Update): VNode {
+function previewButton(count: number, showing: Value<boolean>, update: Update): VNode {
   const on = () => showing();
 
   return svg(
@@ -1512,7 +1576,7 @@ function previewButton(showing: Value<boolean>, update: Update): VNode {
       style: {
         position: 'absolute',
         right: '12px',
-        top: `${12 + VERSIONS * ROW + 2 * PADDING + 8 + BAKE_HEIGHT + 8}px`,
+        top: `${12 + stripHeight(count) + 8 + BAKE_HEIGHT + 8}px`,
         filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
       },
     },

@@ -520,9 +520,9 @@ export interface World {
   rigs: Map<Id, Rig>
 }
 
-/** Long enough to author a shrink sequence against, short enough to fit down
- * the side of the window without a scrollbar. */
-export const VERSIONS = 9;
+/** How many keyframes a new world starts with: long enough to author a shrink
+ * sequence against. More are inserted and deleted from there — see `keys.ts`. */
+const STARTING = 9;
 
 export function emptyWorld(): World {
   return {
@@ -532,7 +532,7 @@ export function emptyWorld(): World {
     start: { at: { x: 0, y: 0 }, facing: 0 },
     paths: new Map(),
     nextId: 0,
-    keyframes: Array.from({ length: VERSIONS }, (_unused, i) => ({
+    keyframes: Array.from({ length: STARTING }, (_unused, i) => ({
       id: i,
       name: `v${i}`,
       visible: true,
@@ -824,7 +824,7 @@ export function undone(s: EditorState): EditorState {
     ...s,
     world: past[past.length - 1],
     history: { past: past.slice(0, -1), future: [...future, s.world] },
-  });
+  }, s.world);
 }
 
 export function redone(s: EditorState): EditorState {
@@ -836,20 +836,27 @@ export function redone(s: EditorState): EditorState {
     ...s,
     world: future[future.length - 1],
     history: { past: [...past, s.world], future: future.slice(0, -1) },
-  });
+  }, s.world);
 }
 
 /** The selection with anything the world no longer has dropped: stepping back
- * past the birth of a polygon leaves it picked and gone. */
-function settled(s: EditorState): EditorState {
+ * past the birth of a polygon leaves it picked and gone. And the keyframe on
+ * screen, where stepping back took it out: the one in its place instead. */
+function settled(s: EditorState, was: World): EditorState {
   const corners = new Set<VertexId>();
 
   for (const p of s.world.polygons.values()) {
     for (const v of p.points) corners.add(v.id);
   }
 
+  const here = s.world.keyframes.some(f => f.id === s.keyframe);
+  const place = Math.max(0, was.keyframes.findIndex(f => f.id === s.keyframe));
+  const keyframe = here ? s.keyframe : s.world.keyframes[Math.min(place, s.world.keyframes.length - 1)].id;
+
   return {
     ...s,
+    keyframe,
+    replay: here ? s.replay : null,
     selection: {
       polygons: s.selection.polygons.filter(
         id => s.world.polygons.has(id) || s.world.groups.has(id),

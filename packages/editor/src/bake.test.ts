@@ -39,7 +39,6 @@ import {
   PolygonId,
   FLOOR,
   PolygonKind,
-  VERSIONS,
   KeyframeId,
   World,
   emptyWorld,
@@ -1368,7 +1367,7 @@ describe('a bake against a world that moved', () => {
     const keyframes = [...w.keyframes];
     keyframes[2] = { ...keyframes[2], visible: false };
 
-    expect(pruned(bake, { ...w, keyframes }).spans.size).toBe(VERSIONS - 1);
+    expect(pruned(bake, { ...w, keyframes }).spans.size).toBe(w.keyframes.length - 1);
   });
 });
 

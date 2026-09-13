@@ -69,7 +69,6 @@ import {
   PolygonId,
   FLOOR,
   PolygonKind,
-  VERSIONS,
   KeyframeId,
   Vertex,
   World,
@@ -1631,7 +1630,7 @@ describe('a group holds a measuring path', () => {
 
     const apart = ungrouped(w, group)!;
 
-    for (let v = 0; v < VERSIONS; v++) {
+    for (let v = 0; v < w.keyframes.length; v++) {
       const before = pathAt(w, walk, v as KeyframeId)!;
       const after = pathAt(apart, walk, v as KeyframeId)!;
 
@@ -2060,7 +2059,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const gone = removeAt(world, 3, [ids[0]]);
     const clips = copied(gone, 1, [ids[0]]);
-    const put = pasted(gone, VERSIONS - 1, clips, { x: 500, y: 0 }, TOP);
+    const put = pasted(gone, gone.keyframes.length - 1, clips, { x: 500, y: 0 }, TOP);
 
     expect(put.world.polygons.get(put.ids[0] as PolygonId)!.death).toEqual(null);
   });

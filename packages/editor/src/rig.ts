@@ -310,7 +310,7 @@ export function spun(v: Point, angle: number): Point {
 
 /** `(1 − dᵘ) / (1 − d)`: how much of a scale's slide has happened when `u` of
  * the scale has. See `played`. */
-function slid(d: number, u: number): number {
+export function slid(d: number, u: number): number {
   const l = Math.log(d);
 
   return Math.abs(l) < 1e-12 ? u : Math.expm1(u * l) / Math.expm1(l);
@@ -813,7 +813,7 @@ export function trivial(op: Op): boolean {
 }
 
 /** Two points the same to within the arithmetic that produced them. */
-function near(p: Point, q: Point): boolean {
+export function near(p: Point, q: Point): boolean {
   const scale = Math.max(1, Math.abs(p.x), Math.abs(p.y), Math.abs(q.x), Math.abs(q.y));
 
   return Math.abs(p.x - q.x) <= 1e-9 * scale && Math.abs(p.y - q.y) <= 1e-9 * scale;
