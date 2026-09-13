@@ -19,8 +19,8 @@
 // wrote, shown here: a multi-corner erosion, or a turn of several things at
 // once. ⌥-click picks the one entry alone. The arrow beside the clicked entry
 // repeats all of them, each told to run to the same keyframe, and dragging the
-// end of a picked one's lane or clicking a dot on it does the same to every
-// one picked. With ⌥ held, each is about its own entry only.
+// end of an entry's lane or clicking a dot on it picks the same and does the
+// same to all of them. With ⌥ held, each is about its own entry only.
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging an icon a keyframe along pushes or pulls it, and what is picked
@@ -711,7 +711,7 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
       zIndex: 1,
     }, [], {
       title: s.skip ? 'Waits here: click to step' : 'Steps here: click to wait',
-      onclick: (e: MouseEvent) => ctx.acted(skipsToggled(ctx.state().world, acting(m, b.place, e.altKey), b.place, m.keyframes[s.col].id)),
+      onclick: (e: MouseEvent) => acting(ctx, m, b.place, e.altKey, (w, all) => skipsToggled(w, all, b.place, m.keyframes[s.col].id)),
     }));
 
     prev = centre(m, s.col) + 5;
@@ -755,7 +755,7 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
   const x = slot(m, col, i + 1);
 
   const done = (up: PointerEvent) => {
-    ctx.acted(repeatedTo(ctx.state().world, acting(m, p.lead, up.altKey), col, colAt(ctx, up.clientX)));
+    acting(ctx, m, p.lead, up.altKey, (w, all) => repeatedTo(w, all, col, colAt(ctx, up.clientX)));
   };
 
   return [box({
@@ -785,7 +785,7 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
  * once, and to the last is to the end. */
 function end(ctx: Ctx, m: Model, place: Place, from: number, x: number, y: number): VNode {
   const done = (up: PointerEvent) => {
-    ctx.acted(repeatedTo(ctx.state().world, acting(m, place, up.altKey), from, colAt(ctx, up.clientX)));
+    acting(ctx, m, place, up.altKey, (w, all) => repeatedTo(w, all, from, colAt(ctx, up.clientX)));
   };
 
   return box({
@@ -800,10 +800,25 @@ function end(ctx: Ctx, m: Model, place: Place, from: number, x: number, y: numbe
   }, [], { title: 'Drag to where it stops', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
 }
 
-/** What a hand on the entry at `place` acts on: everything picked with it,
- * where it is picked, and with ⌥ held or unpicked, it alone. */
-function acting(m: Model, place: Place, alone: boolean): Place[] {
-  return !alone && m.picked !== null && isPicked(m, place) ? m.picked.all : [place];
+/**
+ * `f` done to what a hand on the entry at `place` is about, which is then
+ * what is picked: everything picked with it where it is picked, and otherwise
+ * what its gesture wrote in its column — or with ⌥ held, it alone.
+ */
+function acting(
+  ctx: Ctx,
+  m: Model,
+  place: Place,
+  alone: boolean,
+  f: (world: World, places: readonly Place[]) => World | Refused,
+): void {
+  const w = ctx.state().world;
+  const all = alone ? [place] : isPicked(m, place) ? m.picked!.all : gestureOf(w, m.rows, order(w, place.at), place);
+
+  ctx.acted(f(w, all));
+
+  // Told how often to repeat or where to wait, every entry is where it was.
+  ctx.change(l => ({ ...l, picked: { lead: place, all } }));
 }
 
 /** Every entry at `places`, written at column `from`, told to repeat to
