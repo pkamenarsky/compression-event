@@ -2,6 +2,7 @@ import { Value } from '@incpt/kontinuum';
 import { VNode, dynamic, effect, fragment, object, show, stateful, text as textNode } from '@incpt/kontinuum-dom';
 import { div, span } from '@incpt/kontinuum-dom/html';
 import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg';
+import { signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, bakeAll, spanAt } from './bake';
@@ -34,6 +35,7 @@ import { timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
+  Editing,
   Id,
   EASINGS,
   REPLAY_EASE,
@@ -71,6 +73,10 @@ import {
 export function editor(initial: World): VNode {
   const input = createInput();
 
+  // A double click on an entry in the keyframes, for the canvas to edit it by
+  // the gesture it was written by.
+  const edits = signal<Editing>();
+
   return stateful(initialState(initial), (state, set) => {
     const update: Update = fn => set(fn(state()));
 
@@ -107,6 +113,7 @@ export function editor(initial: World): VNode {
             s.roaming,
             input,
             update,
+            edits,
           ),
 
           preview(
@@ -147,7 +154,7 @@ export function editor(initial: World): VNode {
             },
             [
               statusbar(s.status),
-              timeline(state, s.world, s.selection, s.keyframe, input, update, k => update(t => switched(t, k))),
+              timeline(state, s.world, s.selection, s.keyframe, input, update, k => update(t => switched(t, k)), edits),
             ],
           ),
         ],

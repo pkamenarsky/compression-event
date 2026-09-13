@@ -28,6 +28,7 @@ import { Value } from '@incpt/kontinuum';
 import { VNode, dynamic, effect, fragment, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 import { path, svg } from '@incpt/kontinuum-dom/svg';
+import { Signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input, keyOwned, pressedAway } from './input';
@@ -36,7 +37,7 @@ import { KeyframeId } from './rig';
 import { order, rigOf, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, entryLabel, rootsOf, rowsOf, timesTo } from './track';
-import { EditorState, Flags, Id, Selection, Update, World, flagged, marked, saying, within } from './types';
+import { EditorState, Editing, Flags, Id, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
 const ROW = 24;
@@ -52,6 +53,9 @@ const PAD = 10;
 
 /** A column holds this many entries side by side before it widens. */
 const ROOMY = 5;
+
+/** How soon a second click on an icon makes a double click. */
+const DOUBLE_MS = 350;
 
 /** What Delete and Escape mean while an entry is picked. */
 const KEYS = ['Backspace', 'Delete', 'Escape'];
@@ -86,6 +90,7 @@ export function timeline(
   input: Input,
   update: Update,
   go: (k: KeyframeId) => void,
+  edits: Signal<Editing>,
 ): VNode {
   const initial: Local = { picked: null };
 
@@ -116,7 +121,7 @@ export function timeline(
       return m;
     };
 
-    const ctx: Ctx = { state, update, go, local, change, acted, letGo, inner: null, model: null };
+    const ctx: Ctx = { state, update, go, edits, local, change, acted, letGo, inner: null, model: null, clicked: null };
 
     let root: (() => void) | null = null;
 
@@ -165,12 +170,17 @@ interface Ctx {
   state: Value<EditorState>
   update: Update
   go: (k: KeyframeId) => void
+  edits: Signal<Editing>
   local: Value<Local>
   change: (f: (l: Local) => Local) => void
   acted: (out: World | Refused) => void
   letGo: () => void
   inner: HTMLElement | null
   model: Model | null
+  /** The last click on an icon, and when: the second of two is a double
+   * click. Timed here, since a press that may be a drag takes the page's own
+   * reading of clicks away. */
+  clicked: { id: Id, at: KeyframeId, index: number, when: number } | null
 }
 
 function keys(ctx: Ctx, input: Input): VNode {
@@ -532,9 +542,18 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       const picked = isPicked(m, r, col, index);
       const colour = picked ? theme.accent : theme.text;
 
+      // Twice is an edit, by the gesture the entry was written by: see
+      // `editing` in `canvas.ts`.
       const click = () => {
+        const now = performance.now();
+        const was = ctx.clicked;
+        const twice = was !== null && was.id === r.id && was.at === at && was.index === index && now - was.when < DOUBLE_MS;
+
+        ctx.clicked = twice ? null : { id: r.id, at, index, when: now };
         ctx.go(at);
         ctx.change(l => ({ ...l, picked: { id: r.id, at, index } }));
+
+        if (twice) ctx.edits.emit({ id: r.id, at, index });
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the

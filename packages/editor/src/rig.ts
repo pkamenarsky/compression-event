@@ -878,7 +878,7 @@ function sameSkip(a: ReadonlySet<KeyframeId> | undefined, b: ReadonlySet<Keyfram
 
 const NONE: ReadonlySet<KeyframeId> = new Set();
 
-function merged(a: Entry, b: Entry): Entry | 'gone' | null {
+export function merged(a: Entry, b: Entry): Entry | 'gone' | null {
   if (a.times !== b.times || !sameSkip(a.skip, b.skip)) return null;
 
   const x = a.op, y = b.op;

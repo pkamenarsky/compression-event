@@ -1,7 +1,7 @@
 import { Value } from '@incpt/kontinuum';
 import { VNode, effect } from '@incpt/kontinuum-dom';
 import { canvas } from '@incpt/kontinuum-dom/html';
-import { Op, select, signal } from '@incpt/kontinuum-interaction';
+import { Op, Signal, select, signal } from '@incpt/kontinuum-interaction';
 import { interactive } from '@incpt/kontinuum-interaction/dom';
 
 import { Bake, Frame, artefactsDuring, replayed } from './bake';
@@ -23,6 +23,9 @@ import {
   pointerDragged,
   pointerMoved,
   keyHeard,
+  keyOwned,
+  pointerOver,
+  pressedAway,
   pressedOn,
   pointerReleased,
 } from './input';
@@ -92,6 +95,9 @@ import {
   runs,
   verticesWithinBox,
   withinBox,
+  editedAt,
+  refolded,
+  rigOf,
 } from './scene';
 import {
   OnPath,
@@ -139,6 +145,7 @@ import {
   VertexId,
   View,
   World,
+  Editing,
   clickable,
   visible,
   GroupId,
@@ -210,6 +217,8 @@ export function worldCanvas(
   roaming: Value<boolean>,
   input: Input,
   update: Update,
+  /** Entries asked to be edited, from the keyframes. See `editing`. */
+  edits: Signal<Editing>,
 ): VNode {
   let el: HTMLCanvasElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
@@ -484,6 +493,193 @@ export function worldCanvas(
     }
 
     /**
+     * How a transform gesture reads the hand: where the cursor is taken to be
+     * and what a scale multiplies by, from where the drag started — `from` in
+     * the world and `down` on screen. One place for every gesture that writes
+     * a transform, so that one writing an entry anew and one editing an entry
+     * already written move and snap alike.
+     */
+    function readers(code: string, pivot: Point, from: Point, down: Point) {
+      /**
+       * Where the cursor is taken to be, which is the whole of how these
+       * gestures snap.
+       *
+       * One place rather than one rule per transform, because a move, a turn
+       * and an erosion are all a reading of two points about a pivot: land the
+       * second of them somewhere the grid allows and the transform lands there
+       * with it. What "somewhere the grid allows" means is the one thing that
+       * differs — a move is a step of whole cells, a turn is five degrees, an
+       * erosion is a cell of depth.
+       *
+       * A scale is not in here at all. It reads the drag rather than the
+       * cursor, and where the cursor happens to be says nothing about it.
+       */
+      const locked = axisLock(() => SLOP / view().zoom);
+
+      const aim = (e: PointerEvent): Point => {
+        const to = at(e);
+        const g = settings().gridSize;
+
+        // The step, not the place: a selection has no one point that ought to
+        // land on the grid, and snapping any particular corner of it would
+        // drag the rest out of whatever alignment they had. Alt holds it to
+        // one axis, before the grid rather than after, so that a locked move
+        // is still a whole number of cells along the line it is held to.
+        if (code === 'KeyT') {
+          const step = locked(e, { x: to.x - from.x, y: to.y - from.y });
+
+          return free(e)
+            ? { x: from.x + step.x, y: from.y + step.y }
+            : { x: from.x + toStep(step.x, g), y: from.y + toStep(step.y, g) };
+        }
+
+        // A depth, read off the horizontal alone: right gives material back,
+        // left eats into the shape, and the vertical is drift. It read both
+        // for a while, taking whichever the hand had gone furthest along, and
+        // that turned every diagonal into a guess about which of the two was
+        // meant — a depth is one number, so one axis says it.
+        if (code === 'KeyE') {
+          const deep = from.x - to.x;
+
+          return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
+        }
+
+        if (free(e)) return to;
+
+        // Five degrees ordinarily and forty-five with Alt: the second is the
+        // set of turns a level is actually built out of, and the first is fine
+        // enough to aim anything else with.
+        if (code === 'KeyR') return turnedAbout(pivot, from, to, e.altKey ? EIGHTH : TURN);
+
+        return onGrid(to, g);
+      };
+
+      /**
+       * What a scale multiplies by, out of how far the drag has gone on screen.
+       *
+       * Not out of where the cursor is against the pivot, which is what this
+       * was and what made it unusable: that reading is a quotient of two
+       * distances, so grabbing anywhere near the pivot divides by nearly
+       * nothing and the room is suddenly a mile wide. Nothing about the drag
+       * says that is what was asked for — it is the arithmetic failing, at
+       * exactly the place a hand is most likely to start from.
+       *
+       * A drag is a distance, and what a scale wants is a factor, so the one
+       * becomes the other through an exponent: no drag is 1:1, `DOUBLING`
+       * pixels either way is twice or half, and twice that is four times or a
+       * quarter. Symmetric, unbounded in both directions and never singular —
+       * the same pixels always mean the same factor, wherever the hand
+       * happened to start.
+       *
+       * Right and up grow, left and down shrink — the same rule the erosion
+       * reads its depth by. Up rather than down for the vertical, because a
+       * thing being made bigger is a thing being raised, and every slider and
+       * every handle in every editor agrees about that.
+       */
+      const scaling = (e: PointerEvent): Point => {
+        const d = { x: e.clientX - down.x, y: down.y - e.clientY };
+        const by = (n: number): number => Math.pow(2, n / DOUBLING);
+
+        // One factor for both axes with Alt, off whichever way the hand went
+        // furthest. Without it the two axes are independent, which is the
+        // reading worth having: a room made wider and shallower is one gesture
+        // rather than two.
+        const f = e.altKey
+          ? by(Math.abs(d.x) >= Math.abs(d.y) ? d.x : d.y)
+          : null;
+
+        const out = f === null ? { x: by(d.x), y: by(d.y) } : { x: f, y: f };
+
+        // Eighths, which is where the factors worth having live: a half, three
+        // quarters, one and a half, twice. Below an eighth is a shape squashed
+        // to nothing, and it stops there rather than passing through zero.
+        return free(e)
+          ? out
+          : { x: Math.max(STEP, toStep(out.x, STEP)), y: Math.max(STEP, toStep(out.y, STEP)) };
+      };
+
+      return { aim, scaling };
+    }
+
+    /**
+     * One entry edited by the gesture its kind is written by — asked for by a
+     * double click on its icon in the keyframes.
+     *
+     * The same readings of the hand a transform takes and the same operation
+     * out of them, about the entry's own centre and against the thing as the
+     * entry leaves it, folded into the entry rather than added after it: so it
+     * stays one entry, repeating as it did, and what comes after it in the
+     * list still acts where it did. See `editedAt` and `refolded`.
+     *
+     * Nothing is held down to end it, since nothing was pressed to start it:
+     * it goes like laying down a polygon. It starts reading the hand once the
+     * cursor is over the canvas, so the way there from the keyframes is not a
+     * drag; a click keeps what is on screen, and Escape or a press anywhere
+     * else puts the entry back.
+     */
+    function* editing(target: Editing): Op<void> {
+      const was = world();
+      const { id, at: k, index } = target;
+      const entry = rigOf(was, id).keys.get(k)?.[index];
+      const code = entry === undefined ? undefined : EDITED[entry.op.kind];
+
+      if (entry === undefined || code === undefined || el === undefined) return;
+
+      const read = editedAt(was, k, id, entry);
+
+      if (read === null) return;
+
+      const { paint, pivot } = read;
+      const mode = TRANSFORMS[code];
+
+      // Escape is this gesture's, over the keyframes', which hold it while the
+      // entry is picked.
+      const me = {};
+      const release = input.claim(me, 'Escape');
+
+      update(s => saying(s, `Editing a ${entry.op.kind}: move over the canvas, click to keep it, Escape to put it back.`));
+      setLocal({ ...local(), previewing: true });
+
+      try {
+        const start = yield* select({
+          over: pointerOver(el),
+          cancel: keyOwned(input, me),
+          away: pressedAway(input, 'canvas'),
+          lost: blurred(),
+        });
+
+        if (start.tag !== 'over') return;
+
+        const e = start.value;
+        const from = at(e);
+        const { aim, scaling } = readers(code, pivot, from, { x: e.clientX, y: e.clientY });
+
+        cursor('crosshair');
+
+        const end = yield* select({
+          moving: pointerMoved(e => {
+            const op = mode(paint, { pivot, from, to: aim(e), alt: e.altKey, factor: scaling(e) });
+
+            update(s => ({ ...s, world: refolded(was, k, id, index, op) }));
+          }),
+          panning: alongside(),
+          done: pressedOn(input, 'canvas'),
+          cancel: keyOwned(input, me),
+          away: pressedAway(input, 'canvas'),
+          lost: blurred(),
+        });
+
+        update(s => settled(s, was, end.tag !== 'done'));
+      }
+      finally {
+        release();
+        cursor('');
+        setLocal({ ...local(), previewing: false });
+        update(s => (s.status?.startsWith('Editing a ') ? { ...s, status: null } : s));
+      }
+    }
+
+    /**
      * Hold the key, move the mouse, let go. Every move recomputes from the
      * transforms as they were when the key went down rather than from the last
      * frame, so the gesture cannot drift and letting go leaves exactly what was
@@ -599,103 +795,7 @@ export function worldCanvas(
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
 
-      /**
-       * Where the cursor is taken to be, which is the whole of how these
-       * gestures snap.
-       *
-       * One place rather than one rule per transform, because a move, a turn
-       * and an erosion are all a reading of two points about a pivot: land the
-       * second of them somewhere the grid allows and the transform lands there
-       * with it. What "somewhere the grid allows" means is the one thing that
-       * differs — a move is a step of whole cells, a turn is five degrees, an
-       * erosion is a cell of depth.
-       *
-       * A scale is not in here at all. It reads the drag rather than the
-       * cursor, and where the cursor happens to be says nothing about it.
-       */
-      const locked = axisLock(() => SLOP / view().zoom);
-
-      const aim = (e: PointerEvent): Point => {
-        const to = at(e);
-        const g = settings().gridSize;
-
-        // The step, not the place: a selection has no one point that ought to
-        // land on the grid, and snapping any particular corner of it would
-        // drag the rest out of whatever alignment they had. Alt holds it to
-        // one axis, before the grid rather than after, so that a locked move
-        // is still a whole number of cells along the line it is held to.
-        if (code === 'KeyT') {
-          const step = locked(e, { x: to.x - from.x, y: to.y - from.y });
-
-          return free(e)
-            ? { x: from.x + step.x, y: from.y + step.y }
-            : { x: from.x + toStep(step.x, g), y: from.y + toStep(step.y, g) };
-        }
-
-        // A depth, read off the horizontal alone: right gives material back,
-        // left eats into the shape, and the vertical is drift. It read both
-        // for a while, taking whichever the hand had gone furthest along, and
-        // that turned every diagonal into a guess about which of the two was
-        // meant — a depth is one number, so one axis says it.
-        if (code === 'KeyE') {
-          const deep = from.x - to.x;
-
-          return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
-        }
-
-        if (free(e)) return to;
-
-        // Five degrees ordinarily and forty-five with Alt: the second is the
-        // set of turns a level is actually built out of, and the first is fine
-        // enough to aim anything else with.
-        if (code === 'KeyR') return turnedAbout(pivot, from, to, e.altKey ? EIGHTH : TURN);
-
-        return onGrid(to, g);
-      };
-
-      /**
-       * What a scale multiplies by, out of how far the drag has gone on screen.
-       *
-       * Not out of where the cursor is against the pivot, which is what this
-       * was and what made it unusable: that reading is a quotient of two
-       * distances, so grabbing anywhere near the pivot divides by nearly
-       * nothing and the room is suddenly a mile wide. Nothing about the drag
-       * says that is what was asked for — it is the arithmetic failing, at
-       * exactly the place a hand is most likely to start from.
-       *
-       * A drag is a distance, and what a scale wants is a factor, so the one
-       * becomes the other through an exponent: no drag is 1:1, `DOUBLING`
-       * pixels either way is twice or half, and twice that is four times or a
-       * quarter. Symmetric, unbounded in both directions and never singular —
-       * the same pixels always mean the same factor, wherever the hand
-       * happened to start.
-       *
-       * Right and up grow, left and down shrink — the same rule the erosion
-       * reads its depth by. Up rather than down for the vertical, because a
-       * thing being made bigger is a thing being raised, and every slider and
-       * every handle in every editor agrees about that.
-       */
-      const scaling = (e: PointerEvent): Point => {
-        const d = { x: e.clientX - down.x, y: down.y - e.clientY };
-        const by = (n: number): number => Math.pow(2, n / DOUBLING);
-
-        // One factor for both axes with Alt, off whichever way the hand went
-        // furthest. Without it the two axes are independent, which is the
-        // reading worth having: a room made wider and shallower is one gesture
-        // rather than two.
-        const f = e.altKey
-          ? by(Math.abs(d.x) >= Math.abs(d.y) ? d.x : d.y)
-          : null;
-
-        const out = f === null ? { x: by(d.x), y: by(d.y) } : { x: f, y: f };
-
-        // Eighths, which is where the factors worth having live: a half, three
-        // quarters, one and a half, twice. Below an eighth is a shape squashed
-        // to nothing, and it stops there rather than passing through zero.
-        return free(e)
-          ? out
-          : { x: Math.max(STEP, toStep(out.x, STEP)), y: Math.max(STEP, toStep(out.y, STEP)) };
-      };
+      const { aim, scaling } = readers(code, pivot, from, down);
 
       const end = yield* select({
         moving: pointerMoved(e => {
@@ -2014,8 +2114,14 @@ export function worldCanvas(
             // The right button lists everything under it, what cannot be
             // picked included — which is how a locked thing is got back.
             menu: pressedOn(input, 'canvas', 2),
+            edit: edits,
             lost: blurred(),
           });
+
+          if (started.tag === 'edit') {
+            yield* editing(started.value);
+            continue;
+          }
 
           if (started.tag === 'menu') {
             const e = started.value;
@@ -2418,6 +2524,15 @@ const TURN = Math.PI / 36;
 /** What a turn lands on with Alt held: the eighth of a circle, which is the
  * only angle most of a level is ever turned by. */
 const EIGHTH = Math.PI / 4;
+
+/** The gesture each kind of entry is written by, which is the one it is
+ * edited by. A skew has none: only a fold writes one. */
+const EDITED: Partial<Record<Operation['kind'], string>> = {
+  move: 'KeyT',
+  turn: 'KeyR',
+  scale: 'KeyS',
+  erode: 'KeyE',
+};
 
 const TRANSFORMS: Record<string, Mode> = {
   KeyT: (p, { from, to }) => moveOf(p, { x: to.x - from.x, y: to.y - from.y }),

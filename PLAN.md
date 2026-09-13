@@ -365,6 +365,15 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   and widens for more. Each repeat hangs under its row in a lane of its own,
   a line down from its icon and along to where it stops; the rightmost
   icon's lane is the nearest, so no line crosses another.
+- A double click on an icon edits that entry by the gesture its kind is
+  written by (`editing` in `canvas.ts`): the same readings of the hand and
+  the same operation, about the entry's own centre and against the thing as
+  the entry leaves it (`editedAt`), folded into it exactly (`refolded`, by
+  `merged`). It stays one entry and keeps repeating; what comes after it
+  still acts where it did. Started from the keyframes, it reads the hand
+  once the cursor is over the canvas; a click keeps it, Escape or a press
+  elsewhere puts it back. One thing at a time: an entry a selection wrote is
+  edited for that thing alone.
 - Stands are not shown. Taking one out moves the thing to wherever upstream
   says, which is Cmd+Shift+U's question rather than an entry's.
 - The picked entry has an arrow in the slot after its icon, drawn unlike

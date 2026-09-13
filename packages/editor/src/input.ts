@@ -309,6 +309,20 @@ export function pointerDragged(from: Point, slop: number): Op<PointerEvent> {
   });
 }
 
+/** The first pointer move over `el` itself: where a gesture begun from
+ * somewhere else starts reading the hand from. */
+export function pointerOver(el: Element): Op<PointerEvent> {
+  return perform(resume => {
+    const onMove = (e: PointerEvent) => {
+      if (e.target === el) resume(e);
+    };
+
+    window.addEventListener('pointermove', onMove);
+
+    return () => window.removeEventListener('pointermove', onMove);
+  });
+}
+
 /** The primary button coming up, anywhere: a drag ends wherever it is let
  * go. */
 export function pointerReleased(): Op<PointerEvent> {

@@ -1105,6 +1105,14 @@ export interface EditorState {
   } | null
 }
 
+/** One entry, to be edited by the gesture its kind is written by: `id`'s,
+ * the `index`-th of what keyframe `at` does to it. */
+export interface Editing {
+  id: Id
+  at: KeyframeId
+  index: number
+}
+
 /** Everything that writes to the store goes through one of these. */
 export type Update = (fn: (s: EditorState) => EditorState) => void;
 

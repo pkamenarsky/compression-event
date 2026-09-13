@@ -106,6 +106,7 @@ import {
   Move,
   Op,
   REST,
+  merged,
   Rig,
   Scale,
   Source,
@@ -1137,6 +1138,90 @@ export function scaleOf(p: Painted, centre: Point, by: { x: number, y: number })
     along,
     lean,
   };
+}
+
+// -----------------------------------------------------------------------------
+// Editing one entry
+//
+// The gesture its kind is written by, read against the thing as that entry
+// leaves it and about the entry's own anchor, so that what the hand does is
+// the same kind of operation about the same centre — and folds into the entry
+// exactly, the way a hand repeating itself does. See `merged` in `rig.ts`.
+// -----------------------------------------------------------------------------
+
+/** Where a thing is at keyframe `k` just before `entry` plays there, and just
+ * after. Nothing where it is not one of `k`'s. */
+export function around(world: World, k: KeyframeId, id: Id, entry: Entry): { before: Frame, after: Frame } | null {
+  const i = order(world, k);
+  let frame = i > 0 ? stateAt(world, id, world.keyframes[i - 1].id).frame : REST;
+  const sources = sourcesAt(world, id, k);
+  const ops = playedAt(world, id, k);
+
+  for (let j = 0; j < ops.length; j++) {
+    if (sources[j].entry === entry && sources[j].step === 0) return { before: frame, after: played(frame, ops[j]) };
+
+    frame = played(frame, ops[j]);
+  }
+
+  return null;
+}
+
+/**
+ * What an edit of `entry` is read against: the thing painted as the entry
+ * leaves it, at the entry's own painted point, and the centre it acts about in
+ * world units — a turn's anchor, the one point a scale leaves where it was, or
+ * where the thing is for a move or an erosion, which have none.
+ */
+export function editedAt(world: World, k: KeyframeId, id: Id, entry: Entry): { paint: Painted, pivot: Point } | null {
+  const frames = around(world, k, id, entry);
+
+  if (frames === null) return null;
+
+  const op = entry.op;
+  const held = under(world, k, id);
+  const ref = op.kind === 'turn' || op.kind === 'scale' ? op.ref : painted(world, k, id).ref;
+  const was = placed(frames.before, ref);
+  const paint = { ref, at: placed(frames.after, ref), frame: frames.after, held };
+
+  let centre = paint.at;
+
+  if (op.kind === 'turn') {
+    centre = { x: was.x + op.about.x, y: was.y + op.about.y };
+  }
+  else if (op.kind === 'scale') {
+    // The slide is `(I − M)(c − p)` along its axes: undone axis by axis, and
+    // the painted point on an axis it does not stretch.
+    const w = unsheared(op.shift, op.along, op.lean);
+    const along = (d: number, by: number) => (Math.abs(1 - by) < 1e-9 ? 0 : d / (1 - by));
+    const c = sheared({ x: along(w.x, op.by.x), y: along(w.y, op.by.y) }, op.along, op.lean);
+
+    centre = { x: was.x + c.x, y: was.y + c.y };
+  }
+
+  return { paint, pivot: place(held, [centre])[0] };
+}
+
+/**
+ * The entry at `index` of `k`'s list with `op` folded into it: what it did,
+ * and then `op`, as one entry repeating as it did. Taken out where the two
+ * come to nothing, and left alone where they are not one — which an edit read
+ * by `editedAt` never is.
+ */
+export function refolded(world: World, k: KeyframeId, id: Id, index: number, op: Op): World {
+  const list = listAt(world, k, id);
+  const e = list[index];
+
+  if (e === undefined) return world;
+
+  // Along the axes the entry was written along, which only its repeats read.
+  const also = e.op.kind === 'scale' && op.kind === 'scale' ? { ...op, along: e.op.along, lean: e.op.lean } : op;
+  const both = merged(e, { ...e, op: also });
+
+  if (both === null) return world;
+
+  const now = both === 'gone' ? list.filter((_x, i) => i !== index) : list.map((x, i) => (i === index ? both : x));
+
+  return withRig(world, id, withKeys(rigOf(world, id), k, now));
 }
 
 /**
