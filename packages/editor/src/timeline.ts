@@ -65,7 +65,6 @@ interface Picked {
 
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
-  all: boolean
   picked: Picked | null
 }
 
@@ -77,7 +76,6 @@ interface Model {
   current: number
   rows: Row[]
   picked: Picked | null
-  all: boolean
 }
 
 export function timeline(
@@ -89,7 +87,7 @@ export function timeline(
   update: Update,
   go: (k: KeyframeId) => void,
 ): VNode {
-  const initial: Local = { all: false, picked: null };
+  const initial: Local = { picked: null };
 
   return stateful(initial, (local, setLocal) => {
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
@@ -200,7 +198,7 @@ function keys(ctx: Ctx, input: Input): VNode {
 // -----------------------------------------------------------------------------
 
 function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local): Model {
-  const rows = rowsOf(world, rootsOf(world, selection, local.all));
+  const rows = rowsOf(world, rootsOf(world, selection));
   const picked = valid(world, local.picked);
 
   // As wide as the fullest cell in it, and never narrower than a handful.
@@ -226,7 +224,6 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
     current: order(world, k),
     rows,
     picked,
-    all: local.all,
   };
 }
 
@@ -378,7 +375,6 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
     pinned([
       chip('+ insert', 8, () => ctx.update(insertedAfter), false, 'A keyframe after the one on screen, where nothing happens'),
       chip('− delete', 70, () => ctx.update(deletedHere), false, 'The keyframe on screen, its writing handed to the next'),
-      chip(m.all ? 'all' : 'picked', 136, () => ctx.change(l => ({ ...l, all: !l.all })), m.all, 'Everything, or what is picked'),
     ]),
   ]);
 }
@@ -698,12 +694,13 @@ function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   if (i < 0 || r.bars.some(b => b.from === col && b.index === p.index)) return [];
 
-  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length) + ICON / 2, ROW / 2)];
+  // Under the icon rather than beside it, where the next one would be.
+  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length), ROW / 2 + ICON / 2 + 2, true)];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
-function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number, y: number): VNode {
+function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number, y: number, under = false): VNode {
   const done = (clientX: number) => {
     const w = ctx.state().world;
     const e = rigOf(w, id).keys.get(at)?.[index];
@@ -713,11 +710,12 @@ function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: n
     ctx.acted(timed(w, id, at, index, timesTo(w, e, from, colAt(ctx, clientX))));
   };
 
+  const place = under
+    ? { left: `${x - 6}px`, top: `${y}px`, width: '12px', height: '3px' }
+    : { left: `${x + 5}px`, top: `${y - 6}px`, width: '4px', height: '12px' };
+
   return box({
-    left: `${x + 5}px`,
-    top: `${y - 6}px`,
-    width: '4px',
-    height: '12px',
+    ...place,
     borderRadius: '2px',
     background: theme.faded,
     cursor: 'ew-resize',

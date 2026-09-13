@@ -11,7 +11,7 @@ import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
 import { Entry, KeyframeId, Op, counted1, indexIn } from './rig';
 import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
-import { Flags, Id, Selection, World, enclosing, flagsOf, parentOf } from './types';
+import { Flags, Id, Selection, World, enclosing, flagsOf } from './types';
 
 export type Kind = Op['kind'];
 
@@ -65,18 +65,9 @@ export interface Bar {
   heading: string | null
 }
 
-/**
- * The things the view starts from: what is picked, or everything at the top
- * level. A pick inside a picked group is under it already.
- */
-export function rootsOf(world: World, selection: Selection, all: boolean): Id[] {
-  if (all) {
-    const up = parentOf(world);
-    const ids = [...world.polygons.keys(), ...world.groups.keys(), ...world.artefacts.keys(), ...world.paths.keys()];
-
-    return ids.filter(id => !up.has(id)).sort((a, b) => a - b);
-  }
-
+/** The things the view starts from: what is picked. A pick inside a picked
+ * group is under it already. */
+export function rootsOf(world: World, selection: Selection): Id[] {
   const picked = [...new Set([...selection.polygons, ...selection.artefacts, ...selection.paths])];
   const has = new Set(picked);
 

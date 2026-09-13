@@ -342,7 +342,7 @@ keyframe is a no-op rather than half of the next.
 ### 5 — horizontal keyframe view — done
 
 - Replaces `versionStrip`. Columns are keyframes; rows are objects in their
-  group tree (selection-scoped, "all" toggle), expanding into one row per kind
+  group tree (what is picked), expanding into one row per kind
   of op.
 - A cell holding one entry is a diamond; several are a stack with a count,
   opened to pick one. A repeat trails a bar whose end sets `times`, with a

@@ -51,14 +51,14 @@ describe('rows', () => {
     expect(row.cells.map(c => c.alive)).toEqual([false, false, true, true, true, true, true, true, true]);
   });
 
-  test('picked roots leave out what a picked group already holds; all is the top level', () => {
+  test('picked roots leave out what a picked group already holds', () => {
     const a = room();
     const b = room(a.world);
     const c = room(b.world);
     const made = grouped(c.world, 0, [a.id, b.id], TOP)!;
 
-    expect(rootsOf(made.world, { ...EMPTY_SELECTION, polygons: [a.id, made.id] }, false)).toEqual([made.id]);
-    expect(rootsOf(made.world, EMPTY_SELECTION, true)).toEqual([c.id, made.id]);
+    expect(rootsOf(made.world, { ...EMPTY_SELECTION, polygons: [a.id, made.id] })).toEqual([made.id]);
+    expect(rootsOf(made.world, { ...EMPTY_SELECTION, polygons: [c.id, a.id] })).toEqual([c.id, a.id]);
   });
 });
 
