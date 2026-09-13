@@ -72,7 +72,6 @@ import {
   KeyframeId,
   Timed,
   Unrolled,
-  TimedEntry,
   VertexId,
   World,
   enclosing,
@@ -1721,6 +1720,19 @@ function folded(
   return out === null ? null : { rig: { ...rig, keys: out.keys }, unrolled: out.unrolled };
 }
 
+/** What takes a thing from rest to `f`: a stretch, a skew and a turn about
+ * the rest frame's origin, then a move. */
+function arrival(f: Frame): Op[] {
+  const ops: Op[] = [
+    { kind: 'scale', by: f.scale, ref: ORIGIN, shift: ORIGIN, along: 0, lean: 0 },
+    { kind: 'skew', by: f.skew, ref: ORIGIN, shift: ORIGIN, along: 0 },
+    { kind: 'turn', angle: f.angle, ref: ORIGIN, about: ORIGIN },
+    { kind: 'move', by: f.t },
+  ];
+
+  return ops.filter(op => !trivial(op));
+}
+
 /** One operation a keyframe played, where it came from, and what it came to
  * on the other side. */
 interface Crossed {
@@ -1747,7 +1759,6 @@ interface Crossed {
  *   carried entry's own step: the frame it is carried through holds its shape
  *   over the span, and the kind needs nothing but that frame to be carried
  *   (a turn across a squash is a turn, a skew and a stretch, and never one);
- * - it begins inside what is carried, rather than already running there;
  * - every repeat running beside it that began before it is kept too. A kept
  *   repeat's steps are played at the head of each keyframe, before its own
  *   list, and one that overtook a step taken apart would change the order.
@@ -1775,6 +1786,15 @@ function carried(
 
     const row: Crossed[] = [];
     const mine = playedAt(world, m, k), from = sourcesAt(world, m, k);
+
+    // Born after the first keyframe, it begins at rest in whatever holds it
+    // — which, on the other side of the frame, is the frame itself. Unless it
+    // begins with a stand, which says where it is outright.
+    if (i === first && before !== null && mine[0]?.kind !== 'stand') {
+      for (const op of arrival(outer)) {
+        row.push({ source: { entry: once(op), at: k, step: 0 }, group: false, ops: [op] });
+      }
+    }
 
     for (let j = 0; j < mine.length; j++) {
       const out = outward(mine[j], outer, inner);
@@ -1833,13 +1853,17 @@ function carried(
     return { id, at: c.source.at, nth: list.indexOf(c.source.entry), why: 'order' };
   };
 
+  // Each repeat is compared from the first step it takes here, which is its
+  // own entry unless it was already running where `m` begins. A repeat's
+  // steps from its n-th on are the n-th step repeated — a step of a step is a
+  // step — so one already running is kept by writing that.
   for (const [entry, all] of steps) {
     const head = all[0];
+    const h = head.source.step;
     let why: Unrolled['why'] | null = null;
 
-    if (head.source.step !== 0) why = 'running';
-    else if (all.some(c => c.ops.length !== 1)) why = 'squash';
-    else if (all.some(c => !sameOp(c.ops[0], stepped(head.ops[0], c.source.step)))) {
+    if (all.some(c => c.ops.length !== 1)) why = 'squash';
+    else if (all.some(c => !sameOp(c.ops[0], stepped(head.ops[0], c.source.step - h)))) {
       why = head.group ? 'moving' : 'reshaped';
     }
 
@@ -1848,13 +1872,15 @@ function carried(
   }
 
   // Where each kept repeat is in the order the walk will play kept steps in:
-  // the keyframe it was written at, and its place in what that keyframe
+  // the keyframe it is written at, and its place in what that keyframe
   // played.
   const rank = new Map<Entry, number>();
 
   rows.forEach((row, i) => row.forEach((c, j) => {
-    if (c.source.step === 0) rank.set(c.source.entry, i * 1e6 + j);
+    if (!rank.has(c.source.entry)) rank.set(c.source.entry, i * 1e6 + j);
   }));
+
+  const heads = new Set([...steps.values()].map(all => all[0]));
 
   let settled = false;
 
@@ -1866,7 +1892,7 @@ function carried(
       let last = -Infinity;
 
       for (const c of row) {
-        const step = kept.has(c.source.entry) && c.source.step > 0;
+        const step = kept.has(c.source.entry) && !heads.has(c);
 
         if (!step) {
           prefix = false;
@@ -1898,7 +1924,7 @@ function carried(
       const e = c.source.entry;
 
       if (!kept.has(e)) list.push(...c.ops.map(o => once(o)));
-      else if (c.source.step === 0) list.push({ op: c.ops[0], times: e.times, skip: e.skip });
+      else if (heads.has(c)) list.push({ op: c.ops[0], times: e.times === null ? null : e.times - c.source.step });
     }
 
     if (list.length > 0) keys.set(world.keyframes[first + i].id, list);
@@ -3772,9 +3798,11 @@ function unheld(m: Affine): Frame {
  * the erosion sequence is the thing worth copying, and it is not in any one
  * keyframe.
  *
- * Nothing before the copy comes at all, but for the repeats still running: the
- * steps they go on taking after it are part of what the original goes on to do,
- * and they come across one step to an entry at the head of each list.
+ * Nothing before the copy comes at all, but for the repeats still running: what
+ * they go on doing after it is part of what the original goes on to do. Each
+ * comes across as its next step, repeated for the steps it has left, at the
+ * head of the keyframe after the copy — a step of a step is a step, so that is
+ * the same repeat carrying on, in the same order.
  *
  * The outermost things are copied in world units, their holders not coming
  * with them — taken out of them as ungrouping would take them, every holder
@@ -3788,6 +3816,13 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
   const at = order(world, v);
   const n = world.keyframes.length;
   const offset = (k: KeyframeId): number => order(world, k) - at;
+
+  /** Whether a repeat still has steps to take after the copy keyframe. */
+  const reaches = (u: Unrolled): boolean => {
+    const times = rigOf(world, u.id).keys.get(u.at)?.[u.nth]?.times;
+
+    return times === null || (times !== undefined && offset(u.at) + times - 1 > 0);
+  };
 
   /** What happens to `id` after the copy keyframe: in world units for the
    * outermost, and in the frame of what holds it for the rest. */
@@ -3804,23 +3839,18 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       keys: new Map([...rig.keys].filter(([k]) => offset(k) <= 0)),
     });
 
-    const keys: [number, TimedEntry[]][] = [];
-    const running = new Map<Entry, Unrolled>();
+    const keys: [number, Entry[]][] = [];
 
     for (let i = at + 1; i < n; i++) {
       const k = world.keyframes[i].id;
-      const steps = playedAt(before, id, k).map(op => ({ op, times: 1, skip: [] }));
-      const own = (rig.keys.get(k) ?? []).map(e => ({
-        op: e.op,
-        times: e.times,
-        skip: [...e.skip].map(offset).filter(o => o > 0),
-      }));
+      const own = rig.keys.get(k) ?? [];
 
-      for (const { entry, at: from } of sourcesAt(before, id, k)) {
-        const nth = (rig.keys.get(from) ?? []).indexOf(entry);
+      // Only the keyframe right after: from there, the walk steps them on.
+      const steps: Entry[] = i > at + 1 ? [] : playedAt(before, id, k).map((op, j) => {
+        const { entry, step } = sourcesAt(before, id, k)[j];
 
-        running.set(entry, { id, at: from, nth, why: 'running' });
-      }
+        return { op, times: entry.times === null ? null : entry.times - step };
+      });
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
@@ -3829,9 +3859,8 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       start: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
       erosion: state.erosion,
       keys,
-      // What the fold took apart matters only where it was written after the
-      // copy: anything begun by then is running, and comes apart regardless.
-      unrolled: [...freeing.unrolled.filter(u => offset(u.at) > 0), ...running.values()],
+      // What the fold took apart matters only where it goes on past the copy.
+      unrolled: freeing.unrolled.filter(reaches),
       keysOf: rig,
     };
   };
@@ -4060,15 +4089,7 @@ function written(
     // note on `pasted`.
     if (k === null) break;
 
-    keys.set(k, list.map(e => ({
-      op: e.op,
-      times: e.times,
-      skip: new Set(e.skip.flatMap(o => {
-        const at = landingAt(world, v, o);
-
-        return at === null ? [] : [at];
-      })),
-    })));
+    keys.set(k, list);
   }
 
   return withRig(world, id, { ...rigOf(world, id), keys });

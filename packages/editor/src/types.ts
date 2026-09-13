@@ -718,9 +718,8 @@ export interface Timed {
   death?: number
   start: Frame
   erosion: number
-  /** Each keyframe's list after the copy, by offset. Its skips are offsets
-   * too. */
-  keys: [number, TimedEntry[]][]
+  /** Each keyframe's list after the copy, by offset. */
+  keys: [number, Entry[]][]
   /** The repeats that came across as single entries. */
   unrolled: Unrolled[]
 }
@@ -736,18 +735,15 @@ export interface Timed {
  *   operation;
  * - `reshaped`: the group turns, scales or skews while it runs;
  * - `moving`: a group's repeat, and what it is aimed at moves while it runs;
- * - `order`: a repeat running beside it that began before it had to be;
- * - `running`: it was already running where the thing starts.
+ * - `order`: a repeat running beside it that began before it had to be.
  */
 export interface Unrolled {
   id: Id
   at: KeyframeId
   nth: number
-  why: 'squash' | 'reshaped' | 'moving' | 'order' | 'running'
+  why: 'squash' | 'reshaped' | 'moving' | 'order'
 }
 
-/** An entry whose skips are offsets rather than keyframes. */
-export type TimedEntry = Omit<Entry, 'skip'> & { skip: number[] }
 
 export type Clipping =
   | ({

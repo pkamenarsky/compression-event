@@ -713,7 +713,6 @@ const WHY: Record<Unrolled['why'], string> = {
   reshaped: 'the group turns, scales or skews while it runs',
   moving: 'a group\'s repeat is aimed at something that moves while it runs',
   order: 'a repeat running before it had to be taken apart',
-  running: 'it was already running where the copy starts',
 };
 
 /**

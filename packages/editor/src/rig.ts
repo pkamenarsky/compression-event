@@ -167,10 +167,9 @@ export type Op = Move | Turn | Scale | Skew | Erode | Stand;
 
 export interface Entry<O extends Op = Op> {
   op: O
-  /** How many keyframes it contributes to: 1 is once, `null` is to the end. */
+  /** How many keyframes it contributes to, one after another from its own: 1
+   * is once, `null` is to the end. */
   times: number | null
-  /** Keyframes where a step is left out. A skipped keyframe is not counted. */
-  skip: ReadonlySet<KeyframeId>
 }
 
 /**
@@ -190,20 +189,14 @@ export interface Rig {
 
 export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map() };
 
-const NEVER: ReadonlySet<KeyframeId> = new Set();
-
 /** An entry that contributes once, at its own keyframe. */
 export function once<O extends Op>(op: O): Entry<O> {
-  return { op, times: 1, skip: NEVER };
+  return { op, times: 1 };
 }
 
 /** An entry that goes on contributing: `times` in all, or to the end. */
-export function repeating<O extends Op>(
-  op: O,
-  times: number | null,
-  skip: ReadonlySet<KeyframeId> = NEVER,
-): Entry<O> {
-  return { op, times, skip };
+export function repeating<O extends Op>(op: O, times: number | null): Entry<O> {
+  return { op, times };
 }
 
 /**
@@ -595,16 +588,10 @@ function walk(
       }
     };
 
-    // The steps of repeats begun earlier, oldest first. A skipped keyframe
-    // is not a step: the repeat waits over it and carries its count on.
+    // The steps of repeats begun earlier, oldest first.
     const going: Running[] = [];
 
     for (const r of running) {
-      if (r.entry.skip.has(key)) {
-        going.push(r);
-        continue;
-      }
-
       if (r.entry.times !== null && r.steps + 1 >= r.entry.times) continue;
 
       r.steps += 1;
@@ -727,7 +714,7 @@ function deepAt(
  * what it did after `from` if it was written before it.
  *
  * The same count the walk keeps for the list — once at its own keyframe, and
- * once more at each unskipped one after it while it has steps left — worked
+ * once more at each one after it while it has steps left — worked
  * out directly, since a corner's moves commute and there is no order to play
  * them in. `from` is a stand, or the corner's own birth: a stand holds what
  * came before it, the steps it was written over included, and what a repeat
@@ -744,18 +731,12 @@ function applications(
 
   if (j < 0 || j > i) return 0;
 
-  return j >= from ? counted1(keyframes, e, j, i) : counted1(keyframes, e, j, i) - counted1(keyframes, e, j, from);
+  return j >= from ? counted1(e, j, i) : counted1(e, j, i) - counted1(e, j, from);
 }
 
 /** How many times an entry written at index `j` has contributed by `i`. */
-function counted1(keyframes: readonly Keyframe[], e: Entry, j: number, i: number): number {
-  let steps = 0;
-
-  for (let m = j + 1; m <= i; m++) {
-    if (!e.skip.has(keyframes[m].id)) steps++;
-  }
-
-  return 1 + (e.times === null ? steps : Math.min(steps, e.times - 1));
+function counted1(e: Entry, j: number, i: number): number {
+  return 1 + (e.times === null ? i - j : Math.min(i - j, e.times - 1));
 }
 
 /** A thing's state at a keyframe: at rest before it is born, and wherever the
@@ -838,10 +819,6 @@ function near(p: Point, q: Point): boolean {
   return Math.abs(p.x - q.x) <= 1e-9 * scale && Math.abs(p.y - q.y) <= 1e-9 * scale;
 }
 
-function sameSkip(a: ReadonlySet<KeyframeId>, b: ReadonlySet<KeyframeId>): boolean {
-  return a.size === b.size && [...a].every(k => b.has(k));
-}
-
 /**
  * `b` folded into `a`, where that is exact: the entry that does both, or
  * `'gone'` where together they do nothing, or nothing where they cannot be one.
@@ -855,7 +832,7 @@ function sameSkip(a: ReadonlySet<KeyframeId>, b: ReadonlySet<KeyframeId>): boole
  * keeps the first's.
  */
 function merged(a: Entry, b: Entry): Entry | 'gone' | null {
-  if (a.times !== b.times || !sameSkip(a.skip, b.skip)) return null;
+  if (a.times !== b.times) return null;
 
   const x = a.op, y = b.op;
   let op: Op | null = null;

@@ -1048,13 +1048,27 @@ describe('copy and paste', () => {
     expect([...rigOf(inside.world, inside.ids[0]).keys.values()].flat().filter(e => e.times === null)).toHaveLength(1);
   });
 
-  test('a repeat already running where a copy starts comes across a step at a time, and says so', () => {
+  test('a repeat already running where a copy starts carries on as one', () => {
+    // Its steps from the next on are the next step repeated: a step of a
+    // step is a step.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const w = repeated(world, 0, ids[0], spun(0.5));
+    const w = repeated(world, 0, ids[0], turning(0.5, { x: 150, y: 20 }), 4);
 
     const after = pasted(w, 1, copied(w, 1, [ids[0]]), { x: 0, y: 400 }, TOP);
+    const copy = after.ids[0];
 
-    expect(after.unrolled).toEqual([{ id: ids[0], at: 0, nth: 0, why: 'running' }]);
+    expect(after.unrolled).toEqual([]);
+    expect([...rigOf(after.world, copy).keys.values()].flat().map(e => e.times)).toEqual([1, 2]);
+
+    for (let v = 1; v < 4; v++) {
+      const put = only(after.world, v as KeyframeId, copy).source;
+      const was = only(w, v as KeyframeId, ids[0]).source;
+
+      for (let i = 0; i < put.length; i++) {
+        expect(put[i].x).toBeCloseTo(was[i].x, 6);
+        expect(put[i].y).toBeCloseTo(was[i].y + 400, 6);
+      }
+    }
   });
 
   test('a paste survives the original being deleted', () => {
@@ -1807,6 +1821,27 @@ describe('making and taking apart', () => {
     expect(done.unrolled).toEqual([]);
     for (const id of ids) expect(repeats(done.world, id)).toEqual(1);
     stays(w, done.world, ids);
+  });
+
+  test('a group\'s spin begun before a member was born stays one on it', () => {
+    const { world, ids, group } = pair();
+    const late = addPolygon(world, { type: 'level' }, rect(40, 40, 10, 10), 1, landing(world, 1, group));
+    const w = repeated(late.world, 0, group, spun(0.4));
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled).toEqual([]);
+    expect(repeats(done.world, late.id)).toEqual(1);
+    stays(w, done.world, ids);
+
+    for (let v = 1; v < 4; v++) {
+      const before = at(w, v as KeyframeId, late.id);
+
+      at(done.world, v as KeyframeId, late.id).forEach((p, i) => {
+        expect(p.x).toBeCloseTo(before[i].x, 6);
+        expect(p.y).toBeCloseTo(before[i].y, 6);
+      });
+    }
   });
 
   test('a turn repeating inside a squash is taken apart, and said so', () => {

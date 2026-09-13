@@ -670,7 +670,7 @@ function savedEntry(e: Entry): SavedEntry {
     ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
-  return { op, times: e.times, skip: e.skip.size === 0 ? undefined : [...e.skip] };
+  return { op, times: e.times };
 }
 
 // -----------------------------------------------------------------------------

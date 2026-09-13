@@ -398,14 +398,6 @@ describe('repeats', () => {
     expect(framed(f)).not.toBeNull();
   });
 
-  test('a skipped keyframe is left out and not counted', () => {
-    const tl = keyed(room, 0, P, [repeating(turnAbout(30, r, r, ORIGIN), null, new Set([2]))]);
-
-    near(refAt(tl, P, 1, r), rotated(r, 60));
-    near(refAt(tl, P, 2, r), rotated(r, 60));
-    near(refAt(tl, P, 3, r), rotated(r, 90));
-  });
-
   test('a repeat stops after its count', () => {
     const tl = keyed(room, 0, P, [repeating(move(10, 0), 3)]);
 

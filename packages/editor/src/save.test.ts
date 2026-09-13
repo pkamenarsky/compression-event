@@ -49,7 +49,7 @@ function world(): EditorState {
 
   let w = wrote(b.world, 2, b.id, move(3, -2), spun(0.25), scaled(1.5, 0.75), erode(2));
 
-  w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null, new Set([5]))]);
+  w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null)]);
   w = withRig(w, b.id, nudged(rigOf(w, b.id), corners[1].id, 2, { x: 1, y: -1 }));
   w = withRig(w, b.id, deepened(rigOf(w, b.id), corners[2].id, 2, -3));
 
@@ -97,8 +97,7 @@ describe('save', () => {
     const repeat = [...after.world.rigs.values()].flatMap(r => [...r.keys.values()].flat())
       .find(e => e.times === null)!;
 
-    expect(repeat.skip).toBeInstanceOf(Set);
-    expect([...repeat.skip]).toEqual([5]);
+    expect(repeat.op).toEqual({ kind: 'erode', by: 1 });
   });
 
   test('a stand comes back with its maps', () => {
@@ -112,13 +111,6 @@ describe('save', () => {
     expect(entry.op.kind).toBe('stand');
     expect(entry.op.kind === 'stand' && entry.op.corners).toBeInstanceOf(Map);
     expect(after.world).toEqual(stood);
-  });
-
-  test('an empty skip is not written', () => {
-    const file = saved(world());
-    const entries = file.world.rigs.flatMap(([, rig]) => rig.keys.flatMap(([, list]) => list));
-
-    expect(entries.filter(e => e.skip !== undefined)).toHaveLength(1);
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {

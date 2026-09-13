@@ -59,7 +59,6 @@ type Op =
 interface Entry {
   op: Op
   times: number | null            // 1 = once, null = to the end
-  skip: Set<KeyframeId>           // steps left out, not counted
 }
 
 interface Frame {
@@ -130,12 +129,13 @@ one entry, not one per frame.
 
 ### Repeats
 
-The n-th step (n unskipped steps after its entry) contributes its op again,
+The n-th step (n keyframes after its entry) contributes its op again,
 adjusted so that it acts about the same centre every time:
 
 ```
 turn   aboutₙ = R(angle)ⁿ · about
 scale  shiftₙ = Mⁿ · shift        M = the stretch `by` in the axes `along`
+skew   shiftₙ = Xⁿ · shift        X = the shear `by` along `along`
 ```
 
 Each step has to ride every displacement of `ref` except the ones the repeat
@@ -144,6 +144,11 @@ So a hand move in the middle of the span carries the centre along with the
 room, and a spin in place leaves it alone.
 
 Stacked erosion (`d, 2d, 3d…`) is `{ op: { kind: 'erode', by: d }, times: null }`.
+
+A step of a step is a step: the n-th step of the m-th step is the (m + n)-th.
+So a repeat can be cut anywhere into two exactly, the second an entry of its
+own whose op is the step it starts on — which is how a copy carries a repeat
+already running, and how a fold keeps one begun before the thing was born.
 
 ### Gestures
 
@@ -213,7 +218,7 @@ Done on branch `timelines`: 1, 2, 3 and 3½, and groups made global. Next: 4.
   - turns about different anchors in one keyframe kept apart; same-anchor
     turns merging; an entry whose angle comes back to 0 going
   - a repeated turn orbiting one centre; a repeated scale spreading from one
-    centre; a skip; a hand move mid-span
+    centre; a hand move mid-span
   - stacked erosion; dropping one entry; nested groups; birth partway
 
 ### 2 — the editor onto it (lands with 3) — done
@@ -298,13 +303,12 @@ Done as written, with these on top:
 - `drop` an entry or all of one kind at a keyframe; `push` (to the front of
   the next keyframe) and `pull` (the next keyframe's to the end of this one)
   move entries whole, with nothing recomputed; `split(fraction)`; set
-  `times`; skip.
+  `times`.
 - A split turn is two halves about the same anchor: the second half's
   `about` is `R(θ/2) · about`, which puts it on the same point now and after
   any later edit. A split scale is the same with `M^½`.
 - Remove `VERSIONS`. Insert a keyframe = split every entry at the next one;
-  delete = push, moving births and deaths with it and clearing `skip`s that
-  name it. A repeat's span counts steps, so an inserted keyframe inside it
+  delete = push, moving births and deaths with it. A repeat's span counts steps, so an inserted keyframe inside it
   adds one.
 
 ### 5 — horizontal keyframe view
@@ -313,8 +317,7 @@ Done as written, with these on top:
   group tree (selection-scoped, "all" toggle), expanding into one row per kind
   of op.
 - A cell holding one entry is a diamond; several are a stack with a count,
-  opened to pick one. A repeat trails a bar whose end sets `times`; clicking a
-  step skips it. A repeating scale shows where it is heading, since `byⁿ`
+  opened to pick one. A repeat trails a bar whose end sets `times`. A repeating scale shows where it is heading, since `byⁿ`
   runs away quickly.
 - Delete drops, ⌥delete pushes, dragging an entry to a neighbour pushes or
   pulls.
@@ -359,9 +362,9 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
   the copy does what was copied, and then what the group does.
 - **A fold keeps a repeat only where it is one on the other side.** Where the
   frame it is carried through changes shape over the span, where it is a turn
-  across a squash, where it was already running, or behind one taken apart,
-  it becomes one entry per keyframe, stopping at the last keyframe there is.
-  Ungroup and paste say so on the status line.
+  across a squash, or behind one taken apart, it becomes one entry per
+  keyframe, stopping at the last keyframe there is. Ungroup, resolve and
+  paste say so on the status line.
 - **A room drawn into a group after the group's rooms were deleted stays.**
   Deleting a group writes deaths onto what it holds at the time; the group has
   no death of its own to hand on.
