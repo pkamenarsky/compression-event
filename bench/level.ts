@@ -6,16 +6,16 @@
 // and the one to the south — but not always, which is what makes a room touch
 // one to four others rather than eight — and a pillar standing in some of them.
 //
-// The version over it is what a version of this kind actually holds: mostly
-// erosion and small moves, a nudged corner here and there, the odd rotation.
+// The keyframe over it is what a keyframe of this kind actually holds: mostly
+// erosion and small moves, a nudged corner here and there, the odd turn.
 // -----------------------------------------------------------------------------
 
 import { Point } from '../packages/game/src/world';
-import { TOP, addPolygon, editAt, resolveAt, withEdit } from '../packages/editor/src/scene';
+import { TOP, addPolygon, keyed, middle, resolveAt, rigOf, withRig } from '../packages/editor/src/scene';
+import { Op, deepened, nudged } from '../packages/editor/src/rig';
 import {
   PolygonId,
   PolygonKind,
-  Transform,
   World,
   emptyWorld,
 } from '../packages/editor/src/types';
@@ -80,7 +80,7 @@ export function level(rooms: number): { world: World, ids: PolygonId[] } {
 }
 
 /**
- * One version over the level, touching `share` of it.
+ * One keyframe over the level, touching `share` of it.
  *
  * `bend` is the share of the polygons it touches that get one corner offset
  * apart from the rest, which is what puts them on the varying road inside
@@ -104,36 +104,32 @@ export function version(
     if (rnd() > share) continue;
 
     const it = at.find(r => r.id === id)!;
-    const edit = editAt(out, v, id, it.erosion);
     const roll = rnd();
+    const ops: Op[] = [];
 
-    const transform: Transform = {
-      ...edit.transform,
-      erosion: roll < 0.7 ? 4 + rnd() * 8 : edit.transform.erosion,
-      translation: roll < 0.5
-        ? { x: (rnd() - 0.5) * 24, y: (rnd() - 0.5) * 24 }
-        : edit.transform.translation,
-      rotation: roll > 0.94 ? (rnd() - 0.5) * 0.5 : edit.transform.rotation,
-    };
+    if (roll < 0.7) ops.push({ kind: 'erode', by: 4 + rnd() * 8 });
+    if (roll < 0.5) ops.push({ kind: 'move', by: { x: (rnd() - 0.5) * 24, y: (rnd() - 0.5) * 24 } });
 
-    const vertices = new Map(edit.vertices);
+    // A spin in place, about the middle of the room as it stands.
+    if (roll > 0.94) {
+      ops.push({ kind: 'turn', angle: (rnd() - 0.5) * 0.5, ref: middle(it.local), about: { x: 0, y: 0 } });
+    }
+
+    out = keyed(out, v, id, ops);
 
     if (roll > 0.4 && roll < 0.6) {
       const poly = out.polygons.get(id)!;
-      const v = poly.points[(rnd() * poly.points.length) | 0];
+      const c = poly.points[(rnd() * poly.points.length) | 0];
 
-      vertices.set(v.id, { x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 30 });
+      out = withRig(out, id, nudged(rigOf(out, id), c.id, v, { x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 30 }));
     }
-
-    const depths = new Map<number, number>();
 
     if (rnd() < bend) {
       const poly = out.polygons.get(id)!;
+      const c = poly.points[(rnd() * poly.points.length) | 0];
 
-      depths.set(poly.points[(rnd() * poly.points.length) | 0].id, 5 + rnd() * 10);
+      out = withRig(out, id, deepened(rigOf(out, id), c.id, v, 5 + rnd() * 10));
     }
-
-    out = withEdit(out, v, id, { transform, vertices, depths });
   }
 
   return out;

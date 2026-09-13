@@ -21,8 +21,10 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
-import { TOP, addPolygon, addVertex, deepen, grouped, removeVertices, sealing, resolveAt, editAt, withEdit } from './scene';
-import { EMPTY_TRANSFORM, FLOOR, Id, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+import { TOP, addPolygon, addVertex, deepen, depths, grouped, removeVertices, sealing, resolveAt, rigOf, withRig } from './scene';
+import { FLOOR, Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
+import { nudged } from './rig';
+import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -48,21 +50,35 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   }
   return { world, ids };
 }
-function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Transform>): World {
-  const it = resolveAt(world, v).find(r => r.id === id)!;
-  const edit = editAt(world, v, id, it.erosion);
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+/** A layer as these were first written against: a squash, a turn and a move,
+ * each about the origin, and a depth stated outright, written as the
+ * operations that say it now. */
+interface Layer {
+  translation: Point
+  rotation: number
+  scale: { x: number, y: number }
+  erosion: number
 }
-/** A group over these, and whatever the version does to it. Groups carry no
- * geometry, so there is no resolved depth to seed from. */
-function held(world: World, ids: Id[], v: VersionId, t: Partial<Transform>): World {
+function transformed(world: World, v: KeyframeId, id: Id, t: Partial<Layer>): World {
+  const ops: Writing[] = [];
+  if (t.scale !== undefined) ops.push(scaled(t.scale.x, t.scale.y));
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(
+      t.erosion! - (resolveAt(w, k).find(r => r.id === of)?.erosion ?? depths(w, k).get(of) ?? 0),
+    ));
+  }
+  return wrote(world, v, id, ...ops);
+}
+/** A group over these, and whatever the keyframe does to it. */
+function held(world: World, ids: Id[], v: KeyframeId, t: Partial<Layer>): World {
   const made = sealed(world, 0, ids, TOP)!;
 
-  return withEdit(made.world, v, made.id, {
-    transform: { ...EMPTY_TRANSFORM, ...t },
-    vertices: new Map(),
-    depths: new Map(),
-  });
+  return transformed(made.world, v, made.id, t);
+}
+function nudging(world: World, v: KeyframeId, id: Id, vertex: number, by: Point): World {
+  return withRig(world, id, nudged(rigOf(world, id), vertex, v, by));
 }
 
 function run<T>(g: Generator<number, T, void>): T { let s = g.next(); while (!s.done) s = g.next(); return s.value; }
@@ -221,11 +237,7 @@ test('the replay never strays far from csg(t)', () => {
     );
 
     const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
-    const w = withEdit(inner.world, 1, inner.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI/5 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(inner.world, 1, inner.id, turning(Math.PI/5));
 
     check('a group inside a group', held(w, [inner.id, ids[2]], 1, { scale: { x: 1.6, y: 0.7 } })); }
   {
@@ -314,10 +326,7 @@ test('the replay never strays far from csg(t)', () => {
     const pulled = (() => {
       const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
       const where = now.corners.length - now.corners.length + 1;
-      const edit = editAt(grown, 1, ids[0], now.erosion);
-      const vertices = new Map(edit.vertices);
-      vertices.set(now.corners[where].id, { x: 0, y: -90 });
-      return withEdit(grown, 1, ids[0], { ...edit, vertices });
+      return nudging(grown, 1, ids[0], now.corners[where].id, { x: 0, y: -90 });
     })();
     check('a corner arriving', pulled);
   }
@@ -352,12 +361,9 @@ test('the replay never strays far from csg(t)', () => {
   {
     const { world, ids } = drawn(['level', rect(0,0,120,120)]);
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
-    const edit = editAt(world, 1, ids[0], 0);
-    const vertices = new Map(edit.vertices);
-    vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
-    const nudged = withEdit(world, 1, ids[0], { ...edit, vertices });
-    check('nudge and erode', transformed(nudged, 1, ids[0], { erosion: 22 }));
-    check('nudge, erode and turn', transformed(nudged, 1, ids[0], { erosion: 22, rotation: 0.4 }));
+    const bent = nudging(world, 1, ids[0], it.polygon.points[2].id, { x: 90, y: 40 });
+    check('nudge and erode', transformed(bent, 1, ids[0], { erosion: 22 }));
+    check('nudge, erode and turn', transformed(bent, 1, ids[0], { erosion: 22, rotation: 0.4 }));
   }
   {
     // A depth arriving on one corner alone over the span, which is the case the
@@ -367,9 +373,8 @@ test('the replay never strays far from csg(t)', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 140)]);
     const corner = (w: World, i: number, by: number): World => {
       const it = resolveAt(w, 1).find(r => r.id === ids[0])!;
-      const edit = editAt(w, 1, ids[0], it);
 
-      return withEdit(w, 1, ids[0], deepen(edit, it.polygon, new Set([it.corners[i].id]), by));
+      return deepen(w, 1, ids[0], new Set([it.corners[i].id]), by);
     };
 
     // The jump column reads 200 for this one and its neighbour below, and that

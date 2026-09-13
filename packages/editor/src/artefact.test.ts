@@ -11,7 +11,6 @@ import {
   artefactsIn,
   artefactsWithinBox,
   copied,
-  editAt,
   grouped,
   sealing,
   hitArtefact,
@@ -23,15 +22,14 @@ import {
   retypeArtefacts,
   shownAt,
   stamped,
-  starting,
   START_ID,
   turnedStart,
   reachable,
   swallowed,
   ungrouped,
-  withEdit,
 } from './scene';
-import { ARTEFACTS, Clipping, EMPTY_TRANSFORM, FLOOR, World, emptyWorld, within, PolygonKind } from './types';
+import { ARTEFACTS, Clipping, FLOOR, World, emptyWorld, within, PolygonKind } from './types';
+import { move, moved as step, scaled, turned, wrote } from './testing';
 
 /** One artefact, put down at `v` and nowhere else. */
 /**
@@ -50,23 +48,12 @@ function dropped(v = 0, x = 10, y = 20): { world: World, id: number } {
   return addArtefact(emptyWorld(), 'key', { x, y }, v, TOP);
 }
 
-/** What a drag writes: a translation in that version's layer, replacing
- * whatever it held. The same call `draggingSelection` makes. */
+/** What a drag writes: a move at that keyframe, by a step on screen. The same
+ * thing `draggingSelection` writes. */
 function moved(world: World, v: number, ids: number[], by: Point): World {
   let out = world;
 
-  for (const [id, edit] of starting(world, v, ids)) {
-    out = withEdit(out, v, id, {
-      ...edit,
-      transform: {
-        ...edit.transform,
-        translation: {
-          x: edit.transform.translation.x + by.x,
-          y: edit.transform.translation.y + by.y,
-        },
-      },
-    });
-  }
+  for (const id of ids) out = wrote(out, v, id, step(by.x, by.y));
 
   return out;
 }
@@ -120,35 +107,16 @@ describe('an artefact is a point, and the versions do to it what they do', () =>
   });
 
   test('a turn about a pivot is a turn about that pivot, twice over', () => {
-    // The worry this design answers. Two rotations about two different pivots
-    // in one version compose into one transform of this family — a rotation
-    // and whatever translation the two pivots left over — so the second does
-    // not have to undo or re-read the first. It is what polygons have always
-    // done, and an artefact is now doing it with them.
+    // Two turns about two different pivots in one keyframe are two entries,
+    // each about its own anchor, and the second acts on what the first left.
+    // It is what polygons do, and an artefact does it with them.
     const { world, id } = dropped(0, 1, 0);
-    const edit = editAt(world, 0, id, 0);
-
-    const quarter = (t: typeof edit.transform, p: Point) => {
-      const dx = t.translation.x - p.x, dy = t.translation.y - p.y;
-
-      return {
-        ...t,
-        rotation: t.rotation + Math.PI / 2,
-        translation: { x: p.x - dy, y: p.y + dx },
-      };
-    };
 
     // About the origin, then about (1, 0): (1,0) → (0,1) → (0,-1).
-    const once = quarter(EMPTY_TRANSFORM, { x: 0, y: 0 });
-    const twice = quarter(once, { x: 1, y: 0 });
-    const turned = withEdit(world, 0, id, {
-      transform: twice,
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const both = wrote(world, 0, id, turned(Math.PI / 2), turned(Math.PI / 2, { x: 1, y: 0 }));
 
-    expect(placeAt(turned, id, 0)!.x).toBeCloseTo(0, 9);
-    expect(placeAt(turned, id, 0)!.y).toBeCloseTo(-1, 9);
+    expect(placeAt(both, id, 0)!.x).toBeCloseTo(0, 9);
+    expect(placeAt(both, id, 0)!.y).toBeCloseTo(-1, 9);
   });
 
   test('the type is one fact about it, not one per version', () => {
@@ -212,14 +180,10 @@ describe('a group takes one with it, because it is a member like any other', () 
 
   test('and turning the group swings it round, which is the whole point', () => {
     const { world, artefact, group } = room();
-    const turned = withEdit(world, 1, group, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(world, 1, group, turned(Math.PI / 2));
 
-    expect(placeAt(turned, artefact, 1)!.x).toBeCloseTo(-50, 9);
-    expect(placeAt(turned, artefact, 1)!.y).toBeCloseTo(50, 9);
+    expect(placeAt(w, artefact, 1)!.x).toBeCloseTo(-50, 9);
+    expect(placeAt(w, artefact, 1)!.y).toBeCloseTo(50, 9);
   });
 
   test('a gesture over the group reaches it, the way it reaches the rooms', () => {
@@ -260,13 +224,9 @@ describe('a group takes one with it, because it is a member like any other', () 
     // Read in the group's frame on the way in, so a group already turned does
     // not send the thing you just placed somewhere else.
     const { world, group } = room();
-    const turned = withEdit(world, 0, group, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(world, 0, group, turned(Math.PI / 2));
 
-    const put = addArtefact(turned, 'exit', { x: 10, y: 0 }, 0, {
+    const put = addArtefact(w, 'exit', { x: 10, y: 0 }, 0, {
       into: group,
       frame: { a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0 },
     });
@@ -287,11 +247,7 @@ function turningRoom(): { world: World, artefact: number, group: number } {
   const put = addArtefact(drawn.world, 'key', { x: 100, y: 0 }, 0, TOP);
   const made = sealed(put.world, 0, [drawn.id, put.id], TOP)!;
 
-  const world = withEdit(made.world, 1, made.id, {
-    transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-    vertices: new Map(),
-    depths: new Map(),
-  });
+  const world = wrote(made.world, 1, made.id, turned(Math.PI / 2));
 
   return { world, artefact: put.id, group: made.id };
 }
@@ -333,14 +289,10 @@ describe('a walk moves them on the walls’ clock', () => {
     // a quarter turn — (10, 0) to (0, 10) — where lerping the two ends would
     // have sent it through the origin and out the other side.
     const { world, id } = dropped(0, 10, 0);
-    const turned = withEdit(world, 1, id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(world, 1, id, turned(Math.PI));
 
-    expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.x).toBeCloseTo(0, 9);
-    expect(artefactsDuring(turned, 0, 1, 0.5)[0].at.y).toBeCloseTo(10, 9);
+    expect(artefactsDuring(w, 0, 1, 0.5)[0].at.x).toBeCloseTo(0, 9);
+    expect(artefactsDuring(w, 0, 1, 0.5)[0].at.y).toBeCloseTo(10, 9);
   });
 
   test('and a group turning carries it round with the room, in step', () => {
@@ -362,15 +314,7 @@ describe('a walk moves them on the walls’ clock', () => {
     // great arc and coming back. The walls get this; so does a key among them.
     const { world, id } = dropped(0, 2, 0);
     const turn = { x: 1, y: 0 };
-    const spun = withEdit(world, 1, id, {
-      transform: {
-        ...EMPTY_TRANSFORM,
-        rotation: Math.PI,
-        translation: { x: 2 * turn.x, y: 2 * turn.y },
-      },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const spun = wrote(world, 1, id, turned(Math.PI, turn));
 
     // Half way is a quarter turn about (1, 0): (2, 0) goes to (1, 1).
     const half = artefactsDuring(spun, 0, 1, 0.5)[0].at;
@@ -435,21 +379,17 @@ describe('a walk moves them on the walls’ clock', () => {
       landing(made.world, 1, made.id),
     );
 
-    const turned = withEdit(put.world, 1, made.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(put.world, 1, made.id, turned(Math.PI / 2));
 
-    const half = artefactsDuring(turned, 0, 1, 0.5)[0].at;
+    const half = artefactsDuring(w, 0, 1, 0.5)[0].at;
 
     expect(half.x).toBeCloseTo(100 / Math.SQRT2, 9);
     expect(half.y).toBeCloseTo(100 / Math.SQRT2, 9);
 
-    // And it ends where standing still at the later version puts it, which is
+    // And it ends where standing still at the later keyframe puts it, which is
     // the crossing the still and the walk have to agree across.
-    const there = artefactsDuring(turned, 0, 1, 1)[0].at;
-    const still = placeAt(turned, put.id, 1)!;
+    const there = artefactsDuring(w, 0, 1, 1)[0].at;
+    const still = placeAt(w, put.id, 1)!;
 
     expect(there.x).toBeCloseTo(still.x, 9);
     expect(there.y).toBeCloseTo(still.y, 9);
@@ -479,13 +419,9 @@ describe('a walk moves them on the walls’ clock', () => {
       landing(made.world, 0, made.id),
     );
 
-    const turned = withEdit(put.world, 1, made.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const w = wrote(put.world, 1, made.id, turned(Math.PI / 2));
 
-    const gone = removeAt(turned, 1, [put.id]);
+    const gone = removeAt(w, 1, [put.id]);
     const half = artefactsDuring(gone, 0, 1, 0.5)[0].at;
 
     expect(half.x).toBeCloseTo(100 / Math.SQRT2, 9);
@@ -642,16 +578,9 @@ describe('the start is not one of them', () => {
       { x: 100, y: 100 },
     ], 0, TOP);
 
-    const world = movedStart(
-      withEdit(drawn.world, 1, drawn.id, {
-        transform: { ...EMPTY_TRANSFORM, translation: { x: 500, y: 500 } },
-        vertices: new Map(),
-        depths: new Map(),
-      }),
-      { x: 12, y: 34 },
-    );
+    const world = movedStart(wrote(drawn.world, 1, drawn.id, move(500, 500)), { x: 12, y: 34 });
 
-    for (let v = 0; v < world.versions.length; v++) {
+    for (let v = 0; v < world.keyframes.length; v++) {
       expect(shownAt(world, v).filter(it => it.type === 'start')).toEqual([
         { id: START_ID, type: 'start', at: { x: 12, y: 34 }, facing: 0 },
       ]);
@@ -696,16 +625,7 @@ describe('and it keeps step with the walls it stands among', () => {
     const put = addArtefact(drawn.world, 'anchor', corner, 0, TOP);
     const made = sealed(put.world, 0, [drawn.id, put.id], TOP)!;
 
-    const world = withEdit(made.world, 1, made.id, {
-      transform: {
-        ...EMPTY_TRANSFORM,
-        rotation: Math.PI / 3,
-        translation: { x: 40, y: -25 },
-        scale: { x: 1.4, y: 0.8 },
-      },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const world = wrote(made.world, 1, made.id, scaled(1.4, 0.8), turned(Math.PI / 3), move(40, -25));
 
     const bake = baked(world);
 

@@ -430,7 +430,11 @@ function walked(tl: Timeline, id: Id): Walked | null {
     return held;
   }
 
-  const out = walk(tl, rig, thing);
+  // A group's from the first keyframe, whenever it was made. Membership is one
+  // fact about the world rather than something a keyframe does, so a group made
+  // while standing at v3 holds its members at v0 too, and can be moved there.
+  const from = tl.groups.has(id) ? tl.keyframes[0]?.id ?? thing.birth : thing.birth;
+  const out = walk(tl, rig, thing, from);
 
   walks.set(key, out);
 
@@ -447,10 +451,15 @@ interface Running {
   steps: number
 }
 
-function walk(tl: Timeline, rig: Rig, thing: Lived & { points?: readonly Vertex[] }): Walked {
+function walk(
+  tl: Timeline,
+  rig: Rig,
+  thing: Lived & { points?: readonly Vertex[] },
+  from: KeyframeId,
+): Walked {
   const keyframes = tl.keyframes;
   const n = keyframes.length;
-  const born = indexIn(keyframes, thing.birth);
+  const born = indexIn(keyframes, from);
 
   const out: Walked = {
     rig,

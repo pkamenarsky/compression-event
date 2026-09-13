@@ -11,7 +11,9 @@ import { Input, createInput, inputListener, keyPressed } from './input';
 import {
   copied,
   grouped,
+  keyAt,
   landing,
+  order,
   pasted,
   reaching,
   kindsOf,
@@ -39,8 +41,8 @@ import {
   Tool,
   Update,
   VERSIONS,
-  Version,
-  VersionId,
+  Keyframe,
+  KeyframeId,
   World,
   Figure,
   FIGURES,
@@ -88,7 +90,7 @@ export function editor(initial: World): VNode {
           playing(state, input),
           shortcuts(state, input, update),
 
-          replaying(s.currentVersion, state, update),
+          replaying(s.keyframe, state, update),
           roaming(input, state, update),
           versions(input, update),
 
@@ -100,7 +102,7 @@ export function editor(initial: World): VNode {
             s.figure,
             s.selection,
             s.inside,
-            s.currentVersion,
+            s.keyframe,
             s.replay,
             s.bake,
             s.roaming,
@@ -112,7 +114,7 @@ export function editor(initial: World): VNode {
             () => s.preview() || s.roaming(),
             s.world,
             s.bake,
-            s.currentVersion,
+            s.keyframe,
             s.replay,
             s.roaming,
             update,
@@ -123,7 +125,7 @@ export function editor(initial: World): VNode {
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           typeBar(s.world, s.selection, s.tool, update),
-          versionStrip(s.world, s.selection, s.currentVersion, update),
+          versionStrip(s.world, s.selection, s.keyframe, update),
           bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
         ],
@@ -150,7 +152,7 @@ export function editor(initial: World): VNode {
  * what it draws underneath is supposed to snap — and the 3D view could not
  * have been more obvious about it.
  */
-function replaying(current: Value<VersionId>, state: Value<EditorState>, update: Update): VNode {
+function replaying(current: Value<KeyframeId>, state: Value<EditorState>, update: Update): VNode {
   return effect(current, v => {
     const walk = state().replay;
 
@@ -161,7 +163,7 @@ function replaying(current: Value<VersionId>, state: Value<EditorState>, update:
     // The run-up first, if the walk asked for one, standing at the start; the
     // walk's own clock begins where it ends.
     const started = performance.now() + walk.before * 1000;
-    const ms = REPLAY_MS * Math.abs(v - walk.from);
+    const ms = REPLAY_MS * Math.abs(order(state().world, v) - order(state().world, walk.from));
     const curve = EASINGS[REPLAY_EASE];
 
     let frame = requestAnimationFrame(function tick() {
@@ -248,13 +250,14 @@ function versions(input: Input, update: Update): VNode {
       // what is on screen.
       const by = e.code === 'ArrowDown' ? 1 : -1;
 
-      update(s => switched(s, clamped(s.currentVersion + by)));
+      update(s => switched(s, clamped(s.world, order(s.world, s.keyframe) + by)));
     }
   });
 }
 
-function clamped(v: number): VersionId {
-  return Math.min(VERSIONS - 1, Math.max(0, v));
+/** The keyframe at a place in the order, or the nearest end of it. */
+function clamped(world: World, i: number): KeyframeId {
+  return keyAt(world, Math.min(world.keyframes.length - 1, Math.max(0, i)))!;
 }
 
 /**
@@ -264,19 +267,19 @@ function clamped(v: number): VersionId {
  * Clicking the version already on screen is not a switch and does not start
  * one.
  */
-function switched(s: EditorState, to: VersionId): EditorState {
-  if (s.currentVersion === to) return s;
+function switched(s: EditorState, to: KeyframeId): EditorState {
+  if (s.keyframe === to) return s;
 
   // Nothing to play is not a walk. An edit invalidates every span after it, and
   // a transition declared over one that no longer stands leaves both views
   // trying to draw an instant that has no geometry — which reads as everything
   // between the two versions blinking out and back.
-  if (!playable(s, to)) return { ...s, currentVersion: to, replay: null };
+  if (!playable(s, to)) return { ...s, keyframe: to, replay: null };
 
   return {
     ...s,
-    currentVersion: to,
-    replay: { from: s.currentVersion, to, at: 0, through: 0, before: s.roaming ? s.lead : 0 },
+    keyframe: to,
+    replay: { from: s.keyframe, to, at: 0, through: 0, before: s.roaming ? s.lead : 0 },
   };
 }
 
@@ -316,8 +319,9 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
 /** Whether every span between here and there has been baked and still stands.
  * `spanAt` decides, against the world in front of it, so an edit takes the
  * transition away without anything having to be told. */
-function playable(s: EditorState, to: VersionId): boolean {
-  const lo = Math.min(s.currentVersion, to), hi = Math.max(s.currentVersion, to);
+function playable(s: EditorState, to: KeyframeId): boolean {
+  const here = order(s.world, s.keyframe), there = order(s.world, to);
+  const lo = Math.min(here, there), hi = Math.max(here, there);
 
   for (let from = lo; from < hi; from++) {
     if (spanAt(s.bake, s.world, from) === null) return false;
@@ -498,7 +502,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           ...s,
           clipboard: copied(
             s.world,
-            s.currentVersion,
+            s.keyframe,
             [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths],
           ),
         }));
@@ -511,7 +515,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // see happen rather than a polygon hidden exactly under its original.
           const by = s.settings.gridSize;
           const at = { x: by, y: by };
-          const where = landing(s.world, s.currentVersion, s.inside);
+          const where = landing(s.world, s.keyframe, s.inside);
 
           // Shift is the paste that leaves the history behind: what was copied
           // as it stands here, born here, saying nothing about any other
@@ -519,8 +523,8 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // Into the group standing open, if one is: a paste lands where the
           // author is working, and in here that is inside the group.
           const { world, ids, artefacts, paths } = e.shiftKey
-            ? stamped(s.world, s.currentVersion, s.clipboard, at, where)
-            : pasted(s.world, s.currentVersion, s.clipboard, at, where);
+            ? stamped(s.world, s.keyframe, s.clipboard, at, where)
+            : pasted(s.world, s.keyframe, s.clipboard, at, where);
 
           return marked(
             {
@@ -547,7 +551,7 @@ function loosened(s: EditorState, back: boolean): EditorState {
   const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
   const how = back ? rechained : unchained;
 
-  return marked({ ...s, world: how(s.world, s.currentVersion, ids) }, s.world);
+  return marked({ ...s, world: how(s.world, s.keyframe, ids) }, s.world);
 }
 
 /** The grid at a new size. Not in the history: what the grid is set to is how
@@ -563,9 +567,9 @@ function together(s: EditorState): EditorState {
   // together is what makes the key and the measurement go where the room goes.
   const made = grouped(
     s.world,
-    s.currentVersion,
+    s.keyframe,
     [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths],
-    landing(s.world, s.currentVersion, s.inside),
+    landing(s.world, s.keyframe, s.inside),
   );
 
   if (made === null) return s;
@@ -589,9 +593,10 @@ function together(s: EditorState): EditorState {
 /**
  * The picked groups taken apart, and their members picked instead.
  *
- * Nothing at all where a version cannot hold what taking one apart would have
- * to write — see `composed`. Refusing the whole gesture is the point: half of
- * it would leave the members displaced at the versions it could not do.
+ * Nothing at all where a member's frame cannot hold what taking one apart
+ * would have to write — see `ungrouped`. Refusing the whole gesture is the
+ * point: half of it would leave the members displaced at the keyframes it could
+ * not do.
  */
 function apart(s: EditorState): EditorState {
   let world = s.world;
@@ -652,8 +657,8 @@ function flattened(s: EditorState): EditorState | null {
   // group, resolving two of its members is about those two.
   const path = opened(s.world, s.inside);
   const tops = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))];
-  const where = landing(s.world, s.currentVersion, s.inside);
-  const done = resolveInto(s.world, s.currentVersion, tops, where);
+  const where = landing(s.world, s.keyframe, s.inside);
+  const done = resolveInto(s.world, s.keyframe, tops, where);
 
   if (done === null) return null;
   if (done.losing.length > 0 && !agreed(s, done.losing)) return null;
@@ -703,17 +708,18 @@ function shut(s: EditorState, sealed: boolean): EditorState {
  * Only when there is something to lose. A group nobody has animated resolves
  * without a word, which is nearly every one of them.
  */
-function agreed(s: EditorState, losing: readonly VersionId[]): boolean {
-  const names = losing.map(v => s.world.versions[v].name).join(', ');
-  const here = s.world.versions[s.currentVersion].name;
+function agreed(s: EditorState, losing: readonly KeyframeId[]): boolean {
+  const name = (k: KeyframeId): string => s.world.keyframes[order(s.world, k)].name;
+  const names = losing.map(name).join(', ');
+  const here = name(s.keyframe);
 
   return confirm(
     `Resolving reads the group as it stands at ${here}, and that is the shape it `
-    + 'becomes at every version.\n\n'
+    + 'becomes at every keyframe.\n\n'
     + `${names} ${losing.length === 1 ? 'moves' : 'move'} the members separately, and a `
-    + 'union cannot carry that: a version\'s transform moves a whole polygon, and there '
-    + `is no one transform that is what all of them were doing. ${names} will stop `
-    + 'saying anything about it.\n\n'
+    + 'union cannot carry that: an operation moves a whole polygon, and there is no one '
+    + `operation that is what all of them were doing. ${names} will stop saying `
+    + 'anything about it.\n\n'
     + 'The group\'s own moves and its erosion are kept.',
   );
 }
@@ -1148,7 +1154,7 @@ const STRIP_WIDTH = 132;
 function versionStrip(
   world: Value<World>,
   selection: Value<Selection>,
-  current: Value<VersionId>,
+  current: Value<KeyframeId>,
   update: Update,
 ): VNode {
   const height = VERSIONS * ROW + 2 * PADDING;
@@ -1192,8 +1198,8 @@ function versionStrip(
       ...Array.from({ length: VERSIONS }, (_unused, i) =>
         versionRow(
           i,
-          () => world().versions[i],
-          () => unchains(world(), i, selection()),
+          () => world().keyframes[i],
+          () => unchains(world(), world().keyframes[i].id, selection()),
           current,
           update,
         )),
@@ -1202,35 +1208,35 @@ function versionStrip(
 }
 
 /**
- * Whether this version's layer unchains anything that is picked.
+ * Whether this keyframe unchains anything that is picked.
  *
- * About the selection rather than about the world, because a footing is about
- * one thing and the strip is one column: a mark that meant *somebody* is
- * unchained here would be on nearly every row of a level that uses this at all,
- * and would answer a question nobody asked. Picked, it answers the one they
- * did — where does this stop hearing from upstream.
+ * About the selection rather than about the world, because a stand is about one
+ * thing and the strip is one column: a mark that meant *somebody* is unchained
+ * here would be on nearly every row of a level that uses this at all, and would
+ * answer a question nobody asked. Picked, it answers the one they did — where
+ * does this stop hearing from upstream.
  */
-function unchains(world: World, index: VersionId, selection: Selection): boolean {
+function unchains(world: World, k: KeyframeId, selection: Selection): boolean {
   return [...selection.polygons, ...selection.artefacts, ...selection.paths].some(
-    id => within(world, id).some(m => unchainedAt(world, index, m)),
+    id => within(world, id).some(m => unchainedAt(world, k, m)),
   );
 }
 
 function versionRow(
-  index: VersionId,
-  version: Value<Version>,
+  index: number,
+  version: Value<Keyframe>,
   broken: Value<boolean>,
-  current: Value<VersionId>,
+  current: Value<KeyframeId>,
   update: Update,
 ): VNode {
-  const active = () => current() === index;
+  const active = () => current() === version().id;
   const y = PADDING + index * ROW + ROW / 2;
 
   return g({ transform: `translate(0, ${y})` }, [
     g(
       {
         style: { cursor: 'pointer' },
-        onclick: () => update(s => switched(s, index)),
+        onclick: () => update(s => switched(s, version().id)),
       },
       [
         // A hit area over the whole row, so the name is as clickable as the node
@@ -1286,7 +1292,7 @@ function versionRow(
 }
 
 /** Open when the version draws as a ghost, struck through when it does not. */
-function eye(version: Value<Version>, update: Update, index: VersionId): VNode {
+function eye(version: Value<Keyframe>, update: Update, index: number): VNode {
   const on = () => version().visible;
   const x = STRIP_WIDTH - PADDING - 18;
 
@@ -1296,10 +1302,10 @@ function eye(version: Value<Version>, update: Update, index: VersionId): VNode {
   // bake survives it either way — a stamp compares each version's edits, and
   // this changes none of them.
   const toggle = () => update(s => {
-    const versions = [...s.world.versions];
-    versions[index] = { ...versions[index], visible: !versions[index].visible };
+    const keyframes = [...s.world.keyframes];
+    keyframes[index] = { ...keyframes[index], visible: !keyframes[index].visible };
 
-    return marked({ ...s, world: { ...s.world, versions } }, s.world);
+    return marked({ ...s, world: { ...s.world, keyframes } }, s.world);
   });
 
   return g(

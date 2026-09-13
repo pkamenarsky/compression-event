@@ -11,8 +11,9 @@
 
 import { test } from 'vitest';
 import { Span, bakeSpan, sample } from '../packages/editor/src/bake';
-import { TOP, grouped, withEdit } from '../packages/editor/src/scene';
-import { EMPTY_TRANSFORM, World } from '../packages/editor/src/types';
+import { TOP, grouped, keyed, painted } from '../packages/editor/src/scene';
+import { Op } from '../packages/editor/src/rig';
+import { World } from '../packages/editor/src/types';
 import { SIZES, level, version, weight } from './level';
 
 /**
@@ -63,16 +64,19 @@ function bytes(span: Span): number {
 test('what an eroding group adds', () => {
   const rooms = 120;
 
-  const held = (w: World, ids: number[], n: number, t: Partial<typeof EMPTY_TRANSFORM>) => {
+  const held = (w: World, ids: number[], n: number, t: { erosion?: number, rotation?: number }) => {
     const made = grouped(w, 0, ids.slice(0, n), TOP);
 
     if (made === null) throw new Error('a group needs two');
 
-    return withEdit(made.world, 1, made.id, {
-      transform: { ...EMPTY_TRANSFORM, ...t },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const ops: Op[] = [];
+
+    if (t.erosion !== undefined) ops.push({ kind: 'erode', by: t.erosion });
+    if (t.rotation !== undefined) {
+      ops.push({ kind: 'turn', angle: t.rotation, ref: painted(made.world, 1, made.id).ref, about: { x: 0, y: 0 } });
+    }
+
+    return keyed(made.world, 1, made.id, ops);
   };
 
   const { world, ids } = level(rooms);
@@ -174,7 +178,7 @@ test('a bake at level scale', () => {
 
     console.log(
       `${String(w.polygons.size).padStart(4)} polys, ` +
-      `${String(w.versions[1].edits.size).padStart(3)} edited  ` +
+      `${String(w.rigs.size).padStart(3)} edited  ` +
       `bake ${ms.toFixed(0).padStart(6)}ms  ` +
       `csg ${String(span.evaluations).padStart(6)}  ` +
       `stretches ${String(size.stretches).padStart(5)}  ` +

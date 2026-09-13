@@ -10,11 +10,11 @@
 // Resolving turns that read into geometry: the union is worked out, and the
 // rings it came out as become polygons with corners of their own.
 //
-// Read once, at the version in front of you
-// -----------------------------------------
-// The union is taken at one version and that is the shape, at every version the
-// geometry stood at. What the members were doing at any *other* version is
-// gone, and the versions that said it say nothing afterwards.
+// Read once, at the keyframe in front of you
+// ------------------------------------------
+// The union is taken at one keyframe and that is the shape, at every keyframe
+// the geometry stood at. What the members were doing at any *other* keyframe is
+// gone, and what was written about them goes with them.
 //
 // This was not always so, and the thing it replaced was much larger. A point of
 // a union is a name rather than a position — `boundaryRuns` hands back every
@@ -34,22 +34,22 @@
 // The lineage was exact and the motion was a lie, which is a worse thing to
 // hand somebody than nothing — it looks like it worked.
 //
-// So it does the simple thing and says so. `losing` names the versions whose
-// layers are about to stop meaning anything, and it is the caller's business to
-// put that in front of whoever asked before doing it.
+// So it does the simple thing and says so. `losing` names the keyframes whose
+// entries are about to stop meaning anything, and it is the caller's business
+// to put that in front of whoever asked before doing it.
 //
 // What is kept
 // ------------
-// The group's own layers, all of them. Its transform stays a transform, so a
-// group that turns still turns through its arc rather than becoming corners
-// that moved; its depth stays a depth, unbaked, so an author who resolves a
-// corridor and then wants another unit of wall can still say so. Only what the
-// *members* were doing separately is lost, which is exactly the part that had
-// nowhere to go.
+// The group's own timeline, all of it. Its turns stay turns, so a group that
+// turns still turns through its arc rather than becoming corners that moved;
+// its depth stays a depth, unbaked, so an author who resolves a corridor and
+// then wants another unit of wall can still say so. Only what the *members*
+// were doing separately is lost, which is exactly the part that had nowhere to
+// go.
 //
-// Nor is this a layer. Every other edit here lands in one version and flows
-// forward; this one rewrites the whole chain, because the thing it replaces
-// spans the whole chain. Undo is what takes it back.
+// Nor is this an entry. Every other edit here lands in one keyframe and plays
+// from there; this one rewrites every keyframe, because the thing it replaces
+// spans them all. Undo is what takes it back.
 //
 // What comes out
 // --------------
@@ -101,23 +101,22 @@ import {
   depths,
   groupFrame,
   joined,
+  keyAt,
+  order,
   resolveAt,
+  rigOf,
   standingIn,
   underfoot,
   ungrouped,
   unplace,
 } from './scene';
+import { Entry, Rig, once } from './rig';
 import {
-  EMPTY_TRANSFORM,
-  Edit,
   GroupId,
   Id,
-  Polygon,
   PolygonId,
-  Version,
-  VersionId,
+  KeyframeId,
   Vertex,
-  VertexId,
   World,
   within,
 } from './types';
@@ -338,7 +337,7 @@ function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }
  * Which ring is a hole is decided here, in the frame the corners are written
  * down in, because that is the frame `project` will read their winding in.
  */
-function readingAt(world: World, v: VersionId, id: GroupId): Reading[] {
+function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   const inside = new Set(within(world, id).filter(m => m !== id));
   const depth = depths(world, v);
 
@@ -417,15 +416,16 @@ export interface Resolution {
    */
   ids: Id[]
   /**
-   * The versions whose layers are about to stop saying anything — every version
-   * but the one it was read at that had written something about a member.
+   * The keyframes whose entries are about to stop saying anything — every
+   * keyframe but the one it was read at that had written something about a
+   * member.
    *
    * Not an error and not a refusal. It is the one thing about this that cannot
    * be seen by looking at the result, so it is handed back to be asked about.
    * Empty is the ordinary case: a group nobody has animated resolves with
    * nothing lost at all.
    */
-  losing: VersionId[]
+  losing: KeyframeId[]
 }
 
 /**
@@ -441,7 +441,7 @@ export interface Resolution {
  * says nothing, so its layers are hoisted onto the polygon, which reads them in
  * exactly the frame the group read them in.
  */
-export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolution | null {
+export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resolution | null {
   const group = world.groups.get(id);
 
   if (group === undefined) return null;
@@ -457,26 +457,26 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
   // them, and what replaces them has to stand there too.
   const geometry = within(world, id).filter(m => world.polygons.has(m));
 
-  const versions = world.versions
-    .map((_unused, k) => k)
+  const standing = world.keyframes
+    .map(k => k.id)
     .filter(k => {
       const from = new Set(chain(world, k));
 
       return geometry.some(m => standingIn(world, m, from));
     });
 
-  if (versions.length === 0) return null;
+  if (standing.length === 0) return null;
 
   // Everything under the group that was geometry. It goes entirely rather than
-  // dying at a version: what replaces it stands at every version it stood at,
+  // dying at a keyframe: what replaces it stands at every keyframe it stood at,
   // so leaving it would draw the same rooms twice.
   //
   // Geometry, and nothing else. An artefact is a place and a path is a walk,
-  // and neither has anything to do with a union — none of their layers went
-  // into one and none of them is lost by taking one, so a resolve has no
-  // business touching either. They came out here because `within` reaches
-  // everything, and the artefact was arriving with its moves deleted and
-  // `losing` naming versions that were losing nothing.
+  // and neither has anything to do with a union — nothing of theirs went into
+  // one and none of it is lost by taking one, so a resolve has no business
+  // touching either. They came out here because `within` reaches everything,
+  // and the artefact was arriving with its moves deleted and `losing` naming
+  // keyframes that were losing nothing.
   const aside = (m: Id): boolean => world.artefacts.has(m) || world.paths.has(m);
 
   const gone = new Set<Id>(within(world, id).filter(m => m !== id && !aside(m)));
@@ -484,15 +484,21 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
 
   const polygons = new Map(world.polygons);
   const groups = new Map(world.groups);
+  const rigs = new Map(world.rigs);
 
+  // Everything written about a member goes with the member. What it said is
+  // not recoverable as an operation on the union — that is the whole of why
+  // this reads one keyframe — and leaving it written would be a timeline naming
+  // something no longer in the world.
   for (const m of gone) {
     polygons.delete(m);
     groups.delete(m);
+    rigs.delete(m);
   }
 
-  const born = versions[0];
-  const dies = versions[versions.length - 1] + 1;
-  const death = dies < world.versions.length ? dies : null;
+  const born = standing[0];
+  const last = order(world, standing[standing.length - 1]);
+  const death = keyAt(world, last + 1);
 
   // One block of ids, so a polygon's corners are the numbers after it — which
   // is what `addPolygon` does and what anything reading a saved file expects.
@@ -522,90 +528,76 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
     next++;
   }
 
+  // The group's depth, written onto every ring as it goes: an erosion at every
+  // keyframe it changes at, adding up to what the group's was.
+  //
+  // This is the one thing an ordinary ungroup cannot carry and this one can.
+  // A group's depth offsets the *union* of what its members produced, so once
+  // the members are back to being members there is no union for it to be about
+  // and the fold drops it. Here each ring already is that union, so a depth on
+  // the ring means exactly what the group's meant.
+  //
+  // The depth as the group had it, never the other way about. `contributed` has
+  // to flip the sign on what a group takes away — erode(A - B, d) = erode(A,
+  // d) - erode(B, -d) — and that flip has already happened here: every ring out
+  // of `readingAt` is added, holes included, so every one of them erodes
+  // inward.
+  const eroding = new Map<KeyframeId, readonly Entry[]>();
+  let was = 0;
+
+  for (const k of standing) {
+    const d = depths(world, k).get(id) ?? 0;
+
+    if (d !== was) eroding.set(k, [once({ kind: 'erode', by: d - was })]);
+
+    was = d;
+  }
+
+  for (const m of made) {
+    const rig: Rig = { keys: eroding, nudges: new Map(), depths: new Map() };
+
+    if (eroding.size > 0) rigs.set(m, rig);
+  }
+
   // The rings go in where the members were, and the group comes apart round
-  // them. Everything the group's own layers were doing is carried onto them by
-  // `ungrouped`, which is the one piece of this that already existed and the
+  // them. Everything the group's own timeline was doing is carried onto them
+  // by `ungrouped`, which is the one piece of this that already existed and the
   // reason the group is used as scaffolding rather than dismantled by hand.
   groups.set(id, { ...group, members: [...made, ...kept] });
 
-  const depth = new Map(versions.map(k => [k, depths(world, k).get(id) ?? 0]));
-
-  const versionsOut: Version[] = world.versions.map((version, k) => {
-    // Every layer written about a member goes with the member. What it said is
-    // not recoverable as a transform on the union — that is the whole of why
-    // this reads one version — and leaving it written would be a layer naming
-    // something no longer in the world.
-    const edits = new Map<Id, Edit>([...version.edits].filter(([who]) => !gone.has(who)));
-
-    // The group's depth, written onto every ring at every version it stands
-    // at.
-    //
-    // This is the one thing an ordinary ungroup cannot carry and this one can.
-    // A group's depth offsets the *union* of what its members produced, so once
-    // the members are back to being members there is no union for it to be
-    // about and `composed` drops it. Here each ring already is that union, so a
-    // depth on the ring means exactly what the group's meant.
-    //
-    // At every version rather than only where the group stated one, because a
-    // version that states nothing inherits its base's — and `ungrouped` is
-    // about to write a transform into every member at every version the group
-    // spoke at, which would state a depth of nought at each of them.
-    if (versions.includes(k)) {
-      const d = depth.get(k) ?? 0;
-
-      for (const m of made) {
-        edits.set(m, {
-          transform: {
-            ...EMPTY_TRANSFORM,
-            // The depth as the group wrote it, never the other way about.
-            // `contributed` has to flip the sign on what a group takes away —
-            // erode(A - B, d) = erode(A, d) - erode(B, -d) — and that flip has
-            // already happened here: every ring out of `readingAt` is added,
-            // holes included, so every one of them erodes inward.
-            erosion: d,
-          },
-          vertices: new Map<VertexId, Point>(),
-          depths: new Map(),
-        });
-      }
-    }
-
-    // And every footing under it, the group's own included. What one holds is
-    // the state its base handed over, in the member's own terms — a frame, a
-    // ring, the corners there were — and none of those survive the union any
-    // better than a member's transform does. So a resolved group is chained
-    // again, and `losing` says so before it happens. See *Unchaining* in
-    // `scene.ts`.
-    const footings = new Map(
-      [...version.footings].filter(([who]) => !gone.has(who) && who !== id),
-    );
-
-    return { ...version, edits, footings };
-  });
-
-  const held = { ...world, polygons, groups, nextId: next, versions: versionsOut };
+  const held = { ...world, polygons, groups, rigs, nextId: next };
 
   // Taken apart, so that what came out is pickable one ring at a time. It is
   // the whole reason to resolve: a union you cannot get at is the group you
   // already had.
   //
-  // Refused only where a version cannot hold what coming apart would have to
+  // Refused only where a keyframe cannot hold what coming apart would have to
   // write, which after this is only ever about an artefact the group was
-  // holding — every ring's own transform is the identity here, so composing the
-  // group's onto it is the group's, exactly. Then the group stays, and what is
-  // handed back says so.
+  // holding — every ring's own frame is at rest here, so folding the group's
+  // onto it is the group's, exactly. Then the group stays, and what is handed
+  // back says so.
   const apart = ungrouped(held, id);
 
   return {
     world: apart ?? held,
     ids: apart === null ? [id] : made,
-    losing: world.versions
-      .map((_unused, k) => k)
-      .filter(k => k !== v && (
-        [...world.versions[k].edits.keys()].some(who => gone.has(who))
-        || [...world.versions[k].footings.keys()].some(who => gone.has(who) || who === id)
-      )),
+    losing: world.keyframes
+      .map(k => k.id)
+      .filter(k => k !== v && [...gone].some(m => written(rigOf(world, m), k))),
   };
+}
+
+/** Whether anything is written about a thing at a keyframe. */
+function written(rig: Rig, k: KeyframeId): boolean {
+  if (rig.keys.has(k)) return true;
+
+  for (const maps of [rig.nudges, rig.depths]) {
+    for (const map of maps.values()) {
+      if (map.has(k)) return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -624,7 +616,7 @@ export function resolveGroup(world: World, v: VersionId, id: GroupId): Resolutio
  */
 export function resolveInto(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   ids: readonly Id[],
   where: Landing,
 ): Resolution | null {
@@ -649,9 +641,9 @@ export function resolveInto(
  * two, or everything the open group already holds. Both are refusals about a
  * group being worth making, and this one is not being made to be kept.
  *
- * Born at the root and never taken out, so it holds its members at every
- * version they stand at. Nothing is compensated, exactly as in `grouped`: its
- * transform is the identity everywhere, so everything is where it was.
+ * Born at the first keyframe and never taken out, so it holds its members at
+ * every keyframe they stand at. Nothing is compensated, exactly as in
+ * `grouped`: its frame is at rest everywhere, so everything is where it was.
  */
 function enclosed(world: World, ids: readonly Id[], where: Landing): {
   world: World
@@ -662,7 +654,7 @@ function enclosed(world: World, ids: readonly Id[], where: Landing): {
   const groups = new Map(world.groups);
   const parent = where.into === null ? undefined : groups.get(where.into);
 
-  groups.set(id, { birth: 0, death: null, members: [...ids], sealed: true });
+  groups.set(id, { birth: world.keyframes[0].id, death: null, members: [...ids], sealed: true });
 
   // Taken out of wherever they were, so nothing is claimed twice.
   if (where.into !== null && parent !== undefined) {

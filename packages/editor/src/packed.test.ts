@@ -1,16 +1,20 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { decoded, encoded, packed, unpacked } from '@ce/game';
 import { describe, expect, test } from 'vitest';
 import { bakeAll } from './bake';
 import { bakedLevel } from './export';
-import { Saved, restored, reopened, written } from './save';
-import { EditorState } from './types';
+import { Saved, reopened, written } from './save';
+import { EditorState, initialState } from './types';
+import { level as rooms, version } from '../../../bench/level';
 
-/** A level off the scratch pile, baked. */
+/** A level of the kind the bench measures, with something happening in each
+ * of its first few keyframes, baked. */
 function bakedState(): EditorState {
-  const file = JSON.parse(readFileSync(resolve(__dirname, '../../../scratch/world-2026-09-10T08-11-42Z.json'), 'utf8')) as Saved;
-  const state = restored(file);
+  const built = rooms(12);
+  let world = built.world;
+
+  for (const v of [1, 2, 3]) world = version(world, built.ids, 0.5, v);
+
+  const state = initialState(world);
   const job = bakeAll(state.world);
 
   let step = job.next();
@@ -24,7 +28,7 @@ describe('the bake in a file', () => {
   const level = bakedLevel(state.bake, state.world);
 
   test('there is something to pack', () => {
-    expect(level.spans.length).toBe(state.world.versions.length - 1);
+    expect(level.spans.length).toBe(state.world.keyframes.length - 1);
   });
 
   test('bytes come back as they went', () => {

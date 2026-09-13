@@ -1,19 +1,19 @@
 // -----------------------------------------------------------------------------
-// What the world looks like at a version
+// What the world looks like at a keyframe
 //
-// A world is a sequence of versions, and a version is a layer rather than a
-// copy: it stores what changed against its base and resolves against it here,
-// on demand. That is the whole reason this file exists — an edit made in v0 is
-// seen by v4 without being replayed by hand into v1, v2 and v3.
+// A thing is its rest geometry and a timeline: a list of operations per
+// keyframe, played from its birth — see `rig.ts`. Nothing is inherited and
+// nothing is replayed by hand: an operation written at v0 is seen at v4 because
+// v4 is v0's operations and then some, played again.
 //
-// Resolution is sequential:
+// Resolution is a read of the timelines:
 //
-//   local(k)  = local(k - 1) + vertexEdits_k
-//   source(k) = (transform_k o ... o transform_1)(local(k))
-//   shape(k)  = erode(source(k), depth_k)
+//   local(k)  = rest + nudges up to k
+//   source(k) = (every holder's frame at k) o frame(k), over local(k)
+//   shape(k)  = erode(source(k), depth(k))
 //
-// so `source` is what flows down the chain and `shape` is a read-only view
-// taken at each version. Version k + 1 erodes source(k), never shape(k), and
+// so `source` is what the handles are on and `shape` is a read-only view taken
+// at each keyframe. The next keyframe erodes source(k + 1), never shape(k), and
 // that one decision is what makes erosion free to delete vertices and split a
 // room in two: what it deletes belongs to a projection, and a projection has no
 // identity to lose. Nothing is written back, ever.
@@ -26,8 +26,8 @@
 // Nothing in here derives a frame from geometry the user can edit. An earlier
 // version turned and scaled about `centroid(points)`, which tied the frame to
 // the points: moving one vertex moved the centroid, and every other vertex
-// swung about the difference. A transform is about the world origin instead,
-// and the gesture that builds one puts the pivot it wants into the translation.
+// swung about the difference. An operation turns about a point it painted onto
+// the thing when it was written, and carries that point from then on.
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
@@ -53,9 +53,6 @@ import {
   ArtefactId,
   ArtefactType,
   Clipping,
-  EMPTY_TRANSFORM,
-  Edit,
-  Footing,
   GroupId,
   IconType,
   FLOOR,
@@ -72,9 +69,9 @@ import {
   PolygonId,
   PolygonKind,
   SetName,
-  Transform,
-  Version,
-  VersionId,
+  KeyframeId,
+  Timed,
+  TimedEntry,
   VertexId,
   World,
   enclosing,
@@ -100,6 +97,34 @@ import {
 } from './worldset';
 import { remembered } from './memo';
 import { Affine, IDENTITY, compose, place, unplace } from './affine';
+import {
+  EMPTY_RIG,
+  Entry,
+  Erode,
+  Frame,
+  Move,
+  Op,
+  REST,
+  Rig,
+  Scale,
+  Stand,
+  Turn,
+  affineOf,
+  appending,
+  deepened,
+  framed,
+  heldFrame,
+  indexIn,
+  nudged,
+  once,
+  placed,
+  playedAt,
+  played,
+  spun,
+  stateAt,
+  withKeys,
+  worldFrame,
+} from './rig';
 
 export type { Affine };
 export { IDENTITY, compose, place, unplace };
@@ -149,11 +174,11 @@ export interface Resolved {
    * one from another names the fields.
    */
   readonly shape: Shape
-  /** The depth `shape` was taken at, inherited where this version states none. */
+  /** The depth `shape` was taken at: what its erosions add up to. */
   erosion: number
   /**
-   * The extra depth on single corners, by id — `Edit.depths` as this version
-   * leaves it, and empty in every world nobody has offset a corner of.
+   * The extra depth on single corners, by id, as this keyframe leaves it, and
+   * empty in every world nobody has offset a corner of.
    *
    * Kept by id rather than as an array beside `corners` because that is how it
    * is authored and how it is written down; `depths` below is the same thing
@@ -263,7 +288,7 @@ export function addPolygon(
   world: World,
   kind: PolygonKind,
   points: Point[],
-  birth: VersionId,
+  birth: KeyframeId,
   where: Landing,
 ): { world: World, id: PolygonId } {
   const wound = isCCW(points) ? points : [...points].reverse();
@@ -338,9 +363,9 @@ export function facing(m: Affine): number {
  * not un-draw them: grouping is a handle appearing, and removing one is the
  * contents going.
  */
-export function removals(world: World, id: Id): VersionId[] {
+export function removals(world: World, id: Id): KeyframeId[] {
   const own = lived(world, id);
-  const out: VersionId[] = own === undefined || own.death === null ? [] : [own.death];
+  const out: KeyframeId[] = own === undefined || own.death === null ? [] : [own.death];
 
   for (const g of enclosing(world, id)) {
     const death = world.groups.get(g)?.death;
@@ -359,7 +384,7 @@ export function removals(world: World, id: Id): VersionId[] {
  * `resolveAt` asks the same question the long way round, because it is walking
  * the chain anyway and can drop a polygon as it passes.
  */
-export function standingIn(world: World, id: Id, from: ReadonlySet<VersionId>): boolean {
+export function standingIn(world: World, id: Id, from: ReadonlySet<KeyframeId>): boolean {
   const own = lived(world, id);
 
   if (own === undefined || !standing(own, from)) return false;
@@ -374,7 +399,7 @@ export function standingIn(world: World, id: Id, from: ReadonlySet<VersionId>): 
  * and taken out at one — that is what existence means here — and the two
  * readers above want the answer rather than the map it came out of.
  */
-function lived(world: World, id: Id): { birth: VersionId, death: VersionId | null } | undefined {
+function lived(world: World, id: Id): { birth: KeyframeId, death: KeyframeId | null } | undefined {
   return world.polygons.get(id)
     ?? world.groups.get(id)
     ?? world.artefacts.get(id)
@@ -389,7 +414,7 @@ function lived(world: World, id: Id): { birth: VersionId, death: VersionId | nul
  * artefact is in the version's layers like anything else, so `groupFrame`
  * answers for it without knowing what it is.
  */
-export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | null {
+export function placeAt(world: World, id: ArtefactId, v: KeyframeId): Point | null {
   const it = world.artefacts.get(id);
 
   if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
@@ -398,7 +423,7 @@ export function placeAt(world: World, id: ArtefactId, v: VersionId): Point | nul
 }
 
 /** Which way it is pointing at a version, or nothing if it is not there. */
-export function facingAt(world: World, id: ArtefactId, v: VersionId): number | null {
+export function facingAt(world: World, id: ArtefactId, v: KeyframeId): number | null {
   const it = world.artefacts.get(id);
 
   if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
@@ -435,12 +460,12 @@ export function turnedStart(world: World, facing: number): World {
 
 /** Everything standing at a version, the start first: it is drawn under the
  * artefacts, and picked after them where the two overlap. */
-export function shownAt(world: World, v: VersionId): Placed[] {
+export function shownAt(world: World, v: KeyframeId): Placed[] {
   return [startPlaced(world), ...artefactsAt(world, v)];
 }
 
 /** Everything standing at a version, in id order. */
-export function artefactsAt(world: World, v: VersionId): Placed[] {
+export function artefactsAt(world: World, v: KeyframeId): Placed[] {
   const out: Placed[] = [];
 
   for (const [id, it] of world.artefacts) {
@@ -463,7 +488,7 @@ export function addArtefact(
   world: World,
   type: ArtefactType,
   at: Point,
-  v: VersionId,
+  v: KeyframeId,
   where: Landing,
 ): { world: World, id: ArtefactId } {
   const id = world.nextId;
@@ -555,13 +580,13 @@ export interface Laid {
  * `placeAt` with more than one point, down to the call it makes: the route is
  * in the path's own frame, and the frame is what the chain has to say about it.
  */
-export function pathAt(world: World, id: PathId, v: VersionId): Point[] | null {
+export function pathAt(world: World, id: PathId, v: KeyframeId): Point[] | null {
   return laidAt(world, id, v)?.points ?? null;
 }
 
 /** The same, with the frame it was placed by — which is what anything writing
  * a point back wants, and the reason `Laid` carries one. */
-export function laidAt(world: World, id: PathId, v: VersionId): Laid | null {
+export function laidAt(world: World, id: PathId, v: KeyframeId): Laid | null {
   const it = world.paths.get(id);
 
   if (it === undefined || !standingIn(world, id, new Set(chain(world, v)))) return null;
@@ -572,7 +597,7 @@ export function laidAt(world: World, id: PathId, v: VersionId): Laid | null {
 }
 
 /** Every path standing at a version, in id order. */
-export function pathsAt(world: World, v: VersionId): Laid[] {
+export function pathsAt(world: World, v: KeyframeId): Laid[] {
   const out: Laid[] = [];
 
   for (const id of world.paths.keys()) {
@@ -588,55 +613,44 @@ export function pathsAt(world: World, v: VersionId): Laid[] {
 // Resolution
 // -----------------------------------------------------------------------------
 
-/** The versions from the root down to `v`, in the order they apply. */
-export function chain(world: World, v: VersionId): VersionId[] {
-  const out: VersionId[] = [];
+/**
+ * The keyframes from the first down to `v`, in the order they play.
+ *
+ * What existence is asked against: a thing stands at `v` if it was born into
+ * one of these and not taken out by one. Membership rather than `<=`, because
+ * the order is the array and an id is not a position in it.
+ */
+export function chain(world: World, v: KeyframeId): KeyframeId[] {
+  const i = indexIn(world.keyframes, v);
 
-  for (let at: VersionId | null = v; at !== null; at = world.versions[at].base) {
-    out.unshift(at);
-  }
+  return world.keyframes.slice(0, i + 1).map(k => k.id);
+}
 
-  return out;
+/** Where a keyframe is in the order. What anything counting across keyframes
+ * counts in. */
+export function order(world: World, v: KeyframeId): number {
+  return indexIn(world.keyframes, v);
+}
+
+/** The keyframe at a place in the order, or nothing past either end. */
+export function keyAt(world: World, i: number): KeyframeId | null {
+  return world.keyframes[i]?.id ?? null;
 }
 
 // -----------------------------------------------------------------------------
-// The composed frame
+// Frames
 //
-// A vertex edit is written in the polygon's own frame and every transform in
-// the chain carries it, which is the only reading under which a polygon is one
-// shape: nudge a corner at v3, turn the polygon at v0, and the corner stays
-// where it was put relative to its neighbours rather than swinging out of the
-// ring. Written the other way — a displacement against the world geometry the
-// base handed over — the nudge keeps its screen direction while the polygon
-// turns underneath it, and the shape is different at every upstream angle.
+// A nudge is written in the polygon's rest frame and its frame carries it,
+// which is the only reading under which a polygon is one shape: nudge a corner
+// at v3, turn the polygon at v0, and the corner stays where it was put relative
+// to its neighbours rather than swinging out of the ring.
 //
-// So resolution accumulates one composed affine per polygon rather than pushing
-// each version's displacement through the transforms that come after it. That
-// is strictly less work, not more: the awkward `sum over j of (M_k ... M_j) e_j`
-// is gone, and what is left is one matrix product down the chain and one pass
-// over the points at the end.
-//
-// The composed map is a general affine — rotate, squash, rotate again is a
-// shear, so this family is not closed under composition. That costs nothing
-// here, because nothing interpolates an accumulated transform: every version
-// boundary is a keyframe, and the one in flight is stored per version in
-// components. Components are kept separate for interpolation, and this is not
-// interpolation.
+// A thing's own frame is always a translation, an angle and a scale along its
+// own axes — every operation keeps it so. What places it in the world is that,
+// composed with the frame of every group holding it, and that composition is a
+// general affine: a group squashed across a member turned against it is a
+// shear. Nothing interpolates the composition, so nothing has to mind.
 // -----------------------------------------------------------------------------
-
-/** One version's layer as a matrix: scale per axis, then turn, then move. */
-export function affine(t: Transform): Affine {
-  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
-
-  return {
-    a: c * t.scale.x,
-    b: s * t.scale.x,
-    c: -s * t.scale.y,
-    d: c * t.scale.y,
-    tx: t.translation.x,
-    ty: t.translation.y,
-  };
-}
 
 /**
  * Where a new thing goes, and the frame it will be read in.
@@ -663,7 +677,7 @@ export interface Landing {
 export const TOP: Landing = { into: null, frame: IDENTITY };
 
 /** Where the author is working: the group standing open, if one is. */
-export function landing(world: World, v: VersionId, inside: GroupId | null): Landing {
+export function landing(world: World, v: KeyframeId, inside: GroupId | null): Landing {
   return inside === null || !world.groups.has(inside)
     ? TOP
     : { into: inside, frame: inward(world, v, inside) };
@@ -680,21 +694,6 @@ export function joined(world: World, into: GroupId | null, ids: readonly Id[]): 
   groups.set(into, { ...group, members: [...group.members, ...ids] });
 
   return { ...world, groups };
-}
-
-/**
- * This layer's displacements, added to what the corners already stood at.
- *
- * Keyed by corner throughout, rather than by where it sits in the ring: which
- * corners a version has is not what the version before it had, so an index is
- * not a name that survives the step.
- */
-function displace(at: Map<VertexId, Point>, vertices: Map<VertexId, Point>): void {
-  for (const [id, d] of vertices) {
-    const p = at.get(id);
-
-    if (p !== undefined) at.set(id, { x: p.x + d.x, y: p.y + d.y });
-  }
 }
 
 /**
@@ -829,71 +828,35 @@ export function resolved(at: Omit<Resolved, 'shape' | 'rings'>): Resolved {
 }
 
 /**
- * The transform every group holding `id` puts on it at one version, composed
- * outermost last.
+ * The frame a thing's own frame at `v` is read in: every group holding it, at
+ * that keyframe, in world units.
  *
- * A group is a frame its members sit in, so this is the same composition the
- * version chain does — apply mine, then the enclosing one's — one level of
- * structure at a time instead of one version at a time. That is deliberate:
- * one rule to learn rather than two that rhyme.
- *
- * Every version, whenever the group was made. Membership is one fact about the
- * world, not something a layer does, so a group made while standing at v3 holds
- * its members at v0 too and can be moved there. What is versioned is the
- * transform, and a version that says nothing about a group leaves it alone —
- * which is why making one changes nothing anywhere until it is used.
- *
- * The group's own erosion is not read here. It offsets the union of what the
- * members produced, which is a read taken after this one and after the CSG has
- * put the union together. See *Groups* in `docs/versioning.md`.
- */
-function held(world: World, version: Version, id: Id): Affine {
-  return enclosing(world, id).reduce(
-    (m, g) => compose(affine(version.edits.get(g)?.transform ?? EMPTY_TRANSFORM), m),
-    IDENTITY,
-  );
-}
-
-/**
- * The frame a thing's own transform at version `v` is read in.
- *
- * Resolve applies a layer in two stages: the thing's own transform first, and
- * then the transforms of the groups holding it, at that same version. So what
- * a polygon's own transform does happens *inside* whatever its groups are
- * doing, and its numbers are not in world units — a translation of (10, 0) on
- * a polygon inside a group turned a quarter turn moves it ten units *down* the
+ * What a polygon's own operations do happens *inside* whatever its groups are
+ * doing, and their numbers are not in world units — a move of (10, 0) on a
+ * polygon inside a group turned a quarter turn moves it ten units *down* the
  * screen.
  *
- * Anything writing a transform from a gesture therefore has to take the cursor
- * back through this first, or it is answering a question asked in world units
- * with a number that will be read in another frame entirely. The pivot of a
- * rotation is the case that shows it worst: left alone, a polygon inside a
+ * Anything writing an operation from a gesture therefore has to take the
+ * cursor back through this first, or it is answering a question asked in world
+ * units with a number that will be read in another frame entirely. The centre
+ * of a turn is the case that shows it worst: left alone, a polygon inside a
  * turned group spins about a point that is nowhere near it.
- *
- * Only this version's groups, and that is not an oversight. A group's turn at
- * an earlier version is already inside the space this one's own transform acts
- * on, because that is the order `resolveAt` composed them in.
  */
-export function under(world: World, v: VersionId, id: Id): Affine {
-  return held(world, world.versions[v], id);
+export function under(world: World, v: KeyframeId, id: Id): Affine {
+  return heldFrame(world, id, v);
 }
 
 /**
- * The frame a thing newly put inside `into` at `v` is placed by.
+ * The frame a thing newly put inside `into` at `v` is placed by: the group's
+ * own frame there, and everything holding the group.
  *
  * `under` answers this for something already in the world, off its own
  * enclosing groups. A paste has nothing to ask about yet — the thing does not
  * exist and is about to be built to fit — so the same walk is done one step
- * early: the group's own transform, and then everything holding the group.
- *
- * Born at `v`, so this version's layer is the whole of it. Nothing earlier ever
- * applied to something that was not there.
+ * early.
  */
-export function inward(world: World, v: VersionId, into: GroupId): Affine {
-  const version = world.versions[v];
-  const own = affine(version.edits.get(into)?.transform ?? EMPTY_TRANSFORM);
-
-  return compose(held(world, version, into), own);
+export function inward(world: World, v: KeyframeId, into: GroupId): Affine {
+  return worldFrame(world, into, v);
 }
 
 /** A world-space step as the frame `m` reads it. A direction and a distance,
@@ -906,57 +869,21 @@ export function unstep(m: Affine, dx: number, dy: number): Point {
 }
 
 /**
- * The frame a thing is placed by at a version: its own layer at every stage of
- * the chain, and every group holding it, in the order resolve applies them.
+ * The frame a thing is placed by at a keyframe: its own, and every group
+ * holding it.
  *
- * The same walk `resolveAt` does for a polygon, without the geometry — this is
- * what it puts in `Resolved.frame`, for the things that have no ring to hang
- * one on. A group has none, an artefact has a point, a path has a run of them.
- * What it is also for is the bake: keeping a group's points in this rather than
- * in world units is what makes a turning group interpolate along its arc
- * instead of across the chord.
+ * What `resolveAt` puts in `Resolved.frame`, for the things that have no ring
+ * to hang one on. A group has none, an artefact has a point, a path has a run
+ * of them. What it is also for is the bake: keeping a group's points in this
+ * rather than in world units is what makes a turning group interpolate along
+ * its arc instead of across the chord.
  *
- * The walk starts where the thing does. Nothing that happened before it was
- * there applies to it — a room drawn into a group at v2 is placed against the
- * group *as it stands at v2*, and the move the group was given at v0 is
- * already in the ground it was drawn on rather than something still to be
- * applied. `resolveAt` says exactly this for a polygon by seeding the frame at
- * `polygon.birth`, and this said it for nothing at all: an artefact dropped
- * into a group an earlier version had moved came out offset by that move, once
- * for every version between.
- *
- * Membership in the chain rather than `k < birth`, for the reason `standing`
- * is: versions happen to be numbered in order today and forks would end that.
+ * Anything the world does not hold — the sides `sideOf` mints, and anything
+ * asking about an id the world has lost — is at rest, and so is anything
+ * before it is born.
  */
-export function groupFrame(world: World, v: VersionId, id: Id): Affine {
-  let m = IDENTITY;
-
-  // Nothing in the maps is nothing to be born — the sides `sideOf` mints, and
-  // anything asking about an id the world has lost. The whole chain for those,
-  // which is what this always did.
-  const born = lived(world, id)?.birth;
-  let here = born === undefined;
-
-  for (const k of chain(world, v)) {
-    if (!here) {
-      if (k !== born) continue;
-
-      here = true;
-    }
-
-    const version = world.versions[k];
-    const footing = version.footings.get(id);
-
-    // Everything the chain had built up to here, thrown away for what the
-    // footing says instead. Before this version's own layer, which then applies
-    // on top of it exactly as it would have. See `Footing`.
-    if (footing !== undefined) m = footing.frame;
-
-    m = compose(affine(version.edits.get(id)?.transform ?? EMPTY_TRANSFORM), m);
-    m = compose(held(world, version, id), m);
-  }
-
-  return m;
+export function groupFrame(world: World, v: KeyframeId, id: Id): Affine {
+  return worldFrame(world, id, v);
 }
 
 /** Shared, because there is one of these per polygon per resolve and almost
@@ -1006,9 +933,9 @@ function varying(
  * to be one.
  *
  * Which corners are standing comes in as a question rather than as a set of
- * versions, because an unchained polygon answers it differently: what its
- * footing froze is standing whatever the chain says about where it was born.
- * See `Footing`.
+ * keyframes, because an unchained polygon answers it differently: what its
+ * stand froze is standing whatever was said about where it was born. See
+ * `Stand` in `rig.ts`.
  */
 function surviving(points: readonly Vertex[], alive: (c: Vertex) => boolean): Vertex[] {
   const out: Vertex[] = [];
@@ -1051,147 +978,44 @@ function surviving(points: readonly Vertex[], alive: (c: Vertex) => boolean): Ve
   return gone ? [] : out;
 }
 
-export function resolveAt(world: World, v: VersionId): Resolved[] {
-  const order = chain(world, v);
-  const inherited = new Set(order);
-
-  // Where each corner stands in its polygon's own frame. A map rather than a
-  // ring, because the ring is not a fixed length any more: corners arrive and
-  // leave as the chain is walked, and only the ids hold still.
-  const local = new Map<PolygonId, Map<VertexId, Point>>();
-  const frame = new Map<PolygonId, Affine>();
-  const depth = new Map<PolygonId, number>();
-  // What a layer says about single corners, wholesale rather than merged, for
-  // the same reason `depth` is: a layer states the offsets it means to be
-  // under, and `editAt` hands it the ones its base was under to start from.
-  const over = new Map<PolygonId, ReadonlyMap<VertexId, number>>();
-
-  // Worked out once rather than per version: the walk up to a polygon's holders
-  // is the same at every step of the chain, and there are as many steps as
-  // there are versions.
-  const taken = new Map<PolygonId, VersionId[]>();
-
-  for (const id of world.polygons.keys()) taken.set(id, removals(world, id));
-
-  // What an unchained polygon hears instead of the whole chain: the stretch of
-  // it from its last footing on. Absent for everything nobody has unchained,
-  // which is nearly everything — see `Footing`.
-  const since = new Map<PolygonId, ReadonlySet<VersionId>>();
-  const frozen = new Map<PolygonId, ReadonlySet<VertexId>>();
-
-  order.forEach((k, step) => {
-    const version = world.versions[k];
-    const outer = new Map<Id, Affine>();
-
-    for (const [id, polygon] of world.polygons) {
-      if (polygon.birth === k) {
-        local.set(id, new Map());
-        frame.set(id, IDENTITY);
-        depth.set(id, 0);
-        over.set(id, EMPTY_DEPTHS);
-      }
-
-      // Taken out by this version — its own removal, or that of a group holding
-      // it, which is the same thing: see `removals`.
-      //
-      // After the birth rather than before: the walk is what says a polygon is
-      // here at all, so dropping it here drops it from the rest of the walk
-      // too, and whatever later layers still name it are inert rather than
-      // wrong. They are left written for the reason `removeVertices` leaves a
-      // displacement — a layer that moved something still moved it, at the
-      // versions that still have it.
-      if (taken.get(id)!.includes(k)) {
-        local.delete(id);
-        frame.delete(id);
-        depth.delete(id);
-        over.delete(id);
-      }
-
-      // Standing on its own numbers from here rather than on what the base
-      // handed over. Where a birth would be, and for the same reason: this is
-      // the version the thing begins at, as far as it is concerned. Only for
-      // something that is here — a footing does not raise the dead, and it does
-      // not bring a polygon forward past the version it is born into.
-      const footing = version.footings.get(id);
-
-      if (footing !== undefined && local.has(id)) {
-        local.set(id, new Map(footing.local));
-        frame.set(id, footing.frame);
-        depth.set(id, footing.erosion);
-        over.set(id, footing.depths);
-        since.set(id, new Set(order.slice(step)));
-        frozen.set(id, new Set(footing.local.keys()));
-      }
-
-      const at = local.get(id);
-
-      if (at === undefined) continue;
-
-      // Corners this version introduces take their resting place before its
-      // own layer is applied, so that a layer can move a corner it just added.
-      for (const corner of polygon.points) {
-        if (corner.birth === k) at.set(corner.id, { ...corner.at });
-      }
-
-      const edit = version.edits.get(id);
-
-      if (edit !== undefined) {
-        displace(at, edit.vertices);
-        frame.set(id, compose(affine(edit.transform), frame.get(id)!));
-        depth.set(id, edit.transform.erosion);
-        over.set(id, edit.depths);
-      }
-
-      // After its own, and whether or not it has one of its own: what moves a
-      // polygon at this version is not only what the version says about it.
-      const up = parentOf(world).get(id);
-
-      if (up === undefined) continue;
-
-      const m = outer.get(up) ?? held(world, version, id);
-
-      outer.set(up, m);
-      frame.set(id, compose(m, frame.get(id)!));
-    }
-  });
-
+/**
+ * Every polygon as keyframe `v` leaves it.
+ *
+ * In the order they were born into the keyframes, and then in the order they
+ * were made. That is the order they are drawn in, so what a click picks on top
+ * is what is drawn on top.
+ */
+export function resolveAt(world: World, v: KeyframeId): Resolved[] {
+  const from = new Set(chain(world, v));
+  const born = (p: Polygon): number => order(world, p.birth);
   const out: Resolved[] = [];
 
-  for (const [id, at] of local) {
-    const polygon = world.polygons.get(id)!;
-    const from = since.get(id) ?? inherited;
-    const kept = frozen.get(id);
+  const here = [...world.polygons]
+    .filter(([id]) => standingIn(world, id, from))
+    .sort(([, p], [, q]) => born(p) - born(q));
 
-    // Born into the stretch being listened to, or frozen into the footing at
-    // the head of it — and either way gone if something in that stretch took it
-    // out. Where there is no footing, `kept` is nothing and this is exactly
-    // `standing`.
-    const corners = surviving(
-      polygon.points,
-      c => (from.has(c.birth) || kept?.has(c.id) === true)
-        && (c.death === null || !from.has(c.death)),
-    );
+  for (const [id, polygon] of here) {
+    const state = stateAt(world, id, v);
+    const corners = surviving(polygon.points, c => state.corners.has(c.id));
 
     // A polygon whose outline has gone is not geometry any more. It cannot
     // happen through the editor, which will not take a ring below three, but
     // resolving is not the place to be sure of that.
     if (corners.length < 3) continue;
 
-    const ring = corners.map(c => at.get(c.id) ?? { ...c.at });
-    const erosion = depth.get(id) ?? 0;
-    const mine = over.get(id) ?? EMPTY_DEPTHS;
-    const m = frame.get(id)!;
+    const local = corners.map(c => state.corners.get(c.id)!);
+    const frame = worldFrame(world, id, v);
 
     out.push(resolved({
       id,
       polygon,
       corners,
-      local: ring,
-      frame: m,
-      source: place(m, ring),
-      erosion,
-      over: mine,
-      depths: varying(corners, erosion, mine),
+      local,
+      frame,
+      source: place(frame, local),
+      erosion: state.erosion,
+      over: state.depths,
+      depths: varying(corners, state.erosion, state.depths),
     }));
   }
 
@@ -1201,82 +1025,132 @@ export function resolveAt(world: World, v: VersionId): Resolved[] {
 // -----------------------------------------------------------------------------
 // Editing
 //
-// You edit the version you are standing in, and edits flow forward. That is the
-// entire propagation model: there is no way to author an edit that lands in an
-// earlier version than the one on screen, so if something is wrong in v0, go to
-// v0 and fix it, and watch the consequences downstream with ghosts.
+// You edit the keyframe you are standing in, and what is written there plays
+// from there on. There is no way to author an operation that lands earlier than
+// the keyframe on screen, so if something is wrong at v0, go to v0 and fix it,
+// and watch the consequences downstream with ghosts.
+//
+// A gesture adds one operation to the end of the keyframe's list for each thing
+// it moves, and works it out again from the list it started with every time
+// the hand moves — so it cannot drift, and letting go leaves one entry however
+// long it went on. See `appending` in `rig.ts` for when it folds into the
+// entry before it instead.
 // -----------------------------------------------------------------------------
 
-/**
- * This version's own edit for a polygon, or a fresh one that changes nothing.
- *
- * The depths are seeded from what it already resolved to, so that the first
- * thing written into a layer — a nudge, a move — does not also throw away the
- * erosion its base had. Both of them: the polygon's own, and the corners
- * offset apart from it.
- *
- * Hand it the `Resolved` wherever there is one, which is every polygon. A bare
- * number is for the things that have no ring and so no corners to have offset —
- * a group, an artefact — and for a caller stating a depth outright; it seeds no
- * corner depths, because there are none to seed it from.
- */
-export function editAt(world: World, v: VersionId, id: Id, base: number | Resolved): Edit {
-  const erosion = typeof base === 'number' ? base : base.erosion;
-  const over = typeof base === 'number' ? EMPTY_DEPTHS : base.over ?? EMPTY_DEPTHS;
+/** Everything written about a thing, or nothing. */
+export function rigOf(world: World, id: Id): Rig {
+  return world.rigs.get(id) ?? EMPTY_RIG;
+}
 
-  return world.versions[v].edits.get(id)
-    ?? {
-      transform: { ...EMPTY_TRANSFORM, erosion },
-      vertices: new Map(),
-      depths: new Map(over),
-    };
+/** A thing's timeline replaced. One with nothing in it is taken out. */
+export function withRig(world: World, id: Id, rig: Rig): World {
+  const rigs = new Map(world.rigs);
+
+  if (rig.keys.size === 0 && rig.nudges.size === 0 && rig.depths.size === 0) rigs.delete(id);
+  else rigs.set(id, rig);
+
+  return { ...world, rigs };
+}
+
+/** What keyframe `v` does to a thing, in order. */
+export function listAt(world: World, v: KeyframeId, id: Id): readonly Entry[] {
+  return rigOf(world, id).keys.get(v) ?? [];
+}
+
+/** `k`'s list for `id`, written outright. A bare operation happens once. */
+export function keyed(world: World, k: KeyframeId, id: Id, list: readonly (Op | Entry)[]): World {
+  const entries = list.map(e => ('op' in e ? e : once(e)));
+
+  return withRig(world, id, withKeys(rigOf(world, id), k, entries));
+}
+
+/** One operation more at the end of what `v` does to `id`, folded into the one
+ * before where the two are exactly one. */
+export function appended(world: World, v: KeyframeId, id: Id, op: Op | Entry): World {
+  const list = listAt(world, v, id);
+  const now = appending(list, 'op' in op ? op : once(op));
+
+  return now === list ? world : withRig(world, id, withKeys(rigOf(world, id), v, now));
 }
 
 /**
- * What each of `ids` holds at version `v`, as the edit a gesture starts from.
+ * Where a thing's middle is, as an operation written now paints it.
  *
- * Every gesture recomputes from here rather than composing onto its own last
- * frame, so it cannot drift and letting go leaves exactly what is on screen.
- *
- * Keyed by what was picked rather than by what is drawn: picking a group
- * writes one transform to the group, not one to each of its members, and that
- * is the whole of what a group is for.
- *
- * Two readers, because there are two kinds of thing here and neither knows
- * about the other. `resolveAt` answers for polygons, having geometry to answer
- * with; a group's depth is only ever a number on a layer, and `depths` is what
- * walks the chain for it. Asking the polygon reader about a group gets nothing
- * back, and then the first thing written into a later version — a turn, a
- * nudge — throws away the erosion its base had.
+ * `ref` is the middle of what it is on screen as, taken back through its frame
+ * into its rest frame: from here on it is just a point of the thing. `at` is
+ * where that point is in the frame the thing is held in, which is what an
+ * operation's anchor and slide are measured from. `held` is that frame, for
+ * taking the cursor into it.
  */
-export function starting(world: World, v: VersionId, ids: readonly Id[]): Map<Id, Edit> {
-  const mine = new Map<Id, Resolved>(resolveAt(world, v).map(it => [it.id, it]));
-  const theirs = depths(world, v);
+export interface Painted {
+  ref: Point
+  at: Point
+  frame: Frame
+  held: Affine
+}
 
-  return new Map(
-    ids
-      .filter(id =>
-        world.polygons.has(id)
-        || world.groups.has(id)
-        || world.artefacts.has(id)
-        || world.paths.has(id),
-      )
-      // An artefact has no depth of its own and inherits nobody's: erosion is
-      // the one part of a transform that means nothing to a point, and reading
-      // its group's depth onto it would write a number nothing would ever
-      // take back off. A path is a run of points and answers the same way.
-      .map(id => [
-        id,
-        editAt(
-          world,
-          v,
-          id,
-          world.artefacts.has(id) || world.paths.has(id)
-            ? 0
-            : mine.get(id) ?? theirs.get(id) ?? 0,
-        ),
-      ]),
-  );
+export function painted(world: World, v: KeyframeId, id: Id): Painted {
+  const frame = stateAt(world, id, v).frame;
+  const ref = unplace(worldFrame(world, id, v), middleOf(world, v, id));
+
+  return { ref, at: placed(frame, ref), frame, held: under(world, v, id) };
+}
+
+/**
+ * The middle of what a thing is on screen as, at a keyframe.
+ *
+ * A group is what it is drawn as, shut: the union its members make, with
+ * whatever is held inside it. A lone polygon is its own outline, and an
+ * artefact is its point.
+ */
+export function middleOf(world: World, v: KeyframeId, id: Id): Point {
+  if (world.artefacts.has(id)) return placeAt(world, id, v) ?? { x: 0, y: 0 };
+  if (world.paths.has(id)) return middle(pathAt(world, id, v) ?? []);
+
+  const reached = new Set(polygonsIn(world, [id]));
+  const items = resolveAt(world, v).filter(it => reached.has(it.id));
+  const open = opened(world, parentOf(world).get(id) ?? null);
+
+  const places = artefactsIn(world, [id]).flatMap(a => {
+    const at = placeAt(world, a, v);
+
+    return at === null ? [] : [at];
+  });
+
+  const walks = pathsIn(world, [id]).flatMap(p => pathAt(world, p, v) ?? []);
+  const drawn = items.length === 0 ? [] : outlining(world, v, items, open);
+
+  return middle([...drawn, ...places, ...walks]);
+}
+
+/** A move by a world-space step, as the thing's holder reads it. */
+export function moveOf(p: Painted, by: Point): Move {
+  return { kind: 'move', by: unstep(p.held, by.x, by.y) };
+}
+
+/** A turn about a world-space centre. */
+export function turnOf(p: Painted, centre: Point, angle: number): Turn {
+  const c = unplace(p.held, centre);
+
+  return { kind: 'turn', angle, ref: p.ref, about: { x: c.x - p.at.x, y: c.y - p.at.y } };
+}
+
+/**
+ * A stretch along the thing's own axes about a world-space centre: exactly
+ * where scaling about it would have slid the thing, written down as a slide.
+ */
+export function scaleOf(p: Painted, centre: Point, by: { x: number, y: number }): Scale {
+  const c = unplace(p.held, centre);
+  const along = p.frame.angle;
+  const w = spun({ x: c.x - p.at.x, y: c.y - p.at.y }, -along);
+
+  return {
+    kind: 'scale',
+    by,
+    ref: p.ref,
+    shift: spun({ x: (1 - by.x) * w.x, y: (1 - by.y) * w.y }, along),
+    along,
+  };
 }
 
 /**
@@ -1304,212 +1178,66 @@ export function sealing(world: World, id: GroupId, sealed: boolean): World {
   return { ...world, groups };
 }
 
-export function withEdit(world: World, v: VersionId, id: Id, edit: Edit): World {
-  const was = world.versions[v].edits.get(id)?.transform ?? EMPTY_TRANSFORM;
-  const versions = [...world.versions];
-  const edits = new Map(versions[v].edits);
-
-  edits.set(id, edit);
-  versions[v] = { ...versions[v], edits };
-
-  return carried({ ...world, versions }, v, id, was, edit.transform);
-}
-
-/**
- * Whether two transforms differ in where a thing is and in nothing else.
- *
- * The compensation below is derived for a translation and is right for
- * nothing else, so it asks rather than assuming. Which costs nothing in
- * practice: a gesture writes one kind of transform at a time — `t` moves, `r`
- * turns, `s` scales — so a drag that moves something changes this and only
- * this.
- */
-function onlyMoved(was: Transform, now: Transform): boolean {
-  return was.rotation === now.rotation
-    && was.scale.x === now.scale.x
-    && was.scale.y === now.scale.y
-    && was.erosion === now.erosion
-    && (was.translation.x !== now.translation.x || was.translation.y !== now.translation.y);
-}
-
-/**
- * Moving something at one version, carried through the versions after it.
- *
- * A version's layer applies on top of everything before it, so a rotation at
- * v1 acts on v0's translation as much as on the geometry: drag a room right at
- * v0 with a quarter turn on it at v1 and it goes *up* at v1. That is what
- * composing layers means and it is not a mistake in the composition, but it is
- * not what anybody drags for. What the hand said was "this is a hundred units
- * further right", and every version it reaches should hear the same sentence.
- *
- * The frame at a later version is `L . D . Mv`, where `D` is the displacement
- * the drag made and `L` is everything the later versions add over the top. The
- * wanted frame is `D . L . Mv`, and the two agree exactly when `L` is replaced
- * by `D L D-inverse` — so each later layer is conjugated by the displacement.
- * For a layer `T . R . S` and a translation `D` that is
- *
- *   T' = T + d - RS(d)
- *
- * which touches the translation and nothing else, so it stays inside
- * `Transform` and no shear can appear. A layer with no turn and no scale in it
- * has `RS(d) = d` and is left exactly as it was, which is most of them.
- *
- * What gets conjugated is every later layer of the thing moved *and of
- * everything inside it*, because those are the layers composing over the top of
- * this one. Nothing outside it is touched: moving a polygon inside a group that
- * turns at a later version leaves the group's turn alone, and the polygon rides
- * it. A thing attached to something that turns turning with it is not the
- * surprise — a thing re-aiming its own earlier drag is.
- *
- * It stops at a footing, which is the one thing that says *ignore what the base
- * handed over*. The displacement does not reach past one, so there is nothing
- * there to compensate for.
- *
- * This is the one place that writes into a version other than the one being
- * edited, and it is worth saying why that is allowed here. Inheritance is the
- * whole design and rewriting downstream is what `Footing` exists to avoid — but
- * what is written here is what those layers already meant. A turn at v1 means
- * *this room, turned*; it went on meaning that, and the numbers are what
- * changed under it.
- */
-function carried(world: World, v: VersionId, id: Id, was: Transform, now: Transform): World {
-  if (!onlyMoved(was, now)) return world;
-
-  const step = {
-    x: now.translation.x - was.translation.x,
-    y: now.translation.y - was.translation.y,
-  };
-
-  // Into world units. A layer's own translation is read in the frame its groups
-  // make at that version — see `under` — and the displacement has to be in the
-  // space the later layers compose in, which is the world.
-  const h = held(world, world.versions[v], id);
-  const d = {
-    x: h.a * step.x + h.c * step.y,
-    y: h.b * step.x + h.d * step.y,
-  };
-
-  const mine = new Set(within(world, id));
-  const versions = [...world.versions];
-  const done = new Set<Id>();
-
-  let touched = false;
-
-  for (let k = v + 1; k < versions.length; k++) {
-    // Only the versions this one is actually upstream of. Membership rather
-    // than `k > v`, for the reason `standing` gives: versions happen to be
-    // numbered in order today and forks would end that.
-    if (!chain(world, k).includes(v)) continue;
-
-    let edits: Map<Id, Edit> | null = null;
-
-    for (const t of mine) {
-      // Past a footing the base is not what this stands on, so the move never
-      // reached here and there is nothing to take back out.
-      if (done.has(t)) continue;
-      if (versions[k].footings.has(t)) {
-        done.add(t);
-        continue;
-      }
-
-      const layer = versions[k].edits.get(t);
-
-      if (layer === undefined) continue;
-
-      const m = affine({ ...layer.transform, translation: { x: 0, y: 0 } });
-      const turned = { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
-
-      // No turn and no scale, so the layer carries the move unchanged and has
-      // nothing to say about it.
-      if (turned.x === d.x && turned.y === d.y) continue;
-
-      edits ??= new Map(versions[k].edits);
-      edits.set(t, {
-        ...layer,
-        transform: {
-          ...layer.transform,
-          translation: {
-            x: layer.transform.translation.x + d.x - turned.x,
-            y: layer.transform.translation.y + d.y - turned.y,
-          },
-        },
-      });
-    }
-
-    if (edits !== null) {
-      versions[k] = { ...versions[k], edits };
-      touched = true;
-    }
-  }
-
-  return touched ? { ...world, versions } : world;
-}
-
 // -----------------------------------------------------------------------------
 // Unchaining
 //
-// Everything above this line is about inheritance: a version is a layer over
-// its base, an edit at v0 is seen at v8, and that is what the document is for.
-// This is the one thing that says no to it, for one thing at a time.
+// Everything above this line is about a thing's past reaching its future: an
+// operation at v0 is seen at v8, and that is what the document is for. This is
+// the one thing that says no to it, for one thing at a time.
 //
-// An unchained polygon keeps its id, its corners, its groups and every layer
-// ever written about it. What it stops keeping is its base's answer: at the
-// version it was unchained in, the state the chain would have handed over is
-// replaced by a copy of what that state *was* at the moment of unchaining, and
-// the walk carries on from there. So it looks identical the second after, and
+// An unchained polygon keeps its id, its corners, its groups and everything
+// ever written about it. What changes is that the keyframe it was unchained at
+// starts again from a stand — the state that keyframe's own list was about to
+// be played over, said outright — so it looks identical the second after, and
 // stays where it is when v0 is dragged the day after.
 //
 // Why a copy and not an inverse
 // -----------------------------
 // The obvious reading of "cut it loose here" is to write the inverse of
-// everything upstream into this version's layer, so the two cancel. They do —
-// once. Edit the upstream transform and the inverse no longer inverts it, and
-// the change comes through as the difference between them, which is worse than
-// it coming through whole. And a transform has no inverse for the parts of the
-// chain that are not transforms: a corner an upstream layer nudges, a corner it
-// deletes, a corner it adds, a depth it states. All of those flow down too, and
-// all of them have to stop.
+// everything upstream into this keyframe, so the two cancel. They do — once.
+// Edit upstream and the inverse no longer inverts it, and the change comes
+// through as the difference between them, which is worse than it coming
+// through whole. And there is no inverse for what is not a frame: a corner
+// nudged upstream, deleted, added, a depth. All of those have to stop too.
 //
-// So what is written down is the state, and `Footing` is the shape of it: the
-// composed frame, where each corner stood, which corners there were, and the
-// depths. Exactly the accumulators `resolveAt` carries, which is not a
-// coincidence — the whole trick is that a footing is what a base hands over,
-// said outright instead of computed.
+// So what is written down is the state, and `Stand` is the shape of it: the
+// frame, where each corner stood, which corners there were, and the depths.
+//
+// What still comes through is what repeats. A spin written at v0 to go on for
+// ever is a thing the room is doing, and a stand that stopped it would change
+// what is on screen from the keyframe after — so its steps go on, and only
+// what it had already done is held.
 //
 // Rechaining
 // ----------
-// Delete the footing. The thing becomes derived again and jumps to wherever the
-// chain says it now is — which may be nowhere near where it was sitting, if the
-// upstream it stopped listening to has moved on since. That is the answer, and
-// it is a coherent one: unchaining suppresses the inheritance rather than
-// destroying it, so rechaining restores something that was true all along
-// rather than reconstructing something that was lost. Nothing is inverted and
-// nothing is guessed at.
-//
-// Which is why unchaining is not an identity-breaking operation here, and does
-// not have to be. Breaking identity — copy the geometry into a new polygon born
-// at this version, kill the old one — would give the same picture and would
-// give up the id, the corner ids, the group membership, the layers downstream
-// and any hope of undoing it as anything but an undo.
+// Take the stand out. The thing goes back to hearing its past and jumps to
+// wherever that says it now is — which may be nowhere near where it was
+// sitting, if upstream has moved on since. That is the answer, and a coherent
+// one: nothing is inverted and nothing is guessed at.
 //
 // What is *not* unchained
 // -----------------------
 // Existence. A polygon deleted at v1 is gone at v6 whether or not it was
 // unchained at v4, and one drawn at v1 is not around before it. Birth and death
-// are one fact about a thing rather than something a layer hands down — see
-// `standing` — and a thing that outlived its own deletion in one stretch of the
-// chain would be two things wearing one id. Deleting upstream is how something
-// stops existing, and it still is.
+// are one fact about a thing — see `standing`.
 //
-// Groups go down to their members, always. A group is a frame and a union of
-// what its members resolve to, so unchaining the frame alone would leave every
-// upstream nudge inside it still coming through, which is not what anybody
-// meant by unchaining the group.
+// Nor what holds it. A member unchained stands still in its group's frame, and
+// goes on going where the group goes; to hold it still in the world, unchain
+// the group, which takes its members with it — a group is a frame and a union
+// of what its members resolve to, and unchaining the frame alone would leave
+// every nudge inside it still coming through.
 // -----------------------------------------------------------------------------
 
-/** Whether `v`'s layer unchains `id`: whether there is a footing here. */
-export function unchainedAt(world: World, v: VersionId, id: Id): boolean {
-  return world.versions[v].footings.has(id);
+/**
+ * Whether `v` unchains `id`: whether its list there has a stand in it.
+ *
+ * Not at the keyframe it is born into, where a stand is where a pasted thing
+ * begins rather than anything it stopped hearing — see `restore`.
+ */
+export function unchainedAt(world: World, v: KeyframeId, id: Id): boolean {
+  const it = lived(world, id);
+
+  return it !== undefined && it.birth !== v && listAt(world, v, id).some(e => e.op.kind === 'stand');
 }
 
 /**
@@ -1518,25 +1246,24 @@ export function unchainedAt(world: World, v: VersionId, id: Id): boolean {
  * The gesture is offered for a selection where any of it is — one already
  * unchained here beside one that is not is not a reason to refuse.
  */
-export function unchainable(world: World, v: VersionId, ids: readonly Id[]): boolean {
+export function unchainable(world: World, v: KeyframeId, ids: readonly Id[]): boolean {
   return reaches(world, v, ids).some(id => !unchainedAt(world, v, id));
 }
 
 /** Whether rechaining `ids` at `v` would say anything. */
-export function rechainable(world: World, v: VersionId, ids: readonly Id[]): boolean {
+export function rechainable(world: World, v: KeyframeId, ids: readonly Id[]): boolean {
   return reaches(world, v, ids).some(id => unchainedAt(world, v, id));
 }
 
 /**
- * Everything under `ids` that a footing at `v` could be about: standing here,
- * standing at the base, and not the version it was born into.
+ * Everything under `ids` that a stand at `v` could be about: standing here,
+ * standing at the keyframe before, and not born here.
  *
  * Born here is left out because there is nothing to unchain — a thing born at
- * `v` already stands on this version and hears nothing from before it. Writing
- * a footing for one would be a copy of an empty state, which is what it has.
+ * `v` hears nothing from before it.
  */
-function reaches(world: World, v: VersionId, ids: readonly Id[]): Id[] {
-  const base = world.versions[v].base;
+function reaches(world: World, v: KeyframeId, ids: readonly Id[]): Id[] {
+  const base = keyAt(world, order(world, v) - 1);
 
   if (base === null) return [];
 
@@ -1556,153 +1283,115 @@ function reaches(world: World, v: VersionId, ids: readonly Id[]): Id[] {
 }
 
 /**
- * `ids` cut loose from everything before `v`, and everything under them.
+ * The state `v`'s own list is played over: the keyframe before, and the steps
+ * whatever repeats took at `v`. What a stand at the head of the list has to say
+ * for nothing to move.
  *
- * What each one resolved to at the base is copied into `v`'s layer as a
- * footing, so nothing moves: the same numbers are now stated rather than
- * inherited. From here on an edit upstream is invisible to them, and an edit
- * here or later reads exactly as it did.
- *
- * The world unchanged where there is nothing to say — at the root version,
- * which has no base to stop listening to, and for a selection every part of
- * which is already unchained here.
+ * The corners are read at `v` itself, less what `v` nudges them by — a corner's
+ * nudges have no place in the list, and the ones written at a stand's own
+ * keyframe are played over it. See `rig.ts`.
  */
-export function unchained(world: World, v: VersionId, ids: readonly Id[]): World {
-  const base = world.versions[v].base;
-  const going = reaches(world, v, ids).filter(id => !unchainedAt(world, v, id));
+export function handed(world: World, v: KeyframeId, id: Id): Stand {
+  const base = keyAt(world, order(world, v) - 1);
+  const before = base === null ? stateAt(world, id, v) : stateAt(world, id, base);
+  const all = playedAt(world, id, v);
+  const steps = base === null ? [] : all.slice(0, all.length - listAt(world, v, id).length);
 
-  if (base === null || going.length === 0) return world;
+  let frame = base === null ? REST : before.frame;
+  let erosion = base === null ? 0 : before.erosion;
 
-  // What the base resolved to, read once for the whole gesture. Three readers,
-  // because there are three kinds of thing here and the geometry is only one of
-  // them: a group's depth is a number on a layer rather than something a ring
-  // was eroded by, and an artefact is a point with no depth at all.
-  const mine = new Map(resolveAt(world, base).map(it => [it.id, it]));
-  const theirs = depths(world, base);
-
-  const footings = new Map(world.versions[v].footings);
-
-  for (const id of going) {
-    const it = mine.get(id);
-
-    footings.set(id, it === undefined
-      ? {
-          frame: groupFrame(world, base, id),
-          local: new Map(),
-          erosion: world.groups.has(id) ? theirs.get(id) ?? 0 : 0,
-          depths: new Map(),
-        }
-      : {
-          frame: it.frame,
-          local: new Map(it.corners.map((c, i) => [c.id, it.local[i]])),
-          erosion: it.erosion,
-          depths: new Map(it.over ?? []),
-        });
+  for (const op of steps) {
+    if (op.kind === 'erode') erosion += op.by;
+    else frame = played(frame, op);
   }
 
-  return withFootings(world, v, footings);
+  const here = stateAt(world, id, v);
+  const rig = rigOf(world, id);
+
+  const corners = new Map([...here.corners].map(([c, p]) => {
+    const own = rig.nudges.get(c)?.get(v)?.op.by;
+
+    return [c, own === undefined ? p : { x: p.x - own.x, y: p.y - own.y }];
+  }));
+
+  const depths = new Map<VertexId, number>();
+
+  for (const [c, d] of here.depths) {
+    const left = d - (rig.depths.get(c)?.get(v)?.op.by ?? 0);
+
+    if (left !== 0) depths.set(c, left);
+  }
+
+  return { kind: 'stand', frame, erosion, corners, depths };
 }
 
 /**
- * `ids` chained back up at `v`: the footings written there taken out again, and
+ * `ids` cut loose from everything before `v`, and everything under them.
+ *
+ * What each one's list at `v` was about to be played over goes at the head of
+ * that list as a stand, so nothing moves: the same numbers are now stated
+ * rather than heard. From here on an edit upstream is invisible to them, and
+ * an edit here or later reads exactly as it did.
+ *
+ * The world unchanged where there is nothing to say — at the first keyframe,
+ * which has nothing before it to stop hearing, and for a selection every part
+ * of which is already unchained here.
+ */
+export function unchained(world: World, v: KeyframeId, ids: readonly Id[]): World {
+  const going = reaches(world, v, ids).filter(id => !unchainedAt(world, v, id));
+  let out = world;
+
+  for (const id of going) out = keyed(out, v, id, [once(handed(world, v, id)), ...listAt(out, v, id)]);
+
+  return out;
+}
+
+/**
+ * `ids` chained back up at `v`: the stands written there taken out again, and
  * everything under them.
  *
  * Only the ones at `v`. A thing unchained twice, at v2 and at v6, is chained
  * back up one point at a time, standing where the point is — which is the only
- * reading that lets the two be undone separately, and the only one where doing
- * this at a version that never unchained anything does nothing at all.
+ * reading that lets the two be undone separately.
  *
- * What comes back is what the chain says now, which is not necessarily what it
- * said when the footing was written. That is the whole of what was being
- * suppressed, arriving.
+ * What comes back is what its past says now, which is not necessarily what it
+ * said when the stand was written. That is the whole of what was being held
+ * off, arriving.
  */
-export function rechained(world: World, v: VersionId, ids: readonly Id[]): World {
+export function rechained(world: World, v: KeyframeId, ids: readonly Id[]): World {
   const going = reaches(world, v, ids).filter(id => unchainedAt(world, v, id));
+  let out = world;
 
-  if (going.length === 0) return world;
+  for (const id of going) out = keyed(out, v, id, listAt(out, v, id).filter(e => e.op.kind !== 'stand'));
 
-  const footings = new Map(world.versions[v].footings);
-
-  for (const id of going) footings.delete(id);
-
-  return withFootings(world, v, footings);
-}
-
-function withFootings(world: World, v: VersionId, footings: Map<Id, Footing>): World {
-  const versions = [...world.versions];
-
-  versions[v] = { ...versions[v], footings };
-
-  return { ...world, versions };
+  return out;
 }
 
 // -----------------------------------------------------------------------------
 // Grouping
 //
-// Structure is global and the transform is versioned, so making a group is a
-// change to the world and moving one is a change to a layer. What that costs is
-// all at the other end: taking a group apart has to leave its members where
-// they are *at every version*, and there is no single transform to bake in,
-// because the group's own differs from one version to the next.
+// Structure is global and the timelines are per thing, so making a group is a
+// change to the world and moving one is an entry on the group's timeline. What
+// that costs is all at the other end: taking a group apart has to leave its
+// members where they are *at every keyframe*, and there is no single frame to
+// bake in, because the group's own differs from one keyframe to the next.
 // -----------------------------------------------------------------------------
 
 /**
- * `outer` after `inner` as one layer, or nothing where that is not a layer.
- *
- * A `Transform` is components rather than a matrix — a turn, a scale per axis,
- * a move — and that family is not closed under composition: turn, squash and
- * turn again is a shear, and no combination of the three says shear. Nothing in
- * the chain ever needed it to be closed, because nothing composes; taking a
- * group apart is the one operation that does.
- *
- * So this answers where it can and refuses where it cannot, and the refusal is
- * the honest one: what the author is asking for is not something the document
- * can hold.
- */
-export function composed(outer: Transform, inner: Transform): Transform | null {
-  const m = compose(affine(outer), affine(inner));
-
-  // `affine` builds `R(rotation) · diag(scale)`, so the first column is the
-  // turn at the length of one axis and the second is what is left.
-  const rotation = Math.atan2(m.b, m.a);
-  const cos = Math.cos(rotation), sin = Math.sin(rotation);
-
-  const x = Math.hypot(m.a, m.b);
-  const y = m.d * cos - m.c * sin;
-
-  // Whatever of the second column lies along the first. Zero for anything this
-  // family can say, and a shear otherwise.
-  const skew = m.c * cos + m.d * sin;
-
-  if (Math.abs(skew) > 1e-9 * Math.max(1, Math.abs(x), Math.abs(y))) return null;
-
-  return {
-    translation: { x: m.tx, y: m.ty },
-    rotation,
-    scale: { x, y },
-
-    // Depths never transfer. A polygon owns one, membership does not touch it,
-    // and a group's is the group's — which is the only rule under which
-    // leaving and rejoining is the identity.
-    erosion: inner.erosion,
-  };
-}
-
-/**
- * A new group over `ids`, born into the version on screen.
+ * A new group over `ids`, born into the keyframe on screen.
  *
  * Only what is not already held: grouping something with a thing it is already
  * inside means grouping what holds it, and grouping a group with its own member
  * is not a structure — it is the same member twice. Drilled into a group and
  * picking everything in it is the same refusal wearing a different hat.
  *
- * Nothing is compensated. A new group's transform is identity at every version,
- * so its members are exactly where they were, which is the whole reason making
- * one is cheap and taking one apart is not.
+ * Nothing is compensated. A new group's frame is the identity at every
+ * keyframe, so its members are exactly where they were, which is the whole
+ * reason making one is cheap and taking one apart is not.
  */
 export function grouped(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   ids: readonly Id[],
   where: Landing,
 ): { world: World, id: GroupId } | null {
@@ -1745,50 +1434,45 @@ export function grouped(
 
 /**
  * A group taken apart, with its members left exactly where they stood at every
- * version.
+ * keyframe.
  *
- * The group's transform differs per version, so there is no one transform to
- * bake into the members: baking the version on screen would hold them still
- * where the author is standing and shift them everywhere else. So every version
- * that says anything about the group writes it into every member instead, as
- * one change.
+ * The group's frame differs per keyframe, so there is no one frame to bake into
+ * the members: baking the keyframe on screen would hold them still where the
+ * author is standing and shift them everywhere else. So the group is folded
+ * into each member, keyframe by keyframe — see `folded`.
  *
- * Nothing where a version cannot hold the composition — see `composed`. It is
- * refused whole rather than in part: half an ungroup would leave the members
- * displaced at the versions it could not do, which is worse than not having
- * done it.
+ * Nothing where a member's frame cannot hold what that comes to: a group
+ * squashed across a member turned against it is a shear in the world, and a
+ * frame cannot say shear. It is refused whole rather than in part: half an
+ * ungroup would leave the members displaced at the keyframes it could not do,
+ * which is worse than not having done it.
  *
- * A group that is taken out at a version passes that on too, the same way it
- * passes on its transform: the members died with it, and letting them outlive
- * the thing whose removal took them would be an ungroup that brought rooms
- * back. The earlier of the two, since a member may already have gone first.
+ * A group that is taken out at a keyframe passes that on too: the members died
+ * with it, and letting them outlive the thing whose removal took them would be
+ * an ungroup that brought rooms back. The earlier of the two, since a member
+ * may already have gone first.
  */
 export function ungrouped(world: World, id: GroupId): World | null {
   const group = world.groups.get(id);
 
   if (group === undefined) return null;
 
-  const versions = [...world.versions];
+  const rigs = new Map(world.rigs);
 
-  for (let k = 0; k < versions.length; k++) {
-    const mine = versions[k].edits.get(id);
+  // The group's own timeline goes with it, folded into its members. Its depth
+  // never transfers: a group's erosion offsets the union of its members, and
+  // once they are members no longer there is no union for it to be about.
+  rigs.delete(id);
 
-    if (mine === undefined) continue;
-
-    const edits = new Map(versions[k].edits);
-
+  if (world.rigs.has(id)) {
     for (const member of group.members) {
-      const was = edits.get(member)
-        ?? { transform: EMPTY_TRANSFORM, vertices: new Map(), depths: new Map() };
-      const now = composed(mine.transform, was.transform);
+      const rig = folded(world, id, member);
 
-      if (now === null) return null;
+      if (rig === null) return null;
 
-      edits.set(member, { ...was, transform: now });
+      if (rig.keys.size === 0 && rig.nudges.size === 0 && rig.depths.size === 0) rigs.delete(member);
+      else rigs.set(member, rig);
     }
-
-    edits.delete(id);
-    versions[k] = { ...versions[k], edits };
   }
 
   const groups = new Map(world.groups);
@@ -1798,8 +1482,10 @@ export function ungrouped(world: World, id: GroupId): World | null {
   const up = parentOf(world).get(id);
 
   if (group.death !== null) {
+    const death = group.death;
+
     for (const member of group.members) {
-      const maps = [groups, polygons, artefacts, paths] as Map<Id, { death: VersionId | null }>[];
+      const maps = [groups, polygons, artefacts, paths] as Map<Id, { death: KeyframeId | null }>[];
 
       for (const map of maps) {
         const it = map.get(member);
@@ -1808,7 +1494,7 @@ export function ungrouped(world: World, id: GroupId): World | null {
 
         map.set(member, {
           ...it,
-          death: it.death === null ? group.death : Math.min(it.death, group.death),
+          death: it.death === null || order(world, death) < order(world, it.death) ? death : it.death,
         });
       }
     }
@@ -1827,7 +1513,230 @@ export function ungrouped(world: World, id: GroupId): World | null {
     });
   }
 
-  return { ...world, groups, polygons, artefacts, paths, versions };
+  const out = { ...world, groups, polygons, artefacts, paths, rigs };
+
+  // Held to what it promises. Every step of the fold is exact where it is
+  // allowed at all, and this is where that is checked rather than argued: a
+  // member that would land anywhere else at any keyframe refuses the lot.
+  for (const m of group.members.flatMap(m => within(world, m))) {
+    const from = order(world, lived(world, m)?.birth ?? -1);
+
+    for (const k of world.keyframes.slice(Math.max(0, from))) {
+      if (!alike(worldFrame(world, m, k.id), worldFrame(out, m, k.id))) return null;
+    }
+  }
+
+  return out;
+}
+
+/** Two frames that place everything within the arithmetic of each other. */
+function alike(p: Affine, q: Affine): boolean {
+  const size = Math.max(1, Math.abs(p.tx), Math.abs(p.ty), Math.abs(p.a), Math.abs(p.d));
+  const off = Math.max(
+    Math.abs(p.a - q.a), Math.abs(p.b - q.b), Math.abs(p.c - q.c), Math.abs(p.d - q.d),
+    Math.abs(p.tx - q.tx) / size, Math.abs(p.ty - q.ty) / size,
+  );
+
+  return off <= 1e-7;
+}
+
+/** Whether a frame scales both of its axes alike, which is when turning in it
+ * is turning in the frame outside it. */
+function even(f: Frame): boolean {
+  return Math.abs(f.scale.x - f.scale.y) <= 1e-12 * Math.max(f.scale.x, f.scale.y);
+}
+
+/** How far `a` is from being a multiple of a quarter turn, as a quarter turn
+ * count, or nothing where it is not near one. */
+function quarters(a: number): number | null {
+  const q = Math.round(a / (Math.PI / 2));
+
+  return Math.abs(a - q * (Math.PI / 2)) <= 1e-9 ? q : null;
+}
+
+/** A vector through a frame's linear part. */
+function stepped(f: Frame, v: Point): Point {
+  return spun({ x: v.x * f.scale.x, y: v.y * f.scale.y }, f.angle);
+}
+
+/**
+ * An operation written in a group's frame, said instead in the frame outside
+ * it, for a member whose own frame is `inner` there — or nothing where the frame
+ * outside cannot say it.
+ *
+ * `outer` is the group's frame. A move and a slide go through its linear part;
+ * a turn is a turn outside only where the group scales both ways alike, and so
+ * is a stretch along the member's own axes, unless those axes are the group's
+ * own a quarter turn at a time. `ref` needs nothing: the member's rest frame is
+ * the rest frame of what it comes to.
+ */
+export function outward(op: Op, outer: Frame, inner: Frame | null): Op | null {
+  switch (op.kind) {
+    case 'move':
+      return { kind: 'move', by: stepped(outer, op.by) };
+
+    case 'turn':
+      if (!even(outer) && Math.abs(op.angle) > 1e-12) return null;
+
+      return { ...op, about: stepped(outer, op.about) };
+
+    case 'scale':
+      if (!even(outer) && (inner === null || quarters(inner.angle) === null)) return null;
+
+      return {
+        ...op,
+        shift: stepped(outer, op.shift),
+        along: op.along + outer.angle,
+      };
+
+    case 'erode':
+      return op;
+
+    case 'stand': {
+      const frame = framed(compose(affineOf(outer), affineOf(op.frame)));
+
+      return frame === null ? null : { ...op, frame };
+    }
+  }
+}
+
+/**
+ * A group's timeline folded into one of its members: the member's own
+ * operations said in the frame outside the group, then the group's, at every
+ * keyframe the member stands at.
+ *
+ * At a keyframe the member is placed by `G ∘ M`, where each is its frame at the
+ * keyframe before with that keyframe's operations played over it:
+ *
+ *   G_k ∘ M_k = gₙ … g₁ ∘ G_{k-1} ∘ mₙ … m₁ ∘ M_{k-1}
+ *             = gₙ … g₁ ∘ (G_{k-1} mₙ G_{k-1}⁻¹) … (G_{k-1} m₁ G_{k-1}⁻¹) ∘ (G ∘ M)_{k-1}
+ *
+ * so the member's own come first, each carried out of the group by the group's
+ * frame at the keyframe before — `outward` — and the group's follow, each
+ * aimed at the point it was aimed at, which it paints onto the member by
+ * taking it back through the combined frame.
+ *
+ * What comes out is played rather than written: every step of every repeat is
+ * its own entry, since a repeat's next step is adjusted in the group's frame
+ * and not in the member's. The corners are untouched — they are in the
+ * member's rest frame, which the group never reached.
+ *
+ * Nothing where the member's frame cannot say what the two come to.
+ */
+function folded(world: World, g: GroupId, m: Id): Rig | null {
+  const rig = rigOf(world, m);
+  const born = lived(world, m);
+
+  if (born === undefined) return rig;
+
+  const first = order(world, born.birth);
+  const keys = new Map<KeyframeId, Entry[]>();
+
+  if (first < 0) return rig;
+
+  for (let i = first; i < world.keyframes.length; i++) {
+    const k = world.keyframes[i].id;
+    const before = keyAt(world, i - 1);
+
+    let outer = before === null ? REST : stateAt(world, g, before).frame;
+    let inner = i === first || before === null ? REST : stateAt(world, m, before).frame;
+    let both = framed(compose(affineOf(outer), affineOf(inner)));
+
+    if (both === null) return null;
+
+    const list: Entry[] = [];
+
+    for (const op of playedAt(world, m, k)) {
+      const out = outward(op, outer, inner);
+
+      if (out === null) return null;
+
+      list.push(once(out));
+      inner = op.kind === 'erode' ? inner : op.kind === 'stand' ? op.frame : played(inner, op);
+    }
+
+    both = framed(compose(affineOf(outer), affineOf(inner)));
+
+    if (both === null) return null;
+
+    for (const op of playedAt(world, g, k)) {
+      const out = inward1(world, k, m, op, outer, both);
+
+      if (out === null) return null;
+
+      outer = op.kind === 'erode' ? outer : op.kind === 'stand' ? op.frame : played(outer, op);
+
+      if (out === 'none') continue;
+
+      list.push(once(out));
+      both = out.kind === 'stand' ? out.frame : played(both, out);
+    }
+
+    if (list.length > 0) keys.set(k, list);
+  }
+
+  return { ...rig, keys };
+}
+
+/**
+ * One of a group's operations, aimed at what its member and it come to
+ * together: `both`, the combined frame where the operation begins, with the
+ * group's own frame there `outer`.
+ *
+ * A move is a move. A turn goes about the same point, which it paints onto the
+ * member through the combined frame. A stretch along the group's axes is one
+ * along the member's where the two agree to within a quarter turn — axes a
+ * quarter turn apart swap which factor is which — or where it stretches both
+ * alike. The group's depth goes nowhere; `'none'` says so.
+ *
+ * A stand says where the group is outright, and so where the member is: the
+ * member's own frame inside the new group frame, as one stand, with the corners
+ * and depths it has there.
+ */
+function inward1(
+  world: World,
+  k: KeyframeId,
+  m: Id,
+  op: Op,
+  outer: Frame,
+  both: Frame,
+): Op | 'none' | null {
+  switch (op.kind) {
+    case 'move':
+      return op;
+
+    case 'erode':
+      return 'none';
+
+    case 'turn': {
+      const p = placed(outer, op.ref);
+
+      return { ...op, ref: unplace(affineOf(both), p) };
+    }
+
+    case 'scale': {
+      const p = placed(outer, op.ref);
+      const uniform = Math.abs(op.by.x - op.by.y) <= 1e-12 * Math.max(op.by.x, op.by.y);
+      const turns = quarters(both.angle - outer.angle);
+
+      if (!uniform && turns === null) return null;
+
+      const by = uniform || (turns! & 1) === 0 ? op.by : { x: op.by.y, y: op.by.x };
+
+      return { ...op, by, ref: unplace(affineOf(both), p), along: both.angle };
+    }
+
+    case 'stand': {
+      const inner = stateAt(world, m, k);
+      const frame = framed(compose(affineOf(op.frame), affineOf(inner.frame)));
+
+      if (frame === null) return null;
+
+      const held = handed(world, k, m);
+
+      return { kind: 'stand', frame, erosion: inner.erosion, corners: held.corners, depths: held.depths };
+    }
+  }
 }
 
 /**
@@ -1969,66 +1878,53 @@ export function pathsIn(world: World, ids: readonly Id[]): PathId[] {
 }
 
 /**
- * A source vertex put under the cursor, exactly.
+ * A source vertex put under the cursor, exactly: `it` as it stood when the
+ * gesture began, and a nudge at `v` making up the difference.
  *
- * The displacement is written in the polygon's own frame, so every transform in
- * the chain carries it and the corner keeps its place in the ring however the
- * polygon is turned or squashed upstream. Taking the cursor back to that frame
- * is one inverse of the composed matrix, which is exact: erosion is not in the
- * way, having never touched the source.
+ * The nudge is in the polygon's rest frame, so its frame carries it and the
+ * corner keeps its place in the ring however the polygon is turned or squashed
+ * upstream. Taking the cursor back to that frame is one inverse of the frame,
+ * which is exact: erosion is not in the way, having never touched the source.
  *
- * It is not cumulative. The displacement replaces what this layer held rather
- * than adding to it, so a drag that returns to where it started leaves the
- * layer as it found it.
+ * Added to what `v` already nudged the corner by, against the corner as the
+ * gesture found it — so a drag that returns to where it started leaves the
+ * keyframe as it found it.
  */
-export function placeVertex(it: Resolved, edit: Edit, index: number, at: Point): Edit {
-  const id = it.corners[index].id;
-  const was = edit.vertices.get(id) ?? { x: 0, y: 0 };
-
+export function placeVertex(world: World, v: KeyframeId, it: Resolved, index: number, at: Point): World {
   const target = unplace(it.frame, at);
   const local = it.local[index];
+  const by = { x: target.x - local.x, y: target.y - local.y };
 
-  const vertices = new Map(edit.vertices);
-  vertices.set(id, {
-    x: was.x + target.x - local.x,
-    y: was.y + target.y - local.y,
-  });
-
-  return { ...edit, vertices };
+  return withRig(world, it.id, nudged(rigOf(world, it.id), it.corners[index].id, v, by));
 }
 
 /**
- * The named corners taken `by` deeper than the polygon they are in, or shallower
- * where `by` is negative.
+ * The named corners of a polygon taken `by` deeper than it, or shallower where
+ * `by` is negative, at `v`.
  *
- * Against the layer rather than against nothing, so a drag composes with what
- * the version already held — and `starting` seeded that from what the base
- * resolved to, so the first drag in a fresh version starts where the shape on
- * screen is rather than at nought.
- *
- * A corner that comes back to the depth of its polygon is taken out of the map
- * instead of being written as nought. What is left is the same offset either
- * way, but only an empty map says *nothing here is offset*, which is what puts
- * the polygon back on the road `erode` has always taken. See `varying`.
+ * Added to what `v` already said about them. A corner that comes back to
+ * nothing is taken out of the map rather than written as nought: only an
+ * empty map says *nothing here is offset*, which is what puts the polygon back
+ * on the road `erode` has always taken. See `varying`.
  */
 export function deepen(
-  edit: Edit,
-  polygon: Polygon,
+  world: World,
+  v: KeyframeId,
+  id: PolygonId,
   corners: ReadonlySet<VertexId>,
   by: number,
-): Edit {
-  const depths = new Map(edit.depths);
+): World {
+  const polygon = world.polygons.get(id);
+
+  if (polygon === undefined || by === 0) return world;
+
+  let rig = rigOf(world, id);
 
   for (const corner of polygon.points) {
-    if (!corners.has(corner.id)) continue;
-
-    const d = (edit.depths.get(corner.id) ?? 0) + by;
-
-    if (d === 0) depths.delete(corner.id);
-    else depths.set(corner.id, d);
+    if (corners.has(corner.id)) rig = deepened(rig, corner.id, v, by);
   }
 
-  return { ...edit, depths };
+  return withRig(world, id, rig);
 }
 
 /** Which polygons the picked corners belong to. A depth is written into the
@@ -2065,10 +1961,10 @@ export interface Contributed {
    * The frame the shape is placed by, which is what the bake keeps its points
    * in so that a turn is a turn rather than a chord.
    *
-   * The identity for a group. Its members' frames already carry its transform —
-   * that is what `held` does — so the union comes out in world units with the
-   * motion in it, and a group that applied its own layer again would apply it
-   * twice.
+   * The identity for a group. Its members' frames already carry its own —
+   * that is what `worldFrame` does — so the union comes out in world units
+   * with the motion in it, and a group that applied its own frame again would
+   * apply it twice.
    */
   frame: Affine
   /** Whether the shape is already an arrangement and `simplify` may be
@@ -2080,34 +1976,23 @@ export interface Contributed {
 }
 
 /**
- * Every polygon's depth, and every group's, as version `v` leaves it.
+ * Every group's depth as keyframe `v` leaves it: what its erosions add up to.
  *
- * Inherited down the chain exactly as a polygon's is: a version that says
- * nothing about a group leaves its depth where its base had it.
- *
- * A group that is not there at `v` has no depth, whatever a layer written
- * before it was taken out still says. Nothing reaches its members either — they
- * went with it — so this is about the ghost rather than about the geometry, and
- * a ghost with a depth is one more thing for a reader to have to rule out.
+ * A group that is not there at `v` has no depth, whatever was written about it
+ * before it was taken out. Nothing reaches its members either — they went with
+ * it — so this is about the ghost rather than about the geometry, and a ghost
+ * with a depth is one more thing for a reader to have to rule out.
  */
-export function depths(world: World, v: VersionId): Map<Id, number> {
-  const inherited = new Set(chain(world, v));
+export function depths(world: World, v: KeyframeId): Map<Id, number> {
+  const from = new Set(chain(world, v));
   const out = new Map<Id, number>();
 
-  for (const k of inherited) {
-    // Footings first, then this version's own layer over them: the same order
-    // the chain applies them in everywhere else.
-    for (const [id, footing] of world.versions[k].footings) {
-      if (world.groups.has(id) && standingIn(world, id, inherited)) {
-        out.set(id, footing.erosion);
-      }
-    }
+  for (const id of world.groups.keys()) {
+    if (!standingIn(world, id, from)) continue;
 
-    for (const [id, edit] of world.versions[k].edits) {
-      if (world.groups.has(id) && standingIn(world, id, inherited)) {
-        out.set(id, edit.transform.erosion);
-      }
-    }
+    const d = stateAt(world, id, v).erosion;
+
+    if (d !== 0) out.set(id, d);
   }
 
   return out;
@@ -2136,7 +2021,7 @@ export function depths(world: World, v: VersionId): Map<Id, number> {
  */
 export function contributing(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
 ): Contributed[] {
   const depth = depths(world, v);
@@ -2500,7 +2385,7 @@ export function contributed(
  */
 export function showing(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   /** The groups standing open, from `opened`. Everything else is shut. */
   path: readonly GroupId[],
@@ -2619,7 +2504,7 @@ export function occupiedShape(o: Occupied): Shape {
  */
 export function occupying(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Occupied[] {
@@ -2712,7 +2597,7 @@ function withExtents(
  */
 export function occupyingSource(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Occupied[] {
@@ -2795,7 +2680,7 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
  */
 export function outlining(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
 ): Point[] {
@@ -2893,7 +2778,7 @@ export interface Handle extends Grabbed {
  */
 export function handles(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
   inside: GroupId | null,
@@ -2992,13 +2877,13 @@ export function plainly(items: readonly Resolved[]): Contributed[] {
  * See `worldset.ts`. Nothing that reads this wants a closed loop — the overlay
  * is stroked, and collision is edge-normal based.
  */
-export function csg(world: World, v: VersionId): Point[][] {
+export function csg(world: World, v: KeyframeId): Point[][] {
   return runs(live(EMPTY_LIVE, contributing(world, v, resolveAt(world, v))));
 }
 
 /** The same for the floor, which is a set of its own and answered by the same
  * machinery. See `Live`. */
-export function csgFloor(world: World, v: VersionId): Point[][] {
+export function csgFloor(world: World, v: KeyframeId): Point[][] {
   return floorRuns(live(EMPTY_LIVE, contributing(world, v, resolveAt(world, v))));
 }
 
@@ -3196,7 +3081,7 @@ function standingFor(it: Resolved): Shape {
  */
 export function hitting(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
   at: Point,
@@ -3378,7 +3263,7 @@ export function verticesWithinBox(on: readonly Handle[], a: Point, b: Point): Ve
  */
 export function addVertex(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   it: Resolved,
   index: number,
   at: Point,
@@ -3425,9 +3310,7 @@ export function addVertex(
     return { world: grown, vertex };
   }
 
-  const edit = placeVertex(now, editAt(grown, v, it.id, now), where, at);
-
-  return { world: withEdit(grown, v, it.id, edit), vertex };
+  return { world: placeVertex(grown, v, now, where, at), vertex };
 }
 
 /**
@@ -3465,7 +3348,7 @@ export function addVertex(
  * one *does* restructure, since what is left is a group holding something that
  * is not in the world at all.
  */
-export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World {
+export function removeAt(world: World, v: KeyframeId, going: Iterable<Id>): World {
   const inherited = new Set(chain(world, v));
 
   // Everything under what was picked, which is what a delete has always
@@ -3485,7 +3368,7 @@ export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World
   let changed = false;
 
   /** One thing's map entry, either killed at `v` or dropped outright. */
-  const take = <T extends { birth: VersionId, death: VersionId | null }>(
+  const take = <T extends { birth: KeyframeId, death: KeyframeId | null }>(
     map: Map<Id, T>,
     id: Id,
     it: T,
@@ -3530,7 +3413,7 @@ export function removeAt(world: World, v: VersionId, going: Iterable<Id>): World
 
 export function removeVertices(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   going: Iterable<VertexId>,
 ): World {
   const gone = new Set(going);
@@ -3541,7 +3424,7 @@ export function removeVertices(
   let changed = false;
 
   // Which corners are here is a resolve rather than a filter, because an
-  // unchained polygon's are not the ones the chain would name — see `Footing`.
+  // unchained polygon's are not the ones its births would name — see `Stand`.
   const standingHere = new Map(resolveAt(world, v).map(it => [it.id, it.corners]));
 
   for (const [id, polygon] of world.polygons) {
@@ -3585,215 +3468,244 @@ export function removeVertices(
 // Copying
 // -----------------------------------------------------------------------------
 
-/** A direction as the frame `m` places it: the linear part only, so a
- * displacement turns and stretches with the frame but does not travel. */
-function pointing(m: Affine, d: Point): Point {
-  return { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
-}
-
 /**
- * How far past the copy version the thing being copied is taken out, or nothing
- * where it is not.
+ * How far past the copy keyframe the thing being copied is taken out, or
+ * nothing where it is not.
  *
  * The same offset a corner's `death` becomes, and for the same reason: what is
  * copied is a life rather than a shape, so a room the original loses two
- * versions on is a room the copy loses two versions after it lands. One that
- * died before the copy version is never reached — nothing that is not standing
- * at `v` is offered to `clip` at all.
+ * keyframes on is a room the copy loses two keyframes after it lands.
  */
-function outliving(it: { death: VersionId | null }, v: VersionId): number | undefined {
-  return it.death === null ? undefined : it.death - v;
+function outliving(world: World, it: { death: KeyframeId | null }, v: KeyframeId): number | undefined {
+  return it.death === null ? undefined : order(world, it.death) - order(world, v);
 }
 
 /**
- * `outliving` read back at the version a paste lands in.
+ * An offset read back at the keyframe a paste lands in.
  *
- * A death that falls off the end of the chain is nothing: there is no version
- * left to take the thing out, so the copy simply lives to the last one. The
- * same rule a corner's death is restored under.
+ * One that falls off the end of the keyframes is nothing: there is no keyframe
+ * left to take the thing out, so the copy simply lives to the last one.
  */
-function dying(world: World, v: VersionId, death: number | undefined): VersionId | null {
-  return death === undefined || v + death >= world.versions.length ? null : v + death;
+function landingAt(world: World, v: KeyframeId, offset: number | undefined): KeyframeId | null {
+  return offset === undefined ? null : keyAt(world, order(world, v) + offset);
 }
 
 /**
- * The picked things lifted out, from the version they were taken at onward.
- *
- * Two halves. The version it was copied at becomes the geometry: rings in world
- * units as they stood there, so the copy starts life looking exactly like what
- * was on screen. Every version *after* it comes across as a layer, keyed by how
- * far past the copy it was, so what the original goes on to do the copy goes on
- * to do too — the erosion sequence is the thing worth copying, and it is not in
- * any one version.
- *
- * Nothing before the copy comes at all. A copy taken at v1 that reappeared at
- * v0 is answering a question nobody asked: the author is standing at v1 and
- * pointing at what is there.
- *
- * Displacements and corners still to arrive are written in the polygon's drawn
- * frame, which the copy no longer has — its drawn frame is the copy version's
- * world. So they come through that frame: `place` for a corner, which is
- * somewhere, and `pointing` for a displacement, which is only a direction.
- *
- * No footings come across, and there is nothing for them to say: a copy is born
- * at the version it lands in, out of the geometry that stood at the version it
- * was taken at, so it already hears nothing from before that. A footing further
- * down the original's chain is the one thing lost, and it is lost the way every
- * other layer before the copy version is — see *Unchaining*.
+ * A frame, and the nearest one to it where it is sheared: what a thing's frame
+ * inside a group squashed across it looks like from outside, less the shear.
  */
-export function copied(world: World, v: VersionId, ids: readonly Id[]): Clipping[] {
-  const items = new Map(resolveAt(world, v).map(it => [it.id, it]));
-  const deep = depths(world, v);
+function nearest(m: Affine): Frame {
+  return framed(m) ?? {
+    t: { x: m.tx, y: m.ty },
+    angle: Math.atan2(m.b, m.a),
+    scale: { x: Math.hypot(m.a, m.b), y: Math.hypot(m.c, m.d) },
+  };
+}
 
-  /** What a version's layer says, as the copy will say it. */
-  const layers = (
-    id: Id,
-    m: Affine | null,
-    erosion: number,
-    over: ReadonlyMap<VertexId, number> = new Map(),
-  ): [number, Edit][] => {
-    const out: [number, Edit][] = [[0, {
-      transform: { ...EMPTY_TRANSFORM, erosion },
-      vertices: new Map(),
-      depths: new Map(over),
-    }]];
+/**
+ * The picked things lifted out, from the keyframe they were taken at onward.
+ *
+ * Two halves. The keyframe it was copied at becomes where it starts: its state
+ * there, over its rest geometry with every nudge up to then put in, so the
+ * copy starts life looking exactly like what was on screen. Every keyframe
+ * *after* it comes across as the list written there, keyed by how far past the
+ * copy it was, so what the original goes on to do the copy goes on to do too —
+ * the erosion sequence is the thing worth copying, and it is not in any one
+ * keyframe.
+ *
+ * Nothing before the copy comes at all, but for the repeats still running: the
+ * steps they go on taking after it are part of what the original goes on to do,
+ * and they come across one step to an entry at the head of each list.
+ *
+ * The outermost things are copied in world units, their holders not coming
+ * with them — the frame they start from, and every operation after it. What is
+ * inside them keeps the frame of what holds it, since that comes too.
+ */
+export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clipping[] {
+  const at = order(world, v);
+  const n = world.keyframes.length;
+  const offset = (k: KeyframeId): number => order(world, k) - at;
 
-    for (let k = v + 1; k < world.versions.length; k++) {
-      const edit = world.versions[k].edits.get(id);
+  /** What happens to `id` after the copy keyframe, said in the frame `out`. */
+  const timed = (id: Id, outermost: boolean): Timed & { keysOf: Rig } => {
+    const rig = rigOf(world, id);
+    const state = stateAt(world, id, v);
+    const out = outermost ? framed(under(world, v, id)) : REST;
 
-      if (edit === undefined) continue;
+    // What the repeats begun by the copy keyframe go on to do: the same rig
+    // with nothing after the copy in it, walked on past it.
+    const before = withRig(world, id, {
+      ...rig,
+      keys: new Map([...rig.keys].filter(([k]) => offset(k) <= 0)),
+    });
 
-      out.push([k - v, {
-        transform: { ...edit.transform, translation: { ...edit.transform.translation } },
-        vertices: m === null
-          ? new Map()
-          : new Map([...edit.vertices].map(([id, d]) => [id, pointing(m, d)])),
-        depths: new Map(edit.depths),
-      }]);
+    const carry = (op: Op): Op => out === null ? op : outward(op, out, null) ?? op;
+
+    const keys: [number, TimedEntry[]][] = [];
+
+    for (let i = at + 1; i < n; i++) {
+      const k = world.keyframes[i].id;
+      const steps = playedAt(before, id, k).map(op => ({ op: carry(op), times: 1, skip: [] }));
+      const own = (rig.keys.get(k) ?? []).map(e => ({
+        op: carry(e.op),
+        times: e.times,
+        skip: [...e.skip].map(offset).filter(o => o > 0),
+      }));
+
+      if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
 
-    return out;
+    return {
+      start: outermost ? nearest(worldFrame(world, id, v)) : state.frame,
+      erosion: state.erosion,
+      keys,
+      keysOf: rig,
+    };
   };
 
-  const clip = (id: Id): Clipping[] => {
+  /** A corner's entries after the copy keyframe, by offset. */
+  const later = <E>(map: ReadonlyMap<KeyframeId, E> | undefined): [number, E][] =>
+    [...(map ?? [])].flatMap(([k, e]): [number, E][] => (offset(k) > 0 ? [[offset(k), e]] : []));
+
+  const clip = (id: Id, outermost: boolean): Clipping[] => {
+    const here = new Set(chain(world, v));
+
+    if (!standingIn(world, id, here)) return [];
+
     const thing = world.artefacts.get(id);
 
     if (thing !== undefined) {
-      const here = placeAt(world, id, v);
+      const { keysOf: _rig, ...time } = timed(id, outermost);
 
-      // Its layers come across the way a group's do — a transform and nothing
-      // else. There is no ring under it to displace and no depth to inherit.
-      return here === null
-        ? []
-        : [{
-          kind: 'artefact',
-          type: thing.type,
-          at: here,
-          death: outliving(thing, v),
-          edits: layers(id, null, 0),
-        }];
+      return [{ kind: 'artefact', type: thing.type, at: thing.at, death: outliving(world, thing, v), ...time }];
     }
 
     const walk = world.paths.get(id);
 
     if (walk !== undefined) {
-      const here = pathAt(world, id, v);
+      const { keysOf: _rig, ...time } = timed(id, outermost);
 
-      // An artefact's clipping with more points in it, and the same layers: a
-      // transform per version and nothing else, there being no ring to
-      // displace and no depth to inherit.
-      return here === null
-        ? []
-        : [{
-          kind: 'path',
-          points: here,
-          death: outliving(walk, v),
-          edits: layers(id, null, 0),
-        }];
+      return [{ kind: 'path', points: walk.points, death: outliving(world, walk, v), ...time }];
     }
 
     const group = world.groups.get(id);
 
     if (group !== undefined) {
-      const members = group.members.flatMap(clip);
+      const members = group.members.flatMap(m => clip(m, false));
+      const { keysOf: _rig, ...time } = timed(id, outermost);
 
       return members.length === 0 ? [] : [{
         kind: 'group',
         sealed: group.sealed,
         members,
-        death: outliving(group, v),
-        edits: layers(id, null, deep.get(id) ?? 0),
+        death: outliving(world, group, v),
+        ...time,
       }];
     }
 
-    const it = items.get(id);
+    const polygon = world.polygons.get(id);
 
-    if (it === undefined) return [];
+    if (polygon === undefined) return [];
 
-    const source = new Map(it.corners.map((corner, i) => [corner.id, it.source[i]]));
+    const state = stateAt(world, id, v);
+    const { keysOf: rig, ...time } = timed(id, outermost);
 
-    const points = it.polygon.points
-      .filter(corner => source.has(corner.id) || corner.birth > v)
-      .map(corner => ({
-        id: corner.id,
-        at: source.get(corner.id) ?? place(it.frame, [corner.at])[0],
-        ring: corner.ring,
-        birth: source.has(corner.id) ? 0 : corner.birth - v,
-        death: corner.death === null ? null : corner.death - v,
+    const points = polygon.points
+      .filter(c => state.corners.has(c.id) || offset(c.birth) > 0)
+      .map(c => ({
+        id: c.id,
+        at: state.corners.get(c.id) ?? c.at,
+        ring: c.ring,
+        birth: state.corners.has(c.id) ? 0 : offset(c.birth),
+        death: c.death === null ? null : offset(c.death),
       }));
+
+    const kept = new Set(points.map(c => c.id));
 
     return [{
       kind: 'polygon',
-      ...kindOf(it.polygon),
+      ...kindOf(polygon),
       points,
-      death: outliving(it.polygon, v),
-      edits: layers(id, it.frame, it.erosion, it.over),
+      depths: [...state.depths],
+      nudges: [...rig.nudges].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
+      deep: [...rig.depths].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
+      death: outliving(world, polygon, v),
+      ...time,
     }];
   };
 
-  return [...new Set(ids)].flatMap(clip);
+  return [...new Set(ids)].flatMap(id => clip(id, true));
 }
 
 /**
- * The clipping's layers written for `id`, starting at `v`, with its vertices
- * renamed and the paste's offset put in.
+ * The clipping's timeline written for `id`, starting at `v`: a stand where it
+ * is born, which is where it begins, and the lists after it at their offsets.
  *
- * The offset goes on the translation of the layer the thing is born into rather
- * than into the ring: that translation is applied after the layer's own turn
- * and scale, so at the top level it is a world-space nudge, and every later
- * layer applies to what it produced. Move it once at the start and it has moved
- * at every version, keeping whatever it does in between.
+ * `into` is what takes the clipping's frames into the frame it lands in — the
+ * paste's offset, and the open group's frame undone — for the outermost thing,
+ * and nothing for what is inside it, which lands in what held it before.
  */
 function written(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   id: Id,
-  edits: readonly [number, Edit][],
-  renamed: ReadonlyMap<VertexId, VertexId>,
-  m: Affine,
-  by: Point | null,
+  clip: Timed,
+  corners: ReadonlyMap<VertexId, Point>,
+  depths: ReadonlyMap<VertexId, number>,
+  into: Affine | null,
 ): World {
-  let out = world;
+  const start = into === null ? clip.start : nearest(compose(into, affineOf(clip.start)));
+  const carried = into === null ? null : framed(into);
+  const carry = (op: Op): Op => carried === null ? op : outward(op, carried, null) ?? op;
 
-  for (const [offset, edit] of edits) {
-    // Past the end of the chain, and there is nowhere for it to go. See the
+  const keys = new Map<KeyframeId, readonly Entry[]>([
+    [v, [once<Stand>({ kind: 'stand', frame: start, erosion: clip.erosion, corners, depths })]],
+  ]);
+
+  for (const [offset, list] of clip.keys) {
+    const k = landingAt(world, v, offset);
+
+    // Past the end of the keyframes, and there is nowhere for it to go. See the
     // note on `pasted`.
-    if (v + offset >= world.versions.length) break;
+    if (k === null) break;
 
-    const at = edit.transform.translation;
+    keys.set(k, list.map(e => ({
+      op: carry(e.op),
+      times: e.times,
+      skip: new Set(e.skip.flatMap(o => {
+        const at = landingAt(world, v, o);
 
-    // A world-space nudge, and this layer's translation is read in `m`.
-    const step = offset === 0 && by !== null ? unstep(m, by.x, by.y) : null;
+        return at === null ? [] : [at];
+      })),
+    })));
+  }
 
-    out = withEdit(out, v + offset, id, {
-      transform: step === null
-        ? edit.transform
-        : { ...edit.transform, translation: { x: at.x + step.x, y: at.y + step.y } },
-      vertices: new Map([...edit.vertices].map(
-        ([v, d]) => [renamed.get(v) ?? v, unstep(m, d.x, d.y)],
-      )),
-      depths: new Map([...edit.depths].map(([v, d]) => [renamed.get(v) ?? v, d])),
-    });
+  return withRig(world, id, { ...rigOf(world, id), keys });
+}
+
+/** A corner's entries after the copy, landed at `v` and renamed. */
+function landed<E>(
+  world: World,
+  v: KeyframeId,
+  entries: readonly [VertexId, [number, E][]][],
+  renamed: ReadonlyMap<VertexId, VertexId>,
+): Map<VertexId, Map<KeyframeId, E>> {
+  const out = new Map<VertexId, Map<KeyframeId, E>>();
+
+  for (const [c, list] of entries) {
+    const id = renamed.get(c);
+
+    if (id === undefined) continue;
+
+    const mine = new Map<KeyframeId, E>();
+
+    for (const [offset, e] of list) {
+      const k = landingAt(world, v, offset);
+
+      if (k !== null) mine.set(k, e);
+    }
+
+    if (mine.size > 0) out.set(id, mine);
   }
 
   return out;
@@ -3802,54 +3714,40 @@ function written(
 /**
  * One clipping put back at `v`, and everything under it.
  *
- * `m` is the frame whatever is pasted will be placed by: identity at the top
- * level, and the open group's own frame when pasting into one. A clipping's
- * geometry is in world units, so it comes back through that frame on the way
- * in — otherwise pasting into a turned group would turn the paste, which is not
- * what the author is looking at while they do it.
- *
- * The same frame all the way down, rather than one per level: what is inside
- * the pasted group is placed by the pasted group, whose own frame at `v` is
- * nothing but the offset.
- *
- * The offset lands on the outermost thing only, for the same reason.
+ * `into` takes the outermost thing's frames from world units into the frame it
+ * lands in: the paste's offset, and the open group's frame undone, so that
+ * pasting into a turned group does not turn the paste. What is inside a pasted
+ * group lands in that group, as it was in the one it came out of, and is
+ * handed nothing.
  */
 function restore(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   clip: Clipping,
-  m: Affine,
-  by: Point | null,
+  into: Affine | null,
 ): { world: World, id: Id } {
+  const none = new Map();
+
   if (clip.kind === 'artefact') {
     const id = world.nextId;
     const artefacts = new Map(world.artefacts);
 
-    artefacts.set(id, {
-      type: clip.type,
-      birth: v,
-      death: dying(world, v, clip.death),
-      at: unplace(m, clip.at),
-    });
+    artefacts.set(id, { type: clip.type, birth: v, death: landingAt(world, v, clip.death), at: clip.at });
 
     const out = { ...world, artefacts, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
+    return { world: written(out, v, id, clip, none, none, into), id };
   }
 
   if (clip.kind === 'path') {
     const id = world.nextId;
     const paths = new Map(world.paths);
 
-    paths.set(id, {
-      birth: v,
-      death: dying(world, v, clip.death),
-      points: clip.points.map(p => unplace(m, p)),
-    });
+    paths.set(id, { birth: v, death: landingAt(world, v, clip.death), points: clip.points });
 
     const out = { ...world, paths, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
+    return { world: written(out, v, id, clip, none, none, into), id };
   }
 
   if (clip.kind === 'group') {
@@ -3857,7 +3755,7 @@ function restore(
     let out = world;
 
     for (const member of clip.members) {
-      const put = restore(out, v, member, m, null);
+      const put = restore(out, v, member, null);
 
       out = put.world;
       members.push(put.id);
@@ -3866,46 +3764,49 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: v, death: dying(out, v, clip.death), members, sealed: clip.sealed });
+    groups.set(id, { birth: v, death: landingAt(out, v, clip.death), members, sealed: clip.sealed });
     out = { ...out, groups, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip.edits, new Map(), m, by), id };
+    return { world: written(out, v, id, clip, none, none, into), id };
   }
 
   const id = world.nextId;
   const renamed = new Map<VertexId, VertexId>();
   const points = clip.points
-    .filter(corner => v + corner.birth < world.versions.length)
+    .filter(corner => landingAt(world, v, corner.birth) !== null)
     .map((corner, i) => {
       renamed.set(corner.id, id + 1 + i);
 
       return {
         id: id + 1 + i,
-        at: unplace(m, corner.at),
+        at: corner.at,
         ring: corner.ring,
-        birth: v + corner.birth,
-        death: corner.death === null || v + corner.death >= world.versions.length
-          ? null
-          : v + corner.death,
+        birth: landingAt(world, v, corner.birth)!,
+        death: corner.death === null ? null : landingAt(world, v, corner.death),
       };
     });
 
   const polygons = new Map(world.polygons);
 
-  polygons.set(id, {
-    ...kindOf(clip),
-    birth: v,
-    death: dying(world, v, clip.death),
-    points,
+  polygons.set(id, { ...kindOf(clip), birth: v, death: landingAt(world, v, clip.death), points });
+
+  let out: World = { ...world, polygons, nextId: id + 1 + points.length };
+
+  const corners = new Map(points.filter(c => c.birth === v).map(c => [c.id, c.at]));
+  const depths = new Map(clip.depths.flatMap(([c, d]) => {
+    const now = renamed.get(c);
+
+    return now === undefined ? [] : [[now, d]];
+  }));
+
+  out = written(out, v, id, clip, corners, depths, into);
+  out = withRig(out, id, {
+    ...rigOf(out, id),
+    nudges: landed(out, v, clip.nudges, renamed),
+    depths: landed(out, v, clip.deep, renamed),
   });
 
-  const out = {
-    ...world,
-    polygons,
-    nextId: id + 1 + points.length,
-  };
-
-  return { world: written(out, v, id, clip.edits, renamed, m, by), id };
+  return { world: out, id };
 }
 
 /**
@@ -3913,13 +3814,13 @@ function restore(
  * can see happen.
  *
  * A copy taken at v1 and pasted at v3 has its v1 land in v3, its v2 in v4, and
- * so on: the layers are relative to where they were taken, so what is pasted
+ * so on: the lists are relative to where they were taken, so what is pasted
  * does from here what the original did from there.
  *
- * What runs off the end of the chain is dropped. The chain is a fixed length
- * everywhere else — the strip draws its rows once, the bake counts its spans
- * from the same number — so growing it here would be growing it for all of
- * them, and that is a change about forks, not about pasting.
+ * What runs off the end of the keyframes is dropped. There is a fixed number of
+ * them everywhere else — the strip draws its rows once, the bake counts its
+ * spans from the same number — so growing it here would be growing it for all
+ * of them.
  *
  * The ids that come back are the top of what was pasted — a group rather than
  * the polygons under it — because that is what the selection should hold: a
@@ -3927,7 +3828,7 @@ function restore(
  */
 export function pasted(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   clips: readonly Clipping[],
   by: Point,
   where: Landing,
@@ -3937,8 +3838,21 @@ export function pasted(
   const paths: PathId[] = [];
   let out = world;
 
+  // World units, moved by the offset, and then into whatever is standing open.
+  const det = where.frame.a * where.frame.d - where.frame.b * where.frame.c;
+  const back: Affine = {
+    a: where.frame.d / det,
+    b: -where.frame.b / det,
+    c: -where.frame.c / det,
+    d: where.frame.a / det,
+    tx: 0,
+    ty: 0,
+  };
+  const o = unplace(where.frame, by);
+  const into = { ...back, tx: o.x, ty: o.y };
+
   for (const clip of clips) {
-    const put = restore(out, v, clip, where.frame, by);
+    const put = restore(out, v, clip, into);
 
     out = put.world;
 
@@ -3968,10 +3882,10 @@ export interface Pasted {
 }
 
 /**
- * The same, and only the version it lands in: one version's worth of shape,
+ * The same, and only the keyframe it lands in: one keyframe's worth of shape,
  * born there, saying nothing about any other.
  *
- * The clipping's first layer *is* the version it was copied at, so this is the
+ * The clipping's start *is* the keyframe it was copied at, so this is the
  * paste with the tail dropped. For taking a shape somewhere else without taking
  * its history with it — the pillar from v0's room, in v3's, standing still
  * while the original goes on eroding.
@@ -3983,27 +3897,24 @@ export interface Pasted {
  */
 export function stamped(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   clips: readonly Clipping[],
   by: Point,
   where: Landing,
 ): Pasted {
   const now = (clip: Clipping): Clipping => clip.kind === 'artefact' || clip.kind === 'path'
-    ? { ...clip, death: undefined, edits: clip.edits.slice(0, 1) }
+    ? { ...clip, death: undefined, keys: [] }
     : clip.kind === 'group'
-    ? {
-        ...clip,
-        members: clip.members.map(now),
-        death: undefined,
-        edits: clip.edits.slice(0, 1),
-      }
+    ? { ...clip, members: clip.members.map(now), death: undefined, keys: [] }
     : {
         ...clip,
         points: clip.points
           .filter(c => c.birth === 0)
           .map(c => ({ ...c, death: null })),
         death: undefined,
-        edits: clip.edits.slice(0, 1),
+        keys: [],
+        nudges: [],
+        deep: [],
       };
 
   return pasted(world, v, clips.map(now), by, where);

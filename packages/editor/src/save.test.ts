@@ -1,19 +1,22 @@
 import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
 import { FORMAT, restored, saved } from './save';
-import { resolveAt } from './scene';
 import {
   TOP,
   addArtefact,
   addPolygon,
-  editAt,
   grouped,
-  pathAt,
+  handed,
+  keyed,
   placeAt,
   removeAt,
-  withEdit,
+  resolveAt,
+  rigOf,
+  withRig,
 } from './scene';
-import { EMPTY_TRANSFORM, EditorState, FLOOR, VERSIONS, emptyWorld, initialState, PolygonKind } from './types';
+import { deepened, nudged, once, repeating } from './rig';
+import { EditorState, FLOOR, emptyWorld, initialState, PolygonKind } from './types';
+import { erode, move, scaled, spun, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -24,11 +27,11 @@ import { EMPTY_TRANSFORM, EditorState, FLOOR, VERSIONS, emptyWorld, initialState
  */
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
-const LEVEL: PolygonKind = { type: 'level' };
-
 const kind = (k: Named): PolygonKind =>
   k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
+/** A world with something of every kind written about it: moves, a turn, a
+ * stretch, depths, a repeat with a skip in it, a nudge and a corner depth. */
 function world(): EditorState {
   const a = addPolygon(emptyWorld(), kind('level'), [
     { x: 0, y: 0 },
@@ -42,76 +45,80 @@ function world(): EditorState {
     { x: 8, y: 8 },
   ], 1, TOP);
 
-  const edit = editAt(b.world, 2, b.id, 0);
-  const vertices = new Map(edit.vertices);
+  const corners = b.world.polygons.get(b.id)!.points;
 
-  vertices.set(b.world.polygons.get(b.id)!.points[1].id, { x: 1, y: -1 });
+  let w = wrote(b.world, 2, b.id, move(3, -2), spun(0.25), scaled(1.5, 0.75), erode(2));
 
-  const w = withEdit(b.world, 2, b.id, {
-    depths: new Map([[b.world.polygons.get(b.id)!.points[2].id, -3]]),
-    transform: {
-      translation: { x: 3, y: -2 },
-      rotation: 0.25,
-      scale: { x: 1.5, y: 0.75 },
-      erosion: 2,
-    },
-    vertices,
-  });
+  w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null, new Set([5]))]);
+  w = withRig(w, b.id, nudged(rigOf(w, b.id), corners[1].id, 2, { x: 1, y: -1 }));
+  w = withRig(w, b.id, deepened(rigOf(w, b.id), corners[2].id, 2, -3));
 
   return {
     ...initialState(w),
     selection: { polygons: [b.id], vertices: [], artefacts: [], paths: [], start: false },
     tool: 'polygon',
-    currentVersion: 2,
+    keyframe: 2,
   };
+}
+
+/** The state written out and read back in, through text. */
+function trip(state: EditorState): EditorState {
+  return restored(JSON.parse(JSON.stringify(saved(state))));
 }
 
 describe('save', () => {
   test('a state survives the trip through a file', () => {
     const before = world();
-    const after = restored(JSON.parse(JSON.stringify(saved(before))));
 
-    expect(after).toEqual(before);
+    expect(trip(before)).toEqual(before);
   });
 
-  test('a depth on one corner comes back, and an empty map is not written', () => {
+  test('and so does everything it resolves to, at every keyframe', () => {
     const before = world();
-    const file = JSON.parse(JSON.stringify(saved(before)));
-    const edits = new Map(file.world.versions[2].edits);
+    const after = trip(before);
 
-    // Written where there is something to say, and nowhere else — every layer
-    // in every file made before this one has nothing to say here.
-    expect([...edits.values()].every(e => (e as { depths?: unknown }).depths !== null)).toBe(true);
-
-    const after = restored(file);
-    const back = [...after.world.versions[2].edits.values()][0];
-
-    expect([...back.depths.values()]).toEqual([-3]);
+    for (const k of before.world.keyframes) {
+      expect(resolveAt(after.world, k.id).map(it => it.source))
+        .toEqual(resolveAt(before.world, k.id).map(it => it.source));
+      expect(resolveAt(after.world, k.id).map(it => it.depths))
+        .toEqual(resolveAt(before.world, k.id).map(it => it.depths));
+    }
   });
 
-  test('a file written before there were corner depths reads as having none', () => {
-    const file = JSON.parse(JSON.stringify(saved(world())));
+  test('a timeline comes back as maps and sets rather than as arrays', () => {
+    // Everything a timeline names, it names by id. Read back as a list, an
+    // entry would re-point at whatever now sits at that position.
+    const after = trip(world());
+    const rig = [...after.world.rigs.values()][0];
 
-    for (const [, e] of file.world.versions[2].edits) delete e.depths;
+    expect(after.world.rigs).toBeInstanceOf(Map);
+    expect(rig.keys).toBeInstanceOf(Map);
 
-    file.format = FORMAT - 1;
+    const repeat = [...after.world.rigs.values()].flatMap(r => [...r.keys.values()].flat())
+      .find(e => e.times === null)!;
 
-    const after = restored(file);
-
-    expect([...after.world.versions[2].edits.values()][0].depths.size).toBe(0);
+    expect(repeat.skip).toBeInstanceOf(Set);
+    expect([...repeat.skip]).toEqual([5]);
   });
 
-  test('a layer comes back as maps rather than as arrays', () => {
-    // Everything a version names, it names by id. Read back as a list, an edit
-    // would re-point at whatever now sits at that position.
+  test('a stand comes back with its maps', () => {
     const before = world();
-    const after = restored(JSON.parse(JSON.stringify(saved(before))));
+    const id = [...before.world.polygons.keys()][0];
+    const stood = keyed(before.world, 4, id, [once(handed(before.world, 4, id))]);
+    const after = trip({ ...before, world: stood });
 
-    const edits = after.world.versions[2].edits;
+    const [entry] = rigOf(after.world, id).keys.get(4)!;
 
-    expect(edits).toBeInstanceOf(Map);
-    expect([...edits.values()][0].vertices).toBeInstanceOf(Map);
-    expect([...edits.keys()]).toEqual([...before.world.versions[2].edits.keys()]);
+    expect(entry.op.kind).toBe('stand');
+    expect(entry.op.kind === 'stand' && entry.op.corners).toBeInstanceOf(Map);
+    expect(after.world).toEqual(stood);
+  });
+
+  test('an empty skip is not written', () => {
+    const file = saved(world());
+    const entries = file.world.rigs.flatMap(([, rig]) => rig.keys.flatMap(([, list]) => list));
+
+    expect(entries.filter(e => e.skip !== undefined)).toHaveLength(1);
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {
@@ -124,321 +131,79 @@ describe('save', () => {
   });
 
   test('a file from a format this does not read is refused', () => {
-    const file = { ...saved(world()), format: FORMAT + 1 };
-
-    expect(() => restored(file)).toThrow(/format/);
+    expect(() => restored({ ...saved(world()), format: FORMAT + 1 })).toThrow(/format/);
   });
 
-  test('groups survive the trip, and a format-4 file has none', () => {
+  test('and so is one from before timelines, rather than being half-read', () => {
+    // A layer cannot be read as operations without inventing where every one
+    // of them was aimed. See `FORMAT`.
+    expect(() => restored({ ...saved(world()), format: FORMAT - 1 })).toThrow(/format/);
+  });
+
+  test('groups survive the trip', () => {
     const before = world();
     const ids = [...before.world.polygons.keys()];
-
-    const grouped: EditorState = {
-      ...before,
-      world: {
-        ...before.world,
-        groups: new Map([[100, { birth: 0, death: null, members: ids, sealed: false }]]),
-        nextId: 101,
-      },
-    };
-
-    const after = restored(JSON.parse(JSON.stringify(saved(grouped))));
+    const made = grouped(before.world, 0, ids, TOP)!;
+    const after = trip({ ...before, world: made.world });
 
     expect(after.world.groups).toBeInstanceOf(Map);
-    expect(after.world.groups.get(100)).toEqual({ birth: 0, death: null, members: ids, sealed: false });
-
-    // A file written before there were any says nothing about them rather than
-    // saying there are none, and both read the same way.
-    const file = saved(grouped);
-    const old = { ...file, format: 4, world: { ...file.world, groups: undefined } };
-
-    expect(restored(JSON.parse(JSON.stringify(old)) as typeof file).world.groups.size)
-      .toEqual(0);
+    expect(after.world.groups.get(made.id)).toEqual(made.world.groups.get(made.id));
   });
 
-  test('a format-15 path stood over the whole chain, and reads as one that does', () => {
+  test('measuring paths survive the trip', () => {
     const before = world();
-    const drawn: EditorState = {
-      ...before,
-      world: addPath(
-        before.world,
-        [{ x: 0, y: 0 }, { x: 100, y: 0 }],
-        before.currentVersion,
-        TOP,
-      ).world,
-    };
-
-    const file = saved(drawn);
-    const id = [...drawn.world.paths.keys()][0];
-
-    // What one looked like before there was a version to be born into.
-    const old = {
-      ...file,
-      format: 15,
-      world: {
-        ...file.world,
-        paths: [[id, { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] }]],
-      },
-    };
-
-    const back = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    expect(back.world.paths.get(id)).toEqual({
-      birth: 0,
-      death: null,
-      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }],
-    });
-
-    // Born at the root and never taken out, which is standing everywhere.
-    expect(pathAt(back.world, id, 0)).not.toBe(null);
-    expect(pathAt(back.world, id, VERSIONS - 1)).not.toBe(null);
-  });
-
-  test('measuring paths survive the trip, and a format-7 file has none', () => {
-    const before = world();
-    const drawn: EditorState = {
-      ...before,
-      world: addPath(
-        before.world,
-        [{ x: 0, y: 0 }, { x: 100, y: 0 }],
-        before.currentVersion,
-        TOP,
-      ).world,
-    };
-
-    const file = saved(drawn);
-    const after = restored(JSON.parse(JSON.stringify(file)) as typeof file);
+    const drawn = addPath(before.world, [{ x: 0, y: 0 }, { x: 100, y: 0 }], before.keyframe, TOP);
+    const after = trip({ ...before, world: drawn.world });
 
     expect([...after.world.paths.values()]).toEqual([
-      { birth: before.currentVersion, death: null, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
+      { birth: before.keyframe, death: null, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
     ]);
-
-    // And the tool it was drawing with was called something else then. The
-    // figure goes with it: there was one thing the pen drew, so a file of that
-    // vintage does not say which — and saying nothing is the whole of what is
-    // being read here.
-    const old = {
-      ...file,
-      format: 7,
-      tool: 'path' as const,
-      figure: undefined,
-      world: { ...file.world, paths: undefined },
-    };
-
-    const back = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    expect(back.world.paths.size).toBe(0);
-    expect(back.tool).toBe('create');
-
-    // And that tool drew one thing, which is what a file with no figure in it
-    // is saying.
-    expect(back.figure).toBe('polyline');
   });
 
-  test('artefacts survive the trip, places and all, and a format-5 file has none', () => {
+  test('artefacts survive the trip, places and all', () => {
     const before = world();
     const one = addArtefact(before.world, 'key', { x: 5, y: 6 }, 0, TOP);
-    const moved = withEdit(one.world, 2, one.id, {
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 45, y: 54 } },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const moved = wrote(one.world, 2, one.id, move(45, 54));
 
-    const placed: EditorState = {
+    const after = trip({
       ...before,
       world: moved,
       selection: { ...before.selection, artefacts: [one.id] },
-    };
+    });
 
-    const after = restored(JSON.parse(JSON.stringify(saved(placed))));
     const back = after.world.artefacts.get(one.id)!;
 
-    expect(back.type).toEqual('key');
-    expect(back.birth).toEqual(0);
-    expect(back.at).toEqual({ x: 5, y: 6 });
-
-    // What it goes on to do is in the versions, where everything else's is.
-    expect(after.world.versions[2].edits.get(one.id)!.transform.translation)
-      .toEqual({ x: 45, y: 54 });
+    expect(back).toEqual({ type: 'key', birth: 0, death: null, at: { x: 5, y: 6 } });
+    expect(placeAt(after.world, one.id, 2)).toEqual({ x: 50, y: 60 });
     expect(after.selection.artefacts).toEqual([one.id]);
-
-    const file = saved(placed);
-    const old = {
-      ...file,
-      format: 5,
-      artefacts: undefined,
-      world: { ...file.world, artefacts: undefined },
-    };
-
-    const opened = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    expect(opened.world.artefacts.size).toEqual(0);
-    expect(opened.selection.artefacts).toEqual([]);
   });
 
-  test('a format-6 file says the same places the long way round', () => {
-    // There an artefact held a move per version. The first is where it was put
-    // and each of the rest is a translation that version was making, which is
-    // what a transform's translation is — so it converts exactly rather than
-    // being approximated or dropped.
-    const before = world();
-    const one = addArtefact(before.world, 'exit', { x: 0, y: 0 }, 0, TOP);
-    const file = saved({ ...before, world: one.world });
-
-    const old = {
-      ...file,
-      format: 6,
-      world: {
-        ...file.world,
-        artefacts: [[one.id, {
-          type: 'exit',
-          birth: 1,
-          at: [[1, { x: 10, y: 0 }], [3, { x: 5, y: 5 }]],
-        }]],
-      },
-    };
-
-    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-    const back = after.world.artefacts.get(one.id)!;
-
-    expect(back.birth).toEqual(1);
-    expect(back.at).toEqual({ x: 10, y: 0 });
-    expect(after.world.versions[1].edits.get(one.id)).toBeUndefined();
-    expect(after.world.versions[3].edits.get(one.id)!.transform.translation)
-      .toEqual({ x: 5, y: 5 });
-
-    // Which is the same sequence of places it was saying before.
-    expect(placeAt(after.world, one.id, 0)).toBeNull();
-    expect(placeAt(after.world, one.id, 2)).toEqual({ x: 10, y: 0 });
-    expect(placeAt(after.world, one.id, 4)).toEqual({ x: 15, y: 5 });
-  });
-
-  test('the start survives the trip, and a format-10 file kept it as an artefact', () => {
+  test('the start survives the trip', () => {
     const before = world();
     const placed: EditorState = {
       ...before,
       world: { ...before.world, start: { at: { x: 7, y: -3 }, facing: Math.PI / 2 } },
     };
 
-    const after = restored(JSON.parse(JSON.stringify(saved(placed))));
-
-    expect(after.world.start).toEqual({ at: { x: 7, y: -3 }, facing: Math.PI / 2 });
-
-    // There it was one of the artefacts, turned by whatever its layers turned
-    // it. Where it stood at v0 is where it stood, since that is the only
-    // version the player was ever put at.
-    const one = addArtefact(before.world, 'exit', { x: 4, y: 0 }, 0, TOP);
-    const spun = withEdit(one.world, 0, one.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
-
-    const file = saved({
-      ...before,
-      world: spun,
-      selection: { ...before.selection, artefacts: [one.id] },
-    });
-    const old = {
-      ...file,
-      format: 10,
-      world: {
-        ...file.world,
-        start: undefined,
-        artefacts: file.world.artefacts!.map(([id, a]) => [id, { ...a, type: 'start' }]),
-      },
-    };
-
-    const opened = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    expect(opened.world.start.at.x).toBeCloseTo(0);
-    expect(opened.world.start.at.y).toBeCloseTo(4);
-    expect(opened.world.start.facing).toBeCloseTo(Math.PI / 2);
-
-    // And it is not an artefact any more, nor picked as one.
-    expect(opened.world.artefacts.size).toEqual(0);
-    expect(opened.selection.artefacts).toEqual([]);
-    expect(opened.selection.start).toBe(false);
+    expect(trip(placed).world.start).toEqual({ at: { x: 7, y: -3 }, facing: Math.PI / 2 });
   });
 
-  test('a format-17 polygon is a set and a direction, and each pair is a kind', () => {
-    // Four pairs, and every one of them says exactly one of the four names —
-    // so nothing here is guessed at. See `FORMAT`.
-    // A world with one of each of the four, so that all four pairs are read.
+  test('every kind of polygon survives the trip', () => {
     let w = emptyWorld();
 
     for (const k of ['level', 'solid', 'floor', 'hole'] as const) {
-      w = addPolygon(w, kind(k), [
-        { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 },
-      ], 0, TOP).world;
+      w = addPolygon(w, kind(k), [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], 0, TOP).world;
     }
 
-    const file = saved({ ...world(), world: w });
-    const was: Record<string, [string, string]> = {
-      level: ['level', 'add'],
-      solid: ['level', 'subtract'],
-      floor: ['floor', 'add'],
-      void: ['floor', 'subtract'],
-    };
-
-    const old = {
-      ...file,
-      format: 17,
-      world: {
-        ...file.world,
-        polygons: file.world.polygons.map(([id, p]) => {
-          const [type, op] = was[p.type === 'void' ? 'void' : p.type];
-
-          return [id, { ...p, type, op, from: undefined }];
-        }),
-      },
-    };
-
-    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    for (const [id, p] of after.world.polygons) {
-      expect(p).toEqual(file.world.polygons.find(([q]) => q === id)![1]);
-    }
+    expect(trip({ ...world(), world: w }).world.polygons).toEqual(w.polygons);
   });
 
-  test('a format-3 file opens, with every corner standing throughout', () => {
-    // Before 4 there was no way for a corner to say it came or went, so a file
-    // that says nothing is read as one where none of them did.
-    const file = saved(world());
-    const old = {
-      ...file,
-      format: 3,
-      world: {
-        ...file.world,
-        polygons: file.world.polygons.map(([id, p]) => [
-          id,
-          { ...p, points: p.points.map(({ id: v, at }) => ({ id: v, at })) },
-        ]),
-      },
-    };
-
-    const after = restored(JSON.parse(JSON.stringify(old)) as typeof file);
-
-    for (const [id, p] of after.world.polygons) {
-      expect(p.points.length).toBeGreaterThan(2);
-
-      for (const c of p.points) {
-        expect(c.birth).toEqual(p.birth);
-        expect(c.death).toEqual(null);
-      }
-
-      // And it resolves to the same ring the format-4 file does.
-      expect(resolveAt(after.world, 4).find(r => r.id === id)!.corners.length)
-        .toEqual(p.points.length);
-    }
-  });
-
-  test('what a version took out comes back saying so', () => {
+  test('what a keyframe took out comes back saying so', () => {
     const before = world();
     const ids = [...before.world.polygons.keys()];
     const gone = removeAt(before.world, 2, [ids[0]]);
 
-    const after = restored(JSON.parse(JSON.stringify(saved({ ...before, world: gone }))));
+    const after = trip({ ...before, world: gone });
 
     expect(after.world.polygons.get(ids[0])!.death).toEqual(2);
     expect(resolveAt(after.world, 1).map(r => r.id)).toContain(ids[0]);
@@ -452,55 +217,18 @@ describe('save', () => {
     const made = grouped(put.world, 0, [ids[0], put.id], TOP)!;
     const gone = removeAt(made.world, 3, [made.id]);
 
-    const after = restored(JSON.parse(JSON.stringify(saved({ ...before, world: gone }))));
+    const after = trip({ ...before, world: gone });
 
     expect(after.world.groups.get(made.id)!.death).toEqual(3);
     expect(after.world.artefacts.get(put.id)!.death).toEqual(3);
     expect(after.world.polygons.get(ids[0])!.death).toEqual(3);
   });
 
-  test('a file written before anything could be taken out reads as nothing was', () => {
-    const file = JSON.parse(JSON.stringify(saved(world())));
+  test('the keyframes come back as they were, eyes and all', () => {
+    const before = world();
+    const keyframes = before.world.keyframes.map((k, i) => ({ ...k, visible: i % 2 === 0 }));
+    const after = trip({ ...before, world: { ...before.world, keyframes } });
 
-    for (const [, p] of file.world.polygons) delete p.death;
-    for (const [, g] of file.world.groups ?? []) delete g.death;
-    for (const [, a] of file.world.artefacts ?? []) delete a.death;
-
-    file.format = FORMAT - 1;
-
-    const after = restored(file);
-
-    for (const [, p] of after.world.polygons) expect(p.death).toEqual(null);
-    for (const [, g] of after.world.groups) expect(g.death).toEqual(null);
-    for (const [, a] of after.world.artefacts) expect(a.death).toEqual(null);
-  });
-
-  test('a file written when the chain was shorter comes back at full length', () => {
-    // `VERSIONS` is fixed and everything reads it as fixed: the strip draws that
-    // many rows and each one reads its own version out of the world. A file from
-    // before it was raised came back short, and the first row past the end read
-    // `undefined.name` — the whole editor, on load, before anything else could
-    // go wrong.
-    const file = JSON.parse(JSON.stringify(saved(world())));
-
-    file.world.versions = file.world.versions.slice(0, 5);
-
-    const after = restored(file);
-
-    expect(after.world.versions.length).toEqual(VERSIONS);
-    expect(after.world.versions.every(v => typeof v.name === 'string')).toBe(true);
-
-    // Chained on and empty: the world the file described is unchanged, and the
-    // spans they add are spans in which nothing moves.
-    for (let i = 5; i < VERSIONS; i++) {
-      expect(after.world.versions[i].base).toEqual(i - 1);
-      expect(after.world.versions[i].edits.size).toEqual(0);
-      expect(after.world.versions[i].footings.size).toEqual(0);
-    }
-
-    // What was there is untouched.
-    for (let i = 0; i < 5; i++) {
-      expect(after.world.versions[i].name).toEqual(file.world.versions[i].name);
-    }
+    expect(after.world.keyframes).toEqual(keyframes);
   });
 });

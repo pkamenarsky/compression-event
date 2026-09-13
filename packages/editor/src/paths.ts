@@ -19,7 +19,7 @@
 import { WALK_SPEED } from '@ce/game';
 import { SCALE } from '@ce/game/world';
 import { Laid, Landing, joined, laidAt, unplace, without } from './scene';
-import { PathId, Point, VersionId, World } from './types';
+import { PathId, Point, KeyframeId, World } from './types';
 
 /** Editor units the player covers in a second: the game's speed is in world
  * units, and the editor's grid is `SCALE` of one. */
@@ -87,7 +87,7 @@ export function seconds(t: number): string {
  */
 export function inFrame(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   id: PathId,
   points: readonly Point[],
 ): Point[] {
@@ -112,7 +112,7 @@ export function inFrame(
 export function addPath(
   world: World,
   points: readonly Point[],
-  v: VersionId,
+  v: KeyframeId,
   where: Landing,
 ): { world: World, id: PathId } {
   const id = world.nextId;

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon, csg, grouped, resolveAt, sealing, withEdit, editAt } from './scene';
+import { TOP, addPolygon, csg, grouped, resolveAt, sealing } from './scene';
+import { turned, wrote } from './testing';
 import { bakeSpan } from './bake';
-import { EMPTY_TRANSFORM, emptyWorld, World } from './types';
+import { emptyWorld, World } from './types';
 
 const rect = (x: number, y: number, w: number, h: number) =>
   [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -17,10 +18,7 @@ function built(rooms: number, group: boolean, inner = false, seal = false): Worl
     ids.push(a.id);
   }
 
-  const turn = (world: World, on: number): World => withEdit(world, 1, on, {
-    ...editAt(world, 1, on, 0),
-    transform: { ...EMPTY_TRANSFORM, rotation: 0.05 },
-  });
+  const turn = (world: World, on: number): World => wrote(world, 1, on, turned(0.05));
 
   // Ungrouped: every other room turns on its own, which is the same set of
   // moving polygons the grouped runs have.

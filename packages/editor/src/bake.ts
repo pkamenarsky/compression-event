@@ -149,7 +149,6 @@ import {
   IDENTITY,
   Placed,
   Resolved,
-  affine,
   artefactsAt,
   centroid,
   chain,
@@ -158,20 +157,22 @@ import {
   depths,
   facing,
   groupFrame,
-  placeAt,
+  keyAt,
+  order,
   parts,
+  placeAt,
   sidedWith,
   sideOf,
   live,
   place,
   resolved,
   standingIn,
+  under,
   unplace,
   resolveAt,
 } from './scene';
 import {
   ArtefactId,
-  EMPTY_TRANSFORM,
   GroupId,
   Id,
   KINDS,
@@ -179,8 +180,7 @@ import {
   PolygonKind,
   SLOTS,
   SetName,
-  Transform,
-  VersionId,
+  KeyframeId,
   Vertex,
   VertexId,
   World,
@@ -191,6 +191,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
+import { affineOf, framed, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -282,6 +283,54 @@ export type Origin =
   | { kind: 'cross', a: Ref, b: Ref };
 
 /**
+ * What a thing is in flight with over a span, in components: everything the
+ * keyframe does to it, as one map about the origin.
+ *
+ * Kept in components rather than as a matrix because it is interpolated, and a
+ * matrix lerped entrywise slews a rotation through a shear.
+ */
+export interface Layer {
+  translation: Point
+  rotation: number
+  scale: { x: number, y: number }
+}
+
+export const NO_LAYER: Layer = { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } };
+
+/** A layer as a matrix: scale per axis, then turn, then move. */
+export function affine(t: Layer): Affine {
+  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
+
+  return {
+    a: c * t.scale.x,
+    b: s * t.scale.x,
+    c: -s * t.scale.y,
+    d: c * t.scale.y,
+    tx: t.translation.x,
+    ty: t.translation.y,
+  };
+}
+
+/**
+ * What takes a thing from one frame to another, as a layer — or nothing where
+ * the two are not one layer apart, and the span has to walk across entrywise.
+ */
+function layered(from: Affine, to: Affine): Layer | null {
+  const det = from.a * from.d - from.b * from.c;
+  const inverse: Affine = {
+    a: from.d / det,
+    b: -from.b / det,
+    c: -from.c / det,
+    d: from.a / det,
+    tx: (from.c * from.ty - from.d * from.tx) / det,
+    ty: (from.b * from.tx - from.a * from.ty) / det,
+  };
+  const f = framed(compose(to, inverse));
+
+  return f === null ? null : { translation: f.t, rotation: f.angle, scale: f.scale };
+}
+
+/**
  * A group holding a polygon over the span, and the layer it is in flight with.
  *
  * Named, because the shader shares one of these between everything the group
@@ -290,37 +339,27 @@ export type Origin =
  */
 export interface Holder {
   id: Id
-  layer: Transform
+  layer: Layer
 }
 
 /**
  * What takes a polygon's runs back out to the world, in the form that can be
- * interpolated: a constant chain, the one layer in flight over it, and every
- * group in flight over that, innermost first.
+ * interpolated: its frame at the near end, and the one layer in flight over it
+ * that carries it to the far end.
  *
- * The groups stay a chain rather than being composed into one layer, and they
- * have to: a `Transform` is components, composing two of them is a general
- * matrix, and a matrix lerped entrywise slews a rotation through a shear. Each
- * is eased on its own terms and the results multiply, which is the same thing
- * `resolveAt` does one stage at a time.
+ * One layer for everything a keyframe does to a thing, which is exact at both
+ * ends and eased about the one point the whole keyframe leaves where it was.
+ * The chain of groups is there for the table's sake and carries nothing.
  */
 export interface Rider {
   base: Affine
   /**
-   * Where the base lands at the far end, where the far end does not stand on
-   * the near one's — which is a thing unchained at `from + 1`, and nothing
-   * else. See `Footing`.
-   *
-   * Absent everywhere else, and absent at the moment of unchaining too: a
-   * footing is a copy of what its base handed over, so the two frames are the
-   * same matrix until an upstream edit moves one of them. What is left when
-   * they do differ is a discontinuity the author asked for, and the span walks
-   * across it entrywise — the one place here that lerps a matrix, because the
-   * two ends are no longer two readings of one motion and there is no motion
-   * to interpolate along.
+   * Where the base lands at the far end, where no one layer takes it there —
+   * a shear, which a layer cannot say. The span walks across it entrywise,
+   * the one place here that lerps a matrix.
    */
   into?: Affine
-  layer: Transform
+  layer: Layer
   holders: Holder[]
 }
 
@@ -329,7 +368,7 @@ export interface Rider {
 export function riding(r: {
   base: Affine
   into?: Affine
-  layer: Transform
+  layer: Layer
   holders: readonly Holder[]
 }, t: number): Affine {
   let frame = compose(affine(easing(r.layer, t)), walked(r.base, r.into, t));
@@ -458,9 +497,10 @@ export interface Track {
   jumps: Stretch[]
 }
 
-/** Everything between two adjacent versions. */
+/** Everything between two adjacent keyframes. */
 export interface Span {
-  from: VersionId
+  /** Where the earlier of the two is in the order. */
+  from: number
   /** One per polygon, ordered by id — which is also the order `sample` puts
    * their runs back in. */
   tracks: Track[]
@@ -502,10 +542,15 @@ export interface Span {
 }
 
 /**
- * A span's geometry depends on its own two versions and on every version above
- * them, since that is what `resolveAt` walks. So the stamp is the whole chain
- * down to `k + 1`, plus the polygons, the group structure and the artefacts
+ * A span's geometry depends on everything written at its own two keyframes and
+ * at every keyframe before them, since that is what the walk plays. So the
+ * stamp is every entry written up to the later of the two, plus the order of
+ * the keyframes, the polygons, the group structure and the artefacts
  * themselves.
+ *
+ * The entries by identity, one by one, rather than the map of timelines: an
+ * edit at v5 replaces that map and leaves every entry written before v5 the
+ * same object, so the spans before it stand.
  *
  * The artefacts because they have slots in the frame table — `carried` puts
  * them there, and which of them exist decides both how many slots there are and
@@ -513,20 +558,21 @@ export interface Span {
  * no row for it, and the game falls back to a straight line between the two
  * places rather than the frame it should be riding.
  *
- * It is the `edits` maps rather than the `Version` objects, so that opening and
- * closing a ghost's eye — which replaces the version but changes no
- * geometry — does not throw away a bake.
+ * Opening and closing a ghost's eye — which replaces the keyframe but changes
+ * no geometry — does not throw away a bake: only the order of their ids is
+ * read.
  */
 export interface Stamp {
-  edits: unknown[]
+  written: unknown[]
+  order: string
   polygons: unknown
   groups: unknown
   artefacts: unknown
 }
 
 export interface Bake {
-  /** Keyed by the earlier of the two versions. */
-  spans: Map<VersionId, Span>
+  /** Keyed by where the earlier of the two keyframes is in the order. */
+  spans: Map<number, Span>
   /** 0 to 1 while a bake is running, and null when none is. */
   progress: number | null
   /**
@@ -551,9 +597,31 @@ export interface Loaded {
 
 export const EMPTY_BAKE: Bake = { spans: new Map(), progress: null };
 
-export function stamp(world: World, from: VersionId): Stamp {
+export function stamp(world: World, from: number): Stamp {
+  const upto = new Set(world.keyframes.slice(0, from + 2).map(k => k.id));
+  const written: unknown[] = [];
+
+  for (const [id, rig] of world.rigs) {
+    const mine: unknown[] = [];
+
+    for (const [k, list] of rig.keys) {
+      if (upto.has(k)) mine.push(k, list);
+    }
+
+    for (const maps of [rig.nudges, rig.depths]) {
+      for (const [c, map] of maps) {
+        for (const [k, e] of map) {
+          if (upto.has(k)) mine.push(c, k, e);
+        }
+      }
+    }
+
+    if (mine.length > 0) written.push(id, ...mine);
+  }
+
   return {
-    edits: world.versions.slice(0, from + 2).map(v => v.edits),
+    written,
+    order: world.keyframes.map(k => k.id).join(','),
     polygons: world.polygons,
     groups: world.groups,
     artefacts: world.artefacts,
@@ -561,26 +629,27 @@ export function stamp(world: World, from: VersionId): Stamp {
 }
 
 /** The span, if what it was baked against is still standing. */
-export function spanAt(bake: Bake, world: World, from: VersionId): Span | null {
+export function spanAt(bake: Bake, world: World, from: number): Span | null {
   const span = bake.spans.get(from);
   if (span === undefined) return null;
 
   return stamped(span.stamp, stamp(world, from)) ? span : null;
 }
 
-/** A stamp over every span of the level, which is the chain down to the last
- * version. */
+/** A stamp over every span of the level, which is everything written down to
+ * the last keyframe. */
 export function stampAll(world: World): Stamp {
-  return stamp(world, Math.max(world.versions.length - 2, 0));
+  return stamp(world, Math.max(world.keyframes.length - 2, 0));
 }
 
 function stamped(a: Stamp, b: Stamp): boolean {
   if (a.polygons !== b.polygons) return false;
   if (a.groups !== b.groups) return false;
   if (a.artefacts !== b.artefacts) return false;
-  if (a.edits.length !== b.edits.length) return false;
+  if (a.order !== b.order) return false;
+  if (a.written.length !== b.written.length) return false;
 
-  return a.edits.every((e, i) => e === b.edits[i]);
+  return a.written.every((e, i) => e === b.written[i]);
 }
 
 /** The bake a file came with, if the world it came with is still the one
@@ -595,7 +664,7 @@ export function loadedFor(bake: Bake, world: World): BakedLevel | null {
 /** Every span the edit reached, dropped. Cheaper to ask than to work out, and
  * `spanAt` is the one that has to be right. */
 export function pruned(bake: Bake, world: World): Bake {
-  const spans = new Map<VersionId, Span>();
+  const spans = new Map<number, Span>();
 
   for (const [from] of bake.spans) {
     const kept = spanAt(bake, world, from);
@@ -622,9 +691,10 @@ export function pruned(bake: Bake, world: World): Bake {
 interface Moving {
   at: Resolved
   base: Affine
-  /** The far end's own, where it was unchained at `from + 1`. See `Rider`. */
+  /** The far end's own, where the two ends are not one layer apart. See
+   * `Rider`. */
   into?: Affine
-  layer: Transform
+  layer: Layer
   /**
    * The corners both ends are written over: every corner either version has,
    * in ring order. `local` and `corners` are index for index at both ends, so
@@ -937,50 +1007,67 @@ function budding(local: Ring): Ring {
 }
 
 /**
- * Every group holding something, with what the later version does to it.
+ * Every group holding something, and what each is in flight with: nothing.
  *
- * Membership is global, so which groups these are is not a question about when
- * any of them was made. What *is* a question is whether the group is still
- * there at the far end: a group taken out at `from + 1` may still have a layer
- * written at that version from before it was, and applying it would carry a
- * shrinking room off to somewhere the editor never draws. A group that is not
- * there does nothing, which is the same answer `resolveAt` gives by never
- * reaching it.
+ * What a span does to a thing is taken whole off its frames at the two ends,
+ * groups and all, and is in its own layer already — so the groups are named
+ * for what reaches a polygon's neighbours, and a rider rides none of them.
  */
-function holders(world: World, from: VersionId, id: Id): Holder[] {
-  const next = world.versions[from + 1];
-  const there = new Set(chain(world, from + 1));
-
-  return enclosing(world, id).map(g => ({
-    id: g,
-    layer: standingIn(world, g, there)
-      ? next.edits.get(g)?.transform ?? EMPTY_TRANSFORM
-      : EMPTY_TRANSFORM,
-  }));
+function holders(world: World, id: Id): Holder[] {
+  return enclosing(world, id).map(g => ({ id: g, layer: NO_LAYER }));
 }
 
-function moving(world: World, from: VersionId): Moving[] {
-  const before = new Map(resolveAt(world, from).map(it => [it.id, it]));
-  const after = resolveAt(world, from + 1);
+/**
+ * What a thing is in flight with across a span: the one layer that takes its
+ * frame at the near end to its frame at the far end — or, where no layer does,
+ * the far frame to walk to.
+ */
+function flight(a: Affine, b: Affine): { layer: Layer, into?: Affine } {
+  const layer = layered(a, b);
 
-  const next = world.versions[from + 1];
-  const holding = (id: PolygonId): Holder[] => holders(world, from, id);
+  return layer === null ? { layer: NO_LAYER, into: b } : { layer };
+}
+
+/**
+ * A thing at one end of a span only, riding whatever holds it across it: its
+ * own frame from the end it has, inside its holder's frame from the near end,
+ * with the holder's flight over the top.
+ *
+ * So a key put into a turning room goes round with the room from the start of
+ * the turn, and one taken out of it turns on its way out. Its own frame stands
+ * still: there is nowhere for it to come from or go to.
+ */
+function riderOnly(world: World, from: number, id: Id, own: KeyframeId): Rider {
+  const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
+  const a = under(world, near, id);
+  const mine = affineOf(stateAt(world, id, own).frame);
+  const go = flight(a, under(world, far, id));
+
+  return {
+    base: compose(a, mine),
+    layer: go.layer,
+    into: go.into === undefined ? undefined : compose(go.into, mine),
+    holders: [],
+  };
+}
+
+function moving(world: World, from: number): Moving[] {
+  const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
+  const before = new Map(resolveAt(world, near).map(it => [it.id, it]));
+  const after = resolveAt(world, far);
 
   const out = after.map(it => {
     const was = before.get(it.id);
-    const edit = next.edits.get(it.id);
-    const layer = edit?.transform ?? EMPTY_TRANSFORM;
 
     if (was === undefined) {
-      // Its own transform is applied outright rather than eased: a version that
-      // both makes a polygon and moves it is describing where the polygon *is*,
-      // and there is no earlier place for that to be a move away from. So the
-      // only thing in flight over the frame is what its groups are doing, and
-      // the birth itself is in the ring.
+      // Where it is at the far end, outright: a keyframe that both makes a
+      // polygon and moves it is describing where the polygon *is*, and there is
+      // no earlier place for that to be a move away from. So the birth is all
+      // in the ring, and what is in flight is whatever holds it.
       return {
         at: it,
-        base: compose(affine(layer), groupFrame(world, from, it.id)),
-        layer: EMPTY_TRANSFORM,
+        ...riderOnly(world, from, it.id, far),
+        holders: holders(world, it.id),
         corners: it.corners,
         local: [budding(it.local), it.local] as [Ring, Ring],
         dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
@@ -991,7 +1078,6 @@ function moving(world: World, from: VersionId): Moving[] {
         depth: [0, it.erosion] as [number, number],
         depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
-        holders: holding(it.id),
       };
     }
 
@@ -1000,28 +1086,22 @@ function moving(world: World, from: VersionId): Moving[] {
     return {
       at: it,
       base: was.frame,
-      into: footed(world, from + 1, it.id),
-      layer,
+      ...flight(was.frame, it.frame),
       corners: over.corners,
       local: over.local,
       dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
-      holders: holding(it.id),
+      holders: holders(world, it.id),
     };
   });
 
-  // And the ones going the other way. A polygon the later version takes out is
+  // And the ones going the other way. A polygon the later keyframe takes out is
   // in `before` and nowhere in `after`, so it is picked up here rather than in
   // the walk above, and given the far end it does not have: the same ring
-  // pinched into its own middle, which is `budding` read backwards.
-  //
-  // Its own layer at `from + 1` is *not* applied, whatever it says. A polygon
-  // is not editable at a version that does not have it, so anything written
-  // there was written before the delete and is inert everywhere else — see
-  // `resolveAt`, which stops walking a polygon at its death and never reads it.
-  // What is left in flight is what its groups are doing, which is real: a room
+  // pinched into its own middle, which is `budding` read backwards. Its own
+  // frame stands still while it goes, and what holds it goes on moving: a room
   // going out of a turning group turns on its way out.
   const kept = new Set(after.map(it => it.id));
 
@@ -1030,30 +1110,18 @@ function moving(world: World, from: VersionId): Moving[] {
 
     out.push({
       at: was,
-      base: was.frame,
-      layer: EMPTY_TRANSFORM,
+      ...riderOnly(world, from, id, near),
+      holders: holders(world, id),
       corners: was.corners,
       local: [was.local, budding(was.local)] as [Ring, Ring],
       dead: [was.corners.map(() => false), was.corners.map(() => false)] as [boolean[], boolean[]],
       depth: [was.erosion, 0] as [number, number],
       depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
       varying: was.depths !== null,
-      holders: holding(id),
     });
   }
 
   return out;
-}
-
-/**
- * The frame a version's footing puts a thing on, or nothing where it has none.
- *
- * What the span needs it for is the far end: everything else about a leg is a
- * motion away from where the near end stood, and an unchained thing's far end
- * is not — it stands on numbers of its own. See `Rider.into`.
- */
-function footed(world: World, v: VersionId, id: Id): Affine | undefined {
-  return world.versions[v]?.footings.get(id)?.frame;
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1084,7 +1152,7 @@ function mix(u: number, v: number, t: number): number {
  * axis alone. `null` says so, and the caller falls back to a straight line —
  * which for a translation is exactly right anyway.
  */
-export function pivot(layer: Transform): Point | null {
+export function pivot(layer: Layer): Point | null {
   const m = affine({ ...layer, translation: { x: 0, y: 0 } });
 
   const det = (1 - m.a) * (1 - m.d) - m.b * m.c;
@@ -1110,7 +1178,7 @@ export function pivot(layer: Transform): Point | null {
  * carried round a circle, and a chord is not a circle. Both ends are unmoved by
  * this, since `A(0)` is the identity and `A(1) f` is `f - T` by construction.
  */
-function easing(layer: Transform, t: number): Transform {
+function easing(layer: Layer, t: number): Layer {
   const rotation = layer.rotation * t;
   const scale = { x: mix(1, layer.scale.x, t), y: mix(1, layer.scale.y, t) };
   const held = t === 0 || t === 1 ? null : pivot(layer);
@@ -1120,11 +1188,10 @@ function easing(layer: Transform, t: number): Transform {
       translation: { x: layer.translation.x * t, y: layer.translation.y * t },
       rotation,
       scale,
-      erosion: 0,
     };
   }
 
-  const a = affine({ translation: { x: 0, y: 0 }, rotation, scale, erosion: 0 });
+  const a = affine({ translation: { x: 0, y: 0 }, rotation, scale });
 
   return {
     translation: {
@@ -1133,7 +1200,6 @@ function easing(layer: Transform, t: number): Transform {
     },
     rotation,
     scale,
-    erosion: 0,
   };
 }
 
@@ -1320,7 +1386,7 @@ function mitred(ring: Ring, rings: readonly number[], i: number, depth: number):
  * The bake exists precisely so that the game never has to do it, so nothing in
  * the editor calls this; it is the yardstick.
  */
-export function truth(world: World, from: VersionId, t: number): Frame {
+export function truth(world: World, from: number, t: number): Frame {
   const cast = casting(world, from);
 
   return evaluate(cast, cast.items, t, null).out;
@@ -1399,8 +1465,9 @@ export interface Cast {
   folds: Map<number, Map<string, Shape>>
 }
 
-function casting(world: World, from: VersionId): Cast {
-  const a = depths(world, from), b = depths(world, from + 1);
+function casting(world: World, from: number): Cast {
+  const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
+  const a = depths(world, near), b = depths(world, far);
   const scopes = new Map<GroupId, [number, number]>();
 
   // Every sealed group, whatever its depth, and no loose one. It used to be the
@@ -1415,22 +1482,19 @@ function casting(world: World, from: VersionId): Cast {
     if (group.sealed) scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
-  const next = world.versions[from + 1];
-  const there = new Set(chain(world, from + 1));
+  const there = new Set(chain(world, far));
   const riders = new Map<GroupId, Rider>();
 
   for (const id of scopes.keys()) {
-    riders.set(id, {
-      base: groupFrame(world, from, id),
-      into: footed(world, from + 1, id),
+    const base = groupFrame(world, near, id);
 
-      // Nothing, for a group the later version takes out: whatever it says
-      // about one it does not have was written before the removal and means
-      // no more here than a dead polygon's layer does. See `moving`.
-      layer: standingIn(world, id, there)
-        ? next.edits.get(id)?.transform ?? EMPTY_TRANSFORM
-        : EMPTY_TRANSFORM,
-      holders: holders(world, from, id),
+    riders.set(id, {
+      base,
+
+      // Nothing, for a group the later keyframe takes out: it stands still
+      // while it goes, as a dead polygon does. See `moving`.
+      ...(standingIn(world, id, there) ? flight(base, groupFrame(world, far, id)) : { layer: NO_LAYER }),
+      holders: [],
     });
   }
 
@@ -3127,7 +3191,7 @@ export interface Slice {
  * polygon than the thread cutting it would be a silent wrong answer rather than
  * an error.
  */
-export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
+export function ridersOf(world: World, from: number): Map<Id, Rider> {
   const cast = casting(world, from);
   const out = ridden(cast, subjects(cast));
 
@@ -3161,31 +3225,29 @@ export function ridersOf(world: World, from: VersionId): Map<Id, Rider> {
  * version says about it was written before the delete and is inert, exactly as
  * `moving` says of a polygon's.
  */
-function carried(world: World, from: VersionId): Map<Id, Rider> {
-  const next = world.versions[from + 1];
+function carried(world: World, from: number): Map<Id, Rider> {
   const out = new Map<Id, Rider>();
+  const late = keyAt(world, from + 1);
 
-  if (next === undefined) return out;
+  if (late === null) return out;
 
-  const near = new Set(chain(world, from));
-  const far = new Set(chain(world, from + 1));
+  const early = keyAt(world, from)!;
+  const near = new Set(chain(world, early));
+  const far = new Set(chain(world, late));
 
-  for (const [id, it] of world.artefacts) {
+  for (const id of world.artefacts.keys()) {
     const here = standingIn(world, id, near), there = standingIn(world, id, far);
 
-    // At neither end is not in the span at all: one the versions have not
+    // At neither end is not in the span at all: one the keyframes have not
     // reached yet, and one they finished with before it began.
     if (!here && !there) continue;
 
-    const own = next.edits.get(id)?.transform ?? EMPTY_TRANSFORM;
-    const base = groupFrame(world, from, id);
+    const base = groupFrame(world, early, id);
+    const end = groupFrame(world, late, id);
 
-    out.set(id, {
-      base: here ? base : compose(affine(own), base),
-      into: here ? footed(world, from + 1, id) : undefined,
-      layer: here && there ? own : EMPTY_TRANSFORM,
-      holders: holders(world, from, id),
-    });
+    out.set(id, here && there
+      ? { base, ...flight(base, end), holders: [] }
+      : riderOnly(world, from, id, here ? early : late));
   }
 
   return out;
@@ -3209,12 +3271,12 @@ function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
     return [
       s.id,
       m === undefined
-        ? cast.riders.get(group) ?? { base: IDENTITY, layer: EMPTY_TRANSFORM, holders: [] }
+        ? cast.riders.get(group) ?? { base: IDENTITY, layer: NO_LAYER, holders: [] }
         : {
           base: m.base,
           into: m.into,
           layer: m.layer,
-          holders: m.holders,
+          holders: [],
         },
     ];
   }));
@@ -3229,7 +3291,7 @@ function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
  * it, rather than once per handful.
  */
 export interface Ready {
-  from: VersionId
+  from: number
   cast: Cast
   /** What the tracks are cut for, and what a job names them by. */
   items: Subject[]
@@ -3240,7 +3302,7 @@ export interface Ready {
   setup: number
 }
 
-export function ready(world: World, from: VersionId): Ready {
+export function ready(world: World, from: number): Ready {
   const began = now();
   const cast = casting(world, from);
   const items = subjects(cast);
@@ -3408,7 +3470,7 @@ function now(): number {
  * the list is dealt out `of` ways. The serial path's slicing, and the bench's. */
 export function* bakeSlice(
   world: World,
-  from: VersionId,
+  from: number,
   index: number,
   of: number,
   tol: number = TOLERANCE,
@@ -3426,7 +3488,7 @@ export function* bakeSlice(
 /** Every slice put back together, in the order `sample` reads them. */
 export function joined(
   world: World,
-  from: VersionId,
+  from: number,
   riders: Map<Id, Rider>,
   slices: readonly Slice[],
 ): Span {
@@ -3453,7 +3515,7 @@ export function joined(
  */
 export function* bakeSpan(
   world: World,
-  from: VersionId,
+  from: number,
   tol: number = TOLERANCE,
 ): Generator<number, Span, void> {
   const slice = yield* bakeSlice(world, from, 0, 1, tol);
@@ -3462,9 +3524,9 @@ export function* bakeSpan(
 }
 
 /** Every span in the chain, one after the other. */
-export function* bakeAll(world: World): Generator<number, Map<VersionId, Span>, void> {
-  const out = new Map<VersionId, Span>();
-  const count = world.versions.length - 1;
+export function* bakeAll(world: World): Generator<number, Map<number, Span>, void> {
+  const out = new Map<number, Span>();
+  const count = world.keyframes.length - 1;
 
   for (let k = 0; k < count; k++) {
     const span = yield* weighted(bakeSpan(world, k), k / count, 1 / count);
@@ -3668,80 +3730,46 @@ export function stretchAt(track: Track, t: number): Stretch | null {
   return all[lo];
 }
 
-/** How an artefact's own layer at the later version is read over a leg. */
-type Own = 'ease' | 'whole' | 'none';
-
 /**
- * The set part way through a walk from one version to another, which is what
- * the editor draws while the versions change under it.
- *
- * `u` runs from 0 to 1 over the whole walk however many versions it crosses, so
- * a jump from v0 to v4 plays the four spans one after another. Going backwards
- * plays them backwards, which is the same stretches read the other way.
- *
- * Null when the span it lands in is not baked, or was baked against a world
- * that has since moved. There is deliberately nothing to fall back on: the
- * point of watching this is to see what the bake says, and quietly resolving
- * the version instead would show something the game will never get.
- */
-/**
- * Every artefact part way through a walk, in the frame the versions put it in.
+ * Every artefact part way through a walk, in the frame the keyframes put it in.
  *
  * Here rather than beside `artefactsAt` because it is `replayed`'s question,
- * and it has to be answered `replayed`'s way: one leg per version crossed, so
- * the walk is over versions rather than over distance and a key does not
- * arrive in a room ahead of the room.
- *
- * The layer is eased, not the place. A leg differs from its neighbour by
- * exactly one version's worth of transforms — its own and every group holding
- * it — so easing those on is what a turning group does to everything else it
- * holds, and interpolating the two ends instead would carry a turning artefact
- * across the chord while the room it is in went round the arc.
- *
- * One that is not there yet, and one on its way out, both still ride. There is
- * nowhere for either to come from or go to, but the groups holding them are
- * moving over this leg like any others, and a key put into a turning room
- * belongs to the room from the start of the turn. This is `carried`'s rule, and
- * it is here as well because the two have to agree across the crossing between
- * the still and the morph.
+ * and it has to be answered `replayed`'s way: one leg per keyframe crossed, so
+ * the walk is over keyframes rather than over distance and a key does not
+ * arrive in a room ahead of the room — and each leg rides exactly what the
+ * span's frame table says it rides. See `carried`.
  */
 export function artefactsDuring(
   world: World,
-  from: VersionId,
-  to: VersionId,
+  from: KeyframeId,
+  to: KeyframeId,
   u: number,
 ): Placed[] {
-  const n = Math.abs(to - from);
+  const a0 = order(world, from), b0 = order(world, to);
+  const n = Math.abs(b0 - a0);
 
   if (n === 0) return artefactsAt(world, to);
 
   const x = Math.min(Math.max(u, 0), 1) * n;
   const i = Math.min(Math.floor(x), n - 1);
-  const step = to > from ? 1 : -1;
+  const step = b0 > a0 ? 1 : -1;
   const rest = x - i;
 
-  const a = from + step * i, b = a + step;
+  const a = a0 + step * i, b = a + step;
 
-  // The later of the two, whose layer is the one being eased on or off. Going
-  // forward it arrives over the leg; going back it leaves over it, which is
-  // the same easing read from the other end.
-  const late = Math.max(a, b);
+  // The earlier of the two is the span; going backwards reads it the other
+  // way, which is the same easing from the other end.
+  const riders = carried(world, Math.min(a, b));
   const t = step > 0 ? rest : 1 - rest;
 
   const out: Placed[] = [];
 
   for (const [id, it] of world.artefacts) {
-    const there = placeAt(world, id, a), then = placeAt(world, id, b);
+    const r = riders.get(id);
 
-    if (there === null && then === null) continue;
+    if (r === undefined) continue;
 
-    // Which ends of the leg it is standing at, which is the whole of what
-    // decides how its own layer is read. The leg's own two versions rather
-    // than its direction: going backwards is the same span read the other way,
-    // and a thing arriving is a thing leaving seen from there.
-    const here = placeAt(world, id, Math.min(a, b)) !== null;
-    const own: Own = there !== null && then !== null ? 'ease' : here ? 'none' : 'whole';
-    const m = easedFrame(world, id, late, t, own);
+    const m = riding(r, t);
 
     out.push({ id, type: it.type, at: place(m, [it.at])[0], facing: facing(m) });
   }
@@ -3749,62 +3777,23 @@ export function artefactsDuring(
   return out.sort((p, q) => p.id - q.id);
 }
 
-/**
- * `groupFrame`, with one version's layers part way on.
- *
- * The groups always ease. What the artefact's *own* layer at `late` does is
- * `own`, and there are three answers rather than two. It eases where the
- * artefact is standing at both ends of the leg, which is the ordinary case. It
- * is applied `whole` for one the leg introduces: there was no earlier place for
- * that transform to be a move away from. And it is skipped entirely for one the
- * leg takes out, because a layer written at a version that does not have the
- * artefact was written before the delete and means nothing — the same reading
- * `resolveAt` gives a dead polygon's.
- */
-function easedFrame(
-  world: World,
-  id: ArtefactId,
-  late: VersionId,
-  t: number,
-  own: Own,
-): Affine {
-  const up = enclosing(world, id);
-  let m = IDENTITY;
-
-  for (const k of chain(world, late)) {
-    const edits = world.versions[k].edits;
-    const lay = (of: Id, how: Own): Transform => {
-      const layer = edits.get(of)?.transform ?? EMPTY_TRANSFORM;
-
-      if (k !== late) return layer;
-
-      return how === 'ease' ? easing(layer, t) : how === 'whole' ? layer : EMPTY_TRANSFORM;
-    };
-
-    m = compose(affine(lay(id, own)), m);
-
-    for (const g of up) m = compose(affine(lay(g, 'ease')), m);
-  }
-
-  return m;
-}
-
 export function replayed(
   bake: Bake,
   world: World,
-  from: VersionId,
-  to: VersionId,
+  from: KeyframeId,
+  to: KeyframeId,
   u: number,
 ): Frame | null {
-  const n = Math.abs(to - from);
+  const a = order(world, from), b = order(world, to);
+  const n = Math.abs(b - a);
   if (n === 0) return null;
 
   const x = Math.min(Math.max(u, 0), 1) * n;
   const i = Math.min(Math.floor(x), n - 1);
   const rest = x - i;
 
-  const forward = to > from;
-  const span = spanAt(bake, world, forward ? from + i : from - 1 - i);
+  const forward = b > a;
+  const span = spanAt(bake, world, forward ? a + i : a - 1 - i);
 
   return span === null ? null : sample(span, forward ? rest : 1 - rest);
 }

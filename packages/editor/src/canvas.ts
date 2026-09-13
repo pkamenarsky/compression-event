@@ -34,13 +34,18 @@ import {
   landing,
   addVertex,
   middle,
-  editAt,
+  order,
   hitEdge,
   hitPolygons,
   hitting,
   hitVertex,
   contributing,
-  starting,
+  appended,
+  painted,
+  moveOf,
+  turnOf,
+  scaleOf,
+  Painted,
   deepen,
   owning,
   under,
@@ -48,7 +53,6 @@ import {
   unstep,
   IDENTITY,
   Placed,
-  affine,
   place,
   placeAt,
   START_ID,
@@ -86,7 +90,6 @@ import {
   resolveAt,
   runs,
   verticesWithinBox,
-  withEdit,
   withinBox,
 } from './scene';
 import {
@@ -102,6 +105,7 @@ import {
   timings,
 } from './paths';
 import { theme } from './theme';
+import { Op as Operation } from './rig';
 import {
   ARTEFACTS,
   ArtefactId,
@@ -113,7 +117,6 @@ import {
   NGON_MAX,
   NGON_MIN,
   EMPTY_SELECTION,
-  EMPTY_TRANSFORM,
   ArtefactType,
   EditorState,
   Id,
@@ -128,9 +131,8 @@ import {
   Figure,
   zoomedAt,
   Tool,
-  Transform,
   Update,
-  VersionId,
+  KeyframeId,
   kindKey,
   VertexId,
   View,
@@ -198,7 +200,7 @@ export function worldCanvas(
   figure: Value<Figure>,
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
-  currentVersion: Value<VersionId>,
+  keyframe: Value<KeyframeId>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
@@ -349,7 +351,7 @@ export function worldCanvas(
       // a room takes what is standing in it as well as the room.
       if (tool() === 'artefact' || tool() === 'polygon') {
         const caught = artefactsWithinBox(
-          artefactsAt(world(), currentVersion()),
+          artefactsAt(world(), keyframe()),
           box.a,
           box.b,
         );
@@ -374,7 +376,7 @@ export function worldCanvas(
 
       // Corners come off what is on screen as itself; polygons come off
       // everything, because a member is how a marquee finds the group over it.
-      const items = resolveAt(world(), currentVersion());
+      const items = resolveAt(world(), keyframe());
 
       // A marquee takes whole groups: half a group picked is a selection that
       // no gesture could act on without taking the group apart. Whole at the
@@ -428,18 +430,18 @@ export function worldCanvas(
      * group out of shape one corner at a time, and the shape is what was picked.
      */
     function* draggingVertices(grabbed: VertexId, ids: readonly VertexId[]): Op<void> {
-      const v = currentVersion();
+      const v = keyframe();
       const was = world();
       const items = resolveAt(was, v);
 
       // Where each of them stood when the drag began. Every move is computed
       // from here rather than from the frame before, so the gesture cannot
       // drift and letting go leaves exactly what is on screen.
-      const held = new Map<VertexId, { id: PolygonId, from: Point }>();
+      const held = new Map<VertexId, { it: Resolved, index: number, from: Point }>();
 
       for (const it of items) {
         it.corners.forEach((corner, i) => {
-          if (ids.includes(corner.id)) held.set(corner.id, { id: it.id, from: it.source[i] });
+          if (ids.includes(corner.id)) held.set(corner.id, { it, index: i, from: it.source[i] });
         });
       }
 
@@ -458,23 +460,10 @@ export function worldCanvas(
           const dx = step.x, dy = step.y;
 
           update(s => {
-            let world = s.world;
+            let world = was;
 
-            for (const [vertex, { id, from }] of held) {
-              const it = resolveAt(world, v).find(r => r.id === id);
-              if (it === undefined) continue;
-
-              const index = it.corners.findIndex(c => c.id === vertex);
-              if (index < 0) continue;
-
-              const edit = placeVertex(
-                it,
-                editAt(world, v, id, it),
-                index,
-                { x: from.x + dx, y: from.y + dy },
-              );
-
-              world = withEdit(world, v, id, edit);
+            for (const { it, index, from } of held.values()) {
+              world = placeVertex(world, v, it, index, { x: from.x + dx, y: from.y + dy });
             }
 
             return { ...s, world };
@@ -498,7 +487,7 @@ export function worldCanvas(
      */
     function* transforming(code: string, mode: Mode): Op<void> {
       const e = input.pointer();
-      const v = currentVersion();
+      const v = keyframe();
       const was = world();
 
       if (e === null) return;
@@ -569,10 +558,15 @@ export function worldCanvas(
       // how far the hand has gone rather than about where it has got to.
       const down = { x: e.clientX, y: e.clientY };
 
-      // The layer as it stood when the key went down. A transform written into
-      // this version replaces whatever it held, so the gesture recomputes from
-      // here rather than composing onto its own last frame.
-      const anchors = starting(world(), v, ids);
+      // Where each of them is painted: its middle as it stands when the key
+      // went down, which every operation this gesture writes is about. The
+      // gesture recomputes from the lists as they were then rather than
+      // composing onto its own last frame.
+      const paints = new Map(
+        [...new Set(ids)]
+          .filter(id => was.polygons.has(id) || was.groups.has(id) || was.artefacts.has(id) || was.paths.has(id))
+          .map(id => [id, painted(was, v, id)]),
+      );
 
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself. Artefacts are in it: a room turning
@@ -599,18 +593,6 @@ export function worldCanvas(
 
       cursor('crosshair');
       setLocal({ ...local(), previewing: true });
-
-      // The frame each of them reads its own transform in. Not one frame for
-      // all: a selection can hold a polygon inside a turned group and another
-      // outside it, and each answers in its own.
-      //
-      // Erosion takes the cursor as it comes. It is a depth rather than a
-      // place — not in the frame at all — and a drag that erodes has to mean
-      // the same thing whichever way a group has been turned, which is exactly
-      // what taking it back through a rotation would stop it doing.
-      const frames = new Map(
-        [...anchors.keys()].map(id => [id, code === 'KeyE' ? IDENTITY : under(was, v, id)]),
-      );
 
       /**
        * Where the cursor is taken to be, which is the whole of how these
@@ -716,10 +698,10 @@ export function worldCanvas(
           const factor = scaling(e);
 
           update(s => {
-            let world = s.world;
+            let world = was;
 
             // Its own point and its own facing, off the same reading of the
-            // drag the transforms get: a move is where the cursor has gone, and
+            // drag the operations get: a move is where the cursor has gone, and
             // a turn about its own point is a turn of the direction alone.
             if (beginning && code === 'KeyT') {
               world = movedStart(world, {
@@ -731,31 +713,13 @@ export function worldCanvas(
               world = turnedStart(world, was.start.facing + about(pivot, from, to));
             }
 
-            for (const [id, edit] of anchors) {
-              const polygon = world.polygons.get(id);
-
-              if (corners.size > 0 && polygon !== undefined) {
-                world = withEdit(
-                  world,
-                  v,
-                  id,
-                  deepen(edit, polygon, corners, to.y - from.y),
-                );
+            for (const [id, p] of paints) {
+              if (corners.size > 0 && world.polygons.has(id)) {
+                world = deepen(world, v, id, corners, to.y - from.y);
                 continue;
               }
 
-              const m = frames.get(id)!;
-
-              world = withEdit(world, v, id, {
-                ...edit,
-                transform: mode(edit.transform, {
-                  pivot: unplace(m, pivot),
-                  from: unplace(m, from),
-                  to: unplace(m, to),
-                  alt: e.altKey,
-                  factor,
-                }),
-              });
+              world = appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
             }
 
             return { ...s, world };
@@ -804,8 +768,8 @@ export function worldCanvas(
           s.world,
           ARTEFACTS[0],
           at(e, true),
-          s.currentVersion,
-          landing(s.world, s.currentVersion, s.inside),
+          s.keyframe,
+          landing(s.world, s.keyframe, s.inside),
         );
 
         return marked(
@@ -844,8 +808,8 @@ export function worldCanvas(
           s.world,
           KINDS[0],
           points,
-          s.currentVersion,
-          landing(s.world, s.currentVersion, s.inside),
+          s.keyframe,
+          landing(s.world, s.keyframe, s.inside),
         );
 
         return marked(
@@ -1172,8 +1136,8 @@ export function worldCanvas(
           ? addPath(
             s.world,
             w.points,
-            s.currentVersion,
-            landing(s.world, s.currentVersion, s.inside),
+            s.keyframe,
+            landing(s.world, s.keyframe, s.inside),
           ).world
           : setPath(s.world, w.id, own(s, w.id, w.points));
 
@@ -1186,13 +1150,13 @@ export function worldCanvas(
     /** The paths as the version on screen leaves them: where they run, which
      * is what every click and every label is about. */
     function laid(): Laid[] {
-      return pathsAt(world(), currentVersion());
+      return pathsAt(world(), keyframe());
     }
 
     /** World points as one path's own frame reads them — see `inFrame`, which
      * is where the two frames a path has are told apart. */
     function own(s: EditorState, id: PathId, points: readonly Point[]): Point[] {
-      return inFrame(s.world, s.currentVersion, id, points);
+      return inFrame(s.world, s.keyframe, id, points);
     }
 
     /** The path point under the cursor, if a click is close enough to be
@@ -1453,7 +1417,7 @@ export function worldCanvas(
         const it = items.find(r => r.id === edge.id);
 
         if (it !== undefined) {
-          const v = currentVersion();
+          const v = keyframe();
 
           setLocal({ ...local(), onPath: null });
 
@@ -1651,7 +1615,7 @@ export function worldCanvas(
       // Not `standingIn`: command means "past the group for one click", and
       // going into one is the opposite of that. A double-click is asking for
       // the group whatever else is held down.
-      const under = hitting(w, currentVersion(), resolveAt(w, currentVersion()), path, at(e));
+      const under = hitting(w, keyframe(), resolveAt(w, keyframe()), path, at(e));
 
       const into = under.find(id => w.groups.has(id));
 
@@ -1727,7 +1691,7 @@ export function worldCanvas(
       const w = world();
       const path = opened(w, inside());
 
-      return resolveAt(w, currentVersion())
+      return resolveAt(w, keyframe())
         .filter(it => !swallowed(w, it.id, path) && reachable(w, it.id, inside()));
     }
 
@@ -1735,7 +1699,7 @@ export function worldCanvas(
      * call the drawing makes — see `handles`. */
     function grabs(): Handle[] {
       const w = world();
-      const v = currentVersion();
+      const v = keyframe();
 
       return handles(
         w,
@@ -1756,7 +1720,7 @@ export function worldCanvas(
      * the one outline it is drawn as.
      */
     function standingIn(w: World, e: MouseEvent, p: Point): Id[] {
-      const v = currentVersion();
+      const v = keyframe();
       const items = resolveAt(w, v);
 
       if (e.metaKey || e.ctrlKey) {
@@ -1790,7 +1754,7 @@ export function worldCanvas(
      * about is the one on screen.
      */
     function* draggingSelection(from: PointerEvent): Op<void> {
-      const v = currentVersion();
+      const v = keyframe();
       const was = world();
       const ids = [...selection().polygons, ...selection().artefacts, ...selection().paths];
       const grabbed = at(from);
@@ -1800,11 +1764,13 @@ export function worldCanvas(
       // into. Alone, because it is picked alone.
       const beginning = selection().start;
 
-      const anchors = starting(was, v, ids);
+      const paints = new Map(
+        [...new Set(ids)]
+          .filter(id => was.polygons.has(id) || was.groups.has(id) || was.artefacts.has(id) || was.paths.has(id))
+          .map(id => [id, painted(was, v, id)]),
+      );
 
-      if (anchors.size === 0 && !beginning) return;
-
-      const frames = new Map([...anchors.keys()].map(id => [id, under(was, v, id)]));
+      if (paints.size === 0 && !beginning) return;
 
       cursor('move');
       setLocal({ ...local(), previewing: true });
@@ -1821,7 +1787,7 @@ export function worldCanvas(
           const dy = step === 0 ? raw.y : toStep(raw.y, step);
 
           update(st => {
-            let world = st.world;
+            let world = was;
 
             if (beginning) {
               world = movedStart(world, {
@@ -1830,24 +1796,11 @@ export function worldCanvas(
               });
             }
 
-            for (const [id, edit] of anchors) {
-              // The step as this one's own frame reads it. Snapped in world
-              // units, because the grid is on screen and that is where the
-              // hand is aiming — then taken back, so a group turned a quarter
-              // turn does not send its contents sideways.
-              const step = unstep(frames.get(id)!, dx, dy);
-
-              world = withEdit(world, v, id, {
-                ...edit,
-                transform: {
-                  ...edit.transform,
-                  translation: {
-                    x: edit.transform.translation.x + step.x,
-                    y: edit.transform.translation.y + step.y,
-                  },
-                },
-              });
-            }
+            // The step as each one's holder reads it. Snapped in world units,
+            // because the grid is on screen and that is where the hand is
+            // aiming — then taken back, so a group turned a quarter turn does
+            // not send its contents sideways.
+            for (const [id, p] of paints) world = appended(world, v, id, moveOf(p, { x: dx, y: dy }));
 
             return { ...st, world };
           });
@@ -1896,7 +1849,7 @@ export function worldCanvas(
      */
     function grabbing(e: PointerEvent, all = false): ArtefactId | null {
       const path = opened(world(), inside());
-      const shown = shownAt(world(), currentVersion())
+      const shown = shownAt(world(), keyframe())
         .filter(it => it.id === START_ID || all || !swallowed(world(), it.id, path));
 
       return hitArtefact(shown, at(e), HANDLE / view().zoom);
@@ -1918,7 +1871,7 @@ export function worldCanvas(
           return marked(
             {
               ...s,
-              world: removeAt(s.world, s.currentVersion, s.selection.artefacts),
+              world: removeAt(s.world, s.keyframe, s.selection.artefacts),
               selection: { ...s.selection, artefacts: [] },
             },
             s.world,
@@ -1929,7 +1882,7 @@ export function worldCanvas(
           return marked(
             {
               ...s,
-              world: removeVertices(s.world, s.currentVersion, s.selection.vertices),
+              world: removeVertices(s.world, s.keyframe, s.selection.vertices),
               selection: { ...s.selection, vertices: [] },
             },
             s.world,
@@ -1944,7 +1897,7 @@ export function worldCanvas(
 
         if (picked.length === 0) return s;
 
-        const world = removeAt(s.world, s.currentVersion, picked);
+        const world = removeAt(s.world, s.keyframe, picked);
 
         return world === s.world ? s : marked(
           {
@@ -1989,7 +1942,7 @@ export function worldCanvas(
               tool(),
               selection(),
               inside(),
-              currentVersion(),
+              keyframe(),
               replay(),
               bake(),
               local(),
@@ -2377,12 +2330,12 @@ const EMPTY_LOCAL: Local = {
 // The modal transforms
 // -----------------------------------------------------------------------------
 
-/** `was` is the transform as it stood when the key went down, so that every
- * move recomputes from there rather than from the last frame. */
-type Mode = (was: Transform, drag: Aimed) => Transform;
+/** What a gesture writes for one thing, painted where it was when the key went
+ * down: every move recomputes from there rather than from the last frame. */
+type Mode = (p: Painted, drag: Aimed) => Operation;
 
-/** The gesture as the transforms read it, in the frame of whatever is being
- * transformed. */
+/** The gesture as the operations read it, in world units. Each thing takes it
+ * into the frame it is held in itself — see `moveOf`. */
 interface Aimed {
   pivot: Point
   /** Where the cursor was when the key went down, and where it is taken to be
@@ -2404,60 +2357,6 @@ const DOUBLING = 150;
 
 /** What a scale's factor lands on. */
 const STEP = 1 / 8;
-
-/**
- * The same transform, turned by `angle` about `pivot`.
- *
- * A rotation composes on the outside — turn the polygon, then carry its
- * translation round the pivot — and the family is closed under that, since a
- * rotation of a rotation is a rotation and the leftover is a translation.
- * Because a transform is about the world origin this is just the composition
- * written out, and one pivot serves the whole selection.
- */
-function turned(t: Transform, pivot: Point, angle: number): Transform {
-  const c = Math.cos(angle), s = Math.sin(angle);
-  const dx = t.translation.x - pivot.x, dy = t.translation.y - pivot.y;
-
-  return {
-    ...t,
-    rotation: t.rotation + angle,
-    translation: {
-      x: pivot.x + dx * c - dy * s,
-      y: pivot.y + dx * s + dy * c,
-    },
-  };
-}
-
-/**
- * The same transform, scaled per axis with `pivot` held still.
- *
- * A squash has to go *inside* the rotation. Composed on the outside it would be
- * a shear the moment the polygon is turned — rotate, squash, rotate again is
- * not a rotation and a scale — and this family cannot say a shear, deliberately:
- * the components stay separate so that the morph can interpolate rotation
- * angularly rather than slewing a matrix through a shear on the way.
- *
- * So the factor multiplies the transform's own per-axis scale, which squashes
- * along the polygon's own axes, and the translation takes up whatever that did
- * to the pivot. Written out, `T' = pivot - R·F·R⁻¹·(pivot - T)`, which stays in
- * the family because a translation is free.
- */
-function squashed(t: Transform, pivot: Point, fx: number, fy: number): Transform {
-  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
-  const dx = pivot.x - t.translation.x, dy = pivot.y - t.translation.y;
-
-  const ux = (dx * c + dy * s) * fx;
-  const uy = (-dx * s + dy * c) * fy;
-
-  return {
-    ...t,
-    scale: { x: t.scale.x * fx, y: t.scale.y * fy },
-    translation: {
-      x: pivot.x - (ux * c - uy * s),
-      y: pivot.y - (ux * s + uy * c),
-    },
-  };
-}
 
 /** How far the cursor is from the pivot now against where it started, as a
  * factor. Nothing is scaled by a gesture that started on the pivot, and a zero
@@ -2496,31 +2395,25 @@ const TURN = Math.PI / 36;
 const EIGHTH = Math.PI / 4;
 
 const TRANSFORMS: Record<string, Mode> = {
-  KeyT: (t, { from, to }) => ({
-    ...t,
-    translation: {
-      x: t.translation.x + to.x - from.x,
-      y: t.translation.y + to.y - from.y,
-    },
-  }),
+  KeyT: (p, { from, to }) => moveOf(p, { x: to.x - from.x, y: to.y - from.y }),
 
-  KeyR: (t, { pivot, from, to }) => turned(t, pivot, about(pivot, from, to)),
+  KeyR: (p, { pivot, from, to }) => turnOf(p, pivot, about(pivot, from, to)),
 
   /** Both axes, each from its own share of the drag — one factor for both
    * where Alt has already made them one. Where the factors come from is
-   * `scaling`, which is where the whole of the feel of this lives. */
-  KeyS: (t, { pivot, factor }) => squashed(t, pivot, factor.x, factor.y),
+   * `scaling`, which is where the whole of the feel of this lives. Along the
+   * thing's own axes, whichever way it is turned: see `scaleOf`. */
+  KeyS: (p, { pivot, factor }) => scaleOf(p, pivot, factor),
 
   // One axis and nothing else, whatever the drag does on the other. `s` reads
   // both, so these are how one of them is said on its own without having to
   // hold the hand still.
-  KeyX: (t, { pivot, factor }) => squashed(t, pivot, factor.x, 1),
-  KeyY: (t, { pivot, factor }) => squashed(t, pivot, 1, factor.y),
+  KeyX: (p, { pivot, factor }) => scaleOf(p, pivot, { x: factor.x, y: 1 }),
+  KeyY: (p, { pivot, factor }) => scaleOf(p, pivot, { x: 1, y: factor.y }),
 
-  KeyE: (t, { from, to }) => ({
-    ...t,
-    erosion: t.erosion + to.y - from.y,
-  }),
+  // A depth is not in any frame, and a drag that erodes has to mean the same
+  // thing whichever way a group has been turned.
+  KeyE: (_p, { from, to }) => ({ kind: 'erode', by: to.y - from.y }),
 };
 
 // -----------------------------------------------------------------------------
@@ -2703,7 +2596,7 @@ function layers(
   tool: Tool,
   selection: Selection,
   inside: GroupId | null,
-  current: VersionId,
+  current: KeyframeId,
   local: Local,
   items: Resolved[],
   outline: Point[][],
@@ -2727,7 +2620,7 @@ function layers(
 
   for (const k of ghostVersions(world, current, local.previewing)) {
     const shown = resolveAt(world, k);
-    const stroke = ghostColour(k - current);
+    const stroke = ghostColour(order(world, k) - order(world, current));
 
     out.push(ctx => ghosts(ctx, view, world, k, shown, stroke));
   }
@@ -2861,16 +2754,12 @@ function layers(
  * while a gesture runs, everything downstream fades in whatever they say, since
  * that is the whole point of editing an early version and watching a late one.
  */
-function ghostVersions(world: World, current: VersionId, previewing: boolean): VersionId[] {
-  const out: VersionId[] = [];
+function ghostVersions(world: World, current: KeyframeId, previewing: boolean): KeyframeId[] {
+  const at = order(world, current);
 
-  for (let k = 0; k < world.versions.length; k++) {
-    if (k !== current && (world.versions[k].visible || (previewing && k > current))) {
-      out.push(k);
-    }
-  }
-
-  return out;
+  return world.keyframes
+    .filter((k, i) => i !== at && (k.visible || (previewing && i > at)))
+    .map(k => k.id);
 }
 
 /** Outline only, no fill, and hue ramps along with alpha: past about three
@@ -2901,7 +2790,7 @@ function ghosts(
   ctx: CanvasRenderingContext2D,
   view: View,
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: Resolved[],
   stroke: string,
 ): void {
@@ -3151,7 +3040,7 @@ interface Moved {
  */
 function moved(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   items: readonly Resolved[],
   path: readonly GroupId[],
   shut: readonly Occupied[],

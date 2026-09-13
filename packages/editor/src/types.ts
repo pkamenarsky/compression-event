@@ -20,9 +20,10 @@ import {
   slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
-import type { Affine } from './scene';
+import type { Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
+export type { Keyframe, KeyframeId };
 export { FLOOR, KINDS, SETS, SLOTS, SLOT_KINDS, SOLID, inside, inverted, kindKey, sameKind, slotOf };
 
 /** The kinds, in the order the number keys pick them. */
@@ -222,36 +223,16 @@ export function resized(view: View, width: number, height: number, dpr: number):
 // The store
 // -----------------------------------------------------------------------------
 
-export interface Transform {
-  translation: Point
-  rotation: number
-  /**
-   * Per axis. Identity is 1, and a zero axis is refused: it is not invertible
-   * and there is no geometry on the far side of it worth having.
-   *
-   * Nothing accumulates a transform — each version applies its own to what the
-   * one before it produced — so nothing has to commute with eroding, which is
-   * the whole reason this was uniform before.
-   */
-  scale: { x: number, y: number }
-  /** How far each edge has moved inward in the projection. */
-  erosion: number
-}
-
-export const EMPTY_TRANSFORM: Transform = {
-  translation: { x: 0, y: 0 },
-  rotation: 0,
-  scale: { x: 1, y: 1 },
-  erosion: 0,
-};
-
 // -----------------------------------------------------------------------------
 // Identities
 //
 // All of them come from one counter on `World`, so an id is unique across the
-// document and can never be confused for another kind. Everything a version's
-// layer names, it names by id: an edit keyed by array index re-points at the
-// wrong thing the moment something upstream is inserted.
+// document and can never be confused for another kind. Everything a timeline
+// names, it names by id: an entry keyed by array index re-points at the wrong
+// thing the moment something upstream is inserted.
+//
+// Keyframes are the exception, and count on their own: they are not things in
+// the world, and nothing holds or transforms one.
 // -----------------------------------------------------------------------------
 
 export type PolygonId = number;
@@ -260,21 +241,20 @@ export type GroupId = number;
 export type VertexId = number;
 export type ArtefactId = number;
 
-/** Whatever a version's layer can carry a transform for. One counter, so no
- * two ever collide and a map over all of them is well defined. */
+/** Whatever can have a timeline. One counter, so no two ever collide and a
+ * map over all of them is well defined. */
 export type Id = PolygonId | GroupId | ArtefactId | PathId;
-export type VersionId = number;
 
 /**
  * A corner, where it was put when it was drawn, and the stretch of the chain
  * over which it is one of the polygon's.
  *
- * Corners come and go the way polygons do, and for the same reason: a version
- * is a layer over the versions before it, and nothing a layer does may reach
- * back past itself. Adding a corner at v3 and having it appear at v0 is exactly
- * the backward propagation the whole design is built to refuse.
+ * Corners come and go the way polygons do, and for the same reason: what is
+ * written at a keyframe plays from there on, and nothing written there may
+ * reach back past it. Adding a corner at v3 and having it appear at v0 is
+ * exactly the backward propagation the whole design is built to refuse.
  *
- * `death` is where it stops, not the last version that has it, so the two read
+ * `death` is where it stops, not the last keyframe that has it, so the two read
  * the same way round: alive from `birth`, gone from `death`.
  */
 export interface Vertex {
@@ -297,10 +277,10 @@ export interface Vertex {
    * that is the only way one arrives.
    */
   ring: number
-  /** The version whose layer put it there. */
-  birth: VersionId
-  /** The version whose layer took it out, or nothing while it still stands. */
-  death: VersionId | null
+  /** The keyframe that put it there. */
+  birth: KeyframeId
+  /** The keyframe that took it out, or nothing while it still stands. */
+  death: KeyframeId | null
 }
 
 /**
@@ -328,9 +308,8 @@ export function ringsOf(corners: readonly Vertex[]): number[] {
 
 /**
  * The points as they were laid down, and nothing else. What has happened to
- * them since belongs to the versions, one layer at a time — a polygon carries
- * no transform of its own, because there is no version at which it would be the
- * right one.
+ * them since is its timeline — see `rig.ts` — and where it is at a keyframe is
+ * its rest geometry through the frame that timeline plays to there.
  *
  * `points` is ordered, because winding matters. Two vertices resolving to the
  * same position are still distinct ids; coincidence is emergent, never
@@ -350,11 +329,11 @@ export function ringsOf(corners: readonly Vertex[]): number[] {
  * `ringsOf` for how it is read back.
  */
 export type Polygon = PolygonKind & {
-  /** The version whose layer introduced it. Nothing before it may name it. */
-  birth: VersionId
+  /** The keyframe that introduced it. Nothing before it may name it. */
+  birth: KeyframeId
   /** The version whose layer took it out, or nothing while it stands. Exactly
    * a corner's `death`, one level up: see `standing`. */
-  death: VersionId | null
+  death: KeyframeId | null
   points: Vertex[]
 }
 
@@ -362,137 +341,6 @@ export type Polygon = PolygonKind & {
  * geometry it belongs to. A polygon *is* a kind — this only narrows it. */
 export function kindOf(p: PolygonKind): PolygonKind {
   return p.type === 'void' ? { type: 'void', from: p.from } : { type: p.type };
-}
-
-/**
- * What one version does to one polygon.
- *
- * `vertices` holds displacements against the geometry the base resolved to, in
- * the frame before this version's transform, so an edit turns with its polygon
- * when an upstream version moves it. They land on the source ring, always:
- * erosion is a projection taken afterwards and what it projects to has no
- * handles to drag.
- */
-export interface Edit {
-  transform: Transform
-  vertices: Map<VertexId, Point>
-  /**
-   * Extra depth for single corners, added to `transform.erosion`, in the same
-   * units and with the same sign. Absent from the map is nought — an offset
-   * that agrees with the one the whole polygon is under.
-   *
-   * By corner rather than by edge, which is what makes it a thing a layer can
-   * hold at all: a corner has an id and keeps it while corners are inserted
-   * either side of it, and an edge has neither. It is also what the offset
-   * itself wants — the two moved lines meeting at a corner both carry that
-   * corner's depth, so a number per corner names the mitre and a number per
-   * edge would leave it to be argued about.
-   *
-   * Restated rather than accumulated, the way `transform.erosion` is: a
-   * version that writes an edit at all writes the depths it means to be under,
-   * and `editAt` seeds them from what the base resolved to so that a nudge
-   * does not throw them away.
-   */
-  depths: Map<VertexId, number>
-}
-
-/**
- * What a thing stands on where it no longer stands on its base.
- *
- * Everything else here is inherited: a version hands its geometry to the next
- * one, and an edit at v0 is seen at v8 without being replayed. That is the
- * whole design, and it is the whole problem once a room downstream is finished
- * — going back to fix the shape of v0 moves the finished room too, and there
- * is no way to say *this one is done*.
- *
- * A footing is that way of saying it. It is written into the layer of the
- * version it takes effect at, and it says: for this thing, at this version,
- * ignore what the base handed over and use these numbers instead. Everything
- * from here on is unchanged — this version's own layer applies to it, and so do
- * all the versions after, so the room still moves when moved and still erodes
- * when eroded. It has stopped hearing from upstream, and nothing else.
- *
- * The numbers are exactly the state `resolveAt` carries down the chain, frozen
- * at the moment of unchaining: what the base resolved to. Written down rather
- * than derived, which is the one place in this file that is true — and it has
- * to be, because *not being derivable from upstream any more* is the entire
- * content of the thing.
- *
- * Inverting the upstream transforms into this version's layer would look the
- * same on screen the day it was done and would not be this. An inverse cancels
- * the transform it was taken against, so the moment that transform is edited it
- * stops cancelling and the change comes through — which is precisely what was
- * being asked to stop. Nor could an inverse say anything about a corner an
- * upstream layer nudges, deletes, or adds. So the state is copied, not undone.
- *
- * Rechaining is deleting it. The thing goes back to being derived, and jumps to
- * wherever the chain says it is now — which is the honest answer, and the
- * reason unchaining does not have to be a door that locks behind you. See
- * `unchained` and `rechained` in `scene.ts`.
- */
-export interface Footing {
-  /**
-   * The composed frame the base handed over: every transform down the chain up
-   * to but not including this version's own layer, group transforms and all.
-   *
-   * A matrix rather than a `Transform`, because that is what is being frozen —
-   * the product, which need not be a rotate-scale-move and generally is not.
-   * See *The composed frame* in `scene.ts`.
-   */
-  frame: Affine
-  /**
-   * Where each corner stood in the polygon's own frame, by id — and, by which
-   * ids are in it, *which* corners there are.
-   *
-   * Both at once deliberately. Which corners are standing is otherwise a
-   * question about the chain, and a chain that is no longer being listened to
-   * cannot answer it: an upstream layer that deletes a corner after the
-   * unchaining must not take it away here, and one that adds a corner must not
-   * put it in. So the keys are the ring, and births and deaths written from
-   * this version on are what still move it.
-   *
-   * Empty for a group and an artefact, which have no ring — a group's members
-   * have rings of their own and are unchained with it.
-   */
-  local: Map<VertexId, Point>
-  /** The depth the base was under. */
-  erosion: number
-  /** The extra depth on single corners the base was under, by id. */
-  depths: Map<VertexId, number>
-}
-
-/**
- * A version is a layer, not a copy. It stores what changed against its base and
- * resolves against it on demand, so an edit to an early version is seen by
- * every later one without being replayed by hand into any of them.
- *
- * `base` is a field rather than an assumption that it is `N - 1`, which is what
- * would make forks free. There are none yet.
- *
- * A new version has no edits at all, so it renders identically to its base
- * until touched. There is nothing to diff and nothing to reconcile.
- */
-export interface Version {
-  name: string
-  base: VersionId | null
-  /** Whether it draws as a ghost while another version is the one on screen. */
-  visible: boolean
-  /**
-   * Keyed by anything a transform can be written for: a polygon, or a group.
-   * A group's edit uses the transform and leaves `vertices` empty — there is
-   * no ring under it to displace, only members with rings of their own.
-   */
-  edits: Map<Id, Edit>
-  /**
-   * What this version's layer refuses to inherit, keyed the same way `edits`
-   * is: a polygon, a group or an artefact that has been unchained here stands
-   * on the numbers in its footing instead of on what its base resolved to.
-   *
-   * Nearly always empty, and read alongside `edits` at every step of the walk —
-   * a footing is applied where a birth would be, and then this version's own
-   * edit applies on top of it exactly as it would have. See `Footing`.
-   */
-  footings: Map<Id, Footing>
 }
 
 /**
@@ -508,8 +356,8 @@ export interface Version {
  * one question in this world, asked at four sizes.
  */
 export function standing(
-  it: { birth: VersionId, death: VersionId | null },
-  from: ReadonlySet<VersionId>,
+  it: { birth: KeyframeId, death: KeyframeId | null },
+  from: ReadonlySet<KeyframeId>,
 ): boolean {
   return from.has(it.birth) && (it.death === null || !from.has(it.death));
 }
@@ -532,8 +380,8 @@ export function standing(
  * `docs/versioning.md`.
  */
 export interface Group {
-  /** The version whose layer introduced it. Nothing before it may name it. */
-  birth: VersionId
+  /** The keyframe that introduced it. Nothing before it may name it. */
+  birth: KeyframeId
   /**
    * The version whose layer took it out, or nothing while it stands.
    *
@@ -544,7 +392,7 @@ export interface Group {
    * at every version that still has it, which is the whole reason death is a
    * version rather than a deletion from the map.
    */
-  death: VersionId | null
+  death: KeyframeId | null
   members: Id[]
   /**
    * Whether the group is a set of its own, or only a handle.
@@ -565,9 +413,9 @@ export interface Group {
    * of the difference, and it is a thing an author asks for rather than a thing
    * that happens to them.
    *
-   * Eroding a group seals it. A depth is an offset of a union and there is no
-   * union until the members are resolved into one, so the two cannot come
-   * apart: see `withEdit`.
+   * Eroding a loose group is refused. A depth is an offset of a union and
+   * there is no union until the members are resolved into one, so there is
+   * nothing for the depth to move.
    */
   sealed: boolean
 }
@@ -575,28 +423,26 @@ export interface Group {
 /**
  * A place in the world with a kind: where it was put, and nothing else.
  *
- * What has happened to it since belongs to the versions, exactly as it does for
- * a polygon — an artefact carries no transform of its own, because there is no
- * version at which it would be the right one. So `at` is the point as it was
- * dropped, in the artefact's own frame, and where it *is* at a version is that
- * point taken through every transform down the chain.
+ * What has happened to it since is its timeline, exactly as it is for a polygon.
+ * So `at` is the point as it was dropped, in the artefact's own frame, and where
+ * it *is* at a keyframe is that point taken through the frame its timeline and
+ * every group holding it play to there.
  *
- * The same layer a polygon gets, which is the whole of the design: a version's
- * transform is what that version does, so a move written at v1 is carried by
- * every version after it rather than overruled by them, an artefact inside a
- * group goes where the group goes, and a turn about a pivot is a turn about a
- * pivot however many of them one version writes in a row.
+ * The same timeline a polygon gets, which is the whole of the design: a move
+ * written at v1 is carried by every keyframe after it rather than overruled by
+ * them, an artefact inside a group goes where the group goes, and a turn about
+ * a pivot is a turn about a pivot however many of them one keyframe holds.
  *
- * Erosion is the one part of a transform that means nothing here. A point has
- * no thickness to take a depth out of, and the gestures leave it alone.
+ * Erosion is the one operation that means nothing here. A point has no
+ * thickness to take a depth out of, and the gestures leave it alone.
  */
 export interface Artefact {
   type: ArtefactType
-  /** The version whose layer introduced it. Nothing before it may name it. */
-  birth: VersionId
-  /** The version whose layer took it out, or nothing while it stands. */
-  death: VersionId | null
-  /** In its own frame, before any version's transform. */
+  /** The keyframe that introduced it. Nothing before it may name it. */
+  birth: KeyframeId
+  /** The keyframe that took it out, or nothing while it stands. */
+  death: KeyframeId | null
+  /** In its own frame, before anything its timeline does. */
   at: Point
 }
 
@@ -625,38 +471,37 @@ export interface Start {
 /**
  * A walk somebody might take through the level, and nothing more.
  *
- * A measuring tape rather than a part of the world: it is not shipped, nothing
- * collides with it, and no version transforms it. What it is for is the one
- * question the geometry cannot answer by being looked at — how long the walk
- * from here to there takes — and the answer is the run of the points times the
- * speed the player walks at. See `seconds`.
+ * A measuring tape rather than a part of the world: it is not shipped and
+ * nothing collides with it. What it is for is the one question the geometry
+ * cannot answer by being looked at — how long the walk from here to there
+ * takes — and the answer is the run of the points times the speed the player
+ * walks at. See `seconds`.
  *
- * The route is version-independent and the frame it is read in is not, which
- * is the one split that lets a tape be both. `points` is the walk as it was
- * laid down, in the path's own frame, and every version reads the same list —
- * so a leg added at v3 is a leg at v0 too, and comparing the same route
- * against two versions goes on being what a path is drawn for. What a version
- * may say about it is where it *is*: its layer carries a transform for the
- * path exactly as it does for a polygon, and so do the layers of every group
- * holding it. A room moved at v2 takes the tape measuring it along.
+ * The route is the same at every keyframe and the frame it is read in is not,
+ * which is the one split that lets a tape be both. `points` is the walk as it
+ * was laid down, in the path's own frame, and every keyframe reads the same
+ * list — so a leg added at v3 is a leg at v0 too, and comparing the same route
+ * against two keyframes goes on being what a path is drawn for. What a
+ * keyframe may say about it is where it *is*: it has a timeline exactly as a
+ * polygon does, and so does every group holding it. A room moved at v2 takes
+ * the tape measuring it along.
  *
  * That is also why it has a life. It has to be a thing a group can hold — the
  * whole point of holding one is that the walk goes where the level goes — and
- * a member is something born into a version and taken out at one, the same way
- * everything else in the world is. A path drawn at v0 stands at every version,
- * which is what every path in every file written before this did.
+ * a member is something born into a keyframe and taken out at one, the same
+ * way everything else in the world is.
  *
- * There is no ring under it and no depth on it. `Edit.vertices` and
- * `Edit.depths` are empty for a path the way they are for a group, and the
- * erosion gesture leaves it alone the way it leaves an artefact alone: a walk
- * has no thickness to take a depth out of.
+ * There is no ring under it and no depth on it. Its timeline nudges no corner
+ * and deepens none, the way a group's does not, and the erosion gesture leaves
+ * it alone the way it leaves an artefact alone: a walk has no thickness to
+ * take a depth out of.
  */
 export interface Path {
-  /** The version whose layer introduced it. Nothing before it may name it. */
-  birth: VersionId
-  /** The version whose layer took it out, or nothing while it stands. */
-  death: VersionId | null
-  /** In its own frame, before any version's transform. */
+  /** The keyframe that introduced it. Nothing before it may name it. */
+  birth: KeyframeId
+  /** The keyframe that took it out, or nothing while it stands. */
+  death: KeyframeId | null
+  /** In its own frame, before anything its timeline does. */
   points: Point[]
 }
 
@@ -664,14 +509,22 @@ export interface World {
   polygons: Map<PolygonId, Polygon>
   groups: Map<GroupId, Group>
   artefacts: Map<ArtefactId, Artefact>
-  /** Where the player comes in. Always there, at every version. See `Start`. */
+  /** Where the player comes in. Always there, at every keyframe. See
+   * `Start`. */
   start: Start
   /** The measuring paths. Not shipped and not collided with, but in the
-   * versions and in the groups like everything else — see `Path`. */
+   * timelines and in the groups like everything else — see `Path`. */
   paths: Map<PathId, Path>
   /** One counter for every kind of id. */
   nextId: number
-  versions: Version[]
+  /** In order: the order is the array. */
+  keyframes: Keyframe[]
+  /**
+   * What happens to each thing, keyframe by keyframe. Absent is nothing: a
+   * thing nobody has written anything about stands at rest, wherever it was
+   * put. See `rig.ts`.
+   */
+  rigs: Map<Id, Rig>
 }
 
 /** Long enough to author a shrink sequence against, short enough to fit down
@@ -686,14 +539,12 @@ export function emptyWorld(): World {
     start: { at: { x: 0, y: 0 }, facing: 0 },
     paths: new Map(),
     nextId: 0,
-
-    versions: Array.from({ length: VERSIONS }, (_unused, i) => ({
+    keyframes: Array.from({ length: VERSIONS }, (_unused, i) => ({
+      id: i,
       name: `v${i}`,
-      base: i === 0 ? null : i - 1,
       visible: true,
-      edits: new Map(),
-      footings: new Map(),
     })),
+    rigs: new Map(),
   };
 }
 
@@ -846,56 +697,63 @@ export function togglePicked(some: readonly number[], id: number): number[] {
 }
 
 /**
- * Something lifted out of the world, ready to be put back — from the version it
- * was taken at onward, and nothing before that.
+ * Something lifted out of the world, ready to be put back — from the keyframe
+ * it was taken at onward, and nothing before that.
  *
- * The copy version becomes the geometry: rings in world units as they stood
- * there, which is why a clipping has no ids worth keeping and no transform for
- * where it came from. Everything after it is a layer keyed by **how far past
- * the copy** it was, so pasting somewhere else replays the same sequence from
- * there: v1 into v3, v2 into v4, and on. The offsets always start at 0, and the
- * layer at 0 carries the depth, which is the one thing a ring cannot hold.
+ * The copy keyframe becomes where it starts: its state there, as a frame and a
+ * depth, over the geometry it had there. Everything after it is keyed by **how
+ * far past the copy** it was, so pasting somewhere else replays the same
+ * sequence from there: v1 into v3, v2 into v4, and on.
  *
- * A vertex is named by id in the ring and again in every layer that displaces
- * it, and those two have to keep agreeing. Paste remints them together.
+ * The geometry is its own rest geometry, with every nudge up to the copy put
+ * into it, and the frame is what places it. So an operation written after the
+ * copy still acts about the painted point it was written about, and a scale
+ * along the thing's own axes is along the same axes.
+ *
+ * `start` is its own frame at the copy keyframe, in the frame of whatever held
+ * it — except for the outermost things copied, whose holders do not come with
+ * them, where it is in world units. Paste reads it back in the frame it lands
+ * in.
  *
  * `birth` and `death` on a corner are offsets too, so a corner the original
- * grows at v3 the copy grows three versions after it lands. `death` on the
+ * grows at v3 the copy grows three keyframes after it lands. `death` on the
  * clipping itself is one as well, and is nothing for a thing the original never
- * removes: what is copied is a life, and one that ends two versions on ends two
- * versions after the paste. Only `death` — a clipping is taken at the version
- * it was copied from and is born where it lands, so its birth is always 0.
+ * removes: what is copied is a life, and one that ends two keyframes on ends
+ * two keyframes after the paste.
  */
+export interface Timed {
+  death?: number
+  start: Frame
+  erosion: number
+  /** Each keyframe's list after the copy, by offset. Its skips are offsets
+   * too. */
+  keys: [number, TimedEntry[]][]
+}
+
+/** An entry whose skips are offsets rather than keyframes. */
+export type TimedEntry = Omit<Entry, 'skip'> & { skip: number[] }
+
 export type Clipping =
   | ({
       kind: 'polygon'
       points: Vertex[]
-      death?: number
-      edits: [number, Edit][]
-    } & PolygonKind)
-  | {
+      /** The extra depth on single corners at the copy keyframe. */
+      depths: [VertexId, number][]
+      /** Nudges and depths on single corners after it, by offset. */
+      nudges: [VertexId, [number, Entry<Move>][]][]
+      deep: [VertexId, [number, Entry<Erode>][]][]
+    } & PolygonKind & Timed)
+  | ({
       kind: 'group'
       members: Clipping[]
-      death?: number
-      edits: [number, Edit][]
       /** Whether it is a set of its own. See `Group.sealed`. */
       sealed: boolean
-    }
-  /** An artefact, the same way round as a polygon: where it stood at the copy
-   * version in world units, and every layer after it keyed by how far past the
-   * copy it was. */
-  | {
-      kind: 'artefact'
-      type: ArtefactType
-      at: Point
-      death?: number
-      edits: [number, Edit][]
-    }
-  /** A path, the same way round again: the walk as it stood at the copy
-   * version in world units, and a layer per version after it. There are no
-   * corner ids in it because a path's points have none — the route is one
-   * list and no layer displaces part of it. */
-  | { kind: 'path', points: Point[], death?: number, edits: [number, Edit][] }
+    } & Timed)
+  /** An artefact: its own point, and its frame. */
+  | ({ kind: 'artefact', type: ArtefactType, at: Point } & Timed)
+  /** A path: its own walk, and its frame. There are no corner ids in it,
+   * because a path's points have none. */
+  | ({ kind: 'path', points: Point[] } & Timed)
 
 // -----------------------------------------------------------------------------
 // Undo
@@ -1003,8 +861,8 @@ function settled(s: EditorState): EditorState {
  * `t` into the shader. One clock, so they cannot drift apart.
  */
 export interface Replay {
-  from: VersionId
-  to: VersionId
+  from: KeyframeId
+  to: KeyframeId
   /** 0 to 1 over the whole walk, however many versions it crosses, on the
    * curve the walls move by. */
   at: number
@@ -1032,7 +890,7 @@ export interface EditorState {
   world: World
   /** The version being edited. Every edit lands in this one and flows forward
    * from it; there is no way to author one that lands earlier. */
-  currentVersion: VersionId
+  keyframe: KeyframeId
   /** What the next transform applies to. */
   selection: Selection
   /**
@@ -1119,7 +977,7 @@ export type Update = (fn: (s: EditorState) => EditorState) => void;
 export function initialState(world: World): EditorState {
   return {
     world,
-    currentVersion: 0,
+    keyframe: 0,
     selection: EMPTY_SELECTION,
     inside: null,
     status: null,

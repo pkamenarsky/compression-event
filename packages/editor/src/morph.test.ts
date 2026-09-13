@@ -17,8 +17,10 @@ import { looped, morph, still } from '@ce/game';
 import { WallOptions } from '@ce/game';
 import { bakeSpan } from './bake';
 import { bakedSpan, floorsAt } from './export';
-import { TOP, addPolygon, editAt, resolveAt, withEdit } from './scene';
-import { FLOOR, PolygonId, PolygonKind, VersionId, World, emptyWorld } from './types';
+import { TOP, addPolygon, resolveAt, rigOf, withRig } from './scene';
+import { nudged } from './rig';
+import { erode, move, turned as turning, wrote } from './testing';
+import { FLOOR, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -50,14 +52,18 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
-function moved(world: World, v: VersionId, id: PolygonId, to: Point): World {
-  const it = resolveAt(world, v).find(r => r.id === id)!;
-  const edit = editAt(world, v, id, it.erosion);
+/** Turned a little about the origin, and then moved by `to`. */
+function moved(world: World, v: KeyframeId, id: PolygonId, to: Point): World {
+  return wrote(world, v, id, turning(0.6), move(to.x, to.y));
+}
 
-  return withEdit(world, v, id, {
-    ...edit,
-    transform: { ...edit.transform, translation: to, rotation: 0.6 },
-  });
+/** Corners moved at `v`, in their polygon's rest frame. */
+function nudging(world: World, v: KeyframeId, id: PolygonId, by: [number, Point][]): World {
+  let rig = rigOf(world, id);
+
+  for (const [c, d] of by) rig = nudged(rig, c, v, d);
+
+  return withRig(world, id, rig);
 }
 
 function run<T>(g: Generator<number, T, void>): T {
@@ -292,13 +298,7 @@ describe('the standing floors and the bake fill the same ground', () => {
       ['floor', rect(-100, -100, 200, 200)],
     );
 
-    const it = resolveAt(world, 0).find(r => r.id === ids[1])!;
-    const edit = editAt(world, 0, ids[1], it.erosion);
-
-    same(withEdit(world, 0, ids[1], {
-      ...edit,
-      transform: { ...edit.transform, erosion: 25 },
-    }));
+    same(wrote(world, 0, ids[1], erode(25)));
   });
 });
 
@@ -647,12 +647,8 @@ describe('the fill counts the ring at every instant', () => {
     );
 
     const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
-    const edit = editAt(world, 1, ids[1], it.erosion);
-    const vertices = new Map(edit.vertices);
 
-    vertices.set(it.corners[1].id, { x: 0, y: 160 });
-
-    counts(withEdit(world, 1, ids[1], { ...edit, vertices }));
+    counts(nudging(world, 1, ids[1], [[it.corners[1].id, { x: 0, y: 160 }]]));
   });
 
   test('a floor turning and sliding under a room', () => {
@@ -682,13 +678,11 @@ describe('the fill counts the ring at every instant', () => {
     );
 
     const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
-    const edit = editAt(world, 1, ids[1], it.erosion);
-    const vertices = new Map(edit.vertices);
 
-    vertices.set(it.corners[3].id, { x: 100, y: -80 });
-    vertices.set(it.corners[5].id, { x: -100, y: 90 });
-
-    counts(withEdit(world, 1, ids[1], { ...edit, vertices }));
+    counts(nudging(world, 1, ids[1], [
+      [it.corners[3].id, { x: 100, y: -80 }],
+      [it.corners[5].id, { x: -100, y: 90 }],
+    ]));
   });
 
   test('and one eroding, which moves every corner at once', () => {
@@ -700,13 +694,7 @@ describe('the fill counts the ring at every instant', () => {
       ]],
     );
 
-    const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
-    const edit = editAt(world, 1, ids[1], it.erosion);
-
-    counts(withEdit(world, 1, ids[1], {
-      ...edit,
-      transform: { ...edit.transform, erosion: 30 },
-    }));
+    counts(wrote(world, 1, ids[1], erode(30)));
   });
 });
 

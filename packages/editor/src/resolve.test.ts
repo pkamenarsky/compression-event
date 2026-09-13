@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { nextOf, shapeArea } from './geometry';
@@ -11,8 +10,8 @@ import {
   contributing,
   csg,
   depths,
-  editAt,
   grouped,
+  listAt,
   sealing,
   hitEdge,
   hitPolygon,
@@ -22,19 +21,18 @@ import {
   placeAt,
   removeVertices,
   resolveAt,
+  rigOf,
   showing,
   sidedWith,
   underfoot,
-  withEdit,
 } from './scene';
 import {
   PolygonId,
   FLOOR,
   SOLID,
   PolygonKind,
-  Transform,
   VERSIONS,
-  VersionId,
+  KeyframeId,
   World,
   GroupId,
   emptyWorld,
@@ -44,8 +42,10 @@ import {
   standing,
 } from './types';
 import { Frame, truth } from './bake';
-import { FORMAT, Saved, restored, saved } from './save';
+import { FORMAT, restored, saved } from './save';
 import { resolveGroup, resolveInto, rings } from './resolve';
+import { stateAt } from './rig';
+import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -79,16 +79,28 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
+/** A squash, a turn and a move, each about the origin, and a depth stated
+ * outright rather than added, as the operations that say them, at the end of
+ * `v`'s list. */
 function transformed(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   id: number,
-  t: Partial<Transform>,
+  t: { translation?: Point, rotation?: number, scale?: Point, erosion?: number },
 ): World {
-  const it = resolveAt(world, v).find(r => r.id === id);
-  const edit = editAt(world, v, id, it ?? (depths(world, v).get(id) ?? 0));
+  const ops: Writing[] = [];
 
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+  if (t.scale !== undefined) ops.push(scaled(t.scale.x, t.scale.y));
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(
+      t.erosion! - (resolveAt(w, k).find(r => r.id === of)?.erosion ?? depths(w, k).get(of) ?? 0),
+    ));
+  }
+
+  return wrote(world, v, id, ...ops);
 }
 
 /** Two overlapping rooms in one group, at the top level. */
@@ -106,12 +118,12 @@ function pair(): { world: World, a: number, b: number, group: number } {
 /** The set the game would get, as one number per version: enough to say the
  * resolve did not change what is on screen. */
 function areas(world: World): number[] {
-  return world.versions.map((_unused, v) =>
+  return world.keyframes.map((_unused, v) =>
     csg(world, v).reduce((s, run) => s + run.length, 0));
 }
 
 /** What is drawn at a version, as one shape. */
-function drawnArea(world: World, v: VersionId): number {
+function drawnArea(world: World, v: KeyframeId): number {
   return showing(world, v, resolveAt(world, v), [])
     .reduce((s, it) => s + (it.kind.type === 'solid' ? -1 : 1) * shapeArea(it.shape), 0);
 }
@@ -154,10 +166,10 @@ describe('resolving a group', () => {
 
   test('the union it draws is the union it drew, at every version', () => {
     const { world, group } = pair();
-    const before = world.versions.map((_unused, v) => drawnArea(world, v));
+    const before = world.keyframes.map((_unused, v) => drawnArea(world, v));
     const out = resolveGroup(world, 0, group)!;
 
-    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
+    expect(out.world.keyframes.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 6)));
   });
 
@@ -197,18 +209,15 @@ describe('resolving a group', () => {
     expect(shapeArea(it.shape)).toBeCloseTo(100 * 180, 6);
   });
 
-  test('a member is not left in the world with layers still naming it', () => {
+  test('a member is not left in the world with a timeline still naming it', () => {
     const { world, group, a, b } = pair();
     const moved = transformed(world, 3, b, { translation: { x: 20, y: 0 } });
     const out = resolveGroup(moved, 0, group)!;
 
     expect(out.world.polygons.has(a)).toBe(false);
     expect(out.world.polygons.has(b)).toBe(false);
-
-    for (const version of out.world.versions) {
-      expect(version.edits.has(a)).toBe(false);
-      expect(version.edits.has(b)).toBe(false);
-    }
+    expect(out.world.rigs.has(a)).toBe(false);
+    expect(out.world.rigs.has(b)).toBe(false);
   });
 
   test('a group deleted at a version stays deleted', () => {
@@ -224,30 +233,32 @@ describe('resolving a group', () => {
   test('the group keeps its depth rather than baking it in', () => {
     const { world, group } = pair();
     const eroded = transformed(world, 2, group, { erosion: 5 });
-    const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
+    const before = eroded.keyframes.map((_unused, v) => drawnArea(eroded, v));
     const out = resolveGroup(eroded, 0, group)!;
 
-    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
+    expect(out.world.keyframes.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 4)));
 
-    // On the layer, not in the points: v0 and v1 are the shape unoffset.
+    // An erosion, not the points: v0 and v1 are the shape unoffset.
     const [id] = [...out.world.polygons.keys()];
 
-    expect(out.world.versions[2].edits.get(id)!.transform.erosion).toBe(5);
-    expect(out.world.versions[0].edits.get(id)?.transform.erosion ?? 0).toBe(0);
+    expect(listAt(out.world, 2, id).map(e => e.op)).toEqual([erode(5)]);
+    expect(stateAt(out.world, id, 0).erosion).toBe(0);
+    expect(stateAt(out.world, id, 2).erosion).toBe(5);
   });
 
-  test('a moving group keeps its motion as a transform', () => {
+  test('a moving group keeps its motion as a turn', () => {
     const { world, group } = pair();
     const turned = transformed(world, 5, group, { rotation: Math.PI / 6 });
     const out = resolveGroup(turned, 0, group)!;
 
     const [id] = [...out.world.polygons.keys()];
+    const [turn] = listAt(out.world, 5, id).map(e => e.op);
 
     // The turn is still a turn — the corners did not each move on their own.
-    expect(out.world.versions[5].edits.get(id)!.transform.rotation)
-      .toBeCloseTo(Math.PI / 6, 12);
-    expect(out.world.versions[5].edits.get(id)!.vertices.size).toBe(0);
+    expect(turn.kind).toBe('turn');
+    expect(turn.kind === 'turn' && turn.angle).toBeCloseTo(Math.PI / 6, 12);
+    expect(rigOf(out.world, id).nudges.size).toBe(0);
   });
 
   test('a courtyard becomes a hole in the room, not a pillar in it', () => {
@@ -292,10 +303,10 @@ describe('resolving a group', () => {
 
     const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const eroded = transformed(made.world, 3, made.id, { erosion: 4 });
-    const before = eroded.versions.map((_unused, v) => drawnArea(eroded, v));
+    const before = eroded.keyframes.map((_unused, v) => drawnArea(eroded, v));
     const out = resolveGroup(eroded, 0, made.id)!;
 
-    expect(out.world.versions.map((_unused, v) => drawnArea(out.world, v)))
+    expect(out.world.keyframes.map((_unused, v) => drawnArea(out.world, v)))
       .toEqual(before.map(a => expect.closeTo(a, 4)));
 
     // The courtyard got bigger as the walls came in, rather than smaller.
@@ -340,44 +351,37 @@ describe('what one reading costs', () => {
     }
   });
 
-  test('no layer displaces a corner, so the group\'s motion is still motion', () => {
+  test('nothing nudges a corner, so the group\'s motion is still motion', () => {
     const { world, group } = pair();
     const turned = transformed(world, 5, group, { rotation: Math.PI / 6 });
     const out = resolveGroup(turned, 0, group)!;
     const [id] = [...out.world.polygons.keys()];
+    const [turn] = listAt(out.world, 5, id).map(e => e.op);
 
-    for (const version of out.world.versions) {
-      expect(version.edits.get(id)?.vertices.size ?? 0).toBe(0);
-    }
-
-    expect(out.world.versions[5].edits.get(id)!.transform.rotation)
-      .toBeCloseTo(Math.PI / 6, 12);
+    expect(rigOf(out.world, id).nudges.size).toBe(0);
+    expect(turn.kind === 'turn' && turn.angle).toBeCloseTo(Math.PI / 6, 12);
   });
 });
 
 describe('a group made later than what is in it', () => {
   /**
-   * A pair of rooms drawn at v0 and grouped at v1, with one of them turned by
-   * the group's own layer. Off disk rather than built here, because what it is
-   * a regression against is a shape of history the editor makes and the tests
-   * above did not: the geometry outlives the handle on it.
+   * A pair of rooms drawn at v0 and grouped at v1, with one of them spun in
+   * place at v1. What it is a regression against is a shape of history the
+   * editor makes and the tests above did not: the geometry outlives the handle
+   * on it. It was read off a file once; the file is in a format that is no
+   * longer read, so it is built here the way that file was.
    */
-  const loaded = restored(
-    JSON.parse(
-      readFileSync(
-        new URL('../../../scratch/world-2026-09-06T15-01-45Z.json', import.meta.url),
-        'utf8',
-      ),
-    ) as Saved,
-  ).world;
+  const { world: drawnPair, ids } = drawn(
+    ['level', rect(-1100, -700, 800, 700)],
+    ['level', rect(-600, -300, 1200, 900)],
+  );
 
-  const group = 10;
+  const made = grouped(drawnPair, 1, ids, TOP)!;
+  const group = made.id;
 
-  // The file predates sealing, so its group opens loose — which is what keeps
-  // every world written before the question existed looking exactly as it did.
   // Resolving is a thing done to a scope, so this seals it first, which is
   // what an author reaching for the gesture would have done.
-  const world = sealing(loaded, group, true);
+  const world = wrote(sealing(made.world, group, true), 1, ids[1], spun(-Math.PI / 6));
 
   test('the rooms it was made of stand before it did', () => {
     expect(world.groups.get(group)!.birth).toBe(1);
@@ -405,7 +409,7 @@ describe('a group made later than what is in it', () => {
     // of the rooms there, so the pair of edges that cross is a different pair
     // and the crossing they made is a different crossing. What must not happen
     // is the whole ring arriving at once.
-    const at = (v: VersionId) => resolveAt(out.world, v)[0].corners.length;
+    const at = (v: KeyframeId) => resolveAt(out.world, v)[0].corners.length;
 
     expect(at(0)).toBeGreaterThan(3);
     expect(at(1)).toBeGreaterThan(3);
@@ -509,19 +513,13 @@ describe('a hole is a ring like any other', () => {
     expect(shapeArea(resolveAt(back, 0)[0].shape)).toBeCloseTo(100 * 100 - 60 * 60, 6);
   });
 
-  test('a file written before rings reads as one ring', () => {
-    const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
+  test('a file written before timelines is refused rather than half-read', () => {
+    const { world } = drawn(['level', rect(0, 0, 10, 10)]);
     const file = JSON.parse(JSON.stringify(saved(initialState(world))));
-
-    for (const [, polygon] of file.world.polygons) {
-      for (const corner of polygon.points) delete corner.ring;
-    }
 
     file.format = FORMAT - 1;
 
-    const back = restored(file).world;
-
-    expect(back.polygons.get(ids[0])!.points.every(c => c.ring === 0)).toBe(true);
+    expect(() => restored(file)).toThrow();
   });
 
   test('the bake carries it across a span without losing the hole', () => {
@@ -716,8 +714,7 @@ describe('the group does not survive being resolved', () => {
     // one — and the version that moved it is not one of the versions being
     // warned about.
     expect(out.losing).toEqual([]);
-    expect(out.world.versions[2].edits.get(dropped.id)!.transform.translation)
-      .toEqual({ x: 7, y: 11 });
+    expect(listAt(out.world, 2, dropped.id).map(e => e.op)).toEqual([move(7, 11)]);
 
     for (const v of [0, 2]) {
       const was = placeAt(moved, dropped.id, v)!;
@@ -916,7 +913,7 @@ describe('floors are clipped to the ground', () => {
 describe('resolving does not move where a gesture turns about', () => {
   /** What a transform gesture takes as its pivot: see `middle` and the turn in
    * `canvas.ts`, which builds this out of exactly these points. */
-  const pivotOf = (world: World, v: VersionId, path: GroupId[] = []) =>
+  const pivotOf = (world: World, v: KeyframeId, path: GroupId[] = []) =>
     middle(outlining(world, v, resolveAt(world, v), path));
 
   test('a group turns about its room, not about the pillar sticking out of it', () => {

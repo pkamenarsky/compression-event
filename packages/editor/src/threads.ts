@@ -44,7 +44,7 @@
 // -----------------------------------------------------------------------------
 
 import { Slice, Span, TOLERANCE, joined, ridersOf } from './bake';
-import { VersionId, World } from './types';
+import { KeyframeId, World } from './types';
 import type { FromWorker, ToWorker } from './bake.worker';
 
 /** How many to open. One per core, less the one this is running on. */
@@ -67,7 +67,7 @@ const HANDFUL = 6;
 
 export interface Pool {
   /** Every span in the chain, with `tick` called as they come along. */
-  bake: (world: World, tick: (at: number) => void) => Promise<Map<VersionId, Span>>
+  bake: (world: World, tick: (at: number) => void) => Promise<Map<number, Span>>
   close: () => void
 }
 
@@ -79,8 +79,8 @@ export function pool(count = cores(), handful = HANDFUL): Pool {
     close: () => threads.forEach(w => w.terminate()),
 
     bake: async (world, tick) => {
-      const out = new Map<VersionId, Span>();
-      const spans = world.versions.length - 1;
+      const out = new Map<number, Span>();
+      const spans = world.keyframes.length - 1;
 
       for (const w of threads) send(w, { kind: 'open', world });
 

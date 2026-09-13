@@ -14,17 +14,15 @@ import {
 import {
   TOP,
   addPolygon,
-  editAt,
   grouped,
   landing,
   pathAt,
   pathsAt,
   pathsIn,
   removeAt,
-  starting,
-  withEdit,
 } from './scene';
-import { EMPTY_TRANSFORM, FLOOR, PathId, Point, VersionId, World, emptyWorld, PolygonKind } from './types';
+import { FLOOR, PathId, Point, KeyframeId, World, emptyWorld, PolygonKind } from './types';
+import { move, scaled, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -69,7 +67,7 @@ describe('editing', () => {
     expect(world.paths.get(id)!.points).toHaveLength(2);
   });
 
-  test('it is born into the version it was drawn in, and stands from there', () => {
+  test('it is born into the keyframe it was drawn in, and stands from there', () => {
     const { world, id } = addPath(emptyWorld(), [{ x: 0, y: 0 }, { x: 10, y: 0 }], 3, TOP);
 
     expect(world.paths.get(id)).toMatchObject({ birth: 3, death: null });
@@ -102,13 +100,10 @@ describe('editing', () => {
 });
 
 describe('the chain', () => {
-  test('a version that moves it moves it, and the versions before it do not', () => {
+  test('a keyframe that moves it moves it, and the keyframes before it do not', () => {
     const { world, id } = laid([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
 
-    const moved = withEdit(world, 2, id, {
-      ...editAt(world, 2, id, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 100, y: 0 } },
-    });
+    const moved = wrote(world, 2, id, move(100, 0));
 
     expect(pathAt(moved, id, 1)).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
     expect(pathAt(moved, id, 2)).toEqual([{ x: 100, y: 0 }, { x: 110, y: 0 }]);
@@ -128,10 +123,7 @@ describe('the chain', () => {
     const walk = addPath(room.world, [{ x: 0, y: 0 }, { x: 10, y: 0 }], 0, TOP);
     const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
 
-    const moved = withEdit(made.world, 1, made.id, {
-      ...editAt(made.world, 1, made.id, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 0, y: 40 } },
-    });
+    const moved = wrote(made.world, 1, made.id, move(0, 40));
 
     expect(pathAt(moved, walk.id, 0)).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
     expect(pathAt(moved, walk.id, 1)).toEqual([{ x: 0, y: 40 }, { x: 10, y: 40 }]);
@@ -153,10 +145,7 @@ describe('the chain', () => {
     const made = grouped(other.world, 0, [room.id, other.id], TOP)!;
 
     // The group turned and moved, so its own frame is nothing like the world's.
-    const turned = withEdit(made.world, 0, made.id, {
-      ...editAt(made.world, 0, made.id, 0),
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2, translation: { x: 7, y: 3 } },
-    });
+    const turned = wrote(made.world, 0, made.id, turning(Math.PI / 2), move(7, 3));
 
     const where = landing(turned, 0, made.id);
     const walk = addPath(turned, [{ x: 20, y: 20 }, { x: 30, y: 20 }], 0, where);
@@ -169,7 +158,7 @@ describe('the chain', () => {
     expect(back[1].y).toBeCloseTo(20);
   });
 
-  test('a gesture over a group reaches the paths under it, and starts an edit for one', () => {
+  test('a gesture over a group reaches the paths under it, and can write into one', () => {
     const room = addPolygon(
       emptyWorld(),
       kind('level'),
@@ -182,11 +171,11 @@ describe('the chain', () => {
 
     expect(pathsIn(made.world, [made.id])).toEqual([walk.id]);
 
-    // And a transform gesture can write into a path's own layer: no depth on
-    // it, the way an artefact has none.
-    const from = starting(made.world, 0, [walk.id]);
+    // And a gesture can write into a path's own timeline, the way it writes
+    // into an artefact's.
+    const moved = wrote(made.world, 0, walk.id, move(0, 5));
 
-    expect(from.get(walk.id)!.transform.erosion).toBe(0);
+    expect(pathAt(moved, walk.id, 0)).toEqual([{ x: 0, y: 5 }, { x: 10, y: 5 }]);
   });
 });
 
@@ -198,7 +187,7 @@ describe('writing a point back', () => {
    * Getting that wrong is invisible until something has been transformed, and
    * then every drag lands where the path used to be.
    */
-  function roundTrip(world: World, id: PathId, v: VersionId): void {
+  function roundTrip(world: World, id: PathId, v: KeyframeId): void {
     const there = pathAt(world, id, v)!;
     const back = inFrame(world, v, id, there);
 
@@ -208,10 +197,7 @@ describe('writing a point back', () => {
   test('a point dragged to where it already is does not move', () => {
     const { world, id } = laid([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
 
-    const moved = withEdit(world, 0, id, {
-      ...editAt(world, 0, id, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 250, y: -30 } },
-    });
+    const moved = wrote(world, 0, id, move(250, -30));
 
     roundTrip(moved, id, 0);
 
@@ -235,17 +221,11 @@ describe('writing a point back', () => {
     const walk = addPath(room.world, [{ x: 10, y: 10 }, { x: 40, y: 10 }], 0, TOP);
     const made = grouped(walk.world, 0, [room.id, walk.id], TOP)!;
 
-    const turned = withEdit(made.world, 0, made.id, {
-      ...editAt(made.world, 0, made.id, 0),
-      transform: { ...EMPTY_TRANSFORM, rotation: 0.7, translation: { x: 5, y: 9 } },
-    });
+    const turned = wrote(made.world, 0, made.id, turning(0.7), move(5, 9));
 
-    // A layer of the path's own on top of the group's, which is the pair that
-    // `under` alone cannot see.
-    const both = withEdit(turned, 1, walk.id, {
-      ...editAt(turned, 1, walk.id, 0),
-      transform: { ...EMPTY_TRANSFORM, scale: { x: 2, y: 3 }, translation: { x: -4, y: 1 } },
-    });
+    // Operations of the path's own on top of the group's, which is the pair
+    // that `under` alone cannot see.
+    const both = wrote(turned, 1, walk.id, scaled(2, 3), move(-4, 1));
 
     const points = [...both.paths.get(walk.id)!.points];
 
@@ -295,10 +275,7 @@ describe('hit testing', () => {
   });
 
   test('it hits where the version puts it, not where it was drawn', () => {
-    const moved = withEdit(world, 0, id, {
-      ...editAt(world, 0, id, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 1000, y: 0 } },
-    });
+    const moved = wrote(world, 0, id, move(1000, 0));
 
     const there = pathsAt(moved, 0);
 

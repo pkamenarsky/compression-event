@@ -7,8 +7,8 @@ import {
   addVertex,
   csg,
   depths,
-  editAt,
   grouped,
+  keyed,
   landing,
   placeAt,
   rechainable,
@@ -16,18 +16,20 @@ import {
   removeAt,
   removeVertices,
   resolveAt,
+  rigOf,
   unchainable,
   unchained,
   unchainedAt,
-  withEdit,
+  withRig,
 } from './scene';
+import { nudged as nudging, repeating } from './rig';
+import { Writing, erode, move, turned as turning, wrote } from './testing';
 import {
   ArtefactId,
   PolygonId,
   FLOOR,
   PolygonKind,
-  Transform,
-  VersionId,
+  KeyframeId,
   World,
   emptyWorld,
   initialState,
@@ -65,30 +67,34 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
+/** A move, a turn about the origin, and a depth stated outright rather than
+ * added, as the operations that say them, at the end of `v`'s list. */
 function transformed(
   world: World,
-  v: VersionId,
+  v: KeyframeId,
   id: number,
-  t: Partial<Transform>,
+  t: { translation?: Point, rotation?: number, erosion?: number },
 ): World {
-  const it = resolveAt(world, v).find(r => r.id === id);
-  const edit = editAt(world, v, id, it ?? (depths(world, v).get(id) ?? 0));
+  const ops: Writing[] = [];
 
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(
+      t.erosion! - (resolveAt(w, k).find(r => r.id === of)?.erosion ?? depths(w, k).get(of) ?? 0),
+    ));
+  }
+
+  return wrote(world, v, id, ...ops);
 }
 
-function nudged(world: World, v: VersionId, id: number, vertex: number, by: Point): World {
-  const it = resolveAt(world, v).find(r => r.id === id)!;
-  const edit = editAt(world, v, id, it);
-  const vertices = new Map(edit.vertices);
-
-  vertices.set(vertex, by);
-
-  return withEdit(world, v, id, { ...edit, vertices });
+function nudged(world: World, v: KeyframeId, id: number, vertex: number, by: Point): World {
+  return withRig(world, id, nudging(rigOf(world, id), vertex, v, by));
 }
 
 /** Where a polygon's corners are at a version, as one comparable thing. */
-function at(world: World, v: VersionId, id: PolygonId): string {
+function at(world: World, v: KeyframeId, id: PolygonId): string {
   const it = resolveAt(world, v).find(r => r.id === id);
 
   if (it === undefined) return 'gone';
@@ -107,8 +113,8 @@ describe('unchaining', () => {
   test('changes nothing at the moment it is done', () => {
     const { world, id } = square();
 
-    // Something upstream worth inheriting, so that the footing is not a copy
-    // of an identity.
+    // Something upstream worth hearing, so that the stand is not a copy of
+    // nothing.
     const moved = transformed(world, 1, id, { translation: { x: 25, y: -10 } });
     const before = [0, 1, 2, 3, 4].map(v => at(moved, v, id));
 
@@ -117,7 +123,7 @@ describe('unchaining', () => {
     expect([0, 1, 2, 3, 4].map(v => at(loose, v, id))).toEqual(before);
   });
 
-  test('an upstream transform stops arriving, from the unchain point on', () => {
+  test('an upstream move stops arriving, from the unchain point on', () => {
     const { world, id } = square();
     const loose = unchained(world, 3, [id]);
     const moved = transformed(loose, 1, id, { translation: { x: 40, y: 0 } });
@@ -132,7 +138,7 @@ describe('unchaining', () => {
     expect(at(moved, 4, id)).toEqual(at(world, 4, id));
   });
 
-  test('the layers at and after the unchain point still apply', () => {
+  test('what is written at and after the unchain point still applies', () => {
     const { world, id } = square();
     const loose = unchained(world, 3, [id]);
 
@@ -222,14 +228,14 @@ describe('unchaining', () => {
     expect(at(gone, 3, id)).toEqual('gone');
   });
 
-  test('the root version has nothing to unchain from', () => {
+  test('the first keyframe has nothing to unchain from', () => {
     const { world, id } = square();
 
     expect(unchainable(world, 0, [id])).toBe(false);
     expect(unchained(world, 0, [id])).toBe(world);
   });
 
-  test('a thing born at the version has nothing to unchain from either', () => {
+  test('a thing born at the keyframe has nothing to unchain from either', () => {
     const { world } = drawn();
     const added = addPolygon(world, kind('level'), rect(0, 0, 10, 10), 3, TOP);
 
@@ -237,12 +243,29 @@ describe('unchaining', () => {
     expect(unchained(added.world, 3, [added.id])).toBe(added.world);
   });
 
-  test('unchaining twice at the same version says nothing the second time', () => {
+  test('unchaining twice at the same keyframe says nothing the second time', () => {
     const { world, id } = square();
     const once = unchained(world, 3, [id]);
 
     expect(unchainable(once, 3, [id])).toBe(false);
     expect(unchained(once, 3, [id])).toBe(once);
+  });
+
+  test('a repeat written upstream goes on through the point, and nothing moves', () => {
+    // It is something the room is doing rather than somewhere it got to, so
+    // holding it back would change what is on screen from the keyframe after.
+    const { world, id } = square();
+    const going = keyed(world, 1, id, [repeating(move(10, 0), null)]);
+    const before = [0, 1, 2, 3, 4, 5].map(v => at(going, v, id));
+
+    const loose = unchained(going, 3, [id]);
+
+    expect([0, 1, 2, 3, 4, 5].map(v => at(loose, v, id))).toEqual(before);
+
+    // And a move that does not repeat is still held back.
+    const moved = transformed(loose, 1, id, { translation: { x: 0, y: 500 } });
+
+    expect(at(moved, 4, id)).toEqual(at(loose, 4, id));
   });
 
   test('two unchain points, each holding back only what is above it', () => {
@@ -350,6 +373,20 @@ describe('unchaining a group', () => {
     expect(depths(deeper, 3).get(group)).toBe(5);
   });
 
+  test('a member unchained on its own still goes where its group goes', () => {
+    // Its own past stops arriving, and the group's does not: to hold a member
+    // still in the world, it is the group that is unchained.
+    const { world, a, group } = pair();
+    const loose = unchained(world, 3, [a]);
+
+    expect(unchainedAt(loose, 3, group)).toBe(false);
+
+    const moved = transformed(loose, 1, group, { translation: { x: 40, y: 0 } });
+
+    expect(at(moved, 3, a)).not.toEqual(at(world, 3, a));
+    expect(at(transformed(loose, 1, a, { translation: { x: 40, y: 0 } }), 3, a)).toEqual(at(world, 3, a));
+  });
+
   test('a member moved at or after the point still moves', () => {
     const { world, a, group } = pair();
     const loose = unchained(world, 3, [group]);
@@ -384,7 +421,7 @@ describe('unchaining an artefact', () => {
   });
 });
 
-describe('a footing in a file', () => {
+describe('a stand in a file', () => {
   test('comes back saying the same thing', () => {
     const { world, id } = square();
     const moved = transformed(world, 1, id, { translation: { x: 25, y: -10 } });
@@ -402,11 +439,11 @@ describe('a footing in a file', () => {
     const { world, id } = square();
     const file = saved(initialState(world));
 
-    expect(file.world.versions.every(v => v.footings === undefined)).toBe(true);
+    expect(file.world.rigs).toEqual([]);
 
     const back = restored(JSON.parse(JSON.stringify(file))).world;
 
-    expect(back.versions.every(v => v.footings.size === 0)).toBe(true);
+    expect(back.keyframes.some(k => unchainedAt(back, k.id, id))).toBe(false);
     expect(at(back, 3, id)).toEqual(at(world, 3, id));
   });
 });
@@ -414,10 +451,10 @@ describe('a footing in a file', () => {
 // -----------------------------------------------------------------------------
 // The span across an unchain point
 //
-// A footing is a copy of what the base handed over, so the two ends of the leg
+// A stand is a copy of what its keyframe was handed, so the two ends of the leg
 // it sits at the far end of agree until an upstream edit pulls them apart. Once
 // one does, the leg is a leg like any other — it starts where the editor draws
-// the near version and lands where it draws the far one. Which is the whole of
+// the near keyframe and lands where it draws the far one. Which is the whole of
 // what has to be true here: the bake and the editor must not disagree about
 // where an unchained room is.
 // -----------------------------------------------------------------------------
@@ -460,7 +497,7 @@ function middle(frame: Frame): Point {
   return { x: (minX + maxX) / 2, y: 0 };
 }
 
-function editorAt(world: World, v: VersionId): number {
+function editorAt(world: World, v: KeyframeId): number {
   return length(csg(world, v).map(points => ({
     id: 0,
     points,

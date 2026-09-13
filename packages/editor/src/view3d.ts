@@ -62,12 +62,13 @@ import {
   artefactsAt,
   contributing,
   live,
+  order,
   resolveAt,
   sourced,
   startPlaced,
 } from './scene';
 import { theme } from './theme';
-import { Replay, Update, VersionId, World } from './types';
+import { Replay, Update, KeyframeId, World } from './types';
 
 /**
  * Standing in it: where the walker is and which way they are facing.
@@ -138,7 +139,7 @@ export function preview(
   showing: Value<boolean>,
   world: Value<World>,
   bake: Value<Bake>,
-  current: Value<VersionId>,
+  current: Value<KeyframeId>,
   replay: Value<Replay | null>,
   roaming: Value<boolean>,
   update: Update,
@@ -149,7 +150,7 @@ export function preview(
 function panel(
   world: Value<World>,
   bake: Value<Bake>,
-  current: Value<VersionId>,
+  current: Value<KeyframeId>,
   replay: Value<Replay | null>,
   roaming: Value<boolean>,
   update: Update,
@@ -278,8 +279,16 @@ function panel(
      * on screen at both ends of the transition, which reads as the level
      * blinking out and back.
      */
+    /** Where a walk's two ends are in the order, which is what the spans are
+     * counted in. */
+    const ends = (r: Replay): [number, number] => {
+      const w = untracked(world);
+
+      return [order(w, r.from), order(w, r.to)];
+    };
+
     const playing = (r: Replay | null): r is Replay =>
-      r !== null && Math.max(r.from, r.to) <= spans;
+      r !== null && Math.max(...ends(r)) <= spans;
 
     /**
      * How hard the picture is bent, standing in a walk: through the run-up if
@@ -292,9 +301,10 @@ function panel(
     const bent = (r: Replay | null): number => {
       if (!untracked(roaming) || !playing(r)) return 0;
 
-      const since = r.before > 0 ? -r.before : r.through * REPLAY_MS * Math.abs(r.to - r.from) / 1000;
+      const [a, b] = ends(r);
+      const since = r.before > 0 ? -r.before : r.through * REPLAY_MS * Math.abs(b - a) / 1000;
 
-      return beaten(since, BEAT_MS / 1000, r.to < r.from, look.warp);
+      return beaten(since, BEAT_MS / 1000, b < a, look.warp);
     };
 
     const walked = (r: Replay | null): void => {
@@ -307,7 +317,8 @@ function panel(
         return;
       }
 
-      const at = r.from + (r.to - r.from) * r.at;
+      const [a, b] = ends(r);
+      const at = a + (b - a) * r.at;
 
       view.walk(Math.min(Math.max(at / spans, 0), 1));
     };
@@ -324,7 +335,7 @@ function panel(
      * alone past walls that have not moved is a glitch rather than a walk, and
      * that is the same rule the canvas keeps.
      */
-    const peopled = (w: World, v: VersionId, r: Replay | null): void => {
+    const peopled = (w: World, v: KeyframeId, r: Replay | null): void => {
       if (crowd === null) return;
 
       // The start with them, standing still: it is in no version's layer, so
@@ -378,7 +389,7 @@ function panel(
     /** The boundary at the version on screen, and the floors under it: what is
      * drawn whenever nothing is in flight. The span's own buffers have both for
      * the length of a walk. */
-    const shown = (w: World, v: VersionId): void => {
+    const shown = (w: World, v: KeyframeId): void => {
       if (view === null) return;
 
       set = live(set, contributing(w, v, resolveAt(w, v)));

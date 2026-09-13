@@ -22,24 +22,25 @@ import {
   sealing,
   addVertex,
   csg,
-  editAt,
+  depths,
   removeVertices,
   resolveAt,
+  rigOf,
   sideOf,
-  withEdit,
+  withRig,
 } from './scene';
+import { nudged } from './rig';
+import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
 import {
   EMPTY_BAKE,
 } from './bake';
 import {
-  EMPTY_TRANSFORM,
   Id,
   PolygonId,
   FLOOR,
   PolygonKind,
-  Transform,
   VERSIONS,
-  VersionId,
+  KeyframeId,
   World,
   emptyWorld,
 } from './types';
@@ -74,17 +75,35 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
-function transformed(
-  world: World,
-  v: VersionId,
-  id: Id,
-  t: Partial<Transform>,
-): World {
-  // A group has no geometry to read a depth off, and none to inherit either.
-  const it = resolveAt(world, v).find(r => r.id === id);
-  const edit = editAt(world, v, id, it?.erosion ?? 0);
+/** A layer as these tests were first written against: a squash, a turn and a
+ * move, each about the origin, and a depth stated outright rather than added.
+ * Written as the operations that say it now, at the end of `v`'s list. */
+interface Layer {
+  translation: Point
+  rotation: number
+  scale: { x: number, y: number }
+  erosion: number
+}
 
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+function transformed(world: World, v: KeyframeId, id: Id, t: Partial<Layer>): World {
+  const ops: Writing[] = [];
+
+  if (t.scale !== undefined) ops.push(scaled(t.scale.x, t.scale.y));
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(
+      t.erosion! - (resolveAt(w, k).find(r => r.id === of)?.erosion ?? depths(w, k).get(of) ?? 0),
+    ));
+  }
+
+  return wrote(world, v, id, ...ops);
+}
+
+/** One corner moved by `by` at `v`, in its polygon's rest frame. */
+function nudging(world: World, v: KeyframeId, id: Id, vertex: number, by: Point): World {
+  return withRig(world, id, nudged(rigOf(world, id), vertex, v, by));
 }
 
 /** The generator run to the end, which is what a test wants and the editor
@@ -163,7 +182,7 @@ function lengthOf(runs: Point[][]): number {
 }
 
 /** The set the editor draws at a version, for the bake to be checked against. */
-function editorAt(world: World, v: VersionId): number {
+function editorAt(world: World, v: KeyframeId): number {
   return lengthOf(csg(world, v));
 }
 
@@ -266,12 +285,7 @@ describe('interpolation', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
 
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
-    const edit = editAt(world, 1, ids[0], 0);
-    const vertices = new Map(edit.vertices);
-
-    vertices.set(it.polygon.points[2].id, { x: 100, y: 0 });
-
-    const w = withEdit(world, 1, ids[0], { ...edit, vertices });
+    const w = nudging(world, 1, ids[0], it.polygon.points[2].id, { x: 100, y: 0 });
     const span = run(bakeSpan(w, 0));
 
     const at = (t: number) => length(sample(span, t));
@@ -520,7 +534,7 @@ describe('the replay never leaves the truth, as a shape', () => {
   // ends at `t = 0`, easing in through 1e-6, 1e-5, 1e-4. Evenly spaced instants
   // step straight over the whole of it, which is how this survived a suite that
   // sampled twenty-three of them.
-  const follows = (world: World, from: VersionId) => {
+  const follows = (world: World, from: KeyframeId) => {
     const span = run(bakeSpan(world, from));
     let checked = 0;
 
@@ -1075,12 +1089,9 @@ describe('the replay against the CSG worked out directly', () => {
   test('a nudge on its own', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
-    const edit = editAt(world, 1, ids[0], 0);
-    const vertices = new Map(edit.vertices);
 
-    vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
-
-    expect(drift(withEdit(world, 1, ids[0], { ...edit, vertices }))).toBeLessThan(TOLERANCE);
+    expect(drift(nudging(world, 1, ids[0], it.polygon.points[2].id, { x: 90, y: 40 })))
+      .toBeLessThan(TOLERANCE);
   });
 
   test('a nudge and an erosion together, which nothing analytic can cut', () => {
@@ -1097,13 +1108,9 @@ describe('the replay against the CSG worked out directly', () => {
     // extra stretches and answers it outright.
     const { world, ids } = drawn(['level', rect(0, 0, 120, 120)]);
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
-    const edit = editAt(world, 1, ids[0], 0);
-    const vertices = new Map(edit.vertices);
 
-    vertices.set(it.polygon.points[2].id, { x: 90, y: 40 });
-
-    const nudged = withEdit(world, 1, ids[0], { ...edit, vertices });
-    const w = transformed(nudged, 1, ids[0], { erosion: 22 });
+    const bent = nudging(world, 1, ids[0], it.polygon.points[2].id, { x: 90, y: 40 });
+    const w = transformed(bent, 1, ids[0], { erosion: 22 });
 
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(run(bakeSpan(w, 0)).tracks[0].stretches.length).toBeGreaterThan(1);
@@ -1111,19 +1118,10 @@ describe('the replay against the CSG worked out directly', () => {
 });
 
 describe('a turn goes round its pivot, not round the origin', () => {
-  // The transform a rotation gesture leaves behind, for a turn of `angle`
-  // about `at`: the pivot carried round to where the rotation would have sent
-  // it, then put back. This is `turned` in the canvas, starting from identity.
-  function about(at: Point, angle: number): Partial<Transform> {
-    const c = Math.cos(angle), s = Math.sin(angle);
-
-    return {
-      rotation: angle,
-      translation: {
-        x: at.x - (at.x * c - at.y * s),
-        y: at.y - (at.x * s + at.y * c),
-      },
-    };
+  // What a turn gesture writes, for a turn of `angle` about `at`: the thing's
+  // middle painted on, and the pivot as an offset from it.
+  function about(world: World, id: Id, at: Point, angle: number): World {
+    return wrote(world, 1, id, turning(angle, at));
   }
 
   function reach(frame: Frame, at: Point): { near: number, far: number } {
@@ -1160,30 +1158,35 @@ describe('a turn goes round its pivot, not round the origin', () => {
     const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
     const at = { x: 500, y: 360 };
 
-    expect(held(transformed(world, 1, ids[0], about(at, Math.PI / 2)), at)).toBeLessThan(1e-6);
+    expect(held(about(world, ids[0], at, Math.PI / 2), at)).toBeLessThan(1e-6);
   });
 
   test('about a corner, well away from the origin', () => {
     const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
     const at = { x: 400, y: 300 };
 
-    expect(held(transformed(world, 1, ids[0], about(at, 1.1)), at)).toBeLessThan(1e-6);
+    expect(held(about(world, ids[0], at, 1.1), at)).toBeLessThan(1e-6);
   });
 
   test('and two turns about different pivots agree on a third', () => {
     // Composing them gives a rotation about neither, and the morph has to find
     // it rather than be told: nothing stores a pivot.
     const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
-    const one = about({ x: 500, y: 360 }, 0.7);
-    const two = about({ x: 400, y: 300 }, 0.5);
+
+    // The composite's translation, off the two it was made from.
+    const pivot = (at: Point, angle: number): Point => {
+      const c = Math.cos(angle), s = Math.sin(angle);
+
+      return { x: at.x - (at.x * c - at.y * s), y: at.y - (at.x * s + at.y * c) };
+    };
+
+    const one = pivot({ x: 500, y: 360 }, 0.7);
+    const two = pivot({ x: 400, y: 300 }, 0.5);
 
     const c = Math.cos(0.5), s = Math.sin(0.5);
-    const both: Partial<Transform> = {
-      rotation: 1.2,
-      translation: {
-        x: two.translation!.x + one.translation!.x * c - one.translation!.y * s,
-        y: two.translation!.y + one.translation!.x * s + one.translation!.y * c,
-      },
+    const both = {
+      x: two.x + one.x * c - one.y * s,
+      y: two.y + one.x * s + one.y * c,
     };
 
     // Where the composite holds still, which is neither of the two it was made
@@ -1191,14 +1194,14 @@ describe('a turn goes round its pivot, not round the origin', () => {
     const c2 = Math.cos(1.2), s2 = Math.sin(1.2);
     const det = (1 - c2) * (1 - c2) + s2 * s2;
     const at = {
-      x: ((1 - c2) * both.translation!.x - s2 * both.translation!.y) / det,
-      y: (s2 * both.translation!.x + (1 - c2) * both.translation!.y) / det,
+      x: ((1 - c2) * both.x - s2 * both.y) / det,
+      y: (s2 * both.x + (1 - c2) * both.y) / det,
     };
 
     expect(at.x).not.toBeCloseTo(400, 1);
     expect(at.x).not.toBeCloseTo(500, 1);
 
-    const w = transformed(world, 1, ids[0], both);
+    const w = wrote(world, 1, ids[0], turning(0.7, { x: 500, y: 360 }), turning(0.5, { x: 400, y: 300 }));
 
     expect(held(w, at)).toBeLessThan(1e-6);
     expect(drift(w)).toBeLessThan(TOLERANCE);
@@ -1271,10 +1274,10 @@ describe('a bake against a world that moved', () => {
 
     const bake = { spans: run(bakeAll(w)), progress: null };
 
-    const versions = [...w.versions];
-    versions[2] = { ...versions[2], visible: false };
+    const keyframes = [...w.keyframes];
+    keyframes[2] = { ...keyframes[2], visible: false };
 
-    expect(pruned(bake, { ...w, versions }).spans.size).toBe(VERSIONS - 1);
+    expect(pruned(bake, { ...w, keyframes }).spans.size).toBe(VERSIONS - 1);
   });
 });
 
@@ -1330,10 +1333,7 @@ describe('a corner coming or going across a span', () => {
     // Pull the new corner off the edge, so the span has something to animate.
     const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
     const where = now.corners.findIndex(c => c.birth === 1);
-    const edit = editAt(grown, 1, ids[0], now.erosion);
-    const vertices = new Map(edit.vertices);
-    vertices.set(now.corners[where].id, { x: 0, y: -80 });
-    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+    const pulled = nudging(grown, 1, ids[0], now.corners[where].id, { x: 0, y: -80 });
 
     const span = run(bakeSpan(pulled, 0));
 
@@ -1351,10 +1351,7 @@ describe('a corner coming or going across a span', () => {
 
     const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
     const where = now.corners.findIndex(c => c.birth === 1);
-    const edit = editAt(grown, 1, ids[0], now.erosion);
-    const vertices = new Map(edit.vertices);
-    vertices.set(now.corners[where].id, { x: 0, y: -80 });
-    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+    const pulled = nudging(grown, 1, ids[0], now.corners[where].id, { x: 0, y: -80 });
 
     const span = run(bakeSpan(pulled, 0));
 
@@ -1371,10 +1368,7 @@ describe('a corner coming or going across a span', () => {
 
     const now = resolveAt(grown, 1).find(r => r.id === ids[0])!;
     const where = now.corners.findIndex(c => c.birth === 1);
-    const edit = editAt(grown, 1, ids[0], now.erosion);
-    const vertices = new Map(edit.vertices);
-    vertices.set(now.corners[where].id, { x: 0, y: -80 });
-    const pulled = withEdit(grown, 1, ids[0], { ...edit, vertices });
+    const pulled = nudging(grown, 1, ids[0], now.corners[where].id, { x: 0, y: -80 });
 
     const span = run(bakeSpan(pulled, 0));
 
@@ -1422,18 +1416,8 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
       ['floor', rect(-50, -50, 100, 100)],
     );
 
-    const it = resolveAt(world, 1).find(r => r.id === ids[1])!;
-    const edit = editAt(world, 1, ids[1], it.erosion);
-
     return {
-      world: withEdit(world, 1, ids[1], {
-        ...edit,
-        transform: {
-          ...edit.transform,
-          translation: { x: 120, y: 40 },
-          rotation: 0.7,
-        },
-      }),
+      world: transformed(world, 1, ids[1], { translation: { x: 120, y: 40 }, rotation: 0.7 }),
       room: ids[0],
       floor: ids[1],
     };
@@ -1539,23 +1523,11 @@ describe('a floor morphs like everything else, taking part in nothing', () => {
     const made = sealed(world, 0, ids, TOP)!;
 
     // The group turns and erodes; the floor slides and erodes inside it.
-    const turning = withEdit(made.world, 1, made.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: 0.8, erosion: 12 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
-
-    const it = resolveAt(turning, 1).find(r => r.id === ids[1])!;
-    const edit = editAt(turning, 1, ids[1], it.erosion);
-
-    const moved = withEdit(turning, 1, ids[1], {
-      ...edit,
-      transform: {
-        ...edit.transform,
-        translation: { x: 60, y: -40 },
-        rotation: -0.5,
-        erosion: 18,
-      },
+    const turned = transformed(made.world, 1, made.id, { rotation: 0.8, erosion: 12 });
+    const moved = transformed(turned, 1, ids[1], {
+      translation: { x: 60, y: -40 },
+      rotation: -0.5,
+      erosion: 18,
     });
 
     const span = run(bakeSpan(moved, 0));
@@ -1649,13 +1621,9 @@ describe('a corner that was always there but flat at one end', () => {
 
     const at = resolveAt(out, 1).find(r => r.id === ids[0])!;
     const middle = at.corners.find(c => c.at.x === 0 && c.at.y === -100)!;
-    const edit = editAt(out, 1, ids[0], at.erosion);
-    const vertices = new Map(edit.vertices);
-
-    vertices.set(middle.id, { x: 0, y: 80 });
 
     return {
-      world: withEdit(out, 1, ids[0], { ...edit, vertices }),
+      world: nudging(out, 1, ids[0], middle.id, { x: 0, y: 80 }),
       id: ids[0],
       moved: middle.id,
     };
@@ -1722,7 +1690,7 @@ describe('a wall that is eroded while a corner leaves it', () => {
       { x: 100, y: 100 }, { x: -100, y: 100 },
     ]]);
 
-    const deep = withEdit(world, 0, ids[0], { ...editAt(world, 0, ids[0], 12) });
+    const deep = wrote(world, 0, ids[0], erode(12));
     const going = deep.polygons.get(ids[0])!.points[1].id;
 
     return { world: removeVertices(deep, 1, [going]), id: ids[0] };
@@ -2012,12 +1980,7 @@ describe('the bake chases its own error', () => {
     const { world, ids } = drawn(['level', tangle.map(([x, y]) => ({ x, y }))]);
 
     const it = resolveAt(world, 1).find(r => r.id === ids[0])!;
-    const edit = editAt(world, 1, ids[0], 0);
-    const vertices = new Map(edit.vertices);
-
-    vertices.set(it.polygon.points[1].id, { x: -500, y: 900 });
-
-    const span = run(bakeSpan(withEdit(world, 1, ids[0], { ...edit, vertices }), 0));
+    const span = run(bakeSpan(nudging(world, 1, ids[0], it.polygon.points[1].id, { x: -500, y: 900 }), 0));
     const track = span.tracks[0];
 
     expect(span.worst).toBeLessThan(TOLERANCE);

@@ -10,7 +10,6 @@ import {
   addPolygon,
   addArtefact,
   placeAt,
-  composed,
   EMPTY_LIVE,
   contributing,
   live,
@@ -21,7 +20,7 @@ import {
   IDENTITY,
   depths,
   occupying,
-  starting,
+  rigOf,
   under,
   unstep,
   editable,
@@ -39,14 +38,12 @@ import {
   addVertex,
   hitPolygon,
   hitPolygons,
-  affine,
   copied,
   csg,
   csgFloor,
   pathAt,
   pathsIn,
   runs,
-  editAt,
   hitEdge,
   hitVertex,
   landing,
@@ -60,20 +57,19 @@ import {
   resolveAt,
   stamped,
   unplace,
-  withEdit,
 } from './scene';
+import { affineOf } from './rig';
+import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
 import { addPath } from './paths';
 import {
-  EMPTY_TRANSFORM,
   GroupId,
   Id,
   PathId,
   PolygonId,
   FLOOR,
   PolygonKind,
-  Transform,
   VERSIONS,
-  VersionId,
+  KeyframeId,
   Vertex,
   World,
   emptyWorld,
@@ -117,21 +113,37 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
-function only(world: World, v: VersionId, id: PolygonId): Resolved {
+function only(world: World, v: KeyframeId, id: PolygonId): Resolved {
   return resolveAt(world, v).find(it => it.id === id)!;
 }
 
-/** Whatever this version already said about the polygon, with these components
- * of the transform replaced. */
-function transformed(
-  world: World,
-  v: VersionId,
-  id: PolygonId,
-  t: Partial<Transform>,
-): World {
-  const edit = editAt(world, v, id, only(world, v, id));
+/** A layer as these tests were first written against: a squash, a turn and a
+ * move, each about the origin, and a depth stated outright rather than added.
+ * Written as the operations that say it now, at the end of `v`'s list. */
+interface Layer {
+  translation: Point
+  rotation: number
+  scale: { x: number, y: number }
+  erosion: number
+}
 
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+function transformed(world: World, v: KeyframeId, id: Id, t: Partial<Layer>): World {
+  const ops: Writing[] = [];
+
+  if (t.scale !== undefined) ops.push(scaled(t.scale.x, t.scale.y));
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(t.erosion! - (depths(w, k).get(of) ?? only1(w, k, of)?.erosion ?? 0)));
+  }
+
+  return wrote(world, v, id, ...ops);
+}
+
+/** A polygon as a keyframe leaves it, or nothing for anything else. */
+function only1(world: World, v: KeyframeId, id: Id): Resolved | undefined {
+  return resolveAt(world, v).find(it => it.id === id);
 }
 
 const reversed = (points: Point[]) => [...points].reverse();
@@ -261,16 +273,11 @@ describe('csg', () => {
 });
 
 describe('transforms', () => {
-  const turned: Transform = {
-    translation: { x: 40, y: -15 },
-    rotation: Math.PI / 4,
-    scale: { x: 1.3, y: 0.6 },
-    erosion: 0,
-  };
+  const turned = affineOf({ t: { x: 40, y: -15 }, angle: Math.PI / 4, scale: { x: 1.3, y: 0.6 } });
 
   test('a squash and a turn come apart again exactly', () => {
     for (const p of rect(-30, 20, 70, 45)) {
-      const back = unplace(affine(turned), place(affine(turned), [p])[0]);
+      const back = unplace(turned, place(turned, [p])[0]);
 
       expect(back.x).toBeCloseTo(p.x, 9);
       expect(back.y).toBeCloseTo(p.y, 9);
@@ -279,7 +286,7 @@ describe('transforms', () => {
 
   test('the axes scale independently', () => {
     const ring = place(
-      affine({ ...EMPTY_TRANSFORM, scale: { x: 2, y: 0.5 } }),
+      affineOf({ t: { x: 0, y: 0 }, angle: 0, scale: { x: 2, y: 0.5 } }),
       rect(0, 0, 10, 10),
     );
 
@@ -302,16 +309,15 @@ describe('a depth per corner', () => {
   /** The polygon's corners with `by` written onto the ones named, at `v`. */
   function deepened(
     world: World,
-    v: VersionId,
+    v: KeyframeId,
     id: PolygonId,
     which: readonly number[],
     by: number,
   ): World {
     const polygon = world.polygons.get(id)!;
     const corners = new Set(which.map(i => polygon.points[i].id));
-    const edit = editAt(world, v, id, only(world, v, id));
 
-    return withEdit(world, v, id, deepen(edit, polygon, corners, by));
+    return deepen(world, v, id, corners, by);
   }
 
   test('a corner is offset over the depth its polygon is under, not instead of it', () => {
@@ -339,7 +345,7 @@ describe('a depth per corner', () => {
 
     expect(only(bent, 1, ids[0]).depths).not.toBe(null);
     expect(only(back, 1, ids[0]).depths).toBe(null);
-    expect(back.versions[1].edits.get(ids[0])!.depths.size).toBe(0);
+    expect(rigOf(back, ids[0]).depths.size).toBe(0);
   });
 
   test('it is inherited by the versions after it, like any other depth', () => {
@@ -418,24 +424,24 @@ describe('a depth per corner', () => {
     );
     const g = sealed(world, 0, ids, TOP)!;
     const bent = deepened(g.world, 0, ids[0], [0], 30);
-    const both = withEdit(bent, 0, g.id, editAt(bent, 0, g.id, 8));
+    const both = wrote(bent, 0, g.id, erode(8));
 
     // Less than the same group with nothing bent, and the group's own depth is
     // still doing its work on top.
-    const plain = withEdit(g.world, 0, g.id, editAt(g.world, 0, g.id, 8));
+    const plain = wrote(g.world, 0, g.id, erode(8));
 
     expect(shapeArea(csg(both, 0))).toBeLessThan(shapeArea(csg(plain, 0)));
     expect(shapeArea(csg(both, 0))).toBeGreaterThan(0);
   });
 
-  test('a gesture starts from the depths the base was under', () => {
-    // `starting` is what a drag reads, and a drag that wrote a transform
-    // without carrying these would flatten every corner the base had offset.
+  test('a gesture at a later keyframe keeps the depths from before it', () => {
+    // A gesture writes one operation and nothing about the corners, so what
+    // was offset before it is offset after it. It used to have to seed them.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const bent = deepened(world, 1, ids[0], [0], 15);
-    const corner = bent.polygons.get(ids[0])!.points[0].id;
+    const turned = wrote(bent, 2, ids[0], spun(0.3));
 
-    expect(starting(bent, 2, [ids[0]]).get(ids[0])!.depths.get(corner)).toBe(15);
+    expect(only(turned, 2, ids[0]).depths).toEqual([15, 0, 0, 0]);
   });
 
   test('picking a corner names the polygon its depth is written into', () => {
@@ -525,24 +531,22 @@ describe('versions', () => {
 });
 
 describe('placeVertex', () => {
-  const turned: Transform = {
+  const turned: Partial<Layer> = {
     translation: { x: 40, y: -15 },
     rotation: Math.PI / 4,
     scale: { x: 1.3, y: 0.6 },
-    erosion: 0,
   };
 
-  /** The drag, as the canvas does it: resolve, take this version's edit, write. */
+  /** The drag, as the canvas does it: resolve, and nudge the corner under the
+   * cursor. */
   function drag(
     world: World,
-    v: VersionId,
+    v: KeyframeId,
     id: PolygonId,
     index: number,
     to: Point,
   ): World {
-    const it = only(world, v, id);
-
-    return withEdit(world, v, id, placeVertex(it, editAt(world, v, id, it.erosion), index, to));
+    return placeVertex(world, v, only(world, v, id), index, to);
   }
 
   test('a source vertex lands under the cursor and takes nothing with it', () => {
@@ -662,13 +666,11 @@ describe('placeVertex', () => {
 });
 
 describe('corners added and taken away', () => {
-  const ring = (world: World, v: VersionId, id: PolygonId) =>
+  const ring = (world: World, v: KeyframeId, id: PolygonId) =>
     only(world, v, id).source.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
 
-  function drag(world: World, v: VersionId, id: PolygonId, index: number, to: Point): World {
-    const it = only(world, v, id);
-
-    return withEdit(world, v, id, placeVertex(it, editAt(world, v, id, it.erosion), index, to));
+  function drag(world: World, v: KeyframeId, id: PolygonId, index: number, to: Point): World {
+    return placeVertex(world, v, only(world, v, id), index, to);
   }
 
   test('a click on an edge puts a corner exactly where it was clicked', () => {
@@ -901,12 +903,12 @@ describe('copy and paste', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const at1 = moved(world, 1, ids[0], { erosion: 7 });
 
-    const last = at1.versions.length - 1;
+    const last = at1.keyframes.length - 1;
     const after = pasted(at1, last, copied(at1, 0, [ids[0]]), { x: 0, y: 500 }, TOP);
 
     // Copied at v0, pasted at the last version: its v1 has nowhere to land, and
     // the chain does not grow to make room.
-    expect(after.world.versions.length).toEqual(last + 1);
+    expect(after.world.keyframes.length).toEqual(last + 1);
     expect(only(after.world, last, after.ids[0]).erosion).toEqual(0);
   });
 
@@ -1302,15 +1304,11 @@ function pair(): { world: World, ids: PolygonId[], group: GroupId } {
 }
 
 /** Where a polygon's corners actually are at a version. */
-function at(world: World, v: VersionId, id: PolygonId): Point[] {
+function at(world: World, v: KeyframeId, id: PolygonId): Point[] {
   return only(world, v, id).source;
 }
 
-function moved(world: World, v: VersionId, id: Id, t: Partial<Transform>): World {
-  const edit = editAt(world, v, id, 0);
-
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
-}
+const moved = transformed;
 
 describe('a group moves what is in it', () => {
   test('a member takes its group\'s transform on top of its own', () => {
@@ -1373,7 +1371,7 @@ describe('a group moves what is in it', () => {
     const made = sealed(world, 2, ids, TOP)!;
 
     for (let v = 0; v < 4; v++) {
-      expect(at(made.world, v as VersionId, ids[0])[0]).toEqual({ x: 0, y: 0 });
+      expect(at(made.world, v as KeyframeId, ids[0])[0]).toEqual({ x: 0, y: 0 });
     }
 
     const w = moved(made.world, 0, made.id, { translation: { x: 100, y: 0 } });
@@ -1408,14 +1406,11 @@ describe('born into a group that was already moved', () => {
    * at. What the earlier move must not do is apply twice — once in the ground
    * the thing was placed against, and again on the way back out.
    */
-  function moved(): { world: World, group: GroupId, at: VersionId } {
+  function moved(): { world: World, group: GroupId, at: KeyframeId } {
     const a = drawn(['level', rect(0, 0, 10, 10)], ['level', rect(20, 0, 10, 10)]);
     const g = sealed(a.world, 0, a.ids, TOP)!;
 
-    const world = withEdit(g.world, 0, g.id, {
-      ...editAt(g.world, 0, g.id, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 100, y: 0 } },
-    });
+    const world = wrote(g.world, 0, g.id, move(100, 0));
 
     return { world, group: g.id, at: 2 };
   }
@@ -1460,11 +1455,8 @@ describe('born into a group that was already moved', () => {
       landing(art.world, at, group),
     );
 
-    const next = (at + 1) as VersionId;
-    const later = withEdit(walk.world, next, group, {
-      ...editAt(walk.world, next, group, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 100, y: 7 } },
-    });
+    const next = (at + 1) as KeyframeId;
+    const later = wrote(walk.world, next, group, move(100, 7));
 
     const step = (a: Point, b: Point) => ({ x: b.x - a.x, y: b.y - a.y });
 
@@ -1493,10 +1485,7 @@ describe('a group holds a measuring path', () => {
   test('the group carries it, and the versions before the move do not', () => {
     const { world, walk, group } = taped();
 
-    const w = withEdit(world, 2, group, {
-      ...editAt(world, 2, group, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 0, y: 200 } },
-    });
+    const w = wrote(world, 2, group, move(0, 200));
 
     expect(pathAt(w, walk, 1)).toEqual([{ x: 10, y: 10 }, { x: 90, y: 10 }]);
     expect(pathAt(w, walk, 2)).toEqual([{ x: 10, y: 210 }, { x: 90, y: 210 }]);
@@ -1505,10 +1494,7 @@ describe('a group holds a measuring path', () => {
   test('a turn of the group turns the walk about the group, not about itself', () => {
     const { world, walk, group } = taped();
 
-    const w = withEdit(world, 0, group, {
-      ...editAt(world, 0, group, 0),
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 2 },
-    });
+    const w = wrote(world, 0, group, turning(Math.PI / 2));
 
     const there = pathAt(w, walk, 0)!;
 
@@ -1522,16 +1508,13 @@ describe('a group holds a measuring path', () => {
   test('taking the group apart leaves the walk exactly where it stood', () => {
     const { world, walk, group } = taped();
 
-    const w = withEdit(world, 1, group, {
-      ...editAt(world, 1, group, 0),
-      transform: { translation: { x: 3, y: 7 }, rotation: 0.4, scale: { x: 2, y: 2 }, erosion: 0 },
-    });
+    const w = transformed(world, 1, group, { translation: { x: 3, y: 7 }, rotation: 0.4, scale: { x: 2, y: 2 } });
 
     const apart = ungrouped(w, group)!;
 
     for (let v = 0; v < VERSIONS; v++) {
-      const before = pathAt(w, walk, v as VersionId)!;
-      const after = pathAt(apart, walk, v as VersionId)!;
+      const before = pathAt(w, walk, v as KeyframeId)!;
+      const after = pathAt(apart, walk, v as KeyframeId)!;
 
       after.forEach((p, i) => {
         expect(p.x).toBeCloseTo(before[i].x, 9);
@@ -1551,10 +1534,7 @@ describe('a group holds a measuring path', () => {
   test('a copy of the group brings the walk across, where it stood', () => {
     const { world, walk, group } = taped();
 
-    const w = withEdit(world, 0, group, {
-      ...editAt(world, 0, group, 0),
-      transform: { ...EMPTY_TRANSFORM, translation: { x: 50, y: 0 } },
-    });
+    const w = wrote(world, 0, group, move(50, 0));
 
     const clips = copied(w, 0, [group]);
     const put = pasted(w, 0, clips, { x: 0, y: 0 }, TOP);
@@ -1606,8 +1586,8 @@ describe('making and taking apart', () => {
 
     for (let v = 0; v < 4; v++) {
       for (const id of ids) {
-        const before = at(w, v as VersionId, id);
-        const after = at(apart, v as VersionId, id);
+        const before = at(w, v as KeyframeId, id);
+        const after = at(apart, v as KeyframeId, id);
 
         after.forEach((p, i) => {
           expect(p.x).toBeCloseTo(before[i].x, 9);
@@ -1617,9 +1597,10 @@ describe('making and taking apart', () => {
     }
   });
 
-  test('what a version cannot hold is refused whole', () => {
-    // Turn, squash, turn again is a shear, and no combination of a turn and
-    // two scales says shear.
+  test('what a frame cannot hold is refused whole', () => {
+    // A squash outside a turn is a shear, and a frame cannot say shear: a
+    // member turned inside a group squashed across it is not a turn, a scale
+    // and a move of anything once the group is gone.
     const { world, ids, group } = pair();
 
     const w = moved(
@@ -1629,32 +1610,31 @@ describe('making and taking apart', () => {
       { scale: { x: 2, y: 1 } },
     );
 
-    expect(composed(
-      { ...EMPTY_TRANSFORM, scale: { x: 2, y: 1 } },
-      { ...EMPTY_TRANSFORM, rotation: 0.4 },
-    )).toEqual(null);
-
-    // A squash outside a turn is the shear. Either on its own composes, and so
-    // does a turn outside anything at all.
-    expect(composed(
-      { ...EMPTY_TRANSFORM, rotation: 0.7 },
-      { ...EMPTY_TRANSFORM, rotation: 0.4, scale: { x: 2, y: 1 } },
-    )).not.toEqual(null);
-
     expect(ungrouped(w, group)).toEqual(null);
 
     // And the world it refused is the world that stands.
     expect(w.groups.has(group)).toEqual(true);
+
+    // A turn outside a squash is not a shear, so the other way round comes
+    // apart, and so does a turn outside anything at all.
+    const other = moved(
+      moved(world, 0, ids[0], { rotation: 0.4, scale: { x: 2, y: 1 } }),
+      0,
+      group,
+      { rotation: 0.7 },
+    );
+
+    expect(ungrouped(other, group)).not.toEqual(null);
   });
 
   test('a depth is nobody else\'s', () => {
     // Leaving a group does not take its erosion, and does not lose your own.
-    const both = composed(
-      { ...EMPTY_TRANSFORM, erosion: 5 },
-      { ...EMPTY_TRANSFORM, erosion: 2 },
-    );
+    const { world, ids, group } = pair();
+    const w = wrote(wrote(world, 0, group, erode(5)), 0, ids[0], erode(2));
+    const apart = ungrouped(w, group)!;
 
-    expect(both!.erosion).toEqual(2);
+    expect(only(apart, 0, ids[0]).erosion).toEqual(2);
+    expect(only(apart, 0, ids[1]).erosion).toEqual(0);
   });
 
   test('a group nested inside another takes its place in the holder', () => {
@@ -1669,7 +1649,7 @@ describe('making and taking apart', () => {
 });
 
 describe('taken out at a version, and standing at the ones before it', () => {
-  const there = (world: World, v: VersionId) => resolveAt(world, v).map(it => it.id).sort();
+  const there = (world: World, v: KeyframeId) => resolveAt(world, v).map(it => it.id).sort();
 
   test('a polygon goes from that version onward and stays in the ones before', () => {
     const { world, ids } = drawn(
@@ -1702,7 +1682,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
     const moved = transformed(world, 3, ids[0], { translation: { x: 500, y: 0 } });
     const gone = removeAt(moved, 2, [ids[0]]);
 
-    expect(gone.versions[3].edits.has(ids[0])).toBe(true);
+    expect(rigOf(gone, ids[0]).keys.has(3)).toBe(true);
     expect(resolveAt(gone, 3)).toEqual([]);
   });
 
@@ -2426,11 +2406,10 @@ describe('going inside a group', () => {
 });
 
 describe('a gesture writes into the frame it is read in', () => {
-  test("a group's depth survives the first thing written at a later version", () => {
-    // Eroded at v0, turned at v1. The turn writes a whole layer, and the
-    // erosion has to be seeded into it from what the base already resolved to
-    // or it goes to zero — a group's depth being on a layer rather than on
-    // geometry, the polygon reader has never heard of it.
+  test("a group's depth survives the first thing written at a later keyframe", () => {
+    // Eroded at v0, turned at v1. The turn is one more operation and says
+    // nothing about the depth, which goes on being what v0 made it. It used to
+    // be a whole layer, which had to be seeded with the depth or lost it.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(120, 0, 100, 100)],
@@ -2438,14 +2417,7 @@ describe('a gesture writes into the frame it is read in', () => {
 
     const made = sealed(world, 0, ids, TOP)!;
     const w = moved(made.world, 0, made.id, { erosion: 8 });
-
-    expect(starting(w, 1, [made.id]).get(made.id)!.transform.erosion).toEqual(8);
-
-    // And having written the turn, it is still there.
-    const turned = withEdit(w, 1, made.id, {
-      ...starting(w, 1, [made.id]).get(made.id)!,
-      transform: { ...starting(w, 1, [made.id]).get(made.id)!.transform, rotation: 0.5 },
-    });
+    const turned = wrote(w, 1, made.id, spun(0.5));
 
     expect(depths(turned, 1).get(made.id)).toEqual(8);
   });
@@ -2472,7 +2444,7 @@ describe('a gesture writes into the frame it is read in', () => {
     expect(p.y).toBeCloseTo(-1, 9);
 
     // A step is the same question without the frame's own translation in it.
-    const shifted = moved(w, 0, group, { rotation: angle, translation: { x: 500, y: 500 } });
+    const shifted = moved(w, 0, group, { translation: { x: 500, y: 500 } });
     const step = unstep(under(shifted, 0, ids[0]), 1, 0);
 
     expect(step.x).toBeCloseTo(0, 9);
@@ -2488,30 +2460,11 @@ describe('a gesture writes into the frame it is read in', () => {
 
     const it = only(w, 0, ids[0]);
     const pivot = centroid(it.source);
-    const m = under(w, 0, ids[0]);
 
-    const edit = starting(w, 0, [ids[0]]).get(ids[0])!;
-    const local = unplace(m, pivot);
-    const c = Math.cos(Math.PI), sn = Math.sin(Math.PI);
-
-    // A half turn about the pivot, written the way `turned` writes it.
-    const dx = edit.transform.translation.x - local.x;
-    const dy = edit.transform.translation.y - local.y;
-
-    const spun = withEdit(w, 0, ids[0], {
-      ...edit,
-      transform: {
-        ...edit.transform,
-        rotation: edit.transform.rotation + Math.PI,
-        translation: {
-          x: local.x + c * dx - sn * dy,
-          y: local.y + sn * dx + c * dy,
-        },
-      },
-    });
+    // A half turn about its own middle, written the way the gesture writes it.
+    const after = only(wrote(w, 0, ids[0], spun(Math.PI)), 0, ids[0]);
 
     // Half a turn about its own centre: a rectangle lands back on itself.
-    const after = only(spun, 0, ids[0]);
 
     expect(centroid(after.source).x).toBeCloseTo(pivot.x, 6);
     expect(centroid(after.source).y).toBeCloseTo(pivot.y, 6);
@@ -2639,10 +2592,9 @@ describe('a projection is the same shape wherever it is taken', () => {
           ),
         }),
         (ring, t) => {
-          const m = affine({
-            ...EMPTY_TRANSFORM,
-            translation: { x: t.x, y: t.y },
-            rotation: t.rotation,
+          const m = affineOf({
+            t: { x: t.x, y: t.y },
+            angle: t.rotation,
             scale: { x: t.scale, y: t.scale },
           });
 
@@ -2723,10 +2675,9 @@ describe('a projection is the same shape wherever it is taken', () => {
           ),
         }),
         (ring, t) => {
-          const m = affine({
-            ...EMPTY_TRANSFORM,
-            translation: { x: t.x, y: t.y },
-            rotation: t.rotation,
+          const m = affineOf({
+            t: { x: t.x, y: t.y },
+            angle: t.rotation,
             scale: { x: t.scale, y: t.scale },
           });
 
@@ -2769,13 +2720,14 @@ describe('a projection is the same shape wherever it is taken', () => {
   });
 });
 
-describe('moving something at one version moves it at the versions after it', () => {
+describe('moving something at one keyframe moves it at the keyframes after it', () => {
   /**
-   * The compensation `carried` makes, from the outside: a drag says *this is a
-   * hundred units further right*, and every version it reaches hears the same
-   * sentence rather than the sentence its own layer would turn it into.
+   * What a move means, from the outside: a drag says *this is a hundred units
+   * further right*, and every keyframe it reaches hears the same sentence. It
+   * used to take a compensation written into every later layer; a turn about
+   * a painted point hears it without being told.
    */
-  const middle = (world: World, v: VersionId, id: Id): Point => {
+  const middle = (world: World, v: KeyframeId, id: Id): Point => {
     const pts = resolveAt(world, v).find(r => r.id === id)!.shape.flat();
 
     return {
@@ -2858,10 +2810,10 @@ describe('moving something at one version moves it at the versions after it', ()
     expect(middle(out, 1, ids[0]).y).toBeCloseTo(100, 6);
   });
 
-  test('nothing is carried past a footing', () => {
-    // A footing says *ignore what the base handed over*, so the drag never
-    // reaches the layer beyond one and there is nothing there to take back out.
-    // Compensating anyway would move a version that was explicitly cut loose.
+  test('nothing is carried past a stand', () => {
+    // A stand says *ignore what came before*, so the drag never reaches the
+    // keyframe beyond one. Moving it anyway would move a keyframe that was
+    // explicitly cut loose.
     const { world, ids } = box();
     const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
     const loose = unchained(turned, 1, [ids[0]]);
@@ -2874,18 +2826,15 @@ describe('moving something at one version moves it at the versions after it', ()
     expect(middle(out, 1, ids[0]).y).toBeCloseTo(before.y, 6);
   });
 
-  test('a drag in steps lands where the same drag in one go lands', () => {
-    // A gesture writes the whole transform on every pointer move, so this runs
-    // once per frame of a drag and compensates for that frame's step alone.
-    // Translations compose, so the steps have to add up to the same answer the
-    // single move gives — otherwise a slow hand and a fast one end somewhere
-    // different.
+  test('a drag in steps lands where the same drag in one go lands, as one entry', () => {
+    // Moves one after another are one move, and a hand that went there in four
+    // goes has written the same thing as one that went there in one.
     const { world, ids } = box();
     const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
 
     let stepped = turned;
 
-    for (const x of [20, 45, 70, 100]) {
+    for (const x of [20, 25, 25, 30]) {
       stepped = transformed(stepped, 0, ids[0], { translation: { x, y: 0 } });
     }
 
@@ -2895,6 +2844,8 @@ describe('moving something at one version moves it at the versions after it', ()
       expect(middle(stepped, v, ids[0]).x).toBeCloseTo(middle(once, v, ids[0]).x, 6);
       expect(middle(stepped, v, ids[0]).y).toBeCloseTo(middle(once, v, ids[0]).y, 6);
     }
+
+    expect(rigOf(stepped, ids[0]).keys.get(0)).toHaveLength(1);
   });
 
   test('a turn at an earlier version is inherited, as it always was', () => {

@@ -30,6 +30,7 @@ import {
 } from '@ce/game';
 import {
   Frame,
+  Layer,
   Span,
   artefactsDuring,
   bakeSpan,
@@ -47,12 +48,11 @@ import {
   addPolygon,
   addVertex,
   EMPTY_LIVE,
-  affine,
   compose,
   contributing,
   csg,
   deepen,
-  editAt,
+  depths,
   grouped,
   sealing,
   live,
@@ -61,9 +61,9 @@ import {
   removeVertices,
   resolveAt,
   unchained,
-  withEdit,
 } from './scene';
-import { ArtefactId, EMPTY_TRANSFORM, FLOOR, Id, SOLID, PolygonId, PolygonKind, Transform, VersionId, World, emptyWorld } from './types';
+import { ArtefactId, FLOOR, Id, SOLID, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
+import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -98,26 +98,37 @@ function drawn(...specs: [Named, Point[]][]): { world: World, ids: PolygonId[] }
   return { world, ids };
 }
 
-function transformed(world: World, v: VersionId, id: PolygonId, t: Partial<Transform>): World {
-  const it = resolveAt(world, v).find(r => r.id === id)!;
-  const edit = editAt(world, v, id, it.erosion);
-
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+/** A layer as these tests were first written against: a squash, a turn and a
+ * move, each about the origin, and a depth stated outright rather than added.
+ * Written as the operations that say it now, at the end of `v`'s list. On
+ * anything at all, group or polygon. */
+interface Shaped {
+  translation: Point
+  rotation: number
+  scale: { x: number, y: number }
+  erosion: number
 }
 
-/** A layer on anything at all, group or polygon. `transformed` reads the
- * polygon's own erosion back first, which a group does not have. */
-function moved(world: World, v: VersionId, id: Id, t: Partial<Transform>): World {
-  const edit = editAt(world, v, id, 0);
+function transformed(world: World, v: KeyframeId, id: Id, t: Partial<Shaped>): World {
+  const ops: Writing[] = [];
 
-  return withEdit(world, v, id, { ...edit, transform: { ...edit.transform, ...t } });
+  if (t.scale !== undefined) ops.push(scaled(t.scale.x, t.scale.y));
+  if (t.rotation !== undefined) ops.push(turning(t.rotation));
+  if (t.translation !== undefined) ops.push(move(t.translation.x, t.translation.y));
+
+  if (t.erosion !== undefined) {
+    ops.push((w, k, of) => erode(
+      t.erosion! - (resolveAt(w, k).find(r => r.id === of)?.erosion ?? depths(w, k).get(of) ?? 0),
+    ));
+  }
+
+  return wrote(world, v, id, ...ops);
 }
 
-function eroded(world: World, v: VersionId, id: PolygonId, depth: number): World {
-  return withEdit(world, v, id, {
-    ...editAt(world, v, id, depth),
-    transform: { ...editAt(world, v, id, depth).transform, erosion: depth },
-  });
+const moved = transformed;
+
+function eroded(world: World, v: KeyframeId, id: PolygonId, depth: number): World {
+  return transformed(world, v, id, { erosion: depth });
 }
 
 function run<T>(g: Generator<number, T, void>): T {
@@ -155,7 +166,7 @@ const SLACK = 1e-3;
 /** Instants that are deliberately not the ones the bake looked at. */
 const INSTANTS = Array.from({ length: 101 }, (_unused, i) => i / 100);
 
-function agrees(world: World, from: VersionId): number {
+function agrees(world: World, from: KeyframeId): number {
   const span = run(bakeSpan(world, from));
   const flat = bakedSpan(span);
 
@@ -388,7 +399,7 @@ describe('the shipped set is the set the editor draws', () => {
 
 describe('an artefact rides the frame table like everything else', () => {
   /** A key put exactly on a corner of a room, and the room made to move. */
-  function corner(layer: Partial<Transform>): { world: World, key: ArtefactId } {
+  function corner(layer: Partial<Shaped>): { world: World, key: ArtefactId } {
     const at = { x: 200, y: 0 };
     const drew = addPolygon(emptyWorld(), kind('level'), [{ x: 0, y: 0 }, at, { x: 200, y: 200 }], 0, TOP);
     const put = addArtefact(drew.world, 'key', at, 0, TOP);
@@ -529,13 +540,11 @@ describe('a room split by a depth on one corner', () => {
     const { world, ids } = drawn(['level', room]);
     const polygon = world.polygons.get(ids[0])!;
 
-    let edit = editAt(world, 0, ids[0], resolveAt(world, 0)[0]);
+    let out = world;
 
-    for (const [i, d] of by) {
-      edit = deepen(edit, polygon, new Set([polygon.points[i].id]), d);
-    }
+    for (const [i, d] of by) out = deepen(out, 0, ids[0], new Set([polygon.points[i].id]), d);
 
-    return withEdit(world, 0, ids[0], edit);
+    return out;
   }
 
   /**
@@ -643,7 +652,7 @@ describe('what the buffers are', () => {
 /** One world unit per editor unit, so every number below is both. */
 const ONE = 1;
 
-function hullsAt(world: World, v: VersionId): Hulls {
+function hullsAt(world: World, v: KeyframeId): Hulls {
   return new Hulls(versionOf(world, v).polygons, ONE);
 }
 
@@ -917,11 +926,10 @@ function shaderFrame(frames: Float32Array, depth: number, slot: number, t: numbe
       ty: mix(frames[o + 5], frames[o + 21]),
     };
 
-    const layer: Transform = {
+    const layer: Layer = {
       translation: { x: frames[o + 6], y: frames[o + 7] },
       rotation: frames[o + 8],
       scale: { x: frames[o + 9], y: frames[o + 10] },
-      erosion: 0,
     };
 
     const rot = layer.rotation * t;
@@ -974,17 +982,8 @@ describe('the chain a vertex rides', () => {
     const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
     const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
 
-    const turned = withEdit(outer.world, 1, inner.id, {
-      transform: { ...EMPTY_TRANSFORM, rotation: Math.PI / 5 },
-      vertices: new Map(),
-      depths: new Map(),
-    });
-
-    const squashed = withEdit(turned, 1, outer.id, {
-      transform: { ...EMPTY_TRANSFORM, scale: { x: 1.6, y: 0.7 } },
-      vertices: new Map(),
-      depths: new Map(),
-    });
+    const turned = wrote(outer.world, 1, inner.id, turning(Math.PI / 5));
+    const squashed = wrote(turned, 1, outer.id, scaled(1.6, 0.7));
 
     return {
       world: transformed(squashed, 1, ids[0], { translation: { x: 30, y: 0 } }),
@@ -1038,10 +1037,10 @@ describe('the chain a vertex rides', () => {
   });
 
   /**
-   * A footing at the far version is the one thing that puts a slot's two ends
-   * on different bases, and the table has to carry both — the near base alone
-   * leaves the shader holding the room still for the whole span and snapping it
-   * into place at the end of it, which is what the 3D view did.
+   * A stand at the far keyframe puts a slot's two ends a long way apart, and
+   * the table has to carry the way between them — holding the room still for
+   * the whole span and snapping it into place at the end of it is what the 3D
+   * view once did.
    */
   test('and across an unchain point, where the two bases differ', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
@@ -1170,7 +1169,7 @@ describe('the standing walls and the bake agree about every vertical', () => {
 // -----------------------------------------------------------------------------
 
 describe('a void is a hole in a hole', () => {
-  const area = (world: World, v: VersionId = 0) => shapeArea(unionAt(world, v));
+  const area = (world: World, v: KeyframeId = 0) => shapeArea(unionAt(world, v));
 
   test('a pillar with a void across its edge is a U, and the level says so', () => {
     // The case the whole restructure exists for: `room - (pillar - void)`,

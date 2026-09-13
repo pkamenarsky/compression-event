@@ -19,11 +19,11 @@
 // -----------------------------------------------------------------------------
 
 import { Ready, Slice, TOLERANCE, cutSome, ready } from './bake';
-import { VersionId, World } from './types';
+import { KeyframeId, World } from './types';
 
 export type ToWorker =
   | { kind: 'open', world: World }
-  | { kind: 'cut', from: VersionId, which: number[], tol: number };
+  | { kind: 'cut', from: number, which: number[], tol: number };
 
 export type FromWorker =
   | { kind: 'progress', at: number }

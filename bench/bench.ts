@@ -99,11 +99,11 @@ async function main(): Promise<void> {
 
   const built = level(rooms);
   const world = version(built.world, built.ids, share);
-  const spans = world.versions.length - 1;
+  const spans = world.keyframes.length - 1;
   const where = count === 0 ? 'on this thread' : `${count} threads`;
 
   say(`${navigator.hardwareConcurrency} cores reported`);
-  say(`${world.polygons.size} polygons, ${world.versions[1].edits.size} edited, ${spans} spans`);
+  say(`${world.polygons.size} polygons, ${world.rigs.size} edited, ${spans} spans`);
   say(`${where}, ${handful} polygons at a time\n`);
   await breathe();
 

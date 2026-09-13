@@ -33,7 +33,7 @@ import {
 import { Bake, Origin, Ref, Rider, Span, Stretch, loadedFor, pivot, spanAt } from './bake';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, IDENTITY, contributing, placeAt, resolveAt, settled } from './scene';
-import { ArtefactId, Id, PolygonId, SLOTS, SetName, VersionId, World, slotOf } from './types';
+import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
 
 // -----------------------------------------------------------------------------
 // One span
@@ -310,7 +310,7 @@ export function bakedLevel(bake: Bake, world: World): BakedLevel {
   const spans = [];
   const carrying = shipping(world);
 
-  for (let from = 0; from + 1 < world.versions.length; from++) {
+  for (let from = 0; from + 1 < world.keyframes.length; from++) {
     const span = spanAt(bake, world, from);
     if (span === null) break;
 
@@ -347,7 +347,7 @@ function shapeOf(it: Contributed): Shape {
  * would be nothing for a diff to skip, and this runs once where the editor's
  * own set runs once a frame.
  */
-export function setAt(world: World, v: VersionId, set: SetName): Shape {
+export function setAt(world: World, v: KeyframeId, set: SetName): Shape {
   const slots: Shape[] = Array.from({ length: SLOTS[set] }, () => []);
 
   // Through `contributing`, which is what makes this the same set the editor
@@ -371,7 +371,7 @@ export function setAt(world: World, v: VersionId, set: SetName): Shape {
 }
 
 /** The level: what collision and the walls are made of. */
-export function unionAt(world: World, v: VersionId): Shape {
+export function unionAt(world: World, v: KeyframeId): Shape {
   return setAt(world, v, 'level');
 }
 
@@ -391,7 +391,7 @@ export function unionAt(world: World, v: VersionId): Shape {
  * wound. `withNormals` reads the winding and `sideOf` in `coldet.ts` acts on
  * it, and neither needs telling which is which.
  */
-export function versionOf(world: World, v: VersionId): GameVersion {
+export function versionOf(world: World, v: KeyframeId): GameVersion {
   const polygons: GamePolygon[] = [];
 
   for (const ring of unionAt(world, v)) {
@@ -416,7 +416,7 @@ export function versionOf(world: World, v: VersionId): GameVersion {
  * Its own function because the 3D view wants it without wanting the level, and
  * the level is the expensive half of `versionOf`.
  */
-export function floorsAt(world: World, v: VersionId): Floor[] {
+export function floorsAt(world: World, v: KeyframeId): Floor[] {
   return filled(setAt(world, v, 'floor'));
 }
 
@@ -459,7 +459,7 @@ export function artefactsShipped(world: World): GameArtefact[] {
     return {
       type: it.type,
       at: it.at,
-      places: world.versions.map((_unused, v) => placeAt(world, id, v)),
+      places: world.keyframes.map(k => placeAt(world, id, k.id)),
     };
   });
 }
@@ -484,7 +484,7 @@ export function shipped(world: World, bake: Bake): GameWorld {
     // As it stands, once: it is in no version's layer, so there is nothing to
     // resolve it through and nothing per version to say about it.
     start: { at: world.start.at, facing: world.start.facing },
-    versions: world.versions.map((_unused, v) => versionOf(world, v)),
+    versions: world.keyframes.map(k => versionOf(world, k.id)),
     baked: bakedLevel(bake, world),
   };
 }
