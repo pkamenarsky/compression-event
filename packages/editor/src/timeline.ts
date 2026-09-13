@@ -286,9 +286,16 @@ function centre(m: Model, col: number): number {
   return m.xs[col] + m.widths[col] / 2;
 }
 
-/** Where the `i`-th of `n` slots sits in a column. */
-function slot(m: Model, col: number, i: number, n: number): number {
-  return centre(m, col) + (i - (n - 1) / 2) * SLOT;
+/**
+ * The middle of a column's `i`-th slot, counted from its left edge.
+ *
+ * From the left rather than about the middle, so that an icon stays where it
+ * is when the picked one's arrow comes out beside it: only what comes after
+ * the arrow moves, and the second click of a double click lands where the
+ * first did.
+ */
+function slot(m: Model, col: number, i: number): number {
+  return m.xs[col] + PAD + i * SLOT + SLOT / 2;
 }
 
 /** Where the picked entry is among a cell's icons, or -1. */
@@ -302,9 +309,8 @@ function pickedIn(m: Model, r: Row, col: number): number {
  * it, and everything after that moves along one. */
 function placed(m: Model, r: Row, col: number, i: number): number {
   const p = pickedIn(m, r, col);
-  const n = r.cells[col].entries.length + (p < 0 ? 0 : 1);
 
-  return slot(m, col, p >= 0 && i > p ? i + 1 : i, n);
+  return slot(m, col, p >= 0 && i > p ? i + 1 : i);
 }
 
 /** The column under a point on the page, clamped to the ones there are. */
@@ -736,7 +742,7 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   if (i < 0) return [];
 
-  const x = slot(m, col, i + 1, r.cells[col].entries.length + 1);
+  const x = slot(m, col, i + 1);
 
   const done = (clientX: number) => {
     const w = ctx.state().world;
