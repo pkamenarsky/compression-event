@@ -70,9 +70,6 @@ interface Picked {
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
   picked: Picked | null
-  /** Whether the pick's arrow is out: only once a second click would no
-   * longer be a double click, or the arrow would be under it. */
-  armed: boolean
 }
 
 interface Model {
@@ -83,7 +80,6 @@ interface Model {
   current: number
   rows: Row[]
   picked: Picked | null
-  armed: boolean
 }
 
 export function timeline(
@@ -96,12 +92,12 @@ export function timeline(
   go: (k: KeyframeId) => void,
   edits: Signal<Editing>,
 ): VNode {
-  const initial: Local = { picked: null, armed: false };
+  const initial: Local = { picked: null };
 
   return stateful(initial, (local, setLocal) => {
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
     const letGo = () => {
-      if (local().picked !== null) change(l => ({ ...l, picked: null, armed: false }));
+      if (local().picked !== null) change(l => ({ ...l, picked: null }));
     };
 
     // Acted on, a pick may name an entry that is not there any more, and a
@@ -219,12 +215,11 @@ function keys(ctx: Ctx, input: Input): VNode {
 function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local): Model {
   const rows = rowsOf(world, rootsOf(world, selection));
   const picked = valid(world, local.picked);
-  const armed = picked !== null && local.armed;
 
   // As wide as the fullest cell in it, the picked entry's arrow counted, and
   // never narrower than a handful.
   const widths = world.keyframes.map((f, col) =>
-    Math.max(ROOMY, ...rows.map(r => r.cells[col].entries.length + (armed && picked.id === r.id && picked.at === f.id ? 1 : 0))) * SLOT + 2 * PAD);
+    Math.max(ROOMY, ...rows.map(r => r.cells[col].entries.length + (picked?.id === r.id && picked.at === f.id ? 1 : 0))) * SLOT + 2 * PAD);
   const xs: number[] = [];
   let x = LABEL;
 
@@ -245,7 +240,6 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
     current: order(world, k),
     rows,
     picked,
-    armed,
   };
 }
 
@@ -298,12 +292,6 @@ function slot(m: Model, col: number, i: number, n: number): number {
 }
 
 /** Where the picked entry is among a cell's icons, or -1. */
-/** Where the picked entry is among a cell's icons, where its arrow is out,
- * or -1. */
-function arrowIn(m: Model, r: Row, col: number): number {
-  return m.armed ? pickedIn(m, r, col) : -1;
-}
-
 function pickedIn(m: Model, r: Row, col: number): number {
   const p = m.picked;
 
@@ -313,7 +301,7 @@ function pickedIn(m: Model, r: Row, col: number): number {
 /** Where a cell's `i`-th icon sits: the picked one's arrow takes the slot after
  * it, and everything after that moves along one. */
 function placed(m: Model, r: Row, col: number, i: number): number {
-  const p = arrowIn(m, r, col);
+  const p = pickedIn(m, r, col);
   const n = r.cells[col].entries.length + (p < 0 ? 0 : 1);
 
   return slot(m, col, p >= 0 && i > p ? i + 1 : i, n);
@@ -563,13 +551,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
 
         ctx.clicked = twice ? null : { id: r.id, at, index, when: now };
         ctx.go(at);
-
-        // Picked at once, its arrow out only once a second click would not be
-        // a double click any more.
-        const picked = { id: r.id, at, index };
-
-        ctx.change(l => ({ ...l, picked, armed: false }));
-        setTimeout(() => ctx.change(l => (l.picked === picked ? { ...l, armed: true } : l)), DOUBLE_MS);
+        ctx.change(l => ({ ...l, picked: { id: r.id, at, index } }));
 
         if (twice) ctx.edits.emit({ id: r.id, at, index });
       };
@@ -750,7 +732,7 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
   if (p === null || p.id !== r.id) return [];
 
   const col = m.keyframes.findIndex(f => f.id === p.at);
-  const i = arrowIn(m, r, col);
+  const i = pickedIn(m, r, col);
 
   if (i < 0) return [];
 
