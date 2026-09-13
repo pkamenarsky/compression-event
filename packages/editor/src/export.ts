@@ -23,6 +23,11 @@ import {
   ENTRY_STRIDE,
   FRAME_STRIDE,
   Floor,
+  OP_MOVE,
+  OP_SCALE,
+  OP_STAND,
+  OP_STRIDE,
+  OP_TURN,
   Artefact as GameArtefact,
   Polygon as GamePolygon,
   Version as GameVersion,
@@ -30,9 +35,10 @@ import {
   nesting,
   withNormals,
 } from '@ce/game';
-import { Bake, Origin, Ref, Rider, Span, Stretch, loadedFor, pivot, spanAt } from './bake';
+import { Bake, Flight, Origin, Ref, Rider, Span, Stretch, loadedFor, spanAt } from './bake';
+import { Op } from './rig';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Contributed, IDENTITY, contributing, placeAt, resolveAt, settled } from './scene';
+import { Contributed, contributing, placeAt, resolveAt, settled } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
 
 // -----------------------------------------------------------------------------
@@ -62,20 +68,15 @@ function slotted(riders: Map<Id, Rider>): Slots {
   return new Map([...ids].sort((a, b) => a - b).map((id, i) => [id, i]));
 }
 
-/** Every slot's own layer and who holds it, which the riders say once per
- * polygon and the table says once per slot. */
+/** Every slot's own flight and who holds it, which the riders say once per
+ * polygon and the table says once per slot. A group is its own flight and
+ * whatever holds it in turn, which every rider it holds says alike. */
 function chains(riders: Map<Id, Rider>): Map<Id, Rider> {
   const out = new Map<Id, Rider>(riders);
 
   for (const rider of riders.values()) {
     rider.holders.forEach((h, i) => {
-      // A group carries no geometry, so it stands on nothing: identity base,
-      // its own layer in flight, and whatever holds it in turn.
-      out.set(h.id, {
-        base: IDENTITY,
-        layer: h.layer,
-        holders: rider.holders.slice(i + 1),
-      });
+      if (!out.has(h.id)) out.set(h.id, { frame: h.frame, ops: h.ops, holders: rider.holders.slice(i + 1) });
     });
   }
 
@@ -91,51 +92,61 @@ function deepest(riders: Map<Id, Rider>): number {
   return out;
 }
 
-function frames(riders: Map<Id, Rider>, slots: Slots): Float32Array {
+/** The most operations any slot plays. */
+function most(riders: Map<Id, Rider>): number {
+  let out = 0;
+
+  for (const rider of chains(riders).values()) out = Math.max(out, rider.ops.length);
+
+  return out;
+}
+
+/** One operation as the table holds it. See `OP_STRIDE`. */
+function record(op: Op): number[] {
+  switch (op.kind) {
+    case 'move':
+      return [OP_MOVE, op.by.x, op.by.y, 0, 0, 0, 0, 0];
+    case 'turn':
+      return [OP_TURN, op.angle, op.ref.x, op.ref.y, op.about.x, op.about.y, 0, 0];
+    case 'scale':
+      return [OP_SCALE, op.by.x, op.by.y, op.ref.x, op.ref.y, op.shift.x, op.shift.y, 0];
+    case 'stand': {
+      const f = op.frame;
+
+      return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, 0, 0];
+    }
+    case 'erode':
+      throw new Error('an erosion is in the depths, not in the frame table');
+  }
+}
+
+/** Every slot's frame, and every slot's operations laid end to end. */
+function frames(riders: Map<Id, Rider>, slots: Slots): { frames: Float32Array, ops: Float32Array } {
   const out = new Float32Array(slots.size * FRAME_STRIDE);
+  const ops: number[] = [];
   const all = chains(riders);
 
   for (const [id, slot] of slots) {
-    const { base, into, layer, holders } = all.get(id)!;
-    const held = pivot(layer);
+    const { frame, ops: mine, holders }: Flight & Pick<Rider, 'holders'> = all.get(id)!;
     const o = slot * FRAME_STRIDE;
 
-    out[o] = base.a;
-    out[o + 1] = base.b;
-    out[o + 2] = base.c;
-    out[o + 3] = base.d;
-    out[o + 4] = base.tx;
-    out[o + 5] = base.ty;
-
-    out[o + 6] = layer.translation.x;
-    out[o + 7] = layer.translation.y;
-    out[o + 8] = layer.rotation;
-    out[o + 9] = layer.scale.x;
-    out[o + 10] = layer.scale.y;
-
-    out[o + 11] = held === null ? 0 : 1;
-    out[o + 12] = held?.x ?? 0;
-    out[o + 13] = held?.y ?? 0;
+    out[o] = frame.t.x;
+    out[o + 1] = frame.t.y;
+    out[o + 2] = frame.angle;
+    out[o + 3] = frame.scale.x;
+    out[o + 4] = frame.scale.y;
 
     // The chain, one link at a time. Everything above this slot is that
     // slot's business, and it says so the same way.
-    out[o + 14] = holders.length === 0 ? -1 : slots.get(holders[0].id) ?? -1;
+    out[o + 5] = holders.length === 0 ? -1 : slots.get(holders[0].id) ?? -1;
 
-    // Where the base lands at the far end. The base itself wherever the far end
-    // inherits it, which is everywhere nothing was unchained — the shader lerps
-    // between the two unconditionally, and this is what makes that a no-op. See
-    // `Rider.into`.
-    const far = into ?? base;
+    out[o + 6] = ops.length / OP_STRIDE;
+    out[o + 7] = mine.length;
 
-    out[o + 16] = far.a;
-    out[o + 17] = far.b;
-    out[o + 18] = far.c;
-    out[o + 19] = far.d;
-    out[o + 20] = far.tx;
-    out[o + 21] = far.ty;
+    for (const op of mine) ops.push(...record(op));
   }
 
-  return out;
+  return { frames: out, ops: new Float32Array(ops) };
 }
 
 /**
@@ -273,9 +284,13 @@ export function bakedSpan(span: Span, carrying: readonly ArtefactId[] = []): Bak
     jumps: track.jumps.map(flatten),
   }));
 
+  const ridden = frames(span.riders, slots);
+
   return {
     from: span.from,
-    frames: frames(span.riders, slots),
+    frames: ridden.frames,
+    ops: ridden.ops,
+    most: most(span.riders),
     depth: deepest(span.riders),
     entries: new Float32Array(table.floats),
     pointsA: new Float32Array(pointsA),

@@ -8,10 +8,11 @@
 // the editor because it is the *contract*: the editor writes it, the game reads
 // it, and neither of them owns it.
 //
-// Nothing in here resolves a version. A span holds two adjacent versions'
+// Nothing in here resolves a keyframe. A span holds two adjacent keyframes'
 // worth of geometry already evaluated, cut into stretches across which the
-// arrangement holds, and everything between two stretch ends is a lerp. That is
-// the whole runtime model — see `docs/versioning.md`, *The bake*.
+// arrangement holds, and everything between two stretch ends is a lerp in the
+// frame each point rides — and a frame is the operations the far keyframe
+// plays, played part way. That is the whole runtime model.
 //
 // Two kinds of output point
 // -------------------------
@@ -28,49 +29,67 @@
 //
 // Why the strides are what they are
 // ---------------------------------
-// Both tables go up as RGBA float textures, so both strides are multiples of
-// four and the padding is deliberate rather than left over.
+// All three tables go up as RGBA float textures, so every stride is a multiple
+// of four and the padding is deliberate rather than left over.
 // -----------------------------------------------------------------------------
 
 import { Point } from './world';
 
 /**
- * Twenty-four floats per polygon: the chain it already stood in as an affine,
- * where that chain lands at the far end, the version in flight in components,
- * and that layer's fixed point.
+ * Eight floats per slot: where the thing's own frame stands at the near end of
+ * the span, in the frame of whatever holds it, and where its operations are.
  *
- *   0..5   base affine a, b, c, d, tx, ty
- *   6, 7   the layer's translation
- *   8      the layer's rotation, in radians
- *   9, 10  the layer's scale, per axis
- *   11     whether the layer has a fixed point at all
- *   12, 13 that fixed point
- *   14     the slot of the group holding this one, or -1
- *   15     spare
- *   16..21 the base at the far end, a, b, c, d, tx, ty
- *   22, 23 spare
+ *   0, 1   the translation
+ *   2      the angle
+ *   3, 4   the scale, along the thing's own axes
+ *   5      the slot of the group holding this one, or -1
+ *   6      the first of its operations in the operation table
+ *   7      how many there are
  *
- * The far base is the base itself for everything that stands on what its base
- * handed it, which is everything but a thing unchained at the far version — see
- * `Rider.into` in the editor. So the walk between the two is a lerp that is a
- * no-op nearly always, and is a matrix lerp when it is not: the two ends are
- * then a discontinuity the author asked for rather than two readings of one
- * motion, and there is no motion to interpolate along.
+ * A frame is a translation, an angle and a scale along its own axes, and every
+ * operation keeps it one — so a slot is five numbers rather than a matrix, and
+ * the operations are played on those numbers as they were written. What the
+ * far keyframe does to the thing is its operations one after another, each
+ * part way, each from the frame the one before it left: see `OP_STRIDE`.
  *
- * A group is a slot like any other: an identity base, the group's own layer in
- * flight, and its own holder above it. A vertex rides the chain up to the top
- * rather than one composed matrix, because composing two layers gives a
- * general matrix and a matrix lerped entrywise slews a rotation through a
- * shear. How deep the chain goes is `BakedSpan.depth`.
- *
- * The layer is kept in components rather than as a matrix because it is
- * interpolated, and a matrix lerped entrywise slews a rotation through a shear.
- * The fixed point is what a turn goes round; a layer that has none — a pure
- * translation, or a scale leaving an axis alone — says so in slot 11 and the
- * translation is taken in a straight line instead, which for a translation is
- * exactly right anyway.
+ * A group is a slot like any other: its own frame, its own operations, and its
+ * own holder above it. A vertex rides the chain up to the top rather than one
+ * composed matrix, because composing two frames gives a general matrix — a
+ * group squashed across a member turned against it is a shear — and a shear is
+ * not something operations can be played on. How deep the chain goes is
+ * `BakedSpan.depth`.
  */
-export const FRAME_STRIDE = 24;
+export const FRAME_STRIDE = 8;
+
+/**
+ * Eight floats per operation: its kind, and its numbers.
+ *
+ *   OP_MOVE   by x, by y
+ *   OP_TURN   angle, painted point x, y, offset of the anchor from it x, y
+ *   OP_SCALE  by x, by y, painted point x, y, slide x, y
+ *   OP_STAND  translation x, y, angle, scale x, y
+ *
+ * Part way, `u` of the way through — which is `t`, the span being one
+ * keyframe's worth — each goes the way it would have gone under the hand:
+ *
+ *   MOVE   the translation goes `u · by`
+ *   TURN   `u · angle` about the anchor, which is the painted point placed
+ *          by the frame as it stands when the turn begins, plus the offset
+ *   SCALE  `byᵘ` along the thing's own axes about the painted point placed
+ *          the same way, and the slide eased to match: by `(1 − dᵘ)/(1 − d)`
+ *          along each axis, which keeps the gesture's own centre still
+ *   STAND  every component straight to its numbers
+ *
+ * The anchor is placed off the frame as it stands, rather than stored placed,
+ * because an operation that comes after another in the same keyframe acts
+ * about a point the one before it is still carrying.
+ */
+export const OP_STRIDE = 8;
+
+export const OP_MOVE = 0;
+export const OP_TURN = 1;
+export const OP_SCALE = 2;
+export const OP_STAND = 3;
 
 /**
  * Eight floats per entry of the table crossings are solved from.
@@ -111,7 +130,7 @@ export interface BakedRun {
 /**
  * A stretch of `t` across which nothing discrete happens to one polygon.
  *
- * `t0` and `t1` are positions within the span, 0 at the earlier version and 1
+ * `t0` and `t1` are positions within the span, 0 at the earlier keyframe and 1
  * at the later one. Adjacent stretches abut exactly and the track's stretches
  * cover the whole span, so every instant has one owner and no instant has two.
  *
@@ -175,13 +194,23 @@ export interface BakedTrack {
   jumps: BakedStretch[]
 }
 
-/** Everything between two adjacent versions. */
+/** Everything between two adjacent keyframes. */
 export interface BakedSpan {
-  /** The earlier of the two versions. `t` runs 0 to 1 from it to the next. */
+  /** Where the earlier of the two is in the order. `t` runs 0 to 1 from it to
+   * the next. */
   from: number
   /** `FRAME_STRIDE` floats per slot: one per polygon, and one per group
    * holding any of them. */
   frames: Float32Array
+  /** `OP_STRIDE` floats per operation, every slot's laid end to end. */
+  ops: Float32Array
+  /**
+   * The most operations any one slot plays.
+   *
+   * The shader walks a slot's run per vertex, so it is written down here and
+   * the loop is built to it, the way it is built to `depth`.
+   */
+  most: number
   /**
    * How many slots deep the deepest chain of them goes: 1 where nothing is
    * grouped, 2 for a polygon in a group, and so on.
@@ -241,7 +270,7 @@ export interface BakedSpan {
   artefacts: Int32Array
 }
 
-/** Every span of one level, in version order and covering all of them. */
+/** Every span of one level, in keyframe order and covering all of them. */
 export interface BakedLevel {
   spans: BakedSpan[]
 }
@@ -280,22 +309,20 @@ function mix(u: number, v: number, t: number): number {
 
 /**
  * The frame a point actually rides: its own slot's, and every group holding
- * it, each eased on its own terms and multiplied.
+ * it, each played on its own terms and multiplied.
  *
  * The chain stays a chain rather than arriving as one composed matrix, because
- * composing two layers gives a general matrix and a general matrix lerped
- * entrywise slews through a shear — a group turning round a polygon that is
- * itself turning would collapse through its own middle on the way. Exactly
- * what `resolveAt` walks one stage at a time, and exactly what the shader's
- * `frameAt` does.
+ * composing two frames gives a general matrix and there are no operations to
+ * play on one of those. Exactly what `worldFrame` walks at a keyframe, and
+ * exactly what the shader's `frameAt` does.
  */
 export function frameAt(span: BakedSpan, slot: number, t: number): Affine {
   let m = linkAt(span, slot, t);
-  let up = span.frames[slot * FRAME_STRIDE + 14];
+  let up = span.frames[slot * FRAME_STRIDE + 5];
 
   while (up >= 0) {
     m = onto(linkAt(span, up, t), m);
-    up = span.frames[up * FRAME_STRIDE + 14];
+    up = span.frames[up * FRAME_STRIDE + 5];
   }
 
   return m;
@@ -313,47 +340,97 @@ function onto(outer: Affine, inner: Affine): Affine {
   };
 }
 
-/**
- * One link of that chain: the layer this slot is in the middle of receiving,
- * eased from identity to itself, composed onto the frame it already stood in.
- *
- * Rotation and scale ease on their own terms; the translation is then whatever
- * holds the fixed point still. Easing it in a straight line instead is what
- * makes a turning room swing out on a great arc and come back, since the
- * translation a turn leaves behind is its pivot carried round a circle and a
- * chord is not a circle.
- */
-export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
-  const f = span.frames, o = slot * FRAME_STRIDE;
+/** A frame in the components the table keeps it in. */
+interface Pose {
+  x: number
+  y: number
+  angle: number
+  sx: number
+  sy: number
+}
 
-  const rotation = f[o + 8] * t;
-  const sx = mix(1, f[o + 9], t), sy = mix(1, f[o + 10], t);
+/** A point of the thing, placed by a frame. */
+function posed(f: Pose, px: number, py: number): Point {
+  const c = Math.cos(f.angle), s = Math.sin(f.angle);
+  const x = px * f.sx, y = py * f.sy;
 
-  const cos = Math.cos(rotation), sin = Math.sin(rotation);
-  const a = cos * sx, b = sin * sx, c = -sin * sy, d = cos * sy;
+  return { x: f.x + c * x - s * y, y: f.y + s * x + c * y };
+}
 
-  // Both ends are unmoved by the choice: at 0 the map is the identity and at 1
-  // it is the layer itself, whichever way the translation got there.
-  const held = f[o + 11] !== 0 && t !== 0 && t !== 1;
-  const px = f[o + 12], py = f[o + 13];
+function spin(x: number, y: number, angle: number): Point {
+  const c = Math.cos(angle), s = Math.sin(angle);
 
-  const tx = held ? px - (a * px + c * py) : f[o + 6] * t;
-  const ty = held ? py - (b * px + d * py) : f[o + 7] * t;
+  return { x: c * x - s * y, y: s * x + c * y };
+}
 
-  // The eased layer, after the base — which is itself part way to the far
-  // end's, where the two differ. See `FRAME_STRIDE`.
-  const ba = mix(f[o], f[o + 16], t), bb = mix(f[o + 1], f[o + 17], t);
-  const bc = mix(f[o + 2], f[o + 18], t), bd = mix(f[o + 3], f[o + 19], t);
-  const bx = mix(f[o + 4], f[o + 20], t), by = mix(f[o + 5], f[o + 21], t);
+/** `(1 − dᵘ) / (1 − d)`: how much of a scale's slide has happened when `u` of
+ * the scale has. */
+function slid(d: number, u: number): number {
+  const l = Math.log(d);
+
+  return Math.abs(l) < 1e-12 ? u : Math.expm1(u * l) / Math.expm1(l);
+}
+
+/** One operation of the table, `u` of the way through. See `OP_STRIDE`. */
+function playedAt(span: BakedSpan, op: number, f: Pose, u: number): Pose {
+  const o = span.ops, i = op * OP_STRIDE;
+  const kind = o[i];
+
+  if (kind === OP_MOVE) return { ...f, x: f.x + o[i + 1] * u, y: f.y + o[i + 2] * u };
+
+  if (kind === OP_TURN) {
+    const p = posed(f, o[i + 2], o[i + 3]);
+    const ax = p.x + o[i + 4], ay = p.y + o[i + 5];
+    const angle = o[i + 1] * u;
+    const d = spin(f.x - ax, f.y - ay, angle);
+
+    return { ...f, x: ax + d.x, y: ay + d.y, angle: f.angle + angle };
+  }
+
+  if (kind === OP_SCALE) {
+    const p = posed(f, o[i + 3], o[i + 4]);
+    const dx = Math.pow(o[i + 1], u), dy = Math.pow(o[i + 2], u);
+    const own = spin(f.x - p.x, f.y - p.y, -f.angle);
+    const back = spin(own.x * dx, own.y * dy, f.angle);
+    const sh = spin(o[i + 5], o[i + 6], -f.angle);
+    const slide = spin(sh.x * slid(o[i + 1], u), sh.y * slid(o[i + 2], u), f.angle);
+
+    return {
+      x: p.x + back.x + slide.x,
+      y: p.y + back.y + slide.y,
+      angle: f.angle,
+      sx: f.sx * dx,
+      sy: f.sy * dy,
+    };
+  }
 
   return {
-    a: a * ba + c * bb,
-    b: b * ba + d * bb,
-    c: a * bc + c * bd,
-    d: b * bc + d * bd,
-    tx: a * bx + c * by + tx,
-    ty: b * bx + d * by + ty,
+    x: mix(f.x, o[i + 1], u),
+    y: mix(f.y, o[i + 2], u),
+    angle: mix(f.angle, o[i + 3], u),
+    sx: mix(f.sx, o[i + 4], u),
+    sy: mix(f.sy, o[i + 5], u),
   };
+}
+
+/**
+ * One link of that chain: the slot's own frame at the near end, with every
+ * operation the far keyframe plays over it played `t` of the way.
+ */
+export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
+  const fr = span.frames, o = slot * FRAME_STRIDE;
+
+  let f: Pose = { x: fr[o], y: fr[o + 1], angle: fr[o + 2], sx: fr[o + 3], sy: fr[o + 4] };
+
+  if (t !== 0) {
+    const first = fr[o + 6], count = fr[o + 7];
+
+    for (let k = 0; k < count; k++) f = playedAt(span, first + k, f, t);
+  }
+
+  const c = Math.cos(f.angle), s = Math.sin(f.angle);
+
+  return { a: c * f.sx, b: s * f.sx, c: -s * f.sy, d: c * f.sy, tx: f.x, ty: f.y };
 }
 
 /** A point in a slot's own frame, taken out to the world at one instant. */

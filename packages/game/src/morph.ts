@@ -14,9 +14,10 @@
 // rather than a picture someone remembers.
 //
 // The tables go up as float textures rather than uniforms because a level has
-// thousands of entries and uniform space is counted in hundreds. Four texels per
-// frame, two per entry, `texelFetch` throughout — no filtering, no mipmaps, and
-// no normalised coordinates to get half a texel wrong.
+// thousands of entries and uniform space is counted in hundreds. Two texels per
+// frame, two per operation, two per entry, `texelFetch` throughout — no
+// filtering, no mipmaps, and no normalised coordinates to get half a texel
+// wrong.
 //
 // The floors are the same, now
 // ----------------------------
@@ -59,13 +60,14 @@ const WIDTH = 512;
  * Everything both of a span's vertex shaders are built on: the tables, the walk
  * up the chain of frames, and where one point of the bake stands at an instant.
  *
- * Built per span rather than once, because how deep the chain of groups goes is
- * a fact about the level and the walk up it is per vertex. A bounded loop is
- * unrolled and its register cost is known; `while (slot >= 0)` would be legal
- * and would leave that to the driver.
+ * Built per span rather than once, because how deep the chain of groups goes
+ * and how many operations a slot plays are facts about the level, and both
+ * walks are per vertex. A bounded loop is unrolled and its register cost is
+ * known; `while (slot >= 0)` would be legal and would leave that to the driver.
  */
-const tablesFor = (depth: number): string => /* glsl */ `
+const tablesFor = (depth: number, most: number): string => /* glsl */ `
   uniform sampler2D uFrames;
+  uniform sampler2D uOps;
   uniform sampler2D uEntries;
   uniform float uTime;
   uniform float uScale;
@@ -82,67 +84,116 @@ const tablesFor = (depth: number): string => /* glsl */ `
   }
 
   const int DEPTH = ${depth};
+  const int MOST = ${Math.max(1, most)};
+
+  /** A frame in the components the table keeps it in: where, which way, and
+   * how big along its own axes. */
+  struct Pose {
+    vec2 t;
+    float a;
+    vec2 s;
+  };
+
+  vec2 spun(vec2 v, float a) {
+    float c = cos(a), s = sin(a);
+    return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
+  }
+
+  vec2 posed(Pose f, vec2 p) {
+    return f.t + spun(p * f.s, f.a);
+  }
+
+  /** How much of a scale's slide has happened when \`u\` of the scale has:
+   * \`(1 - d^u) / (1 - d)\`, and \`u\` itself where \`d\` is one or near it. */
+  float slid(float d, float u) {
+    float l = log(d);
+    return abs(l) < 1e-3 ? u * (1.0 + 0.5 * (u - 1.0) * l) : (exp(u * l) - 1.0) / (exp(l) - 1.0);
+  }
 
   /**
-   * One slot's own frame: the version in flight eased from identity to itself,
-   * composed onto the chain it already stood in.
+   * One operation, \`u\` of the way through, from the frame the one before it
+   * left. \`OP_STRIDE\` in \`baked.ts\` says what each kind's numbers are, and
+   * \`playedAt\` there is this on the CPU.
+   */
+  Pose played(Pose f, int op, float u) {
+    vec4 o0 = fetch(uOps, op * 2);
+    vec4 o1 = fetch(uOps, op * 2 + 1);
+    int kind = int(o0.x + 0.5);
+
+    if (kind == 0) {
+      f.t += o0.yz * u;
+    }
+    else if (kind == 1) {
+      // About the anchor, placed off the frame as it stands: an operation after
+      // another in the same keyframe acts about a point the first is carrying.
+      vec2 anchor = posed(f, o0.zw) + o1.xy;
+      float angle = o0.y * u;
+
+      f.t = anchor + spun(f.t - anchor, angle);
+      f.a += angle;
+    }
+    else if (kind == 2) {
+      vec2 p = posed(f, vec2(o0.w, o1.x));
+      vec2 d = vec2(pow(o0.y, u), pow(o0.z, u));
+      vec2 back = spun(spun(f.t - p, -f.a) * d, f.a);
+      vec2 slide = spun(o1.yz, -f.a);
+
+      f.t = p + back + spun(vec2(slide.x * slid(o0.y, u), slide.y * slid(o0.z, u)), f.a);
+      f.s *= d;
+    }
+    else {
+      f.t = mix(f.t, o0.yz, u);
+      f.a = mix(f.a, o0.w, u);
+      f.s = mix(f.s, o1.xy, u);
+    }
+
+    return f;
+  }
+
+  /**
+   * One slot's own frame: where it stands at the near end, with every
+   * operation the far keyframe plays over it played \`t\` of the way.
    *
    * Column-major, so that \`m * vec3(p, 1.0)\` is the point placed.
    */
   mat3 linkAt(int slot, float t) {
-    int o = slot * 6;
-    vec4 f0 = fetch(uFrames, o);
-    vec4 f1 = fetch(uFrames, o + 1);
-    vec4 f2 = fetch(uFrames, o + 2);
-    vec4 f3 = fetch(uFrames, o + 3);
-    vec4 f4 = fetch(uFrames, o + 4);
-    vec4 f5 = fetch(uFrames, o + 5);
+    vec4 f0 = fetch(uFrames, slot * 2);
+    vec4 f1 = fetch(uFrames, slot * 2 + 1);
 
-    float rot = f2.x * t;
-    float sx = mix(1.0, f2.y, t);
-    float sy = mix(1.0, f2.z, t);
+    Pose f = Pose(f0.xy, f0.z, vec2(f0.w, f1.x));
+    int first = int(f1.z + 0.5);
+    int count = int(f1.w + 0.5);
 
-    float co = cos(rot), si = sin(rot);
-    float a = co * sx, b = si * sx, c = -si * sy, d = co * sy;
+    if (t != 0.0) {
+      for (int i = 0; i < MOST; i++) {
+        if (i >= count) break;
 
-    // A turn goes round the layer's own fixed point; a layer that has none
-    // takes its translation in a straight line, which for a translation is
-    // exactly right anyway. Both ends agree either way.
-    bool held = f2.w != 0.0 && t != 0.0 && t != 1.0;
-    vec2 p = f3.xy;
-    vec2 tr = held
-      ? p - vec2(a * p.x + c * p.y, b * p.x + d * p.y)
-      : f1.zw * t;
+        f = played(f, first + i, t);
+      }
+    }
 
-    // The chain it stood in, part way to where it stands at the far end. The
-    // two are the same matrix for everything that inherits its base, which is
-    // everything but a thing unchained at the far version.
-    vec2 ba = mix(f0.xy, f4.xy, t);
-    vec2 bc = mix(f0.zw, f4.zw, t);
-    vec2 bt = mix(f1.xy, f5.xy, t);
+    float c = cos(f.a), s = sin(f.a);
 
     return mat3(
-      vec3(a * ba.x + c * ba.y, b * ba.x + d * ba.y, 0.0),
-      vec3(a * bc.x + c * bc.y, b * bc.x + d * bc.y, 0.0),
-      vec3(a * bt.x + c * bt.y + tr.x, b * bt.x + d * bt.y + tr.y, 1.0)
+      vec3(c * f.s.x, s * f.s.x, 0.0),
+      vec3(-s * f.s.y, c * f.s.y, 0.0),
+      vec3(f.t, 1.0)
     );
   }
 
   /**
    * The frame a vertex actually rides: its own, and every group holding it,
-   * each eased on its own terms and multiplied.
+   * each played on its own terms and multiplied.
    *
-   * Not one composed matrix handed over ready-made. Composing two layers gives
-   * a general matrix, and a general matrix lerped entrywise slews through a
-   * shear — a group turning round a polygon that is turning would collapse
-   * through its own middle on the way. So the chain stays a chain, exactly as
-   * \`resolveAt\` walks it one stage at a time.
+   * Not one composed matrix handed over ready-made. Composing two frames gives
+   * a general matrix, and there are no operations to play on one of those. So
+   * the chain stays a chain, exactly as \`worldFrame\` walks it at a keyframe.
    */
   mat3 frameAt(int slot, float t) {
     mat3 m = linkAt(slot, t);
 
     for (int i = 1; i < DEPTH; i++) {
-      slot = int(fetch(uFrames, slot * 6 + 3).z);
+      slot = int(fetch(uFrames, slot * 2 + 1).y);
 
       if (slot < 0) break;
 
@@ -227,8 +278,8 @@ const tablesFor = (depth: number): string => /* glsl */ `
  * The walls and the lines: one point, its own stretch, and a height that is a
  * flag rather than a coordinate.
  */
-const shaderFor = (depth: number): string => /* glsl */ `
-  ${tablesFor(depth)}
+const shaderFor = (depth: number, most: number): string => /* glsl */ `
+  ${tablesFor(depth, most)}
 
   attribute vec2 aPointA;
   attribute vec2 aPointB;
@@ -280,8 +331,8 @@ const shaderFor = (depth: number): string => /* glsl */ `
  * ring's own edges and it is right for as long as the ring is there. See the
  * header of `walls.ts` on filling by counting.
  */
-const fillShaderFor = (depth: number): string => /* glsl */ `
-  ${tablesFor(depth)}
+const fillShaderFor = (depth: number, most: number): string => /* glsl */ `
+  ${tablesFor(depth, most)}
 
   ${NEARCLIP}
 
@@ -354,6 +405,7 @@ const fillShaderFor = (depth: number): string => /* glsl */ `
 /** What both materials are told about the world, and what changes per frame. */
 export interface MorphUniforms extends Record<string, { value: unknown }> {
   uFrames: { value: THREE.DataTexture }
+  uOps: { value: THREE.DataTexture }
   uEntries: { value: THREE.DataTexture }
   uTime: { value: number }
   uScale: { value: number }
@@ -628,6 +680,7 @@ export function reach(
 export function morph(span: BakedSpan, options: WallOptions): Morph {
   const uniforms: MorphUniforms = {
     uFrames: { value: tabled(span.frames) },
+    uOps: { value: tabled(span.ops) },
     uEntries: { value: tabled(span.entries) },
     uTime: { value: 0 },
     uScale: { value: options.scale },
@@ -635,10 +688,10 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
   };
 
   const { wall, line, fill } = materials(
-    shaderFor(span.depth),
+    shaderFor(span.depth, span.most),
     options,
     uniforms,
-    fillShaderFor(span.depth),
+    fillShaderFor(span.depth, span.most),
   );
 
   const shape = extrude(walling(span));
@@ -737,6 +790,7 @@ export function morph(span: BakedSpan, options: WallOptions): Morph {
 
     dispose(): void {
       uniforms.uFrames.value.dispose();
+      uniforms.uOps.value.dispose();
       uniforms.uEntries.value.dispose();
       wallGeometry.dispose();
       lineGeometry.dispose();

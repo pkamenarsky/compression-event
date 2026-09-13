@@ -20,6 +20,7 @@ import {
   CROSSING,
   FRAME_STRIDE,
   Hulls,
+  OP_STRIDE,
   fills,
   looped,
   outline,
@@ -30,7 +31,6 @@ import {
 } from '@ce/game';
 import {
   Frame,
-  Layer,
   Span,
   artefactsDuring,
   bakeSpan,
@@ -63,7 +63,7 @@ import {
   unchained,
 } from './scene';
 import { ArtefactId, FLOOR, Id, SOLID, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
-import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
+import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -231,6 +231,41 @@ describe('a flattened span replays as its span does', () => {
     );
 
     expect(agrees(transformed(world, 1, ids[1], { rotation: 1.1 }), 0)).toBeLessThan(SLACK);
+  });
+
+  // What playing the operations rather than one motion was for, read out of
+  // the buffers: the table's run of them, in single precision, has to play
+  // them the way the editor does.
+  test('a turn of 720°, which goes round twice', () => {
+    const { world, ids } = drawn(['level', rect(100, -20, 40, 40)]);
+
+    expect(agrees(wrote(world, 1, ids[0], turning(4 * Math.PI)), 0)).toBeLessThan(SLACK);
+  });
+
+  test('a spin with a drag, which spins while it slides', () => {
+    const { world, ids } = drawn(['level', rect(-40, -20, 80, 40)]);
+
+    expect(agrees(wrote(world, 1, ids[0], spun(Math.PI), move(100, 0)), 0)).toBeLessThan(SLACK);
+  });
+
+  test('a selection scale, which slides the room as it grows', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -20, 40, 40)],
+      ['level', rect(160, -20, 40, 40)],
+    );
+
+    let w = world;
+
+    for (const id of ids) w = wrote(w, 1, id, scaled(2, 0.5, { x: 0, y: 0 }));
+
+    expect(agrees(w, 0)).toBeLessThan(SLACK);
+  });
+
+  test('a stand, which walks the room to where it stands', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const loose = unchained(wrote(world, 0, ids[0], spun(0.3)), 1, [ids[0]]);
+
+    expect(agrees(wrote(loose, 0, ids[0], move(400, 0), spun(0.4)), 0)).toBeLessThan(SLACK);
   });
 
   // The one case where a slot's own frame is not the whole answer: the group's
@@ -902,56 +937,92 @@ describe('the source rings a version resolves to', () => {
 // -----------------------------------------------------------------------------
 
 /**
- * `frameAt` out of `morph.ts`, in TypeScript: one slot's own frame, then up the
- * chain by the parent the table names, `depth` links at most.
+ * `frameAt` out of `morph.ts`, in TypeScript: one slot's own frame with its
+ * run of operations played over it, then up the chain by the parent the table
+ * names, `depth` links at most.
  *
  * Transcribed rather than shared, deliberately. What is being checked is that
  * the table says what the shader will read out of it — the slot a group landed
- * in, the parent index beside every polygon, and the depth the loop is built
- * to. A helper both sides called would agree with itself.
+ * in, the parent index beside every polygon, where each run of operations
+ * starts and how long it is, and the depth the loop is built to. A helper both
+ * sides called would agree with itself.
  */
-function shaderFrame(frames: Float32Array, depth: number, slot: number, t: number): Affine {
+function shaderFrame(flat: BakedSpan, slot: number, t: number): Affine {
+  const f = flat.frames, o = flat.ops;
+
+  interface Pose { t: Point, a: number, s: Point }
+
+  const spun = (v: Point, a: number): Point =>
+    ({ x: Math.cos(a) * v.x - Math.sin(a) * v.y, y: Math.sin(a) * v.x + Math.cos(a) * v.y });
+  const posed = (p: Pose, q: Point): Point => {
+    const r = spun({ x: q.x * p.s.x, y: q.y * p.s.y }, p.a);
+
+    return { x: p.t.x + r.x, y: p.t.y + r.y };
+  };
+  const slid = (d: number, u: number): number => {
+    const l = Math.log(d);
+
+    return Math.abs(l) < 1e-3 ? u * (1 + 0.5 * (u - 1) * l) : (Math.exp(u * l) - 1) / (Math.exp(l) - 1);
+  };
+  const mix = (a: number, b: number, u: number): number => a + (b - a) * u;
+
+  const played = (p: Pose, op: number, u: number): Pose => {
+    const i = op * OP_STRIDE;
+    const kind = Math.round(o[i]);
+
+    if (kind === 0) return { ...p, t: { x: p.t.x + o[i + 1] * u, y: p.t.y + o[i + 2] * u } };
+
+    if (kind === 1) {
+      const at = posed(p, { x: o[i + 2], y: o[i + 3] });
+      const anchor = { x: at.x + o[i + 4], y: at.y + o[i + 5] };
+      const d = spun({ x: p.t.x - anchor.x, y: p.t.y - anchor.y }, o[i + 1] * u);
+
+      return { ...p, t: { x: anchor.x + d.x, y: anchor.y + d.y }, a: p.a + o[i + 1] * u };
+    }
+
+    if (kind === 2) {
+      const at = posed(p, { x: o[i + 3], y: o[i + 4] });
+      const d = { x: Math.pow(o[i + 1], u), y: Math.pow(o[i + 2], u) };
+      const own = spun({ x: p.t.x - at.x, y: p.t.y - at.y }, -p.a);
+      const back = spun({ x: own.x * d.x, y: own.y * d.y }, p.a);
+      const sh = spun({ x: o[i + 5], y: o[i + 6] }, -p.a);
+      const slide = spun({ x: sh.x * slid(o[i + 1], u), y: sh.y * slid(o[i + 2], u) }, p.a);
+
+      return {
+        t: { x: at.x + back.x + slide.x, y: at.y + back.y + slide.y },
+        a: p.a,
+        s: { x: p.s.x * d.x, y: p.s.y * d.y },
+      };
+    }
+
+    return {
+      t: { x: mix(p.t.x, o[i + 1], u), y: mix(p.t.y, o[i + 2], u) },
+      a: mix(p.a, o[i + 3], u),
+      s: { x: mix(p.s.x, o[i + 4], u), y: mix(p.s.y, o[i + 5], u) },
+    };
+  };
+
   const link = (at: number): Affine => {
-    const o = at * FRAME_STRIDE;
-    // Part way to where the base lands at the far end, which is the base
-    // itself unless something was unchained there. See `FRAME_STRIDE`.
-    const mix = (u: number, v: number): number => u + (v - u) * t;
+    const k = at * FRAME_STRIDE;
+    let p: Pose = { t: { x: f[k], y: f[k + 1] }, a: f[k + 2], s: { x: f[k + 3], y: f[k + 4] } };
 
-    const base: Affine = {
-      a: mix(frames[o], frames[o + 16]),
-      b: mix(frames[o + 1], frames[o + 17]),
-      c: mix(frames[o + 2], frames[o + 18]),
-      d: mix(frames[o + 3], frames[o + 19]),
-      tx: mix(frames[o + 4], frames[o + 20]),
-      ty: mix(frames[o + 5], frames[o + 21]),
-    };
+    if (t !== 0) {
+      for (let i = 0; i < flat.most; i++) {
+        if (i >= f[k + 7]) break;
 
-    const layer: Layer = {
-      translation: { x: frames[o + 6], y: frames[o + 7] },
-      rotation: frames[o + 8],
-      scale: { x: frames[o + 9], y: frames[o + 10] },
-    };
+        p = played(p, f[k + 6] + i, t);
+      }
+    }
 
-    const rot = layer.rotation * t;
-    const sx = 1 + (layer.scale.x - 1) * t;
-    const sy = 1 + (layer.scale.y - 1) * t;
-    const cos = Math.cos(rot), sin = Math.sin(rot);
-    const m = { a: cos * sx, b: sin * sx, c: -sin * sy, d: cos * sy, tx: 0, ty: 0 };
+    const c = Math.cos(p.a), sn = Math.sin(p.a);
 
-    const fixed = frames[o + 11] !== 0 && t !== 0 && t !== 1;
-    const p = { x: frames[o + 12], y: frames[o + 13] };
-
-    const tr = fixed
-      ? { x: p.x - (m.a * p.x + m.c * p.y), y: p.y - (m.b * p.x + m.d * p.y) }
-      : { x: layer.translation.x * t, y: layer.translation.y * t };
-
-    return compose({ ...m, tx: tr.x, ty: tr.y }, base);
+    return { a: c * p.s.x, b: sn * p.s.x, c: -sn * p.s.y, d: c * p.s.y, tx: p.t.x, ty: p.t.y };
   };
 
   let out = link(slot);
 
-  for (let i = 1; i < depth; i++) {
-    slot = frames[slot * FRAME_STRIDE + 14];
+  for (let i = 1; i < flat.depth; i++) {
+    slot = f[slot * FRAME_STRIDE + 5];
 
     if (slot < 0) break;
 
@@ -1017,7 +1088,7 @@ describe('the chain a vertex rides', () => {
     )));
 
     expect(plain.depth).toEqual(1);
-    expect(plain.frames[14]).toEqual(-1);
+    expect(plain.frames[5]).toEqual(-1);
   });
 
   test('walking it gives what the bake places the scope by', () => {
@@ -1029,11 +1100,36 @@ describe('the chain a vertex rides', () => {
     const flat = bakedSpan(span);
 
     for (const t of [0, 0.13, 0.5, 0.77, 1]) {
-      near(
-        shaderFrame(flat.frames, flat.depth, slotted(span).get(outer)!, t),
-        riding(span.riders.get(outer)!, t),
-      );
+      near(shaderFrame(flat, slotted(span).get(outer)!, t), riding(span.riders.get(outer)!, t));
     }
+  });
+
+  test('a room in a loose group, both turning, rides both links', () => {
+    // A loose group is a handle: its members are tracks of their own and each
+    // rides the group's slot above its own, so the chain is two deep and both
+    // links play operations over the span.
+    const { world, ids } = drawn(
+      ['level', rect(100, -60, 120, 120)],
+      ['level', rect(-300, -60, 120, 120)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    let w = wrote(made.world, 1, made.id, turning(0.9, { x: 0, y: 0 }), move(40, -10));
+
+    w = wrote(w, 1, ids[0], spun(-1.3), scaled(1.5, 0.75, { x: 160, y: 0 }));
+
+    const span = run(bakeSpan(w, 0));
+    const flat = bakedSpan(span);
+    const slot = slotted(span).get(ids[0])!;
+
+    expect(flat.depth).toBe(2);
+    expect(flat.most).toBe(2);
+
+    for (const t of [0, 0.13, 0.5, 0.77, 1]) {
+      near(shaderFrame(flat, slot, t), riding(span.riders.get(ids[0])!, t));
+    }
+
+    expect(agrees(w, 0)).toBeLessThan(SLACK);
   });
 
   /**
@@ -1054,12 +1150,12 @@ describe('the chain a vertex rides', () => {
     const slot = slotted(span).get(id)!;
 
     for (const t of [0, 0.13, 0.5, 0.77, 1]) {
-      near(shaderFrame(flat.frames, flat.depth, slot, t), riding(span.riders.get(id)!, t));
+      near(shaderFrame(flat, slot, t), riding(span.riders.get(id)!, t));
     }
 
-    // And it is a walk rather than a jump at the end: the two bases are far
+    // And it is a walk rather than a jump at the end: the two ends are far
     // apart, so the frame half way is nowhere near either of them.
-    const half = shaderFrame(flat.frames, flat.depth, slot, 0.5);
+    const half = shaderFrame(flat, slot, 0.5);
 
     expect(half.tx).toBeGreaterThan(1);
     expect(half.tx).toBeLessThan(399);

@@ -30,7 +30,7 @@ import {
   withRig,
 } from './scene';
 import { nudged } from './rig';
-import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
+import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
 import {
   EMPTY_BAKE,
 } from './bake';
@@ -1168,43 +1168,134 @@ describe('a turn goes round its pivot, not round the origin', () => {
     expect(held(about(world, ids[0], at, 1.1), at)).toBeLessThan(1e-6);
   });
 
-  test('and two turns about different pivots agree on a third', () => {
-    // Composing them gives a rotation about neither, and the morph has to find
-    // it rather than be told: nothing stores a pivot.
+  test('and two turns about different pivots are two turns, one after the other', () => {
+    // Each part way, each from where the one before left the room. The first
+    // goes round its own pivot; the second goes round a point the first is
+    // still carrying, since its anchor is an offset from the room's painted
+    // middle. So what is seen is the hand's two gestures, not the one motion
+    // that happens to join the ends — and nothing holds still but what does.
     const { world, ids } = drawn(['level', rect(400, 300, 200, 120)]);
+    const a = { x: 500, y: 360 }, b = { x: 400, y: 300 };
+    const w = wrote(world, 1, ids[0], turning(0.7, a), turning(0.5, b));
 
-    // The composite's translation, off the two it was made from.
-    const pivot = (at: Point, angle: number): Point => {
-      const c = Math.cos(angle), s = Math.sin(angle);
+    const round = (p: Point, c: Point, angle: number): Point => {
+      const cos = Math.cos(angle), sin = Math.sin(angle);
 
-      return { x: at.x - (at.x * c - at.y * s), y: at.y - (at.x * s + at.y * c) };
+      return { x: c.x + (p.x - c.x) * cos - (p.y - c.y) * sin, y: c.y + (p.x - c.x) * sin + (p.y - c.y) * cos };
     };
 
-    const one = pivot({ x: 500, y: 360 }, 0.7);
-    const two = pivot({ x: 400, y: 300 }, 0.5);
+    // The room's middle, which is where both turns were painted.
+    const m = { x: 500, y: 360 };
 
-    const c = Math.cos(0.5), s = Math.sin(0.5);
-    const both = {
-      x: two.x + one.x * c - one.y * s,
-      y: two.y + one.x * s + one.y * c,
-    };
+    // Where the second turn's anchor sits relative to the middle, as written:
+    // after the first turn, the middle is where the first left it.
+    const offset = { x: b.x - round(m, a, 0.7).x, y: b.y - round(m, a, 0.7).y };
 
-    // Where the composite holds still, which is neither of the two it was made
-    // from, and which nothing wrote down.
-    const c2 = Math.cos(1.2), s2 = Math.sin(1.2);
-    const det = (1 - c2) * (1 - c2) + s2 * s2;
-    const at = {
-      x: ((1 - c2) * both.x - s2 * both.y) / det,
-      y: (s2 * both.x + (1 - c2) * both.y) / det,
-    };
+    for (const t of [0.25, 0.5, 0.75, 1]) {
+      const first = round(m, a, 0.7 * t);
+      const anchor = { x: first.x + offset.x, y: first.y + offset.y };
+      const want = round(first, anchor, 0.5 * t);
+      const got = middle(truth(w, 0, t));
 
-    expect(at.x).not.toBeCloseTo(400, 1);
-    expect(at.x).not.toBeCloseTo(500, 1);
+      expect(got.x).toBeCloseTo(want.x, 6);
+      expect(got.y).toBeCloseTo(want.y, 6);
+    }
 
-    const w = wrote(world, 1, ids[0], turning(0.7, { x: 500, y: 360 }), turning(0.5, { x: 400, y: 300 }));
-
-    expect(held(w, at)).toBeLessThan(1e-6);
     expect(drift(w)).toBeLessThan(TOLERANCE);
+  });
+});
+
+describe('a keyframe in flight plays its operations one after another', () => {
+  // Each partway, each from the frame the one before it left, and each about
+  // its own anchor — so what is seen between two keyframes is what the hand
+  // did, rather than whichever single motion happens to join the two ends.
+
+  /** Where the middle of one polygon's share of the outline is, part way. */
+  function whereAt(world: World, id: PolygonId, t: number): Point {
+    return middle(sample(run(bakeSpan(world, 0)), t).filter(r => r.id === id));
+  }
+
+  function near(p: Point, q: Point, digits = 6): void {
+    expect(p.x).toBeCloseTo(q.x, digits);
+    expect(p.y).toBeCloseTo(q.y, digits);
+  }
+
+  test('a room spinning in place keeps its size and its place', () => {
+    const { world, ids } = drawn(['level', rect(100, 0, 100, 60)]);
+    const w = wrote(world, 1, ids[0], spun(Math.PI / 2));
+    const span = run(bakeSpan(w, 0));
+
+    for (const t of [0.25, 0.5, 0.75]) {
+      expect(length(sample(span, t))).toBeCloseTo(320, 6);
+      near(whereAt(w, ids[0], t), { x: 150, y: 30 });
+    }
+  });
+
+  test('a turned selection arcs about its centre', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -20, 40, 40)],
+      ['level', rect(160, -20, 40, 40)],
+    );
+
+    // Both turned by one gesture about the middle of the two of them.
+    let w = world;
+
+    for (const id of ids) w = wrote(w, 1, id, turning(Math.PI / 2, { x: 0, y: 0 }));
+
+    for (const t of [0.25, 0.5, 0.75]) {
+      const a = t * Math.PI / 2;
+
+      near(whereAt(w, ids[1], t), { x: 180 * Math.cos(a), y: 180 * Math.sin(a) });
+      near(whereAt(w, ids[0], t), { x: -180 * Math.cos(a), y: -180 * Math.sin(a) });
+    }
+  });
+
+  test('720° plays as two turns', () => {
+    const { world, ids } = drawn(['level', rect(100, -20, 40, 40)]);
+    const w = wrote(world, 1, ids[0], turning(4 * Math.PI, { x: 0, y: 0 }));
+
+    // A quarter of the way through is a half turn about the origin, and an
+    // eighth is a quarter turn: all the way round twice, rather than nowhere.
+    near(whereAt(w, ids[0], 0.125), { x: 0, y: 120 });
+    near(whereAt(w, ids[0], 0.25), { x: -120, y: 0 });
+    near(whereAt(w, ids[0], 1), { x: 120, y: 0 });
+  });
+
+  test('a spin with a drag in the same keyframe spins while it slides', () => {
+    const { world, ids } = drawn(['level', rect(-40, -20, 80, 40)]);
+    const w = wrote(world, 1, ids[0], spun(Math.PI), move(100, 0));
+    const span = run(bakeSpan(w, 0));
+
+    // Half way: half of the slide, and half of the turn about a middle that is
+    // itself sliding. As one motion joining the two ends it would swing out
+    // round the point the two of them together leave alone.
+    near(whereAt(w, ids[0], 0.5), { x: 50, y: 0 });
+
+    // A quarter turn is an 80 by 40 room standing on its end.
+    const box = sample(span, 0.5).flatMap(r => r.points);
+    const tall = Math.max(...box.map(p => p.y)) - Math.min(...box.map(p => p.y));
+
+    expect(tall).toBeCloseTo(80, 6);
+  });
+
+  test('a selection scale slides the room with it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(-200, -20, 40, 40)],
+      ['level', rect(160, -20, 40, 40)],
+    );
+
+    let w = world;
+
+    for (const id of ids) w = wrote(w, 1, id, scaled(2, 2, { x: 0, y: 0 }));
+
+    // The centre goes nowhere, and everything else goes out from it as the
+    // scale grows: by twice at the end, and by the root of two half way.
+    for (const t of [0, 0.5, 1]) {
+      const f = 2 ** t;
+
+      near(whereAt(w, ids[1], t), { x: 180 * f, y: 0 });
+      near(whereAt(w, ids[0], t), { x: -180 * f, y: 0 });
+    }
   });
 });
 

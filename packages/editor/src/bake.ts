@@ -1,36 +1,35 @@
 // -----------------------------------------------------------------------------
 // The bake
 //
-// The game does not resolve versions. It gets buffers, and between two of them
-// it lerps. So the bake's job is to cut the span between two versions into
-// *stretches* — runs of `t` across which the arrangement's combinatorics hold —
-// and to evaluate the geometry at both ends of each one. Within a stretch the
-// shader reproduces the world exactly by interpolating; between two stretches
-// there is a discontinuity, which is what a topology event *is*.
+// The game does not resolve keyframes. It gets buffers, and between two of
+// them it lerps. So the bake's job is to cut the span between two keyframes
+// into *stretches* — runs of `t` across which the arrangement's combinatorics
+// hold — and to evaluate the geometry at both ends of each one. Within a
+// stretch the shader reproduces the world exactly by interpolating; between two
+// stretches there is a discontinuity, which is what a topology event *is*.
 //
 // What is interpolated
 // --------------------
-// Not positions: components. The version in flight contributes its own layer,
-// eased from identity to itself, and everything before it is already inside the
-// base frame and inside `local`:
+// Not positions: operations. Each thing's own frame starts where the near
+// keyframe left it, and the far keyframe's operations play over it one after
+// another, each `t` of the way and each from the frame the one before it left;
+// every group holding it does the same over that:
 //
-//   frame(t)  = ease(T_{k+1}, t) o A_k           (rotation, scale, translation)
-//   local(t)  = lerp(local_k, local_{k+1}, t)    (vertex nudges)
+//   frame(t)  = … o play(G, t) o play(F_k, ops_{k+1}, t)   (each link a frame)
+//   local(t)  = lerp(local_k, local_{k+1}, t)               (corner nudges)
 //   depth(t)  = lerp(d_k, d_{k+1}, t)
 //   shape(t)  = erode(frame(t)(local(t)), depth(t))
 //
 // which is exactly `resolveAt(k)` at t = 0 and `resolveAt(k + 1)` at t = 1. A
-// polygon that turns therefore turns through the morph rather than collapsing
-// through its own centre, which is the whole reason a version keeps its
-// transform in components instead of as a matrix.
+// turn goes round its own anchor, so a room spun in place keeps its size and a
+// turned selection swings about its centre; a turn of 720° goes round twice;
+// and a spin with a drag in the same keyframe spins while it slides. See
+// `played` in `rig.ts` for how each kind goes part way, and `Flight` for why
+// it is the operations and not one motion fitted to the two ends.
 //
-// Rotation and scale ease from identity on their own terms. The translation
-// does not: it is whatever holds the layer's own fixed point still, so a turn
-// goes round its pivot instead of round the world origin. See `pivot`.
-//
-// `A_k` is a general affine and is constant across the span, so nothing here
-// interpolates an accumulated chain — the property the composed frame in
-// `scene.ts` was allowed to give up.
+// Each link is a frame played on its own terms, and the links multiply at
+// every instant. Nothing interpolates a composed matrix, so nothing has to
+// mind that one can be sheared.
 //
 // A polygon that is new in `k + 1` has no `local_k` of its own, and is given
 // one: its own ring pinched into its own middle. So `local(t)` opens it back
@@ -42,8 +41,8 @@
 // One that `k + 1` takes out is the same thing read backwards: it has no
 // `local_{k+1}`, and gets the pinched ring at that end instead. A removal is a
 // birth with the span running the other way, and it is written that way here —
-// the only asymmetry is that a dying polygon takes no layer of its own, since a
-// version that does not have a polygon cannot be saying anything about it.
+// the only asymmetry is that a dying polygon plays nothing of its own, since a
+// keyframe that does not have a polygon cannot be saying anything about it.
 //
 // It costs something, and what it costs is not about which direction it goes —
 // a birth and a removal of the same polygon measure identically, being the same
@@ -102,7 +101,7 @@
 // path that bends. So a stretch has to end wherever any of those gives out, and
 // there are two ways to know:
 //
-// - **Known outright, from the layer chain.** Both ends of the span, always: a
+// - **Known outright, from the keyframes.** Both ends of the span, always: a
 //   version boundary is a keyframe because the interpolation's derivative
 //   changes there. Those cost nothing.
 //
@@ -191,7 +190,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { affineOf, framed, stateAt } from './rig';
+import { Frame as Pose, Op, REST, affineOf, played, playedAt, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -283,113 +282,77 @@ export type Origin =
   | { kind: 'cross', a: Ref, b: Ref };
 
 /**
- * What a thing is in flight with over a span, in components: everything the
- * keyframe does to it, as one map about the origin.
+ * A thing's own frame across a span: where it stands at the near end, in the
+ * frame of whatever holds it, and what the far keyframe plays over it, in
+ * order.
  *
- * Kept in components rather than as a matrix because it is interpolated, and a
- * matrix lerped entrywise slews a rotation through a shear.
+ * The operations themselves, and not one motion that joins the two ends. A
+ * turned selection swings about the centre it was turned about, a turn of 720°
+ * goes round twice, and a spin with a drag in the same keyframe spins while it
+ * slides — each of which a single motion fitted to the ends gets wrong, and
+ * the first of which it gets wrong only when the keyframe holds anything else.
+ * See `played` in `rig.ts` for how each one goes part way.
+ *
+ * Only what moves the frame. An erosion is in the depths, which are lerped.
  */
-export interface Layer {
-  translation: Point
-  rotation: number
-  scale: { x: number, y: number }
-}
-
-export const NO_LAYER: Layer = { translation: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } };
-
-/** A layer as a matrix: scale per axis, then turn, then move. */
-export function affine(t: Layer): Affine {
-  const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
-
-  return {
-    a: c * t.scale.x,
-    b: s * t.scale.x,
-    c: -s * t.scale.y,
-    d: c * t.scale.y,
-    tx: t.translation.x,
-    ty: t.translation.y,
-  };
+export interface Flight {
+  frame: Pose
+  ops: readonly Op[]
 }
 
 /**
- * What takes a thing from one frame to another, as a layer — or nothing where
- * the two are not one layer apart, and the span has to walk across entrywise.
- */
-function layered(from: Affine, to: Affine): Layer | null {
-  const det = from.a * from.d - from.b * from.c;
-  const inverse: Affine = {
-    a: from.d / det,
-    b: -from.b / det,
-    c: -from.c / det,
-    d: from.a / det,
-    tx: (from.c * from.ty - from.d * from.tx) / det,
-    ty: (from.b * from.tx - from.a * from.ty) / det,
-  };
-  const f = framed(compose(to, inverse));
-
-  return f === null ? null : { translation: f.t, rotation: f.angle, scale: f.scale };
-}
-
-/**
- * A group holding a polygon over the span, and the layer it is in flight with.
+ * A group holding a polygon over the span, and what it is in flight with.
  *
  * Named, because the shader shares one of these between everything the group
  * holds rather than carrying a copy per polygon: what a vertex rides is a
  * chain, and the chain is the structure.
  */
-export interface Holder {
+export interface Holder extends Flight {
   id: Id
-  layer: Layer
 }
 
 /**
- * What takes a polygon's runs back out to the world, in the form that can be
- * interpolated: its frame at the near end, and the one layer in flight over it
- * that carries it to the far end.
+ * What takes a polygon's runs back out to the world: its own flight, and every
+ * group's over that, innermost first.
  *
- * One layer for everything a keyframe does to a thing, which is exact at both
- * ends and eased about the one point the whole keyframe leaves where it was.
- * The chain of groups is there for the table's sake and carries nothing.
+ * A chain rather than one composed matrix, because each link is a frame played
+ * forward on its own terms and a composition of two is a general matrix — a
+ * group squashed across a member turned against it is a shear, which no frame
+ * is. The links multiply at each instant, which is the same thing
+ * `worldFrame` does at a keyframe.
  */
-export interface Rider {
-  base: Affine
-  /**
-   * Where the base lands at the far end, where no one layer takes it there —
-   * a shear, which a layer cannot say. The span walks across it entrywise,
-   * the one place here that lerps a matrix.
-   */
-  into?: Affine
-  layer: Layer
+export interface Rider extends Flight {
   holders: Holder[]
 }
 
-/** Where a polygon's own frame stands at an instant of the span: its base, its
- * layer in flight over that, and every group's in flight over that. */
-export function riding(r: {
-  base: Affine
-  into?: Affine
-  layer: Layer
-  holders: readonly Holder[]
-}, t: number): Affine {
-  let frame = compose(affine(easing(r.layer, t)), walked(r.base, r.into, t));
-
-  for (const h of r.holders) frame = compose(affine(easing(h.layer, t)), frame);
-
-  return frame;
+/** Only what moves a frame: the operations a flight plays. */
+function moves(ops: readonly Op[]): Op[] {
+  return ops.filter(op => op.kind !== 'erode');
 }
 
-/** One frame or the walk between two, entrywise. See `Rider.into`. */
-function walked(base: Affine, into: Affine | undefined, t: number): Affine {
-  if (into === undefined) return base;
+/** A flight `t` of the way through: every operation that far, one after
+ * another, each from the frame the one before it left. Its own frame exactly at
+ * nought, and exactly the far keyframe's at one. */
+export function flown(f: Flight, t: number): Pose {
+  if (t === 0) return f.frame;
 
-  return {
-    a: mix(base.a, into.a, t),
-    b: mix(base.b, into.b, t),
-    c: mix(base.c, into.c, t),
-    d: mix(base.d, into.d, t),
-    tx: mix(base.tx, into.tx, t),
-    ty: mix(base.ty, into.ty, t),
-  };
+  let out = f.frame;
+
+  for (const op of f.ops) out = played(out, op, t);
+
+  return out;
+}
+
+/** Where a polygon's own frame stands at an instant of the span, in world
+ * units: its flight, and every group's over it. Composed innermost first, the
+ * way `worldFrame` composes, so that the two ends are the keyframes' own
+ * frames to the last bit. */
+export function riding(r: Rider, t: number): Affine {
+  let frame = affineOf(flown(r, t));
+
+  for (const h of r.holders) frame = compose(affineOf(flown(h, t)), frame);
+
+  return frame;
 }
 
 /**
@@ -504,8 +467,8 @@ export interface Span {
   /** One per polygon, ordered by id — which is also the order `sample` puts
    * their runs back in. */
   tracks: Track[]
-  /** Per polygon, what its runs ride. Constant across the span: only the
-   * easing of `layer` varies, and that is a function of `t` alone. */
+  /** Per polygon, what its runs ride. Constant across the span: how far its
+   * operations have played is a function of `t` alone. */
   riders: Map<Id, Rider>
   /** How many times the CSG was run to settle the span. One of these is a
    * polygon's own neighbourhood, not the level, so the count is large and each
@@ -679,8 +642,8 @@ export function pruned(bake: Bake, world: World): Bake {
 // -----------------------------------------------------------------------------
 
 /**
- * One polygon across one span: the frame it already stood in, the layer being
- * eased onto it, and its two endpoints.
+ * One polygon across one span: its flight, the groups it rides, and its two
+ * endpoints.
  *
  * A polygon born into `k + 1` has no near end of its own, and one taken out at
  * `k + 1` has no far end; either way the end it lacks is the same ring pinched
@@ -688,13 +651,8 @@ export function pruned(bake: Bake, world: World): Bake {
  * other — it rides its groups, it cuts stretches where it passes through its
  * neighbours, and nothing downstream has to know it is arriving or leaving.
  */
-interface Moving {
+interface Moving extends Rider {
   at: Resolved
-  base: Affine
-  /** The far end's own, where the two ends are not one layer apart. See
-   * `Rider`. */
-  into?: Affine
-  layer: Layer
   /**
    * The corners both ends are written over: every corner either version has,
    * in ring order. `local` and `corners` are index for index at both ends, so
@@ -730,8 +688,6 @@ interface Moving {
   /** Whether either end offsets a corner apart from the rest. Almost never, and
    * the uniform road is the one whose arithmetic has not moved. */
   varying: boolean
-  /** The groups holding it over this span, innermost first. */
-  holders: Holder[]
 }
 
 /**
@@ -1007,48 +963,44 @@ function budding(local: Ring): Ring {
 }
 
 /**
- * Every group holding something, and what each is in flight with: nothing.
+ * What a thing does across a span: from where it stands at the near keyframe,
+ * what the far one plays over it.
  *
- * What a span does to a thing is taken whole off its frames at the two ends,
- * groups and all, and is in its own layer already — so the groups are named
- * for what reaches a polygon's neighbours, and a rider rides none of them.
+ * At one end only, it stands still at that end. A polygon born at the far
+ * keyframe is where that keyframe puts it, outright — a keyframe that both
+ * makes a thing and moves it is describing where the thing *is*, and there is
+ * no earlier place for that to be a move away from — and one taken out there
+ * stands where the near keyframe left it: whatever the far one still says
+ * about it was written before it went, and plays nowhere. See `budding` for
+ * what is in flight instead.
  */
-function holders(world: World, id: Id): Holder[] {
-  return enclosing(world, id).map(g => ({ id: g, layer: NO_LAYER }));
-}
-
-/**
- * What a thing is in flight with across a span: the one layer that takes its
- * frame at the near end to its frame at the far end — or, where no layer does,
- * the far frame to walk to.
- */
-function flight(a: Affine, b: Affine): { layer: Layer, into?: Affine } {
-  const layer = layered(a, b);
-
-  return layer === null ? { layer: NO_LAYER, into: b } : { layer };
-}
-
-/**
- * A thing at one end of a span only, riding whatever holds it across it: its
- * own frame from the end it has, inside its holder's frame from the near end,
- * with the holder's flight over the top.
- *
- * So a key put into a turning room goes round with the room from the start of
- * the turn, and one taken out of it turns on its way out. Its own frame stands
- * still: there is nowhere for it to come from or go to.
- */
-function riderOnly(world: World, from: number, id: Id, own: KeyframeId): Rider {
+function flightOf(world: World, from: number, id: Id, here: boolean, there: boolean): Flight {
   const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
-  const a = under(world, near, id);
-  const mine = affineOf(stateAt(world, id, own).frame);
-  const go = flight(a, under(world, far, id));
 
-  return {
-    base: compose(a, mine),
-    layer: go.layer,
-    into: go.into === undefined ? undefined : compose(go.into, mine),
-    holders: [],
-  };
+  if (here && there) {
+    return { frame: stateAt(world, id, near).frame, ops: moves(playedAt(world, id, far)) };
+  }
+
+  return { frame: stateAt(world, id, here ? near : far).frame, ops: [] };
+}
+
+/**
+ * Every group holding something, and what each is in flight with.
+ *
+ * Membership is global, so which groups these are is not a question about when
+ * any of them was made — and a group's own timeline runs from the first
+ * keyframe, so it always has a near end. What *is* a question is whether it is
+ * still there at the far end: a group taken out at `from + 1` may still have
+ * something written there from before it was, and playing it would carry a
+ * shrinking room off to somewhere the editor never draws.
+ */
+function holders(world: World, from: number, id: Id): Holder[] {
+  const there = new Set(chain(world, keyAt(world, from + 1)!));
+
+  return enclosing(world, id).map(g => ({
+    id: g,
+    ...flightOf(world, from, g, true, standingIn(world, g, there)),
+  }));
 }
 
 function moving(world: World, from: number): Moving[] {
@@ -1060,14 +1012,11 @@ function moving(world: World, from: number): Moving[] {
     const was = before.get(it.id);
 
     if (was === undefined) {
-      // Where it is at the far end, outright: a keyframe that both makes a
-      // polygon and moves it is describing where the polygon *is*, and there is
-      // no earlier place for that to be a move away from. So the birth is all
-      // in the ring, and what is in flight is whatever holds it.
+      // Where it is at the far end, and the birth all in the ring: what is in
+      // flight over its frame is whatever holds it.
       return {
         at: it,
-        ...riderOnly(world, from, it.id, far),
-        holders: holders(world, it.id),
+        ...flightOf(world, from, it.id, false, true),
         corners: it.corners,
         local: [budding(it.local), it.local] as [Ring, Ring],
         dead: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
@@ -1078,6 +1027,7 @@ function moving(world: World, from: number): Moving[] {
         depth: [0, it.erosion] as [number, number],
         depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
+        holders: holders(world, from, it.id),
       };
     }
 
@@ -1085,15 +1035,14 @@ function moving(world: World, from: number): Moving[] {
 
     return {
       at: it,
-      base: was.frame,
-      ...flight(was.frame, it.frame),
+      ...flightOf(world, from, it.id, true, true),
       corners: over.corners,
       local: over.local,
       dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
-      holders: holders(world, it.id),
+      holders: holders(world, from, it.id),
     };
   });
 
@@ -1110,14 +1059,14 @@ function moving(world: World, from: number): Moving[] {
 
     out.push({
       at: was,
-      ...riderOnly(world, from, id, near),
-      holders: holders(world, id),
+      ...flightOf(world, from, id, true, false),
       corners: was.corners,
       local: [was.local, budding(was.local)] as [Ring, Ring],
       dead: [was.corners.map(() => false), was.corners.map(() => false)] as [boolean[], boolean[]],
       depth: [was.erosion, 0] as [number, number],
       depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
       varying: was.depths !== null,
+      holders: holders(world, from, id),
     });
   }
 
@@ -1131,76 +1080,6 @@ function flatDepths(it: Resolved): number[] {
 
 function mix(u: number, v: number, t: number): number {
   return u + (v - u) * t;
-}
-
-/**
- * The one point a layer leaves where it found it, or nothing when it has none.
- *
- * A transform turns about the world origin and carries a translation, so the
- * pivot a gesture was made about is not stored anywhere — `turned` folds it
- * into the translation and forgets it. It can be had back regardless: a map
- * with a fixed point has exactly one, and it is the pivot, whatever gesture put
- * the layer there. Solving `(I - A) f = T` recovers it.
- *
- * That is also the answer to a version holding several gestures about several
- * different pivots. Their composite is still one map and still has one fixed
- * point, so there is nothing to store, nothing to choose between, and no order
- * to remember. Turn a polygon about its middle and then about its corner, and
- * the morph spins it about the single point that both agree stayed put.
- *
- * A pure translation has no fixed point, and neither has a scale that leaves an
- * axis alone. `null` says so, and the caller falls back to a straight line —
- * which for a translation is exactly right anyway.
- */
-export function pivot(layer: Layer): Point | null {
-  const m = affine({ ...layer, translation: { x: 0, y: 0 } });
-
-  const det = (1 - m.a) * (1 - m.d) - m.b * m.c;
-  const size = Math.max(1, Math.abs(m.a), Math.abs(m.b), Math.abs(m.c), Math.abs(m.d));
-
-  if (Math.abs(det) < 1e-9 * size * size) return null;
-
-  const { x: tx, y: ty } = layer.translation;
-
-  return {
-    x: ((1 - m.d) * tx + m.c * ty) / det,
-    y: (m.b * tx + (1 - m.a) * ty) / det,
-  };
-}
-
-/**
- * The layer eased on, in components. Identity at 0, itself at 1.
- *
- * Rotation and scale ease on their own terms, and the translation is then
- * whatever holds the pivot still: `T(t) = f - A(t) f`. Easing it in a straight
- * line instead is what makes a turning polygon swing out on a great arc and
- * come back — the translation a rotation gesture leaves behind is the pivot
- * carried round a circle, and a chord is not a circle. Both ends are unmoved by
- * this, since `A(0)` is the identity and `A(1) f` is `f - T` by construction.
- */
-function easing(layer: Layer, t: number): Layer {
-  const rotation = layer.rotation * t;
-  const scale = { x: mix(1, layer.scale.x, t), y: mix(1, layer.scale.y, t) };
-  const held = t === 0 || t === 1 ? null : pivot(layer);
-
-  if (held === null) {
-    return {
-      translation: { x: layer.translation.x * t, y: layer.translation.y * t },
-      rotation,
-      scale,
-    };
-  }
-
-  const a = affine({ translation: { x: 0, y: 0 }, rotation, scale });
-
-  return {
-    translation: {
-      x: held.x - (a.a * held.x + a.c * held.y),
-      y: held.y - (a.b * held.x + a.d * held.y),
-    },
-    rotation,
-    scale,
-  };
 }
 
 function between(a: Ring, b: Ring, t: number): Ring {
@@ -1438,8 +1317,8 @@ export interface Cast {
    * at either end. A depth arriving is a depth in flight like any other. */
   scopes: Map<GroupId, [number, number]>
   /**
-   * What each eroding group's own points ride: its frame at the near version,
-   * its layer in flight over the span, and whatever holds it.
+   * What each eroding group's own points ride: its own flight over the span,
+   * and whatever holds it.
    *
    * A group carries no geometry, so this is not where its shape comes from —
    * its members' frames already have all of this in them and the union arrives
@@ -1486,15 +1365,11 @@ function casting(world: World, from: number): Cast {
   const riders = new Map<GroupId, Rider>();
 
   for (const id of scopes.keys()) {
-    const base = groupFrame(world, near, id);
-
     riders.set(id, {
-      base,
-
-      // Nothing, for a group the later keyframe takes out: it stands still
-      // while it goes, as a dead polygon does. See `moving`.
-      ...(standingIn(world, id, there) ? flight(base, groupFrame(world, far, id)) : { layer: NO_LAYER }),
-      holders: [],
+      // Nothing played, for a group the later keyframe takes out: it stands
+      // still while it goes, as a dead polygon does. See `moving`.
+      ...flightOf(world, from, id, true, standingIn(world, id, there)),
+      holders: holders(world, from, id),
     });
   }
 
@@ -3207,7 +3082,7 @@ export function ridersOf(world: World, from: number): Map<Id, Rider> {
  * reason: a slot in the frame table. Everything that carries a wall carries
  * whatever is standing in it, so a key on the floor of a room that turns goes
  * round with the room rather than taking the chord — and it does so by riding
- * the same chain, eased the same way, rather than by a second answer to a
+ * the same chain, played the same way, rather than by a second answer to a
  * question the frame table already answers.
  *
  * Born and taken out the same way a polygon is, with the one difference that an
@@ -3218,12 +3093,11 @@ export function ridersOf(world: World, from: number): Map<Id, Rider> {
  * goes round with the room instead of waiting at the far end for it, and one
  * taken out of a turning room turns on its way out.
  *
- * The layer it eases is its own, and only where it is standing at both ends.
- * Arriving, the transform is applied outright — it says where the artefact is
- * rather than where it went, and there is no earlier place for it to be a move
- * away from. Leaving, there is nothing to ease at all: whatever the later
- * version says about it was written before the delete and is inert, exactly as
- * `moving` says of a polygon's.
+ * What it plays of its own is only where it is standing at both ends.
+ * Arriving, it is where the far keyframe puts it, outright — there is no
+ * earlier place for that to be a move away from. Leaving, it plays nothing:
+ * whatever the far keyframe says about it was written before the delete and
+ * is inert, exactly as `moving` says of a polygon's. See `flightOf`.
  */
 function carried(world: World, from: number): Map<Id, Rider> {
   const out = new Map<Id, Rider>();
@@ -3242,12 +3116,7 @@ function carried(world: World, from: number): Map<Id, Rider> {
     // reached yet, and one they finished with before it began.
     if (!here && !there) continue;
 
-    const base = groupFrame(world, early, id);
-    const end = groupFrame(world, late, id);
-
-    out.set(id, here && there
-      ? { base, ...flight(base, end), holders: [] }
-      : riderOnly(world, from, id, here ? early : late));
+    out.set(id, { ...flightOf(world, from, id, here, there), holders: holders(world, from, id) });
   }
 
   return out;
@@ -3256,10 +3125,11 @@ function carried(world: World, from: number): Map<Id, Rider> {
 /**
  * What each subject's runs ride.
  *
- * A polygon rides its own chain. An eroding group rides nothing: its members'
- * frames already carry every transform above them, so the union it hands over
- * is in world units with the motion in it, and a layer applied here would be
- * that motion applied twice.
+ * A polygon rides its own chain. A scope rides its own: its members' frames
+ * already carry it, so the union it hands over is in world units with the
+ * motion in it, and the scope's chain is what the union's points are taken
+ * back into — so that a turning group is a turn in the buffers rather than a
+ * chord across it.
  */
 function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
   const own = new Map(cast.items.map(m => [m.at.id, m]));
@@ -3271,13 +3141,8 @@ function ridden(cast: Cast, all: Subject[]): Map<Id, Rider> {
     return [
       s.id,
       m === undefined
-        ? cast.riders.get(group) ?? { base: IDENTITY, layer: NO_LAYER, holders: [] }
-        : {
-          base: m.base,
-          into: m.into,
-          layer: m.layer,
-          holders: [],
-        },
+        ? cast.riders.get(group) ?? { frame: REST, ops: [], holders: [] }
+        : { frame: m.frame, ops: m.ops, holders: m.holders },
     ];
   }));
 }
@@ -3589,7 +3454,7 @@ function drawn(s: Stretch, riders: Map<Id, Rider>, t: number): Frame {
   const u = s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
 
   // One per polygon rather than one per point: every vertex of a polygon rides
-  // the same layer, and rebuilding it is four trig calls.
+  // the same chain, and playing it is a handful of trig calls a link.
   const frames = new Map<PolygonId, Affine>();
 
   const frameOf = (id: PolygonId): Affine => {

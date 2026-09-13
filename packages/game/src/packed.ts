@@ -33,10 +33,16 @@
 // does not match is refused rather than guessed at.
 // -----------------------------------------------------------------------------
 
-import { BakedLevel, BakedSpan, BakedStretch, BakedTrack, ENTRY_STRIDE } from './baked';
+import { BakedLevel, BakedSpan, BakedStretch, BakedTrack, ENTRY_STRIDE, OP_STRIDE } from './baked';
 
-/** The version of the byte layout, first in every packed bake. */
-export const PACKED = 1;
+/**
+ * The version of the byte layout, first in every packed bake.
+ *
+ * 2: a slot is a frame and a run of operations rather than a layer eased over
+ * a base, and the operations are an array of their own. A bake in layout 1
+ * says nothing this can play.
+ */
+export const PACKED = 2;
 
 // -----------------------------------------------------------------------------
 // Bytes
@@ -137,6 +143,7 @@ const FILTERS: Filter[] = [
   /* opacityB */ { width: 4, against: 6 },
   /* crossings */ { width: 4, delta: true, shuffle: true },
   /* artefacts */ { width: 4, delta: true, shuffle: true },
+  /* ops */ { width: 4, stride: OP_STRIDE, shuffle: true },
 ];
 
 function words(a: Float32Array | Int32Array): Uint32Array {
@@ -232,7 +239,7 @@ function wroteTrack(w: Writer, track: BakedTrack): void {
 }
 
 function wroteSpan(w: Writer, span: BakedSpan): void {
-  w.ints.push(span.from, span.depth, span.tracks.length);
+  w.ints.push(span.from, span.depth, span.most, span.tracks.length);
 
   const arrays = [
     span.frames, span.entries,
@@ -240,6 +247,7 @@ function wroteSpan(w: Writer, span: BakedSpan): void {
     span.slots, span.kinds,
     span.opacityA, span.opacityB,
     span.crossings, span.artefacts,
+    span.ops,
   ];
 
   const before: Uint32Array[] = [];
@@ -391,7 +399,7 @@ function readTrack(r: Reader): BakedTrack {
 }
 
 function readSpan(r: Reader): BakedSpan {
-  const from = r.int(), depth = r.int(), tracks = r.int();
+  const from = r.int(), depth = r.int(), most = r.int(), tracks = r.int();
 
   r.before = [];
 
@@ -401,9 +409,10 @@ function readSpan(r: Reader): BakedSpan {
   const slots = r.i32(), kinds = r.u8();
   const opacityA = r.f32(), opacityB = r.f32();
   const crossings = r.i32(), artefacts = r.i32();
+  const ops = r.f32();
 
   return {
-    from, depth, frames, entries, pointsA, pointsB, slots, kinds, opacityA, opacityB, crossings, artefacts,
+    from, depth, most, frames, ops, entries, pointsA, pointsB, slots, kinds, opacityA, opacityB, crossings, artefacts,
     tracks: Array.from({ length: tracks }, () => readTrack(r)),
   };
 }
