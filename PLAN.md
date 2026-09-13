@@ -32,6 +32,9 @@ can be dropped, moved between keyframes or repeated on its own.
     v1 on, because that is its middle when the later operations are written
   - reshaping an object after an operation was made behaves as if it had always
     had that shape: the operation still acts about the same point of it
+- **Groups are global.** A group has no birth and no death: it is one fact over
+  every keyframe, there wherever anything it holds is, and its timeline plays
+  from the first keyframe. Deleting a group writes deaths onto what it holds.
 - **Nothing is ever solved for or rewritten after an edit.** No re-centring,
   no `carried`, no combined anchors. Every anchor is a point a gesture used.
 - **Orbiting as lasting intent is a group's job.** A group's turn applies to
@@ -51,6 +54,7 @@ type Op =
   | { kind: 'turn', angle: number, ref: Point, about: Point }
   | { kind: 'scale', by: { x: number, y: number }, ref: Point, shift: Point, along: number }
   | { kind: 'erode', by: number }
+  | { kind: 'stand', frame: Frame, erosion: number, corners: Map<VertexId, Point>, depths: Map<VertexId, number> }
 
 interface Entry {
   op: Op
@@ -113,13 +117,16 @@ A gesture appends to k's list. It merges into the last entry only when that is
 exact and trivial:
 
 - two moves, or two erosions, with the same `times`: they add
-- two turns with the same `ref`, `about` and `times`: angles add, and an entry
-  whose angle comes back to 0 goes
+- two turns with the same `ref` and `times`, where the second's `about` is the
+  first's turned by the first's angle (which is where the painted point went,
+  and what a repeated gesture about one centre writes): angles add, `about`
+  stays the first's, and an entry whose angle comes back to 0 goes
 - two scales with the same `ref`, `along` and `times`: factors multiply, and
   the slides compose
 
-A drag recomputes from the list it started with, so a gesture is one entry,
-not one per frame.
+An operation that does nothing is not written, and a merge that comes back to
+nothing goes. A drag recomputes from the list it started with, so a gesture is
+one entry, not one per frame.
 
 ### Repeats
 
@@ -154,13 +161,26 @@ parent frame. Nothing records that there was a selection.
 
 ### Playback
 
-A keyframe in flight plays its contributions one after another, each partway,
-each from the frame the previous one left: a move by `t · by`, a turn by
+A keyframe in flight plays all its contributions at once, each `t` of the way,
+composed in list order — each acts on what the ones before it have done so
+far: a move by `t · by`, a turn by
 `t · angle` about its own anchor, a scale by `by^t` about its painted point
 with its slide eased to match, an erosion by `t · by`. A turn is an arc about
 its own anchor, so a turned selection swings about its centre, and a spin with a
 drag in the same keyframe spins while it slides. Nothing is recovered: the
 anchors are stored.
+
+### Stands (unchaining)
+
+A stand is the state the keyframe's own list is played over — the keyframe
+before, plus the steps repeats take there — written at the head of that list,
+so unchaining moves nothing. Nothing written before it reaches past it except
+repeats still running, which keep stepping: they are what the object is doing,
+and stopping them would change what is on screen. Corner nudges written at the
+stand's own keyframe play over it. Unchaining a group unchains everything
+under it; a member unchained alone still rides its group. Rechaining takes the
+stand out. A pasted object begins with a stand at its birth, which is not an
+unchaining.
 
 ## Stays / goes
 
@@ -175,7 +195,9 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-### 1 — types and evaluator (`rig.ts`, pure, not wired)
+Done on branch `timelines`: 1, 2 and 3, and groups made global. Next: 3½.
+
+### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
 - The types above; applying an op; the order; `stateAt(world, id, k)` giving
   the frame, erosion, corner nudges and depths; cached per rig in a `WeakMap`.
@@ -194,23 +216,24 @@ the fixed-point recovery in the bake, old save formats.
     centre; a skip; a hand move mid-span
   - stacked erosion; dropping one entry; nested groups; birth partway
 
-### 2 — the editor onto it (lands with 3)
+### 2 — the editor onto it (lands with 3) — done
 
 - `scene.ts`: `resolveAt`, `depths`, `held`, `under`, `groupFrame`, `inward`
   read `stateAt`. `editAt` / `starting` / `withEdit` become reading and
   appending entries; a gesture recomputes from the list it started with.
   Delete `carried`.
 - `canvas.ts`: `turned` and `squashed` rewritten to the gestures above.
-- Ungroup folds the group into each member at every keyframe; refused where
-  that is not a turn, scale and move of the member (a group's non-uniform
-  scale over a member turned against it).
-- Unchaining: see *Open*.
+- Ungroup folds the group into each member at every keyframe, unrolling
+  repeats into single entries; refused where that is not a turn, scale and
+  move of the member (a group's non-uniform scale over a member turned against
+  it — see 3½).
+- Unchaining: stands, see *Stands*.
 - Port `resolve.ts`, paste/stamp, `export.ts`, `view3d.ts`, `save.ts` (new
   format; older refused).
 - Tests through a builder (`keyed(world, k, id, [turn(…), move(…)])`), keeping
   the behavioural assertions.
 
-### 3 — bake and game
+### 3 — bake and game — done
 
 A slot holds the frame at the start of the span and a short list of ops in
 flight with their anchors placed in the parent frame. `FRAME_STRIDE` gives
@@ -224,6 +247,39 @@ decided here, and it is the one place the list costs something per vertex.
 - Tests first: a room spinning in place keeps its size mid-span, a turned
   selection arcs about its centre, 720° plays as two turns, spin plus drag
   spins while sliding, a selection scale slides the room with it.
+
+The slot is 8 floats (`t`, angle, scale, parent, first op, op count) and the
+operations a table of their own, 8 floats each; the shader's loop is built to
+the longest run in the span, as the chain walk is built to its depth. The
+packed bake is layout 2.
+
+### 3½ — skew in the frame (next)
+
+A group squashed across a member turned against it shears the member in the
+world, and the shear exists nowhere but in the nesting: no frame can hold it.
+So ungroup refuses, copying a member out of its group and the 19→20 converter
+approximate with the nearest frame, and a turn inside a squashed group is not
+a turn seen from outside. Forbidding the configurations instead would mean
+policing every edit by its consequences downstream, and would forbid squashing
+a group of turned rooms.
+
+- `Frame` gains a skew: `F(x) = t + R(Θ) · K(k) · S · x` with
+  `K = [[1, k], [0, 1]]` — every affine that does not mirror. The stretch of a
+  scale applies before the skew (`S ↦ D · S`), so scaling along the object's
+  own axes stays well defined; turns and moves are unchanged.
+- `framed` decomposes any non-mirroring affine exactly; `nearest` goes.
+- The fold (`outward`, `inward1`) writes skew where a member turned inside a
+  squashed group, or a squash over a turned member, needs it, and ungroup no
+  longer refuses. Copy/paste carries frames exactly.
+- An op `{ kind: 'skew', by: number, ref: Point, shift: Point }` for the fold
+  to write, playing by `t · by` about its painted point; no gesture yet.
+- The frame table slot grows from 8 floats to 12 (skew, and padding); the
+  shader's `Pose` and `played`, `baked.ts`'s reader, `packed.ts` (layout 3),
+  the save format (21) and the converter learn skew.
+- Tests: ungrouping a squashed group of turned rooms leaves them where they
+  were at every keyframe; a turn inside a squashed group and the same after
+  ungrouping agree at both ends of the span; copying a sheared member out and
+  pasting it lands where it was seen.
 
 ### 4 — moving operations and keyframe count (`keys.ts`)
 
@@ -281,14 +337,15 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
   is exact when those steps are moves and erosions; where they turn or scale
   too, the order changes and the result with it, and the gesture should say
   so.
-- **Already true today, unchanged:** a member turned inside a group scaled
-  non-uniformly is sheared in the world, and ungrouping it is refused.
+- **Until 3½:** a member turned inside a group scaled non-uniformly is sheared
+  in the world, and ungrouping it is refused.
+- **A room drawn into a group after the group's rooms were deleted stays.**
+  Deleting a group writes deaths onto what it holds at the time; the group has
+  no death of its own to hand on.
+- **Older files do not open.** The 19→20 converter (`pnpm convert`) takes
+  formats 18 and 19.
 
 ## Open
 
-1. **Unchaining.** A footing today freezes the whole composed frame. Proposed:
-   an op `{ kind: 'stand', frame: Frame, erosion: number, … }` that restarts
-   the object's own state from those numbers; freezing a member against its
-   group means freezing the group.
-2. **Repeat spans across inserted keyframes** — steps (proposed) or a fixed
+1. **Repeat spans across inserted keyframes** — steps (proposed) or a fixed
    total spread over the span.
