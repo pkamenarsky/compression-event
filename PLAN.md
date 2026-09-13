@@ -263,11 +263,17 @@ a turn seen from outside. Forbidding the configurations instead would mean
 policing every edit by its consequences downstream, and would forbid squashing
 a group of turned rooms.
 
-Done as written, with two additions. A scale carries `lean`, the skew its
-axes had when written, beside `along`, so that a repeat's `M` is exact on a
-skewed thing too. And a 20 file still opens, every skew nought; its bake is
-left behind. The fold says anything not otherwise expressible as a turn, a
-skew and a stretch about the one point, then a move (`across` in `scene.ts`).
+Done as written, with these on top:
+
+- A scale carries `lean`, the skew its axes had when written, beside `along`,
+  and a skew carries `along`, so that repeats of either are exact on a skewed
+  thing.
+- A 20 file still opens, every skew nought; its bake is left behind.
+- Ungroup, copying out of a group and pasting into one are one fold (`carried`
+  in `scene.ts`). What it cannot say as one operation it says as a turn, a
+  skew and a stretch about one point, then a move (`across`). It keeps a
+  repeat wherever each step carries to the carried entry's own step, and
+  unrolls and reports the rest.
 
 - `Frame` gains a skew: `F(x) = t + R(Θ) · K(k) · S · x` with
   `K = [[1, k], [0, 1]]` — every affine that does not mirror. The stretch of a
@@ -347,9 +353,15 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
   turn inside a squashed group, or a squash across a turned member, into a
   turn, a skew and a stretch of the member, the two ends are exact and the
   way between them is not the group's ellipse.
-- **A copy's later operations are lifted by its holders' frame at the copy
-  keyframe.** A turn inside a squashed holder is not a turn outside it, and
-  without the member's frame to aim at it comes across as written.
+- **A copy goes on doing what was seen.** Copying something out of a group
+  folds its holders into it, as ungrouping would, so their later motion comes
+  with it. Pasting into a group is the fold the other way: at each keyframe
+  the copy does what was copied, and then what the group does.
+- **A fold keeps a repeat only where it is one on the other side.** Where the
+  frame it is carried through changes shape over the span, where it is a turn
+  across a squash, where it was already running, or behind one taken apart,
+  it becomes one entry per keyframe, stopping at the last keyframe there is.
+  Ungroup and paste say so on the status line.
 - **A room drawn into a group after the group's rooms were deleted stays.**
   Deleting a group writes deaths onto what it holds at the time; the group has
   no death of its own to hand on.

@@ -24,7 +24,7 @@ import {
   stamped,
   unchained,
   unchainedAt,
-  ungrouped,
+  ungrouping,
 } from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
@@ -56,6 +56,7 @@ import {
   opened,
   marked,
   saying,
+  Unrolled,
   within,
   redone,
   undone,
@@ -522,17 +523,21 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
           // version. Plain paste brings the whole chain across.
           // Into the group standing open, if one is: a paste lands where the
           // author is working, and in here that is inside the group.
-          const { world, ids, artefacts, paths } = e.shiftKey
+          const { world, ids, artefacts, paths, unrolled } = e.shiftKey
             ? stamped(s.world, s.keyframe, s.clipboard, at, where)
             : pasted(s.world, s.keyframe, s.clipboard, at, where);
 
-          return marked(
-            {
-              ...s,
-              world,
-              selection: { ...s.selection, polygons: ids, artefacts, paths, start: false },
-            },
-            s.world,
+          return noting(
+            marked(
+              {
+                ...s,
+                world,
+                selection: { ...s.selection, polygons: ids, artefacts, paths, start: false },
+              },
+              s.world,
+            ),
+            'Pasted',
+            unrolled,
           );
         });
       }
@@ -601,6 +606,7 @@ function together(s: EditorState): EditorState {
 function apart(s: EditorState): EditorState {
   let world = s.world;
   const picked: Id[] = [];
+  const unrolled: Unrolled[] = [];
 
   for (const id of s.selection.polygons) {
     const group = s.world.groups.get(id);
@@ -610,17 +616,18 @@ function apart(s: EditorState): EditorState {
       continue;
     }
 
-    const taken = ungrouped(world, id);
+    const taken = ungrouping(world, id);
 
     if (taken === null) return s;
 
-    world = taken;
+    world = taken.world;
+    unrolled.push(...taken.unrolled);
     picked.push(...group.members);
   }
 
   // What came out goes back to the list it belongs in, since a group's members
   // are of every kind and the selection is not.
-  return marked(
+  const done = marked(
     {
       ...s,
       world,
@@ -636,6 +643,8 @@ function apart(s: EditorState): EditorState {
     },
     s.world,
   );
+
+  return noting(done, 'Ungrouped', unrolled);
 }
 
 /**
@@ -675,6 +684,35 @@ function flattened(s: EditorState): EditorState | null {
     s.world,
   );
 }
+
+/**
+ * The repeats a gesture had to take apart, said on the status line over what
+ * it did — after `marked`, which clears it. Nothing where there were none.
+ *
+ * A status line rather than a question: nothing moved, and undo is there. What
+ * it warns of is only how the result edits, and that it ends at the last
+ * keyframe there is.
+ */
+function noting(s: EditorState, done: string, unrolled: readonly Unrolled[]): EditorState {
+  if (unrolled.length === 0) return s;
+
+  const n = unrolled.length;
+  const why = [...new Set(unrolled.map(u => WHY[u.why]))].join('; ');
+
+  return saying(
+    s,
+    `${done}. ${n} ${n === 1 ? 'repeat is' : 'repeats are'} now one entry per keyframe, `
+      + `stopping at the last keyframe there is: ${why}.`,
+  );
+}
+
+const WHY: Record<Unrolled['why'], string> = {
+  squash: 'across a squash, a turn is a turn, a skew and a stretch rather than one operation',
+  reshaped: 'the group turns, scales or skews while it runs',
+  moving: 'a group\'s repeat is aimed at something that moves while it runs',
+  order: 'a repeat running before it had to be taken apart',
+  running: 'it was already running where the copy starts',
+};
 
 /**
  * Seal the picked groups, or let them loose again.

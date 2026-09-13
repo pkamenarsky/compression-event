@@ -8,8 +8,8 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { appended, middleOf, moveOf, painted, scaleOf, turnOf } from './scene';
-import { Erode, Move, Op } from './rig';
+import { appended, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
+import { Erode, Move, Op, repeating, withKeys } from './rig';
 import { Id, KeyframeId, World } from './types';
 
 /** An operation, or one worked out from the world as it stands when it is
@@ -24,6 +24,15 @@ export function wrote(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): W
   for (const op of ops) out = appended(out, v, id, typeof op === 'function' ? op(out, v, id) : op);
 
   return out;
+}
+
+/** `op` added to the end of what `v` does to `id` as a repeat: `times` in
+ * all, or to the end. */
+export function repeated(world: World, v: KeyframeId, id: Id, op: Writing, times: number | null = null): World {
+  const rig = rigOf(world, id);
+  const entry = repeating(typeof op === 'function' ? op(world, v, id) : op, times);
+
+  return withRig(world, id, withKeys(rig, v, [...(rig.keys.get(v) ?? []), entry]));
 }
 
 /** A move by a world-space step. */

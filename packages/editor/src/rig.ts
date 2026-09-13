@@ -44,6 +44,7 @@
 //
 //   turn   aboutₙ = R(angle)ⁿ · about
 //   scale  shiftₙ = Mⁿ · shift        M = the stretch `by` in the axes `along`
+//   skew   shiftₙ = Xⁿ · shift        X = the shear `by` along `along`
 //
 // Each step has to ride every displacement of `ref` except the ones the repeat
 // itself causes, and that comes out to these from the entry's own numbers. So
@@ -134,6 +135,9 @@ export interface Skew {
   /** The painted point, in the thing's rest frame. */
   ref: Point
   shift: Point
+  /** The angle the thing's first axis had when it was written. Read only by
+   * repeats. */
+  along: number
 }
 
 export interface Erode {
@@ -425,6 +429,11 @@ export function stepped(op: Op, n: number): Op {
     };
   }
 
+  if (op.kind === 'skew') {
+    // `Xⁿ` is the shear by `n · by`: shears along one axis add.
+    return { ...op, shift: sheared(unsheared(op.shift, op.along, -n * op.by), op.along, 0) };
+  }
+
   return op;
 }
 
@@ -468,6 +477,18 @@ interface Walked {
   order: KeyframeId[]
   states: (State | undefined)[]
   played: Op[][]
+  /** Where each of `played` came from, one for one. */
+  sources: Source[][]
+}
+
+/**
+ * Where an operation a keyframe plays came from: the entry, written at `at`,
+ * and which of its steps this is — nought for the entry itself.
+ */
+export interface Source {
+  entry: Entry
+  at: KeyframeId
+  step: number
 }
 
 /**
@@ -513,6 +534,7 @@ function same(order: readonly KeyframeId[], keyframes: readonly Keyframe[]): boo
 /** A repeat under way: its entry, and how many steps it has taken. */
 interface Running {
   entry: Entry
+  at: KeyframeId
   steps: number
 }
 
@@ -532,6 +554,7 @@ function walk(
     order: keyframes.map(f => f.id),
     states: new Array(n).fill(undefined),
     played: Array.from({ length: n }, () => []),
+    sources: Array.from({ length: n }, () => []),
   };
 
   if (born < 0) return out;
@@ -554,9 +577,11 @@ function walk(
   for (let i = born; i < n; i++) {
     const key = keyframes[i].id;
     const ops = out.played[i];
+    const from = out.sources[i];
 
-    const apply = (op: Op): void => {
+    const apply = (op: Op, source: Source): void => {
       ops.push(op);
+      from.push(source);
 
       if (op.kind === 'erode') {
         erosion += op.by;
@@ -583,20 +608,20 @@ function walk(
       if (r.entry.times !== null && r.steps + 1 >= r.entry.times) continue;
 
       r.steps += 1;
-      apply(stepped(r.entry.op, r.steps));
+      apply(stepped(r.entry.op, r.steps), { entry: r.entry, at: r.at, step: r.steps });
       going.push(r);
     }
 
     running = going;
 
     for (const e of rig.keys.get(key) ?? []) {
-      apply(e.op);
+      apply(e.op, { entry: e, at: key, step: 0 });
 
       if (e.op.kind === 'stand') {
         stood = { at: i, op: e.op };
       }
       else if (e.times === null || e.times > 1) {
-        running.push({ entry: e, steps: 0 });
+        running.push({ entry: e, at: key, steps: 0 });
       }
     }
 
@@ -754,6 +779,13 @@ export function playedAt(tl: Timeline, id: Id, k: KeyframeId): readonly Op[] {
   return (i < 0 ? undefined : walked(tl, id)?.played[i]) ?? [];
 }
 
+/** Where each of `playedAt`'s operations came from, one for one. */
+export function sourcesAt(tl: Timeline, id: Id, k: KeyframeId): readonly Source[] {
+  const i = indexIn(tl.keyframes, k);
+
+  return (i < 0 ? undefined : walked(tl, id)?.sources[i]) ?? [];
+}
+
 /** A thing's frame at a keyframe in world units: its own, and every group
  * holding it, each at that keyframe. */
 export function worldFrame(tl: Timeline, id: Id, k: KeyframeId): Affine {
@@ -850,7 +882,7 @@ function merged(a: Entry, b: Entry): Entry | 'gone' | null {
   }
 
   else if (x.kind === 'skew' && y.kind === 'skew') {
-    if (!near(x.ref, y.ref)) return null;
+    if (!near(x.ref, y.ref) || x.along !== y.along) return null;
 
     op = { ...x, by: x.by + y.by, shift: { x: x.shift.x + y.shift.x, y: x.shift.y + y.shift.y } };
   }

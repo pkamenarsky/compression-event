@@ -71,6 +71,7 @@ import {
   SetName,
   KeyframeId,
   Timed,
+  Unrolled,
   TimedEntry,
   VertexId,
   World,
@@ -107,6 +108,7 @@ import {
   REST,
   Rig,
   Scale,
+  Source,
   Stand,
   Turn,
   affineOf,
@@ -122,7 +124,9 @@ import {
   playedAt,
   played,
   sheared,
+  sourcesAt,
   spun,
+  stepped,
   stateAt,
   trivial,
   unsheared,
@@ -1433,11 +1437,28 @@ export function grouped(
  * do.
  */
 export function ungrouped(world: World, id: GroupId): World | null {
+  return ungrouping(world, id)?.world ?? null;
+}
+
+/**
+ * The same, and the repeats that had to be taken apart into single entries to
+ * do it. See `carried`.
+ *
+ * Tried keeping every repeat the fold can keep first, and checked; should that
+ * ever not land everything where it was, the whole thing again with every
+ * repeat taken apart, which is exact by construction.
+ */
+export function ungrouping(world: World, id: GroupId): { world: World, unrolled: Unrolled[] } | null {
+  return apart1(world, id, true) ?? apart1(world, id, false);
+}
+
+function apart1(world: World, id: GroupId, keep: boolean): { world: World, unrolled: Unrolled[] } | null {
   const group = world.groups.get(id);
 
   if (group === undefined) return null;
 
   const rigs = new Map(world.rigs);
+  const unrolled: Unrolled[] = [];
 
   // The group's own timeline goes with it, folded into its members. Its depth
   // never transfers: a group's erosion offsets the union of its members, and
@@ -1446,9 +1467,13 @@ export function ungrouped(world: World, id: GroupId): World | null {
 
   if (world.rigs.has(id)) {
     for (const member of group.members) {
-      const rig = folded(world, id, member);
+      const fold = folded(world, id, member, keep);
 
-      if (rig === null) return null;
+      if (fold === null) return null;
+
+      const rig = fold.rig;
+
+      unrolled.push(...fold.unrolled);
 
       if (rig.keys.size === 0 && rig.nudges.size === 0 && rig.depths.size === 0) rigs.delete(member);
       else rigs.set(member, rig);
@@ -1477,14 +1502,32 @@ export function ungrouped(world: World, id: GroupId): World | null {
   // where that is checked rather than argued: a member that would land
   // anywhere else at any keyframe refuses the lot.
   for (const m of group.members.flatMap(m => within(world, m))) {
-    const from = order(world, lived(world, m)?.birth ?? world.keyframes[0].id);
-
-    for (const k of world.keyframes.slice(Math.max(0, from))) {
-      if (!alike(worldFrame(world, m, k.id), worldFrame(out, m, k.id))) return null;
-    }
+    if (!placedAlike(world, out, m)) return null;
   }
 
-  return out;
+  return { world: out, unrolled: distinct(unrolled) };
+}
+
+/** Whether `m` is placed alike in both, at every keyframe it stands at. */
+function placedAlike(was: World, now: World, m: Id): boolean {
+  const from = order(was, lived(was, m)?.birth ?? was.keyframes[0].id);
+
+  return was.keyframes.slice(Math.max(0, from)).every(k => alike(worldFrame(was, m, k.id), worldFrame(now, m, k.id)));
+}
+
+/** Each repeat once, however many things it was taken apart onto. */
+function distinct(unrolled: readonly Unrolled[]): Unrolled[] {
+  const seen = new Set<string>();
+
+  return unrolled.filter(u => {
+    const key = `${u.id}@${u.at}#${u.nth}`;
+
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+
+    return true;
+  });
 }
 
 /** Two frames that place everything within the arithmetic of each other. */
@@ -1557,7 +1600,7 @@ function across(f: Frame, m: Affine, p: Point, slide: Point, hint: number): Op[]
 
   const ops: Op[] = [
     { kind: 'turn', angle, ref, about: ORIGIN },
-    { kind: 'skew', by: to.skew - f.skew, ref, shift: ORIGIN },
+    { kind: 'skew', by: to.skew - f.skew, ref, shift: ORIGIN, along: f.angle + angle },
     {
       kind: 'scale',
       by: { x: to.scale.x / f.scale.x, y: to.scale.y / f.scale.y },
@@ -1611,14 +1654,18 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op[] | null 
       return [{ ...op, shift: linear(outer, op.shift), along: axes.angle, lean: axes.skew }];
     }
 
-    case 'skew':
+    case 'skew': {
       if (inner === null || both === null) return null;
+
+      const axis = linear(outer, spun({ x: 1, y: 0 }, op.along));
 
       return [{
         ...op,
         by: op.by * (inner.scale.y / inner.scale.x) * (both.scale.x / both.scale.y),
         shift: linear(outer, op.shift),
+        along: Math.atan2(axis.y, axis.x),
       }];
+    }
 
     case 'erode':
       return [op];
@@ -1629,17 +1676,6 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op[] | null 
       return frame === null ? null : [{ ...op, frame }];
     }
   }
-}
-
-/**
- * An operation written in a group's frame for something inside it, taken
- * outside where that is exact without knowing the thing: what a copy lifted out
- * of its holders carries, and where it is not, the operation as it was.
- */
-function lifted(op: Op, out: Frame | null): Op {
-  const ops = out === null ? null : outward(op, out, null);
-
-  return ops !== null && ops.length === 1 ? ops[0] : op;
 }
 
 /**
@@ -1656,62 +1692,242 @@ function lifted(op: Op, out: Frame | null): Op {
  * so the member's own come first, each carried out of the group by the group's
  * frame at the keyframe before — `outward` — and the group's follow, each
  * aimed at the point it was aimed at, which it paints onto the member by
- * taking it back through the combined frame.
- *
- * What comes out is played rather than written: every step of every repeat is
- * its own entry, since a repeat's next step is adjusted in the group's frame
- * and not in the member's. The corners are untouched — they are in the
- * member's rest frame, which the group never reached.
+ * taking it back through the combined frame. See `carried` for what becomes of
+ * repeats. The corners are untouched — they are in the member's rest frame,
+ * which the group never reached.
  */
-function folded(world: World, g: GroupId, m: Id): Rig | null {
+function folded(
+  world: World,
+  g: GroupId,
+  m: Id,
+  keep: boolean,
+): { rig: Rig, unrolled: Unrolled[] } | null {
   const rig = rigOf(world, m);
   // From its birth, or from the first keyframe for a group, whose timeline
   // plays from there.
   const born = lived(world, m);
   const first = born !== undefined ? order(world, born.birth) : world.groups.has(m) ? 0 : -1;
-  const keys = new Map<KeyframeId, Entry[]>();
 
-  if (first < 0) return rig;
+  if (first < 0) return { rig, unrolled: [] };
+
+  const across = (i: number): Frame => {
+    const before = keyAt(world, i - 1);
+
+    return before === null ? REST : stateAt(world, g, before).frame;
+  };
+
+  const out = carried(world, m, first, across, g, keep);
+
+  return out === null ? null : { rig: { ...rig, keys: out.keys }, unrolled: out.unrolled };
+}
+
+/** One operation a keyframe played, where it came from, and what it came to
+ * on the other side. */
+interface Crossed {
+  source: Source
+  /** Whose it was: the thing's own, or the group's aimed at it. */
+  group: boolean
+  ops: Op[]
+}
+
+/**
+ * `m`'s timeline said on the other side of a frame, from keyframe index
+ * `first` on: what `folded` and `entering` share.
+ *
+ * `across(i)` is the frame `m`'s own operations at keyframe `i` are carried out
+ * through — the group's at the keyframe before when a group is taken away, the
+ * landing group's undone when one is put over it — and `g` is the group whose
+ * own operations follow, aimed at `m`, where there is one.
+ *
+ * Every operation is carried as it is played. What that leaves is exact, one
+ * entry per operation per keyframe. A repeat is then written back as one entry
+ * where that says the same — with `keep`, and where:
+ *
+ * - every step of it carries to one operation, and that operation is the
+ *   carried entry's own step: the frame it is carried through holds its shape
+ *   over the span, and the kind needs nothing but that frame to be carried
+ *   (a turn across a squash is a turn, a skew and a stretch, and never one);
+ * - it begins inside what is carried, rather than already running there;
+ * - every repeat running beside it that began before it is kept too. A kept
+ *   repeat's steps are played at the head of each keyframe, before its own
+ *   list, and one that overtook a step taken apart would change the order.
+ *
+ * The rest are taken apart, and said so.
+ */
+function carried(
+  world: World,
+  m: Id,
+  first: number,
+  across: (i: number) => Frame | null,
+  g: GroupId | null,
+  keep: boolean,
+): { keys: Map<KeyframeId, Entry[]>, unrolled: Unrolled[] } | null {
+  const rows: Crossed[][] = [];
 
   for (let i = first; i < world.keyframes.length; i++) {
     const k = world.keyframes[i].id;
     const before = keyAt(world, i - 1);
 
-    let outer = before === null ? REST : stateAt(world, g, before).frame;
+    let outer = across(i);
     let inner = i === first || before === null ? REST : stateAt(world, m, before).frame;
 
-    const list: Entry[] = [];
+    if (outer === null) return null;
 
-    for (const op of playedAt(world, m, k)) {
-      const out = outward(op, outer, inner);
+    const row: Crossed[] = [];
+    const mine = playedAt(world, m, k), from = sourcesAt(world, m, k);
+
+    for (let j = 0; j < mine.length; j++) {
+      const out = outward(mine[j], outer, inner);
 
       if (out === null) return null;
 
-      list.push(...out.map(o => once(o)));
-      inner = played(inner, op);
+      row.push({ source: from[j], group: false, ops: out });
+      inner = played(inner, mine[j]);
     }
 
-    let both = framed(compose(affineOf(outer), affineOf(inner)));
+    if (g !== null) {
+      let both = framed(compose(affineOf(outer), affineOf(inner)));
 
-    if (both === null) return null;
+      if (both === null) return null;
 
-    for (const op of playedAt(world, g, k)) {
-      const out = inward1(world, k, m, op, outer, both);
+      const theirs = playedAt(world, g, k), whence = sourcesAt(world, g, k);
 
-      if (out === null) return null;
+      for (let j = 0; j < theirs.length; j++) {
+        const out = inward1(world, k, m, theirs[j], outer, both);
 
-      outer = played(outer, op);
+        if (out === null) return null;
 
-      for (const o of out) {
-        list.push(once(o));
-        both = played(both, o);
+        outer = played(outer, theirs[j]);
+
+        for (const o of out) both = played(both, o);
+
+        row.push({ source: whence[j], group: true, ops: out });
       }
     }
 
-    if (list.length > 0) keys.set(k, list);
+    rows.push(row);
   }
 
-  return { ...rig, keys };
+  // Every repeat that played, with its steps in the order they were taken.
+  const steps = new Map<Entry, Crossed[]>();
+
+  for (const row of rows) {
+    for (const c of row) {
+      if (c.source.entry.times === 1 || c.source.entry.op.kind === 'stand') continue;
+
+      const all = steps.get(c.source.entry) ?? [];
+
+      all.push(c);
+      steps.set(c.source.entry, all);
+    }
+  }
+
+  const kept = new Set<Entry>();
+  const unrolled: Unrolled[] = [];
+
+  /** Written where, and which of that keyframe's entries. */
+  const whose = (c: Crossed): Unrolled => {
+    const id = c.group ? g! : m;
+    const list = rigOf(world, id).keys.get(c.source.at) ?? [];
+
+    return { id, at: c.source.at, nth: list.indexOf(c.source.entry), why: 'order' };
+  };
+
+  for (const [entry, all] of steps) {
+    const head = all[0];
+    let why: Unrolled['why'] | null = null;
+
+    if (head.source.step !== 0) why = 'running';
+    else if (all.some(c => c.ops.length !== 1)) why = 'squash';
+    else if (all.some(c => !sameOp(c.ops[0], stepped(head.ops[0], c.source.step)))) {
+      why = head.group ? 'moving' : 'reshaped';
+    }
+
+    if (why === null && keep) kept.add(entry);
+    else unrolled.push({ ...whose(head), why: why ?? 'order' });
+  }
+
+  // Where each kept repeat is in the order the walk will play kept steps in:
+  // the keyframe it was written at, and its place in what that keyframe
+  // played.
+  const rank = new Map<Entry, number>();
+
+  rows.forEach((row, i) => row.forEach((c, j) => {
+    if (c.source.step === 0) rank.set(c.source.entry, i * 1e6 + j);
+  }));
+
+  let settled = false;
+
+  while (!settled) {
+    settled = true;
+
+    for (const row of rows) {
+      let prefix = true;
+      let last = -Infinity;
+
+      for (const c of row) {
+        const step = kept.has(c.source.entry) && c.source.step > 0;
+
+        if (!step) {
+          prefix = false;
+          continue;
+        }
+
+        const r = rank.get(c.source.entry)!;
+
+        if (!prefix || r < last) {
+          kept.delete(c.source.entry);
+          unrolled.push({ ...whose(steps.get(c.source.entry)![0]), why: 'order' });
+          settled = false;
+          break;
+        }
+
+        last = r;
+      }
+
+      if (!settled) break;
+    }
+  }
+
+  const keys = new Map<KeyframeId, Entry[]>();
+
+  rows.forEach((row, i) => {
+    const list: Entry[] = [];
+
+    for (const c of row) {
+      const e = c.source.entry;
+
+      if (!kept.has(e)) list.push(...c.ops.map(o => once(o)));
+      else if (c.source.step === 0) list.push({ op: c.ops[0], times: e.times, skip: e.skip });
+    }
+
+    if (list.length > 0) keys.set(world.keyframes[first + i].id, list);
+  });
+
+  return { keys, unrolled };
+}
+
+/** Two operations the same to within the arithmetic that produced them. */
+function sameOp(a: Op, b: Op): boolean {
+  const x = a as unknown as Record<string, unknown>, y = b as unknown as Record<string, unknown>;
+
+  if (a.kind !== b.kind) return false;
+
+  return Object.keys(x).every(key => close(x[key], y[key]));
+}
+
+function close(a: unknown, b: unknown): boolean {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  }
+
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+
+    return Object.keys(x).every(key => close(x[key], y[key]));
+  }
+
+  return a === b;
 }
 
 /**
@@ -1778,7 +1994,7 @@ function inward1(
         return across(both, x, p, op.shift, 0);
       }
 
-      return [{ ...op, by: read.c, ref: unplace(affineOf(both), p) }];
+      return [{ ...op, by: read.c, ref: unplace(affineOf(both), p), along: both.angle }];
     }
 
     case 'stand': {
@@ -3561,39 +3777,50 @@ function unheld(m: Affine): Frame {
  * and they come across one step to an entry at the head of each list.
  *
  * The outermost things are copied in world units, their holders not coming
- * with them — the frame they start from, and every operation after it. What is
- * inside them keeps the frame of what holds it, since that comes too.
+ * with them — taken out of them as ungrouping would take them, every holder
+ * folded in, so that what the copy goes on to do is what was seen, the
+ * holders' motion and all. See `freed`. What is inside them keeps the frame of
+ * what holds it, since that comes too.
+ *
+ * What had to come across one step to an entry is said, in `unrolled`.
  */
 export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clipping[] {
   const at = order(world, v);
   const n = world.keyframes.length;
   const offset = (k: KeyframeId): number => order(world, k) - at;
 
-  /** What happens to `id` after the copy keyframe, said in the frame `out`. */
+  /** What happens to `id` after the copy keyframe: in world units for the
+   * outermost, and in the frame of what holds it for the rest. */
   const timed = (id: Id, outermost: boolean): Timed & { keysOf: Rig } => {
-    const rig = rigOf(world, id);
+    const freeing = outermost ? freed(world, id) : { world, unrolled: [] };
+    const src = freeing.world;
+    const rig = rigOf(src, id);
     const state = stateAt(world, id, v);
-    const out = outermost ? framed(under(world, v, id)) : REST;
 
     // What the repeats begun by the copy keyframe go on to do: the same rig
     // with nothing after the copy in it, walked on past it.
-    const before = withRig(world, id, {
+    const before = withRig(src, id, {
       ...rig,
       keys: new Map([...rig.keys].filter(([k]) => offset(k) <= 0)),
     });
 
-    const carry = (op: Op): Op => lifted(op, out);
-
     const keys: [number, TimedEntry[]][] = [];
+    const running = new Map<Entry, Unrolled>();
 
     for (let i = at + 1; i < n; i++) {
       const k = world.keyframes[i].id;
-      const steps = playedAt(before, id, k).map(op => ({ op: carry(op), times: 1, skip: [] }));
+      const steps = playedAt(before, id, k).map(op => ({ op, times: 1, skip: [] }));
       const own = (rig.keys.get(k) ?? []).map(e => ({
-        op: carry(e.op),
+        op: e.op,
         times: e.times,
         skip: [...e.skip].map(offset).filter(o => o > 0),
       }));
+
+      for (const { entry, at: from } of sourcesAt(before, id, k)) {
+        const nth = (rig.keys.get(from) ?? []).indexOf(entry);
+
+        running.set(entry, { id, at: from, nth, why: 'running' });
+      }
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
@@ -3602,6 +3829,9 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       start: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
       erosion: state.erosion,
       keys,
+      // What the fold took apart matters only where it was written after the
+      // copy: anything begun by then is running, and comes apart regardless.
+      unrolled: [...freeing.unrolled.filter(u => offset(u.at) > 0), ...running.values()],
       keysOf: rig,
     };
   };
@@ -3675,12 +3905,138 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
 }
 
 /**
+ * `id` taken out of everything holding it, one holder at a time, as ungrouping
+ * each would take it — its holders folded into its own timeline, and it left
+ * where the holder was. What a copy reads the outermost things off, so that
+ * the copy goes on doing what was seen. See `carried` for the repeats.
+ */
+function freed(world: World, id: Id): { world: World, unrolled: Unrolled[] } {
+  let w = world;
+  const unrolled: Unrolled[] = [];
+
+  while (true) {
+    const g = parentOf(w).get(id);
+
+    if (g === undefined) break;
+
+    const next = lift1(w, g, id, true) ?? lift1(w, g, id, false);
+
+    // Never, for a frame that does not mirror: the copy is then read in the
+    // holder's frame, which is wrong, rather than not at all.
+    if (next === null) break;
+
+    w = next.world;
+    unrolled.push(...next.unrolled);
+  }
+
+  return { world: w, unrolled: distinct(unrolled) };
+}
+
+/** `id` out of `g` and into `g`'s own holder, beside it, `g` folded in. */
+function lift1(world: World, g: GroupId, id: Id, keep: boolean): { world: World, unrolled: Unrolled[] } | null {
+  const fold = folded(world, g, id, keep);
+
+  if (fold === null) return null;
+
+  const groups = new Map(world.groups);
+  const group = groups.get(g)!;
+  const up = parentOf(world).get(g);
+
+  groups.set(g, { ...group, members: group.members.filter(m => m !== id) });
+
+  if (up !== undefined) {
+    const holder = groups.get(up)!;
+
+    groups.set(up, { ...holder, members: holder.members.flatMap(m => (m === g ? [g, id] : [m])) });
+  }
+
+  const out = withRig({ ...world, groups }, id, fold.rig);
+
+  return within(world, id).every(m => placedAlike(world, out, m)) ? { world: out, unrolled: fold.unrolled } : null;
+}
+
+/** A whole affine map undone. */
+function undone(m: Affine): Affine {
+  const l = inverse(m);
+
+  return { ...l, tx: -(l.a * m.tx + l.c * m.ty), ty: -(l.b * m.tx + l.d * m.ty) };
+}
+
+/**
+ * A thing pasted at the top level, taken into the group `into`: its timeline
+ * said in that group's frame, so that it lands where it was put and from there
+ * does what was copied, with whatever the group does over it.
+ *
+ * The fold the other way round. At the keyframe it lands in, its operations go
+ * through the group's frame there, which is what puts it where it was put;
+ * after that, through the group's frame at the keyframe before, exactly as a
+ * member's own are carried out of a group taken apart. So each keyframe, it
+ * does what was copied and then what the group does.
+ *
+ * Checked, as ungrouping is, and with every repeat taken apart where keeping
+ * them would not land it so.
+ */
+function entering(world: World, v: KeyframeId, id: Id, into: GroupId): { world: World, unrolled: Unrolled[] } {
+  const at = order(world, v);
+
+  const through = (i: number): Frame | null =>
+    framed(undone(worldFrame(world, into, keyAt(world, i === at ? i : i - 1)!)));
+
+  const attempt = (keep: boolean): { world: World, unrolled: Unrolled[] } | null => {
+    const out = carried(world, id, at, through, null, keep);
+
+    return out === null
+      ? null
+      : { world: withRig(world, id, { ...rigOf(world, id), keys: out.keys }), unrolled: out.unrolled };
+  };
+
+  const kept = attempt(true);
+
+  if (kept !== null && landsAsCopied(world, kept.world, at, id, into)) return kept;
+
+  return attempt(false) ?? { world, unrolled: [] };
+}
+
+/**
+ * Whether `id`, taken into `into`, does what it did at the top level: lands
+ * where it was put, and at each keyframe after goes by the same operations from
+ * where the keyframe before left it, the group's frame there held over it.
+ */
+function landsAsCopied(was: World, now: World, at: number, id: Id, into: GroupId): boolean {
+  for (let i = at; i < was.keyframes.length; i++) {
+    const k = was.keyframes[i].id;
+    const h = worldFrame(was, into, keyAt(was, i === at ? i : i - 1)!);
+
+    let expect = stateAt(was, id, k).frame;
+
+    if (i > at) {
+      const from = framed(compose(h, affineOf(stateAt(now, id, keyAt(was, i - 1)!).frame)));
+
+      if (from === null) return false;
+
+      expect = from;
+
+      for (const op of playedAt(was, id, k)) expect = played(expect, op);
+    }
+
+    if (!alike(compose(h, affineOf(stateAt(now, id, k).frame)), affineOf(expect))) return false;
+  }
+
+  return true;
+}
+
+/** Every repeat a clipping, and anything in it, brought across as single
+ * entries. */
+function unrolledIn(clip: Clipping): Unrolled[] {
+  return [...clip.unrolled, ...(clip.kind === 'group' ? clip.members.flatMap(unrolledIn) : [])];
+}
+
+/**
  * The clipping's timeline written for `id`, starting at `v`: a stand where it
  * is born, which is where it begins, and the lists after it at their offsets.
  *
- * `into` is what takes the clipping's frames into the frame it lands in — the
- * paste's offset, and the open group's frame undone — for the outermost thing,
- * and nothing for what is inside it, which lands in what held it before.
+ * `into` is the paste's offset for the outermost thing, and nothing for what
+ * is inside it, which lands in what held it before.
  */
 function written(
   world: World,
@@ -3692,8 +4048,6 @@ function written(
   into: Affine | null,
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
-  const carried = into === null ? null : framed(into);
-  const carry = (op: Op): Op => lifted(op, carried);
 
   const keys = new Map<KeyframeId, readonly Entry[]>([
     [v, [once<Stand>({ kind: 'stand', frame: start, erosion: clip.erosion, corners, depths })]],
@@ -3707,7 +4061,7 @@ function written(
     if (k === null) break;
 
     keys.set(k, list.map(e => ({
-      op: carry(e.op),
+      op: e.op,
       times: e.times,
       skip: new Set(e.skip.flatMap(o => {
         const at = landingAt(world, v, o);
@@ -3873,25 +4227,25 @@ export function pasted(
   const ids: Id[] = [];
   const artefacts: ArtefactId[] = [];
   const paths: PathId[] = [];
+  const unrolled: Unrolled[] = [];
   let out = world;
 
-  // World units, moved by the offset, and then into whatever is standing open.
-  const det = where.frame.a * where.frame.d - where.frame.b * where.frame.c;
-  const back: Affine = {
-    a: where.frame.d / det,
-    b: -where.frame.b / det,
-    c: -where.frame.c / det,
-    d: where.frame.a / det,
-    tx: 0,
-    ty: 0,
-  };
-  const o = unplace(where.frame, by);
-  const into = { ...back, tx: o.x, ty: o.y };
+  // World units, moved by the offset, and then taken into whatever is
+  // standing open. See `entering`.
+  const shift: Affine = { ...IDENTITY, tx: by.x, ty: by.y };
 
   for (const clip of clips) {
-    const put = restore(out, v, clip, into);
+    const put = restore(out, v, clip, shift);
 
     out = put.world;
+    unrolled.push(...unrolledIn(clip));
+
+    if (where.into !== null) {
+      const inside = entering(out, v, put.id, where.into);
+
+      out = inside.world;
+      unrolled.push(...inside.unrolled);
+    }
 
     // Kept apart only because the selection holds them in separate lists.
     // All three go into the group standing open, all three being members of
@@ -3903,6 +4257,7 @@ export function pasted(
 
   return {
     world: joined(out, where.into, [...ids, ...artefacts, ...paths]),
+    unrolled,
     ids,
     artefacts,
     paths,
@@ -3914,6 +4269,8 @@ export interface Pasted {
   world: World
   /** The polygons and groups, which is what `Selection.polygons` holds. */
   ids: Id[]
+  /** The repeats that came across as single entries, copying or landing. */
+  unrolled: Unrolled[]
   artefacts: ArtefactId[]
   paths: PathId[]
 }
@@ -3940,11 +4297,12 @@ export function stamped(
   where: Landing,
 ): Pasted {
   const now = (clip: Clipping): Clipping => clip.kind === 'artefact' || clip.kind === 'path'
-    ? { ...clip, death: undefined, keys: [] }
+    ? { ...clip, death: undefined, keys: [], unrolled: [] }
     : clip.kind === 'group'
-    ? { ...clip, members: clip.members.map(now), death: undefined, keys: [] }
+    ? { ...clip, members: clip.members.map(now), death: undefined, keys: [], unrolled: [] }
     : {
         ...clip,
+        unrolled: [],
         points: clip.points
           .filter(c => c.birth === 0)
           .map(c => ({ ...c, death: null })),

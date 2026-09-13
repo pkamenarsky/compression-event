@@ -492,7 +492,7 @@ export function converted(old: Old): Converted {
 
       // Then the skew, about the same point, where the holder shears it.
       if (Math.abs(target.skew - f.skew) > 1e-12) {
-        const op: Op = { kind: 'skew', by: target.skew - f.skew, ref, shift: { x: 0, y: 0 } };
+        const op: Op = { kind: 'skew', by: target.skew - f.skew, ref, shift: { x: 0, y: 0 }, along: f.angle };
 
         add(k, op);
         f = played(f, op);

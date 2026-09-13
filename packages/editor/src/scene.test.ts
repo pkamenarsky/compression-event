@@ -34,6 +34,7 @@ import {
   polygonsIn,
   removeAt,
   ungrouped,
+  ungrouping,
   without,
   addVertex,
   hitPolygon,
@@ -59,7 +60,7 @@ import {
   unplace,
 } from './scene';
 import { affineOf } from './rig';
-import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
 import { addPath } from './paths';
 import {
   GroupId,
@@ -976,6 +977,86 @@ describe('copy and paste', () => {
     }
   });
 
+  test('a copy out of a group goes on doing what was seen, the group\'s motion and all', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = sealed(world, 0, ids, TOP)!;
+
+    let w = moved(g.world, 0, g.id, { scale: { x: 1.5, y: 0.7 } });
+
+    w = moved(w, 1, ids[0], { rotation: 0.6 });
+    w = moved(w, 2, g.id, { rotation: -0.4, translation: { x: 20, y: 0 } });
+
+    const after = pasted(w, 0, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
+
+    for (let v = 0; v < 4; v++) {
+      const put = only(after.world, v as KeyframeId, after.ids[0]).source;
+      const was = only(w, v as KeyframeId, ids[0]).source;
+
+      for (let i = 0; i < put.length; i++) {
+        expect(put[i].x).toBeCloseTo(was[i].x, 6);
+        expect(put[i].y).toBeCloseTo(was[i].y + 400, 6);
+      }
+    }
+  });
+
+  test('a paste into a squashed group lands, and goes on, where it would outside it', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+      ['level', rect(0, 300, 100, 100)],
+    );
+    const g = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const w = repeated(moved(g.world, 0, g.id, { scale: { x: 2, y: 0.6 } }), 1, ids[2], spun(0.5));
+
+    const clip = copied(w, 0, [ids[2]]);
+    const outside = pasted(w, 0, clip, { x: 0, y: 400 }, TOP);
+    const inside = pasted(w, 0, clip, { x: 0, y: 400 }, landing(w, 0, g.id));
+
+    expect(inside.world.groups.get(g.id)?.members).toContain(inside.ids[0]);
+
+    // The group holds still after it lands, so inside and out are the same
+    // place at every keyframe — though the spin in it is no spin in the group.
+    for (let v = 0; v < 4; v++) {
+      const a = only(inside.world, v as KeyframeId, inside.ids[0]).source;
+      const b = only(outside.world, v as KeyframeId, outside.ids[0]).source;
+
+      for (let i = 0; i < a.length; i++) {
+        expect(a[i].x).toBeCloseTo(b[i].x, 6);
+        expect(a[i].y).toBeCloseTo(b[i].y, 6);
+      }
+    }
+
+    expect(inside.unrolled.map(u => u.why)).toEqual(['squash']);
+    expect(outside.unrolled).toEqual([]);
+  });
+
+  test('a repeat pasted into a group that only moves stays one', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+      ['level', rect(0, 300, 100, 100)],
+    );
+    const g = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const w = repeated(moved(g.world, 1, g.id, { translation: { x: 50, y: 0 } }), 1, ids[2], spun(0.5));
+
+    const inside = pasted(w, 0, copied(w, 0, [ids[2]]), { x: 0, y: 400 }, landing(w, 0, g.id));
+
+    expect(inside.unrolled).toEqual([]);
+    expect([...rigOf(inside.world, inside.ids[0]).keys.values()].flat().filter(e => e.times === null)).toHaveLength(1);
+  });
+
+  test('a repeat already running where a copy starts comes across a step at a time, and says so', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const w = repeated(world, 0, ids[0], spun(0.5));
+
+    const after = pasted(w, 1, copied(w, 1, [ids[0]]), { x: 0, y: 400 }, TOP);
+
+    expect(after.unrolled).toEqual([{ id: ids[0], at: 0, nth: 0, why: 'running' }]);
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
@@ -1696,6 +1777,71 @@ describe('making and taking apart', () => {
 
     stays(w, once, ids);
     stays(w, ungrouped(once, inner.id)!, ids);
+  });
+
+  /** Every repeat still written as one, on `id`. */
+  function repeats(world: World, id: Id): number {
+    return [...rigOf(world, id).keys.values()].flat().filter(e => e.times !== 1).length;
+  }
+
+  test('a repeat survives ungrouping where the group only moves', () => {
+    const { world, ids, group } = pair();
+
+    let w = repeated(world, 0, ids[0], spun(0.3));
+
+    w = moved(moved(w, 1, group, { translation: { x: 30, y: 5 } }), 2, group, { translation: { x: -4, y: 9 } });
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled).toEqual([]);
+    expect(repeats(done.world, ids[0])).toEqual(1);
+    stays(w, done.world, ids);
+  });
+
+  test('so does a group\'s own spin, onto members that do nothing', () => {
+    const { world, ids, group } = pair();
+    const w = repeated(moved(world, 0, group, { scale: { x: 2, y: 1 } }), 1, group, spun(0.4));
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled).toEqual([]);
+    for (const id of ids) expect(repeats(done.world, id)).toEqual(1);
+    stays(w, done.world, ids);
+  });
+
+  test('a turn repeating inside a squash is taken apart, and said so', () => {
+    const { world, ids, group } = pair();
+    const w = repeated(moved(world, 0, group, { scale: { x: 2, y: 1 } }), 0, ids[0], spun(0.3));
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled).toEqual([{ id: ids[0], at: 0, nth: 0, why: 'squash' }]);
+    expect(repeats(done.world, ids[0])).toEqual(0);
+    stays(w, done.world, ids);
+  });
+
+  test('a repeat is taken apart where the group turns under it', () => {
+    const { world, ids, group } = pair();
+    const w = moved(repeated(world, 0, ids[0], move(3, 0)), 2, group, { rotation: 0.5 });
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled.map(u => u.why)).toEqual(['reshaped']);
+    stays(w, done.world, ids);
+  });
+
+  test('a repeat behind one taken apart is taken apart too, keeping the order', () => {
+    const { world, ids, group } = pair();
+
+    let w = repeated(moved(world, 0, group, { scale: { x: 2, y: 1 } }), 0, ids[0], spun(0.3));
+
+    w = repeated(w, 1, ids[0], move(4, 1));
+
+    const done = ungrouping(w, group)!;
+
+    expect(done.unrolled.map(u => [u.at, u.why])).toEqual([[0, 'squash'], [1, 'order']]);
+    expect(repeats(done.world, ids[0])).toEqual(0);
+    stays(w, done.world, ids);
   });
 
   test('a depth is nobody else\'s', () => {

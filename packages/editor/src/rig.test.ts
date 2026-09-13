@@ -612,7 +612,7 @@ describe('skew', () => {
   const f: Frame = { t: { x: 3, y: -4 }, angle: 0.7, skew: 0.2, scale: { x: 2, y: 0.5 } };
   const r = { x: 1, y: 2 };
 
-  const skew = (by: number, shift: Point = ORIGIN): Op => ({ kind: 'skew', by, ref: r, shift });
+  const skew = (by: number, shift: Point = ORIGIN): Op => ({ kind: 'skew', by, ref: r, shift, along: f.angle });
 
   /** A frame's linear part. */
   const linear = (g: Frame): Affine => ({ ...affineOf(g), tx: 0, ty: 0 });
@@ -661,7 +661,7 @@ describe('skew', () => {
   test('a repeated scale on skewed axes keeps its centre', () => {
     const c = { x: -40, y: 25 };
     const by = { x: 1.5, y: 0.75 };
-    let tl = keyed(room, 0, P, [{ kind: 'skew', by: 0.6, ref: MIDDLE, shift: ORIGIN }, turn(36, MIDDLE)]);
+    let tl = keyed(room, 0, P, [{ kind: 'skew', by: 0.6, ref: MIDDLE, shift: ORIGIN, along: 0 }, turn(36, MIDDLE)]);
 
     const g = stateAt(tl, P, 0).frame;
     const p = placed(g, MIDDLE);
@@ -681,6 +681,34 @@ describe('skew', () => {
       const now = affineOf(stateAt(tl, P, k).frame);
 
       near(at(now, unplace(before, c)), c, 9);
+    }
+  });
+
+  test('a repeated skew keeps its centre', () => {
+    const c = { x: -40, y: 25 };
+    let tl = keyed(room, 0, P, [turn(36, MIDDLE)]);
+
+    const g = stateAt(tl, P, 0).frame;
+    const p = placed(g, MIDDLE);
+    const d = { x: c.x - p.x, y: c.y - p.y };
+
+    // `(I − X)(c − p)`, with `X` the shear by 0.4 along the room's first axis.
+    const x = sheared(unsheared(d, g.angle, -0.4), g.angle, 0);
+
+    tl = keyed(tl, 1, P, [repeating<Op>({
+      kind: 'skew',
+      by: 0.4,
+      ref: MIDDLE,
+      shift: { x: d.x - x.x, y: d.y - x.y },
+      along: g.angle,
+    }, null)]);
+
+    for (let k = 1; k < KEYFRAMES.length; k++) {
+      const before = affineOf(stateAt(tl, P, k - 1).frame);
+      const now = affineOf(stateAt(tl, P, k).frame);
+
+      near(at(now, unplace(before, c)), c, 9);
+      expect(stateAt(tl, P, k).frame.skew).toBeCloseTo(0.4 * k, 12);
     }
   });
 });

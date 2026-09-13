@@ -721,6 +721,29 @@ export interface Timed {
   /** Each keyframe's list after the copy, by offset. Its skips are offsets
    * too. */
   keys: [number, TimedEntry[]][]
+  /** The repeats that came across as single entries. */
+  unrolled: Unrolled[]
+}
+
+/**
+ * A repeat that could not stay one across a fold, and was written as a single
+ * entry per step instead — which looks the same, but edits as many things, and
+ * stops at the last keyframe there is today. See `carried` in `scene.ts`.
+ *
+ * `id` wrote it, at `at`, as the `nth` entry there. `why`:
+ *
+ * - `squash`: across a squash it is a turn, a skew and a stretch, never one
+ *   operation;
+ * - `reshaped`: the group turns, scales or skews while it runs;
+ * - `moving`: a group's repeat, and what it is aimed at moves while it runs;
+ * - `order`: a repeat running beside it that began before it had to be;
+ * - `running`: it was already running where the thing starts.
+ */
+export interface Unrolled {
+  id: Id
+  at: KeyframeId
+  nth: number
+  why: 'squash' | 'reshaped' | 'moving' | 'order' | 'running'
 }
 
 /** An entry whose skips are offsets rather than keyframes. */
