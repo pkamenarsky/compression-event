@@ -206,9 +206,10 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
   const rows = rowsOf(world, rootsOf(world, selection));
   const picked = valid(world, local.picked);
 
-  // As wide as the fullest cell in it, and never narrower than a handful.
-  const widths = world.keyframes.map((_f, col) =>
-    Math.max(ROOMY, ...rows.map(r => r.cells[col].entries.length)) * SLOT + 2 * PAD);
+  // As wide as the fullest cell in it, the picked entry's arrow counted, and
+  // never narrower than a handful.
+  const widths = world.keyframes.map((f, col) =>
+    Math.max(ROOMY, ...rows.map(r => r.cells[col].entries.length + (picked?.id === r.id && picked.at === f.id ? 1 : 0))) * SLOT + 2 * PAD);
   const xs: number[] = [];
   let x = LABEL;
 
@@ -275,9 +276,25 @@ function centre(m: Model, col: number): number {
   return m.xs[col] + m.widths[col] / 2;
 }
 
-/** Where the `i`-th of `n` entries sits in a column. */
+/** Where the `i`-th of `n` slots sits in a column. */
 function slot(m: Model, col: number, i: number, n: number): number {
   return centre(m, col) + (i - (n - 1) / 2) * SLOT;
+}
+
+/** Where the picked entry is among a cell's icons, or -1. */
+function pickedIn(m: Model, r: Row, col: number): number {
+  const p = m.picked;
+
+  return p !== null && p.id === r.id && p.at === m.keyframes[col].id ? r.cells[col].entries.indexOf(p.index) : -1;
+}
+
+/** Where a cell's `i`-th icon sits: the picked one's arrow takes the slot after
+ * it, and everything after that moves along one. */
+function placed(m: Model, r: Row, col: number, i: number): number {
+  const p = pickedIn(m, r, col);
+  const n = r.cells[col].entries.length + (p < 0 ? 0 : 1);
+
+  return slot(m, col, p >= 0 && i > p ? i + 1 : i, n);
 }
 
 /** The column under a point on the page, clamped to the ones there are. */
@@ -437,7 +454,7 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
     ...r.bars.map((b, lane) => bar(ctx, m, r, b, lane)),
 
-    ...repeats(ctx, m, r),
+    ...arrow(ctx, m, r),
 
     pinned([
       label(r.label, {
@@ -507,7 +524,6 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
     : [box({ left: `${m.xs[col]}px`, top: '0', width: `${m.widths[col]}px`, height: '100%', background: 'rgba(0, 0, 0, 0.28)' })];
 
   const at = m.keyframes[col].id;
-  const n = c.entries.length;
 
   return fragment([
     ...shade,
@@ -538,7 +554,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       };
 
       return box({
-        left: `${slot(m, col, i, n) - ICON / 2 - 2}px`,
+        left: `${placed(m, r, col, i) - ICON / 2 - 2}px`,
         top: `${ROW / 2 - ICON / 2 - 2}px`,
         width: `${ICON + 4}px`,
         height: `${ICON + 4}px`,
@@ -619,7 +635,7 @@ function dragged(e: PointerEvent, click: () => void, done: (clientX: number) => 
 function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
   const at = m.keyframes[b.from].id;
   const y = ROW + lane * LANE + LANE / 2;
-  const x = slot(m, b.from, b.slot, r.cells[b.from].entries.length);
+  const x = placed(m, r, b.from, b.slot);
   const colour = isPicked(m, r, b.from, b.index) ? theme.accent : theme.muted;
   const out: VNode[] = [];
 
@@ -687,37 +703,50 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
 }
 
 /**
- * A × at the corner of the picked entry's icon: whether it repeats, and the
- * switch for it. Clicked, one that happens once repeats to the end — its lane
- * appears, and its end is dragged back from there — and one that repeats
- * happens once again.
+ * The picked entry's arrow, in the slot after its icon and drawn unlike any
+ * entry: dragged to a keyframe, the entry repeats to there — to its own is
+ * once, and to the last is to the end.
  */
-function repeats(ctx: Ctx, m: Model, r: Row): VNode[] {
+function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
   const p = m.picked;
 
   if (p === null || p.id !== r.id) return [];
 
   const col = m.keyframes.findIndex(f => f.id === p.at);
-  const c = r.cells[col];
-  const i = c?.entries.indexOf(p.index) ?? -1;
+  const i = pickedIn(m, r, col);
 
   if (i < 0) return [];
 
-  const on = r.bars.some(b => b.from === col && b.index === p.index);
-  const x = slot(m, col, i, c.entries.length);
+  const x = slot(m, col, i + 1, r.cells[col].entries.length + 1);
 
-  return [label('×', {
-    left: `${x + ICON / 2 - 2}px`,
-    top: '-6px',
-    fontSize: '12px',
-    fontWeight: '700',
-    cursor: 'pointer',
-    color: on ? theme.accent : theme.muted,
-    zIndex: 2,
-  }, {
-    title: on ? 'Repeats: click to happen once' : 'Click to repeat to the end',
-    onclick: () => ctx.acted(timed(ctx.state().world, r.id, p.at, p.index, on ? 1 : null)),
-  })];
+  const done = (clientX: number) => {
+    const w = ctx.state().world;
+    const e = rigOf(w, r.id).keys.get(p.at)?.[p.index];
+
+    if (e !== undefined) ctx.acted(timed(w, r.id, p.at, p.index, timesTo(w, e, col, colAt(ctx, clientX))));
+  };
+
+  return [box({
+    left: `${x - ICON / 2 - 2}px`,
+    top: `${ROW / 2 - ICON / 2 - 2}px`,
+    width: `${ICON + 4}px`,
+    height: `${ICON + 4}px`,
+    borderRadius: '4px',
+    border: `1px dashed ${theme.accent}`,
+    cursor: 'ew-resize',
+    zIndex: 1,
+  }, [
+    svg({ width: ICON + 2, height: ICON + 2, viewBox: `-1 -1 ${ICON + 2} ${ICON + 2}`, style: { display: 'block' } }, [
+      path({
+        d: 'M2 7 H12 M8.5 3.5 L12 7 L8.5 10.5',
+        fill: 'none',
+        stroke: theme.accent,
+        'stroke-width': 1.6,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+      }),
+    ]),
+  ], { title: 'Drag to the keyframe it repeats to', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
