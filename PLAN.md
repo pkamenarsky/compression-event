@@ -367,8 +367,9 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   icon's lane is the nearest, so no line crosses another.
 - Stands are not shown. Taking one out moves the thing to wherever upstream
   says, which is Cmd+Shift+U's question rather than an entry's.
-- The picked entry, where it does not repeat, has a handle to drag out into
-  a repeat; dropped on the last keyframe it runs to the end. `skipToggled` in
+- The picked entry has a × at its icon's corner: clicked, a single entry
+  repeats to the end, and a repeat happens once again. Its lane's end is
+  dragged to where it stops. `skipToggled` in
   `keys.ts` turns a step into a wait and back, keeping where the repeat
   stops: `times` goes down or up by one with it.
 - The flags are `World.flags`, a map by id, saved as an optional list, so the

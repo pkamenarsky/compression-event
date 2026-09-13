@@ -437,7 +437,7 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
     ...r.bars.map((b, lane) => bar(ctx, m, r, b, lane)),
 
-    ...handle(ctx, m, r),
+    ...repeats(ctx, m, r),
 
     pinned([
       label(r.label, {
@@ -686,9 +686,13 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
   return fragment(out);
 }
 
-/** The picked entry's handle, where it does not repeat yet: drag it out to
- * make it one. */
-function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
+/**
+ * A × at the corner of the picked entry's icon: whether it repeats, and the
+ * switch for it. Clicked, one that happens once repeats to the end — its lane
+ * appears, and its end is dragged back from there — and one that repeats
+ * happens once again.
+ */
+function repeats(ctx: Ctx, m: Model, r: Row): VNode[] {
   const p = m.picked;
 
   if (p === null || p.id !== r.id) return [];
@@ -697,15 +701,28 @@ function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
   const c = r.cells[col];
   const i = c?.entries.indexOf(p.index) ?? -1;
 
-  if (i < 0 || r.bars.some(b => b.from === col && b.index === p.index)) return [];
+  if (i < 0) return [];
 
-  // Under the icon rather than beside it, where the next one would be.
-  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length), ROW / 2 + ICON / 2 + 2, true)];
+  const on = r.bars.some(b => b.from === col && b.index === p.index);
+  const x = slot(m, col, i, c.entries.length);
+
+  return [label('×', {
+    left: `${x + ICON / 2 - 2}px`,
+    top: '-6px',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    color: on ? theme.accent : theme.muted,
+    zIndex: 2,
+  }, {
+    title: on ? 'Repeats: click to happen once' : 'Click to repeat to the end',
+    onclick: () => ctx.acted(timed(ctx.state().world, r.id, p.at, p.index, on ? 1 : null)),
+  })];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
-function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number, y: number, under = false): VNode {
+function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number, y: number): VNode {
   const done = (clientX: number) => {
     const w = ctx.state().world;
     const e = rigOf(w, id).keys.get(at)?.[index];
@@ -715,17 +732,16 @@ function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: n
     ctx.acted(timed(w, id, at, index, timesTo(w, e, from, colAt(ctx, clientX))));
   };
 
-  const place = under
-    ? { left: `${x - 6}px`, top: `${y}px`, width: '12px', height: '3px' }
-    : { left: `${x + 5}px`, top: `${y - 6}px`, width: '4px', height: '12px' };
-
   return box({
-    ...place,
+    left: `${x + 5}px`,
+    top: `${y - 6}px`,
+    width: '4px',
+    height: '12px',
     borderRadius: '2px',
     background: theme.faded,
     cursor: 'ew-resize',
     zIndex: 1,
-  }, [], { title: 'Drag to repeat', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
+  }, [], { title: 'Drag to where it stops', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
 }
 
 // -----------------------------------------------------------------------------
