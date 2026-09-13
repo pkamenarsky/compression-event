@@ -2557,6 +2557,48 @@ export interface Standing {
  * neighbourhood's contributors, which is what a track is cut against.
  */
 /**
+ * The slot of `set` a scope publishes into: the outermost one anything in it
+ * fills, or nothing where it holds nothing in that set.
+ *
+ * So a scope is whatever its outermost member is. A room with pillars in it is
+ * a level; pillars with holes in them and no room around them are a solid, and
+ * go on to cut whatever room they are put in, exactly as a pillar would. There
+ * is no flag for it, and nothing to retype: what a group is follows from what
+ * it holds, the way a polygon's does from its kind.
+ *
+ * Read off membership, which is global, and not off what stands at any one
+ * keyframe. A polygon's kind never changes from one keyframe to the next and a
+ * group's does not either — a scope whose only room is taken out at v2 is a
+ * level with nothing in it from there on, not a solid from v2, which would have
+ * it shrink away with its room across the span and come back whole at the end.
+ * An author wanting the solid to outlive the room nests it: a sealed solid in
+ * a sealed level has been a solid all along.
+ *
+ * Descending through sealed groups as much as loose ones, because a sealed one
+ * publishes into its own outermost slot and the least of the least is the
+ * least.
+ */
+export function outermostSlot(world: World, id: Id, set: SetName): number | null {
+  const group = world.groups.get(id);
+
+  if (group === undefined) {
+    const p = world.polygons.get(id);
+
+    return p === undefined ? null : slotOf(p, set);
+  }
+
+  let out: number | null = null;
+
+  for (const m of group.members) {
+    const k = outermostSlot(world, m, set);
+
+    if (k !== null && (out === null || k < out)) out = k;
+  }
+
+  return out;
+}
+
+/**
  * The union of `shapes`, offset by `depth`: what one slot of a scope comes to.
  *
  * Remembered, because a group with erosion on it is two arrangements per slot
@@ -2587,6 +2629,16 @@ export function contributed(
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
+  const outer = new Map<string, number | null>();
+
+  /** The slot a scope publishes into. See `outermostSlot`. */
+  const top = (id: Id, set: SetName): number | null => {
+    const key = `${id}:${set}`;
+
+    if (!outer.has(key)) outer.set(key, outermostSlot(world, id, set));
+
+    return outer.get(key)!;
+  };
 
   /** What one member offers of a kind, projected if it is an eroding group. */
   /**
@@ -2610,12 +2662,13 @@ export function contributed(
 
     if (group === undefined) return [];
 
-    // A sealed scope puts in one shape, in the first slot: whatever cut inside
-    // it was spent inside it, so what arrives is a level or a floor and nothing
-    // that cuts. A loose group, or one standing open, has no scope of its own
-    // and hands its members up into this one.
+    // A sealed scope puts in one shape, in the slot of its outermost kind:
+    // whatever cut inside it was spent inside it, so what arrives is a level,
+    // or a solid with its voids already taken out, and nothing that cuts it
+    // back. A loose group, or one standing open, has no scope of its own and
+    // hands its members up into this one.
     if (group.sealed && standing(id) !== null) {
-      return k === 0 ? [resolves(id, set)] : [];
+      return k === top(id, set) ? [resolves(id, set)] : [];
     }
 
     return group.members.flatMap(m => from(m, set, k));
@@ -2638,7 +2691,12 @@ export function contributed(
     // The slots are eroded apart and folded after, which is what lets them come
     // out as though they had been eroded together. A pillar shrunk along with
     // its room leaves a gap that never narrows.
-    const depth = inverted(SLOT_KINDS[set][k]) ? -d : d;
+    //
+    // Counted from the slot the scope publishes into, since that is the shape
+    // the depth erodes: a scope that is a solid shrinks as a solid does, and
+    // its voids grow against it.
+    const kinds = SLOT_KINDS[set];
+    const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
 
     return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth);
   };
@@ -2656,7 +2714,11 @@ export function contributed(
    *
    * A scope with no level keeps its floor whole. There is nothing there for the
    * clip to mean, and clipping to an outline that is not there would resolve
-   * the floor out of existence.
+   * the floor out of existence. Nor does one that is a solid: a solid is
+   * something standing in a room, not the room a floor is laid in.
+   *
+   * The fold starts at the scope's outermost slot rather than the first, so a
+   * solid with voids in it is `solid - void` and not `nothing - (solid - void)`.
    */
   const resolves = (id: Id, set: SetName): Shape => {
     const key = `${id}:${set}`;
@@ -2664,13 +2726,15 @@ export function contributed(
 
     if (known !== undefined) return known;
 
+    const from = top(id, set);
     const slots: Shape[] = [];
 
-    for (let k = 0; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
+    for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
-    const out = set === 'floor'
-      ? underfoot(settled(slots), resolves(id, 'level'))
-      : settled(slots);
+    const settles = slots.length === 0 ? [] : settled(slots);
+    const out = set === 'floor' && top(id, 'level') === 0
+      ? underfoot(settles, resolves(id, 'level'))
+      : settles;
 
     held?.set(key, out);
 
@@ -2713,14 +2777,15 @@ export function contributed(
     // other. A block assembled out of parts has floors inside it and they are
     // inside a block, which is not somewhere a floor is drawn.
     // One contribution per set, both plain: a scope publishes what it *is*, not
-    // what it is made of, so a level here and a floor there and nothing that
-    // cuts either. Two ids, because they are two boundaries.
+    // what it is made of — the outermost kind it holds, so a level or a solid
+    // here and a floor there, and nothing that cuts either. Two ids, because
+    // they are two boundaries. See `outermostSlot`.
     for (const set of SETS) {
       const shape = resolves(id, set);
 
       if (shape.length === 0) continue;
 
-      const kind = SLOT_KINDS[set][0];
+      const kind = SLOT_KINDS[set][top(id, set)!];
 
       out.push({
         id: sideOf(id, kind),

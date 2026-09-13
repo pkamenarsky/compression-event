@@ -12,6 +12,7 @@ import {
   placeAt,
   EMPTY_LIVE,
   contributing,
+  outermostSlot,
   live,
   centroid,
   grouped,
@@ -63,12 +64,14 @@ import {
 import { affineOf, stateAt } from './rig';
 import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
 import { addPath } from './paths';
+import { unionAt } from './export';
 import {
   GroupId,
   Id,
   PathId,
   PolygonId,
   FLOOR,
+  SOLID,
   PolygonKind,
   KeyframeId,
   Vertex,
@@ -90,10 +93,10 @@ function oneRing(ring: Point[]): Vertex[] {
  * Three of them are the kind's own name. `hole` is a void over the floors,
  * which is what a hole in one is. See `PolygonKind`.
  */
-type Named = 'level' | 'solid' | 'floor' | 'hole';
+type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { type: 'void', from: FLOOR } : k === 'void' ? { type: 'void', from: SOLID } : { type: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -2519,26 +2522,67 @@ describe('going inside a group', () => {
     expect(shapeArea(out[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
 
-  test('a scope of nothing but walls occupies nothing, and stands in for it', () => {
-    // There is no room in it for the pillars to be holes in, and outside it
-    // there is nothing of its to cut, so it puts nothing into the set — and
-    // the set is right to be handed nothing. It is still the thing being
-    // picked and dragged, so its extent stands in for the boundary it has not
-    // got, the way a shape eroded away to nothing does.
+  test('a scope of nothing but walls is a solid, with its holes already cut', () => {
+    // A scope is whatever its outermost member is. Two pillars and a hole in
+    // one of them, with no room round them, are `solid - void` — one solid,
+    // put into the set to cut whatever room it lands in, as a pillar would.
     const { world, ids } = drawn(
       ['solid', rect(0, 0, 20, 20)],
       ['solid', rect(40, 0, 20, 20)],
+      ['void', rect(45, 5, 10, 10)],
     );
 
     const made = sealed(world, 0, ids, TOP)!;
+    const all = contributing(made.world, 0, resolveAt(made.world, 0));
 
-    expect(contributing(made.world, 0, resolveAt(made.world, 0))).toEqual([]);
+    expect(all).toHaveLength(1);
+    expect(all[0].kind).toEqual(kind('solid'));
+    expect(shapeArea(all[0].shape)).toBeCloseTo(2 * 20 * 20 - 10 * 10, 6);
+  });
 
-    const out = occupying(made.world, 0, resolveAt(made.world, 0), []);
+  test('a scope that is a solid cuts the room it is put in', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+      ['void', rect(45, 45, 10, 10)],
+    );
 
-    expect(out).toHaveLength(1);
-    expect(out[0].gone).toBe('empty');
-    expect(shapeArea(out[0].shape)).toBeCloseTo(2 * 20 * 20, 6);
+    const made = sealed(world, 0, ids.slice(1), TOP)!;
+
+    expect(shapeArea(unionAt(made.world, 0))).toBeCloseTo(100 * 100 - 20 * 20 + 10 * 10, 6);
+  });
+
+  test('a scope that is a solid erodes as a solid does, its holes growing', () => {
+    const { world, ids } = drawn(
+      ['solid', rect(0, 0, 40, 40)],
+      ['void', rect(15, 15, 10, 10)],
+    );
+
+    const made = sealed(world, 0, ids, TOP)!;
+    const w = wrote(made.world, 0, made.id, erode(2));
+    const all = contributing(w, 0, resolveAt(w, 0));
+
+    expect(all).toHaveLength(1);
+    expect(shapeArea(all[0].shape)).toBeCloseTo(36 * 36 - 14 * 14, 6);
+  });
+
+  test('a scope keeps its kind when its room is taken out', () => {
+    // Read off what it holds, not off what stands: a level with no room left
+    // in it is nothing, and not the solids that were in the room.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['solid', rect(40, 40, 20, 20)],
+    );
+
+    const made = sealed(world, 0, ids, TOP)!;
+    const polygons = new Map(made.world.polygons);
+
+    polygons.set(ids[0], { ...polygons.get(ids[0])!, death: 0 });
+
+    const gone = { ...made.world, polygons };
+
+    expect(outermostSlot(gone, made.id, 'level')).toEqual(0);
+    expect(contributing(gone, 0, resolveAt(gone, 0))).toEqual([]);
   });
 
   test('a loose group does not swallow its members, so they keep their fills', () => {

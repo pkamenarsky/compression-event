@@ -145,7 +145,7 @@ export const KINDS: readonly PolygonKind[] = [
  * The kinds are the way back: `slotOf` says which slot a kind fills, and this
  * says which kind a slot is for. Two things want that — a scope's erosion,
  * which offsets each slot the way its depth in the rule means, and a scope's
- * own contribution, which is the first slot of each set and nothing else. A
+ * own contribution, which is the outermost slot it holds anything in. A
  * void over both sets appears here as the void of whichever set the slot
  * belongs to; the two halves erode alike, being at the same depth in their own
  * set's rule.

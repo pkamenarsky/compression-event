@@ -406,6 +406,11 @@ export interface Group {
    * of the difference, and it is a thing an author asks for rather than a thing
    * that happens to them.
    *
+   * What that shape is follows from what the group holds: its outermost kind.
+   * A room with pillars in it is a level; pillars with holes in them and no
+   * room are a solid, and cut whatever room they are put in. See
+   * `outermostSlot` in `scene.ts`.
+   *
    * Eroding a loose group is refused. A depth is an offset of a union and
    * there is no union until the members are resolved into one, so there is
    * nothing for the depth to move.
