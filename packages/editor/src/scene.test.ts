@@ -57,9 +57,10 @@ import {
   removeVertices,
   resolveAt,
   stamped,
+  listAt,
   unplace,
 } from './scene';
-import { affineOf } from './rig';
+import { affineOf, stateAt } from './rig';
 import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
 import { addPath } from './paths';
 import {
@@ -1047,8 +1048,29 @@ describe('copy and paste', () => {
     expect([...rigOf(inside.world, inside.ids[0]).keys.values()].flat().filter(e => e.times === null)).toHaveLength(1);
   });
 
+  test('a repeat begun at the copy keyframe begins where the paste lands', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const w = repeated(world, 0, ids[0], erode(4), null);
+
+    const after = pasted(w, 1, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
+    const copy = after.ids[0];
+
+    expect(listAt(after.world, 1, copy).map(e => [e.op.kind, e.times])).toEqual([['stand', 1], ['erode', null]]);
+    expect(listAt(after.world, 2, copy)).toEqual([]);
+    expect([1, 2, 3].map(v => stateAt(after.world, copy, v).erosion)).toEqual([4, 8, 12]);
+  });
+
+  test('a stamp stands where the copy stood, and does nothing after', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+    const w = repeated(world, 0, ids[0], erode(4), null);
+
+    const after = stamped(w, 1, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
+
+    expect([1, 2, 3].map(v => stateAt(after.world, after.ids[0], v).erosion)).toEqual([4, 4, 4]);
+  });
+
   test('a repeat already running where a copy starts carries on as one', () => {
-    // Its steps from the next on are the next step repeated: a step of a
+    // Its steps from the copy on are its step there repeated: a step of a
     // step is a step.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const w = repeated(world, 0, ids[0], turning(0.5, { x: 150, y: 20 }), 4);
@@ -1057,7 +1079,7 @@ describe('copy and paste', () => {
     const copy = after.ids[0];
 
     expect(after.unrolled).toEqual([]);
-    expect([...rigOf(after.world, copy).keys.values()].flat().map(e => e.times)).toEqual([1, 2]);
+    expect([...rigOf(after.world, copy).keys.values()].flat().map(e => e.times)).toEqual([1, 3]);
 
     for (let v = 1; v < 4; v++) {
       const put = only(after.world, v as KeyframeId, copy).source;

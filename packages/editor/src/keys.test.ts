@@ -175,8 +175,8 @@ describe('keyframes', () => {
     const late = pasted(out.world, at(5), clips, { x: 0, y: 0 }, TOP);
     const a = early.ids[0], b = late.ids[0];
 
-    expect(listAt(early.world, at(1), a).find(e => e.times === null)!.skip).toEqual(new Set([out.key]));
-    expect(listAt(late.world, at(6), b).find(e => e.times === null)!.skip).toBe(undefined);
+    expect(listAt(early.world, at(0), a).find(e => e.times === null)!.skip).toEqual(new Set([out.key]));
+    expect(listAt(late.world, at(5), b).find(e => e.times === null)!.skip).toBe(undefined);
   });
 
   test('a deleted keyframe hands what it does to the next', () => {

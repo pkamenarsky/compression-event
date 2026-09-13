@@ -3799,19 +3799,21 @@ function unheld(m: Affine): Frame {
 /**
  * The picked things lifted out, from the keyframe they were taken at onward.
  *
- * Two halves. The keyframe it was copied at becomes where it starts: its state
- * there, over its rest geometry with every nudge up to then put in, so the
- * copy starts life looking exactly like what was on screen. Every keyframe
- * *after* it comes across as the list written there, keyed by how far past the
- * copy it was, so what the original goes on to do the copy goes on to do too —
- * the erosion sequence is the thing worth copying, and it is not in any one
- * keyframe.
+ * Two halves. Where the keyframe before left it becomes where it starts, over
+ * its rest geometry with every nudge up to the copy put in. The keyframe it
+ * was copied at, and every one after it, comes across as the list written
+ * there, keyed by how far past the copy it was — so the copy starts life
+ * looking exactly like what was on screen, a repeat begun there begins where
+ * the paste lands, and what the original goes on to do the copy goes on to do
+ * too: the erosion sequence is the thing worth copying, and it is not in any
+ * one keyframe.
  *
  * Nothing before the copy comes at all, but for the repeats still running: what
- * they go on doing after it is part of what the original goes on to do. Each
- * comes across as its next step, repeated for the steps it has left, at the
- * head of the keyframe after the copy — a step of a step is a step, so that is
- * the same repeat carrying on, in the same order.
+ * they go on doing is part of what the original does. Each comes across as its
+ * step at the copy keyframe, repeated for the steps it has left, at the head of
+ * that keyframe's list — a step of a step is a step, so that is the same repeat
+ * carrying on, in the same order. Behind a stand at the copy keyframe, the
+ * stand is where it starts, and the repeats come across at the keyframe after.
  *
  * The outermost things are copied in world units, their holders not coming
  * with them — taken out of them as ungrouping would take them, every holder
@@ -3840,33 +3842,57 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     const src = freeing.world;
     const rig = rigOf(src, id);
     const state = stateAt(world, id, v);
+    const mine = rig.keys.get(v) ?? [];
 
-    // What the repeats begun by the copy keyframe go on to do: the same rig
-    // with nothing after the copy in it, walked on past it.
+    // A repeat's step, as an entry of its own that carries on from there.
+    const carrying = (op: Op, { entry, step }: Source, k: KeyframeId): Entry =>
+      skipping(world.keyframes, { ...entry, op, times: entry.times === null ? null : entry.times - step }, k);
+
+    // Up to its last stand, the copy keyframe's own list is where the copy
+    // starts: a stand holds nothing that can be written again elsewhere.
+    const cut = mine.map(e => e.op.kind).lastIndexOf('stand') + 1;
+    const stand = cut > 0 ? mine[cut - 1].op as Stand : null;
+    const was = at > 0 ? stateAt(src, id, world.keyframes[at - 1].id) : null;
+
+    // With no stand, it starts where the keyframe before left it, and the
+    // copy keyframe comes across as what it does: the steps of the repeats
+    // running into it, as entries that carry on, and then its own list. So a
+    // repeat begun there begins where the paste lands, in the same order.
+    const sources = sourcesAt(src, id, v);
+    const running = stand !== null
+      ? []
+      : playedAt(src, id, v).flatMap((op, j) => (sources[j].at === v ? [] : [carrying(op, sources[j], v)]));
+
+    // Behind a stand, what is running goes on past it, and comes across as its
+    // next step at the head of the keyframe after: the same rig with nothing
+    // after the stand in it, walked on.
     const before = withRig(src, id, {
       ...rig,
-      keys: new Map([...rig.keys].filter(([k]) => offset(k) <= 0)),
+      keys: new Map([...[...rig.keys].filter(([k]) => offset(k) < 0), ...(cut > 0 ? [[v, mine.slice(0, cut)] as const] : [])]),
     });
 
     const keys: [number, Entry[]][] = [];
+
+    if (running.length + mine.length - cut > 0) keys.push([0, [...running, ...mine.slice(cut)]]);
 
     for (let i = at + 1; i < n; i++) {
       const k = world.keyframes[i].id;
       const own = rig.keys.get(k) ?? [];
 
       // Only the keyframe right after: from there, the walk steps them on.
-      const steps: Entry[] = i > at + 1 ? [] : playedAt(before, id, k).map((op, j) => {
-        const { entry, step } = sourcesAt(before, id, k)[j];
-
-        return skipping(world.keyframes, { ...entry, op, times: entry.times === null ? null : entry.times - step }, k);
-      });
+      const steps: Entry[] = stand === null || i > at + 1
+        ? []
+        : playedAt(before, id, k).map((op, j) => carrying(op, sourcesAt(before, id, k)[j], k));
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
 
+    const frame = stand?.frame ?? was?.frame ?? REST;
+
     return {
-      start: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
-      erosion: state.erosion,
+      start: frame,
+      erosion: stand?.erosion ?? was?.erosion ?? 0,
+      stood: { frame: outermost ? unheld(worldFrame(world, id, v)) : state.frame, erosion: state.erosion },
       keys,
       // What the fold took apart matters only where it goes on past the copy.
       unrolled: freeing.unrolled.filter(reaches),
@@ -4099,8 +4125,8 @@ function written(
     if (k === null) break;
 
     // A skip names the keyframe it was meant for, and stays on it where the
-    // paste still reaches it.
-    keys.set(k, list.map(e => skipping(world.keyframes, e, k)));
+    // paste still reaches it. What the copy keyframe did plays over the stand.
+    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, e, k))]);
   }
 
   return withRig(world, id, { ...rigOf(world, id), keys });
@@ -4311,8 +4337,8 @@ export interface Pasted {
  * The same, and only the keyframe it lands in: one keyframe's worth of shape,
  * born there, saying nothing about any other.
  *
- * The clipping's start *is* the keyframe it was copied at, so this is the
- * paste with the tail dropped. For taking a shape somewhere else without taking
+ * The clipping's `stood` *is* the keyframe it was copied at, so this is the
+ * paste started there with the tail dropped. For taking a shape somewhere else without taking
  * its history with it — the pillar from v0's room, in v3's, standing still
  * while the original goes on eroding.
  *
@@ -4328,12 +4354,15 @@ export function stamped(
   by: Point,
   where: Landing,
 ): Pasted {
+  // Where the copy stood with everything it did there in: a stamp starts
+  // there and has no list to play over it.
   const now = (clip: Clipping): Clipping => clip.kind === 'artefact' || clip.kind === 'path'
-    ? { ...clip, death: undefined, keys: [], unrolled: [] }
+    ? { ...clip, ...still(clip), death: undefined, keys: [], unrolled: [] }
     : clip.kind === 'group'
-    ? { ...clip, members: clip.members.map(now), death: undefined, keys: [], unrolled: [] }
+    ? { ...clip, ...still(clip), members: clip.members.map(now), death: undefined, keys: [], unrolled: [] }
     : {
         ...clip,
+        ...still(clip),
         unrolled: [],
         points: clip.points
           .filter(c => c.birth === 0)
@@ -4345,6 +4374,10 @@ export function stamped(
       };
 
   return pasted(world, v, clips.map(now), by, where);
+}
+
+function still(clip: Timed): { start: Frame, erosion: number } {
+  return { start: clip.stood.frame, erosion: clip.stood.erosion };
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

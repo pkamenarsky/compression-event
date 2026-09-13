@@ -790,10 +790,10 @@ export function togglePicked(some: readonly number[], id: number): number[] {
  * Something lifted out of the world, ready to be put back — from the keyframe
  * it was taken at onward, and nothing before that.
  *
- * The copy keyframe becomes where it starts: its state there, as a frame and a
- * depth, over the geometry it had there. Everything after it is keyed by **how
- * far past the copy** it was, so pasting somewhere else replays the same
- * sequence from there: v1 into v3, v2 into v4, and on.
+ * The keyframe before the copy becomes where it starts: its state there, as a
+ * frame and a depth, over the geometry it had at the copy. Everything from the
+ * copy on is keyed by **how far past the copy** it was, so pasting somewhere
+ * else replays the same sequence from there: v1 into v3, v2 into v4, and on.
  *
  * The geometry is its own rest geometry, with every nudge up to the copy put
  * into it, and the frame is what places it. So an operation written after the
@@ -813,9 +813,13 @@ export function togglePicked(some: readonly number[], id: number): number[] {
  */
 export interface Timed {
   death?: number
+  /** Where it starts: where the keyframe before the copy left it. */
   start: Frame
   erosion: number
-  /** Each keyframe's list after the copy, by offset. */
+  /** Where it stood at the copy keyframe, everything there in: what a stamp
+   * starts at. */
+  stood: { frame: Frame, erosion: number }
+  /** Each keyframe's list from the copy on, by offset. */
   keys: [number, Entry[]][]
   /** The repeats that came across as single entries. */
   unrolled: Unrolled[]
