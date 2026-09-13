@@ -40,6 +40,10 @@ import { bakedLevel } from './export';
 import { Entry, Erode, Frame, Move, Op, Rig } from './rig';
 
 /**
+ * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
+ * 20 is the same with every skew nought, and is read as that; its bake, which
+ * is in a layout the game no longer reads, is left behind to be baked again.
+ *
  * 20: what happens to a thing is a list of operations per keyframe — see
  * `rig.ts` — rather than a layer per version holding one transform for it.
  *
@@ -52,7 +56,7 @@ import { Entry, Erode, Frame, Move, Op, Rig } from './rig';
  *
  * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
  */
-export const FORMAT = 20;
+export const FORMAT = 21;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 20;
@@ -162,9 +166,15 @@ function savedEntry(e: Entry): SavedEntry {
 }
 
 function restoredEntry(e: SavedEntry): Entry {
+  // A 20 has no skews: absent is nought.
   const op: Op = e.op.kind === 'stand'
-    ? { ...e.op, corners: new Map(e.op.corners), depths: new Map(e.op.depths) }
-    : e.op;
+    ? {
+        ...e.op,
+        frame: { ...e.op.frame, skew: e.op.frame.skew ?? 0 },
+        corners: new Map(e.op.corners),
+        depths: new Map(e.op.depths),
+      }
+    : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
 
   return { op, times: e.times, skip: new Set(e.skip ?? []) };
 }
@@ -264,7 +274,7 @@ export async function written(state: EditorState): Promise<Saved> {
  */
 export async function reopened(file: Saved): Promise<EditorState> {
   const state = restored(file);
-  if (file.baked === undefined) return state;
+  if (file.baked === undefined || file.format < 21) return state;
 
   const level = await unpacked(file.baked);
 

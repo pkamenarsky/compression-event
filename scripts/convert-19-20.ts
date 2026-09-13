@@ -1,9 +1,9 @@
 // -----------------------------------------------------------------------------
-// A format-19 world as a format-20 one
+// A format-19 world as a format-21 one
 //
 //   pnpm convert <world.json>...
 //
-// Writes `<world>.v20.json` beside each. Format 18 is read too: it is 19 without
+// Writes `<world>.v21.json` beside each. Format 18 is read too: it is 19 without
 // a bake.
 //
 // A version's layer is a transform about the world origin composed onto
@@ -15,6 +15,7 @@
 // world in exactly those places:
 //
 //   scale  by the change in size along the thing's own axes, about its middle
+//   skew   by the change in skew, about the same point
 //   turn   by the change in angle, about the point the rest of the step keeps
 //          still, so that it plays as a swing about the same point it did
 //   move   whatever is left, usually nothing
@@ -25,9 +26,9 @@
 // written onto everything it held, which is what the old world did with it. Then every thing is resolved again through `rig.ts` and
 // compared with the old answer, and the file is only written if they agree.
 //
-// What cannot come over: a frame the old chain sheared or mirrored — turned,
-// squashed, turned again — is no frame at all, and is reported and written as
-// the nearest one. The bake is left out, since it was baked for the old
+// A frame the old chain sheared — turned, squashed, turned again — comes over
+// exactly, as a skew. What cannot come over is one it mirrored, which is
+// reported and written as the nearest frame. The bake is left out, since it was baked for the old
 // motion: bake again once it is open.
 // -----------------------------------------------------------------------------
 
@@ -356,7 +357,7 @@ export function converted(old: Old): Converted {
 
   const sheared = new Set<string>();
 
-  /** A matrix as the frame a keyframe can hold, or the nearest one. */
+  /** A matrix as the frame a keyframe can hold, or the nearest one where it mirrors. */
   const asFrame = (id: Id, k: number, m: Affine): Frame => {
     const f = framed(m);
 
@@ -366,13 +367,13 @@ export function converted(old: Old): Converted {
 
     if (!sheared.has(key)) {
       sheared.add(key);
-      warnings.push(`#${id} at v${k} is sheared or mirrored in its holder, which no frame can be: written as the nearest one`);
+      warnings.push(`#${id} at v${k} is mirrored in its holder, which no frame can be: written as the nearest one`);
     }
 
     const x = Math.hypot(m.a, m.b);
     const angle = Math.atan2(m.b, m.a);
 
-    return { t: { x: m.tx, y: m.ty }, angle, scale: { x, y: Math.abs((m.a * m.d - m.b * m.c) / x) } };
+    return { t: { x: m.tx, y: m.ty }, angle, skew: 0, scale: { x, y: Math.abs((m.a * m.d - m.b * m.c) / x) } };
   };
 
   /** `angle` moved by whole turns to within half of one of `near`. */
@@ -483,7 +484,15 @@ export function converted(old: Old): Converted {
       const by = { x: target.scale.x / f.scale.x, y: target.scale.y / f.scale.y };
 
       if (Math.abs(by.x - 1) > 1e-12 || Math.abs(by.y - 1) > 1e-12) {
-        const op: Op = { kind: 'scale', by, ref, shift: { x: 0, y: 0 }, along: f.angle };
+        const op: Op = { kind: 'scale', by, ref, shift: { x: 0, y: 0 }, along: f.angle, lean: f.skew };
+
+        add(k, op);
+        f = played(f, op);
+      }
+
+      // Then the skew, about the same point, where the holder shears it.
+      if (Math.abs(target.skew - f.skew) > 1e-12) {
+        const op: Op = { kind: 'skew', by: target.skew - f.skew, ref, shift: { x: 0, y: 0 } };
 
         add(k, op);
         f = played(f, op);
@@ -623,7 +632,7 @@ export function converted(old: Old): Converted {
   }
 
   const file: Saved = {
-    format: 20,
+    format: 21,
     tool: old.tool,
     figure: old.figure ?? 'polyline',
     keyframe: old.currentVersion,
@@ -671,7 +680,7 @@ function savedEntry(e: Entry): SavedEntry {
 const inputs = process.argv.slice(2).filter(a => a !== '--');
 
 if (inputs.length === 0) {
-  console.error('usage: pnpm convert <world.json>...   (writes <world>.v20.json beside each)');
+  console.error('usage: pnpm convert <world.json>...   (writes <world>.v21.json beside each)');
   process.exit(1);
 }
 
@@ -680,7 +689,7 @@ let failed = false;
 for (const path of inputs) {
   try {
     const { file, warnings, error, wrong } = converted(JSON.parse(readFileSync(path, 'utf8')) as Old);
-    const out = path.replace(/(\.json)?$/, '.v20.json');
+    const out = path.replace(/(\.json)?$/, '.v21.json');
 
     for (const w of warnings) console.warn(`  ${path}: ${w}`);
 

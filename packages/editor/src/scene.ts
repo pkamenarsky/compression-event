@@ -115,13 +115,17 @@ import {
   framed,
   heldFrame,
   indexIn,
+  linear,
   nudged,
   once,
   placed,
   playedAt,
   played,
+  sheared,
   spun,
   stateAt,
+  trivial,
+  unsheared,
   withKeys,
   worldFrame,
 } from './rig';
@@ -612,11 +616,12 @@ export function keyAt(world: World, i: number): KeyframeId | null {
 // at v3, turn the polygon at v0, and the corner stays where it was put relative
 // to its neighbours rather than swinging out of the ring.
 //
-// A thing's own frame is always a translation, an angle and a scale along its
-// own axes — every operation keeps it so. What places it in the world is that,
-// composed with the frame of every group holding it, and that composition is a
-// general affine: a group squashed across a member turned against it is a
-// shear. Nothing interpolates the composition, so nothing has to mind.
+// A thing's own frame is always a translation, an angle, a skew and a scale
+// along its own axes — every operation keeps it so. What places it in the
+// world is that, composed with the frame of every group holding it: a group
+// squashed across a member turned against it shears it there, and the skew is
+// how the member's own frame says so once the group is gone. Nothing
+// interpolates the composition, so nothing has to mind.
 // -----------------------------------------------------------------------------
 
 /**
@@ -1116,15 +1121,16 @@ export function turnOf(p: Painted, centre: Point, angle: number): Turn {
  */
 export function scaleOf(p: Painted, centre: Point, by: { x: number, y: number }): Scale {
   const c = unplace(p.held, centre);
-  const along = p.frame.angle;
-  const w = spun({ x: c.x - p.at.x, y: c.y - p.at.y }, -along);
+  const along = p.frame.angle, lean = p.frame.skew;
+  const w = unsheared({ x: c.x - p.at.x, y: c.y - p.at.y }, along, lean);
 
   return {
     kind: 'scale',
     by,
     ref: p.ref,
-    shift: spun({ x: (1 - by.x) * w.x, y: (1 - by.y) * w.y }, along),
+    shift: sheared({ x: (1 - by.x) * w.x, y: (1 - by.y) * w.y }, along, lean),
     along,
+    lean,
   };
 }
 
@@ -1419,11 +1425,12 @@ export function grouped(
  * author is standing and shift them everywhere else. So the group is folded
  * into each member, keyframe by keyframe — see `folded`.
  *
- * Nothing where a member's frame cannot hold what that comes to: a group
- * squashed across a member turned against it is a shear in the world, and a
- * frame cannot say shear. It is refused whole rather than in part: half an
- * ungroup would leave the members displaced at the keyframes it could not do,
- * which is worse than not having done it.
+ * A group squashed across a member turned against it shears the member in the
+ * world, and the member's frame says so in its skew. Nothing only where the
+ * fold would not land a member where it was, which no frame that does not
+ * mirror gives it cause to; it is refused whole rather than in part, since half
+ * an ungroup would leave the members displaced at the keyframes it could not
+ * do.
  */
 export function ungrouped(world: World, id: GroupId): World | null {
   const group = world.groups.get(id);
@@ -1466,9 +1473,9 @@ export function ungrouped(world: World, id: GroupId): World | null {
 
   const out = { ...world, groups, rigs };
 
-  // Held to what it promises. Every step of the fold is exact where it is
-  // allowed at all, and this is where that is checked rather than argued: a
-  // member that would land anywhere else at any keyframe refuses the lot.
+  // Held to what it promises. Every step of the fold is exact, and this is
+  // where that is checked rather than argued: a member that would land
+  // anywhere else at any keyframe refuses the lot.
   for (const m of group.members.flatMap(m => within(world, m))) {
     const from = order(world, lived(world, m)?.birth ?? world.keyframes[0].id);
 
@@ -1491,64 +1498,148 @@ function alike(p: Affine, q: Affine): boolean {
   return off <= 1e-7;
 }
 
-/** Whether a frame scales both of its axes alike, which is when turning in it
+/** Whether a frame is a turn and an even scale, which is when turning in it
  * is turning in the frame outside it. */
-function even(f: Frame): boolean {
-  return Math.abs(f.scale.x - f.scale.y) <= 1e-12 * Math.max(f.scale.x, f.scale.y);
+function similar(f: Frame): boolean {
+  return Math.abs(f.skew) <= 1e-12
+    && Math.abs(f.scale.x - f.scale.y) <= 1e-12 * Math.max(f.scale.x, f.scale.y);
 }
 
-/** How far `a` is from being a multiple of a quarter turn, as a quarter turn
- * count, or nothing where it is not near one. */
-function quarters(a: number): number | null {
-  const q = Math.round(a / (Math.PI / 2));
+const ORIGIN: Point = { x: 0, y: 0 };
 
-  return Math.abs(a - q * (Math.PI / 2)) <= 1e-9 ? q : null;
+/** A frame's linear part, as a matrix. */
+function linearOf(f: Frame): Affine {
+  return { ...affineOf(f), tx: 0, ty: 0 };
 }
 
-/** A vector through a frame's linear part. */
-function stepped(f: Frame, v: Point): Point {
-  return spun({ x: v.x * f.scale.x, y: v.y * f.scale.y }, f.angle);
+/** A frame's axes, unscaled: `R · K`. */
+function axesOf(f: Frame): Affine {
+  return linearOf({ ...REST, angle: f.angle, skew: f.skew });
+}
+
+/** A linear map undone. Never singular here: every map it is asked about is a
+ * frame's, or made of them. */
+function inverse(m: Affine): Affine {
+  const det = m.a * m.d - m.b * m.c;
+
+  return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det, tx: 0, ty: 0 };
+}
+
+/** `m` conjugated by `by`: the same map, read in the frame `by` leads out of. */
+function within1(by: Affine, m: Affine): Affine {
+  return compose(inverse(by), compose(m, by));
+}
+
+/** A small matrix is small next to the numbers on its diagonal. */
+function tiny(x: number, m: Affine): boolean {
+  return Math.abs(x) <= 1e-12 * Math.max(Math.abs(m.a), Math.abs(m.d));
+}
+
+/**
+ * What carries a thing's frame `f` through `m` — a linear map about the point
+ * `p`, in the frame the thing is held in — and then along `slide`, said as the
+ * thing's own operations: a turn, a skew and a stretch, all about the point of
+ * the thing at `p`, which each of them therefore leaves where it is, and a
+ * move.
+ *
+ * Exact at the end, which is all the fold asks: part way, it goes by its own
+ * path rather than the one the map would have taken. The turn is the one
+ * nearest `hint`, so a group's full turn is a full turn of its member.
+ */
+function across(f: Frame, m: Affine, p: Point, slide: Point, hint: number): Op[] | null {
+  const to = framed(compose(m, linearOf(f)));
+
+  if (to === null) return null;
+
+  const ref = unplace(affineOf(f), p);
+  const d = to.angle - f.angle;
+  const angle = d - 2 * Math.PI * Math.round((d - hint) / (2 * Math.PI));
+
+  const ops: Op[] = [
+    { kind: 'turn', angle, ref, about: ORIGIN },
+    { kind: 'skew', by: to.skew - f.skew, ref, shift: ORIGIN },
+    {
+      kind: 'scale',
+      by: { x: to.scale.x / f.scale.x, y: to.scale.y / f.scale.y },
+      ref,
+      shift: ORIGIN,
+      along: f.angle + angle,
+      lean: to.skew,
+    },
+    { kind: 'move', by: slide },
+  ];
+
+  return ops.filter(op => !trivial(op));
 }
 
 /**
  * An operation written in a group's frame, said instead in the frame outside
- * it, for a member whose own frame is `inner` there — or nothing where the frame
- * outside cannot say it.
+ * it, for a member whose own frame is `inner` there — or nothing where that
+ * cannot be said without knowing `inner`, and it is not known.
  *
- * `outer` is the group's frame. A move and a slide go through its linear part;
- * a turn is a turn outside only where the group scales both ways alike, and so
- * is a stretch along the member's own axes, unless those axes are the group's
- * own a quarter turn at a time. `ref` needs nothing: the member's rest frame is
- * the rest frame of what it comes to.
+ * `outer` is the group's frame. A move and a slide go through its linear part.
+ * A stretch along the member's own axes is one along its axes outside too,
+ * whatever the group is doing, because the stretch applies before the skew:
+ * only the axes a repeat reads change. So is a skew, by however much the
+ * member's and the combined frame's proportions differ. A turn is a turn
+ * outside only where the group is a turn and an even scale; anywhere else it
+ * is a general map about its anchor, said through `across`. `ref` needs
+ * nothing: the member's rest frame is the rest frame of what it comes to.
  */
-export function outward(op: Op, outer: Frame, inner: Frame | null): Op | null {
+export function outward(op: Op, outer: Frame, inner: Frame | null): Op[] | null {
+  const both = inner === null ? null : framed(compose(affineOf(outer), affineOf(inner)));
+
   switch (op.kind) {
     case 'move':
-      return { kind: 'move', by: stepped(outer, op.by) };
+      return [{ kind: 'move', by: linear(outer, op.by) }];
 
-    case 'turn':
-      if (!even(outer) && Math.abs(op.angle) > 1e-12) return null;
+    case 'turn': {
+      if (similar(outer) || Math.abs(op.angle) <= 1e-12) return [{ ...op, about: linear(outer, op.about) }];
+      if (inner === null || both === null) return null;
 
-      return { ...op, about: stepped(outer, op.about) };
+      const at = placed(inner, op.ref);
+      const anchor = placed(outer, { x: at.x + op.about.x, y: at.y + op.about.y });
+      const g = linearOf(outer);
+      const turned = linearOf({ ...REST, angle: op.angle });
 
-    case 'scale':
-      if (!even(outer) && (inner === null || quarters(inner.angle) === null)) return null;
+      return across(both, compose(g, compose(turned, inverse(g))), anchor, ORIGIN, op.angle);
+    }
 
-      return {
+    case 'scale': {
+      const axes = framed(compose(linearOf(outer), axesOf({ ...REST, angle: op.along, skew: op.lean })))!;
+
+      return [{ ...op, shift: linear(outer, op.shift), along: axes.angle, lean: axes.skew }];
+    }
+
+    case 'skew':
+      if (inner === null || both === null) return null;
+
+      return [{
         ...op,
-        shift: stepped(outer, op.shift),
-        along: op.along + outer.angle,
-      };
+        by: op.by * (inner.scale.y / inner.scale.x) * (both.scale.x / both.scale.y),
+        shift: linear(outer, op.shift),
+      }];
 
     case 'erode':
-      return op;
+      return [op];
 
     case 'stand': {
       const frame = framed(compose(affineOf(outer), affineOf(op.frame)));
 
-      return frame === null ? null : { ...op, frame };
+      return frame === null ? null : [{ ...op, frame }];
     }
   }
+}
+
+/**
+ * An operation written in a group's frame for something inside it, taken
+ * outside where that is exact without knowing the thing: what a copy lifted out
+ * of its holders carries, and where it is not, the operation as it was.
+ */
+function lifted(op: Op, out: Frame | null): Op {
+  const ops = out === null ? null : outward(op, out, null);
+
+  return ops !== null && ops.length === 1 ? ops[0] : op;
 }
 
 /**
@@ -1571,8 +1662,6 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op | null {
  * its own entry, since a repeat's next step is adjusted in the group's frame
  * and not in the member's. The corners are untouched — they are in the
  * member's rest frame, which the group never reached.
- *
- * Nothing where the member's frame cannot say what the two come to.
  */
 function folded(world: World, g: GroupId, m: Id): Rig | null {
   const rig = rigOf(world, m);
@@ -1590,9 +1679,6 @@ function folded(world: World, g: GroupId, m: Id): Rig | null {
 
     let outer = before === null ? REST : stateAt(world, g, before).frame;
     let inner = i === first || before === null ? REST : stateAt(world, m, before).frame;
-    let both = framed(compose(affineOf(outer), affineOf(inner)));
-
-    if (both === null) return null;
 
     const list: Entry[] = [];
 
@@ -1601,11 +1687,11 @@ function folded(world: World, g: GroupId, m: Id): Rig | null {
 
       if (out === null) return null;
 
-      list.push(once(out));
-      inner = op.kind === 'erode' ? inner : op.kind === 'stand' ? op.frame : played(inner, op);
+      list.push(...out.map(o => once(o)));
+      inner = played(inner, op);
     }
 
-    both = framed(compose(affineOf(outer), affineOf(inner)));
+    let both = framed(compose(affineOf(outer), affineOf(inner)));
 
     if (both === null) return null;
 
@@ -1614,12 +1700,12 @@ function folded(world: World, g: GroupId, m: Id): Rig | null {
 
       if (out === null) return null;
 
-      outer = op.kind === 'erode' ? outer : op.kind === 'stand' ? op.frame : played(outer, op);
+      outer = played(outer, op);
 
-      if (out === 'none') continue;
-
-      list.push(once(out));
-      both = out.kind === 'stand' ? out.frame : played(both, out);
+      for (const o of out) {
+        list.push(once(o));
+        both = played(both, o);
+      }
     }
 
     if (list.length > 0) keys.set(k, list);
@@ -1634,10 +1720,11 @@ function folded(world: World, g: GroupId, m: Id): Rig | null {
  * group's own frame there `outer`.
  *
  * A move is a move. A turn goes about the same point, which it paints onto the
- * member through the combined frame. A stretch along the group's axes is one
- * along the member's where the two agree to within a quarter turn — axes a
- * quarter turn apart swap which factor is which — or where it stretches both
- * alike. The group's depth goes nowhere; `'none'` says so.
+ * member through the combined frame. A stretch along the group's axes, or a
+ * skew along its first, is the member's own where the member's axes read it as
+ * one — a stretch where they are the group's or a quarter turn from them, or
+ * where it stretches both ways alike — and anywhere else a general map about
+ * that point, said through `across`. The group's depth goes nowhere.
  *
  * A stand says where the group is outright, and so where the member is: the
  * member's own frame inside the new group frame, as one stand, with the corners
@@ -1650,30 +1737,48 @@ function inward1(
   op: Op,
   outer: Frame,
   both: Frame,
-): Op | 'none' | null {
+): Op[] | null {
   switch (op.kind) {
     case 'move':
-      return op;
+      return [op];
 
     case 'erode':
-      return 'none';
+      return [];
 
     case 'turn': {
       const p = placed(outer, op.ref);
 
-      return { ...op, ref: unplace(affineOf(both), p) };
+      return [{ ...op, ref: unplace(affineOf(both), p) }];
     }
 
     case 'scale': {
       const p = placed(outer, op.ref);
-      const uniform = Math.abs(op.by.x - op.by.y) <= 1e-12 * Math.max(op.by.x, op.by.y);
-      const turns = quarters(both.angle - outer.angle);
+      const axes = axesOf(outer);
+      const x = compose(axes, compose(linearOf({ ...REST, scale: op.by }), inverse(axes)));
+      const read = within1(axesOf(both), x);
 
-      if (!uniform && turns === null) return null;
+      if (!tiny(read.b, read) || !tiny(read.c, read)) return across(both, x, p, op.shift, 0);
 
-      const by = uniform || (turns! & 1) === 0 ? op.by : { x: op.by.y, y: op.by.x };
+      return [{
+        ...op,
+        by: { x: read.a, y: read.d },
+        ref: unplace(affineOf(both), p),
+        along: both.angle,
+        lean: both.skew,
+      }];
+    }
 
-      return { ...op, by, ref: unplace(affineOf(both), p), along: both.angle };
+    case 'skew': {
+      const p = placed(outer, op.ref);
+      const turn = axesOf({ ...REST, angle: outer.angle });
+      const x = compose(turn, compose(axesOf({ ...REST, skew: op.by }), inverse(turn)));
+      const read = within1(axesOf(both), x);
+
+      if (!tiny(read.b, read) || !tiny(read.a - 1, read) || !tiny(read.d - 1, read)) {
+        return across(both, x, p, op.shift, 0);
+      }
+
+      return [{ ...op, by: read.c, ref: unplace(affineOf(both), p) }];
     }
 
     case 'stand': {
@@ -1684,7 +1789,7 @@ function inward1(
 
       const held = handed(world, k, m);
 
-      return { kind: 'stand', frame, erosion: inner.erosion, corners: held.corners, depths: held.depths };
+      return [{ kind: 'stand', frame, erosion: inner.erosion, corners: held.corners, depths: held.depths }];
     }
   }
 }
@@ -3434,16 +3539,10 @@ function landingAt(world: World, v: KeyframeId, offset: number | undefined): Key
   return offset === undefined ? null : keyAt(world, order(world, v) + offset);
 }
 
-/**
- * A frame, and the nearest one to it where it is sheared: what a thing's frame
- * inside a group squashed across it looks like from outside, less the shear.
- */
-function nearest(m: Affine): Frame {
-  return framed(m) ?? {
-    t: { x: m.tx, y: m.ty },
-    angle: Math.atan2(m.b, m.a),
-    scale: { x: Math.hypot(m.a, m.b), y: Math.hypot(m.c, m.d) },
-  };
+/** A thing's frame read outside everything holding it: exact, since nothing
+ * mirrors, and `REST` only if something had gone singular. */
+function unheld(m: Affine): Frame {
+  return framed(m) ?? REST;
 }
 
 /**
@@ -3483,7 +3582,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       keys: new Map([...rig.keys].filter(([k]) => offset(k) <= 0)),
     });
 
-    const carry = (op: Op): Op => out === null ? op : outward(op, out, null) ?? op;
+    const carry = (op: Op): Op => lifted(op, out);
 
     const keys: [number, TimedEntry[]][] = [];
 
@@ -3500,7 +3599,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     }
 
     return {
-      start: outermost ? nearest(worldFrame(world, id, v)) : state.frame,
+      start: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
       erosion: state.erosion,
       keys,
       keysOf: rig,
@@ -3592,9 +3691,9 @@ function written(
   depths: ReadonlyMap<VertexId, number>,
   into: Affine | null,
 ): World {
-  const start = into === null ? clip.start : nearest(compose(into, affineOf(clip.start)));
+  const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
   const carried = into === null ? null : framed(into);
-  const carry = (op: Op): Op => carried === null ? op : outward(op, carried, null) ?? op;
+  const carry = (op: Op): Op => lifted(op, carried);
 
   const keys = new Map<KeyframeId, readonly Entry[]>([
     [v, [once<Stand>({ kind: 'stand', frame: start, erosion: clip.erosion, corners, depths })]],

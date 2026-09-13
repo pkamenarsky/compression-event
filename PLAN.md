@@ -195,7 +195,7 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-Done on branch `timelines`: 1, 2 and 3, and groups made global. Next: 3½.
+Done on branch `timelines`: 1, 2, 3 and 3½, and groups made global. Next: 4.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -226,7 +226,7 @@ Done on branch `timelines`: 1, 2 and 3, and groups made global. Next: 3½.
 - Ungroup folds the group into each member at every keyframe, unrolling
   repeats into single entries; refused where that is not a turn, scale and
   move of the member (a group's non-uniform scale over a member turned against
-  it — see 3½).
+  it — until 3½, which made that a skew).
 - Unchaining: stands, see *Stands*.
 - Port `resolve.ts`, paste/stamp, `export.ts`, `view3d.ts`, `save.ts` (new
   format; older refused).
@@ -253,7 +253,7 @@ operations a table of their own, 8 floats each; the shader's loop is built to
 the longest run in the span, as the chain walk is built to its depth. The
 packed bake is layout 2.
 
-### 3½ — skew in the frame (next)
+### 3½ — skew in the frame — done
 
 A group squashed across a member turned against it shears the member in the
 world, and the shear exists nowhere but in the nesting: no frame can hold it.
@@ -262,6 +262,12 @@ approximate with the nearest frame, and a turn inside a squashed group is not
 a turn seen from outside. Forbidding the configurations instead would mean
 policing every edit by its consequences downstream, and would forbid squashing
 a group of turned rooms.
+
+Done as written, with two additions. A scale carries `lean`, the skew its
+axes had when written, beside `along`, so that a repeat's `M` is exact on a
+skewed thing too. And a 20 file still opens, every skew nought; its bake is
+left behind. The fold says anything not otherwise expressible as a turn, a
+skew and a stretch about the one point, then a move (`across` in `scene.ts`).
 
 - `Frame` gains a skew: `F(x) = t + R(Θ) · K(k) · S · x` with
   `K = [[1, k], [0, 1]]` — every affine that does not mirror. The stretch of a
@@ -337,13 +343,18 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
   is exact when those steps are moves and erosions; where they turn or scale
   too, the order changes and the result with it, and the gesture should say
   so.
-- **Until 3½:** a member turned inside a group scaled non-uniformly is sheared
-  in the world, and ungrouping it is refused.
+- **A fold's general map plays by its own path.** Where ungrouping turns a
+  turn inside a squashed group, or a squash across a turned member, into a
+  turn, a skew and a stretch of the member, the two ends are exact and the
+  way between them is not the group's ellipse.
+- **A copy's later operations are lifted by its holders' frame at the copy
+  keyframe.** A turn inside a squashed holder is not a turn outside it, and
+  without the member's frame to aim at it comes across as written.
 - **A room drawn into a group after the group's rooms were deleted stays.**
   Deleting a group writes deaths onto what it holds at the time; the group has
   no death of its own to hand on.
-- **Older files do not open.** The 19→20 converter (`pnpm convert`) takes
-  formats 18 and 19.
+- **Files before 20 do not open.** The converter (`pnpm convert`) takes
+  formats 18 and 19 and writes 21.
 
 ## Open
 

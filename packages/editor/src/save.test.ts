@@ -14,7 +14,7 @@ import {
   rigOf,
   withRig,
 } from './scene';
-import { deepened, nudged, once, repeating } from './rig';
+import { Op, Rig, deepened, nudged, once, repeating } from './rig';
 import { EditorState, FLOOR, emptyWorld, initialState, PolygonKind } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
@@ -137,7 +137,45 @@ describe('save', () => {
   test('and so is one from before timelines, rather than being half-read', () => {
     // A layer cannot be read as operations without inventing where every one
     // of them was aimed. See `FORMAT`.
-    expect(() => restored({ ...saved(world()), format: FORMAT - 1 })).toThrow(/format/);
+    expect(() => restored({ ...saved(world()), format: 19 })).toThrow(/format/);
+  });
+
+  test('a 20, which had no skews, reads as one with every skew nought', () => {
+    const before = world();
+    const id = [...before.world.polygons.keys()][0];
+    const rig: Rig = {
+      keys: new Map([[0, [
+        once<Op>({ kind: 'scale', by: { x: 2, y: 1 }, ref: { x: 0, y: 0 }, shift: { x: 0, y: 0 }, along: 0.3, lean: 0 }),
+        once<Op>({
+          kind: 'stand',
+          frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
+          erosion: 0,
+          corners: new Map(),
+          depths: new Map(),
+        }),
+      ]]]),
+      nudges: new Map(),
+      depths: new Map(),
+    };
+
+    const file = JSON.parse(JSON.stringify(saved({
+      ...before,
+      world: { ...before.world, rigs: new Map([[id, rig]]) },
+    })));
+
+    // As 20 wrote them: no `lean`, and no `skew` in a stand's frame.
+    file.format = 20;
+
+    for (const [, keys] of file.world.rigs) {
+      for (const [, list] of keys.keys) {
+        for (const e of list) {
+          delete e.op.lean;
+          if (e.op.kind === 'stand') delete e.op.frame.skew;
+        }
+      }
+    }
+
+    expect(restored(file).world.rigs.get(id)).toEqual(rig);
   });
 
   test('groups survive the trip', () => {

@@ -516,7 +516,7 @@ describe('a hole is a ring like any other', () => {
     const { world } = drawn(['level', rect(0, 0, 10, 10)]);
     const file = JSON.parse(JSON.stringify(saved(initialState(world))));
 
-    file.format = FORMAT - 1;
+    file.format = 19;
 
     expect(() => restored(file)).toThrow();
   });
@@ -685,20 +685,28 @@ describe('the group does not survive being resolved', () => {
     for (const id of out.ids) expect(enclosing(out.world, id)).toEqual([]);
   });
 
-  test('the group is left standing only where it cannot come apart', () => {
+  test('the group comes apart even where it sheared what it held', () => {
     const { world, group } = pair();
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
     const held = sealed(dropped.world, 0, [group, dropped.id], landing(dropped.world, 0, null))!;
 
     // A squash on the outer group and a turn on the artefact under it: squash,
-    // turn, squash is a shear, and no layer says shear. See `composed`.
+    // turn, squash is a shear, which the artefact's own frame says once the
+    // group is gone.
     const squashed = transformed(held.world, 1, held.id, { scale: { x: 3, y: 1 } });
     const turned = transformed(squashed, 1, dropped.id, { rotation: 0.5 });
 
     const out = resolveInto(turned, 0, [held.id], landing(turned, 0, null))!;
 
-    expect(out.world.groups.has(held.id)).toBe(true);
-    expect(out.ids).toEqual([held.id]);
+    expect(out.world.groups.has(held.id)).toBe(false);
+
+    for (const v of [0, 1, 2]) {
+      const was = placeAt(turned, dropped.id, v)!;
+      const now = placeAt(out.world, dropped.id, v)!;
+
+      expect(now.x).toBeCloseTo(was.x, 6);
+      expect(now.y).toBeCloseTo(was.y, 6);
+    }
   });
 
   test("an artefact's own moves are none of a resolve's business", () => {

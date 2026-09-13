@@ -14,8 +14,8 @@
 // rather than a picture someone remembers.
 //
 // The tables go up as float textures rather than uniforms because a level has
-// thousands of entries and uniform space is counted in hundreds. Two texels per
-// frame, two per operation, two per entry, `texelFetch` throughout — no
+// thousands of entries and uniform space is counted in hundreds. Three texels
+// per frame, two per operation, two per entry, `texelFetch` throughout — no
 // filtering, no mipmaps, and no normalised coordinates to get half a texel
 // wrong.
 //
@@ -86,11 +86,12 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
   const int DEPTH = ${depth};
   const int MOST = ${Math.max(1, most)};
 
-  /** A frame in the components the table keeps it in: where, which way, and
-   * how big along its own axes. */
+  /** A frame in the components the table keeps it in: where, which way, how
+   * skewed, and how big along its own axes. */
   struct Pose {
     vec2 t;
     float a;
+    float k;
     vec2 s;
   };
 
@@ -99,8 +100,18 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
     return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
   }
 
+  /** A vector through the frame's axes, R · K, and back. */
+  vec2 sheared(vec2 v, Pose f) {
+    return spun(vec2(v.x + f.k * v.y, v.y), f.a);
+  }
+
+  vec2 unsheared(vec2 v, Pose f) {
+    vec2 w = spun(v, -f.a);
+    return vec2(w.x - f.k * w.y, w.y);
+  }
+
   vec2 posed(Pose f, vec2 p) {
-    return f.t + spun(p * f.s, f.a);
+    return f.t + sheared(p * f.s, f);
   }
 
   /** How much of a scale's slide has happened when \`u\` of the scale has:
@@ -135,15 +146,25 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
     else if (kind == 2) {
       vec2 p = posed(f, vec2(o0.w, o1.x));
       vec2 d = vec2(pow(o0.y, u), pow(o0.z, u));
-      vec2 back = spun(spun(f.t - p, -f.a) * d, f.a);
-      vec2 slide = spun(o1.yz, -f.a);
+      vec2 back = sheared(unsheared(f.t - p, f) * d, f);
+      vec2 slide = unsheared(o1.yz, f);
 
-      f.t = p + back + spun(vec2(slide.x * slid(o0.y, u), slide.y * slid(o0.z, u)), f.a);
+      f.t = p + back + sheared(vec2(slide.x * slid(o0.y, u), slide.y * slid(o0.z, u)), f);
       f.s *= d;
+    }
+    else if (kind == 4) {
+      // A shear is linear in how far it goes, and so is its slide.
+      vec2 p = posed(f, o0.zw);
+      float by = o0.y * u;
+      vec2 w = spun(f.t - p, -f.a);
+
+      f.t = p + spun(vec2(w.x + by * w.y, w.y), f.a) + o1.xy * u;
+      f.k += by;
     }
     else {
       f.t = mix(f.t, o0.yz, u);
       f.a = mix(f.a, o0.w, u);
+      f.k = mix(f.k, o1.z, u);
       f.s = mix(f.s, o1.xy, u);
     }
 
@@ -157,10 +178,11 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
    * Column-major, so that \`m * vec3(p, 1.0)\` is the point placed.
    */
   mat3 linkAt(int slot, float t) {
-    vec4 f0 = fetch(uFrames, slot * 2);
-    vec4 f1 = fetch(uFrames, slot * 2 + 1);
+    vec4 f0 = fetch(uFrames, slot * 3);
+    vec4 f1 = fetch(uFrames, slot * 3 + 1);
+    vec4 f2 = fetch(uFrames, slot * 3 + 2);
 
-    Pose f = Pose(f0.xy, f0.z, vec2(f0.w, f1.x));
+    Pose f = Pose(f0.xy, f0.z, f2.x, vec2(f0.w, f1.x));
     int first = int(f1.z + 0.5);
     int count = int(f1.w + 0.5);
 
@@ -173,10 +195,11 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
     }
 
     float c = cos(f.a), s = sin(f.a);
+    float k = f.k * f.s.y;
 
     return mat3(
       vec3(c * f.s.x, s * f.s.x, 0.0),
-      vec3(-s * f.s.y, c * f.s.y, 0.0),
+      vec3(c * k - s * f.s.y, s * k + c * f.s.y, 0.0),
       vec3(f.t, 1.0)
     );
   }
@@ -193,7 +216,7 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
     mat3 m = linkAt(slot, t);
 
     for (int i = 1; i < DEPTH; i++) {
-      slot = int(fetch(uFrames, slot * 2 + 1).y);
+      slot = int(fetch(uFrames, slot * 3 + 1).y);
 
       if (slot < 0) break;
 

@@ -41,8 +41,10 @@ import { BakedLevel, BakedSpan, BakedStretch, BakedTrack, ENTRY_STRIDE, OP_STRID
  * 2: a slot is a frame and a run of operations rather than a layer eased over
  * a base, and the operations are an array of their own. A bake in layout 1
  * says nothing this can play.
+ *
+ * 3: a frame has a skew, and a slot is twelve floats rather than eight.
  */
-export const PACKED = 2;
+export const PACKED = 3;
 
 // -----------------------------------------------------------------------------
 // Bytes

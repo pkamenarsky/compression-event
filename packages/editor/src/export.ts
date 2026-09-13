@@ -25,6 +25,7 @@ import {
   Floor,
   OP_MOVE,
   OP_SCALE,
+  OP_SKEW,
   OP_STAND,
   OP_STRIDE,
   OP_TURN,
@@ -110,10 +111,12 @@ function record(op: Op): number[] {
       return [OP_TURN, op.angle, op.ref.x, op.ref.y, op.about.x, op.about.y, 0, 0];
     case 'scale':
       return [OP_SCALE, op.by.x, op.by.y, op.ref.x, op.ref.y, op.shift.x, op.shift.y, 0];
+    case 'skew':
+      return [OP_SKEW, op.by, op.ref.x, op.ref.y, op.shift.x, op.shift.y, 0, 0];
     case 'stand': {
       const f = op.frame;
 
-      return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, 0, 0];
+      return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0];
     }
     case 'erode':
       throw new Error('an erosion is in the depths, not in the frame table');
@@ -142,6 +145,7 @@ function frames(riders: Map<Id, Rider>, slots: Slots): { frames: Float32Array, o
 
     out[o + 6] = ops.length / OP_STRIDE;
     out[o + 7] = mine.length;
+    out[o + 8] = frame.skew;
 
     for (const op of mine) ops.push(...record(op));
   }

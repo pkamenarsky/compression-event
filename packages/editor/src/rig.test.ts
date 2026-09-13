@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Affine, place, unplace } from './affine';
+import { Affine, compose, place, unplace } from './affine';
 import {
   EMPTY_RIG,
   Entry,
@@ -22,8 +22,10 @@ import {
   played,
   playedAt,
   repeating,
+  sheared,
   spun,
   stateAt,
+  unsheared,
   withKeys,
   worldFrame,
 } from './rig';
@@ -115,6 +117,7 @@ function scaleAbout(by: Point, ref: Point, p: Point, c: Point, along = 0): Op {
     ref,
     shift: spun({ x: (1 - by.x) * w.x, y: (1 - by.y) * w.y }, along),
     along,
+    lean: 0,
   };
 }
 
@@ -259,7 +262,7 @@ describe('frames', () => {
   });
 
   test('a frame read back off its matrix is itself', () => {
-    const f: Frame = { t: { x: 3, y: -4 }, angle: 1.2, scale: { x: 2, y: 0.5 } };
+    const f: Frame = { t: { x: 3, y: -4 }, angle: 1.2, skew: 0, scale: { x: 2, y: 0.5 } };
     const back = framed(affineOf(f))!;
 
     near(back.t, f.t, 12);
@@ -267,8 +270,18 @@ describe('frames', () => {
     near(back.scale, f.scale, 12);
   });
 
-  test('a sheared matrix is not a frame', () => {
-    expect(framed({ a: 1, b: 0, c: 0.5, d: 1, tx: 0, ty: 0 })).toBeNull();
+  test('a sheared matrix is a frame, exactly', () => {
+    const m: Affine = { a: 1.3, b: 0.4, c: 0.9, d: 1.7, tx: 5, ty: -2 };
+    const f = framed(m)!;
+    const back = affineOf(f);
+
+    expect(Math.abs(f.skew)).toBeGreaterThan(0.1);
+
+    for (const k of ['a', 'b', 'c', 'd', 'tx', 'ty'] as const) expect(back[k]).toBeCloseTo(m[k], 12);
+  });
+
+  test('a mirrored matrix is not', () => {
+    expect(framed({ a: 1, b: 0, c: 0, d: -1, tx: 0, ty: 0 })).toBeNull();
   });
 });
 
@@ -486,7 +499,7 @@ describe('corners', () => {
 
 describe('stands', () => {
   const r = MIDDLE;
-  const held: Frame = { t: { x: 7, y: 8 }, angle: 0.5, scale: { x: 1, y: 2 } };
+  const held: Frame = { t: { x: 7, y: 8 }, angle: 0.5, skew: 0, scale: { x: 1, y: 2 } };
 
   const stand: Op = {
     kind: 'stand',
@@ -554,7 +567,7 @@ describe('stands', () => {
 });
 
 describe('playing part of an operation', () => {
-  const f: Frame = { t: { x: 3, y: -2 }, angle: 0.4, scale: { x: 1.5, y: 0.5 } };
+  const f: Frame = { t: { x: 3, y: -2 }, angle: 0.4, skew: 0, scale: { x: 1.5, y: 0.5 } };
   const r = { x: 1, y: 1 };
   const c = { x: 10, y: -7 };
   const p = placed(f, r);
@@ -592,5 +605,82 @@ describe('playing part of an operation', () => {
 
     expect(played(f, twice, 0.25).angle).toBeCloseTo(f.angle + Math.PI, 12);
     near(placed(played(f, twice, 0.25), r), p, 9);
+  });
+});
+
+describe('skew', () => {
+  const f: Frame = { t: { x: 3, y: -4 }, angle: 0.7, skew: 0.2, scale: { x: 2, y: 0.5 } };
+  const r = { x: 1, y: 2 };
+
+  const skew = (by: number, shift: Point = ORIGIN): Op => ({ kind: 'skew', by, ref: r, shift });
+
+  /** A frame's linear part. */
+  const linear = (g: Frame): Affine => ({ ...affineOf(g), tx: 0, ty: 0 });
+
+  test('a skew shears along the thing\'s first axis about the painted point', () => {
+    const g = played(f, skew(0.5));
+
+    near(placed(g, r), placed(f, r), 12);
+    expect(g.skew).toBeCloseTo(0.7, 12);
+
+    // `R · K(by) · R⁻¹`, the shear along the first axis as it lies, over what
+    // the frame did before.
+    const along = compose(
+      compose(affineOf({ ...REST, angle: f.angle, skew: 0.5 }), affineOf({ ...REST, angle: -f.angle })),
+      linear(f),
+    );
+
+    for (const k of ['a', 'b', 'c', 'd'] as const) expect(linear(g)[k]).toBeCloseTo(along[k], 12);
+  });
+
+  test('half a skew twice is the whole of it, slide and all', () => {
+    const whole = played(f, skew(0.5, { x: 4, y: -1 }));
+    const half = skew(0.25, { x: 2, y: -0.5 });
+    const twice = played(played(f, half), half);
+
+    near(twice.t, whole.t, 12);
+    expect(twice.skew).toBeCloseTo(whole.skew, 12);
+
+    // And played half way, it is where the first half left it.
+    const part = played(f, skew(0.5, { x: 4, y: -1 }), 0.5);
+
+    near(part.t, played(f, half).t, 12);
+    expect(part.skew).toBeCloseTo(f.skew + 0.25, 12);
+  });
+
+  test('a scale on a skewed thing is a stretch along its own axes', () => {
+    const scale: Op = { kind: 'scale', by: { x: 3, y: 0.25 }, ref: r, shift: ORIGIN, along: f.angle, lean: f.skew };
+    const g = played(f, scale);
+
+    near(placed(g, r), placed(f, r), 12);
+    expect(g.angle).toEqual(f.angle);
+    expect(g.skew).toEqual(f.skew);
+    near(g.scale, { x: 6, y: 0.125 }, 12);
+  });
+
+  test('a repeated scale on skewed axes keeps its centre', () => {
+    const c = { x: -40, y: 25 };
+    const by = { x: 1.5, y: 0.75 };
+    let tl = keyed(room, 0, P, [{ kind: 'skew', by: 0.6, ref: MIDDLE, shift: ORIGIN }, turn(36, MIDDLE)]);
+
+    const g = stateAt(tl, P, 0).frame;
+    const p = placed(g, MIDDLE);
+    const w = unsheared({ x: c.x - p.x, y: c.y - p.y }, g.angle, g.skew);
+
+    tl = keyed(tl, 1, P, [repeating<Op>({
+      kind: 'scale',
+      by,
+      ref: MIDDLE,
+      shift: sheared({ x: (1 - by.x) * w.x, y: (1 - by.y) * w.y }, g.angle, g.skew),
+      along: g.angle,
+      lean: g.skew,
+    }, 3)]);
+
+    for (let k = 1; k <= 3; k++) {
+      const before = affineOf(stateAt(tl, P, k - 1).frame);
+      const now = affineOf(stateAt(tl, P, k).frame);
+
+      near(at(now, unplace(before, c)), c, 9);
+    }
   });
 });

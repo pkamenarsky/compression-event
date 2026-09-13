@@ -571,10 +571,9 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // the whole reason to resolve: a union you cannot get at is the group you
   // already had.
   //
-  // Refused only where a keyframe cannot hold what coming apart would have to
-  // write, which after this is only ever about an artefact the group was
-  // holding — every ring's own frame is at rest here, so folding the group's
-  // onto it is the group's, exactly. Then the group stays, and what is handed
+  // Refused only where coming apart would not leave everything where it was,
+  // which no frame gives it cause to — a group's shear on what it held goes
+  // into their skews. Should it ever be, the group stays, and what is handed
   // back says so.
   const apart = ungrouped(held, id);
 

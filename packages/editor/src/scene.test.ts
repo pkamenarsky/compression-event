@@ -273,7 +273,7 @@ describe('csg', () => {
 });
 
 describe('transforms', () => {
-  const turned = affineOf({ t: { x: 40, y: -15 }, angle: Math.PI / 4, scale: { x: 1.3, y: 0.6 } });
+  const turned = affineOf({ t: { x: 40, y: -15 }, angle: Math.PI / 4, skew: 0, scale: { x: 1.3, y: 0.6 } });
 
   test('a squash and a turn come apart again exactly', () => {
     for (const p of rect(-30, 20, 70, 45)) {
@@ -286,7 +286,7 @@ describe('transforms', () => {
 
   test('the axes scale independently', () => {
     const ring = place(
-      affineOf({ t: { x: 0, y: 0 }, angle: 0, scale: { x: 2, y: 0.5 } }),
+      affineOf({ t: { x: 0, y: 0 }, angle: 0, skew: 0, scale: { x: 2, y: 0.5 } }),
       rect(0, 0, 10, 10),
     );
 
@@ -954,6 +954,28 @@ describe('copy and paste', () => {
     }
   });
 
+  test('a room copied out of a group squashed across it lands where it was seen', () => {
+    // Turned inside a squash, it is sheared on screen, and the copy — holders
+    // left behind — has to be sheared the same to look the same.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(200, 0, 100, 100)],
+    );
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = moved(moved(g.world, 0, ids[0], { rotation: 0.6 }), 0, g.id, { scale: { x: 2.2, y: 0.8 } });
+
+    const after = pasted(w, 0, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
+    const put = only(after.world, 0, after.ids[0]).source;
+    const was = only(w, 0, ids[0]).source;
+
+    expect(put.length).toEqual(was.length);
+
+    for (let i = 0; i < put.length; i++) {
+      expect(put[i].x).toBeCloseTo(was[i].x, 6);
+      expect(put[i].y).toBeCloseTo(was[i].y + 400, 6);
+    }
+  });
+
   test('a paste survives the original being deleted', () => {
     // A clipping is geometry, not a reference: it has to outlive what it came
     // from, since that is most of what a clipboard is for.
@@ -1599,26 +1621,48 @@ describe('making and taking apart', () => {
     }
   });
 
-  test('what a frame cannot hold is refused whole', () => {
-    // A squash outside a turn is a shear, and a frame cannot say shear: a
-    // member turned inside a group squashed across it is not a turn, a scale
-    // and a move of anything once the group is gone.
+  /** Every corner of every one of `ids`, at every keyframe, where it was. */
+  function stays(was: World, now: World, ids: readonly PolygonId[]): void {
+    for (let v = 0; v < 4; v++) {
+      for (const id of ids) {
+        const before = at(was, v as KeyframeId, id);
+
+        at(now, v as KeyframeId, id).forEach((p, i) => {
+          expect(p.x).toBeCloseTo(before[i].x, 6);
+          expect(p.y).toBeCloseTo(before[i].y, 6);
+        });
+      }
+    }
+  }
+
+  test('a squashed group of turned rooms comes apart where it stood', () => {
+    // A squash outside a turn is a shear in the world, and the shear exists
+    // nowhere but in the nesting — until the group goes, when each room's own
+    // frame has to say it.
     const { world, ids, group } = pair();
 
-    const w = moved(
-      moved(world, 0, ids[0], { rotation: 0.4 }),
-      0,
-      group,
-      { scale: { x: 2, y: 1 } },
-    );
+    let w = moved(moved(world, 0, ids[0], { rotation: 0.4 }), 0, group, { scale: { x: 2, y: 1 } });
 
-    expect(ungrouped(w, group)).toEqual(null);
+    // And more of the same over the keyframes after: a turn inside the squash,
+    // a squash across the turn, and the group turning too.
+    w = moved(w, 1, ids[0], { rotation: 0.9, translation: { x: 3, y: -2 } });
+    w = moved(w, 1, ids[1], { scale: { x: 1, y: 1.5 } });
+    w = moved(w, 2, group, { scale: { x: 0.7, y: 1.8 }, rotation: -0.6 });
+    w = moved(w, 3, ids[1], { rotation: 1.1 });
 
-    // And the world it refused is the world that stands.
-    expect(w.groups.has(group)).toEqual(true);
+    const apart = ungrouped(w, group)!;
 
-    // A turn outside a squash is not a shear, so the other way round comes
-    // apart, and so does a turn outside anything at all.
+    expect(apart).not.toEqual(null);
+    expect(apart.groups.has(group)).toEqual(false);
+
+    stays(w, apart, ids);
+
+    // Said as a skew, which nothing else could have said.
+    const ops = [...rigOf(apart, ids[0]).keys.values()].flat().map(e => e.op.kind);
+
+    expect(ops).toContain('skew');
+
+    // The other way round was never a shear, and still comes apart.
     const other = moved(
       moved(world, 0, ids[0], { rotation: 0.4, scale: { x: 2, y: 1 } }),
       0,
@@ -1626,7 +1670,32 @@ describe('making and taking apart', () => {
       { rotation: 0.7 },
     );
 
-    expect(ungrouped(other, group)).not.toEqual(null);
+    stays(other, ungrouped(other, group)!, ids);
+  });
+
+  test('a group comes apart where it was squashed across one it holds', () => {
+    // Nested: the inner group turned, the outer squashed across it. Taking the
+    // outer apart hands the inner group a skewed frame, and taking that apart
+    // hands it on to the rooms.
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 10, 10)],
+      ['level', rect(20, 0, 10, 10)],
+      ['level', rect(60, 30, 10, 10)],
+    );
+
+    const inner = sealed(world, 0, [ids[0], ids[1]], TOP)!;
+    const outer = sealed(inner.world, 0, [inner.id, ids[2]], TOP)!;
+
+    let w = moved(outer.world, 0, inner.id, { rotation: 0.5 });
+
+    w = moved(w, 1, outer.id, { scale: { x: 2.5, y: 0.6 } });
+    w = moved(w, 2, inner.id, { rotation: -0.8, scale: { x: 1.2, y: 0.9 } });
+    w = moved(w, 2, ids[0], { rotation: 0.3 });
+
+    const once = ungrouped(w, outer.id)!;
+
+    stays(w, once, ids);
+    stays(w, ungrouped(once, inner.id)!, ids);
   });
 
   test('a depth is nobody else\'s', () => {
@@ -2596,6 +2665,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           const m = affineOf({
             t: { x: t.x, y: t.y },
             angle: t.rotation,
+            skew: 0,
             scale: { x: t.scale, y: t.scale },
           });
 
@@ -2679,6 +2749,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           const m = affineOf({
             t: { x: t.x, y: t.y },
             angle: t.rotation,
+            skew: 0,
             scale: { x: t.scale, y: t.scale },
           });
 

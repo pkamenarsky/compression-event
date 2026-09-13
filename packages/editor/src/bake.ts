@@ -316,9 +316,8 @@ export interface Holder extends Flight {
  * group's over that, innermost first.
  *
  * A chain rather than one composed matrix, because each link is a frame played
- * forward on its own terms and a composition of two is a general matrix — a
- * group squashed across a member turned against it is a shear, which no frame
- * is. The links multiply at each instant, which is the same thing
+ * forward on its own terms, and a composition has no operations of its own to
+ * play. The links multiply at each instant, which is the same thing
  * `worldFrame` does at a keyframe.
  */
 export interface Rider extends Flight {

@@ -45,21 +45,23 @@ import { Point } from './world';
  *   5      the slot of the group holding this one, or -1
  *   6      the first of its operations in the operation table
  *   7      how many there are
+ *   8      the skew
+ *   9–11   spare, so that a slot is three whole texels
  *
- * A frame is a translation, an angle and a scale along its own axes, and every
- * operation keeps it one — so a slot is five numbers rather than a matrix, and
- * the operations are played on those numbers as they were written. What the
+ * A frame is a translation, an angle, a skew and a scale along its own axes —
+ * `t + R · K · S` — and every operation keeps it one, so a slot is six numbers
+ * rather than a matrix, and the operations are played on those numbers as they
+ * were written. What the
  * far keyframe does to the thing is its operations one after another, each
  * part way, each from the frame the one before it left: see `OP_STRIDE`.
  *
  * A group is a slot like any other: its own frame, its own operations, and its
  * own holder above it. A vertex rides the chain up to the top rather than one
- * composed matrix, because composing two frames gives a general matrix — a
- * group squashed across a member turned against it is a shear — and a shear is
- * not something operations can be played on. How deep the chain goes is
+ * composed matrix, because a composed matrix has no operations to play on it:
+ * each link's own are played on its own numbers. How deep the chain goes is
  * `BakedSpan.depth`.
  */
-export const FRAME_STRIDE = 8;
+export const FRAME_STRIDE = 12;
 
 /**
  * Eight floats per operation: its kind, and its numbers.
@@ -67,7 +69,8 @@ export const FRAME_STRIDE = 8;
  *   OP_MOVE   by x, by y
  *   OP_TURN   angle, painted point x, y, offset of the anchor from it x, y
  *   OP_SCALE  by x, by y, painted point x, y, slide x, y
- *   OP_STAND  translation x, y, angle, scale x, y
+ *   OP_STAND  translation x, y, angle, scale x, y, skew
+ *   OP_SKEW   by, painted point x, y, slide x, y
  *
  * Part way, `u` of the way through — which is `t`, the span being one
  * keyframe's worth — each goes the way it would have gone under the hand:
@@ -78,6 +81,8 @@ export const FRAME_STRIDE = 8;
  *   SCALE  `byᵘ` along the thing's own axes about the painted point placed
  *          the same way, and the slide eased to match: by `(1 − dᵘ)/(1 − d)`
  *          along each axis, which keeps the gesture's own centre still
+ *   SKEW   `u · by` along the thing's first axis about the painted point,
+ *          and `u` of the slide, a shear being linear in how far it goes
  *   STAND  every component straight to its numbers
  *
  * The anchor is placed off the frame as it stands, rather than stored placed,
@@ -90,6 +95,7 @@ export const OP_MOVE = 0;
 export const OP_TURN = 1;
 export const OP_SCALE = 2;
 export const OP_STAND = 3;
+export const OP_SKEW = 4;
 
 /**
  * Eight floats per entry of the table crossings are solved from.
@@ -345,16 +351,27 @@ interface Pose {
   x: number
   y: number
   angle: number
+  skew: number
   sx: number
   sy: number
 }
 
 /** A point of the thing, placed by a frame. */
 function posed(f: Pose, px: number, py: number): Point {
-  const c = Math.cos(f.angle), s = Math.sin(f.angle);
-  const x = px * f.sx, y = py * f.sy;
+  const v = shear(px * f.sx, py * f.sy, f);
 
-  return { x: f.x + c * x - s * y, y: f.y + s * x + c * y };
+  return { x: f.x + v.x, y: f.y + v.y };
+}
+
+/** A vector through the frame's axes, `R · K`, and back. */
+function shear(x: number, y: number, f: Pose): Point {
+  return spin(x + f.skew * y, y, f.angle);
+}
+
+function unshear(x: number, y: number, f: Pose): Point {
+  const w = spin(x, y, -f.angle);
+
+  return { x: w.x - f.skew * w.y, y: w.y };
 }
 
 function spin(x: number, y: number, angle: number): Point {
@@ -390,17 +407,31 @@ function playedAt(span: BakedSpan, op: number, f: Pose, u: number): Pose {
   if (kind === OP_SCALE) {
     const p = posed(f, o[i + 3], o[i + 4]);
     const dx = Math.pow(o[i + 1], u), dy = Math.pow(o[i + 2], u);
-    const own = spin(f.x - p.x, f.y - p.y, -f.angle);
-    const back = spin(own.x * dx, own.y * dy, f.angle);
-    const sh = spin(o[i + 5], o[i + 6], -f.angle);
-    const slide = spin(sh.x * slid(o[i + 1], u), sh.y * slid(o[i + 2], u), f.angle);
+    const own = unshear(f.x - p.x, f.y - p.y, f);
+    const back = shear(own.x * dx, own.y * dy, f);
+    const sh = unshear(o[i + 5], o[i + 6], f);
+    const slide = shear(sh.x * slid(o[i + 1], u), sh.y * slid(o[i + 2], u), f);
 
     return {
+      ...f,
       x: p.x + back.x + slide.x,
       y: p.y + back.y + slide.y,
-      angle: f.angle,
       sx: f.sx * dx,
       sy: f.sy * dy,
+    };
+  }
+
+  if (kind === OP_SKEW) {
+    const p = posed(f, o[i + 2], o[i + 3]);
+    const by = o[i + 1] * u;
+    const w = spin(f.x - p.x, f.y - p.y, -f.angle);
+    const back = spin(w.x + by * w.y, w.y, f.angle);
+
+    return {
+      ...f,
+      x: p.x + back.x + o[i + 4] * u,
+      y: p.y + back.y + o[i + 5] * u,
+      skew: f.skew + by,
     };
   }
 
@@ -408,6 +439,7 @@ function playedAt(span: BakedSpan, op: number, f: Pose, u: number): Pose {
     x: mix(f.x, o[i + 1], u),
     y: mix(f.y, o[i + 2], u),
     angle: mix(f.angle, o[i + 3], u),
+    skew: mix(f.skew, o[i + 6], u),
     sx: mix(f.sx, o[i + 4], u),
     sy: mix(f.sy, o[i + 5], u),
   };
@@ -420,7 +452,7 @@ function playedAt(span: BakedSpan, op: number, f: Pose, u: number): Pose {
 export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
   const fr = span.frames, o = slot * FRAME_STRIDE;
 
-  let f: Pose = { x: fr[o], y: fr[o + 1], angle: fr[o + 2], sx: fr[o + 3], sy: fr[o + 4] };
+  let f: Pose = { x: fr[o], y: fr[o + 1], angle: fr[o + 2], skew: fr[o + 8], sx: fr[o + 3], sy: fr[o + 4] };
 
   if (t !== 0) {
     const first = fr[o + 6], count = fr[o + 7];
@@ -429,8 +461,9 @@ export function linkAt(span: BakedSpan, slot: number, t: number): Affine {
   }
 
   const c = Math.cos(f.angle), s = Math.sin(f.angle);
+  const k = f.skew * f.sy;
 
-  return { a: c * f.sx, b: s * f.sx, c: -s * f.sy, d: c * f.sy, tx: f.x, ty: f.y };
+  return { a: c * f.sx, b: s * f.sx, c: c * k - s * f.sy, d: s * k + c * f.sy, tx: f.x, ty: f.y };
 }
 
 /** A point in a slot's own frame, taken out to the world at one instant. */

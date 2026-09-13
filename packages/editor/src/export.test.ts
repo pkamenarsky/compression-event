@@ -61,6 +61,7 @@ import {
   removeVertices,
   resolveAt,
   unchained,
+  ungrouped,
 } from './scene';
 import { ArtefactId, FLOOR, Id, SOLID, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
@@ -950,12 +951,18 @@ describe('the source rings a version resolves to', () => {
 function shaderFrame(flat: BakedSpan, slot: number, t: number): Affine {
   const f = flat.frames, o = flat.ops;
 
-  interface Pose { t: Point, a: number, s: Point }
+  interface Pose { t: Point, a: number, k: number, s: Point }
 
   const spun = (v: Point, a: number): Point =>
     ({ x: Math.cos(a) * v.x - Math.sin(a) * v.y, y: Math.sin(a) * v.x + Math.cos(a) * v.y });
+  const sheared = (v: Point, p: Pose): Point => spun({ x: v.x + p.k * v.y, y: v.y }, p.a);
+  const unsheared = (v: Point, p: Pose): Point => {
+    const w = spun(v, -p.a);
+
+    return { x: w.x - p.k * w.y, y: w.y };
+  };
   const posed = (p: Pose, q: Point): Point => {
-    const r = spun({ x: q.x * p.s.x, y: q.y * p.s.y }, p.a);
+    const r = sheared({ x: q.x * p.s.x, y: q.y * p.s.y }, p);
 
     return { x: p.t.x + r.x, y: p.t.y + r.y };
   };
@@ -983,28 +990,42 @@ function shaderFrame(flat: BakedSpan, slot: number, t: number): Affine {
     if (kind === 2) {
       const at = posed(p, { x: o[i + 3], y: o[i + 4] });
       const d = { x: Math.pow(o[i + 1], u), y: Math.pow(o[i + 2], u) };
-      const own = spun({ x: p.t.x - at.x, y: p.t.y - at.y }, -p.a);
-      const back = spun({ x: own.x * d.x, y: own.y * d.y }, p.a);
-      const sh = spun({ x: o[i + 5], y: o[i + 6] }, -p.a);
-      const slide = spun({ x: sh.x * slid(o[i + 1], u), y: sh.y * slid(o[i + 2], u) }, p.a);
+      const own = unsheared({ x: p.t.x - at.x, y: p.t.y - at.y }, p);
+      const back = sheared({ x: own.x * d.x, y: own.y * d.y }, p);
+      const sh = unsheared({ x: o[i + 5], y: o[i + 6] }, p);
+      const slide = sheared({ x: sh.x * slid(o[i + 1], u), y: sh.y * slid(o[i + 2], u) }, p);
 
       return {
+        ...p,
         t: { x: at.x + back.x + slide.x, y: at.y + back.y + slide.y },
-        a: p.a,
         s: { x: p.s.x * d.x, y: p.s.y * d.y },
+      };
+    }
+
+    if (kind === 4) {
+      const at = posed(p, { x: o[i + 2], y: o[i + 3] });
+      const by = o[i + 1] * u;
+      const w = spun({ x: p.t.x - at.x, y: p.t.y - at.y }, -p.a);
+      const back = spun({ x: w.x + by * w.y, y: w.y }, p.a);
+
+      return {
+        ...p,
+        t: { x: at.x + back.x + o[i + 4] * u, y: at.y + back.y + o[i + 5] * u },
+        k: p.k + by,
       };
     }
 
     return {
       t: { x: mix(p.t.x, o[i + 1], u), y: mix(p.t.y, o[i + 2], u) },
       a: mix(p.a, o[i + 3], u),
+      k: mix(p.k, o[i + 6], u),
       s: { x: mix(p.s.x, o[i + 4], u), y: mix(p.s.y, o[i + 5], u) },
     };
   };
 
   const link = (at: number): Affine => {
     const k = at * FRAME_STRIDE;
-    let p: Pose = { t: { x: f[k], y: f[k + 1] }, a: f[k + 2], s: { x: f[k + 3], y: f[k + 4] } };
+    let p: Pose = { t: { x: f[k], y: f[k + 1] }, a: f[k + 2], k: f[k + 8], s: { x: f[k + 3], y: f[k + 4] } };
 
     if (t !== 0) {
       for (let i = 0; i < flat.most; i++) {
@@ -1015,8 +1036,9 @@ function shaderFrame(flat: BakedSpan, slot: number, t: number): Affine {
     }
 
     const c = Math.cos(p.a), sn = Math.sin(p.a);
+    const sk = p.k * p.s.y;
 
-    return { a: c * p.s.x, b: sn * p.s.x, c: -sn * p.s.y, d: c * p.s.y, tx: p.t.x, ty: p.t.y };
+    return { a: c * p.s.x, b: sn * p.s.x, c: c * sk - sn * p.s.y, d: sn * sk + c * p.s.y, tx: p.t.x, ty: p.t.y };
   };
 
   let out = link(slot);
@@ -1130,6 +1152,43 @@ describe('the chain a vertex rides', () => {
     }
 
     expect(agrees(w, 0)).toBeLessThan(SLACK);
+  });
+
+  test('a room its group sheared rides the skew, and ends where the group had it', () => {
+    // A turn inside a group squashed across it is no turn from outside. Once
+    // the group is gone the room's own frame has to carry the shear, and the
+    // table and the shader with it.
+    const { world, ids } = drawn(
+      ['level', rect(100, -60, 120, 120)],
+      ['level', rect(-300, -60, 120, 120)],
+    );
+
+    const made = grouped(world, 0, ids, TOP)!;
+    let w = wrote(made.world, 0, made.id, scaled(2, 0.5));
+
+    w = wrote(w, 0, ids[0], spun(0.6));
+    w = wrote(w, 1, ids[0], spun(0.9));
+
+    const apart = ungrouped(w, made.id)!;
+    const span = run(bakeSpan(apart, 0));
+    const flat = bakedSpan(span);
+    const slot = slotted(span).get(ids[0])!;
+
+    expect(Math.abs(flat.frames[slot * FRAME_STRIDE + 8])).toBeGreaterThan(0.1);
+
+    for (const t of [0, 0.13, 0.5, 0.77, 1]) {
+      near(shaderFrame(flat, slot, t), riding(span.riders.get(ids[0])!, t));
+    }
+
+    // And the two ends are the grouped room's, both of them.
+    const held = run(bakeSpan(w, 0));
+    const was = bakedSpan(held);
+
+    for (const t of [0, 1]) {
+      near(shaderFrame(flat, slot, t), shaderFrame(was, slotted(held).get(ids[0])!, t));
+    }
+
+    expect(agrees(apart, 0)).toBeLessThan(SLACK);
   });
 
   /**

@@ -6,14 +6,16 @@
 // no layer to inherit, nothing composed into anything, nothing solved for
 // after an edit.
 //
-// A thing's state is its frame — `F(x) = t + R(angle) · S · x` over its rest
-// geometry, in the frame of whatever holds it — together with how deep it is
+// A thing's state is its frame — `F(x) = t + R(angle) · K(skew) · S · x` over
+// its rest geometry, in the frame of whatever holds it — together with how deep it is
 // eroded and where its corners stand. An operation is written against the
 // frame at the start of *that operation*, and says what it means:
 //
 //   move   F ↦ T(by) ∘ F
 //   turn   a = F(ref) + about;  turn by `angle` about a
 //   scale  p = F(ref);  stretch by `by` about p along the thing's own axes;
+//          then T(shift)
+//   skew   p = F(ref);  shear by `by` about p along the thing's first axis;
 //          then T(shift)
 //   erode  erosion += by
 //   stand  the state is these numbers, whatever came before
@@ -70,21 +72,25 @@ export interface Keyframe {
 }
 
 /**
- * Where a thing is: a translation, an angle, and a scale along its own axes.
+ * Where a thing is: a translation, an angle, a skew, and a scale along its own
+ * axes.
  *
- * `F(x) = t + R(angle) · diag(scale) · x`. Angles add and scale factors
- * multiply, and every operation keeps the frame in this family — which is why
- * a scale is along the thing's own axes: stretched along any others, a turned
- * thing would be sheared, and a shear is not a frame.
+ * `F(x) = t + R(angle) · K(skew) · diag(scale) · x`, with `K(k) = [[1, k],
+ * [0, 1]]` — every affine map that does not mirror. Angles add, skews add and
+ * scale factors multiply. The skew is there because a group squashed across a
+ * member turned against it shears the member, and without it that shear would
+ * exist nowhere but in the nesting. The stretch applies before the skew, so a
+ * scale along the thing's own axes stays one whatever it is held in.
  */
 export interface Frame {
   t: Point
   angle: number
+  skew: number
   scale: { x: number, y: number }
 }
 
 /** Where a thing is before anything has happened to it: its rest geometry. */
-export const REST: Frame = { t: { x: 0, y: 0 }, angle: 0, scale: { x: 1, y: 1 } };
+export const REST: Frame = { t: { x: 0, y: 0 }, angle: 0, skew: 0, scale: { x: 1, y: 1 } };
 
 export interface Move {
   kind: 'move'
@@ -113,6 +119,21 @@ export interface Scale {
   /** The angle the thing's axes had when it was written. Read only by
    * repeats. */
   along: number
+  /** The skew they had then. Read only by repeats. */
+  lean: number
+}
+
+/**
+ * A shear along the thing's first axis. No gesture writes one: it is what
+ * ungrouping says where the group had sheared the thing.
+ */
+export interface Skew {
+  kind: 'skew'
+  /** Added to the frame's skew. */
+  by: number
+  /** The painted point, in the thing's rest frame. */
+  ref: Point
+  shift: Point
 }
 
 export interface Erode {
@@ -138,7 +159,7 @@ export interface Stand {
   depths: ReadonlyMap<VertexId, number>
 }
 
-export type Op = Move | Turn | Scale | Erode | Stand;
+export type Op = Move | Turn | Scale | Skew | Erode | Stand;
 
 export interface Entry<O extends Op = Op> {
   op: O
@@ -226,29 +247,49 @@ const UNBORN: State = { frame: REST, erosion: 0, corners: NO_CORNERS, depths: NO
 
 /** A rest-frame point, placed. */
 export function placed(f: Frame, p: Point): Point {
-  const c = Math.cos(f.angle), s = Math.sin(f.angle);
-  const x = p.x * f.scale.x, y = p.y * f.scale.y;
+  const v = linear(f, p);
 
-  return { x: f.t.x + c * x - s * y, y: f.t.y + s * x + c * y };
+  return { x: f.t.x + v.x, y: f.t.y + v.y };
+}
+
+/** A vector through a frame's linear part: `R · K · S · v`. */
+export function linear(f: Frame, v: Point): Point {
+  return sheared({ x: v.x * f.scale.x, y: v.y * f.scale.y }, f.angle, f.skew);
+}
+
+/** A vector through `R(angle) · K(skew)`: the thing's own axes, unscaled. */
+export function sheared(v: Point, angle: number, skew: number): Point {
+  return spun({ x: v.x + skew * v.y, y: v.y }, angle);
+}
+
+/** A vector back through `R(angle) · K(skew)`. */
+export function unsheared(v: Point, angle: number, skew: number): Point {
+  const w = spun(v, -angle);
+
+  return { x: w.x - skew * w.y, y: w.y };
 }
 
 /** The frame as a matrix, for composing with whatever holds it. */
 export function affineOf(f: Frame): Affine {
   const c = Math.cos(f.angle), s = Math.sin(f.angle);
+  const k = f.skew * f.scale.y;
 
   return {
     a: c * f.scale.x,
     b: s * f.scale.x,
-    c: -s * f.scale.y,
-    d: c * f.scale.y,
+    c: c * k - s * f.scale.y,
+    d: s * k + c * f.scale.y,
     tx: f.t.x,
     ty: f.t.y,
   };
 }
 
 /**
- * A matrix as a frame, or nothing where it is not one: sheared, mirrored or
+ * A matrix as a frame, exactly, or nothing where it is not one: mirrored or
  * singular.
+ *
+ * The first column gives the angle and the first scale; the second, turned
+ * back by that angle, is `(skew · y, y)`.
  */
 export function framed(m: Affine): Frame | null {
   const x = Math.hypot(m.a, m.b);
@@ -256,13 +297,9 @@ export function framed(m: Affine): Frame | null {
   const c = Math.cos(angle), s = Math.sin(angle);
   const y = m.d * c - m.c * s;
 
-  // Whatever of the second column lies along the first. Nothing for a frame.
-  const skew = m.c * c + m.d * s;
-
   if (x === 0 || y <= 0) return null;
-  if (Math.abs(skew) > 1e-9 * Math.max(1, x, y)) return null;
 
-  return { t: { x: m.tx, y: m.ty }, angle, scale: { x, y } };
+  return { t: { x: m.tx, y: m.ty }, angle, skew: (m.c * c + m.d * s) / y, scale: { x, y } };
 }
 
 /** A vector turned. */
@@ -295,6 +332,7 @@ function slid(d: number, u: number): number {
  * a centre that is itself moving; a scale grows by `byᵘ` about its painted
  * point, and its slide eases with it — by `(1 − dᵘ) / (1 − d)` along each of the
  * thing's axes, which is exactly what keeps the gesture's own centre still. A
+ * skew goes `u · by` about its painted point, and `u` of its slide with it. A
  * stand goes straight to its numbers, component by component: the two ends of
  * it are not two readings of one motion, and there is no motion to follow.
  */
@@ -318,21 +356,35 @@ export function played(f: Frame, op: Op, u = 1): Frame {
       const dy = u === 1 ? op.by.y : Math.pow(op.by.y, u);
 
       // The stretch along the thing's own axes, about the painted point.
-      const own = spun({ x: f.t.x - p.x, y: f.t.y - p.y }, -f.angle);
-      const back = spun({ x: own.x * dx, y: own.y * dy }, f.angle);
+      const own = unsheared({ x: f.t.x - p.x, y: f.t.y - p.y }, f.angle, f.skew);
+      const back = sheared({ x: own.x * dx, y: own.y * dy }, f.angle, f.skew);
 
       let slide = op.shift;
 
       if (u !== 1) {
-        const s = spun(op.shift, -f.angle);
+        const s = unsheared(op.shift, f.angle, f.skew);
 
-        slide = spun({ x: s.x * slid(op.by.x, u), y: s.y * slid(op.by.y, u) }, f.angle);
+        slide = sheared({ x: s.x * slid(op.by.x, u), y: s.y * slid(op.by.y, u) }, f.angle, f.skew);
       }
 
       return {
+        ...f,
         t: { x: p.x + back.x + slide.x, y: p.y + back.y + slide.y },
-        angle: f.angle,
         scale: { x: f.scale.x * dx, y: f.scale.y * dy },
+      };
+    }
+
+    case 'skew': {
+      // A shear is linear in how far it goes, so its slide is too.
+      const p = placed(f, op.ref);
+      const by = op.by * u;
+      const w = spun({ x: f.t.x - p.x, y: f.t.y - p.y }, -f.angle);
+      const back = spun({ x: w.x + by * w.y, y: w.y }, f.angle);
+
+      return {
+        ...f,
+        t: { x: p.x + back.x + op.shift.x * u, y: p.y + back.y + op.shift.y * u },
+        skew: f.skew + by,
       };
     }
 
@@ -345,6 +397,7 @@ export function played(f: Frame, op: Op, u = 1): Frame {
       return {
         t: { x: mix(f.t.x, op.frame.t.x, u), y: mix(f.t.y, op.frame.t.y, u) },
         angle: mix(f.angle, op.frame.angle, u),
+        skew: mix(f.skew, op.frame.skew, u),
         scale: { x: mix(f.scale.x, op.frame.scale.x, u), y: mix(f.scale.y, op.frame.scale.y, u) },
       };
   }
@@ -364,11 +417,11 @@ export function stepped(op: Op, n: number): Op {
   if (op.kind === 'turn') return { ...op, about: spun(op.about, op.angle * n) };
 
   if (op.kind === 'scale') {
-    const s = spun(op.shift, -op.along);
+    const s = unsheared(op.shift, op.along, op.lean);
 
     return {
       ...op,
-      shift: spun({ x: s.x * Math.pow(op.by.x, n), y: s.y * Math.pow(op.by.y, n) }, op.along),
+      shift: sheared({ x: s.x * Math.pow(op.by.x, n), y: s.y * Math.pow(op.by.y, n) }, op.along, op.lean),
     };
   }
 
@@ -737,6 +790,8 @@ export function trivial(op: Op): boolean {
       return Math.abs(op.angle) < 1e-12;
     case 'scale':
       return op.by.x === 1 && op.by.y === 1 && op.shift.x === 0 && op.shift.y === 0;
+    case 'skew':
+      return op.by === 0 && op.shift.x === 0 && op.shift.y === 0;
     case 'erode':
       return op.by === 0;
     case 'stand':
@@ -761,7 +816,7 @@ function sameSkip(a: ReadonlySet<KeyframeId>, b: ReadonlySet<KeyframeId>): boole
  *
  * Only ever what a hand repeating itself writes. Two moves add, and so do two
  * erosions. Two scales about the same painted point multiply, and their slides
- * add — the second's is taken from where the first left the painted point, and
+ * add, and two skews about one add in both — the second's is taken from where the first left the painted point, and
  * that is where the combined one's is taken from too. Two turns about the same
  * centre add; the second's offset from the painted point is the first's turned
  * with it, since that is where the painted point went, and the one they make
@@ -785,13 +840,19 @@ function merged(a: Entry, b: Entry): Entry | 'gone' | null {
     op = { ...x, angle: x.angle + y.angle };
   }
   else if (x.kind === 'scale' && y.kind === 'scale') {
-    if (!near(x.ref, y.ref) || x.along !== y.along) return null;
+    if (!near(x.ref, y.ref) || x.along !== y.along || x.lean !== y.lean) return null;
 
     op = {
       ...x,
       by: { x: x.by.x * y.by.x, y: x.by.y * y.by.y },
       shift: { x: x.shift.x + y.shift.x, y: x.shift.y + y.shift.y },
     };
+  }
+
+  else if (x.kind === 'skew' && y.kind === 'skew') {
+    if (!near(x.ref, y.ref)) return null;
+
+    op = { ...x, by: x.by + y.by, shift: { x: x.shift.x + y.shift.x, y: x.shift.y + y.shift.y } };
   }
 
   if (op === null) return null;

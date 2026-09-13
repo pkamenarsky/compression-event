@@ -593,8 +593,8 @@ function together(s: EditorState): EditorState {
 /**
  * The picked groups taken apart, and their members picked instead.
  *
- * Nothing at all where a member's frame cannot hold what taking one apart
- * would have to write — see `ungrouped`. Refusing the whole gesture is the
+ * Nothing at all where taking one apart would not leave its members where
+ * they were — see `ungrouped`. Refusing the whole gesture is the
  * point: half of it would leave the members displaced at the keyframes it could
  * not do.
  */
