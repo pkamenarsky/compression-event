@@ -137,6 +137,8 @@ import {
   VertexId,
   View,
   World,
+  clickable,
+  visible,
   GroupId,
   alsoPicked,
   onGrid,
@@ -1151,7 +1153,7 @@ export function worldCanvas(
     /** The paths as the version on screen leaves them: where they run, which
      * is what every click and every label is about. */
     function laid(): Laid[] {
-      return pathsAt(world(), keyframe());
+      return pathsAt(world(), keyframe()).filter(it => clickable(world(), it.id));
     }
 
     /** World points as one path's own frame reads them — see `inFrame`, which
@@ -1852,7 +1854,7 @@ export function worldCanvas(
     function grabbing(e: PointerEvent, all = false): ArtefactId | null {
       const path = opened(world(), inside());
       const shown = shownAt(world(), keyframe())
-        .filter(it => it.id === START_ID || all || !swallowed(world(), it.id, path));
+        .filter(it => it.id === START_ID || (clickable(world(), it.id) && (all || !swallowed(world(), it.id, path))));
 
       return hitArtefact(shown, at(e), HANDLE / view().zoom);
     }
@@ -2019,6 +2021,10 @@ export function worldCanvas(
             // Someone is standing in the level. W and S are theirs, and a
             // scale started under a full-window 3D view would be invisible.
             if (roaming()) continue;
+
+            // Taken by something else for now: Delete, while an entry is
+            // picked in the keyframes, is that entry's.
+            if (input.claimed(e.code)) continue;
 
             // Everything with a command key on it belongs to the shortcuts in
             // `editor.ts`. Without this, Cmd+S would save and start a scale,
@@ -2630,11 +2636,13 @@ function layers(
   // A shut group is one shape, and its members are not on screen at all: the
   // whole of what grouping does to the eye is take several outlines away and
   // leave one. What is left here is everything a shut group is not drawing for.
-  const loose = items.filter(it => !swallowed(world, it.id, path));
+  const loose = items.filter(it => !swallowed(world, it.id, path) && visible(world, it.id));
 
   const reach = (id: Id) => reachable(world, id, inside);
 
-  const shut = occupying(world, current, items, path);
+  // Hidden from the keyframes, which takes it off the canvas and leaves it in
+  // the level. See `Flags`.
+  const shut = occupying(world, current, items, path).filter(g => visible(world, g.id));
   const picking = new Set<Id>(selection.polygons);
 
   // What a picked loose group looks like is the orange over everything it
@@ -2712,9 +2720,10 @@ function layers(
   out.push(ctx => artefacts(
     ctx,
     view,
-    walk === null
+    (walk === null
       ? shownAt(world, current)
-      : [startPlaced(world), ...artefactsDuring(world, walk.from, walk.to, walk.at)],
+      : [startPlaced(world), ...artefactsDuring(world, walk.from, walk.to, walk.at)])
+      .filter(it => it.id === START_ID || visible(world, it.id)),
     new Set(selection.start ? [START_ID, ...selection.artefacts] : selection.artefacts),
     id => id === START_ID || reachable(world, id, inside),
   ));
@@ -2732,7 +2741,7 @@ function layers(
   out.push(ctx => measures(
     ctx,
     view,
-    pathsAt(world, current),
+    pathsAt(world, current).filter(it => visible(world, it.id)),
     local.laying?.id ?? null,
     local.onPath,
     new Set(selection.paths),

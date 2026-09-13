@@ -518,6 +518,102 @@ export interface World {
    * put. See `rig.ts`.
    */
   rigs: Map<Id, Rig>
+  /** What the timeline's row headers say about each thing: hidden, locked,
+   * soloed. Absent is none of them. See `Flags`. */
+  flags: ReadonlyMap<Id, Flags>
+}
+
+/**
+ * How the editor treats a thing, rather than what it is: the switches on a
+ * timeline row.
+ *
+ * None of them reach the level. A hidden room is still in the CSG, and so is
+ * everything a solo leaves out — they are about what the canvas draws and what
+ * a click can land on, and nothing about what is shipped.
+ *
+ * - `hidden`: not drawn as itself, and not picked.
+ * - `locked`: drawn, and not picked.
+ * - `solo`: while anything is soloed, only what is soloed is drawn and picked
+ *   — with what holds it and what it holds.
+ *
+ * A group's flag is its members' too.
+ */
+export interface Flags {
+  hidden: boolean
+  locked: boolean
+  solo: boolean
+}
+
+const NO_FLAGS: Flags = { hidden: false, locked: false, solo: false };
+
+export function flagsOf(world: World, id: Id): Flags {
+  return world.flags.get(id) ?? NO_FLAGS;
+}
+
+/** One flag on a thing set. A thing with none left is taken out of the map. */
+export function flagged(world: World, id: Id, flag: keyof Flags, on: boolean): World {
+  const was = flagsOf(world, id);
+
+  if (was[flag] === on) return world;
+
+  const now = { ...was, [flag]: on };
+  const flags = new Map(world.flags);
+
+  if (now.hidden || now.locked || now.solo) flags.set(id, now);
+  else flags.delete(id);
+
+  return { ...world, flags };
+}
+
+const soloed = new WeakMap<ReadonlyMap<Id, Flags>, { groups: World['groups'], ids: ReadonlySet<Id> | null }>();
+
+/**
+ * Everything a solo keeps: each soloed thing, what it holds and what holds it.
+ * Nothing where nothing is soloed — or only things that are gone, which would
+ * otherwise leave the canvas empty with no row left to turn it off on.
+ */
+function soloing(world: World): ReadonlySet<Id> | null {
+  const held = soloed.get(world.flags);
+
+  if (held !== undefined && held.groups === world.groups) return held.ids;
+
+  let ids: Set<Id> | null = null;
+
+  for (const [id, f] of world.flags) {
+    if (!f.solo || !exists(world, id)) continue;
+
+    ids ??= new Set();
+
+    for (const m of within(world, id)) ids.add(m);
+    for (const g of enclosing(world, id)) ids.add(g);
+  }
+
+  soloed.set(world.flags, { groups: world.groups, ids });
+
+  return ids;
+}
+
+function exists(world: World, id: Id): boolean {
+  return world.polygons.has(id) || world.groups.has(id) || world.artefacts.has(id) || world.paths.has(id);
+}
+
+/** Whether a flag is on the thing or on anything holding it. */
+function inherits(world: World, id: Id, flag: 'hidden' | 'locked'): boolean {
+  return flagsOf(world, id)[flag] || enclosing(world, id).some(g => flagsOf(world, g)[flag]);
+}
+
+/** Whether the canvas draws a thing as itself. See `Flags`. */
+export function visible(world: World, id: Id): boolean {
+  if (world.flags.size === 0) return true;
+
+  const solo = soloing(world);
+
+  return (solo === null || solo.has(id)) && !inherits(world, id, 'hidden');
+}
+
+/** Whether a click may land on a thing: drawn, and not locked. */
+export function clickable(world: World, id: Id): boolean {
+  return world.flags.size === 0 || (visible(world, id) && !inherits(world, id, 'locked'));
 }
 
 /** How many keyframes a new world starts with: long enough to author a shrink
@@ -538,6 +634,7 @@ export function emptyWorld(): World {
       visible: true,
     })),
     rigs: new Map(),
+    flags: new Map(),
   };
 }
 

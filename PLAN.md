@@ -201,7 +201,7 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-Done on branch `timelines`: 1, 2, 3, 3½ and 4, and groups made global. Next: 5.
+Done on branch `timelines`: 1, 2, 3, 3½, 4 and 5, and groups made global. Next: 6.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -339,7 +339,7 @@ keyframe is a no-op rather than half of the next.
   either lands on the keyframe in its place. Skips save as an optional list,
   so the format stays 21.
 
-### 5 — horizontal keyframe view
+### 5 — horizontal keyframe view — done
 
 - Replaces `versionStrip`. Columns are keyframes; rows are objects in their
   group tree (selection-scoped, "all" toggle), expanding into one row per kind
@@ -352,6 +352,25 @@ keyframe is a no-op rather than half of the next.
   pulls.
 - Row header: hide, lock, solo — flags on the object, saved. Hidden stays in
   the CSG; hidden and locked are not picked.
+
+Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
+
+- Docked along the bottom, the status line sitting on it; the bake and 3D
+  buttons, and the 3D panel, move to the top right. The keyframe headers keep
+  the ghost eyes, the unchain mark and insert/delete, and the arrows that
+  walk the keyframes are ← and → now.
+- A thing's own row holds every kind at once; a cell there picks the
+  whole list at that keyframe (`Which` gains `'all'`), a stack in a kind row
+  picks every entry of that kind or, opened, one of them. Dragging a stack
+  moves all of it.
+- Every single entry in a kind row has a handle to drag out into a repeat;
+  dropped on the last keyframe it runs to the end. `skipToggled` in
+  `keys.ts` turns a step into a wait and back; the count carries on.
+- The flags are `World.flags`, a map by id, saved as an optional list, so the
+  format stays 21. A group's hidden or locked is its members'; a solo keeps
+  what holds and what is held by the soloed thing. Locked is out of reach the
+  way a thing outside the open group is, so it draws dimmed.
+- Corner nudges and depths have no rows yet.
 
 ### 6 — effect stack
 

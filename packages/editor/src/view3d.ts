@@ -98,6 +98,9 @@ interface Orbit {
 const WIDTH = 640;
 const HEIGHT = 480;
 
+/** Under the bake and 3D buttons, clear of the keyframes along the bottom. */
+const DOCKED_TOP = 112;
+
 /** Vertical, in radians, and the one the framing is worked out against. */
 const FOV = 60 * Math.PI / 180;
 
@@ -416,7 +419,7 @@ function panel(
         style: {
           position: 'absolute',
           right: '12px',
-          bottom: '12px',
+          top: `${DOCKED_TOP}px`,
           width: `${WIDTH}px`,
           height: `${HEIGHT}px`,
           background: theme.canvas,
@@ -797,10 +800,10 @@ function entered(host: HTMLElement, on: boolean): void {
   // the shorthand and the longhands are the same four properties, so clearing
   // `right` to get the panel's corner back also unsets what `inset` had just
   // put there, and the box collapses to nothing.
-  style.top = on ? '0' : '';
+  style.top = on ? '0' : `${DOCKED_TOP}px`;
   style.left = on ? '0' : '';
   style.right = on ? '0' : '12px';
-  style.bottom = on ? '0' : '12px';
+  style.bottom = on ? '0' : '';
   style.width = on ? '100%' : `${WIDTH}px`;
   style.height = on ? '100%' : `${HEIGHT}px`;
   style.zIndex = on ? '10' : '';

@@ -16,6 +16,7 @@ import {
   ArtefactId,
   EMPTY_HISTORY,
   EditorState,
+  Flags,
   Group,
   GroupId,
   Id,
@@ -83,6 +84,8 @@ export interface Saved {
     start: Start
     keyframes: Keyframe[]
     rigs: [Id, SavedRig][]
+    /** Absent is none, which is every file from before there were any. */
+    flags?: [Id, Flags][]
   }
   /**
    * The bake, where there was one: every span of it that still stood when the
@@ -145,6 +148,7 @@ export function saved(state: EditorState): Saved {
       start: state.world.start,
       keyframes: state.world.keyframes,
       rigs: [...state.world.rigs].map(([id, rig]) => [id, savedRig(rig)]),
+      flags: [...state.world.flags],
     },
   };
 }
@@ -207,6 +211,7 @@ export function restored(file: Saved): EditorState {
     nextId: file.world.nextId,
     keyframes: file.world.keyframes,
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredRig(rig)])),
+    flags: new Map(file.world.flags ?? []),
   };
 
   return {

@@ -15,8 +15,9 @@ import { Entry, Erode, Keyframe, KeyframeId, Move, Op, Rig, counted1, indexIn, s
 import { rigOf, withRig, without } from './scene';
 import { Id, VertexId, World } from './types';
 
-/** An entry by its place in the list, or every entry of one kind. */
-export type Which = number | Op['kind'];
+/** An entry by its place in the list, every entry of one kind, or the whole
+ * list. */
+export type Which = number | Op['kind'] | 'all';
 
 /** Why a change to a timeline was not made, for the status line. */
 export interface Refused {
@@ -24,6 +25,8 @@ export interface Refused {
 }
 
 function chosen(e: Entry, i: number, which: Which): boolean {
+  if (which === 'all') return true;
+
   return typeof which === 'number' ? i === which : e.op.kind === which;
 }
 
@@ -106,6 +109,30 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
   const rig = withKeys(rigOf(world, id), next, there.filter((e, i) => !chosen(e, i, which)));
 
   return withRig(world, id, withKeys(rig, k, [...listOf(world, id, k), ...going]));
+}
+
+/**
+ * A repeat told to wait over keyframe `at`, or to step there again where it
+ * was waiting. Its count carries on either way, so taking a step out moves the
+ * rest of them one keyframe later, and putting one back one earlier.
+ */
+export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, at: KeyframeId): World | Refused {
+  const list = listOf(world, id, k);
+  const e = list[index];
+
+  if (e === undefined) return world;
+  if (e.op.kind === 'stand') return { refused: 'an unchaining does not repeat' };
+  if (indexIn(world.keyframes, at) <= indexIn(world.keyframes, k)) return { refused: 'a repeat skips only after it starts' };
+
+  const skip = new Set(e.skip ?? []);
+
+  if (skip.has(at)) skip.delete(at);
+  else skip.add(at);
+
+  const { skip: _was, ...rest } = e;
+  const now = list.map((x, i) => (i === index ? (skip.size === 0 ? rest : { ...rest, skip }) : x));
+
+  return withRig(world, id, withKeys(rigOf(world, id), k, now));
 }
 
 /** How many stands a list opens with. */

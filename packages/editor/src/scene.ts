@@ -75,6 +75,7 @@ import {
   VertexId,
   World,
   enclosing,
+  clickable,
   inside,
   kindOf,
   kindKey,
@@ -3128,6 +3129,9 @@ export function handles(
  * silently take the selection out with it.
  */
 export function reachable(world: World, id: Id, inside: GroupId | null): boolean {
+  // Hidden or locked from its row in the timeline. See `Flags`.
+  if (!clickable(world, id)) return false;
+
   // A group that is no longer there holds nothing in, which is the same answer
   // `opened` gives: undo can restore a world the open path was never in, and
   // the way out of that is being outside rather than being nowhere.

@@ -23,14 +23,13 @@ import {
   sealing,
   stamped,
   unchained,
-  unchainedAt,
   ungrouping,
 } from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
 import { resolveInto } from './resolve';
-import { deleted, inserted } from './keys';
+import { timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
@@ -41,7 +40,6 @@ import {
   Selection,
   Tool,
   Update,
-  Keyframe,
   KeyframeId,
   World,
   Figure,
@@ -57,7 +55,6 @@ import {
   marked,
   saying,
   Unrolled,
-  within,
   redone,
   undone,
 } from './types';
@@ -122,17 +119,35 @@ export function editor(initial: World): VNode {
           ),
 
           breadcrumb(s.world, s.inside, update),
-          statusbar(s.status),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           typeBar(s.world, s.selection, s.tool, update),
-          // Sized to the keyframes, so made again when there are more or
-          // fewer of them.
-          dynamic(() => s.world().keyframes.length, count => fragment([
-            versionStrip(count, s.world, s.selection, s.keyframe, update),
-            bakeButton(count, state, s.world, s.bake, update),
-            previewButton(count, s.preview, update),
-          ])),
+          // Ticked by the spans, so made again when there are more or fewer of
+          // them.
+          dynamic(() => s.world().keyframes.length, count => bakeButton(count, state, s.world, s.bake, update)),
+          previewButton(s.preview, update),
+
+          // Along the bottom, the status line sitting on the keyframes: it is
+          // most often about something done there.
+          div(
+            {
+              style: {
+                position: 'absolute',
+                left: '12px',
+                right: '12px',
+                bottom: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '8px',
+                pointerEvents: 'none',
+              },
+            },
+            [
+              statusbar(s.status),
+              timeline(state, s.world, s.selection, s.keyframe, input, update, k => update(t => switched(t, k))),
+            ],
+          ),
         ],
       ),
     );
@@ -232,9 +247,9 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
  * up beside the drawing: which version is on screen is one fact about the
  * editor rather than one about whichever view is showing it, so the key that
  * changes it belongs to none of them. It was the walk's alone, and reaching
- * the strip from the canvas meant taking the hand off what it was doing.
+ * the keyframes from the canvas meant taking the hand off what it was doing.
  *
- * Switched the way the version strip switches it: `switched`, so a transition
+ * Switched the way a click on a keyframe switches it: `switched`, so a transition
  * is declared in the same update that moves the version and the walls morph
  * across rather than jump.
  *
@@ -244,16 +259,14 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
 function versions(input: Input, update: Update): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* keyPressed(input, 'ArrowUp', 'ArrowDown');
+      const e = yield* keyPressed(input, 'ArrowLeft', 'ArrowRight');
 
       if (e.metaKey || e.ctrlKey || afoot !== null) continue;
 
       e.preventDefault();
 
-      // Down is forward, because the strip runs downward: the arrows walk it
-      // the way it is drawn rather than the way time runs, and the strip is
-      // what is on screen.
-      const by = e.code === 'ArrowDown' ? 1 : -1;
+      // Right is forward, the way the keyframes run along the bottom.
+      const by = e.code === 'ArrowRight' ? 1 : -1;
 
       update(s => switched(s, clamped(s.world, order(s.world, s.keyframe) + by)));
     }
@@ -1177,266 +1190,16 @@ function typeButton(
 }
 
 // -----------------------------------------------------------------------------
-// The version strip
-//
-// One widget doing two jobs, down the right-hand side. Nodes are the versions
-// along the chain, top to bottom, so the shrink sequence reads in the order it
-// happens; clicking one is how you go and stand in it, which is the only way to
-// edit it. An eye each says whether that version draws as a ghost while another
-// is on screen, Illustrator-style, which covers comparing against an arbitrary
-// version rather than only against the neighbours.
-//
-// There are no span handles, and there is nothing here that reaches into
-// another version. Edits always land in the version on screen.
+// Beside the canvas, top right
 // -----------------------------------------------------------------------------
 
-const ROW = 34;
-const RAIL = 22;
-const STRIP_WIDTH = 132;
-
-function versionStrip(
-  count: number,
-  world: Value<World>,
-  selection: Value<Selection>,
-  current: Value<KeyframeId>,
-  update: Update,
-): VNode {
-  const height = stripHeight(count);
-
-  return svg(
-    {
-      width: STRIP_WIDTH,
-      height,
-      viewBox: `0 0 ${STRIP_WIDTH} ${height}`,
-      style: {
-        position: 'absolute',
-        right: '12px',
-        top: '12px',
-        filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
-      },
-    },
-    [
-      rect({
-        x: 0.5,
-        y: 0.5,
-        width: STRIP_WIDTH - 1,
-        height: height - 1,
-        rx: 8,
-        fill: theme.panel,
-        stroke: theme.border,
-      }),
-
-      // The rail the nodes hang on, drawn once behind them: this is the chain,
-      // and a fork would be another rail beside it.
-      line({
-        x1: RAIL,
-        y1: PADDING + ROW / 2,
-        x2: RAIL,
-        y2: PADDING + (count - 0.5) * ROW,
-        stroke: theme.border,
-        'stroke-width': 2,
-      }),
-
-      // Made again whenever the count changes, so each row reads its own
-      // version out of the world by place.
-      ...Array.from({ length: count }, (_unused, i) =>
-        versionRow(
-          i,
-          () => world().keyframes[i],
-          () => unchains(world(), world().keyframes[i].id, selection()),
-          current,
-          update,
-        )),
-
-      g({ transform: `translate(0, ${PADDING + count * ROW})` }, [
-        stripButton(PADDING, '+ insert', () => update(s => insertedAfter(s))),
-        stripButton(STRIP_WIDTH / 2, '− delete', () => update(s => deletedHere(s))),
-      ]),
-    ],
-  );
-}
-
-/** The strip's height: a row per keyframe, and the row of buttons under them. */
-function stripHeight(count: number): number {
-  return (count + 1) * ROW + 2 * PADDING;
-}
-
-function stripButton(x: number, label: string, onclick: () => void): VNode {
-  const width = STRIP_WIDTH / 2 - PADDING;
-
-  return g({ style: { cursor: 'pointer' }, onclick }, [
-    rect({ x, y: 5, width: width - 2, height: ROW - 10, rx: 6, fill: theme.border }),
-    text(
-      {
-        x: x + width / 2 - 1,
-        y: ROW / 2 + 4,
-        'text-anchor': 'middle',
-        fill: theme.text,
-        'font-family': 'system-ui, sans-serif',
-        'font-size': '12px',
-      },
-      label,
-    ),
-  ]);
-}
-
-/**
- * A keyframe put in after the one on screen, and stood in: one where nothing
- * happens yet. See `inserted` in `keys.ts`.
- */
-function insertedAfter(s: EditorState): EditorState {
-  const out = inserted(s.world, s.keyframe);
-
-  if (out === null) return s;
-
-  return marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
-}
-
-/** The keyframe on screen taken out, standing in the one after it — or before
- * it, for the last. See `deleted` in `keys.ts`. */
-function deletedHere(s: EditorState): EditorState {
-  const out = deleted(s.world, s.keyframe);
-
-  if ('refused' in out) return saying(s, out.refused);
-
-  const i = order(s.world, s.keyframe);
-  const to = s.world.keyframes[i + 1] ?? s.world.keyframes[i - 1];
-
-  return marked({ ...s, world: out, keyframe: to.id, replay: null }, s.world);
-}
-
-/**
- * Whether this keyframe unchains anything that is picked.
- *
- * About the selection rather than about the world, because a stand is about one
- * thing and the strip is one column: a mark that meant *somebody* is unchained
- * here would be on nearly every row of a level that uses this at all, and would
- * answer a question nobody asked. Picked, it answers the one they did — where
- * does this stop hearing from upstream.
- */
-function unchains(world: World, k: KeyframeId, selection: Selection): boolean {
-  return [...selection.polygons, ...selection.artefacts, ...selection.paths].some(
-    id => within(world, id).some(m => unchainedAt(world, k, m)),
-  );
-}
-
-function versionRow(
-  index: number,
-  version: Value<Keyframe>,
-  broken: Value<boolean>,
-  current: Value<KeyframeId>,
-  update: Update,
-): VNode {
-  const active = () => current() === version().id;
-  const y = PADDING + index * ROW + ROW / 2;
-
-  return g({ transform: `translate(0, ${y})` }, [
-    g(
-      {
-        style: { cursor: 'pointer' },
-        onclick: () => update(s => switched(s, version().id)),
-      },
-      [
-        // A hit area over the whole row, so the name is as clickable as the node
-        rect({
-          x: PADDING,
-          y: -ROW / 2,
-          width: STRIP_WIDTH - 2 * PADDING - 24,
-          height: ROW,
-          rx: 6,
-          fill: () => (active() ? theme.accent : 'transparent'),
-        }),
-
-        circle({
-          cx: RAIL,
-          cy: 0,
-          r: 5.5,
-          fill: () => (active() ? theme.onAccent : theme.panel),
-          stroke: () => (active() ? theme.onAccent : theme.muted),
-          'stroke-width': 2,
-        }),
-
-        text(
-          {
-            x: RAIL + 14,
-            y: 4,
-            fill: () => (active() ? theme.onAccent : theme.text),
-            'font-family': 'system-ui, sans-serif',
-            'font-size': '12px',
-          },
-          () => version().name,
-        ),
-      ],
-    ),
-
-    // Two ticks across the rail where it comes down from the version above,
-    // which is exactly where the inheritance is being refused. Drawn over the
-    // row rather than under it, and only about what is picked — see `unchains`.
-    g(
-      {
-        opacity: () => (broken() ? 1 : 0),
-        stroke: theme.gone,
-        'stroke-width': 2,
-        'stroke-linecap': 'round',
-      },
-      [
-        line({ x1: RAIL - 6, y1: -ROW / 2 + 3, x2: RAIL + 6, y2: -ROW / 2 - 5 }),
-        line({ x1: RAIL - 6, y1: -ROW / 2 + 8, x2: RAIL + 6, y2: -ROW / 2 }),
-      ],
-    ),
-
-    eye(version, update, index),
-  ]);
-}
-
-/** Open when the version draws as a ghost, struck through when it does not. */
-function eye(version: Value<Keyframe>, update: Update, index: number): VNode {
-  const on = () => version().visible;
-  const x = STRIP_WIDTH - PADDING - 18;
-
-  // Through the history like every other write to the world, because that is
-  // what the history is over: left out, an undo of the edit *before* the toggle
-  // takes the toggle back with it, which is nothing the author asked for. The
-  // bake survives it either way — a stamp compares each version's edits, and
-  // this changes none of them.
-  const toggle = () => update(s => {
-    const keyframes = [...s.world.keyframes];
-    keyframes[index] = { ...keyframes[index], visible: !keyframes[index].visible };
-
-    return marked({ ...s, world: { ...s.world, keyframes } }, s.world);
-  });
-
-  return g(
-    {
-      transform: `translate(${x}, -8)`,
-      style: { cursor: 'pointer' },
-      onclick: toggle,
-    },
-    [
-      rect({ width: 16, height: 16, fill: 'transparent' }),
-
-      g(
-        {
-          fill: 'none',
-          stroke: () => (on() ? theme.text : theme.faded),
-          'stroke-width': 1.2,
-          'stroke-linecap': 'round',
-        },
-        [
-          path({ d: 'M1.5 8 C 4 4, 12 4, 14.5 8 C 12 12, 4 12, 1.5 8 Z' }),
-          circle({ cx: 8, cy: 8, r: 2 }),
-          path({ d: () => (on() ? '' : 'M2.5 13.5 L13.5 2.5') }),
-        ],
-      ),
-    ],
-  );
-}
+const PANEL_WIDTH = 132;
 
 // -----------------------------------------------------------------------------
 // The bake
 //
-// Under the version strip, because that is what it is about: one span per gap
-// between two nodes, and the count says how many of them are standing. An edit
+// Top right: one span per gap between two keyframes, and the count says how
+// many of them are standing. An edit
 // does not clear anything by hand — a span carries the world it was baked
 // against, so `spanAt` stops answering for it and the count falls on its own.
 // -----------------------------------------------------------------------------
@@ -1470,13 +1233,13 @@ function bakeButton(
 
   return svg(
     {
-      width: STRIP_WIDTH,
+      width: PANEL_WIDTH,
       height: BAKE_HEIGHT,
-      viewBox: `0 0 ${STRIP_WIDTH} ${BAKE_HEIGHT}`,
+      viewBox: `0 0 ${PANEL_WIDTH} ${BAKE_HEIGHT}`,
       style: {
         position: 'absolute',
         right: '12px',
-        top: `${12 + stripHeight(count) + 8}px`,
+        top: '12px',
         filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
       },
     },
@@ -1484,7 +1247,7 @@ function bakeButton(
       rect({
         x: 0.5,
         y: 0.5,
-        width: STRIP_WIDTH - 1,
+        width: PANEL_WIDTH - 1,
         height: BAKE_HEIGHT - 1,
         rx: 8,
         fill: theme.panel,
@@ -1502,7 +1265,7 @@ function bakeButton(
           rect({
             x: PADDING,
             y: PADDING,
-            width: STRIP_WIDTH - 2 * PADDING,
+            width: PANEL_WIDTH - 2 * PADDING,
             height: 24,
             rx: 6,
             fill: () => (running() ? theme.border : theme.accent),
@@ -1510,7 +1273,7 @@ function bakeButton(
 
           text(
             {
-              x: STRIP_WIDTH / 2,
+              x: PANEL_WIDTH / 2,
               y: PADDING + 16,
               'text-anchor': 'middle',
               fill: () => (running() ? theme.muted : theme.onAccent),
@@ -1527,7 +1290,7 @@ function bakeButton(
       rect({
         x: PADDING,
         y: BAKE_HEIGHT - PADDING - 10,
-        width: STRIP_WIDTH - 2 * PADDING,
+        width: PANEL_WIDTH - 2 * PADDING,
         height: 6,
         rx: 3,
         fill: theme.border,
@@ -1536,7 +1299,7 @@ function bakeButton(
       rect({
         x: PADDING,
         y: BAKE_HEIGHT - PADDING - 10,
-        width: () => (STRIP_WIDTH - 2 * PADDING)
+        width: () => (PANEL_WIDTH - 2 * PADDING)
           * (running() ? bake().progress ?? 0 : done() / spans),
         height: 6,
         rx: 3,
@@ -1544,9 +1307,9 @@ function bakeButton(
       }),
 
       ...Array.from({ length: spans - 1 }, (_unused, i) => line({
-        x1: PADDING + (STRIP_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        x1: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
         y1: BAKE_HEIGHT - PADDING - 10,
-        x2: PADDING + (STRIP_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        x2: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
         y2: BAKE_HEIGHT - PADDING - 4,
         stroke: theme.panel,
         'stroke-width': 1,
@@ -1561,18 +1324,18 @@ function bakeButton(
  * Under the bake button, because that is what it depends on: a level that has
  * not been baked has nothing to show, and the two read as one thought.
  */
-function previewButton(count: number, showing: Value<boolean>, update: Update): VNode {
+function previewButton(showing: Value<boolean>, update: Update): VNode {
   const on = () => showing();
 
   return svg(
     {
-      width: STRIP_WIDTH,
+      width: PANEL_WIDTH,
       height: BUTTON_ROW,
-      viewBox: `0 0 ${STRIP_WIDTH} ${BUTTON_ROW}`,
+      viewBox: `0 0 ${PANEL_WIDTH} ${BUTTON_ROW}`,
       style: {
         position: 'absolute',
         right: '12px',
-        top: `${12 + stripHeight(count) + 8 + BAKE_HEIGHT + 8}px`,
+        top: `${12 + BAKE_HEIGHT + 8}px`,
         filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
       },
     },
@@ -1580,7 +1343,7 @@ function previewButton(count: number, showing: Value<boolean>, update: Update): 
       rect({
         x: 0.5,
         y: 0.5,
-        width: STRIP_WIDTH - 1,
+        width: PANEL_WIDTH - 1,
         height: BUTTON_ROW - 1,
         rx: 8,
         fill: theme.panel,
@@ -1596,7 +1359,7 @@ function previewButton(count: number, showing: Value<boolean>, update: Update): 
           rect({
             x: PADDING,
             y: PADDING,
-            width: STRIP_WIDTH - 2 * PADDING,
+            width: PANEL_WIDTH - 2 * PADDING,
             height: 24,
             rx: 6,
             fill: () => (on() ? theme.accent : theme.border),
@@ -1604,7 +1367,7 @@ function previewButton(count: number, showing: Value<boolean>, update: Update): 
 
           text(
             {
-              x: STRIP_WIDTH / 2,
+              x: PANEL_WIDTH / 2,
               y: PADDING + 16,
               'text-anchor': 'middle',
               fill: () => (on() ? theme.onAccent : theme.text),
@@ -1631,7 +1394,7 @@ const BUTTON_ROW = 24 + 2 * PADDING;
  * asked for this: it used to seal the group and erode that, which is doing
  * something else instead, and the author's hand was on neither.
  *
- * Along the bottom, absent when there is nothing to say, for the reason the
+ * Along the bottom, over the keyframes, absent when there is nothing to say, for the reason the
  * breadcrumb is absent at the top level: a bar that is always there is a bar
  * nobody reads, and it appearing *is* the signal.
  */
@@ -1641,9 +1404,6 @@ function statusbar(status: Value<string | null>): VNode {
     div(
       {
         style: {
-          position: 'absolute',
-          left: '12px',
-          bottom: '12px',
           padding: '6px 10px',
           borderRadius: '8px',
           background: theme.panel,
