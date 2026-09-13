@@ -18,7 +18,9 @@
 // A click picks an entry and everything else in its column the same gesture
 // wrote, shown here: a multi-corner erosion, or a turn of several things at
 // once. ⌥-click picks the one entry alone. The arrow beside the clicked entry
-// repeats all of them, each told to run to the same keyframe.
+// repeats all of them, each told to run to the same keyframe, and dragging the
+// end of a picked one's lane or clicking a dot on it does the same to every
+// one picked. With ⌥ held, each is about its own entry only.
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging an icon a keyframe along pushes or pulls it, and what is picked
@@ -43,7 +45,7 @@ import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushed
 import { KeyframeId } from './rig';
 import { order, unchainedAt } from './scene';
 import { theme } from './theme';
-import { Bar, Cell, Kind, Row, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
+import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Editing, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
@@ -573,9 +575,9 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the
       // one before — and what is picked with it, where it is picked.
-      const moved = (clientX: number) => {
+      const moved = (up: PointerEvent) => {
         const w = ctx.state().world;
-        const to = colAt(ctx, clientX);
+        const to = colAt(ctx, up.clientX);
         const going = picked && m.picked !== null ? m.picked.all : [place];
 
         if (to > col) {
@@ -629,7 +631,7 @@ function entryTitle(ctx: Ctx, place: Place): string {
  * never went anywhere, and `done` with where it was let go otherwise. The
  * element follows the pointer meanwhile, and nothing is written until then.
  */
-function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (clientX: number) => void): void {
+function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (up: PointerEvent) => void): void {
   if (e.button !== 0) return;
 
   e.preventDefault();
@@ -652,7 +654,7 @@ function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (clie
     window.removeEventListener('pointerup', up);
     el.style.transform = was;
 
-    if (moving) done(ev.clientX);
+    if (moving) done(ev);
     else click(ev);
   };
 
@@ -709,7 +711,7 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
       zIndex: 1,
     }, [], {
       title: s.skip ? 'Waits here: click to step' : 'Steps here: click to wait',
-      onclick: () => ctx.acted(skipToggledAt(ctx.state().world, b.place, m.keyframes[s.col].id)),
+      onclick: (e: MouseEvent) => ctx.acted(skipsToggled(ctx.state().world, acting(m, b.place, e.altKey), b.place, m.keyframes[s.col].id)),
     }));
 
     prev = centre(m, s.col) + 5;
@@ -729,7 +731,7 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
     }));
   }
 
-  out.push(end(ctx, b.place, b.from, tail, y));
+  out.push(end(ctx, m, b.place, b.from, tail, y));
 
   return fragment(out);
 }
@@ -752,18 +754,8 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   const x = slot(m, col, i + 1);
 
-  const done = (clientX: number) => {
-    const to = colAt(ctx, clientX);
-    let w: World | Refused = ctx.state().world;
-
-    for (const q of p.all) {
-      const e = entryAt(w, q);
-
-      if (e !== undefined) w = timedAt(w, q, timesTo(w, e, col, to));
-      if ('refused' in w) break;
-    }
-
-    ctx.acted(w);
+  const done = (up: PointerEvent) => {
+    ctx.acted(repeatedTo(ctx.state().world, acting(m, p.lead, up.altKey), col, colAt(ctx, up.clientX)));
   };
 
   return [box({
@@ -791,14 +783,9 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
-function end(ctx: Ctx, place: Place, from: number, x: number, y: number): VNode {
-  const done = (clientX: number) => {
-    const w = ctx.state().world;
-    const e = entryAt(w, place);
-
-    if (e === undefined) return;
-
-    ctx.acted(timedAt(w, place, timesTo(w, e, from, colAt(ctx, clientX))));
+function end(ctx: Ctx, m: Model, place: Place, from: number, x: number, y: number): VNode {
+  const done = (up: PointerEvent) => {
+    ctx.acted(repeatedTo(ctx.state().world, acting(m, place, up.altKey), from, colAt(ctx, up.clientX)));
   };
 
   return box({
@@ -811,6 +798,46 @@ function end(ctx: Ctx, place: Place, from: number, x: number, y: number): VNode 
     cursor: 'ew-resize',
     zIndex: 1,
   }, [], { title: 'Drag to where it stops', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
+}
+
+/** What a hand on the entry at `place` acts on: everything picked with it,
+ * where it is picked, and with ⌥ held or unpicked, it alone. */
+function acting(m: Model, place: Place, alone: boolean): Place[] {
+  return !alone && m.picked !== null && isPicked(m, place) ? m.picked.all : [place];
+}
+
+/** Every entry at `places`, written at column `from`, told to repeat to
+ * column `to`. */
+function repeatedTo(world: World, places: readonly Place[], from: number, to: number): World | Refused {
+  let w: World | Refused = world;
+
+  for (const q of places) {
+    const e = entryAt(w, q);
+
+    if (e !== undefined) w = timedAt(w, q, timesTo(w, e, from, to));
+    if ('refused' in w) break;
+  }
+
+  return w;
+}
+
+/** Every entry at `places` waiting over keyframe `k`, or stepping there,
+ * whichever the one at `lead` is turning to: the ones already there stay, and
+ * so do the ones whose repeat does not reach it. */
+function skipsToggled(world: World, places: readonly Place[], lead: Place, k: KeyframeId): World | Refused {
+  const waits = entryAt(world, lead)?.skip?.has(k) ?? false;
+  const col = order(world, k);
+  let w: World | Refused = world;
+
+  for (const q of places) {
+    const e = entryAt(w, q);
+    const reaches = e !== undefined && (barOf(w, e, order(w, q.at), q)?.steps.some(s => s.col === col) ?? false);
+
+    if (reaches && (e.skip?.has(k) ?? false) === waits) w = skipToggledAt(w, q, k);
+    if ('refused' in w) break;
+  }
+
+  return w;
 }
 
 // -----------------------------------------------------------------------------
