@@ -15,7 +15,7 @@ import {
   withRig,
 } from './scene';
 import { Op, Rig, deepened, nudged, once, repeating } from './rig';
-import { EditorState, FLOOR, emptyWorld, initialState, PolygonKind } from './types';
+import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
 /**
@@ -31,7 +31,8 @@ const kind = (k: Named): PolygonKind =>
   k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
 
 /** A world with something of every kind written about it: moves, a turn, a
- * stretch, depths, a repeat with a skip in it, a nudge and a corner depth. */
+ * stretch, depths, a repeat with a skip in it, a nudge and a corner depth,
+ * each carrying the gesture that wrote it. */
 function world(): EditorState {
   const a = addPolygon(emptyWorld(), kind('level'), [
     { x: 0, y: 0 },
@@ -52,6 +53,7 @@ function world(): EditorState {
   w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null)]);
   w = withRig(w, b.id, nudged(rigOf(w, b.id), corners[1].id, 2, { x: 1, y: -1 }));
   w = withRig(w, b.id, deepened(rigOf(w, b.id), corners[2].id, 2, -3));
+  w = gestured(w, a.world);
 
   return {
     ...initialState(w),

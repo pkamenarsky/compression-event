@@ -177,6 +177,14 @@ export interface Entry<O extends Op = Op> {
    * is a keyframe where nothing happens. Absent is none.
    */
   skip?: ReadonlySet<KeyframeId>
+  /**
+   * The gesture that last wrote what it does, by an id of its own: entries
+   * with one, at one keyframe, are picked together in the keyframe view. A
+   * hint rather than a structure — nothing holds a gesture's entries to each
+   * other, and one lost costs a pick one entry at a time. Absent is none. See
+   * `gestured` in `types.ts`.
+   */
+  gesture?: number
 }
 
 /**

@@ -906,9 +906,63 @@ export function marked(s: EditorState, was: World): EditorState {
 
   return {
     ...s,
+    world: gestured(s.world, was),
     status: null,
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
+}
+
+/**
+ * `world` with what the step from `was` wrote stamped with one gesture id,
+ * fresh from `nextId`.
+ *
+ * Written is an operation that was not in that thing's timeline before: a new
+ * entry, or one the step changed what it does. An entry told how often to
+ * repeat, where to wait, or pushed along keeps its operation, and with it the
+ * gesture it had. Only the timelines the step replaced are looked at.
+ */
+export function gestured(world: World, was: World): World {
+  const gesture = world.nextId;
+  const rigs = new Map(world.rigs);
+  let any = false;
+
+  for (const [id, rig] of world.rigs) {
+    const old = was.rigs.get(id);
+
+    if (rig === old) continue;
+
+    const ops = new Set<unknown>();
+
+    if (old !== undefined) {
+      for (const list of old.keys.values()) for (const e of list) ops.add(e.op);
+      for (const map of [...old.nudges.values(), ...old.depths.values()]) for (const e of map.values()) ops.add(e.op);
+    }
+
+    let stamped = false;
+
+    const mark = <E extends Entry>(e: E): E => {
+      if (ops.has(e.op)) return e;
+
+      stamped = true;
+
+      return { ...e, gesture };
+    };
+    const corners = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
+      new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, mark(e)]))]));
+
+    const now: Rig = {
+      keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])),
+      nudges: corners(rig.nudges),
+      depths: corners(rig.depths),
+    };
+
+    if (stamped) {
+      rigs.set(id, now);
+      any = true;
+    }
+  }
+
+  return any ? { ...world, rigs, nextId: gesture + 1 } : world;
 }
 
 /** The editor saying why it did not do the thing. See `EditorState.status`. */

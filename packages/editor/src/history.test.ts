@@ -10,7 +10,9 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon } from './scene';
+import { TOP, addPolygon, deepen, rigOf } from './scene';
+import { timed } from './keys';
+import { erode, move, wrote } from './testing';
 import {
   EditorState,
   FLOOR,
@@ -126,5 +128,51 @@ describe('undo', () => {
 
     expect(undone(a)).toBe(a);
     expect(redone(a)).toBe(a);
+  });
+});
+
+describe('gestures', () => {
+  const two = () => {
+    const a = square(emptyWorld(), 0);
+    const b = square(a.world, 20);
+
+    return { world: b.world, ids: [a.id, b.id] };
+  };
+
+  test('what one step wrote carries one gesture, fresh from the id counter', () => {
+    const { world, ids } = two();
+    const s = step(initialState(world), ids.reduce((w, id) => wrote(w, 0, id, move(1, 0)), world));
+    const [a, b] = ids.map(id => rigOf(s.world, id).keys.get(0)![0].gesture);
+
+    expect(a).toEqual(world.nextId);
+    expect(b).toEqual(a);
+    expect(s.world.nextId).toEqual(world.nextId + 1);
+  });
+
+  test('a corner depth is a gesture too, and one written again is the later one', () => {
+    const { world, ids } = two();
+    const corners = world.polygons.get(ids[0])!.points.map(c => c.id);
+    const first = step(initialState(world), deepen(world, 0, ids[0], new Set(corners.slice(0, 2)), 1));
+    const second = step(first, deepen(first.world, 0, ids[0], new Set(corners.slice(1, 3)), 1));
+    const depths = rigOf(second.world, ids[0]).depths;
+    const of = (i: number) => depths.get(corners[i])!.get(0)!.gesture;
+
+    expect(of(0)).toEqual(world.nextId);
+    expect(of(1)).toEqual(world.nextId + 1);
+    expect(of(2)).toEqual(of(1));
+  });
+
+  test('told how often to repeat, an entry keeps its gesture', () => {
+    const { world, ids } = two();
+    const s = step(initialState(world), wrote(world, 0, ids[0], erode(1)));
+    const was = rigOf(s.world, ids[0]).keys.get(0)![0].gesture;
+    const out = timed(s.world, ids[0], 0, 0, null);
+
+    if ('refused' in out) throw new Error(out.refused);
+
+    const t = step(s, out);
+
+    expect(rigOf(t.world, ids[0]).keys.get(0)![0]).toEqual({ op: erode(1), times: null, gesture: was });
+    expect(t.world.nextId).toEqual(s.world.nextId);
   });
 });

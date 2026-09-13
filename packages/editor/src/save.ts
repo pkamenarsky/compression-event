@@ -115,6 +115,8 @@ export interface SavedEntry {
   times: number | null
   /** Absent is none. */
   skip?: KeyframeId[]
+  /** Absent is none. */
+  gesture?: number
 }
 
 /** An operation, with a stand's two maps written out as entries. */
@@ -166,7 +168,9 @@ function savedEntry(e: Entry): SavedEntry {
     ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
-  return e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
+  const out: SavedEntry = e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
+
+  return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
 }
 
 function restoredEntry(e: SavedEntry): Entry {
@@ -180,7 +184,9 @@ function restoredEntry(e: SavedEntry): Entry {
       }
     : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
 
-  return e.skip === undefined || e.skip.length === 0 ? { op, times: e.times } : { op, times: e.times, skip: new Set(e.skip) };
+  const out: Entry = e.skip === undefined || e.skip.length === 0 ? { op, times: e.times } : { op, times: e.times, skip: new Set(e.skip) };
+
+  return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
 }
 
 function restoredRig(rig: SavedRig): Rig {
