@@ -641,9 +641,9 @@ export function resolveInto(
  * two, or everything the open group already holds. Both are refusals about a
  * group being worth making, and this one is not being made to be kept.
  *
- * Born at the first keyframe and never taken out, so it holds its members at
- * every keyframe they stand at. Nothing is compensated, exactly as in
- * `grouped`: its frame is at rest everywhere, so everything is where it was.
+ * It holds its members at every keyframe they stand at, as every group does.
+ * Nothing is compensated, exactly as in `grouped`: its frame is at rest
+ * everywhere, so everything is where it was.
  */
 function enclosed(world: World, ids: readonly Id[], where: Landing): {
   world: World
@@ -654,7 +654,7 @@ function enclosed(world: World, ids: readonly Id[], where: Landing): {
   const groups = new Map(world.groups);
   const parent = where.into === null ? undefined : groups.get(where.into);
 
-  groups.set(id, { birth: world.keyframes[0].id, death: null, members: [...ids], sealed: true });
+  groups.set(id, { members: [...ids], sealed: true });
 
   // Taken out of wherever they were, so nothing is claimed twice.
   if (where.into !== null && parent !== undefined) {

@@ -194,7 +194,9 @@ export interface Timeline extends Structure {
   keyframes: readonly Keyframe[]
   rigs: ReadonlyMap<Id, Rig>
   polygons: ReadonlyMap<PolygonId, Lived & { points: readonly Vertex[] }>
-  groups: ReadonlyMap<GroupId, Lived & { members: readonly Id[] }>
+  /** No birth: a group is one fact about the world at every keyframe, and its
+   * timeline plays from the first. */
+  groups: ReadonlyMap<GroupId, { members: readonly Id[] }>
   artefacts: ReadonlyMap<Id, Lived>
   paths: ReadonlyMap<Id, Lived>
 }
@@ -391,9 +393,18 @@ export function indexIn(keyframes: readonly Keyframe[], k: KeyframeId): number {
   return held.get(k) ?? -1;
 }
 
-/** When a thing begins and, for a polygon, the corners it has ever had. */
+/** When a thing begins and, for a polygon, the corners it has ever had. A
+ * group begins at the first keyframe, having no birth of its own. */
 function lived(tl: Timeline, id: Id): (Lived & { points?: readonly Vertex[] }) | undefined {
-  return tl.polygons.get(id) ?? tl.groups.get(id) ?? tl.artefacts.get(id) ?? tl.paths.get(id);
+  const group = tl.groups.get(id);
+
+  if (group !== undefined) {
+    const first = tl.keyframes[0];
+
+    return first === undefined ? undefined : { birth: first.id };
+  }
+
+  return tl.polygons.get(id) ?? tl.artefacts.get(id) ?? tl.paths.get(id);
 }
 
 interface Walked {
@@ -422,19 +433,20 @@ function walked(tl: Timeline, id: Id): Walked | null {
 
   if (thing === undefined) return null;
 
+  // Keyed by the rig, or by the thing where nothing is written about it. A
+  // group's life is made up here rather than kept, so it is the group itself
+  // that stands for it: what the walk read of it is its first keyframe, which
+  // the order already answers for.
   const rig = tl.rigs.get(id) ?? EMPTY_RIG;
-  const key = rig === EMPTY_RIG ? thing : rig;
+  const record: object = tl.groups.get(id) ?? thing;
+  const key = rig === EMPTY_RIG ? record : rig;
   const held = walks.get(key);
 
-  if (held !== undefined && held.rig === rig && held.thing === thing && same(held.order, tl.keyframes)) {
+  if (held !== undefined && held.rig === rig && held.thing === record && same(held.order, tl.keyframes)) {
     return held;
   }
 
-  // A group's from the first keyframe, whenever it was made. Membership is one
-  // fact about the world rather than something a keyframe does, so a group made
-  // while standing at v3 holds its members at v0 too, and can be moved there.
-  const from = tl.groups.has(id) ? tl.keyframes[0]?.id ?? thing.birth : thing.birth;
-  const out = walk(tl, rig, thing, from);
+  const out = { ...walk(tl, rig, thing, thing.birth), thing: record };
 
   walks.set(key, out);
 

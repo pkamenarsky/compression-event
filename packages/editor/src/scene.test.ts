@@ -862,8 +862,10 @@ describe('copy and paste', () => {
     const copy = after.ids[0];
 
     // It stands where it was seen at v1 — eroded — and it is not there at v0
-    // at all, having been born into v1.
-    expect(after.world.groups.get(copy)?.birth).toEqual(1);
+    // at all, what it holds having been born into v1.
+    for (const m of after.world.groups.get(copy)!.members) {
+      expect(after.world.polygons.get(m)?.birth).toEqual(1);
+    }
     expect(shapeArea(csg(after.world, 1)))
       .toBeCloseTo(2 * shapeArea(csg(before, 1)), 6);
     expect(shapeArea(csg(after.world, 0)))
@@ -1709,10 +1711,10 @@ describe('taken out at a version, and standing at the ones before it', () => {
     expect(there(gone, 1)).toEqual([...ids].sort());
     expect(there(gone, 2)).toEqual([]);
 
-    // The membership is a fact about every version that still has the group,
-    // so it survives the removal exactly as it was.
-    expect(gone.groups.get(made.id)!.members).toEqual(made.world.groups.get(made.id)!.members);
-    expect(gone.groups.get(made.id)!.death).toEqual(2);
+    // The group is one fact about every keyframe, so it survives the removal
+    // exactly as it was: what went is what it holds.
+    expect(gone.groups.get(made.id)).toEqual(made.world.groups.get(made.id));
+    expect(ids.map(id => gone.polygons.get(id)!.death)).toEqual([2, 2]);
   });
 
   test('one member of a group goes without the group going', () => {
@@ -1725,7 +1727,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
     const gone = removeAt(made.world, 2, [ids[1]]);
 
     expect(there(gone, 2)).toEqual([ids[0]]);
-    expect(gone.groups.get(made.id)!.death).toEqual(null);
+    expect(gone.polygons.get(ids[0])!.death).toEqual(null);
   });
 
   test('a member that went first is not moved by the group going later', () => {
@@ -1742,7 +1744,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
     expect(both.polygons.get(ids[0])!.death).toEqual(3);
   });
 
-  test('taking a dead group apart hands its death down to the members', () => {
+  test('taking apart a group whose rooms are gone leaves them gone', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(300, 0, 100, 100)],
@@ -1752,16 +1754,16 @@ describe('taken out at a version, and standing at the ones before it', () => {
     const gone = removeAt(made.world, 2, [made.id]);
     const apart = ungrouped(gone, made.id)!;
 
-    // Otherwise the rooms would come back: the group that took them is no
-    // longer there to have taken them.
+    // The deaths were written on the rooms, so there is nothing for taking
+    // the handle away to hand down.
     expect(there(apart, 1)).toEqual([...ids].sort());
     expect(there(apart, 2)).toEqual([]);
   });
 
-  test('drawn into a group that a later version already took out, it goes too', () => {
-    // The one case nothing can write a death for: at v3 the group is already
-    // gone, and at v1 a room is drawn into it. Nobody was there to mark the
-    // room, and it must still go where the group went.
+  test('drawn into a group whose rooms a later keyframe took out, it stays', () => {
+    // Deleting the group at v3 took out what it held then. A room drawn into it
+    // at v1 afterwards was not among them: the group is a handle, and has no
+    // death of its own to hand on.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(300, 0, 100, 100)],
@@ -1773,8 +1775,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
 
     expect(added.world.polygons.get(added.id)!.death).toEqual(null);
     expect(there(added.world, 2)).toContain(added.id);
-    expect(there(added.world, 3)).not.toContain(added.id);
-    expect(there(added.world, 4)).toEqual([]);
+    expect(there(added.world, 4)).toEqual([added.id]);
   });
 
   test('and so does an artefact dropped into one', () => {
@@ -1788,7 +1789,7 @@ describe('taken out at a version, and standing at the ones before it', () => {
     const put = addArtefact(gone, 'key', { x: 50, y: 50 }, 1, landing(gone, 1, made.id));
 
     expect(placeAt(put.world, put.id, 2)).not.toBeNull();
-    expect(placeAt(put.world, put.id, 3)).toBeNull();
+    expect(placeAt(put.world, put.id, 3)).not.toBeNull();
   });
 
   test('a copy of something doomed is doomed the same number of versions on', () => {

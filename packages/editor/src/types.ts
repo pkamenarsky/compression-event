@@ -363,12 +363,18 @@ export function standing(
 }
 
 /**
- * Polygons and groups held together, so that one transform moves all of them.
+ * Polygons and groups held together, so that one timeline moves all of them.
  *
- * **Structure is global; the transform is versioned.** Membership is one fact
- * about the world — a polygon is in this group or it is not, at every version
- * that has both. The transform has to be per-version or a group could not be
- * eroded at v3, which is what group transforms are for.
+ * **Structure is global; the timeline is per keyframe.** Membership is one
+ * fact about the world — a polygon is in this group or it is not, at every
+ * keyframe — and so is the group itself: it has no birth and no death, and is
+ * there wherever anything it holds is. What differs from keyframe to keyframe
+ * is what its timeline does, or a group could not be eroded at v3, which is
+ * what a group's timeline is for.
+ *
+ * Deleting a group at a keyframe takes out what it holds from there on, and
+ * leaves the group holding them: the structure is the same at every keyframe,
+ * and a group with nothing standing in it is simply not drawn there.
  *
  * `members` is ordered and may name groups as well as polygons, so groups nest.
  * Nothing here bounds the depth: the chain a vertex carries is the shader's
@@ -380,19 +386,6 @@ export function standing(
  * `docs/versioning.md`.
  */
 export interface Group {
-  /** The keyframe that introduced it. Nothing before it may name it. */
-  birth: KeyframeId
-  /**
-   * The version whose layer took it out, or nothing while it stands.
-   *
-   * Never on its own: a group's members die with it, because a group is not
-   * geometry and leaving its rooms behind while the thing that holds them
-   * together goes would be a delete that removed less than it drew. What it
-   * does *not* do is change the membership — the group still holds what it held
-   * at every version that still has it, which is the whole reason death is a
-   * version rather than a deletion from the map.
-   */
-  death: KeyframeId | null
   members: Id[]
   /**
    * Whether the group is a set of its own, or only a handle.

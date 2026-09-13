@@ -348,62 +348,29 @@ export function facing(m: Affine): number {
 }
 
 /**
- * Every version that takes something out: its own removal, and the removal of
- * any group holding it.
+ * Whether a thing is one of the world's at a keyframe: born into one of the
+ * keyframes in `from`, and not taken out by one.
  *
- * A group goes with what is in it — that is the rule a delete has always
- * followed — so what removes the holder removes the held. `removeAt` writes
- * both, and this is not for the things it wrote. It is for the one case the
- * writing cannot reach: a room drawn *into* a group at v1 when the group was
- * already taken out at v3. Nobody could have written a death on it, since it
- * did not exist when the group went, and it must still go where the group
- * went.
- *
- * Only deaths, never births. A group made at v2 out of rooms drawn at v0 does
- * not un-draw them: grouping is a handle appearing, and removing one is the
- * contents going.
- */
-export function removals(world: World, id: Id): KeyframeId[] {
-  const own = lived(world, id);
-  const out: KeyframeId[] = own === undefined || own.death === null ? [] : [own.death];
-
-  for (const g of enclosing(world, id)) {
-    const death = world.groups.get(g)?.death;
-
-    if (death !== undefined && death !== null) out.push(death);
-  }
-
-  return out;
-}
-
-/**
- * Whether a thing is one of the world's at a version: born into the chain, and
- * neither it nor anything holding it taken out by one.
- *
- * The whole of what existence means here, and the one place that says so.
- * `resolveAt` asks the same question the long way round, because it is walking
- * the chain anyway and can drop a polygon as it passes.
+ * The whole of what existence means here, and the one place that says so. A
+ * group is there wherever anything it holds is: it has no life of its own, the
+ * structure being one fact about every keyframe. See `Group`.
  */
 export function standingIn(world: World, id: Id, from: ReadonlySet<KeyframeId>): boolean {
+  const group = world.groups.get(id);
+
+  if (group !== undefined) return group.members.some(m => standingIn(world, m, from));
+
   const own = lived(world, id);
 
-  if (own === undefined || !standing(own, from)) return false;
-
-  return removals(world, id).every(d => !from.has(d));
+  return own !== undefined && standing(own, from);
 }
 
 /**
- * The stretch of the chain `id` stands over, whichever kind of thing it is.
- *
- * Four maps and one question. Every kind in the world is born into a version
- * and taken out at one — that is what existence means here — and the two
- * readers above want the answer rather than the map it came out of.
+ * The stretch of the keyframes `id` stands over, for anything that has one:
+ * a polygon, an artefact, a path. A group has none.
  */
 function lived(world: World, id: Id): { birth: KeyframeId, death: KeyframeId | null } | undefined {
-  return world.polygons.get(id)
-    ?? world.groups.get(id)
-    ?? world.artefacts.get(id)
-    ?? world.paths.get(id);
+  return world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
 }
 
 /**
@@ -1237,15 +1204,18 @@ export function sealing(world: World, id: GroupId, sealed: boolean): World {
 // -----------------------------------------------------------------------------
 
 /**
- * Whether `v` unchains `id`: whether its list there has a stand in it.
+ * Whether `v` unchains `id`: whether its list there has a stand in it, and it
+ * was there at the keyframe before to stop hearing from.
  *
- * Not at the keyframe it is born into, where a stand is where a pasted thing
- * begins rather than anything it stopped hearing — see `restore`.
+ * Not where it begins, where a stand is where a pasted thing starts rather
+ * than anything it stopped hearing — see `restore`.
  */
 export function unchainedAt(world: World, v: KeyframeId, id: Id): boolean {
-  const it = lived(world, id);
+  const base = keyAt(world, order(world, v) - 1);
 
-  return it !== undefined && it.birth !== v && listAt(world, v, id).some(e => e.op.kind === 'stand');
+  return base !== null
+    && standingIn(world, id, new Set(chain(world, base)))
+    && listAt(world, v, id).some(e => e.op.kind === 'stand');
 }
 
 /**
@@ -1426,7 +1396,7 @@ export function grouped(
   const id = world.nextId;
   const groups = new Map(world.groups);
 
-  groups.set(id, { birth: v, death: null, members: tops, sealed: false });
+  groups.set(id, { members: tops, sealed: false });
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
@@ -1454,11 +1424,6 @@ export function grouped(
  * frame cannot say shear. It is refused whole rather than in part: half an
  * ungroup would leave the members displaced at the keyframes it could not do,
  * which is worse than not having done it.
- *
- * A group that is taken out at a keyframe passes that on too: the members died
- * with it, and letting them outlive the thing whose removal took them would be
- * an ungroup that brought rooms back. The earlier of the two, since a member
- * may already have gone first.
  */
 export function ungrouped(world: World, id: GroupId): World | null {
   const group = world.groups.get(id);
@@ -1484,29 +1449,7 @@ export function ungrouped(world: World, id: GroupId): World | null {
   }
 
   const groups = new Map(world.groups);
-  const polygons = new Map(world.polygons);
-  const artefacts = new Map(world.artefacts);
-  const paths = new Map(world.paths);
   const up = parentOf(world).get(id);
-
-  if (group.death !== null) {
-    const death = group.death;
-
-    for (const member of group.members) {
-      const maps = [groups, polygons, artefacts, paths] as Map<Id, { death: KeyframeId | null }>[];
-
-      for (const map of maps) {
-        const it = map.get(member);
-
-        if (it === undefined) continue;
-
-        map.set(member, {
-          ...it,
-          death: it.death === null || order(world, death) < order(world, it.death) ? death : it.death,
-        });
-      }
-    }
-  }
 
   groups.delete(id);
 
@@ -1521,13 +1464,13 @@ export function ungrouped(world: World, id: GroupId): World | null {
     });
   }
 
-  const out = { ...world, groups, polygons, artefacts, paths, rigs };
+  const out = { ...world, groups, rigs };
 
   // Held to what it promises. Every step of the fold is exact where it is
   // allowed at all, and this is where that is checked rather than argued: a
   // member that would land anywhere else at any keyframe refuses the lot.
   for (const m of group.members.flatMap(m => within(world, m))) {
-    const from = order(world, lived(world, m)?.birth ?? -1);
+    const from = order(world, lived(world, m)?.birth ?? world.keyframes[0].id);
 
     for (const k of world.keyframes.slice(Math.max(0, from))) {
       if (!alike(worldFrame(world, m, k.id), worldFrame(out, m, k.id))) return null;
@@ -1633,11 +1576,10 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op | null {
  */
 function folded(world: World, g: GroupId, m: Id): Rig | null {
   const rig = rigOf(world, m);
+  // From its birth, or from the first keyframe for a group, whose timeline
+  // plays from there.
   const born = lived(world, m);
-
-  if (born === undefined) return rig;
-
-  const first = order(world, born.birth);
+  const first = born !== undefined ? order(world, born.birth) : world.groups.has(m) ? 0 : -1;
   const keys = new Map<KeyframeId, Entry[]>();
 
   if (first < 0) return rig;
@@ -3333,7 +3275,7 @@ export function addVertex(
  * polygon, and that is a different thing to ask for.
  */
 /**
- * Polygons, groups and artefacts taken out as of `v`, and standing as they were
+ * Polygons, artefacts and paths taken out as of `v`, and standing as they were
  * before it.
  *
  * The same shape as `removeVertices`, one level up, and for the same reasons.
@@ -3343,24 +3285,22 @@ export function addVertex(
  * stops walking a thing at its death, so what is left behind is inert rather
  * than wrong.
  *
- * A group goes with everything under it. That is the rule a delete already
- * followed when it was global — picking a group is picking the rooms in it, and
- * removing the thing that holds them together while they stayed would be a
- * delete that removed less than it drew — and it is the rule here, one version
- * at a time. What it does *not* do is take the group apart: the membership is a
- * fact about the world at every version that still has the group, and `without`
- * is for things that are leaving the world rather than leaving a version.
+ * Deleting a group takes out everything under it — picking a group is picking
+ * the rooms in it — and leaves the group itself alone. It has no life to end:
+ * the structure is one fact about every keyframe, and a group with nothing
+ * standing in it is simply not drawn there. See `Group`.
  *
  * Born into `v` and taken out at `v` is the one case that goes entirely: it
- * never stood anywhere, so there is no version for the record to be about. That
- * one *does* restructure, since what is left is a group holding something that
- * is not in the world at all.
+ * never stood anywhere, so there is no keyframe for the record to be about.
+ * That one *does* restructure, since what is left is a group holding something
+ * that is not in the world at all.
  */
 export function removeAt(world: World, v: KeyframeId, going: Iterable<Id>): World {
   const inherited = new Set(chain(world, v));
 
   // Everything under what was picked, which is what a delete has always
-  // reached. A group is in here as itself as well as through its members.
+  // reached. A group is reached through its members and not as itself: it has
+  // no life to end, and holds them still at the keyframes they stand at.
   const gone = new Set<Id>();
 
   for (const id of going) {
@@ -3368,7 +3308,6 @@ export function removeAt(world: World, v: KeyframeId, going: Iterable<Id>): Worl
   }
 
   const polygons = new Map(world.polygons);
-  const groups = new Map(world.groups);
   const artefacts = new Map(world.artefacts);
   const paths = new Map(world.paths);
   const outright = new Set<Id>();
@@ -3402,9 +3341,6 @@ export function removeAt(world: World, v: KeyframeId, going: Iterable<Id>): Worl
     const polygon = polygons.get(id);
     if (polygon !== undefined) take(polygons, id, polygon);
 
-    const group = groups.get(id);
-    if (group !== undefined) take(groups, id, group);
-
     const artefact = artefacts.get(id);
     if (artefact !== undefined) take(artefacts, id, artefact);
 
@@ -3414,7 +3350,7 @@ export function removeAt(world: World, v: KeyframeId, going: Iterable<Id>): Worl
 
   if (!changed) return world;
 
-  const out = { ...world, polygons, groups, artefacts, paths };
+  const out = { ...world, polygons, artefacts, paths };
 
   return outright.size === 0 ? out : without(out, outright);
 }
@@ -3602,13 +3538,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       const members = group.members.flatMap(m => clip(m, false));
       const { keysOf: _rig, ...time } = timed(id, outermost);
 
-      return members.length === 0 ? [] : [{
-        kind: 'group',
-        sealed: group.sealed,
-        members,
-        death: outliving(world, group, v),
-        ...time,
-      }];
+      return members.length === 0 ? [] : [{ kind: 'group', sealed: group.sealed, members, ...time }];
     }
 
     const polygon = world.polygons.get(id);
@@ -3772,7 +3702,7 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { birth: v, death: landingAt(out, v, clip.death), members, sealed: clip.sealed });
+    groups.set(id, { members, sealed: clip.sealed });
     out = { ...out, groups, nextId: id + 1 };
 
     return { world: written(out, v, id, clip, none, none, into), id };

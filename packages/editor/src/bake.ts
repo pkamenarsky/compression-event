@@ -987,12 +987,10 @@ function flightOf(world: World, from: number, id: Id, here: boolean, there: bool
 /**
  * Every group holding something, and what each is in flight with.
  *
- * Membership is global, so which groups these are is not a question about when
- * any of them was made — and a group's own timeline runs from the first
- * keyframe, so it always has a near end. What *is* a question is whether it is
- * still there at the far end: a group taken out at `from + 1` may still have
- * something written there from before it was, and playing it would carry a
- * shrinking room off to somewhere the editor never draws.
+ * A group is global and its timeline runs from the first keyframe, so it
+ * always has a near end. What can still be asked is whether anything of it is
+ * there at the far end: one whose rooms all go at `from + 1` plays nothing, so
+ * that what it held stands still while it goes, as a dead polygon does.
  */
 function holders(world: World, from: number, id: Id): Holder[] {
   const there = new Set(chain(world, keyAt(world, from + 1)!));
@@ -1366,8 +1364,8 @@ function casting(world: World, from: number): Cast {
 
   for (const id of scopes.keys()) {
     riders.set(id, {
-      // Nothing played, for a group the later keyframe takes out: it stands
-      // still while it goes, as a dead polygon does. See `moving`.
+      // Nothing played, for a group with nothing left in it at the later
+      // keyframe: it stands still while it goes, as a dead polygon does.
       ...flightOf(world, from, id, true, standingIn(world, id, there)),
       holders: holders(world, from, id),
     });

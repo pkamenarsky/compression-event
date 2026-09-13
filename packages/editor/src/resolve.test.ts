@@ -384,7 +384,6 @@ describe('a group made later than what is in it', () => {
   const world = wrote(sealing(made.world, group, true), 1, ids[1], spun(-Math.PI / 6));
 
   test('the rooms it was made of stand before it did', () => {
-    expect(world.groups.get(group)!.birth).toBe(1);
     expect(resolveAt(world, 0).length).toBe(2);
   });
 

@@ -64,10 +64,10 @@ function withSquare(tl: Timeline, id: Id, x: number, y: number, size = 10, birth
   return { ...tl, polygons };
 }
 
-function withGroup(tl: Timeline, id: Id, members: Id[], birth: KeyframeId = 0): Timeline {
+function withGroup(tl: Timeline, id: Id, members: Id[]): Timeline {
   const groups = new Map(tl.groups);
 
-  groups.set(id, { birth, members });
+  groups.set(id, { members });
 
   return { ...tl, groups };
 }

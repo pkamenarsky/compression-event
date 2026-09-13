@@ -210,7 +210,7 @@ describe('save', () => {
     expect(resolveAt(after.world, 2).map(r => r.id)).not.toContain(ids[0]);
   });
 
-  test('a group and an artefact carry theirs too', () => {
+  test('deleting a group writes it onto what it holds, and the group is kept', () => {
     const before = world();
     const ids = [...before.world.polygons.keys()];
     const put = addArtefact(before.world, 'key', { x: 1, y: 2 }, 0, TOP);
@@ -219,7 +219,7 @@ describe('save', () => {
 
     const after = trip({ ...before, world: gone });
 
-    expect(after.world.groups.get(made.id)!.death).toEqual(3);
+    expect(after.world.groups.get(made.id)).toEqual(made.world.groups.get(made.id));
     expect(after.world.artefacts.get(put.id)!.death).toEqual(3);
     expect(after.world.polygons.get(ids[0])!.death).toEqual(3);
   });
