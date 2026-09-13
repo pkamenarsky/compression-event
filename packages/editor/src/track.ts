@@ -9,7 +9,7 @@
 
 import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
-import { Cornered, Place, entryAt } from './keys';
+import { Cornered, Place, entryAt, samePlace } from './keys';
 import { Entry, KeyframeId, Op, counted1, indexIn } from './rig';
 import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
 import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
@@ -225,6 +225,22 @@ export function barOf(world: World, e: Entry, from: number, place: Place, slot =
   }
 
   return { from, place, slot, steps, end, forever, heading };
+}
+
+/**
+ * The entry at `place` and every other in column `col` of `rows` that the
+ * same gesture wrote, in the order of the rows: what a click on it picks. Only
+ * what is shown, since what is not could not be seen to be acted on. Alone,
+ * where it has no gesture.
+ */
+export function gestureOf(world: World, rows: readonly Row[], col: number, place: Place): Place[] {
+  const gesture = entryAt(world, place)?.gesture;
+
+  if (gesture === undefined) return [place];
+
+  const all = rows.flatMap(r => r.cells[col].places).filter(p => entryAt(world, p)?.gesture === gesture);
+
+  return all.filter((p, i) => all.findIndex(q => samePlace(p, q)) === i);
 }
 
 /**

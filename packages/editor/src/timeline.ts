@@ -15,8 +15,14 @@
 // goes. The rightmost icon's lane is the nearest, so no line down crosses
 // another's lane.
 //
+// A click picks an entry and everything else in its column the same gesture
+// wrote, shown here: a multi-corner erosion, or a turn of several things at
+// once. ⌥-click picks the one entry alone. The arrow beside the clicked entry
+// repeats all of them, each told to run to the same keyframe.
+//
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
-// dragging an icon a keyframe along pushes or pulls it. See `keys.ts`.
+// dragging an icon a keyframe along pushes or pulls it, and what is picked
+// with it. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
 // in the file. See `Flags`.
@@ -37,7 +43,7 @@ import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushed
 import { KeyframeId } from './rig';
 import { order, unchainedAt } from './scene';
 import { theme } from './theme';
-import { Bar, Cell, Kind, Row, entryLabel, rootsOf, rowsOf, timesTo } from './track';
+import { Bar, Cell, Kind, Row, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Editing, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
@@ -63,7 +69,14 @@ const KEYS = ['Backspace', 'Delete', 'Escape'];
 
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
-  picked: Place | null
+  picked: Picked | null
+}
+
+/** The entry clicked, which the arrow is beside, and everything picked with
+ * it: all in one column, the clicked one among them. */
+interface Picked {
+  lead: Place
+  all: Place[]
 }
 
 interface Model {
@@ -73,7 +86,7 @@ interface Model {
   widths: number[]
   current: number
   rows: Row[]
-  picked: Place | null
+  picked: Picked | null
 }
 
 export function timeline(
@@ -197,7 +210,7 @@ function keys(ctx: Ctx, input: Input): VNode {
 
       const w = ctx.state().world;
 
-      ctx.acted(e.altKey ? pushedAt(w, [picked]) : droppedAt(w, [picked]));
+      ctx.acted(e.altKey ? pushedAt(w, picked.all) : droppedAt(w, picked.all));
     }
   });
 }
@@ -214,8 +227,9 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
 
   // As wide as the fullest cell in it, the picked entry's arrow counted, and
   // never narrower than a handful.
+  const arrowIn = (r: Row, col: number) => picked !== null && r.cells[col].places.some(p => samePlace(p, picked.lead));
   const widths = world.keyframes.map((_f, col) =>
-    Math.max(ROOMY, ...rows.map(r => r.cells[col].places.length + (r.cells[col].places.some(p => picked !== null && samePlace(p, picked)) ? 1 : 0))) * SLOT + 2 * PAD);
+    Math.max(ROOMY, ...rows.map(r => r.cells[col].places.length + (arrowIn(r, col) ? 1 : 0))) * SLOT + 2 * PAD);
   const xs: number[] = [];
   let x = LABEL;
 
@@ -240,8 +254,8 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
 }
 
 /** A pick that still names something. */
-function valid(world: World, picked: Place | null): Place | null {
-  return picked !== null && entryAt(world, picked) !== undefined ? picked : null;
+function valid(world: World, picked: Picked | null): Picked | null {
+  return picked !== null && entryAt(world, picked.lead) !== undefined ? picked : null;
 }
 
 /**
@@ -296,7 +310,7 @@ function slot(m: Model, col: number, i: number): number {
 function pickedIn(m: Model, r: Row, col: number): number {
   const p = m.picked;
 
-  return p === null ? -1 : r.cells[col].places.findIndex(q => samePlace(q, p));
+  return p === null ? -1 : r.cells[col].places.findIndex(q => samePlace(q, p.lead));
 }
 
 /** Where a cell's `i`-th icon sits: the picked one's arrow takes the slot after
@@ -508,7 +522,7 @@ function switches(ctx: Ctx, r: Row): VNode[] {
 }
 
 function isPicked(m: Model, place: Place): boolean {
-  return m.picked !== null && samePlace(m.picked, place);
+  return m.picked !== null && m.picked.all.some(p => samePlace(p, place));
 }
 
 /** Each kind's icon, stroked in a 14 × 14 box. */
@@ -544,29 +558,31 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       // Twice is an edit, by the gesture the entry was written by: see
       // `editing` in `canvas.ts`. Only a list's: a corner's is written by
       // dragging the corner.
-      const click = () => {
+      const click = (e: PointerEvent) => {
         const now = performance.now();
         const was = ctx.clicked;
         const twice = was !== null && samePlace(was.place, place) && now - was.when < DOUBLE_MS;
+        const w = ctx.state().world;
 
         ctx.clicked = twice ? null : { place, when: now };
         ctx.go(at);
-        ctx.change(l => ({ ...l, picked: place }));
+        ctx.change(l => ({ ...l, picked: { lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) } }));
 
         if (twice && 'index' in place) ctx.edits.emit(place);
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the
-      // one before, which is a pull from where it is seen from there.
+      // one before — and what is picked with it, where it is picked.
       const moved = (clientX: number) => {
         const w = ctx.state().world;
         const to = colAt(ctx, clientX);
+        const going = picked && m.picked !== null ? m.picked.all : [place];
 
         if (to > col) {
-          ctx.acted(pushedAt(w, [place]));
+          ctx.acted(pushedAt(w, going));
         }
         else if (to < col) {
-          ctx.acted(pulledAt(w, [place]));
+          ctx.acted(pulledAt(w, going));
         }
       };
 
@@ -613,7 +629,7 @@ function entryTitle(ctx: Ctx, place: Place): string {
  * never went anywhere, and `done` with where it was let go otherwise. The
  * element follows the pointer meanwhile, and nothing is written until then.
  */
-function dragged(e: PointerEvent, click: () => void, done: (clientX: number) => void): void {
+function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (clientX: number) => void): void {
   if (e.button !== 0) return;
 
   e.preventDefault();
@@ -637,7 +653,7 @@ function dragged(e: PointerEvent, click: () => void, done: (clientX: number) => 
     el.style.transform = was;
 
     if (moving) done(ev.clientX);
-    else click();
+    else click(ev);
   };
 
   window.addEventListener('pointermove', move);
@@ -720,15 +736,16 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
 
 /**
  * The picked entry's arrow, in the slot after its icon and drawn unlike any
- * entry: dragged to a keyframe, the entry repeats to there — to its own is
- * once, and to the last is to the end.
+ * entry: dragged to a keyframe, what is picked repeats to there — to its own
+ * is once, and to the last is to the end. Each is told outright, whatever it
+ * did before.
  */
 function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
   const p = m.picked;
 
   if (p === null) return [];
 
-  const col = m.keyframes.findIndex(f => f.id === p.at);
+  const col = m.keyframes.findIndex(f => f.id === p.lead.at);
   const i = pickedIn(m, r, col);
 
   if (i < 0) return [];
@@ -736,10 +753,17 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
   const x = slot(m, col, i + 1);
 
   const done = (clientX: number) => {
-    const w = ctx.state().world;
-    const e = entryAt(w, p);
+    const to = colAt(ctx, clientX);
+    let w: World | Refused = ctx.state().world;
 
-    if (e !== undefined) ctx.acted(timedAt(w, p, timesTo(w, e, col, colAt(ctx, clientX))));
+    for (const q of p.all) {
+      const e = entryAt(w, q);
+
+      if (e !== undefined) w = timedAt(w, q, timesTo(w, e, col, to));
+      if ('refused' in w) break;
+    }
+
+    ctx.acted(w);
   };
 
   return [box({

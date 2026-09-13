@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, grouped, listAt, reachable, rigOf, unchained, withRig } from './scene';
+import { TOP, addPolygon, deepen, grouped, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deepened, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, pushed, skipToggled } from './keys';
-import { barOf, beneath, rootsOf, rowsOf, timesTo } from './track';
+import { barOf, beneath, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { erode, move, repeated, scaled, wrote } from './testing';
 import { restored, saved } from './save';
-import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, initialState, visible } from './types';
+import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, gestured, initialState, visible } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -81,6 +81,27 @@ describe('corner rows', () => {
     expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }, { id, at: 1, corner: corners[2], kind: 'erode' }]);
     expect(rows[2].cells[1].kinds).toEqual(['move', 'erode']);
     expect(rows[1].bars.map(b => [b.from, b.end])).toEqual([[3, 4]]);
+  });
+});
+
+describe('gestures', () => {
+  test('a click picks what the same gesture wrote in its column, corners and all', () => {
+    const a = room();
+    const b = room(a.world);
+    const corners = b.world.polygons.get(a.id)!.points.map(c => c.id);
+    const eroded = gestured(deepen(b.world, 1, a.id, new Set(corners.slice(0, 3)), 2), b.world);
+    const turned = gestured(wrote(wrote(eroded, 1, a.id, move(1, 0)), 1, b.id, move(1, 0)), eroded);
+    const rows = rowsOf(turned, [a.id, b.id], true);
+
+    expect(gestureOf(turned, rows, 1, { id: a.id, at: 1, corner: corners[1], kind: 'erode' })).toEqual(
+      corners.slice(0, 3).map(c => ({ id: a.id, at: 1, corner: c, kind: 'erode' })),
+    );
+    expect(gestureOf(turned, rows, 1, { id: b.id, at: 1, index: 0 })).toEqual([{ id: a.id, at: 1, index: 0 }, { id: b.id, at: 1, index: 0 }]);
+
+    // Written by no gesture, it is picked alone.
+    const bare = wrote(turned, 2, a.id, erode(1));
+
+    expect(gestureOf(bare, rowsOf(bare, [a.id]), 2, { id: a.id, at: 2, index: 0 })).toEqual([{ id: a.id, at: 2, index: 0 }]);
   });
 });
 
