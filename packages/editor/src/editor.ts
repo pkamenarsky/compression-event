@@ -1281,19 +1281,15 @@ function stripButton(x: number, label: string, onclick: () => void): VNode {
 }
 
 /**
- * A keyframe put in after the one on screen, and stood in: it takes the first
- * half of what the next one does. See `inserted` in `keys.ts`.
+ * A keyframe put in after the one on screen, and stood in: one where nothing
+ * happens yet. See `inserted` in `keys.ts`.
  */
 function insertedAfter(s: EditorState): EditorState {
   const out = inserted(s.world, s.keyframe);
 
   if (out === null) return s;
 
-  const next = marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
-
-  return out.held.length === 0
-    ? next
-    : saying(next, `${out.held.length} held still over the new keyframe: what they do next would not cut in two`);
+  return marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
 }
 
 /** The keyframe on screen taken out, standing in the one after it — or before

@@ -110,6 +110,8 @@ export interface SavedRig {
 export interface SavedEntry {
   op: SavedOp
   times: number | null
+  /** Absent is none. */
+  skip?: KeyframeId[]
 }
 
 /** An operation, with a stand's two maps written out as entries. */
@@ -160,7 +162,7 @@ function savedEntry(e: Entry): SavedEntry {
     ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
-  return { op, times: e.times };
+  return e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
 }
 
 function restoredEntry(e: SavedEntry): Entry {
@@ -174,7 +176,7 @@ function restoredEntry(e: SavedEntry): Entry {
       }
     : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
 
-  return { op, times: e.times };
+  return e.skip === undefined || e.skip.length === 0 ? { op, times: e.times } : { op, times: e.times, skip: new Set(e.skip) };
 }
 
 function restoredRig(rig: SavedRig): Rig {

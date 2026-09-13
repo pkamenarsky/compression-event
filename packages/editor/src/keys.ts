@@ -1,36 +1,19 @@
 // -----------------------------------------------------------------------------
 // Moving operations, and the keyframes they are written at
 //
-// An entry is taken out, moved to the keyframe beside it, cut in two or told
-// how often to repeat — each whole, nothing recomputed about the ones around
-// it. Where a thing ends up afterwards is the list played again.
+// An entry is taken out, moved to the keyframe beside it, or told how often
+// to repeat — each whole, nothing recomputed about the ones around it. Where a
+// thing ends up afterwards is the list played again.
 //
-// Keyframes come and go the same way. Inserting one cuts in two what the next
-// keyframe does and gives it the first half; deleting one hands what it does,
-// and what is born and dies there, to the next. A repeat's span counts steps,
-// so a keyframe inserted inside one adds a step to it and a keyframe deleted
-// from inside one takes a step away: it ends where it ended.
+// Keyframes come and go the same way. An inserted one is a keyframe where
+// nothing happens: every repeat running across it skips it. A deleted one
+// hands what it does, and what is born and dies there, to the next, and a
+// repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
 
-import {
-  Entry,
-  Erode,
-  Keyframe,
-  KeyframeId,
-  Move,
-  Op,
-  Rig,
-  indexIn,
-  near,
-  once,
-  sheared,
-  slid,
-  spun,
-  unsheared,
-  withKeys,
-} from './rig';
+import { Entry, Erode, Keyframe, KeyframeId, Move, Op, Rig, counted1, indexIn, skipping, withKeys } from './rig';
 import { rigOf, withRig, without } from './scene';
-import { Id, Vertex, VertexId, World } from './types';
+import { Id, VertexId, World } from './types';
 
 /** An entry by its place in the list, or every entry of one kind. */
 export type Which = number | Op['kind'];
@@ -98,7 +81,9 @@ export function pushed(world: World, id: Id, k: KeyframeId, which: Which): World
   const head = stands(there);
   const rig = withKeys(rigOf(world, id), k, list.filter((e, i) => !chosen(e, i, which)));
 
-  return withRig(world, id, withKeys(rig, next, [...there.slice(0, head), ...going, ...there.slice(head)]));
+  const moved = going.map(e => skipping(world.keyframes, e, next));
+
+  return withRig(world, id, withKeys(rig, next, [...there.slice(0, head), ...moved, ...there.slice(head)]));
 }
 
 /** The chosen entries of the keyframe after `k` moved, whole and in order, to
@@ -130,88 +115,6 @@ function stands(list: readonly Entry[]): number {
   return i < 0 ? list.length : i;
 }
 
-/**
- * One entry cut in two where it is `fraction` of the way, the halves side by
- * side in its place. Played one after the other they are the entry exactly.
- *
- * A repeating move or erosion splits into two repeats, which add. A repeating
- * turn, scale or skew does not: each half's steps would keep to its own centre
- * with the other half moving it.
- */
-export function split(world: World, id: Id, k: KeyframeId, index: number, fraction = 0.5): World | Refused {
-  if (!(fraction > 0 && fraction < 1)) return { refused: 'a split falls inside the operation' };
-
-  const list = listOf(world, id, k);
-  const e = list[index];
-
-  if (e === undefined) return world;
-
-  if (e.times !== 1 && e.op.kind !== 'move' && e.op.kind !== 'erode') {
-    return { refused: 'a repeating turn, scale or skew does not split' };
-  }
-
-  const two = parts(e.op, fraction);
-
-  if (two === null) return { refused: `a ${e.op.kind} does not split` };
-
-  const now = [...list.slice(0, index), { ...e, op: two[0] }, { ...e, op: two[1] }, ...list.slice(index + 1)];
-
-  return withRig(world, id, withKeys(rigOf(world, id), k, now));
-}
-
-/**
- * An operation as two, the first doing `f` of it and the second the rest,
- * about the same centre: the second turn's `about` is the first's turned by
- * the first, which is where the painted point went, and a scale's slide is
- * shared the way playback shares it. Nothing for a stand.
- */
-export function parts(op: Op, f: number): [Op, Op] | null {
-  switch (op.kind) {
-    case 'move':
-      return [
-        { kind: 'move', by: { x: op.by.x * f, y: op.by.y * f } },
-        { kind: 'move', by: { x: op.by.x * (1 - f), y: op.by.y * (1 - f) } },
-      ];
-
-    case 'erode':
-      return [{ kind: 'erode', by: op.by * f }, { kind: 'erode', by: op.by * (1 - f) }];
-
-    case 'turn':
-      return [
-        { ...op, angle: op.angle * f },
-        { ...op, angle: op.angle * (1 - f), about: spun(op.about, op.angle * f) },
-      ];
-
-    case 'scale': {
-      if (op.by.x <= 0 || op.by.y <= 0) return null;
-
-      // `(1 − Dᶠ) / (1 − D)` of the slide along each axis, and the rest after:
-      // the first stretches about the gesture's centre, and so does the second,
-      // from where the first left the painted point.
-      const s = unsheared(op.shift, op.along, op.lean);
-      const first = sheared({ x: s.x * slid(op.by.x, f), y: s.y * slid(op.by.y, f) }, op.along, op.lean);
-
-      return [
-        { ...op, by: { x: Math.pow(op.by.x, f), y: Math.pow(op.by.y, f) }, shift: first },
-        {
-          ...op,
-          by: { x: Math.pow(op.by.x, 1 - f), y: Math.pow(op.by.y, 1 - f) },
-          shift: { x: op.shift.x - first.x, y: op.shift.y - first.y },
-        },
-      ];
-    }
-
-    case 'skew':
-      return [
-        { ...op, by: op.by * f, shift: { x: op.shift.x * f, y: op.shift.y * f } },
-        { ...op, by: op.by * (1 - f), shift: { x: op.shift.x * (1 - f), y: op.shift.y * (1 - f) } },
-      ];
-
-    case 'stand':
-      return null;
-  }
-}
-
 /** How many keyframes an entry contributes to: `null` to the end. */
 export function timed(world: World, id: Id, k: KeyframeId, index: number, times: number | null): World | Refused {
   if (times !== null && !(Number.isInteger(times) && times >= 1)) return { refused: 'a repeat runs once or more' };
@@ -236,45 +139,42 @@ function numbered(keyframes: readonly Keyframe[]): Keyframe[] {
   return keyframes.map((f, i) => (/^v\d+$/.test(f.name) || f.name === '' ? { ...f, name: `v${i}` } : f));
 }
 
-/** An entry written at index `i` with one step more or fewer, where it was
- * written before index `at` and its span reaches it. */
-function respanned<E extends Entry>(e: E, i: number, at: number, by: 1 | -1): E {
-  if (e.times === null || i >= at || i + e.times - 1 < at) return e;
-
-  return { ...e, times: Math.max(1, e.times + by) };
+/** Whether an entry written at index `j` has steps left to take after index
+ * `i`. */
+function going(keyframes: readonly Keyframe[], e: Entry, j: number, i: number): boolean {
+  return e.times === null || counted1(keyframes, e, j, i) < e.times;
 }
 
-/** An entry moved off a deleted keyframe onto the next, ending where it
- * ended. */
-function fewer<E extends Entry>(e: E): E {
-  return e.times === null || e.times === 1 ? e : { ...e, times: e.times - 1 };
+/** Whether an entry written at index `j` takes a step at index `i`. */
+function stepsAt(keyframes: readonly Keyframe[], e: Entry, j: number, i: number): boolean {
+  return i > j && !e.skip?.has(keyframes[i].id) && going(keyframes, e, j, i - 1);
 }
 
-function respannedMap<E extends Entry>(
-  keyframes: readonly Keyframe[],
-  map: ReadonlyMap<KeyframeId, E>,
-  at: number,
-  by: 1 | -1,
-): Map<KeyframeId, E> {
-  return new Map([...map].map(([k, e]) => [k, respanned(e, indexIn(keyframes, k), at, by)]));
+/** Every entry of a rig, wherever it is written, through `f`: the lists and
+ * both corner maps. */
+function everyEntry(rig: Rig, f: <E extends Entry>(e: E, k: KeyframeId) => E): Rig {
+  const maps = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
+    new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, f(e, k)]))]));
+
+  return {
+    keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(e => f(e, k))])),
+    nudges: maps(rig.nudges),
+    depths: maps(rig.depths),
+  };
 }
 
 export interface Inserted {
   world: World
   key: KeyframeId
-  /** Things whose next keyframe could not be cut in two exactly — it turns
-   * and scales about different points, whose halves would not agree in a
-   * different order — and which stand still over the new one instead. */
-  held: Id[]
 }
 
 /**
- * A keyframe put in after `after`.
+ * A keyframe put in after `after`, where nothing happens.
  *
- * It takes the first half of what the keyframe after it does to each thing,
- * and leaves the second half there, so that keyframe is where it was. Only
- * the entries that happen once are cut: a repeat begun there begins there
- * still, and one already running takes a step at the new keyframe too.
+ * It is the keyframe before it over again, and every keyframe after it is
+ * where it was: nothing is written there, and every repeat running across it
+ * skips it. What goes on there is then brought in by hand — pulled from the
+ * next keyframe, pushed from the one before, or done there.
  */
 export function inserted(world: World, after: KeyframeId): Inserted | null {
   const keyframes = world.keyframes;
@@ -283,112 +183,19 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
   if (j < 0) return null;
 
   const key = Math.max(...keyframes.map(f => f.id)) + 1;
-  const next = keyframes[j + 1]?.id ?? null;
-  const rigs = new Map<Id, Rig>();
-  const held: Id[] = [];
-  const corners = cornersOf(world);
 
-  // Spans that run past `after` reach the new keyframe at `j + 1`.
-  for (const [id, rig] of world.rigs) {
-    const keys = new Map([...rig.keys].map(([k, list]) => {
-      const i = indexIn(keyframes, k);
+  const skipped = <E extends Entry>(e: E, k: KeyframeId): E => {
+    const i = indexIn(keyframes, k);
 
-      return [k, list.map(e => respanned(e, i, j + 1, 1))];
-    }));
+    if (i > j || !going(keyframes, e, i, j)) return e;
 
-    const nudges = new Map([...rig.nudges].map(([v, m]) => [v, respannedMap(keyframes, m, j + 1, 1)]));
-    const depths = new Map([...rig.depths].map(([v, m]) => [v, respannedMap(keyframes, m, j + 1, 1)]));
+    return { ...e, skip: new Set([...(e.skip ?? []), key]) };
+  };
 
-    const born = bornAt(world, id);
-    const there = next === null ? [] : keys.get(next) ?? [];
-
-    if (next !== null && born >= 0 && born <= j && !there.some(e => e.op.kind === 'stand')) {
-      const halves = halved(there);
-
-      if (halves === null) {
-        held.push(id);
-      }
-      else if (halves[0].length > 0) {
-        keys.set(key, halves[0]);
-        keys.set(next, halves[1]);
-      }
-
-      // A corner's own moves commute with everything, so they always cut.
-      for (const maps of [nudges, depths] as Map<VertexId, Map<KeyframeId, Entry>>[]) {
-        for (const [v, m] of maps) {
-          const e = m.get(next);
-          const c = corners.get(v);
-
-          if (e === undefined || e.times !== 1 || c === undefined || indexIn(keyframes, c.birth) > j) continue;
-
-          const [a, b] = parts(e.op, 0.5)!;
-
-          m.set(key, { ...e, op: a });
-          m.set(next, { ...e, op: b });
-        }
-      }
-    }
-
-    rigs.set(id, { keys, nudges, depths } as Rig);
-  }
-
+  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, everyEntry(rig, skipped)]));
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
-  return { world: { ...world, keyframes: order, rigs }, key, held };
-}
-
-/**
- * A list as its first halves and its second, or nothing where the halves
- * played apart would not be the list: the first halves all go before any of
- * the second, so they have to commute. Moves and erosions commute with
- * anything; turns about one painted point with each other, and scales, and
- * skews, but not with one another.
- */
-function halved(list: readonly Entry[]): [Entry[], Entry[]] | null {
-  const shaping = list.map(e => e.op).filter(op => op.kind !== 'move' && op.kind !== 'erode');
-  const first = shaping[0];
-
-  if (first !== undefined && !shaping.every(op => together(first, op))) return null;
-
-  const a: Entry[] = [], b: Entry[] = [];
-
-  for (const e of list) {
-    if (e.times !== 1) {
-      b.push(e);
-      continue;
-    }
-
-    const two = parts(e.op, 0.5);
-
-    if (two === null) return null;
-
-    a.push(once(two[0]));
-    b.push(once(two[1]));
-  }
-
-  return [a, b];
-}
-
-function together(x: Op, y: Op): boolean {
-  if (x.kind === 'turn' && y.kind === 'turn') return near(x.ref, y.ref);
-
-  if (x.kind === 'scale' && y.kind === 'scale') {
-    return near(x.ref, y.ref) && x.along === y.along && x.lean === y.lean;
-  }
-
-  if (x.kind === 'skew' && y.kind === 'skew') return near(x.ref, y.ref) && x.along === y.along;
-
-  return false;
-}
-
-function cornersOf(world: World): Map<VertexId, Vertex> {
-  const out = new Map<VertexId, Vertex>();
-
-  for (const p of world.polygons.values()) {
-    for (const c of p.points) out.set(c.id, c);
-  }
-
-  return out;
+  return { world: { ...world, keyframes: order, rigs }, key };
 }
 
 /**
@@ -396,7 +203,8 @@ function cornersOf(world: World): Map<VertexId, Vertex> {
  *
  * What it does to each thing goes to the front of the next keyframe's list,
  * and what is born or dies at it is born or dies at the next — a thing that
- * then lives nowhere goes entirely. The last keyframe's writing goes with it,
+ * then lives nowhere goes entirely. A repeat that stepped there has one step
+ * fewer, so it ends where it ended. The last keyframe's writing goes with it,
  * what dies there lives to the end, and what is born there goes.
  *
  * Refused where one corner would end up with two repeats at one keyframe,
@@ -410,28 +218,40 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
   if (keyframes.length === 1) return { refused: 'the only keyframe stays' };
 
   const next = keyframes[d + 1]?.id ?? null;
+  const left = keyframes.filter(f => f.id !== k);
+
+  // Written before it and stepping there, or written there and stepping at
+  // the next, which is now where it begins: a step fewer either way. Its skips
+  // are the ones still ahead of where it is written.
+  const shortened = <E extends Entry>(e: E, at: KeyframeId): E => {
+    const i = indexIn(keyframes, at);
+    const lost = i < d
+      ? stepsAt(keyframes, e, i, d)
+      : i === d && next !== null && stepsAt(keyframes, e, d, d + 1);
+    const out = lost && e.times !== null ? { ...e, times: e.times - 1 } : e;
+
+    return skipping(left, out, i === d && next !== null ? next : at);
+  };
+
   const rigs = new Map<Id, Rig>();
 
-  for (const [id, rig] of world.rigs) {
-    const keys = new Map<KeyframeId, readonly Entry[]>();
+  for (const [id, was] of world.rigs) {
+    const rig = everyEntry(was, shortened);
+    const keys = new Map(rig.keys);
+    const mine = keys.get(k) ?? [];
 
-    for (const [at, list] of rig.keys) {
-      const i = indexIn(keyframes, at);
+    keys.delete(k);
 
-      if (at !== k) keys.set(at, list.map(e => respanned(e, i, d, -1)));
-    }
+    if (next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
 
-    const mine = rig.keys.get(k) ?? [];
-
-    if (next !== null && mine.length > 0) {
-      keys.set(next, [...mine.map(e => fewer(e)), ...(keys.get(next) ?? [])]);
-    }
-
-    const nudges = cornerMaps<Move, Entry<Move>>(keyframes, rig.nudges, k, next, (a, b) => ({
+    const nudges = cornerMaps<Move, Entry<Move>>(rig.nudges, k, next, (a, b) => ({
       kind: 'move' as const,
       by: { x: a.by.x + b.by.x, y: a.by.y + b.by.y },
     }));
-    const depths = cornerMaps<Erode, Entry<Erode>>(keyframes, rig.depths, k, next, (a, b) => ({ kind: 'erode' as const, by: a.by + b.by }));
+    const depths = cornerMaps<Erode, Entry<Erode>>(rig.depths, k, next, (a, b) => ({
+      kind: 'erode' as const,
+      by: a.by + b.by,
+    }));
 
     if (nudges === null || depths === null) {
       return { refused: 'a corner would have two repeats at one keyframe' };
@@ -439,7 +259,6 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
     rigs.set(id, { keys, nudges, depths });
   }
-
   // A life moved off `k`, or nothing where none is left.
   const life = <T extends { birth: KeyframeId, death: KeyframeId | null }>(it: T): T | null => {
     const moved = (x: KeyframeId): KeyframeId | null => (x === k ? next : x);
@@ -506,7 +325,7 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
   const out: World = {
     ...world,
-    keyframes: numbered(keyframes.filter(f => f.id !== k)),
+    keyframes: numbered(left),
     polygons,
     artefacts,
     paths,
@@ -519,32 +338,24 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 /** A rig's corner maps with `k` taken out: its entries handed to `next`, and
  * added to what is there where both happen as often. */
 function cornerMaps<O extends Op, E extends Entry<O>>(
-  keyframes: readonly Keyframe[],
   maps: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
   k: KeyframeId,
   next: KeyframeId | null,
   add: (a: O, b: O) => O,
 ): Map<VertexId, Map<KeyframeId, E>> | null {
-  const d = indexIn(keyframes, k);
   const out = new Map<VertexId, Map<KeyframeId, E>>();
 
   for (const [v, map] of maps) {
-    const m = new Map<KeyframeId, E>();
+    const m = new Map(map);
+    const mine = m.get(k);
 
-    for (const [at, e] of map) {
-      const i = indexIn(keyframes, at);
-
-      if (at !== k) m.set(at, respanned(e, i, d, -1));
-    }
-
-    const mine = map.get(k);
+    m.delete(k);
 
     if (next !== null && mine !== undefined) {
-      const moved = fewer(mine);
       const there = m.get(next);
 
-      if (there === undefined) m.set(next, moved);
-      else if (there.times === moved.times) m.set(next, { ...there, op: add(moved.op, there.op) });
+      if (there === undefined) m.set(next, mine);
+      else if (there.times === mine.times && sameSkips(there, mine)) m.set(next, { ...there, op: add(mine.op, there.op) });
       else return null;
     }
 
@@ -552,4 +363,10 @@ function cornerMaps<O extends Op, E extends Entry<O>>(
   }
 
   return out;
+}
+
+function sameSkips(a: Entry, b: Entry): boolean {
+  const x = a.skip ?? new Set(), y = b.skip ?? new Set();
+
+  return x.size === y.size && [...x].every(s => y.has(s));
 }

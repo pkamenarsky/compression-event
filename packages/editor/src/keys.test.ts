@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, listAt, rigOf, withRig } from './scene';
-import { Frame, nudged, stateAt } from './rig';
-import { Refused, deleted, dropped, inserted, pulled, pushed, split, timed } from './keys';
+import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
+import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
+import { Refused, deleted, dropped, inserted, pulled, pushed, timed } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
-import { Id, KeyframeId, World, emptyWorld } from './types';
+import { restored, saved } from './save';
+import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -29,6 +30,10 @@ function expectFrame(a: Frame, b: Frame): void {
   expect(a.scale.y).toBeCloseTo(b.scale.y, 9);
 }
 
+function framedWorld(world: World, id: Id, k: KeyframeId): Frame {
+  return framed(worldFrame(world, id, k))!;
+}
+
 /** Every keyframe of `a` in `b` where they share it, the same. */
 function expectSame(a: World, b: World, id: Id): void {
   for (const f of a.keyframes) {
@@ -37,37 +42,6 @@ function expectSame(a: World, b: World, id: Id): void {
 }
 
 describe('entries', () => {
-  test('a split turn is the turn, and its halves meet halfway', () => {
-    const { world, id } = room();
-    const w = wrote(world, 1, id, turned(1.2, { x: 300, y: -40 }), moved(10, 5));
-    const cut = ok(split(w, id, 1, 0));
-
-    expect(listAt(cut, 1, id).length).toBe(3);
-    expectSame(w, cut, id);
-
-    const half = ok(split(wrote(world, 1, id, turned(1.2, { x: 300, y: -40 })), id, 1, 0, 0.25));
-
-    expect(stateAt(half, id, 1).frame.angle).toBeCloseTo(1.2, 12);
-  });
-
-  test('a split non-uniform scale after a turn is the scale', () => {
-    const { world, id } = room();
-    const w = wrote(world, 1, id, spun(0.7), scaled(2, 0.5, { x: 50, y: 400 }));
-
-    expectSame(w, ok(split(w, id, 1, 1, 0.3)), id);
-  });
-
-  test('a repeating turn does not split; a repeating move does, and stays the same', () => {
-    const { world, id } = room();
-    const w = repeated(world, 1, id, turned(0.3, { x: 200, y: 0 }), 4);
-
-    expect('refused' in split(w, id, 1, 0)).toBe(true);
-
-    const m = repeated(world, 1, id, move(10, 0), null);
-
-    expectSame(m, ok(split(m, id, 1, 0)), id);
-  });
-
   test('drop takes out one entry or every one of a kind', () => {
     const { world, id } = room();
     const w = wrote(world, 2, id, move(1, 0), erode(3), move(0, 1), turned(0.5));
@@ -108,57 +82,101 @@ describe('entries', () => {
 });
 
 describe('keyframes', () => {
-  test('an inserted keyframe takes half of the next, which stays where it was', () => {
+  test('an inserted keyframe is the one before over again, and nothing after it moves', () => {
     const { world, id } = room();
-    const w = wrote(world, 2, id, turned(1, { x: 300, y: 0 }), moved(40, 0), turned(0.4, { x: 300, y: 0 }));
-    const out = inserted(w, 1)!;
+    let w = wrote(world, 2, id, turned(1, { x: 300, y: 0 }), moved(40, 0), scaled(2, 1));
 
-    expect(out.held).toEqual([]);
-    expect(out.world.keyframes.length).toBe(w.keyframes.length + 1);
-    expect(out.world.keyframes[2].id).toBe(out.key);
-    expect(out.world.keyframes.map(f => f.name)).toEqual(out.world.keyframes.map((_f, i) => `v${i}`));
-    expectSame(w, out.world, id);
-    expect(stateAt(out.world, id, out.key).frame.angle).toBeCloseTo(0.7, 12);
-  });
+    w = repeated(w, 1, id, spun(0.3), null);
+    w = repeated(w, 0, id, turned(0.2, { x: -100, y: 50 }), 5);
 
-  test('where the next keyframe turns and scales, the thing holds still over the new one', () => {
-    const { world, id } = room();
-    const w = wrote(world, 2, id, spun(0.5), scaled(2, 1));
-    const out = inserted(w, 1)!;
-
-    expect(out.held).toEqual([id]);
-    expectSame(w, out.world, id);
-    expectFrame(stateAt(out.world, id, out.key).frame, stateAt(w, id, 1).frame);
-  });
-
-  test('a thing born at the next keyframe is not cut', () => {
-    const { world, id } = room(emptyWorld(), 2);
-    const w = wrote(world, 2, id, move(10, 0));
-    const out = inserted(w, 1)!;
-
-    expect(listAt(out.world, out.key, id)).toEqual([]);
-    expectSame(w, out.world, id);
-  });
-
-  test('a repeat running across an inserted keyframe takes a step there, and ends where it ended', () => {
-    const { world, id } = room();
-    const w = repeated(world, 1, id, move(10, 0), 4);
     const out = inserted(w, 2)!;
 
-    expect(listAt(out.world, 1, id)[0].times).toBe(5);
-    expect(stateAt(out.world, id, 4).frame.t.x).toBe(50);
-    expect(stateAt(out.world, id, 5).frame.t.x).toBe(50);
+    expect(out.world.keyframes.length).toBe(w.keyframes.length + 1);
+    expect(out.world.keyframes[3].id).toBe(out.key);
+    expect(out.world.keyframes.map(f => f.name)).toEqual(out.world.keyframes.map((_f, i) => `v${i}`));
+    expectSame(w, out.world, id);
+    expectFrame(stateAt(out.world, id, out.key).frame, stateAt(w, id, 2).frame);
+    expect(listAt(out.world, 1, id)[0].skip).toEqual(new Set([out.key]));
   });
 
-  test('corner nudges at the next keyframe are cut too', () => {
+  test('a repeat that has run out by then is not told to skip', () => {
+    const { world, id } = room();
+    const out = inserted(repeated(world, 1, id, move(10, 0), 2), 3)!;
+
+    expect(listAt(out.world, 1, id)[0].skip).toBe(undefined);
+  });
+
+  test('a repeating corner nudge skips it too', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[0].id;
-    const w = withRig(world, id, nudged(rigOf(world, id), corner, 2, { x: 8, y: 0 }));
-    const out = inserted(w, 1)!;
-    const rest = stateAt(w, id, 1).corners.get(corner)!.x;
+    const rig = { ...rigOf(world, id), nudges: new Map([[corner, new Map([[1, repeating(move(5, 0), null)]])]]) };
+    const w = withRig(world, id, rig);
+    const out = inserted(w, 2)!;
 
-    expect(stateAt(out.world, id, out.key).corners.get(corner)!.x - rest).toBe(4);
-    expect(stateAt(out.world, id, 2).corners.get(corner)!.x - rest).toBe(8);
+    for (const f of w.keyframes) {
+      expect(stateAt(out.world, id, f.id).corners.get(corner)).toEqual(stateAt(w, id, f.id).corners.get(corner));
+    }
+
+    expect(stateAt(out.world, id, out.key).corners.get(corner)).toEqual(stateAt(w, id, 2).corners.get(corner));
+  });
+
+  test('deleting an inserted keyframe gives back what there was', () => {
+    const { world, id } = room();
+    const w = repeated(world, 1, id, spun(0.3), 4);
+    const out = inserted(w, 2)!;
+    const back = ok(deleted(out.world, out.key));
+
+    expect(listAt(back, 1, id)).toEqual(listAt(w, 1, id));
+    expectSame(w, back, id);
+  });
+
+  test('a push takes a skip of the keyframe it now starts at off', () => {
+    const { world, id } = room();
+    const out = inserted(repeated(world, 1, id, move(10, 0), null), 1)!;
+    const there = ok(pushed(out.world, id, 1, 0));
+
+    expect(listAt(there, out.key, id)[0].skip).toBe(undefined);
+  });
+
+  test('ungrouping keeps a skip on the repeats it carries, and everything where it was', () => {
+    const one = room();
+    const two = addPolygon(one.world, { type: 'level' }, rect(300, 0, 50, 50), 0, TOP);
+    const made = grouped(two.world, 0, [one.id, two.id], TOP)!;
+    let w = repeated(made.world, 1, one.id, spun(0.3), null);
+
+    w = repeated(w, 1, made.id, move(20, 0), null);
+
+    const out = inserted(w, 2)!;
+    const apart = ungrouped(out.world, made.id)!;
+
+    for (const e of listAt(apart, 1, one.id).filter(e => e.times === null)) {
+      expect(e.skip).toEqual(new Set([out.key]));
+    }
+
+    for (const f of out.world.keyframes) {
+      expectFrame(stateAt(apart, one.id, f.id).frame, framedWorld(out.world, one.id, f.id));
+    }
+  });
+
+  test('skips are saved', () => {
+    const { world, id } = room();
+    const out = inserted(repeated(world, 1, id, move(10, 0), null), 2)!;
+    const back = restored(saved(initialState(out.world)))!;
+
+    expect(listAt(back.world, 1, id)[0].skip).toEqual(new Set([out.key]));
+  });
+
+  test('a pasted repeat keeps its skip on the keyframe it names, where it reaches it', () => {
+    const { world, id } = room();
+    const out = inserted(repeated(world, 1, id, move(10, 0), null), 3)!;
+    const clips = copied(out.world, 1, [id]);
+    const at = (i: number): KeyframeId => out.world.keyframes[i].id;
+    const early = pasted(out.world, at(0), clips, { x: 0, y: 0 }, TOP);
+    const late = pasted(out.world, at(5), clips, { x: 0, y: 0 }, TOP);
+    const a = early.ids[0], b = late.ids[0];
+
+    expect(listAt(early.world, at(1), a).find(e => e.times === null)!.skip).toEqual(new Set([out.key]));
+    expect(listAt(late.world, at(6), b).find(e => e.times === null)!.skip).toBe(undefined);
   });
 
   test('a deleted keyframe hands what it does to the next', () => {

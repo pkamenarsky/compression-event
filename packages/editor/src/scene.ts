@@ -123,6 +123,7 @@ import {
   playedAt,
   played,
   sheared,
+  skipping,
   sourcesAt,
   spun,
   stepped,
@@ -1924,7 +1925,11 @@ function carried(
       const e = c.source.entry;
 
       if (!kept.has(e)) list.push(...c.ops.map(o => once(o)));
-      else if (heads.has(c)) list.push({ op: c.ops[0], times: e.times === null ? null : e.times - c.source.step });
+      else if (heads.has(c)) {
+        const k = world.keyframes[first + i].id;
+
+        list.push(skipping(world.keyframes, { ...e, op: c.ops[0], times: e.times === null ? null : e.times - c.source.step }, k));
+      }
     }
 
     if (list.length > 0) keys.set(world.keyframes[first + i].id, list);
@@ -3849,7 +3854,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       const steps: Entry[] = i > at + 1 ? [] : playedAt(before, id, k).map((op, j) => {
         const { entry, step } = sourcesAt(before, id, k)[j];
 
-        return { op, times: entry.times === null ? null : entry.times - step };
+        return skipping(world.keyframes, { ...entry, op, times: entry.times === null ? null : entry.times - step }, k);
       });
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
@@ -4089,14 +4094,16 @@ function written(
     // note on `pasted`.
     if (k === null) break;
 
-    keys.set(k, list);
+    // A skip names the keyframe it was meant for, and stays on it where the
+    // paste still reaches it.
+    keys.set(k, list.map(e => skipping(world.keyframes, e, k)));
   }
 
   return withRig(world, id, { ...rigOf(world, id), keys });
 }
 
 /** A corner's entries after the copy, landed at `v` and renamed. */
-function landed<E>(
+function landed<E extends Entry>(
   world: World,
   v: KeyframeId,
   entries: readonly [VertexId, [number, E][]][],
@@ -4114,7 +4121,7 @@ function landed<E>(
     for (const [offset, e] of list) {
       const k = landingAt(world, v, offset);
 
-      if (k !== null) mine.set(k, e);
+      if (k !== null) mine.set(k, skipping(world.keyframes, e, k));
     }
 
     if (mine.size > 0) out.set(id, mine);
