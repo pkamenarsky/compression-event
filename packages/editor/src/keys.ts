@@ -113,24 +113,41 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
 
 /**
  * A repeat told to wait over keyframe `at`, or to step there again where it
- * was waiting. Its count carries on either way, so taking a step out moves the
- * rest of them one keyframe later, and putting one back one earlier.
+ * was waiting.
+ *
+ * Where it stops stays put: a step taken out is one fewer, and a wait inside
+ * the span stepped over again is one more. Only taking out the last step moves
+ * the end, back to the step before, since there is then nothing there to stop
+ * on. How far it runs is changed by saying so — see `timed`.
  */
 export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, at: KeyframeId): World | Refused {
+  const keyframes = world.keyframes;
   const list = listOf(world, id, k);
   const e = list[index];
+  const j = indexIn(keyframes, k), i = indexIn(keyframes, at);
 
   if (e === undefined) return world;
   if (e.op.kind === 'stand') return { refused: 'an unchaining does not repeat' };
-  if (indexIn(world.keyframes, at) <= indexIn(world.keyframes, k)) return { refused: 'a repeat skips only after it starts' };
+  if (i <= j) return { refused: 'a repeat skips only after it starts' };
 
   const skip = new Set(e.skip ?? []);
+  let times = e.times;
 
-  if (skip.has(at)) skip.delete(at);
-  else skip.add(at);
+  if (skip.has(at)) {
+    skip.delete(at);
+
+    // Inside the span: it steps there now, and one more keeps the end.
+    if (times !== null && going(keyframes, e, j, i)) times += 1;
+  }
+  else {
+    if (times !== null && stepsAt(keyframes, e, j, i)) times -= 1;
+
+    skip.add(at);
+  }
 
   const { skip: _was, ...rest } = e;
-  const now = list.map((x, i) => (i === index ? (skip.size === 0 ? rest : { ...rest, skip }) : x));
+  const out = { ...rest, times };
+  const now = list.map((x, n) => (n === index ? (skip.size === 0 ? out : { ...out, skip }) : x));
 
   return withRig(world, id, withKeys(rigOf(world, id), k, now));
 }

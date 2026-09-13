@@ -63,11 +63,12 @@ describe('rows', () => {
 describe('bars', () => {
   test('a repeat runs to its last step, waiting over what it skips', () => {
     const { world, id } = room();
-    const w = repeated(world, 1, id, move(1, 0), 3);
+    const w = repeated(world, 1, id, move(1, 0), 4);
     const e = listAt(w, 1, id)[0];
 
-    expect(barOf(w, e, 1, 0)).toMatchObject({ steps: [{ col: 2, skip: false }, { col: 3, skip: false }], end: 3, forever: false });
+    expect(barOf(w, e, 1, 0)).toMatchObject({ end: 4, forever: false });
 
+    // Waiting over a step leaves where it stops alone.
     const skipped = ok(skipToggled(w, id, 1, 0, 2));
     const bar = barOf(skipped, listAt(skipped, 1, id)[0], 1, 0)!;
 
@@ -76,8 +77,11 @@ describe('bars', () => {
     expect(stateAt(skipped, id, 2).frame.t.x).toBe(1);
     expect(stateAt(skipped, id, 4).frame.t.x).toBe(3);
 
-    // And back.
-    expect(listAt(ok(skipToggled(skipped, id, 1, 0, 2)), 1, id)[0].skip).toBeUndefined();
+    // And back, to where it was.
+    expect(listAt(ok(skipToggled(skipped, id, 1, 0, 2)), 1, id)[0]).toEqual(e);
+
+    // The last step taken out ends it at the one before.
+    expect(barOf(w, listAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, 0)!.end).toBe(3);
   });
 
   test('once has no bar, and to the end runs to the last column', () => {

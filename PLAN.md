@@ -365,7 +365,8 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   moves all of it.
 - Every single entry in a kind row has a handle to drag out into a repeat;
   dropped on the last keyframe it runs to the end. `skipToggled` in
-  `keys.ts` turns a step into a wait and back; the count carries on.
+  `keys.ts` turns a step into a wait and back, keeping where the repeat
+  stops: `times` goes down or up by one with it.
 - The flags are `World.flags`, a map by id, saved as an optional list, so the
   format stays 21. A group's hidden or locked is its members'; a solo keeps
   what holds and what is held by the soloed thing. Locked is out of reach the
