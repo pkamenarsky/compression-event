@@ -1,13 +1,15 @@
 // -----------------------------------------------------------------------------
 // The keyframe view
 //
-// Along the bottom: keyframes across, things down. A thing's row holds a
-// diamond wherever something is written about it, and opens into one row per
-// kind of operation and then its members. A cell of one entry is a diamond; of
-// several, a stack with a count, opened to pick one. A repeat trails a bar out
-// to where it stops, with a gap wherever it waits over a keyframe: clicking a
-// step or a gap turns one into the other, and dragging the bar's end says how
-// far it goes.
+// Along the whole bottom: keyframes across, things down. A thing's row holds a
+// diamond for every entry written about it, side by side in its keyframe's
+// column, and opens into one row per kind of operation and then its members.
+// A column is wide enough for a handful of entries and widens for more; past
+// the width of the page the view scrolls, its headings staying where they are.
+//
+// A repeat trails a bar out to where it stops, with a gap wherever it waits
+// over a keyframe: clicking a step or a gap turns one into the other, and
+// dragging the bar's end says how far it goes.
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging a diamond a keyframe along pushes or pulls it. See `keys.ts`.
@@ -25,35 +27,33 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input } from './input';
-import { Refused, Which, deleted, dropped, inserted, pulled, pushed, skipToggled, timed } from './keys';
+import { Refused, deleted, dropped, inserted, pulled, pushed, skipToggled, timed } from './keys';
 import { KeyframeId } from './rig';
 import { order, rigOf, unchainedAt } from './scene';
 import { theme } from './theme';
-import { Bar, Cell, Kind, Row, barOf, entryLabel, rootsOf, rowsOf, timesTo } from './track';
+import { Bar, Cell, Row, entryLabel, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Flags, Id, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
-const COL = 40;
 const ROW = 22;
 const HEAD = 46;
 const FONT = '11px system-ui, sans-serif';
 
+/** One entry's room in a column, and the room at its sides. */
+const SLOT = 13;
+const PAD = 10;
+
+/** A column holds this many entries side by side before it widens. */
+const ROOMY = 5;
+
 /** What Delete and Escape mean while an entry is picked. */
 const KEYS = ['Backspace', 'Delete', 'Escape'];
 
-/** What is picked: one entry by its place, every one of a kind, or the whole
- * keyframe's list, for one thing at one keyframe. */
+/** One entry, for one thing at one keyframe, by its place in the list. */
 interface Picked {
   id: Id
   at: KeyframeId
-  which: Which
-}
-
-/** The stack opened to pick from. */
-interface Stack {
-  id: Id
-  kind: Kind
-  at: KeyframeId
+  index: number
 }
 
 /** The view's own state: not the world's, not in the history, not saved. */
@@ -61,15 +61,16 @@ interface Local {
   all: boolean
   open: ReadonlySet<Id>
   picked: Picked | null
-  stack: Stack | null
 }
 
 interface Model {
   keyframes: { id: KeyframeId, name: string, visible: boolean, unchains: boolean }[]
+  /** Where each column starts, from the left of the view, and how wide it is. */
+  xs: number[]
+  widths: number[]
   current: number
   rows: Row[]
   picked: Picked | null
-  stack: { row: number, col: number, items: { index: number, label: string }[] } | null
   all: boolean
 }
 
@@ -82,17 +83,16 @@ export function timeline(
   update: Update,
   go: (k: KeyframeId) => void,
 ): VNode {
-  const initial: Local = { all: false, open: new Set(), picked: null, stack: null };
+  const initial: Local = { all: false, open: new Set(), picked: null };
 
   return stateful(initial, (local, setLocal) => {
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
     const letGo = () => {
-      if (local().picked !== null || local().stack !== null) change(l => ({ ...l, picked: null, stack: null }));
+      if (local().picked !== null) change(l => ({ ...l, picked: null }));
     };
 
-    // The world changed under a pick, or it was acted on: either way it may
-    // name an entry that is not there any more, and a stale index is a
-    // different entry.
+    // Acted on, a pick may name an entry that is not there any more, and a
+    // stale index is a different entry.
     const acted = (out: World | Refused) => {
       letGo();
 
@@ -112,7 +112,7 @@ export function timeline(
       return m;
     };
 
-    const ctx: Ctx = { state, update, go, local, change, acted, letGo };
+    const ctx: Ctx = { state, update, go, local, change, acted, letGo, inner: null, model: null };
 
     let root: HTMLElement | null = null;
 
@@ -131,13 +131,13 @@ export function timeline(
         onUnmount: () => window.removeEventListener('pointerdown', away, true),
         style: {
           pointerEvents: 'auto',
-          maxWidth: '100%',
+          alignSelf: 'stretch',
           maxHeight: '38vh',
+          minHeight: `${HEAD + 2 * ROW}px`,
           overflow: 'auto',
           background: theme.panel,
-          border: `1px solid ${theme.border}`,
-          borderRadius: '8px',
-          boxShadow: `0 6px 18px ${theme.panelShadow}`,
+          borderTop: `1px solid ${theme.border}`,
+          boxShadow: `0 -6px 18px ${theme.panelShadow}`,
           font: FONT,
           color: theme.text,
           userSelect: 'none',
@@ -153,7 +153,8 @@ export function timeline(
   });
 }
 
-/** What the handlers need: the store, and the view's own state. */
+/** What the handlers need: the store, the view's own state, and where the
+ * columns are on the page now. */
 interface Ctx {
   state: Value<EditorState>
   update: Update
@@ -162,6 +163,8 @@ interface Ctx {
   change: (f: (l: Local) => Local) => void
   acted: (out: World | Refused) => void
   letGo: () => void
+  inner: HTMLElement | null
+  model: Model | null
 }
 
 function keys(ctx: Ctx, input: Input): VNode {
@@ -181,7 +184,7 @@ function keys(ctx: Ctx, input: Input): VNode {
 
       const w = ctx.state().world;
 
-      ctx.acted(e.altKey ? pushed(w, picked.id, picked.at, picked.which) : dropped(w, picked.id, picked.at, picked.which));
+      ctx.acted(e.altKey ? pushed(w, picked.id, picked.at, picked.index) : dropped(w, picked.id, picked.at, picked.index));
     }
   });
 }
@@ -194,28 +197,15 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
   const rows = rowsOf(world, rootsOf(world, selection, local.all), local.open);
   const picked = valid(world, local.picked);
 
-  // A picked entry out of a stack draws its bar, which a stack does not.
-  if (picked !== null && typeof picked.which === 'number') {
-    const e = rigOf(world, picked.id).keys.get(picked.at)?.[picked.which];
-    const col = order(world, picked.at);
-    const row = rows.find(r => r.id === picked.id && r.kind === e?.op.kind);
+  // As wide as the fullest cell in it, and never narrower than a handful.
+  const widths = world.keyframes.map((_f, col) =>
+    Math.max(ROOMY, ...rows.map(r => r.cells[col].entries.length)) * SLOT + 2 * PAD);
+  const xs: number[] = [];
+  let x = LABEL;
 
-    if (e !== undefined && row !== undefined && row.cells[col].entries.length > 1) {
-      const bar = barOf(world, e, col, picked.which);
-
-      if (bar !== null) row.bars = [...row.bars, bar];
-    }
-  }
-
-  let stack: Model['stack'] = null;
-  const s = local.stack;
-
-  if (s !== null) {
-    const row = rows.findIndex(r => r.id === s.id && r.kind === s.kind);
-    const list = rigOf(world, s.id).keys.get(s.at) ?? [];
-    const items = list.flatMap((e, index) => (e.op.kind === s.kind ? [{ index, label: entryLabel(e) }] : []));
-
-    if (row >= 0 && items.length > 1) stack = { row, col: order(world, s.at), items };
+  for (const w of widths) {
+    xs.push(x);
+    x += w;
   }
 
   return {
@@ -225,10 +215,11 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
       visible: f.visible,
       unchains: unchains(world, f.id, selection),
     })),
+    xs,
+    widths,
     current: order(world, k),
     rows,
     picked,
-    stack,
     all: local.all,
   };
 }
@@ -237,11 +228,7 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
 function valid(world: World, picked: Picked | null): Picked | null {
   if (picked === null) return null;
 
-  const list = rigOf(world, picked.id).keys.get(picked.at) ?? [];
-  const which = picked.which;
-  const there = typeof which === 'number' ? which < list.length : which === 'all' ? list.length > 0 : list.some(e => e.op.kind === which);
-
-  return there ? picked : null;
+  return picked.index < (rigOf(world, picked.id).keys.get(picked.at) ?? []).length ? picked : null;
 }
 
 /**
@@ -260,6 +247,9 @@ function unchains(world: World, k: KeyframeId, selection: Selection): boolean {
 
 // -----------------------------------------------------------------------------
 // Drawing
+//
+// A heading row stuck to the top and a label column stuck to the left, over
+// everything else, which scrolls under them.
 // -----------------------------------------------------------------------------
 
 type Style = Record<string, string | number>;
@@ -272,34 +262,78 @@ function label(s: string, style: Style = {}, attrs: Record<string, unknown> = {}
   return box({ whiteSpace: 'nowrap', lineHeight: `${ROW}px`, ...style }, [text(s)], attrs);
 }
 
-const centre = (col: number) => LABEL + col * COL + COL / 2;
-const rowTop = (row: number) => HEAD + row * ROW;
+/** The middle of a column. */
+function centre(m: Model, col: number): number {
+  return m.xs[col] + m.widths[col] / 2;
+}
+
+/** Where the `i`-th of `n` entries sits in a column. */
+function slot(m: Model, col: number, i: number, n: number): number {
+  return centre(m, col) + (i - (n - 1) / 2) * SLOT;
+}
+
+/** The column under a point on the page, clamped to the ones there are. */
+function colAt(ctx: Ctx, clientX: number): number {
+  const m = ctx.model!;
+  const x = clientX - (ctx.inner?.getBoundingClientRect().left ?? 0);
+  const col = m.xs.findIndex((at, i) => x < at + m.widths[i]);
+
+  return col < 0 ? m.xs.length - 1 : Math.max(0, col);
+}
 
 function body(ctx: Ctx, m: Model): VNode {
+  ctx.model = m;
+
   const n = m.keyframes.length;
-  const width = LABEL + n * COL + 8;
+  const width = m.xs[n - 1] + m.widths[n - 1] + 8;
   const height = HEAD + Math.max(1, m.rows.length) * ROW + 4;
 
-  return div({ style: { position: 'relative', width: `${width}px`, height: `${height}px` } }, [
-    // The keyframe on screen, down the whole view.
-    box({
-      left: `${LABEL + m.current * COL}px`,
-      top: '0',
-      width: `${COL}px`,
-      height: `${height}px`,
-      background: 'rgba(91, 140, 255, 0.12)',
-    }),
+  return div(
+    {
+      ref: (el: HTMLElement) => {
+        ctx.inner = el;
+      },
+      style: { position: 'relative', width: `${width}px`, minWidth: '100%', height: `${height}px` },
+    },
+    [
+      // The keyframe on screen, down the whole view.
+      box({
+        left: `${m.xs[m.current]}px`,
+        top: '0',
+        width: `${m.widths[m.current]}px`,
+        height: `${height}px`,
+        background: 'rgba(91, 140, 255, 0.12)',
+      }),
 
-    head(ctx, m),
+      ...m.xs.map(x => box({ left: `${x}px`, top: '0', width: '1px', height: `${height}px`, background: theme.border, opacity: 0.5 })),
 
-    ...m.keyframes.map((f, i) => column(ctx, f, i, i === m.current)),
+      head(ctx, m, width),
 
-    ...(m.rows.length === 0
-      ? [label('Pick something to see what happens to it, or show all.', { left: '10px', top: `${HEAD}px`, color: theme.muted })]
-      : m.rows.map((r, i) => row(ctx, m, r, i))),
+      ...(m.rows.length === 0
+        ? [line([label('Pick something to see what happens to it, or show all.', { left: '10px', color: theme.muted })])]
+        : m.rows.map(r => row(ctx, m, r))),
+    ],
+  );
+}
 
-    ...(m.stack === null ? [] : [stacked(ctx, m)]),
-  ]);
+/** One row of the view: in the flow, so that the label column can stick. */
+function line(children: VNode[], style: Style = {}): VNode {
+  return div({ style: { position: 'relative', height: `${ROW}px`, ...style } }, children);
+}
+
+/** Stuck to the left edge as the view scrolls under it. */
+function pinned(children: VNode[], style: Style = {}): VNode {
+  return div({
+    style: {
+      position: 'sticky',
+      left: '0',
+      width: `${LABEL}px`,
+      height: '100%',
+      background: theme.panel,
+      zIndex: 2,
+      ...style,
+    },
+  }, children);
 }
 
 function chip(s: string, left: number, onclick: () => void, on = false, title = ''): VNode {
@@ -315,24 +349,43 @@ function chip(s: string, left: number, onclick: () => void, on = false, title = 
   }, { onclick, title });
 }
 
-/** Over the row headers: keyframes in and out, and what the rows are of. */
-function head(ctx: Ctx, m: Model): VNode {
-  return fragment([
-    chip('+ insert', 8, () => ctx.update(insertedAfter), false, 'A keyframe after the one on screen, where nothing happens'),
-    chip('− delete', 70, () => ctx.update(deletedHere), false, 'The keyframe on screen, its writing handed to the next'),
-    chip(m.all ? 'all' : 'picked', 136, () => ctx.change(l => ({ ...l, all: !l.all })), m.all, 'Everything, or what is picked'),
+/** The headings, stuck to the top: keyframes in and out and what the rows
+ * are of over the labels, and each keyframe over its column. */
+function head(ctx: Ctx, m: Model, width: number): VNode {
+  return div({
+    style: {
+      position: 'sticky',
+      top: '0',
+      width: `${width}px`,
+      height: `${HEAD}px`,
+      background: theme.panel,
+      borderBottom: `1px solid ${theme.border}`,
+      zIndex: 3,
+      boxSizing: 'border-box',
+    },
+  }, [
+    ...m.keyframes.map((f, i) => column(ctx, m, f, i)),
+
+    pinned([
+      chip('+ insert', 8, () => ctx.update(insertedAfter), false, 'A keyframe after the one on screen, where nothing happens'),
+      chip('− delete', 70, () => ctx.update(deletedHere), false, 'The keyframe on screen, its writing handed to the next'),
+      chip(m.all ? 'all' : 'picked', 136, () => ctx.change(l => ({ ...l, all: !l.all })), m.all, 'Everything, or what is picked'),
+    ]),
   ]);
 }
 
 /** A keyframe's heading: its name, which stands in it, and its eye. */
-function column(ctx: Ctx, f: Model['keyframes'][number], i: number, current: boolean): VNode {
-  const x = LABEL + i * COL;
+function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): VNode {
+  const x = m.xs[i], w = m.widths[i];
+  const current = i === m.current;
 
   return fragment([
+    box({ left: `${x}px`, top: '0', width: `${w}px`, height: '100%', background: current ? 'rgba(91, 140, 255, 0.16)' : 'transparent' }),
+
     label(f.name, {
       left: `${x}px`,
       top: '4px',
-      width: `${COL}px`,
+      width: `${w}px`,
       textAlign: 'center',
       cursor: 'pointer',
       color: current ? theme.accent : theme.text,
@@ -345,7 +398,7 @@ function column(ctx: Ctx, f: Model['keyframes'][number], i: number, current: boo
     label(f.visible ? '◉' : '○', {
       left: `${x}px`,
       top: '22px',
-      width: `${COL}px`,
+      width: `${w}px`,
       textAlign: 'center',
       cursor: 'pointer',
       color: f.visible ? theme.muted : theme.faded,
@@ -363,60 +416,55 @@ function column(ctx: Ctx, f: Model['keyframes'][number], i: number, current: boo
     ...(f.unchains
       ? [box({ left: `${x - 1}px`, top: '6px', width: '3px', height: `${HEAD - 12}px`, background: theme.gone, borderRadius: '2px' }, [], { title: 'Unchained here' })]
       : []),
-
-    box({ left: `${x}px`, top: `${HEAD - 1}px`, width: '1px', height: '100%', background: theme.border, opacity: 0.5 }),
   ]);
 }
 
-function row(ctx: Ctx, m: Model, r: Row, i: number): VNode {
-  const y = rowTop(i);
+function row(ctx: Ctx, m: Model, r: Row): VNode {
   const thing = r.kind === null;
   const indent = 8 + r.depth * 12;
+  const toggle = () => ctx.change(l => {
+    const open = new Set(l.open);
 
-  return fragment([
-    box({ left: '0', top: `${y}px`, width: '100%', height: '1px', background: theme.border, opacity: thing ? 0.8 : 0.35 }),
+    if (open.has(r.id)) open.delete(r.id);
+    else open.add(r.id);
 
-    ...(r.opens
-      ? [label(r.open ? '▾' : '▸', { left: `${indent}px`, top: `${y}px`, width: '12px', cursor: 'pointer', color: theme.muted }, {
-          onclick: () => ctx.change(l => {
-            const open = new Set(l.open);
+    return { ...l, open };
+  });
 
-            if (open.has(r.id)) open.delete(r.id);
-            else open.add(r.id);
+  return line([
+    ...r.cells.map((c, col) => cell(ctx, m, r, col, c)),
 
-            return { ...l, open };
-          }),
-        })]
-      : []),
+    ...r.bars.map(b => bar(ctx, m, r, b)),
 
-    label(r.label, {
-      left: `${indent + 14}px`,
-      top: `${y}px`,
-      width: `${LABEL - indent - 14 - (thing ? 70 : 0)}px`,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      color: thing ? theme.text : theme.muted,
-    }),
+    ...(thing ? [] : handle(ctx, m, r)),
 
-    ...(thing ? switches(ctx, r, y) : []),
+    pinned([
+      ...(r.opens
+        ? [label(r.open ? '▾' : '▸', { left: `${indent}px`, width: '12px', cursor: 'pointer', color: theme.muted }, { onclick: toggle })]
+        : []),
 
-    ...r.cells.map((c, col) => cell(ctx, m, r, col, y, c)),
+      label(r.label, {
+        left: `${indent + 14}px`,
+        width: `${LABEL - indent - 14 - (thing ? 70 : 0)}px`,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        color: thing ? theme.text : theme.muted,
+      }),
 
-    ...r.bars.map(b => bar(ctx, r, b, y, m)),
-
-    ...(thing ? [] : handles(ctx, r, y, m)),
-  ]);
+      ...(thing ? switches(ctx, r) : []),
+    ]),
+  ], { borderTop: `1px solid ${thing ? theme.border : 'rgba(61, 63, 71, 0.4)'}`, boxSizing: 'border-box' });
 }
 
 /** Hide, lock and solo, at the end of a thing's header. */
-function switches(ctx: Ctx, r: Row, y: number): VNode[] {
+function switches(ctx: Ctx, r: Row): VNode[] {
   const flag = (f: keyof Flags, glyph: string, x: number, title: string) =>
     label(glyph, {
       left: `${LABEL - 70 + x}px`,
-      top: `${y + 3}px`,
+      top: '3px',
       width: '18px',
-      height: `${ROW - 6}px`,
-      lineHeight: `${ROW - 6}px`,
+      height: `${ROW - 7}px`,
+      lineHeight: `${ROW - 7}px`,
       textAlign: 'center',
       borderRadius: '4px',
       cursor: 'pointer',
@@ -435,89 +483,84 @@ function switches(ctx: Ctx, r: Row, y: number): VNode[] {
   ];
 }
 
-/** Whether a cell is what is picked. */
-function isPicked(m: Model, r: Row, col: number, entries: readonly number[]): boolean {
+function isPicked(m: Model, r: Row, col: number, index: number): boolean {
   const p = m.picked;
 
-  if (p === null || p.id !== r.id || p.at !== m.keyframes[col].id) return false;
-  if (r.kind === null) return p.which === 'all' || (entries.length === 1 && p.which === entries[0]);
-
-  return p.which === r.kind || (typeof p.which === 'number' && entries.includes(p.which));
+  return p !== null && p.id === r.id && p.at === m.keyframes[col].id && p.index === index;
 }
 
-function cell(ctx: Ctx, m: Model, r: Row, col: number, y: number, c: Cell): VNode {
-  const { entries, kinds, alive } = c;
-  const x = LABEL + col * COL;
-  const shade = alive ? [] : [box({ left: `${x}px`, top: `${y + 1}px`, width: `${COL}px`, height: `${ROW - 1}px`, background: 'rgba(0, 0, 0, 0.28)' })];
-
-  if (entries.length === 0) return fragment(shade);
+/** A keyframe's entries in one row, a diamond each, side by side in the
+ * order they play. */
+function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
+  const shade = c.alive
+    ? []
+    : [box({ left: `${m.xs[col]}px`, top: '0', width: `${m.widths[col]}px`, height: '100%', background: 'rgba(0, 0, 0, 0.28)' })];
 
   const at = m.keyframes[col].id;
-  const picked = isPicked(m, r, col, entries);
-  const stand = entries.length === 1 && kinds[0] === 'stand';
-  const size = entries.length > 1 ? 10 : 8;
-  const colour = picked ? theme.accent : stand ? theme.gone : r.kind === null ? theme.muted : theme.text;
-
-  // One entry is itself; several are the kind of them, or the thing's whole
-  // keyframe on its own row.
-  const which: Which = entries.length === 1 ? entries[0] : r.kind ?? 'all';
-
-  const click = () => {
-    ctx.go(at);
-
-    if (r.kind !== null && entries.length > 1) {
-      ctx.change(l => ({ ...l, picked: { id: r.id, at, which }, stack: { id: r.id, kind: r.kind!, at } }));
-    }
-    else {
-      ctx.change(l => ({ ...l, picked: { id: r.id, at, which }, stack: null }));
-    }
-  };
-
-  // Dropped a keyframe along: pushed to the next, or pulled back into the one
-  // before, which is a pull from where it is seen from there.
-  const moved = (by: number) => {
-    const w = ctx.state().world;
-
-    if (by > 0) {
-      ctx.acted(pushed(w, r.id, at, which));
-    }
-    else {
-      const before = w.keyframes[col - 1]?.id;
-
-      ctx.acted(before === undefined ? { refused: 'nothing before the first keyframe to pull into' } : pulled(w, r.id, before, which));
-    }
-  };
-
-  const title = entries.length > 1 ? `${entries.length}: ${[...new Set(kinds)].join(', ')}` : kinds[0];
+  const n = c.entries.length;
 
   return fragment([
     ...shade,
 
-    box({
-      left: `${centre(col) - size / 2}px`,
-      top: `${y + ROW / 2 - size / 2}px`,
-      width: `${size}px`,
-      height: `${size}px`,
-      transform: 'rotate(45deg)',
-      background: colour,
-      border: entries.length > 1 ? `2px solid ${theme.panel}` : 'none',
-      outline: entries.length > 1 ? `1px solid ${colour}` : 'none',
-      cursor: 'grab',
-    }, [], { title, onpointerdown: (e: PointerEvent) => dragged(e, click, moved, true) }),
+    ...c.entries.map((index, i) => {
+      const picked = isPicked(m, r, col, index);
+      const kind = c.kinds[i];
+      const colour = picked ? theme.accent : kind === 'stand' ? theme.gone : r.kind === null ? theme.muted : theme.text;
 
-    ...(entries.length > 1
-      ? [label(String(entries.length), { left: `${centre(col) + 7}px`, top: `${y - 4}px`, fontSize: '9px', color: colour, pointerEvents: 'none' })]
-      : []),
+      const click = () => {
+        ctx.go(at);
+        ctx.change(l => ({ ...l, picked: { id: r.id, at, index } }));
+      };
+
+      // Dropped a keyframe along: pushed to the next, or pulled back into the
+      // one before, which is a pull from where it is seen from there.
+      const moved = (clientX: number) => {
+        const w = ctx.state().world;
+        const to = colAt(ctx, clientX);
+
+        if (to > col) {
+          ctx.acted(pushed(w, r.id, at, index));
+        }
+        else if (to < col) {
+          const before = w.keyframes[col - 1]?.id;
+
+          ctx.acted(before === undefined ? { refused: 'nothing before the first keyframe to pull into' } : pulled(w, r.id, before, index));
+        }
+      };
+
+      return box({
+        left: `${slot(m, col, i, n) - 4}px`,
+        top: `${ROW / 2 - 4}px`,
+        width: '8px',
+        height: '8px',
+        transform: 'rotate(45deg)',
+        background: colour,
+        cursor: 'grab',
+        zIndex: 1,
+      }, [], {
+        onpointerenter: (e: PointerEvent) => {
+          (e.currentTarget as HTMLElement).title = entryTitle(ctx, r.id, at, index);
+        },
+        onpointerdown: (e: PointerEvent) => dragged(e, click, moved),
+      });
+    }),
   ]);
+}
+
+/** What an entry does, read when the pointer is over it rather than kept in
+ * the model, where its numbers would rebuild the view on every drag. */
+function entryTitle(ctx: Ctx, id: Id, at: KeyframeId, index: number): string {
+  const e = rigOf(ctx.state().world, id).keys.get(at)?.[index];
+
+  return e === undefined ? '' : entryLabel(e);
 }
 
 /**
  * A press that is either a click or a drag along the columns: `click` if it
- * never went anywhere, `done` with how many columns it went otherwise. The
- * element follows the pointer meanwhile, and nothing is written until it is
- * let go.
+ * never went anywhere, and `done` with where it was let go otherwise. The
+ * element follows the pointer meanwhile, and nothing is written until then.
  */
-function dragged(e: PointerEvent, click: () => void, done: (by: number) => void, one: boolean): void {
+function dragged(e: PointerEvent, click: () => void, done: (clientX: number) => void): void {
   if (e.button !== 0) return;
 
   e.preventDefault();
@@ -540,31 +583,26 @@ function dragged(e: PointerEvent, click: () => void, done: (by: number) => void,
     window.removeEventListener('pointerup', up);
     el.style.transform = was;
 
-    if (!moving) {
-      click();
-      return;
-    }
-
-    const cols = Math.round((ev.clientX - x0) / COL);
-    const by = one ? Math.sign(cols) : cols;
-
-    if (by !== 0) done(by);
+    if (moving) done(ev.clientX);
+    else click();
   };
 
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
 }
 
-/** A repeat's bar: a line out to its last step, a dot at each step and a ring
- * at each keyframe it waits over — either clicked turns into the other. */
-function bar(ctx: Ctx, r: Row, b: Bar, y: number, m: Model): VNode {
+/** A repeat's bar: a line from its diamond out to its last step, a dot at each
+ * step and a ring at each keyframe it waits over — either clicked turns into
+ * the other. */
+function bar(ctx: Ctx, m: Model, r: Row, b: Bar): VNode {
   const at = m.keyframes[b.from].id;
-  const mid = y + ROW / 2;
+  const mid = ROW / 2;
+  const cell = r.cells[b.from];
   const out: VNode[] = [];
-  let prev = b.from;
+  let prev = slot(m, b.from, cell.entries.indexOf(b.index), cell.entries.length);
 
   for (const s of b.steps) {
-    const x0 = centre(prev) + 6, x1 = centre(s.col) - 5;
+    const x0 = prev + 6, x1 = centre(m, s.col) - 5;
 
     out.push(box({
       left: `${x0}px`,
@@ -578,109 +616,79 @@ function bar(ctx: Ctx, r: Row, b: Bar, y: number, m: Model): VNode {
     const size = s.skip ? 8 : 6;
 
     out.push(box({
-      left: `${centre(s.col) - size / 2}px`,
+      left: `${centre(m, s.col) - size / 2}px`,
       top: `${mid - size / 2}px`,
       width: `${size}px`,
       height: `${size}px`,
       borderRadius: '50%',
-      background: s.skip ? 'transparent' : theme.muted,
+      background: s.skip ? theme.panel : theme.muted,
       border: s.skip ? `1px solid ${theme.faded}` : 'none',
       cursor: 'pointer',
+      zIndex: 1,
     }, [], {
       title: s.skip ? 'Waits here: click to step' : 'Steps here: click to wait',
       onclick: () => ctx.acted(skipToggled(ctx.state().world, r.id, at, b.index, m.keyframes[s.col].id)),
     }));
 
-    prev = s.col;
+    prev = centre(m, s.col);
   }
 
-  if (b.forever) out.push(label('→', { left: `${centre(b.end) + 12}px`, top: `${y}px`, color: theme.muted, pointerEvents: 'none' }));
+  const tail = b.steps.length === 0 ? prev : centre(m, b.end);
+
+  if (b.forever) out.push(label('→', { left: `${tail + 12}px`, color: theme.muted, pointerEvents: 'none' }));
 
   if (b.heading !== null) {
     out.push(label(b.heading, {
-      left: `${centre(b.end) + (b.forever ? 24 : 12)}px`,
-      top: `${y}px`,
+      left: `${tail + (b.forever ? 24 : 12)}px`,
       fontSize: '9px',
       color: theme.faded,
       pointerEvents: 'none',
     }));
   }
 
-  out.push(end(ctx, r.id, at, b.index, b.from, b.end, y));
+  out.push(end(ctx, r.id, at, b.index, b.from, tail));
 
   return fragment(out);
 }
 
-/** The handle on a single entry that is not yet a repeat: drag it out to make
- * one. Not on a stand, which does not repeat, nor in a stack, where the one
- * picked out of it has a bar of its own. */
-function handles(ctx: Ctx, r: Row, y: number, m: Model): VNode[] {
-  if (r.kind === 'stand') return [];
+/** The picked entry's handle, where it does not repeat yet: drag it out to
+ * make it one. Not on a stand, which does not repeat. */
+function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
+  const p = m.picked;
 
-  const barred = new Set(r.bars.map(b => b.from));
+  if (p === null || p.id !== r.id || r.kind === 'stand') return [];
 
-  return r.cells.flatMap((c, col) =>
-    (c.entries.length === 1 && !barred.has(col) ? [end(ctx, r.id, m.keyframes[col].id, c.entries[0], col, col, y)] : []));
+  const col = m.keyframes.findIndex(f => f.id === p.at);
+  const c = r.cells[col];
+  const i = c?.entries.indexOf(p.index) ?? -1;
+
+  if (i < 0 || r.bars.some(b => b.from === col && b.index === p.index)) return [];
+
+  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length))];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
-function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, last: number, y: number): VNode {
-  const done = (by: number) => {
+function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number): VNode {
+  const done = (clientX: number) => {
     const w = ctx.state().world;
     const e = rigOf(w, id).keys.get(at)?.[index];
 
     if (e === undefined) return;
 
-    ctx.acted(timed(w, id, at, index, timesTo(w, e, from, last + by)));
+    ctx.acted(timed(w, id, at, index, timesTo(w, e, from, colAt(ctx, clientX))));
   };
 
   return box({
-    left: `${centre(last) + 7}px`,
-    top: `${y + ROW / 2 - 6}px`,
+    left: `${x + 7}px`,
+    top: `${ROW / 2 - 6}px`,
     width: '4px',
     height: '12px',
     borderRadius: '2px',
     background: theme.faded,
     cursor: 'ew-resize',
-  }, [], { title: 'Drag to repeat', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done, false) });
-}
-
-/** The entries of a stack, to pick one of. */
-function stacked(ctx: Ctx, m: Model): VNode {
-  const s = m.stack!;
-  const r = m.rows[s.row];
-  const at = m.keyframes[s.col].id;
-
-  const item = (says: string, which: Which, first = false) =>
-    div({
-      style: {
-        padding: '3px 8px',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-        borderBottom: first ? `1px solid ${theme.border}` : 'none',
-        color: isPickedWhich(m, r.id, at, which) ? theme.accent : theme.text,
-      },
-      onclick: () => ctx.change(l => ({ ...l, picked: { id: r.id, at, which }, stack: null })),
-    }, [text(says)]);
-
-  return box({
-    left: `${centre(s.col) - 10}px`,
-    top: `${rowTop(s.row) + ROW}px`,
-    zIndex: 2,
-    background: theme.panel,
-    border: `1px solid ${theme.border}`,
-    borderRadius: '6px',
-    boxShadow: `0 6px 18px ${theme.panelShadow}`,
-    padding: '2px 0',
-  }, [
-    item(`every ${r.kind} (${s.items.length})`, r.kind!, true),
-    ...s.items.map(it => item(it.label, it.index)),
-  ]);
-}
-
-function isPickedWhich(m: Model, id: Id, at: KeyframeId, which: Which): boolean {
-  return m.picked !== null && m.picked.id === id && m.picked.at === at && m.picked.which === which;
+    zIndex: 1,
+  }, [], { title: 'Drag to repeat', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
 }
 
 // -----------------------------------------------------------------------------

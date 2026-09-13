@@ -127,15 +127,15 @@ export function editor(initial: World): VNode {
           dynamic(() => s.world().keyframes.length, count => bakeButton(count, state, s.world, s.bake, update)),
           previewButton(s.preview, update),
 
-          // Along the bottom, the status line sitting on the keyframes: it is
-          // most often about something done there.
+          // Along the whole bottom, the status line sitting on the keyframes:
+          // it is most often about something done there.
           div(
             {
               style: {
                 position: 'absolute',
-                left: '12px',
-                right: '12px',
-                bottom: '12px',
+                left: '0',
+                right: '0',
+                bottom: '0',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'flex-start',
@@ -1404,6 +1404,7 @@ function statusbar(status: Value<string | null>): VNode {
     div(
       {
         style: {
+          marginLeft: '12px',
           padding: '6px 10px',
           borderRadius: '8px',
           background: theme.panel,

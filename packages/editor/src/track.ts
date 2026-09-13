@@ -163,23 +163,14 @@ function lifeOf(world: World, id: Id): { birth: number, death: number } {
   return { birth: indexIn(world.keyframes, it.birth), death: death < 0 ? Infinity : death };
 }
 
-/** The repeats of one kind, where each is alone in its cell: a stack is
- * opened to pick one, and it is the picked one whose bar is drawn then. */
+/** The repeats of one kind. */
 function barsOf(world: World, id: Id, kind: Kind): Bar[] {
-  const out: Bar[] = [];
+  return world.keyframes.flatMap((f, j) =>
+    (rigOf(world, id).keys.get(f.id) ?? []).flatMap((e, n) => {
+      const bar = e.op.kind === kind ? barOf(world, e, j, n) : null;
 
-  world.keyframes.forEach((f, j) => {
-    const list = rigOf(world, id).keys.get(f.id) ?? [];
-    const mine = list.flatMap((e, n) => (e.op.kind === kind ? [n] : []));
-
-    if (mine.length !== 1) return;
-
-    const bar = barOf(world, list[mine[0]], j, mine[0]);
-
-    if (bar !== null) out.push(bar);
-  });
-
-  return out;
+      return bar === null ? [] : [bar];
+    }));
 }
 
 /** An entry's bar, or nothing where it happens once. */

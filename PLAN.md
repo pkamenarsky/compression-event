@@ -355,16 +355,15 @@ keyframe is a no-op rather than half of the next.
 
 Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
 
-- Docked along the bottom, the status line sitting on it; the bake and 3D
+- Across the whole bottom, the status line sitting on it; the bake and 3D
   buttons, and the 3D panel, move to the top right. The keyframe headers keep
   the ghost eyes, the unchain mark and insert/delete, and the arrows that
-  walk the keyframes are ← and → now.
-- A thing's own row holds every kind at once; a cell there picks the
-  whole list at that keyframe (`Which` gains `'all'`), a stack in a kind row
-  picks every entry of that kind or, opened, one of them. Dragging a stack
-  moves all of it.
-- Every single entry in a kind row has a handle to drag out into a repeat;
-  dropped on the last keyframe it runs to the end. `skipToggled` in
+  walk the keyframes are ← and → now. The headings stick to the top and the
+  labels to the left while the rest scrolls both ways.
+- No stacks: every entry is its own diamond, side by side in play order. A
+  column fits five and widens for more. Every repeat has its bar.
+- The picked entry, where it does not repeat, has a handle to drag out into
+  a repeat; dropped on the last keyframe it runs to the end. `skipToggled` in
   `keys.ts` turns a step into a wait and back, keeping where the repeat
   stops: `times` goes down or up by one with it.
 - The flags are `World.flags`, a map by id, saved as an optional list, so the
