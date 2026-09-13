@@ -707,10 +707,16 @@ export function emptyWorld(): World {
 // and cached against the map it was derived from.
 // -----------------------------------------------------------------------------
 
-const parents = new WeakMap<World['groups'], ReadonlyMap<Id, GroupId>>();
+/** The structure alone: what the readers below need of a world, and all of
+ * it. The timelines in `rig.ts` walk it without a world to hand. */
+export interface Structure {
+  groups: ReadonlyMap<GroupId, { members: readonly Id[] }>
+}
+
+const parents = new WeakMap<Structure['groups'], ReadonlyMap<Id, GroupId>>();
 
 /** Who each member belongs to. Nothing for anything at the top level. */
-export function parentOf(world: World): ReadonlyMap<Id, GroupId> {
+export function parentOf(world: Structure): ReadonlyMap<Id, GroupId> {
   const held = parents.get(world.groups);
 
   if (held !== undefined) return held;
@@ -727,7 +733,7 @@ export function parentOf(world: World): ReadonlyMap<Id, GroupId> {
 }
 
 /** Every group `id` is inside, innermost first. Empty at the top level. */
-export function enclosing(world: World, id: Id): GroupId[] {
+export function enclosing(world: Structure, id: Id): GroupId[] {
   const up = parentOf(world);
   const out: GroupId[] = [];
 

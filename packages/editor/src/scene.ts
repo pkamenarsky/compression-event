@@ -99,6 +99,10 @@ import {
   pieces,
 } from './worldset';
 import { remembered } from './memo';
+import { Affine, IDENTITY, compose, place, unplace } from './affine';
+
+export type { Affine };
+export { IDENTITY, compose, place, unplace };
 
 /** One polygon as a version left it: what edits are made against, and what is
  * drawn. */
@@ -620,18 +624,6 @@ export function chain(world: World, v: VersionId): VersionId[] {
 // interpolation.
 // -----------------------------------------------------------------------------
 
-/** `(x, y)` goes to `(ax + cy + tx, bx + dy + ty)`. */
-export interface Affine {
-  a: number
-  b: number
-  c: number
-  d: number
-  tx: number
-  ty: number
-}
-
-export const IDENTITY: Affine = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
-
 /** One version's layer as a matrix: scale per axis, then turn, then move. */
 export function affine(t: Transform): Affine {
   const c = Math.cos(t.rotation), s = Math.sin(t.rotation);
@@ -688,42 +680,6 @@ export function joined(world: World, into: GroupId | null, ids: readonly Id[]): 
   groups.set(into, { ...group, members: [...group.members, ...ids] });
 
   return { ...world, groups };
-}
-
-/** `outer` after `inner`. */
-export function compose(outer: Affine, inner: Affine): Affine {
-  return {
-    a: outer.a * inner.a + outer.c * inner.b,
-    b: outer.b * inner.a + outer.d * inner.b,
-    c: outer.a * inner.c + outer.c * inner.d,
-    d: outer.b * inner.c + outer.d * inner.d,
-    tx: outer.a * inner.tx + outer.c * inner.ty + outer.tx,
-    ty: outer.b * inner.tx + outer.d * inner.ty + outer.ty,
-  };
-}
-
-export function place(m: Affine, ring: Ring): Ring {
-  return ring.map(p => ({
-    x: m.a * p.x + m.c * p.y + m.tx,
-    y: m.b * p.x + m.d * p.y + m.ty,
-  }));
-}
-
-/**
- * A world point back in the frame `m` came from. The inverse of `place`, named
- * apart from `displaced` above, which is about vertex edits rather than frames.
- *
- * Always possible: every stage of the chain refuses a zero axis, so no stage is
- * singular and neither is their product.
- */
-export function unplace(m: Affine, p: Point): Point {
-  const det = m.a * m.d - m.b * m.c;
-  const x = p.x - m.tx, y = p.y - m.ty;
-
-  return {
-    x: (m.d * x - m.c * y) / det,
-    y: (m.a * y - m.b * x) / det,
-  };
 }
 
 /**
