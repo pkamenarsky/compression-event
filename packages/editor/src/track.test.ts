@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, grouped, listAt, reachable } from './scene';
+import { TOP, addPolygon, grouped, listAt, reachable, unchained } from './scene';
 import { stateAt } from './rig';
 import { Refused, dropped, pushed, skipToggled } from './keys';
 import { barOf, beneath, rootsOf, rowsOf, timesTo } from './track';
@@ -23,28 +23,30 @@ function ok(out: World | Refused): World {
 }
 
 describe('rows', () => {
-  test('a thing opens into a row per kind written, then its members', () => {
+  test('a thing is one row with its members under it; stands are not in it', () => {
     const a = room();
     const b = room(a.world);
     const made = grouped(b.world, 0, [a.id, b.id], TOP)!;
-    const w = wrote(wrote(made.world, 1, made.id, move(1, 0), erode(2)), 3, made.id, move(0, 1));
+    const w = unchained(wrote(wrote(made.world, 1, made.id, move(1, 0), erode(2)), 3, made.id, move(0, 1)), 2, [made.id]);
 
-    const shut = rowsOf(w, [made.id], new Set());
+    const rows = rowsOf(w, [made.id]);
 
-    expect(shut.map(r => [r.label, r.kind])).toEqual([[`group ${made.id}`, null]]);
-    expect(shut[0].opens).toBe(true);
-    expect(shut[0].cells.map(c => c.entries.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
+    expect(rows.map(r => [r.label, r.depth])).toEqual([[`group ${made.id}`, 0], [`level ${a.id}`, 1], [`level ${b.id}`, 1]]);
+    expect(rows[0].cells.map(c => c.entries.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
+    expect(rows[0].cells[1].kinds).toEqual(['move', 'erode']);
+    expect(listAt(w, 2, made.id).map(e => e.op.kind)).toEqual(['stand']);
+  });
 
-    const open = rowsOf(w, [made.id], new Set([made.id]));
+  test('the rightmost repeat has the nearest lane', () => {
+    const { world, id } = room();
+    const w = repeated(repeated(repeated(world, 1, id, move(1, 0), null), 1, id, erode(1), 3), 4, id, move(0, 1), 2);
 
-    expect(open.map(r => [r.kind, r.depth])).toEqual([[null, 0], ['move', 1], ['erode', 1], [null, 1], [null, 1]]);
-    expect(open[1].cells[1].entries).toEqual([0]);
-    expect(open[2].cells[1].entries).toEqual([1]);
+    expect(rowsOf(w, [id])[0].bars.map(b => [b.from, b.slot])).toEqual([[4, 0], [1, 1], [1, 0]]);
   });
 
   test('cells before a birth are not alive', () => {
     const { world, id } = room(emptyWorld(), 2);
-    const [row] = rowsOf(world, [id], new Set());
+    const [row] = rowsOf(world, [id]);
 
     expect(row.cells.map(c => c.alive)).toEqual([false, false, true, true, true, true, true, true, true]);
   });

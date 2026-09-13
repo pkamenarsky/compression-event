@@ -360,8 +360,13 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   the ghost eyes, the unchain mark and insert/delete, and the arrows that
   walk the keyframes are ← and → now. The headings stick to the top and the
   labels to the left while the rest scrolls both ways.
-- No stacks: every entry is its own diamond, side by side in play order. A
-  column fits five and widens for more. Every repeat has its bar.
+- No kind rows, stacks or disclosure: a thing is one row, its members under
+  it, with an icon per entry side by side in play order. A column fits five
+  and widens for more. Each repeat hangs under its row in a lane of its own,
+  a line down from its icon and along to where it stops; the rightmost
+  icon's lane is the nearest, so no line crosses another.
+- Stands are not shown. Taking one out moves the thing to wherever upstream
+  says, which is Cmd+Shift+U's question rather than an entry's.
 - The picked entry, where it does not repeat, has a handle to drag out into
   a repeat; dropped on the last keyframe it runs to the end. `skipToggled` in
   `keys.ts` turns a step into a wait and back, keeping where the repeat

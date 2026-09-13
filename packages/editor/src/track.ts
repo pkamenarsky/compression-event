@@ -3,8 +3,8 @@
 //
 // What the keyframe view draws, worked out from the world and nothing else, so
 // that the view is a picture of it and this is what is tested. Columns are the
-// keyframes in order; rows are things in their group tree, each opening into
-// one row per kind of operation written about it and then its members.
+// keyframes in order; rows are things in their group tree, each with its
+// repeats in lanes under it.
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
@@ -15,23 +15,24 @@ import { Flags, Id, Selection, World, enclosing, flagsOf, parentOf } from './typ
 
 export type Kind = Op['kind'];
 
-/** The kinds, in the order their rows go: a stand first, since everything
- * else at its keyframe plays over it. */
-export const KINDS: readonly Kind[] = ['stand', 'move', 'turn', 'scale', 'skew', 'erode'];
-
+/**
+ * A thing's row: an icon for every entry written about it, side by side in
+ * its keyframe's column, and a lane under it for every repeat.
+ *
+ * Stands are not in it. A stand is where a thing stops hearing from upstream,
+ * and taking one out moves the thing to wherever upstream says it is — a
+ * question about the chain, asked with Cmd+U and Cmd+Shift+U, not an entry to
+ * be dragged about.
+ */
 export interface Row {
   id: Id
   depth: number
-  /** Nothing for the thing's own row, whose cells hold every kind at once. */
-  kind: Kind | null
   label: string
-  /** The thing's own row only: whether it is open, and whether there is
-   * anything under it to open to. */
-  open: boolean
-  opens: boolean
   flags: Flags
   /** One per keyframe. */
   cells: Cell[]
+  /** Its repeats, the one nearest the row first: the rightmost entry's, so
+   * that no line down from an entry crosses another's lane. */
   bars: Bar[]
 }
 
@@ -49,9 +50,11 @@ export interface Cell {
  * waits over, as far as it runs.
  */
 export interface Bar {
-  /** The column its entry is written at, and where it is in that list. */
+  /** The column its entry is written at, where it is in that list, and where
+   * among the row's icons in that column. */
   from: number
   index: number
+  slot: number
   /** Every column it has reached, the ones it waits over included. */
   steps: { col: number, skip: boolean }[]
   /** The column of its last step: the last column, for one that runs to the
@@ -80,47 +83,16 @@ export function rootsOf(world: World, selection: Selection, all: boolean): Id[] 
   return picked.filter(id => !enclosing(world, id).some(g => has.has(g)));
 }
 
-export function rowsOf(world: World, roots: readonly Id[], open: ReadonlySet<Id>): Row[] {
+/** Every root's row, and under a group its members', all the way down. */
+export function rowsOf(world: World, roots: readonly Id[]): Row[] {
   const out: Row[] = [];
 
   const add = (id: Id, depth: number): void => {
-    const rig = rigOf(world, id);
-    const lists = [...rig.keys.values()];
-    const kinds = KINDS.filter(k => lists.some(l => l.some(e => e.op.kind === k)));
-    const members = world.groups.get(id)?.members ?? [];
-    const opens = kinds.length > 0 || members.length > 0;
-    const isOpen = opens && open.has(id);
-    const flags = flagsOf(world, id);
+    const cells = cellsOf(world, id);
 
-    out.push({
-      id,
-      depth,
-      kind: null,
-      label: labelOf(world, id),
-      open: isOpen,
-      opens,
-      flags,
-      cells: cellsOf(world, id, null),
-      bars: [],
-    });
+    out.push({ id, depth, label: labelOf(world, id), flags: flagsOf(world, id), cells, bars: barsOf(world, id, cells) });
 
-    if (!isOpen) return;
-
-    for (const kind of kinds) {
-      out.push({
-        id,
-        depth: depth + 1,
-        kind,
-        label: kind,
-        open: false,
-        opens: false,
-        flags,
-        cells: cellsOf(world, id, kind),
-        bars: barsOf(world, id, kind),
-      });
-    }
-
-    for (const m of members) add(m, depth + 1);
+    for (const m of world.groups.get(id)?.members ?? []) add(m, depth + 1);
   };
 
   for (const id of roots) add(id, 0);
@@ -142,13 +114,13 @@ export function labelOf(world: World, id: Id): string {
   return `path ${id}`;
 }
 
-function cellsOf(world: World, id: Id, kind: Kind | null): Cell[] {
+function cellsOf(world: World, id: Id): Cell[] {
   const rig = rigOf(world, id);
   const life = lifeOf(world, id);
 
   return world.keyframes.map((f, i) => {
     const list = rig.keys.get(f.id) ?? [];
-    const entries = list.flatMap((e, n) => (kind === null || e.op.kind === kind ? [n] : []));
+    const entries = list.flatMap((e, n) => (e.op.kind === 'stand' ? [] : [n]));
 
     return { entries, kinds: entries.map(n => list[n].op.kind), alive: i >= life.birth && i < life.death };
   });
@@ -165,18 +137,26 @@ function lifeOf(world: World, id: Id): { birth: number, death: number } {
   return { birth: indexIn(world.keyframes, it.birth), death: death < 0 ? Infinity : death };
 }
 
-/** The repeats of one kind. */
-function barsOf(world: World, id: Id, kind: Kind): Bar[] {
-  return world.keyframes.flatMap((f, j) =>
-    (rigOf(world, id).keys.get(f.id) ?? []).flatMap((e, n) => {
-      const bar = e.op.kind === kind ? barOf(world, e, j, n) : null;
+/** A thing's repeats, rightmost first. */
+function barsOf(world: World, id: Id, cells: readonly Cell[]): Bar[] {
+  const rig = rigOf(world, id);
+  const out: Bar[] = [];
 
-      return bar === null ? [] : [bar];
-    }));
+  world.keyframes.forEach((f, j) => {
+    const list = rig.keys.get(f.id) ?? [];
+
+    cells[j].entries.forEach((n, slot) => {
+      const bar = barOf(world, list[n], j, n, slot);
+
+      if (bar !== null) out.push(bar);
+    });
+  });
+
+  return out.reverse();
 }
 
 /** An entry's bar, or nothing where it happens once. */
-export function barOf(world: World, e: Entry, from: number, index: number): Bar | null {
+export function barOf(world: World, e: Entry, from: number, index: number, slot = 0): Bar | null {
   if (e.times === 1 || e.op.kind === 'stand') return null;
 
   const keyframes = world.keyframes;
@@ -209,7 +189,7 @@ export function barOf(world: World, e: Entry, from: number, index: number): Bar 
     heading = factor(Math.pow(e.op.by.x, n), Math.pow(e.op.by.y, n));
   }
 
-  return { from, index, steps, end, forever, heading };
+  return { from, index, slot, steps, end, forever, heading };
 }
 
 /**

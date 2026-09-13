@@ -1,18 +1,21 @@
 // -----------------------------------------------------------------------------
 // The keyframe view
 //
-// Along the whole bottom: keyframes across, things down. A thing's row holds a
-// diamond for every entry written about it, side by side in its keyframe's
-// column, and opens into one row per kind of operation and then its members.
-// A column is wide enough for a handful of entries and widens for more; past
-// the width of the page the view scrolls, its headings staying where they are.
+// Along the whole bottom: keyframes across, things down, a group's members
+// under it. A thing's row holds an icon for every entry written about it, side
+// by side in its keyframe's column in the order they play. A column is wide
+// enough for a handful and widens for more; past the width of the page the
+// view scrolls, its headings staying where they are.
 //
-// A repeat trails a bar out to where it stops, with a gap wherever it waits
-// over a keyframe: clicking a step or a gap turns one into the other, and
-// dragging the bar's end says how far it goes.
+// Each repeat hangs under its row, a tree on its side: a line down from its
+// icon to a lane of its own, and along the lane to where it stops, with a dot
+// at each step and a ring wherever it waits over a keyframe. Clicking a dot or
+// a ring turns one into the other, and dragging the lane's end says how far it
+// goes. The rightmost icon's lane is the nearest, so no line down crosses
+// another's lane.
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
-// dragging a diamond a keyframe along pushes or pulls it. See `keys.ts`.
+// dragging an icon a keyframe along pushes or pulls it. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
 // in the file. See `Flags`.
@@ -24,6 +27,7 @@
 import { Value } from '@incpt/kontinuum';
 import { VNode, dynamic, effect, fragment, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
+import { path, svg } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input } from './input';
@@ -31,16 +35,19 @@ import { Refused, deleted, dropped, inserted, pulled, pushed, skipToggled, timed
 import { KeyframeId } from './rig';
 import { order, rigOf, unchainedAt } from './scene';
 import { theme } from './theme';
-import { Bar, Cell, Row, entryLabel, rootsOf, rowsOf, timesTo } from './track';
+import { Bar, Cell, Kind, Row, entryLabel, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Flags, Id, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
-const ROW = 22;
+const ROW = 24;
+/** A repeat's lane under its row. */
+const LANE = 14;
+const ICON = 14;
 const HEAD = 46;
 const FONT = '11px system-ui, sans-serif';
 
 /** One entry's room in a column, and the room at its sides. */
-const SLOT = 13;
+const SLOT = 19;
 const PAD = 10;
 
 /** A column holds this many entries side by side before it widens. */
@@ -59,7 +66,6 @@ interface Picked {
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
   all: boolean
-  open: ReadonlySet<Id>
   picked: Picked | null
 }
 
@@ -83,7 +89,7 @@ export function timeline(
   update: Update,
   go: (k: KeyframeId) => void,
 ): VNode {
-  const initial: Local = { all: false, open: new Set(), picked: null };
+  const initial: Local = { all: false, picked: null };
 
   return stateful(initial, (local, setLocal) => {
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
@@ -133,7 +139,7 @@ export function timeline(
           pointerEvents: 'auto',
           alignSelf: 'stretch',
           maxHeight: '38vh',
-          minHeight: `${HEAD + 2 * ROW}px`,
+          minHeight: `${HEAD + ROW}px`,
           overflow: 'auto',
           background: theme.panel,
           borderTop: `1px solid ${theme.border}`,
@@ -194,7 +200,7 @@ function keys(ctx: Ctx, input: Input): VNode {
 // -----------------------------------------------------------------------------
 
 function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local): Model {
-  const rows = rowsOf(world, rootsOf(world, selection, local.all), local.open);
+  const rows = rowsOf(world, rootsOf(world, selection, local.all));
   const picked = valid(world, local.picked);
 
   // As wide as the fullest cell in it, and never narrower than a handful.
@@ -286,7 +292,7 @@ function body(ctx: Ctx, m: Model): VNode {
 
   const n = m.keyframes.length;
   const width = m.xs[n - 1] + m.widths[n - 1] + 8;
-  const height = HEAD + Math.max(1, m.rows.length) * ROW + 4;
+  const height = HEAD + m.rows.reduce((h, r) => h + heightOf(r), 0) + 4;
 
   return div(
     {
@@ -309,11 +315,14 @@ function body(ctx: Ctx, m: Model): VNode {
 
       head(ctx, m, width),
 
-      ...(m.rows.length === 0
-        ? [line([label('Pick something to see what happens to it, or show all.', { left: '10px', color: theme.muted })])]
-        : m.rows.map(r => row(ctx, m, r))),
+      ...m.rows.map(r => row(ctx, m, r)),
     ],
   );
+}
+
+/** A row and the lanes of its repeats. */
+function heightOf(r: Row): number {
+  return ROW + r.bars.length * LANE + (r.bars.length > 0 ? 4 : 0);
 }
 
 /** One row of the view: in the flow, so that the label column can stick. */
@@ -420,40 +429,26 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
 }
 
 function row(ctx: Ctx, m: Model, r: Row): VNode {
-  const thing = r.kind === null;
   const indent = 8 + r.depth * 12;
-  const toggle = () => ctx.change(l => {
-    const open = new Set(l.open);
-
-    if (open.has(r.id)) open.delete(r.id);
-    else open.add(r.id);
-
-    return { ...l, open };
-  });
 
   return line([
     ...r.cells.map((c, col) => cell(ctx, m, r, col, c)),
 
-    ...r.bars.map(b => bar(ctx, m, r, b)),
+    ...r.bars.map((b, lane) => bar(ctx, m, r, b, lane)),
 
-    ...(thing ? [] : handle(ctx, m, r)),
+    ...handle(ctx, m, r),
 
     pinned([
-      ...(r.opens
-        ? [label(r.open ? '▾' : '▸', { left: `${indent}px`, width: '12px', cursor: 'pointer', color: theme.muted }, { onclick: toggle })]
-        : []),
-
       label(r.label, {
-        left: `${indent + 14}px`,
-        width: `${LABEL - indent - 14 - (thing ? 70 : 0)}px`,
+        left: `${indent}px`,
+        width: `${LABEL - indent - 70}px`,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
-        color: thing ? theme.text : theme.muted,
       }),
 
-      ...(thing ? switches(ctx, r) : []),
+      ...switches(ctx, r),
     ]),
-  ], { borderTop: `1px solid ${thing ? theme.border : 'rgba(61, 63, 71, 0.4)'}`, boxSizing: 'border-box' });
+  ], { height: `${heightOf(r)}px`, borderTop: `1px solid ${theme.border}`, boxSizing: 'border-box' });
 }
 
 /** Hide, lock and solo, at the end of a thing's header. */
@@ -489,8 +484,22 @@ function isPicked(m: Model, r: Row, col: number, index: number): boolean {
   return p !== null && p.id === r.id && p.at === m.keyframes[col].id && p.index === index;
 }
 
-/** A keyframe's entries in one row, a diamond each, side by side in the
- * order they play. */
+/** Each kind's icon, stroked in a 14 × 14 box. */
+const ICONS: Record<Kind, string> = {
+  // Four ways out.
+  move: 'M7 1.5 V12.5 M1.5 7 H12.5 M5.2 3.3 L7 1.5 L8.8 3.3 M5.2 10.7 L7 12.5 L8.8 10.7 M3.3 5.2 L1.5 7 L3.3 8.8 M10.7 5.2 L12.5 7 L10.7 8.8',
+  // Round, with the arrowhead where it is going.
+  turn: 'M11.8 7 A4.8 4.8 0 1 1 9.6 3 M9.8 0.6 L9.6 3 L12 3.3',
+  // Out along the diagonal, both ways.
+  scale: 'M2 12 L12 2 M2 12 V8.2 M2 12 H5.8 M12 2 V5.8 M12 2 H8.2',
+  skew: 'M4.5 3 H12.5 L9.5 11 H1.5 Z',
+  // An outline and the one taken in from it.
+  erode: 'M1.5 1.5 H12.5 V12.5 H1.5 Z M4.5 4.5 H9.5 V9.5 H4.5 Z',
+  stand: 'M3 2 V12 M11 2 V12',
+};
+
+/** A keyframe's entries in one row, an icon each, side by side in the order
+ * they play. */
 function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
   const shade = c.alive
     ? []
@@ -504,8 +513,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
 
     ...c.entries.map((index, i) => {
       const picked = isPicked(m, r, col, index);
-      const kind = c.kinds[i];
-      const colour = picked ? theme.accent : kind === 'stand' ? theme.gone : r.kind === null ? theme.muted : theme.text;
+      const colour = picked ? theme.accent : theme.text;
 
       const click = () => {
         ctx.go(at);
@@ -529,15 +537,26 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       };
 
       return box({
-        left: `${slot(m, col, i, n) - 4}px`,
-        top: `${ROW / 2 - 4}px`,
-        width: '8px',
-        height: '8px',
-        transform: 'rotate(45deg)',
-        background: colour,
+        left: `${slot(m, col, i, n) - ICON / 2 - 2}px`,
+        top: `${ROW / 2 - ICON / 2 - 2}px`,
+        width: `${ICON + 4}px`,
+        height: `${ICON + 4}px`,
+        borderRadius: '4px',
+        background: picked ? 'rgba(91, 140, 255, 0.22)' : 'transparent',
         cursor: 'grab',
         zIndex: 1,
-      }, [], {
+      }, [
+        svg({ width: ICON + 4, height: ICON + 4, viewBox: `-2 -2 ${ICON + 4} ${ICON + 4}`, style: { display: 'block' } }, [
+          path({
+            d: ICONS[c.kinds[i]],
+            fill: 'none',
+            stroke: colour,
+            'stroke-width': 1.4,
+            'stroke-linecap': 'round',
+            'stroke-linejoin': 'round',
+          }),
+        ]),
+      ], {
         onpointerenter: (e: PointerEvent) => {
           (e.currentTarget as HTMLElement).title = entryTitle(ctx, r.id, at, index);
         },
@@ -591,25 +610,39 @@ function dragged(e: PointerEvent, click: () => void, done: (clientX: number) => 
   window.addEventListener('pointerup', up);
 }
 
-/** A repeat's bar: a line from its diamond out to its last step, a dot at each
- * step and a ring at each keyframe it waits over — either clicked turns into
- * the other. */
-function bar(ctx: Ctx, m: Model, r: Row, b: Bar): VNode {
+/**
+ * A repeat, in its lane: a line down from its icon, and along the lane to
+ * where it stops, a dot at each step and a ring at each keyframe it waits over
+ * — either clicked turns into the other.
+ */
+function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
   const at = m.keyframes[b.from].id;
-  const mid = ROW / 2;
-  const cell = r.cells[b.from];
+  const y = ROW + lane * LANE + LANE / 2;
+  const x = slot(m, b.from, b.slot, r.cells[b.from].entries.length);
+  const colour = isPicked(m, r, b.from, b.index) ? theme.accent : theme.muted;
   const out: VNode[] = [];
-  let prev = slot(m, b.from, cell.entries.indexOf(b.index), cell.entries.length);
+
+  // Down from the icon to the lane.
+  out.push(box({
+    left: `${x - 1}px`,
+    top: `${ROW / 2 + ICON / 2}px`,
+    width: '0',
+    height: `${y - ROW / 2 - ICON / 2}px`,
+    borderLeft: `2px solid ${colour}`,
+    pointerEvents: 'none',
+  }));
+
+  let prev = x;
 
   for (const s of b.steps) {
-    const x0 = prev + 6, x1 = centre(m, s.col) - 5;
+    const x1 = centre(m, s.col) - 5;
 
     out.push(box({
-      left: `${x0}px`,
-      top: `${mid - 1}px`,
-      width: `${Math.max(0, x1 - x0)}px`,
+      left: `${prev}px`,
+      top: `${y - 1}px`,
+      width: `${Math.max(0, x1 - prev)}px`,
       height: '0',
-      borderTop: s.skip ? `1px dashed ${theme.faded}` : `2px solid ${theme.muted}`,
+      borderTop: s.skip ? `1px dashed ${theme.faded}` : `2px solid ${colour}`,
       pointerEvents: 'none',
     }));
 
@@ -617,11 +650,11 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar): VNode {
 
     out.push(box({
       left: `${centre(m, s.col) - size / 2}px`,
-      top: `${mid - size / 2}px`,
+      top: `${y - size / 2}px`,
       width: `${size}px`,
       height: `${size}px`,
       borderRadius: '50%',
-      background: s.skip ? theme.panel : theme.muted,
+      background: s.skip ? theme.panel : colour,
       border: s.skip ? `1px solid ${theme.faded}` : 'none',
       cursor: 'pointer',
       zIndex: 1,
@@ -630,33 +663,34 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar): VNode {
       onclick: () => ctx.acted(skipToggled(ctx.state().world, r.id, at, b.index, m.keyframes[s.col].id)),
     }));
 
-    prev = centre(m, s.col);
+    prev = centre(m, s.col) + 5;
   }
 
-  const tail = b.steps.length === 0 ? prev : centre(m, b.end);
+  const tail = b.steps.length === 0 ? x : centre(m, b.end);
 
-  if (b.forever) out.push(label('→', { left: `${tail + 12}px`, color: theme.muted, pointerEvents: 'none' }));
+  if (b.forever) out.push(label('→', { left: `${tail + 12}px`, top: `${y - ROW / 2}px`, color: colour, pointerEvents: 'none' }));
 
   if (b.heading !== null) {
     out.push(label(b.heading, {
       left: `${tail + (b.forever ? 24 : 12)}px`,
+      top: `${y - ROW / 2}px`,
       fontSize: '9px',
       color: theme.faded,
       pointerEvents: 'none',
     }));
   }
 
-  out.push(end(ctx, r.id, at, b.index, b.from, tail));
+  out.push(end(ctx, r.id, at, b.index, b.from, tail, y));
 
   return fragment(out);
 }
 
 /** The picked entry's handle, where it does not repeat yet: drag it out to
- * make it one. Not on a stand, which does not repeat. */
+ * make it one. */
 function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
   const p = m.picked;
 
-  if (p === null || p.id !== r.id || r.kind === 'stand') return [];
+  if (p === null || p.id !== r.id) return [];
 
   const col = m.keyframes.findIndex(f => f.id === p.at);
   const c = r.cells[col];
@@ -664,12 +698,12 @@ function handle(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   if (i < 0 || r.bars.some(b => b.from === col && b.index === p.index)) return [];
 
-  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length))];
+  return [end(ctx, r.id, p.at, p.index, col, slot(m, col, i, c.entries.length) + ICON / 2, ROW / 2)];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
-function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number): VNode {
+function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: number, y: number): VNode {
   const done = (clientX: number) => {
     const w = ctx.state().world;
     const e = rigOf(w, id).keys.get(at)?.[index];
@@ -680,8 +714,8 @@ function end(ctx: Ctx, id: Id, at: KeyframeId, index: number, from: number, x: n
   };
 
   return box({
-    left: `${x + 7}px`,
-    top: `${ROW / 2 - 6}px`,
+    left: `${x + 5}px`,
+    top: `${y - 6}px`,
     width: '4px',
     height: '12px',
     borderRadius: '2px',
