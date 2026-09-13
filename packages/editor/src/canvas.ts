@@ -2033,8 +2033,11 @@ export function worldCanvas(
             if (roaming()) continue;
 
             // Taken by something else for now: Delete, while an entry is
-            // picked in the keyframes, is that entry's.
+            // picked in the keyframes, is that entry's. Or taken already: the
+            // keyframes may have heard it first, acted and let the claim go,
+            // and a Delete that dropped an entry must not take the room too.
             if (input.claimed(e.code)) continue;
+            if (e.defaultPrevented && (REMOVE.includes(e.code) || e.code === 'Escape')) continue;
 
             // Everything with a command key on it belongs to the shortcuts in
             // `editor.ts`. Without this, Cmd+S would save and start a scale,

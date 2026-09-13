@@ -69,7 +69,11 @@ export function picker(beneath: Value<EditorState['beneath']>, world: Value<Worl
       while (true) {
         const e = yield* input.keyDown;
 
-        if (e.code === 'Escape' && beneath() !== null) close();
+        if (e.code === 'Escape' && beneath() !== null) {
+          // Said, so that the canvas does not also step out of a group.
+          e.preventDefault();
+          close();
+        }
       }
     }),
 
