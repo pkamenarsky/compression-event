@@ -11,16 +11,23 @@ export const SHIFT = ['ShiftLeft', 'ShiftRight'];
 // -----------------------------------------------------------------------------
 
 /**
- * One pair of window listeners for the whole editor rather than one per thing
+ * One set of window listeners for the whole editor rather than one per thing
  * that wants a key: `emit` wakes every waiter, so any number of loops can watch
  * the same key without knowing about each other.
  *
- * The events are passed on as they come, undecided — what a key means is the
- * business of whoever waits for it.
+ * Who a key press or a pointer press belongs to is decided here, once, as it
+ * is emitted, and goes out with it. Every waiter is woken for every event, in
+ * no order anybody should count on, and some of them change what is going on
+ * as they act on it — a pick let go of, a claim released, a list closed. A
+ * waiter that asked the live state whose event it was would get a different
+ * answer depending on who had been woken first, and the same Delete would drop
+ * an entry and then take the room with it. Stamped at emission, the answer is
+ * the one that held when the event happened, whoever hears it when.
  */
 export interface Input {
-  keyDown: Signal<KeyboardEvent>
+  keys: Signal<Key>
   keyUp: Signal<KeyboardEvent>
+  presses: Signal<Press>
   /**
    * The last pointer event seen anywhere, or nothing before the pointer has
    * moved at all.
@@ -45,42 +52,81 @@ export interface Input {
    */
   holding: (code: string) => boolean
   /**
-   * Take some keys for as long as the returned function has not been called.
+   * Take some keys for `by`, for as long as the returned function has not been
+   * called.
    *
-   * The bus is a broadcast and has no notion of an event being used up: every
-   * waiter is woken, and what a key means is settled by each of them agreeing
-   * to stay out of the others' way. That works for a fixed division — the
-   * canvas leaves anything with a command key on it to the shortcuts — and
-   * stops working the moment the division depends on what is going on, which
-   * is what a half-drawn polygon is: while one is open, Cmd+Z is the pen's and
-   * takes back a point, and the rest of the time it is the document's.
+   * What a key means depends on what is going on: while a polygon is open,
+   * Cmd+Z is the pen's and takes back a point, and the rest of the time it is
+   * the document's; while an entry is picked in the keyframes, Delete is its.
+   * So whoever that is says so, rather than everybody else having to know.
    *
-   * So a running gesture says so, rather than everybody else having to know
-   * about it. `keyPressed` skips what is claimed; whoever claimed it is
-   * waiting on `keyDown` directly and gets it. Counted rather than a flag, so
-   * two claims on the same key cannot end with the first release freeing it.
+   * Claims stack: a key goes to the newest claim on it, the way a list opened
+   * over the keyframes has Escape before they do. A press is stamped with its
+   * owner as it happens — see `Key` — so a claim taken or let go of while one
+   * is being dispatched changes the next, not this one.
    */
-  claim: (...codes: string[]) => () => void
-  claimed: (code: string) => boolean
+  claim: (by: object, ...codes: string[]) => () => void
+  /**
+   * `el` and everything in it is the surface `name`, for as long as the
+   * returned function has not been called: what a press there is stamped
+   * with. See `Press`.
+   */
+  surface: (name: Surface, el: Element) => () => void
   listen: () => () => void
 }
 
+/** A key going down, and whose it is: the claim it went to, or nobody's. */
+export interface Key {
+  event: KeyboardEvent
+  owner: object | null
+}
+
+/** The places a press can land that care whether it did. */
+export type Surface = 'canvas' | 'keyframes' | 'beneath';
+
+/** A pointer going down, any button, and the surface it landed on, or none. */
+export interface Press {
+  event: PointerEvent
+  on: Surface | null
+}
+
 export function createInput(): Input {
-  const keyDown = signal<KeyboardEvent>();
+  const keys = signal<Key>();
   const keyUp = signal<KeyboardEvent>();
+  const presses = signal<Press>();
 
   let pointer: PointerEvent | null = null;
   const down = new Set<string>();
-  const claims = new Map<string, number>();
+  const claims: { by: object, codes: readonly string[] }[] = [];
+  const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
     down.add(e.code);
-    keyDown.emit(e);
+
+    let owner: object | null = null;
+
+    for (let i = claims.length - 1; i >= 0 && owner === null; i--) {
+      if (claims[i].codes.includes(e.code)) owner = claims[i].by;
+    }
+
+    keys.emit({ event: e, owner });
   }
 
   function onKeyUp(e: KeyboardEvent) {
     down.delete(e.code);
     keyUp.emit(e);
+  }
+
+  // In the capture phase, so that it is heard wherever it lands, whatever
+  // stops it on the way.
+  function onPointerDown(e: PointerEvent) {
+    let on: Surface | null = null;
+
+    for (let n = e.target as Node | null; n !== null && on === null; n = n.parentNode) {
+      on = surfaces.get(n) ?? null;
+    }
+
+    presses.emit({ event: e, on });
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -94,38 +140,46 @@ export function createInput(): Input {
   }
 
   return {
-    keyDown,
+    keys,
     keyUp,
+    presses,
     pointer: () => pointer,
     holding: code => down.has(code),
-    claimed: code => (claims.get(code) ?? 0) > 0,
 
-    claim: (...codes) => {
-      for (const code of codes) claims.set(code, (claims.get(code) ?? 0) + 1);
+    claim: (by, ...codes) => {
+      const claim = { by, codes };
+
+      claims.push(claim);
 
       // Written to be safe to call twice, because a gesture releasing in a
       // `finally` may be unwinding for the second time — once for the branch
       // and once for the interaction coming down around it.
-      let held = true;
+      return () => {
+        const i = claims.indexOf(claim);
+
+        if (i >= 0) claims.splice(i, 1);
+      };
+    },
+
+    surface: (name, el) => {
+      surfaces.set(el, name);
 
       return () => {
-        if (!held) return;
-
-        held = false;
-
-        for (const code of codes) claims.set(code, (claims.get(code) ?? 1) - 1);
+        if (surfaces.get(el) === name) surfaces.delete(el);
       };
     },
 
     listen: () => {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
+      window.addEventListener('pointerdown', onPointerDown, true);
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('blur', onBlur);
 
       return () => {
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
+        window.removeEventListener('pointerdown', onPointerDown, true);
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('blur', onBlur);
       };
@@ -139,20 +193,34 @@ export function inputListener(input: Input): VNode {
 }
 
 /**
- * Waits for one of `codes`, letting the rest through to whoever else is
- * waiting. Key repeats count as presses; a loop that does not want them is
- * already past this point and waiting on something else.
- *
- * A key a running gesture has claimed is not one of them, however plainly it
- * is listed here. See `Input.claim`.
+ * Waits for one of `codes` that nobody has claimed, letting the rest through to
+ * whoever else is waiting. Key repeats count as presses; a loop that does not
+ * want them is already past this point and waiting on something else.
  */
 export function* keyPressed(input: Input, ...codes: string[]): Op<KeyboardEvent> {
   while (true) {
-    const e = yield* input.keyDown;
+    const { event, owner } = yield* input.keys;
 
-    if (codes.includes(e.code) && !input.claimed(e.code)) {
-      return e;
-    }
+    if (owner === null && codes.includes(event.code)) return event;
+  }
+}
+
+/** The next key that is nobody's, or `by`'s: what a loop that answers to any
+ * key hears, a gesture holding a claim included. */
+export function* keyHeard(input: Input, by: object | null = null): Op<KeyboardEvent> {
+  while (true) {
+    const { event, owner } = yield* input.keys;
+
+    if (owner === null || owner === by) return event;
+  }
+}
+
+/** The next key claimed for `by`, and only those. */
+export function* keyOwned(input: Input, by: object): Op<KeyboardEvent> {
+  while (true) {
+    const { event, owner } = yield* input.keys;
+
+    if (owner === by) return event;
   }
 }
 
@@ -163,6 +231,25 @@ export function* keyReleased(input: Input, ...codes: string[]): Op<KeyboardEvent
     if (codes.includes(e.code)) {
       return e;
     }
+  }
+}
+
+/** A press of `button` on the surface `on`. */
+export function* pressedOn(input: Input, on: Surface, button = 0): Op<PointerEvent> {
+  while (true) {
+    const p = yield* input.presses;
+
+    if (p.on === on && p.event.button === button) return p.event;
+  }
+}
+
+/** A press of any button anywhere but the surface `on`: what lets go of what
+ * was only there while the hand was. */
+export function* pressedAway(input: Input, on: Surface): Op<PointerEvent> {
+  while (true) {
+    const p = yield* input.presses;
+
+    if (p.on !== on) return p.event;
   }
 }
 
@@ -222,26 +309,17 @@ export function pointerDragged(from: Point, slop: number): Op<PointerEvent> {
   });
 }
 
-/** The primary button going down, and only that one. */
-export function pointerPressed(): Op<PointerEvent> {
-  return pointerButton('pointerdown');
-}
-
+/** The primary button coming up, anywhere: a drag ends wherever it is let
+ * go. */
 export function pointerReleased(): Op<PointerEvent> {
-  return pointerButton('pointerup');
-}
-
-function pointerButton(type: 'pointerdown' | 'pointerup'): Op<PointerEvent> {
   return perform(resume => {
-    const onPointerButton = (e: PointerEvent) => {
-      if (e.button === 0) {
-        resume(e);
-      }
+    const onUp = (e: PointerEvent) => {
+      if (e.button === 0) resume(e);
     };
 
-    window.addEventListener(type, onPointerButton);
+    window.addEventListener('pointerup', onUp);
 
-    return () => window.removeEventListener(type, onPointerButton);
+    return () => window.removeEventListener('pointerup', onUp);
   });
 }
 

@@ -30,7 +30,7 @@ import { div } from '@incpt/kontinuum-dom/html';
 import { path, svg } from '@incpt/kontinuum-dom/svg';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { Input } from './input';
+import { Input, keyOwned, pressedAway } from './input';
 import { Refused, deleted, dropped, inserted, pulled, pushed, skipToggled, timed } from './keys';
 import { KeyframeId } from './rig';
 import { order, rigOf, unchainedAt } from './scene';
@@ -118,21 +118,14 @@ export function timeline(
 
     const ctx: Ctx = { state, update, go, local, change, acted, letGo, inner: null, model: null };
 
-    let root: HTMLElement | null = null;
-
-    const away = (e: PointerEvent) => {
-      if (root !== null && !root.contains(e.target as Node)) letGo();
-    };
+    let root: (() => void) | null = null;
 
     return div(
       {
-        // A press anywhere else lets the pick go, so that Delete is the
-        // canvas' again the moment the hand is back on it.
         ref: (el: HTMLElement) => {
-          root = el;
-          window.addEventListener('pointerdown', away, true);
+          root = input.surface('keyframes', el);
         },
-        onUnmount: () => window.removeEventListener('pointerdown', away, true),
+        onUnmount: () => root?.(),
         style: {
           pointerEvents: 'auto',
           alignSelf: 'stretch',
@@ -149,8 +142,17 @@ export function timeline(
       },
       [
         // Delete is the pick's for as long as there is one.
-        effect(() => local().picked !== null, on => (on ? input.claim(...KEYS) : undefined)),
+        effect(() => local().picked !== null, on => (on ? input.claim(ctx, ...KEYS) : undefined)),
         keys(ctx, input),
+
+        // A press anywhere else lets the pick go, so that Delete is the
+        // canvas' again the moment the hand is back on it.
+        interaction(function* () {
+          while (true) {
+            yield* pressedAway(input, 'keyframes');
+            letGo();
+          }
+        }),
         dynamic(model, m => body(ctx, m)),
       ],
     );
@@ -174,10 +176,13 @@ interface Ctx {
 function keys(ctx: Ctx, input: Input): VNode {
   return interaction(function* () {
     while (true) {
-      const e = yield* input.keyDown;
+      // Claimed while an entry is picked, and stamped as it was pressed: the
+      // pick let go of as this one is acted on hands the next Delete back to
+      // the canvas, and not this one.
+      const e = yield* keyOwned(input, ctx);
       const picked = ctx.local().picked;
 
-      if (picked === null || !KEYS.includes(e.code) || ctx.state().roaming) continue;
+      if (picked === null || ctx.state().roaming) continue;
 
       e.preventDefault();
 

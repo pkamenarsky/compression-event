@@ -22,7 +22,8 @@ import {
   pan,
   pointerDragged,
   pointerMoved,
-  pointerPressed,
+  keyHeard,
+  pressedOn,
   pointerReleased,
 } from './input';
 import {
@@ -940,13 +941,14 @@ export function worldCanvas(
       // shortcuts in `editor.ts` would undo the document under it, which is
       // both surprising and unreachable: the points laid down so far are not
       // in the document to be undone.
-      const release = input.claim('KeyZ');
+      const pen = {};
+      const release = input.claim(pen, 'KeyZ');
 
       try {
         while (true) {
           const next = yield* select({
-            key: input.keyDown,
-            press: pointerPressed(),
+            key: keyHeard(input, pen),
+            press: pressedOn(input, 'canvas'),
 
             // Never resumes: it is here to keep the rubber band on the end of
             // the cursor for as long as nothing else is happening.
@@ -991,11 +993,9 @@ export function worldCanvas(
             continue;
           }
 
+          // Only presses on the canvas itself: the chrome floating over it
+          // is not somewhere to put a corner.
           const e = next.value;
-
-          // The chrome floating over the canvas is not somewhere to put a
-          // corner. The press that started this one was checked the same way.
-          if (e.target !== el) continue;
 
           // A press says nothing until it is known to be a click. A drag while
           // a polygon is being laid down is a click that wandered too far to
@@ -1044,13 +1044,14 @@ export function worldCanvas(
       // level is `\`, which it became so that committing a walk could be the
       // key that means a thing being laid down is finished — and a gesture
       // holding the keys it answers to is how the rest of this works.
-      const release = input.claim('KeyZ', 'Enter', 'NumpadEnter');
+      const walk = {};
+      const release = input.claim(walk, 'KeyZ', 'Enter', 'NumpadEnter');
 
       try {
         while (true) {
           const next = yield* select({
-            key: input.keyDown,
-            press: pointerPressed(),
+            key: keyHeard(input, walk),
+            press: pressedOn(input, 'canvas'),
 
             tracking: pointerMoved(e => {
               const w = local().laying;
@@ -1095,8 +1096,6 @@ export function worldCanvas(
           }
 
           const e = next.value;
-
-          if (e.target !== el) continue;
 
           const decided = yield* select({
             drag: pointerDragged({ x: e.clientX, y: e.clientY }, SLOP),
@@ -1938,15 +1937,7 @@ export function worldCanvas(
           effect(() => el && observeSize(el, update)),
           effect(() => el && wheeling(el, update)),
           effect(() => el && noMenu(el)),
-
-          // The right button lists everything under it, what cannot be picked
-          // included — which is how a locked thing is got back.
-          effect(() => el && pressedRight(el, e => {
-            const w = world();
-            const items = beneath(w, keyframe(), at(e), HANDLE / view().zoom);
-
-            update(s => ({ ...s, beneath: items.length === 0 ? null : { x: e.clientX, y: e.clientY, items } }));
-          })),
+          effect(() => el && input.surface('canvas', el)),
 
           effect(
             () => [
@@ -2016,10 +2007,30 @@ export function worldCanvas(
           // Nothing here decides anything: it waits for the next thing to
           // happen and hands it to whoever the current tool says owns it.
           const started = yield* select({
-            key: input.keyDown,
-            press: pointerPressed(),
+            // Nobody else's: a key claimed by the keyframes, or the list of
+            // what is under the cursor, is theirs.
+            key: keyHeard(input),
+            press: pressedOn(input, 'canvas'),
+            // The right button lists everything under it, what cannot be
+            // picked included — which is how a locked thing is got back.
+            menu: pressedOn(input, 'canvas', 2),
             lost: blurred(),
           });
+
+          if (started.tag === 'menu') {
+            const e = started.value;
+            const items = beneath(world(), keyframe(), at(e), HANDLE / view().zoom);
+
+            // Stamped with the press that opened it, so that the list closing
+            // on a press elsewhere cannot close this one, whoever hears it
+            // first.
+            update(s => ({
+              ...s,
+              beneath: items.length === 0 ? null : { x: e.clientX, y: e.clientY, since: e.timeStamp, items },
+            }));
+
+            continue;
+          }
 
           if (started.tag === 'key') {
             const e = started.value;
@@ -2031,13 +2042,6 @@ export function worldCanvas(
             // Someone is standing in the level. W and S are theirs, and a
             // scale started under a full-window 3D view would be invisible.
             if (roaming()) continue;
-
-            // Taken by something else for now: Delete, while an entry is
-            // picked in the keyframes, is that entry's. Or taken already: the
-            // keyframes may have heard it first, acted and let the claim go,
-            // and a Delete that dropped an entry must not take the room too.
-            if (input.claimed(e.code)) continue;
-            if (e.defaultPrevented && (REMOVE.includes(e.code) || e.code === 'Escape')) continue;
 
             // Everything with a command key on it belongs to the shortcuts in
             // `editor.ts`. Without this, Cmd+S would save and start a scale,
@@ -2097,7 +2101,7 @@ export function worldCanvas(
               }
             }
           }
-          else if (started.tag === 'press' && started.value.target === el) {
+          else if (started.tag === 'press') {
             const e = started.value;
 
             // A press says nothing on its own. Moving makes it a drag, which is
@@ -2530,17 +2534,6 @@ function noMenu(el: HTMLCanvasElement): () => void {
   el.addEventListener('contextmenu', onMenu);
 
   return () => el.removeEventListener('contextmenu', onMenu);
-}
-
-/** The right button going down on the canvas, and only that one. */
-function pressedRight(el: HTMLCanvasElement, then: (e: PointerEvent) => void): () => void {
-  const onDown = (e: PointerEvent): void => {
-    if (e.button === 2) then(e);
-  };
-
-  el.addEventListener('pointerdown', onDown);
-
-  return () => el.removeEventListener('pointerdown', onDown);
 }
 
 /** How big the canvas got is an update like any other, so the draw wakes for it. */

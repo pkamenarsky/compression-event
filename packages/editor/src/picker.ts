@@ -14,7 +14,7 @@ import { VNode, dynamic, effect, fragment, show, text } from '@incpt/kontinuum-d
 import { div } from '@incpt/kontinuum-dom/html';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { Input } from './input';
+import { Input, keyOwned, pressedAway } from './input';
 import { reachable } from './scene';
 import { theme } from './theme';
 import { labelOf } from './track';
@@ -33,11 +33,9 @@ interface Line {
 export function picker(beneath: Value<EditorState['beneath']>, world: Value<World>, input: Input, update: Update): VNode {
   const close = () => update(s => (s.beneath === null ? s : { ...s, beneath: null }));
 
-  let root: HTMLElement | null = null;
-
-  const away = (e: PointerEvent) => {
-    if (root !== null && !root.contains(e.target as Node)) close();
-  };
+  // Whose Escape it is while the list is up.
+  const me = {};
+  let root: (() => void) | null = null;
 
   // Rebuilt only when what it says changes, not on every edit to the world.
   let last: { key: string, lines: { at: Beneath, lines: Line[] } } | null = null;
@@ -63,17 +61,25 @@ export function picker(beneath: Value<EditorState['beneath']>, world: Value<Worl
   };
 
   return fragment([
-    effect(() => beneath() !== null, on => (on ? input.claim('Escape') : undefined)),
+    effect(() => beneath() !== null, on => (on ? input.claim(me, 'Escape') : undefined)),
 
     interaction(function* () {
       while (true) {
-        const e = yield* input.keyDown;
+        const e = yield* keyOwned(input, me);
 
-        if (e.code === 'Escape' && beneath() !== null) {
-          // Said, so that the canvas does not also step out of a group.
-          e.preventDefault();
-          close();
-        }
+        e.preventDefault();
+        close();
+      }
+    }),
+
+    // A press anywhere else closes it — but only a list opened before that
+    // press: the right click that opens the next one is a press elsewhere too,
+    // and which of the two is heard first is nobody's to decide.
+    interaction(function* () {
+      while (true) {
+        const e = yield* pressedAway(input, 'beneath');
+
+        update(s => (s.beneath !== null && s.beneath.since < e.timeStamp ? { ...s, beneath: null } : s));
       }
     }),
 
@@ -82,10 +88,9 @@ export function picker(beneath: Value<EditorState['beneath']>, world: Value<Worl
       div(
         {
           ref: (el: HTMLElement) => {
-            root = el;
-            window.addEventListener('pointerdown', away, true);
+            root = input.surface('beneath', el);
           },
-          onUnmount: () => window.removeEventListener('pointerdown', away, true),
+          onUnmount: () => root?.(),
           oncontextmenu: (e: MouseEvent) => e.preventDefault(),
           style: {
             position: 'fixed',

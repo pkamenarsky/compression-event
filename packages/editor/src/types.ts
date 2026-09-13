@@ -1095,7 +1095,14 @@ export interface EditorState {
    * thing that cannot be picked is found to be let go of. See `beneath` in
    * `track.ts`. Not in the file.
    */
-  beneath: { x: number, y: number, items: { id: Id, depth: number }[] } | null
+  beneath: {
+    x: number
+    y: number
+    /** When the press that opened it happened. A press elsewhere closes only
+     * a list from before it. */
+    since: number
+    items: { id: Id, depth: number }[]
+  } | null
 }
 
 /** Everything that writes to the store goes through one of these. */
