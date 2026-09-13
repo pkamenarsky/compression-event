@@ -10,13 +10,15 @@
     "server": "node scripts/server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "bench": "vitest run --config bench/vitest.config.ts"
+    "bench": "vitest run --config bench/vitest.config.ts",
+    "convert": "vite-node scripts/convert-19-20.ts --"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
     "fast-check": "^4.9.0",
     "typescript": "^5.8.2",
     "vite": "^7.3.1",
+    "vite-node": "3.2.4",
     "vitest": "^3.2.4"
   }
 }
