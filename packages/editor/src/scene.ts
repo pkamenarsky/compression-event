@@ -1089,9 +1089,9 @@ export interface Painted {
   held: Affine
 }
 
-export function painted(world: World, v: KeyframeId, id: Id): Painted {
+export function painted(world: World, v: KeyframeId, id: Id, items?: readonly Resolved[]): Painted {
   const frame = stateAt(world, id, v).frame;
-  const ref = unplace(worldFrame(world, id, v), middleOf(world, v, id));
+  const ref = unplace(worldFrame(world, id, v), middleOf(world, v, id, items));
 
   return { ref, at: placed(frame, ref), frame, held: under(world, v, id) };
 }
@@ -1102,13 +1102,21 @@ export function painted(world: World, v: KeyframeId, id: Id): Painted {
  * A group is what it is drawn as, shut: the union its members make, with
  * whatever is held inside it. A lone polygon is its own outline, and an
  * artefact is its point.
+ *
+ * `all` is the keyframe resolved, where the caller has it already: a gesture
+ * over a selection asks this once for everything picked.
  */
-export function middleOf(world: World, v: KeyframeId, id: Id): Point {
+export function middleOf(
+  world: World,
+  v: KeyframeId,
+  id: Id,
+  all: readonly Resolved[] = resolveAt(world, v),
+): Point {
   if (world.artefacts.has(id)) return placeAt(world, id, v) ?? { x: 0, y: 0 };
   if (world.paths.has(id)) return middle(pathAt(world, id, v) ?? []);
 
   const reached = new Set(polygonsIn(world, [id]));
-  const items = resolveAt(world, v).filter(it => reached.has(it.id));
+  const items = all.filter(it => reached.has(it.id));
   const open = opened(world, parentOf(world).get(id) ?? null);
 
   const places = artefactsIn(world, [id]).flatMap(a => {

@@ -562,10 +562,11 @@ export function worldCanvas(
       // went down, which every operation this gesture writes is about. The
       // gesture recomputes from the lists as they were then rather than
       // composing onto its own last frame.
+      const resolved = resolveAt(was, v);
       const paints = new Map(
         [...new Set(ids)]
           .filter(id => was.polygons.has(id) || was.groups.has(id) || was.artefacts.has(id) || was.paths.has(id))
-          .map(id => [id, painted(was, v, id)]),
+          .map(id => [id, painted(was, v, id, resolved)]),
       );
 
       // One pivot for the whole selection, so several polygons turn together
@@ -1764,10 +1765,11 @@ export function worldCanvas(
       // into. Alone, because it is picked alone.
       const beginning = selection().start;
 
+      const resolved = resolveAt(was, v);
       const paints = new Map(
         [...new Set(ids)]
           .filter(id => was.polygons.has(id) || was.groups.has(id) || was.artefacts.has(id) || was.paths.has(id))
-          .map(id => [id, painted(was, v, id)]),
+          .map(id => [id, painted(was, v, id, resolved)]),
       );
 
       if (paints.size === 0 && !beginning) return;
