@@ -190,17 +190,17 @@ describe('keyframes', () => {
     expect(out.keyframes.map(f => f.name)).toEqual(out.keyframes.map((_f, i) => `v${i}`));
   });
 
-  test('births and deaths move to the next; a life left empty goes', () => {
+  test('what is born at a deleted keyframe goes with it; what dies there dies at the next', () => {
     let { world, id: a } = room(emptyWorld(), 2);
-    const b = room(world, 2);
+    const b = room(world, 1);
 
     world = b.world;
-    world = { ...world, polygons: new Map(world.polygons).set(b.id, { ...world.polygons.get(b.id)!, death: 3 }) };
+    world = { ...world, polygons: new Map(world.polygons).set(b.id, { ...world.polygons.get(b.id)!, death: 2 }) };
 
     const out = ok(deleted(world, 2));
 
-    expect(out.polygons.get(a)!.birth).toBe(3);
-    expect(out.polygons.has(b.id)).toBe(false);
+    expect(out.polygons.has(a)).toBe(false);
+    expect(out.polygons.get(b.id)!.death).toBe(3);
   });
 
   test('deleting the last keyframe lets what died there live, and drops what was born there', () => {

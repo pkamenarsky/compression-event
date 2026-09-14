@@ -419,10 +419,9 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
  * Keyframe `k` taken out.
  *
  * What it does to each thing goes to the front of the next keyframe's list,
- * and what is born or dies at it is born or dies at the next — a thing that
- * then lives nowhere goes entirely. A repeat that stepped there has one step
- * fewer, so it ends where it ended. The last keyframe's writing goes with it,
- * what dies there lives to the end, and what is born there goes.
+ * what dies at it dies at the next, and what is born at it goes with it. A
+ * repeat that stepped there has one step fewer, so it ends where it ended. The
+ * last keyframe's writing goes with it, and what dies there lives to the end.
  *
  * Refused where one corner would end up with two repeats at one keyframe,
  * which a corner has no room for, and for the only keyframe there is.
@@ -470,15 +469,13 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
     rigs.set(id, { keys, nudges, depths });
   }
-  // A life moved off `k`, or nothing where none is left.
+  // A death moved off `k`, or nothing for what was born there.
   const life = <T extends { birth: KeyframeId, death: KeyframeId | null }>(it: T): T | null => {
-    const moved = (x: KeyframeId): KeyframeId | null => (x === k ? next : x);
-    const birth = moved(it.birth);
-    const death = it.death === null ? null : moved(it.death);
+    if (it.birth === k) return null;
 
-    if (birth === null || birth === death) return null;
+    const death = it.death === k ? next : it.death;
 
-    return birth === it.birth && death === it.death ? it : { ...it, birth, death };
+    return death === it.death ? it : { ...it, death };
   };
 
   const gone = new Set<Id>();
