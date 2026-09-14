@@ -313,7 +313,7 @@ describe('places', () => {
 });
 
 describe('rebirth', () => {
-  test('its story moves as far as its birth, and its death stays', () => {
+  test('its whole life moves as far as its birth', () => {
     const { world, id } = room(emptyWorld(), 1);
     const p = world.polygons.get(id)!;
     const late = { ...p.points[0], id: 99, birth: 3, death: 4 };
@@ -325,7 +325,7 @@ describe('rebirth', () => {
     const q = out.polygons.get(id)!;
 
     expect(q.birth).toBe(2);
-    expect(q.death).toBe(5);
+    expect(q.death).toBe(6);
     expect(q.points.slice(0, 4).every(c => c.birth === 2)).toBe(true);
     expect(q.points[4]).toMatchObject({ birth: 4, death: 5 });
     expect(listAt(out, 2, id).map(e => e.op.kind)).toEqual(['turn']);
@@ -333,7 +333,7 @@ describe('rebirth', () => {
     expectFrame(stateAt(out, id, 4).frame, stateAt(w, id, 3).frame);
   });
 
-  test('earlier works the same way, and not past its death', () => {
+  test('earlier works the same way, and a death past the end is none', () => {
     const { world, id } = room(emptyWorld(), 2);
     const w = wrote(world, 3, id, move(0, 4));
     const out = ok(reborn(w, id, 0));
@@ -341,9 +341,10 @@ describe('rebirth', () => {
     expect(out.polygons.get(id)!.birth).toBe(0);
     expect(listAt(out, 1, id).map(e => e.op)).toEqual([move(0, 4)]);
 
-    const dying = { ...w, polygons: new Map(w.polygons).set(id, { ...w.polygons.get(id)!, death: 3 }) };
+    const last = w.keyframes.length - 1;
+    const dying = { ...w, polygons: new Map(w.polygons).set(id, { ...w.polygons.get(id)!, death: last }) };
 
-    expect(reborn(dying, id, 3)).toEqual({ refused: 'it would be born after it is gone' });
+    expect(ok(reborn(dying, id, 3)).polygons.get(id)!.death).toBe(null);
   });
 });
 

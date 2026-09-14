@@ -544,15 +544,12 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 }
 
 /**
- * A thing's birth moved to keyframe `to`, and its story with it: everything
- * written about it, and when each of its corners is born and dies, moves as
- * many keyframes as the birth did. Its death stays where it is.
+ * A thing's birth moved to keyframe `to`, and its whole life with it: its
+ * death, everything written about it, and when each of its corners is born and
+ * dies, all move as many keyframes as the birth did.
  *
  * What is moved past the last keyframe goes — a corner born there, and an
- * entry written there — and a corner that would die there lives to the end.
- * So does a corner that would be born where the thing is already gone.
- *
- * Refused where it would be born at or after its death.
+ * entry written there — and a death there becomes living to the end.
  */
 export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
   const keyframes = world.keyframes;
@@ -564,10 +561,6 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
   const by = t - indexIn(keyframes, it.birth);
 
   if (by === 0) return world;
-
-  const end = it.death === null ? keyframes.length : indexIn(keyframes, it.death);
-
-  if (t >= end) return { refused: 'it would be born after it is gone' };
 
   const shifted = (k: KeyframeId): KeyframeId | null => {
     const i = indexIn(keyframes, k);
@@ -598,6 +591,8 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
       return m.size === 0 || gone.has(v) ? [] : [[v, m] as const];
     }));
 
+  const death = it.death === null ? null : shifted(it.death);
+  const end = death === null ? keyframes.length : indexIn(keyframes, death);
   const gone = new Set<VertexId>();
   let out: World = world;
   const polygon = world.polygons.get(id);
@@ -614,13 +609,13 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
       return [{ ...c, birth, death: c.death === null ? null : shifted(c.death) }];
     });
 
-    out = { ...out, polygons: new Map(out.polygons).set(id, { ...polygon, birth: to, points }) };
+    out = { ...out, polygons: new Map(out.polygons).set(id, { ...polygon, birth: to, death, points }) };
   }
   else if (world.artefacts.has(id)) {
-    out = { ...out, artefacts: new Map(out.artefacts).set(id, { ...world.artefacts.get(id)!, birth: to }) };
+    out = { ...out, artefacts: new Map(out.artefacts).set(id, { ...world.artefacts.get(id)!, birth: to, death }) };
   }
   else {
-    out = { ...out, paths: new Map(out.paths).set(id, { ...world.paths.get(id)!, birth: to }) };
+    out = { ...out, paths: new Map(out.paths).set(id, { ...world.paths.get(id)!, birth: to, death }) };
   }
 
   const rig = rigOf(world, id);
