@@ -1,17 +1,10 @@
 * ask yes/no if level unsaved
 * no need to rebake on artifact change
-* locking polys/making them invisible or something
-** hold cursor, polys beneath "come apart"?
 * fog when dying in order to not see "behind the walls"
-* clear erosion/transform just here/from here on out
-* bring transform one version up
-* multierosion in multiple versions
 
 * artefact idea - shrink walls for 5sec
 * each level has different wall heights/RenderConfigs
 ** even better - different RenderConfig for each version/keyframe
-
-* erosion should be cumulative i think
 
 * a shape in both create and select mode has handles to scale, rotate and erode
 ** TODO exact shape and form
@@ -63,7 +56,6 @@
 ** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
 
 * selection of overlapping vertices
-* locking of polygons? unlock works then with cmd + click
 * adaptive tables? - don't subdivide to smallest event, make it per polygon (chaining more precise table to parent table?)
 
 * shortcuts
