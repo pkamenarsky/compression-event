@@ -103,6 +103,7 @@ import {
   joined,
   keyAt,
   order,
+  outermostOf,
   resolveAt,
   rigOf,
   standingIn,
@@ -217,16 +218,7 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
  * whatever its outermost member is. See `outermostSlot` in `scene.ts`.
  */
 export function outermostIn(items: readonly Contributed[], set: SetName): number | null {
-  let out: number | null = null;
-
-  for (const it of items) {
-    const slot = slotOf(it.kind, set);
-
-    if (it.shape.length === 0 || slot === null) continue;
-    if (out === null || slot < out) out = slot;
-  }
-
-  return out;
+  return outermostOf(items.filter(it => it.shape.length > 0).map(it => it.kind), set);
 }
 
 /**

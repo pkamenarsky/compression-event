@@ -2566,6 +2566,18 @@ describe('going inside a group', () => {
     expect(shapeArea(all[0].shape)).toBeCloseTo(36 * 36 - 14 * 14, 6);
   });
 
+  test('a void is spent inside a scope with anything else in it', () => {
+    const { world, ids } = drawn(
+      ['floor', rect(0, 0, 100, 100)],
+      ['void', rect(40, 40, 20, 20)],
+    );
+
+    const made = sealed(world, 0, ids, TOP)!;
+
+    expect(outermostSlot(made.world, made.id, 'level')).toBeNull();
+    expect(contributing(made.world, 0, resolveAt(made.world, 0)).map(it => it.kind)).toEqual([kind('floor')]);
+  });
+
   test('a scope keeps its kind when its room is taken out', () => {
     // Read off what it holds, not off what stands: a level with no room left
     // in it is nothing, and not the solids that were in the room.

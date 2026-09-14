@@ -636,6 +636,29 @@ describe('the group does not survive being resolved', () => {
     expect(shapeArea(it.shape)).toBeCloseTo(160 * 100 - 20 * 20, 6);
   });
 
+  test('a floor with a hole through both sets resolves to the floor, and no void', () => {
+    // The void's level half had nothing in the group to cut, and a hole in the
+    // floor is not a thing in the level.
+    let world = emptyWorld();
+    const ids: PolygonId[] = [];
+
+    for (const [k, r] of [
+      [{ type: 'floor' }, rect(0, 0, 100, 100)],
+      [{ type: 'void', from: SOLID | FLOOR }, rect(40, 40, 20, 20)],
+    ] as [PolygonKind, Point[]][]) {
+      const made = addPolygon(world, k, r, 0, landing(world, 0, null));
+
+      world = made.world;
+      ids.push(made.id);
+    }
+
+    const out = resolveInto(world, 0, ids, landing(world, 0, null))!;
+
+    expect(out.ids).toHaveLength(1);
+    expect(out.world.polygons.get(out.ids[0])!.type).toBe('floor');
+    expect(shapeArea(resolveAt(out.world, 0)[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
+  });
+
   test('a group of voids alone resolves to one void', () => {
     const { world, ids } = drawn(
       ['void', rect(0, 0, 100, 100)],

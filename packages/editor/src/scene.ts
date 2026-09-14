@@ -2574,28 +2574,48 @@ export interface Standing {
  * An author wanting the solid to outlive the room nests it: a sealed solid in
  * a sealed level has been a solid all along.
  *
+ * A void is the outermost thing only in a scope of nothing but voids. Anywhere
+ * else it came to cut something in the scope, and is spent there: a floor with
+ * a hole through both sets is a floor with a hole in it, and not a floor and a
+ * hole left over in the level for whatever solid it lands on.
+ *
  * Descending through sealed groups as much as loose ones, because a sealed one
  * publishes into its own outermost slot and the least of the least is the
  * least.
  */
 export function outermostSlot(world: World, id: Id, set: SetName): number | null {
+  return outermostOf(polygonsUnder(world, id), set);
+}
+
+/** `outermostSlot` over kinds already in hand. The one rule, for the scope and
+ * for a resolve, which reads what is under it rather than a group. */
+export function outermostOf(kinds: readonly PolygonKind[], set: SetName): number | null {
+  let out: number | null = null;
+
+  for (const kind of kinds) {
+    const k = slotOf(kind, set);
+
+    if (k !== null && (out === null || k < out)) out = k;
+  }
+
+  if (out !== null && SLOT_KINDS[set][out].type === 'void' && kinds.some(k => k.type !== 'void')) {
+    return null;
+  }
+
+  return out;
+}
+
+/** Every polygon's kind under `id`, whether or not it stands anywhere. */
+function polygonsUnder(world: World, id: Id): PolygonKind[] {
   const group = world.groups.get(id);
 
   if (group === undefined) {
     const p = world.polygons.get(id);
 
-    return p === undefined ? null : slotOf(p, set);
+    return p === undefined ? [] : [p];
   }
 
-  let out: number | null = null;
-
-  for (const m of group.members) {
-    const k = outermostSlot(world, m, set);
-
-    if (k !== null && (out === null || k < out)) out = k;
-  }
-
-  return out;
+  return group.members.flatMap(m => polygonsUnder(world, m));
 }
 
 /**
