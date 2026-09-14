@@ -2863,8 +2863,9 @@ export interface Occupied {
    * outlines are on screen in their own right, so this is drawn round them and
    * nothing about them changes: what it says is *these are held together*.
    *
-   * `empty` is a scope that came to nothing — a group of pillars, which has no
-   * room in it for them to be holes in, or one eroded past its own middle.
+   * `empty` is a scope that came to nothing — a room swallowed by its own
+   * pillar, a level whose rooms have all been taken out, or one eroded past its
+   * own middle.
    * Nothing else of it is on screen at all, so this is the whole of what says
    * it is there, and it is drawn the way an eroded-away polygon is.
    *

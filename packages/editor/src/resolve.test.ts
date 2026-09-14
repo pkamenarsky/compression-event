@@ -615,22 +615,38 @@ describe('the group does not survive being resolved', () => {
     expect(it.corners.length).toBe(6);
   });
 
-  test('a group of pillars alone resolves to nothing, and goes', () => {
+  test('a group of pillars alone resolves to one pillar, with its holes in it', () => {
     const { world, ids } = drawn(
       ['solid', rect(0, 0, 100, 100)],
       ['solid', rect(60, 0, 100, 100)],
+      ['void', rect(40, 40, 20, 20)],
     );
 
     const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
-    // A pillar is a hole in something, and there is nothing here for it to be
-    // a hole in — so the set it makes is empty and that is what it becomes.
-    // The alternative is a gesture that does what it says on some groups and
-    // quietly declines on others.
-    expect(out.ids).toEqual([]);
-    expect(out.world.polygons.size).toBe(0);
+    // The group is a solid — its outermost member is — so that is what it
+    // resolves to: `solid - void`, one polygon with a second ring.
+    expect(out.ids).toHaveLength(1);
+    expect(out.world.polygons.get(out.ids[0])!.type).toBe('solid');
     expect(out.world.groups.size).toBe(0);
+
+    const it = resolveAt(out.world, 0)[0];
+
+    expect(shapeArea(it.shape)).toBeCloseTo(160 * 100 - 20 * 20, 6);
+  });
+
+  test('a group of voids alone resolves to one void', () => {
+    const { world, ids } = drawn(
+      ['void', rect(0, 0, 100, 100)],
+      ['void', rect(60, 0, 100, 100)],
+    );
+
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(out.ids).toHaveLength(1);
+    expect(out.world.polygons.get(out.ids[0])).toMatchObject({ type: 'void', from: SOLID });
   });
 
   test('a solid that swallows its room takes the room with it', () => {
@@ -647,9 +663,12 @@ describe('the group does not survive being resolved', () => {
   });
 
   test('an artefact still comes out of a group that resolved to nothing', () => {
-    const { world, ids } = drawn(['solid', rect(0, 0, 100, 100)]);
+    const { world, ids } = drawn(
+      ['level', rect(40, 40, 20, 20)],
+      ['solid', rect(0, 0, 100, 100)],
+    );
     const dropped = addArtefact(world, 'key', { x: 50, y: 50 }, 0, TOP);
-    const made = sealed(dropped.world, 0, [ids[0], dropped.id], landing(dropped.world, 0, null))!;
+    const made = sealed(dropped.world, 0, [...ids, dropped.id], landing(dropped.world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
     expect(out.world.polygons.size).toBe(0);

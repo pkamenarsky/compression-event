@@ -65,9 +65,9 @@
 // Nothing is left over. A pillar reaching out past the room it was in was also
 // cutting the rooms *around* the group, and that goes with it: the price of
 // the shape being one shape, and the shape being one shape is what resolving
-// is. Where there is no room at all — a group of nothing but pillars — there is
-// nothing for a hole to be a hole in, so the gesture does not happen rather
-// than emptying the group.
+// is. Where there is no room at all — a group of nothing but pillars — the
+// pillars are the outermost thing, and what comes out is pillars with their
+// voids as holes in them: `solid - void`, which is what such a group is.
 //
 // A floor is in no level — see `filling` in `bake.ts` — so it neither cuts the
 // walls nor is cut by them, and it is resolved as a set of its own: floors
@@ -82,7 +82,7 @@
 // resolving it out of existence.
 // -----------------------------------------------------------------------------
 
-import { PolygonKind, SLOTS, SetName, inside, slotOf } from '@ce/game/world';
+import { PolygonKind, SLOTS, SLOT_KINDS, SetName, inside, slotOf } from '@ce/game/world';
 import {
   Member,
   Point,
@@ -211,8 +211,36 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
   return out;
 }
 
-/** One set's union, as closed rings in world units. */
+/**
+ * The outermost slot of `set` anything in `items` fills, or nothing where
+ * nothing does: what the union of them *is*, the same way a sealed group is
+ * whatever its outermost member is. See `outermostSlot` in `scene.ts`.
+ */
+export function outermostIn(items: readonly Contributed[], set: SetName): number | null {
+  let out: number | null = null;
+
+  for (const it of items) {
+    const slot = slotOf(it.kind, set);
+
+    if (it.shape.length === 0 || slot === null) continue;
+    if (out === null || slot < out) out = slot;
+  }
+
+  return out;
+}
+
+/**
+ * One set's union, as closed rings in world units.
+ *
+ * Folded from the outermost slot anything fills rather than from the first. A
+ * group of pillars with holes in them is `solid - void`, and that is a shape
+ * whether or not there is a room for it to stand in.
+ */
 export function rings(items: readonly Contributed[], set: SetName): NamedRing[] {
+  const top = outermostIn(items, set);
+
+  if (top === null) return [];
+
   const mine: Member[] = [];
 
   for (const it of items) {
@@ -222,15 +250,16 @@ export function rings(items: readonly Contributed[], set: SetName): NamedRing[] 
     // floor and a hole in a floor does not cut a room.
     if (it.shape.length === 0 || slot === null) continue;
 
-    mine.push({ id: it.id, slot, shape: it.shape });
+    mine.push({ id: it.id, slot: slot - top, shape: it.shape });
   }
 
-  // What is taken away with nothing to be taken out of bounds no material.
-  // The group is pillars, and a pillar on its own is a hole in nothing.
-  if (!mine.some(m => m.slot === 0)) return [];
-
-  const slots = SLOTS[set];
-  const rule = (on: readonly boolean[]) => inside(set, on);
+  // The slots above the outermost are dropped, and the rule for what is left
+  // is the same rule: each slot taken out of the one before it. From the first
+  // slot that is `inside` itself.
+  const slots = SLOTS[set] - top;
+  const rule = top === 0
+    ? (on: readonly boolean[]) => inside(set, on)
+    : (on: readonly boolean[]) => alternating(on, 0);
   const on = ground(mine, slots);
   const out: NamedRing[] = [];
 
@@ -244,6 +273,11 @@ export function rings(items: readonly Contributed[], set: SetName): NamedRing[] 
   }
 
   return stitched(out);
+}
+
+/** Slot `k` taken out of by everything after it, the way `inside` folds. */
+function alternating(on: readonly boolean[], k: number): boolean {
+  return k < on.length && on[k] && !alternating(on, k + 1);
 }
 
 /**
@@ -370,13 +404,21 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   // the room it was in goes with it — it was cutting the rooms *around* the
   // group as well, and that is what resolving to one shape costs.
   const walls = rings(items, 'level').map(ring => ring.map(p => p.at));
+  const level = outermostIn(items, 'level');
+  const floor = outermostIn(items, 'floor');
 
-  // Both come out as the plain kind of their set: what a pillar contributed is
-  // a hole in the level and what a void contributed is a hole in that hole,
+  // Each comes out as the outermost kind of its set: what a pillar contributed
+  // is a hole in the level and what a void contributed is a hole in that hole,
   // and once either is a ring of the shape there is nothing left for it to cut.
+  // Where there is no room, the pillars are the outermost thing, and they come
+  // out as pillars with their holes in them.
+  //
+  // The floor is clipped only to a level. A solid is something standing in a
+  // room, not the room a floor is laid in, so a group that is one keeps its
+  // floor whole, as the scope it resolves does. See `resolves` in `scene.ts`.
   const sides: [PolygonKind, readonly Ring[]][] = [
-    [{ type: 'level' }, walls],
-    [{ type: 'floor' }, floors(items, walls)],
+    [SLOT_KINDS.level[level ?? 0], walls],
+    [SLOT_KINDS.floor[floor ?? 0], level === 0 ? floors(items, walls) : rings(items, 'floor').map(ring => ring.map(p => p.at))],
   ];
 
   for (const [kind, side] of sides) {
@@ -513,10 +555,9 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // here — which the geometry cannot produce, since a hole needs something to
   // be a hole in — would otherwise be a ring nobody draws.
   //
-  // None of them at all is an answer, not a refusal. A group of nothing but
-  // pillars makes no set — a pillar is a hole in something and there is nothing
-  // here for it to be a hole in — so what it resolves to is nothing, and it
-  // goes. Anything else would be a gesture that did what it said on some
+  // None of them at all is an answer, not a refusal. A room swallowed by the
+  // pillar standing in it makes no set, so what it resolves to is nothing, and
+  // it goes. Anything else would be a gesture that did what it said on some
   // groups and quietly declined on others.
   for (const outer of readings.filter(r => !r.hole)) {
     const parts = [outer, ...readings.filter(r => r.hole && readings[r.owner!] === outer)];
