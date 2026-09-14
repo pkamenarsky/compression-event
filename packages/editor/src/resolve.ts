@@ -178,14 +178,29 @@ function signed(ring: Ring): number {
  *
  * A run whose two ends have the same name is already a ring: a member nothing
  * overlaps contributes its whole outline in one piece.
+ *
+ * The one junction a name does not settle is two members' corners standing on
+ * the same spot, which is what two rooms sharing an edge exactly do at either
+ * end of it. A corner lying along somebody else's edge is named after the
+ * corner from both sides, but a corner lying on another corner is two
+ * corners, and each side names it after its own — so the run ending at one
+ * found nothing starting there and closed on itself, and two rooms side by
+ * side resolved to a triangle each. A corner is where it was drawn, bit for
+ * bit, so where the name finds nothing the corner's position is still a join
+ * with no tolerance in it. The name is asked first, so that two rooms
+ * touching at one corner stay two rings rather than one pinched through it.
  */
 function stitched(runs: readonly NamedRing[]): NamedRing[] {
   const from = new Map<string, NamedRing[]>();
+  const at = new Map<string, NamedRing[]>();
+  const spot = (p: Named): string => `${p.at.x},${p.at.y}`;
 
   for (const run of runs) {
-    const head = run[0].key;
+    const head = run[0];
 
-    (from.get(head) ?? from.set(head, []).get(head)!).push(run);
+    (from.get(head.key) ?? from.set(head.key, []).get(head.key)!).push(run);
+
+    if (head.key.startsWith('v')) (at.get(spot(head)) ?? at.set(spot(head), []).get(spot(head))!).push(run);
   }
 
   const used = new Set<NamedRing>();
@@ -203,7 +218,15 @@ function stitched(runs: readonly NamedRing[]): NamedRing[] {
       // Every run's last point is the next one's first. Dropping it here is
       // what leaves the ring closed rather than doubled at every junction.
       ring.push(...go.slice(0, -1));
-      go = from.get(go[go.length - 1].key)?.find(n => !used.has(n));
+
+      const tail: Named = go[go.length - 1];
+
+      // Back where it started, which the name-by-position below would not
+      // otherwise notice: it would carry on into whatever else begins there.
+      if (tail.key === ring[0].key) break;
+
+      go = from.get(tail.key)?.find(n => !used.has(n))
+        ?? (tail.key.startsWith('v') ? at.get(spot(tail))?.find(n => !used.has(n)) : undefined);
     }
 
     if (ring.length >= 3) out.push(ring);

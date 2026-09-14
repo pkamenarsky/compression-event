@@ -163,6 +163,44 @@ describe('resolving a group', () => {
     expect(out.losing).toEqual([]);
   });
 
+  test('two rooms sharing an edge exactly come to one polygon, sealed or loose', () => {
+    // Side by side, and one half the height of the other so only one end of
+    // the shared edge is a corner of both.
+    for (const second of [rect(100, 0, 100, 100), rect(100, 0, 100, 50)]) {
+      for (const seal of [true, false]) {
+        const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', second]);
+        const made = (seal ? sealed : grouped)(world, 0, ids, landing(world, 0, null))!;
+        const out = resolveGroup(made.world, 0, made.id)!;
+
+        expect(out.world.groups.size).toBe(0);
+        expect(out.world.polygons.size).toBe(1);
+
+        const [it] = resolveAt(out.world, 0);
+
+        expect(shapeArea(it.shape)).toBeCloseTo(100 * 100 + shapeArea([second]), 6);
+      }
+    }
+  });
+
+  test('two rooms touching at one corner stay two rooms', () => {
+    const { world, ids } = drawn(
+      ['level', rect(0, 0, 100, 100)],
+      ['level', rect(100, 100, 100, 100)],
+    );
+
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
+    const out = resolveGroup(made.world, 0, made.id)!;
+
+    expect(out.ids.length).toBe(2);
+
+    for (const id of out.ids) {
+      const it = resolveAt(out.world, 0).find(r => r.id === id)!;
+
+      expect(it.shape.length).toBe(1);
+      expect(shapeArea(it.shape)).toBeCloseTo(100 * 100, 6);
+    }
+  });
+
   test('the union it draws is the union it drew, at every version', () => {
     const { world, group } = pair();
     const before = world.keyframes.map((_unused, v) => drawnArea(world, v));
