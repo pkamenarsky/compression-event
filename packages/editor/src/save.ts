@@ -224,6 +224,8 @@ export function restored(file: Saved): EditorState {
     keyframes: file.world.keyframes,
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredRig(rig)])),
     flags: new Map(file.world.flags ?? []),
+    effects: new Map(),
+    cornerEffects: new Map(),
   };
 
   return {

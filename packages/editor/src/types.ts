@@ -20,6 +20,7 @@ import {
   slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
+import type { Pattern, Sides } from './geometry';
 import type { Deform, Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig, Round } from './rig';
 import { CORNER_MAPS, eachCornerMap } from './rig';
 
@@ -527,6 +528,32 @@ export interface World {
   /** What the timeline's row headers say about each thing: hidden, locked,
    * soloed. Absent is none of them. See `Flags`. */
   flags: ReadonlyMap<Id, Flags>
+  /** Which effects each polygon or group has, and how: one fact over every
+   * keyframe. How much is in its timeline. Absent is none. See `Effects`. */
+  effects: ReadonlyMap<Id, Effects>
+  /** A corner's own options, over its polygon's: its round, and the deform of
+   * the edge it starts. Absent is its polygon's. */
+  cornerEffects: ReadonlyMap<VertexId, Partial<Effects>>
+}
+
+/**
+ * The effects on a thing, after its erosion and always in this order: its
+ * corners rounded, then its edges deformed.
+ *
+ * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
+ * effects a thing has, and how, is one fact about it over every keyframe, as
+ * its shape is, and how much — the radius, the amplitude — is an operation,
+ * like erosion. A count, a pattern or a seed does not change over time.
+ *
+ * - `round`: each corner an arc of `segments` segments, one being a chamfer.
+ *   `verticals` off stands verticals only at the tangent points, so the round
+ *   reads smooth rather than faceted.
+ * - `deform`: `count` points put into each edge, pushed off it by the pattern.
+ *   `seed` is the noise's.
+ */
+export interface Effects {
+  round?: { segments: number, verticals: boolean }
+  deform?: { count: number, pattern: Pattern, seed: number, sides: Sides }
 }
 
 /**
@@ -641,6 +668,8 @@ export function emptyWorld(): World {
     })),
     rigs: new Map(),
     flags: new Map(),
+    effects: new Map(),
+    cornerEffects: new Map(),
   };
 }
 
@@ -830,6 +859,8 @@ export interface Timed {
   stood: { frame: Frame, erosion: number, radius?: number, amplitude?: number }
   /** Each keyframe's list from the copy on, by offset. */
   keys: [number, Entry[]][]
+  /** Its effects. Absent is none. */
+  effects?: Effects
   /** The repeats that came across as single entries. */
   unrolled: Unrolled[]
 }
@@ -871,6 +902,8 @@ export type Clipping =
       deep: [VertexId, [number, Entry<Erode>][]][]
       rounds?: [VertexId, [number, Entry<Round>][]][]
       deforms?: [VertexId, [number, Entry<Deform>][]][]
+      /** Its corners' own options. Absent is none. */
+      cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)
   | ({
       kind: 'group'

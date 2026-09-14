@@ -32,13 +32,19 @@
 
 import { Point } from '@ce/game/world';
 import {
+  Effecting,
+  PLAIN,
+  Pattern,
   Ring,
   Shape,
+  Sides,
   contains,
+  effected as effectedAll,
   encloses,
   erode,
   erodeAt,
   erodeRingsAt,
+  imaged,
   isCCW,
   keeping,
   nextOf,
@@ -53,6 +59,7 @@ import {
   ArtefactId,
   ArtefactType,
   Clipping,
+  Effects,
   GroupId,
   IconType,
   FLOOR,
@@ -96,7 +103,7 @@ import {
   outline,
   pieces,
 } from './worldset';
-import { remembered } from './memo';
+import { Key, remembered } from './memo';
 import { Affine, IDENTITY, compose, place, unplace } from './affine';
 import {
   EMPTY_RIG,
@@ -112,6 +119,7 @@ import {
   Scale,
   Source,
   Stand,
+  State,
   Turn,
   affineOf,
   appending,
@@ -224,6 +232,102 @@ export interface Resolved {
    * one costs nothing.
    */
   keep?: readonly Point[]
+  /**
+   * Its rounds and deforms, as the projection takes them: nothing where it has
+   * none, or none of them comes to anything. See `effectedOf`.
+   */
+  effected?: Effected | null
+}
+
+/**
+ * What rounds and deforms a polygon's projection, corner by corner and index
+ * for index with `Resolved.corners`: each corner's options, its whole radius,
+ * the whole amplitude of the edge it starts, and its id, which names that edge
+ * to the noise. `own` and the two amounts beside it are the polygon's, for
+ * what the erosion made rather than any corner.
+ *
+ * Whole: the polygon's amount with the corner's own on top. A length, so a
+ * frame that scales divides it the way it divides a depth.
+ */
+export interface Effected {
+  options: readonly Effecting[]
+  radii: readonly number[]
+  amplitudes: readonly number[]
+  keys: readonly number[]
+  own: Effecting
+  radius: number
+  amplitude: number
+}
+
+/** A thing's options, with a corner's own over them where it has them. */
+export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effecting {
+  const round = own?.round ?? fx?.round;
+  const deform = own?.deform ?? fx?.deform;
+
+  return {
+    segments: round?.segments ?? 0,
+    count: deform?.count ?? 0,
+    pattern: deform?.pattern ?? PLAIN.pattern,
+    seed: deform?.seed ?? 0,
+    sides: deform?.sides ?? PLAIN.sides,
+  };
+}
+
+/**
+ * A polygon's effects at its standing corners, from its options in the world
+ * and its amounts as a keyframe leaves them — or as the bake has them part way
+ * along. Nothing where it has no effects, or where none of them does anything
+ * there: then the projection is its erosion alone, exactly as it always was.
+ */
+export function effectedOf(
+  world: Pick<World, 'effects' | 'cornerEffects'>,
+  id: Id,
+  corners: readonly Vertex[],
+  amounts: Pick<State, 'radius' | 'amplitude' | 'radii' | 'amplitudes'>,
+): Effected | null {
+  const fx = world.effects.get(id);
+
+  if (fx === undefined && !corners.some(c => world.cornerEffects.has(c.id))) return null;
+
+  const options = corners.map(c => effecting(fx, world.cornerEffects.get(c.id)));
+  const radii = corners.map(c => amounts.radius + (amounts.radii.get(c.id) ?? 0));
+  const amplitudes = corners.map(c => amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0));
+  const own = effecting(fx);
+
+  return shaping({ options, radii, amplitudes, keys: corners.map(c => c.id), own, radius: amounts.radius, amplitude: amounts.amplitude });
+}
+
+/** Effects kept only where they do something. */
+export function shaping(e: Effected): Effected | null {
+  const any = e.options.some((o, i) => (o.segments > 0 && e.radii[i] > 0) || (o.count > 0 && e.amplitudes[i] !== 0))
+    || (e.own.segments > 0 && e.radius > 0) || (e.own.count > 0 && e.amplitude !== 0);
+
+  return any ? e : null;
+}
+
+const PATTERNS: readonly Pattern[] = ['zigzag', 'sine', 'noise'];
+const SIDED: readonly Sides[] = ['in', 'out', 'both'];
+
+/** Options as numbers, for `remembered`. */
+function optionKey(e: Effecting): number[] {
+  return [e.segments, e.count, PATTERNS.indexOf(e.pattern), e.seed, SIDED.indexOf(e.sides)];
+}
+
+function optionOf(k: readonly number[]): Effecting {
+  return { segments: k[0], count: k[1], pattern: PATTERNS[k[2]], seed: k[3], sides: SIDED[k[4]] };
+}
+
+/** Effects as numbers, lengths divided by `s`, for `project`. */
+function effectKey(e: Effected, s = 1): Key[] {
+  return [
+    e.options.map(optionKey),
+    e.radii.map(r => r / s),
+    e.amplitudes.map(a => a / s),
+    e.keys as number[],
+    optionKey(e.own),
+    e.radius / s,
+    e.amplitude / s,
+  ];
 }
 
 /**
@@ -700,7 +804,35 @@ export const project = remembered((
   rings: readonly number[],
   erosion: number,
   depths: readonly number[] | null,
+  effects: readonly Key[] | null,
 ): Shape => {
+  const eroded = offsetOf(source, rings, erosion, depths);
+
+  if (effects === null) return eroded;
+
+  // Rounded and then deformed, both built off where each source corner and
+  // edge landed: see `imaged`.
+  const [options, radii, amplitudes, keys, own, radius, amplitude] = effects as [
+    number[][], number[], number[], number[], number[], number, number,
+  ];
+  const at = options.map(optionOf);
+
+  return simplify(imaged(
+    eroded,
+    source,
+    rings,
+    i => depths?.[i] ?? erosion,
+    i => at[i],
+    i => radii[i],
+    j => amplitudes[j],
+    j => keys[j],
+    { radius, amplitude, e: optionOf(own) },
+  ).shape);
+});
+
+/** The erosion alone: the first of the three, and all of it for a polygon
+ * with no effects. */
+function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Shape {
   // One ring is the case the winding still has to be settled for: a source ring
   // is whatever it was drawn as, and `erodeAt` is what decides which way is in.
   // A source with holes in it has already said, by how its rings are wound, and
@@ -712,7 +844,7 @@ export const project = remembered((
   const simple = simplify(sliced(source, rings));
 
   return erosion === 0 ? simple : erode(simple, erosion);
-});
+}
 
 /** The per-corner depths under a frame that scales: an offset is a length and
  * goes through one the way lengths do. */
@@ -779,10 +911,11 @@ function similarity(m: Affine): number | null {
  */
 function projection(at: Omit<Resolved, 'shape'>): Shape {
   const s = similarity(at.frame);
+  const fx = at.effected ?? null;
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths);
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx));
 
-  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s))
+  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s))
     .map(ring => place(at.frame, ring));
 }
 
@@ -996,6 +1129,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
       erosion: state.erosion,
       over: state.depths,
       depths: varying(corners, state.erosion, state.depths),
+      effected: effectedOf(world, id, corners, state),
     }));
   }
 
@@ -2421,6 +2555,18 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   return out;
 }
 
+/** A group's effects as keyframe `v` leaves them: its options and its amounts.
+ * Nothing where it has none. */
+export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
+  const fx = world.effects.get(id);
+
+  if (fx === undefined) return undefined;
+
+  const state = stateAt(world, id, v);
+
+  return { e: effecting(fx), radius: state.radius, amplitude: state.amplitude };
+}
+
 /**
  * The resolved polygons as the CSG should see them: a group with a depth on it
  * standing in for its members, and everything else passed straight through.
@@ -2457,7 +2603,7 @@ export function contributing(
   // members. It used to be the depth that decided this — a group with none was
   // taken to be doing nothing — which asked erosion to stand for a question it
   // is not about. Sealing is that question, asked outright.
-  return contributed(world, items, id => ({ depth: depth.get(id) ?? 0 }));
+  return contributed(world, items, id => ({ depth: depth.get(id) ?? 0, effects: groupEffects(world, v, id) }));
 }
 
 /**
@@ -2569,6 +2715,8 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
+  /** Its rounds and deforms, on its union after the depth. Absent is none. */
+  effects?: { e: Effecting, radius: number, amplitude: number }
   /**
    * The frame to keep the union's points in.
    *
@@ -2661,11 +2809,27 @@ function polygonsUnder(world: World, id: Id): PolygonKind[] {
  * and once more for every ghost on screen, about groups the hand is nowhere
  * near. See `remembered`.
  */
-const offsetUnion = remembered((shapes: readonly Shape[], depth: number): Shape => {
+const offsetUnion = remembered((shapes: readonly Shape[], depth: number, effects: readonly number[] | null): Shape => {
   const all = unionAll(shapes);
+  const eroded = depth === 0 || all.length === 0 ? all : erode(all, depth);
 
-  return depth === 0 || all.length === 0 ? all : erode(all, depth);
+  if (effects === null || eroded.length === 0) return eroded;
+
+  const [radius, amplitude, ...option] = effects;
+
+  return effectedAll(eroded, optionOf(option), radius, amplitude);
 });
+
+/** A group's effects as `offsetUnion` takes them, or nothing where they do
+ * nothing. */
+function unionKey(s: Standing | null): number[] | null {
+  const fx = s?.effects;
+
+  if (fx === undefined) return null;
+  if (!((fx.e.segments > 0 && fx.radius > 0) || (fx.e.count > 0 && fx.amplitude !== 0))) return null;
+
+  return [fx.radius, fx.amplitude, ...optionKey(fx.e)];
+}
 
 export function contributed(
   world: World,
@@ -2736,7 +2900,8 @@ export function contributed(
 
     if (group === undefined) return [];
 
-    const d = standing(id)?.depth ?? 0;
+    const here = standing(id);
+    const d = here?.depth ?? 0;
 
     // What is taken away goes the other way, and this is not a choice — it is
     // what eroding the scope as one shape *means*: eroding a complement is
@@ -2753,7 +2918,7 @@ export function contributed(
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
 
-    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth);
+    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here));
   };
 
   /**
@@ -3084,7 +3249,7 @@ function withExtents(
    */
   const extent = (id: Id): Shape => held.get(id)
     ?? mine.get(id)
-    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0);
+    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0, null);
 
   for (const id of missing) {
     const shape = extent(id);
@@ -4122,6 +4287,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       keys,
       // What the fold took apart matters only where it goes on past the copy.
       unrolled: freeing.unrolled.filter(reaches),
+      ...(world.effects.has(id) ? { effects: world.effects.get(id)! } : {}),
       keysOf: rig,
     };
   };
@@ -4190,6 +4356,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       deep: [...rig.depths].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       rounds: [...rig.rounds].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       deforms: [...rig.deforms].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
+      cornerEffects: [...kept].flatMap(c => (world.cornerEffects.has(c) ? [[c, world.cornerEffects.get(c)!] as [VertexId, Partial<Effects>]] : [])),
       death: outliving(world, polygon, v),
       ...time,
     }];
@@ -4370,6 +4537,11 @@ function written(
   return withRig(world, id, { ...rigOf(world, id), keys });
 }
 
+/** A pasted thing's effects, where it has some. */
+function effectsPasted(world: World, id: Id, fx: Effects | undefined): World {
+  return fx === undefined ? world : { ...world, effects: new Map(world.effects).set(id, fx) };
+}
+
 /** A corner's entries after the copy, landed at `v` and renamed. */
 function landed<E extends Entry>(
   world: World,
@@ -4452,7 +4624,7 @@ function restore(
     const groups = new Map(out.groups);
 
     groups.set(id, { members, sealed: clip.sealed });
-    out = { ...out, groups, nextId: id + 1 };
+    out = effectsPasted({ ...out, groups, nextId: id + 1 }, id, clip.effects);
 
     return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
   }
@@ -4477,7 +4649,19 @@ function restore(
 
   polygons.set(id, { ...kindOf(clip), birth: v, death: landingAt(world, v, clip.death), points });
 
-  let out: World = { ...world, polygons, nextId: id + 1 + points.length };
+  let out: World = effectsPasted({ ...world, polygons, nextId: id + 1 + points.length }, id, clip.effects);
+
+  if ((clip.cornerEffects ?? []).length > 0) {
+    const cornerEffects = new Map(out.cornerEffects);
+
+    for (const [c, fx] of clip.cornerEffects!) {
+      const now = renamed.get(c);
+
+      if (now !== undefined) cornerEffects.set(now, fx);
+    }
+
+    out = { ...out, cornerEffects };
+  }
 
   const corners = new Map(points.filter(c => c.birth === v).map(c => [c.id, c.at]));
   const renaming = (amounts: readonly [VertexId, number][] | undefined) => new Map((amounts ?? []).flatMap(([c, d]) => {
