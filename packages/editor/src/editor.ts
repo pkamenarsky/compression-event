@@ -593,6 +593,12 @@ function gridded(s: EditorState, gridSize: number): EditorState {
 
 /** The picked things made one, and picked as one. */
 function together(s: EditorState): EditorState {
+  return joining(s, false) ?? s;
+}
+
+/** The picked things made one group, loose or sealed, and picked as one.
+ * Nothing where there is nothing to group. */
+function joining(s: EditorState, sealed: boolean): EditorState | null {
   // Artefacts and paths are members like anything else: a room, the key in it
   // and the tape across it is the group worth having, and holding them
   // together is what makes the key and the measurement go where the room goes.
@@ -603,12 +609,12 @@ function together(s: EditorState): EditorState {
     landing(s.world, s.keyframe, s.inside),
   );
 
-  if (made === null) return s;
+  if (made === null) return null;
 
   return marked(
     {
       ...s,
-      world: made.world,
+      world: sealed ? sealing(made.world, made.id, true) : made.world,
       selection: {
         ...s.selection,
         polygons: [made.id],
@@ -742,20 +748,30 @@ const WHY: Record<Unrolled['why'], string> = {
 };
 
 /**
- * Seal the picked groups, or let them loose again.
+ * The picked things sealed into one, or the picked groups let loose again.
  *
- * On the groups picked *as* groups, which inside an open one is whatever the
- * pick reaches at that level. Nothing picked, or nothing among it that is a
- * group, and there is nothing to say yes or no to — so it says so, rather than
+ * Sealing is the ordinary way to make a group, so it does not ask for one
+ * first: several things picked are grouped and the group sealed, in one step
+ * and one undo. One group picked on its own is sealed where it is — wrapping
+ * it in another would be a level of structure that says nothing.
+ *
+ * On what the pick reaches at the level being worked at, which inside an open
+ * group is its members. Where there is nothing to do it says so, rather than
  * appearing to have done something.
  */
 function shut(s: EditorState, sealed: boolean): EditorState {
   const path = opened(s.world, s.inside);
-  const groups = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))]
-    .filter(id => s.world.groups.has(id));
+  const picked = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))];
+  const groups = picked.filter(id => s.world.groups.has(id));
+  const alone = picked.length === 1 && s.selection.artefacts.length === 0 && s.selection.paths.length === 0;
+
+  if (sealed && !(alone && groups.length === 1)) {
+    return joining(s, true)
+      ?? saying(s, 'Nothing to seal. Cmd+L seals several picked things into one group, or a picked group as it is.');
+  }
 
   if (groups.length === 0) {
-    return saying(s, 'Nothing picked that is a group. Cmd+L seals a group; Cmd+Shift+L lets one loose.');
+    return saying(s, 'Nothing picked that is a group. Cmd+Shift+L lets a sealed group loose.');
   }
 
   const world = groups.reduce((w, id) => sealing(w, id, sealed), s.world);
