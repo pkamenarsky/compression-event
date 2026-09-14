@@ -47,3 +47,5 @@ alike, `} else {` is forced, and a call with more than one function argument is
 always exploded onto separate lines regardless of width. Adopting one would
 rewrite ~1000 lines to a style nobody here chose, so these conventions are kept
 by hand. Do not add a formatter config.
+
+Don't test in the browser when implementing features in order to conserve tokens.
