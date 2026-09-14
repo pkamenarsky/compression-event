@@ -2160,7 +2160,7 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 
 describe('effects', () => {
   const ROUND: Effects = { round: { segments: 4, verticals: true } };
-  const ZIGZAG: Effects = { deform: { count: 3, pattern: 'zigzag', seed: 0, sides: 'both' } };
+  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both' } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
 
@@ -2231,29 +2231,62 @@ describe('effects', () => {
     expect(seeds).toEqual([0, 0, 0, 0, 0]);
   });
 
-  test('a corner arriving between two deformed edges of a rounded ring keeps the ring whole', () => {
-    // At the near end the arriving corner is flat in the source but not in
-    // the projection: the deform points either side of it push off the wall.
-    // Were its arc all on one point it would be one vertex there and five a
-    // moment later.
-    const { world, id } = room({ ...ROUND, ...ZIGZAG });
-    const w0 = wrote(world, 0, id, round(20), deform(5));
+  /** A room with a corner arriving on its deformed floor at v1, pulled out
+   * of it. */
+  function arriving(fx: Effects, ...ops: Writing[]): World {
+    const { world, id } = room(fx);
+    const w0 = wrote(world, 0, id, ...ops);
     const it = resolveAt(w0, 1).find(r => r.id === id)!;
     const grown = addVertex(w0, 1, it, 0, { x: 0, y: -100 }).world;
     const now = resolveAt(grown, 1).find(r => r.id === id)!;
     const where = now.corners.findIndex(c => c.birth === 1);
-    const pulled = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
 
-    const span = run(bakeSpan(pulled, 0));
+    return nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
+  }
 
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 0.5));
-    expect(count(span, 1)).toEqual(count(span, 0.5));
-    expect(drift(pulled)).toBeLessThan(TOLERANCE);
-    expect(length(sample(span, 1))).toBeCloseTo(editorAt(pulled, 1), 6);
+  // Rounded, the arriving corner's arc is a sliver along the floor's line,
+  // lifted onto the tooth it lands on rather than bent to it: off the editor's
+  // outline by a sliver of its radius.
+  for (const [named, fx, ops, near] of [
+    ['a deformed floor', ZIGZAG, [deform(5)], 1e-6],
+    ['a rounded, deformed floor', { ...ROUND, ...ZIGZAG }, [round(20), deform(5)], 20 * 1e-3],
+  ] as [string, Effects, Writing[], number][]) {
+    test(`a corner arriving on ${named} starts from the editor's pattern, and nothing jumps`, () => {
+      // At the near end the floor is one edge with one pattern, and the
+      // corner is a point of it; at the far end it is two, each with its own.
+      const w = arriving(fx, ...ops);
+      const span = run(bakeSpan(w, 0));
 
-    // Not yet the editor's at the near end: there the arriving corner splits
-    // the wall's pattern in two, and the editor's wall has one. See PLAN.md.
+      expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+      expect(count(span, 0)).toEqual(count(span, 0.5));
+      expect(count(span, 1)).toEqual(count(span, 0.5));
+      expect(drift(w)).toBeLessThan(TOLERANCE);
+      expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(near);
+      expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+    });
+  }
+
+  test('an edge growing longer gets more points, and they fade in', () => {
+    // The right wall pulled out to twice its length: three teeth at the near
+    // end, five at the far.
+    const { world, id } = room(ZIGZAG);
+    const w0 = wrote(world, 0, id, deform(5));
+    const w = nudging(w0, 1, id, w0.polygons.get(id)!.points[2].id, { x: 0, y: 200 });
+
+    const span = run(bakeSpan(w, 0));
+    const s = span.tracks[0].stretches[0];
+
+    // A tooth going from out to in lies on its line for an instant half way,
+    // and the bake pins it there; the outline is the same either side.
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    // The ones it gains are dark at the near end, and coming up.
+    const later = s.opacity[1].flat();
+
+    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(2);
   });
 
   test('a deform starting from nought fades its verticals in', () => {

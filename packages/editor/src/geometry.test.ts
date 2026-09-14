@@ -1792,7 +1792,7 @@ describe('round and deform', () => {
     expect(p.x).toBeCloseTo(q.x, 9);
     expect(p.y).toBeCloseTo(q.y, 9);
   };
-  const zigzag: Effecting = { ...PLAIN, count: 3, pattern: 'zigzag' };
+  const zigzag: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag' };
 
   test('a corner is always its segments and one, however round, in ring order', () => {
     for (const r of [0, 1, 2.5, 100]) {
@@ -1820,7 +1820,7 @@ describe('round and deform', () => {
   });
 
   test('every point is linear in the radius and the amplitude', () => {
-    const e: Effecting = { ...PLAIN, segments: 3, count: 2, pattern: 'sine' };
+    const e: Effecting = { ...PLAIN, segments: 3, spacing: 5, pattern: 'sine' };
     const at = (r: number, a: number) => imaged(
       [square], square, [0], () => 0, e, () => r, () => a, j => j, { radius: 0, amplitude: 0 },
     ).shape[0];
@@ -1870,21 +1870,34 @@ describe('round and deform', () => {
     expect(inward.slice(1, 4).map(p => p.y + 0)).toEqual([2, 0, 2]);
   });
 
+  test('an edge has as many points as fit at the spacing, one at the least', () => {
+    const e: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag' };
+    const long: Ring = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 1 }, { x: 0, y: 1 }];
+
+    // Ten along the long edges, one along the short.
+    expect(deformed(long, () => 1, e)).toHaveLength(4 + 10 + 1 + 10 + 1);
+
+    // And an edge split in two along its line has about as many as it had.
+    const split: Ring = [{ x: 0, y: 0 }, { x: 13, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 1 }, { x: 0, y: 1 }];
+
+    expect(deformed(split, () => 1, e)).toHaveLength(5 + 4 + 6 + 1 + 10 + 1);
+  });
+
   test('noise is the edge\'s own, whatever its place', () => {
-    const e: Effecting = { ...PLAIN, count: 5, pattern: 'noise', seed: 7 };
-    const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k));
+    const e: Effecting = { ...PLAIN, spacing: 1, pattern: 'noise', seed: 7 };
+    const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k, 5));
 
     for (const v of values) expect(Math.abs(v)).toBeLessThanOrEqual(1);
 
-    expect([1, 2, 3, 4, 5].map(k => patterned(e, 42, k))).toEqual(values);
-    expect([1, 2, 3, 4, 5].map(k => patterned(e, 43, k))).not.toEqual(values);
-    expect([1, 2, 3, 4, 5].map(k => patterned({ ...e, seed: 8 }, 42, k))).not.toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 42, k, 5))).toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 43, k, 5))).not.toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned({ ...e, seed: 8 }, 42, k, 5))).not.toEqual(values);
   });
 
   describe('imaged', () => {
     // A room with a flat corner halfway along its floor.
     const room: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
-    const e: Effecting = { ...PLAIN, segments: 3, count: 2, pattern: 'zigzag' };
+    const e: Effecting = { ...PLAIN, segments: 3, spacing: 4, pattern: 'zigzag' };
     const depth = 1;
     const eroded = erode(simplify([room]), depth);
     const image = (radius: (i: number) => number, amplitude: (j: number) => number) =>
@@ -1895,9 +1908,11 @@ describe('round and deform', () => {
 
       const it = image(() => 1, () => 0.5);
 
-      expect(it.shape[0]).toHaveLength(5 * (4 + 2));
+      // Each edge as many points as fit at its spacing: the floor's two
+      // halves one each, the walls two.
+      expect(it.shape[0]).toHaveLength(5 * 4 + 8);
       expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
-      expect(it.edges.every(run => run !== null && run.length === 2)).toBe(true);
+      expect(it.edges.map(run => run!.length)).toEqual([1, 1, 2, 2, 2]);
 
       // The flat corner's arc is a sliver of the floor about its image.
       it.corners[1]!.forEach((p, k) => close(p, { x: 5 + (k / 3 * 2 - 1) * SEEDING, y: 1 }));

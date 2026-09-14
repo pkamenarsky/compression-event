@@ -408,7 +408,7 @@ keyframe, as its shape is; how much is an op, like erosion.
 ```ts
 interface Effects {
   round?: { segments: number, verticals: boolean }
-  deform?: { count: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both' }
+  deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both' }
 }
 
 // World
@@ -435,7 +435,7 @@ interface Rig {
   That is the whole answer to applying an effect twice.
 - Drop, push, pull, repeat, copy and paste need nothing new. A repeat grows
   the amount: `r, 2r, 3r…`.
-- A count, a pattern or a seed does not change over time. What would want one
+- A segment count, a spacing, a pattern or a seed does not change over time. What would want one
   that does is a second effect, not an option changing under the timeline.
 - A group's effects apply to its union, which is how the joins between rooms
   are rounded. A union has no corner ids, so a group has no per-corner
@@ -450,7 +450,8 @@ interface Rig {
   `round.verticals` off leaves only the tangent points standing them, and
   the round reads smooth. An option of the round like any other, in the
   pane.
-- `deformed`: each edge gets `count` points between its ends, pushed along
+- `deformed`: each edge gets a point every `spacing` of its length (see
+  *Done* below), between its ends, pushed along
   its normal by `amplitude · pattern(s)`. The pattern is nought at both ends,
   so a deform never moves a corner or a tangent point.
 - Deform belongs to source edges, and a flat source corner splits a straight
@@ -502,8 +503,9 @@ So:
   fade starts from them. A radius of nought at one end and more at the other
   is seeded too: the tiny arc does turn, and the arrangement keeps it unasked.
 - A span whose amounts go from something to nought is the same read backwards.
-- The counts never change, so a ring's length across a span never depends on
-  the options.
+- ~~The counts never change~~ An edge's count follows its length, so it can
+  differ between the ends of a span; see *Done* below for how the bake
+  writes both over one run.
 - Just after a flat end an arc's points are nearer than the snap, so the
   arrangement welds them and the cut finds an event there by measuring. An
   invented corner is nearer its line than the snap at the same instants, so
@@ -516,7 +518,8 @@ So:
 #### Editing
 
 - **The gesture** reads two numbers off one drag, as `ngoning` does: sideways
-  is the amount, and it writes an entry; upward is the count, and it sets the
+  is the amount, and it writes an entry; upward is the segments or the
+  spacing, and it sets the
   thing's option, at every keyframe, with a label by the cursor. With corners
   picked it writes their entries instead, as deepening does. The first
   gesture on a thing without the effect gives it the remembered options.
@@ -573,12 +576,34 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
   `keeping` always takes it back. `seeded` and `Imaged.flat` went with it.
   The arc is walked from its first tangent point rather than built off a
   centre, which ran away to infinity as a corner straightened.
-- Not yet: a corner arriving on a deformed edge splits the edge in two
-  source edges at the end where it is flat, each with its own pattern, and
-  the editor's edge there is one. The span holds together — the ring keeps
-  its length and agrees with the cut — but its near end is not the
-  editor's. Putting it right means laying the two halves' points on the
-  whole edge's pattern at that end, with the editor's own points among them.
+- A deform has a spacing rather than a count: an edge gets as many points
+  as fit on it, corner to corner as the erosion leaves it (`countOf`), so
+  the pattern has about the same density everywhere, and an edge split by a
+  corner running straight through has about the teeth it had whole.
+- So an edge's count can change across a span, and the bake writes both ends
+  over one run (`laid`): a deform point is a fraction along its edge and a
+  distance off it (`EdgeRun`), which the geometry takes outright in place of
+  the pattern; each edge carries as many as its busier end needs, and at the
+  other end the extras lie flat on that end's outline between its own,
+  fading in or out. Between the ends both numbers are lerped, and the
+  construction lays them, so the cut and the replay agree.
+- A corner missing at one end is part of the editor's edge there: the edges
+  either side of it are one, with one pattern, so their points are shared
+  out along it by where they fall, and the corner is lifted onto it (`rises`,
+  its arc with it). A tooth that falls on the corner is the corner's.
+- Rounded, that lifted corner's arc is a sliver along the wall's line rather
+  than bent to the tooth it lands on, so the near end is off the editor's
+  outline by about `SEEDING` of the radius. The same order as a radius
+  seeded from nought.
+- A tooth that goes from out to in across a span lies on its line for an
+  instant half way, and the arrangement drops it there; the bake pins that
+  instant. The outline is the same either side.
+- A group's union, and an edge that is the image of nothing, have no runs to
+  lay, so where their counts change with their length the bake finds it by
+  measuring, as a jump.
+- Where an arriving corner is nearer its neighbour than that neighbour's
+  tangent length, the neighbour's arc is clamped by it the moment it turns,
+  and not at the end where it is flat: a step in the arc there.
 - Icons and labels for the two kinds are in, since the timeline's table of
   them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
   a file opens with none.

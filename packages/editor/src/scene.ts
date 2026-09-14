@@ -35,6 +35,7 @@ import {
   Effecting,
   Imaged,
   PLAIN,
+  EdgeRun,
   Pattern,
   Ring,
   Shape,
@@ -258,6 +259,14 @@ export interface Effected {
   own: Effecting
   radius: number
   amplitude: number
+  /**
+   * What the bake lays outright, index for index with the corners: each
+   * edge's points, and each corner's arc lifted off its place — see `Laid` in
+   * `geometry.ts`. Lengths in world units. Absent is the pattern's, and
+   * nought.
+   */
+  runs?: readonly (EdgeRun | null)[]
+  rises?: readonly number[]
 }
 
 /** A thing's options, with a corner's own over them where it has them. */
@@ -267,7 +276,7 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
 
   return {
     segments: round?.segments ?? 0,
-    count: deform?.count ?? 0,
+    spacing: deform?.spacing ?? 0,
     pattern: deform?.pattern ?? PLAIN.pattern,
     seed: deform?.seed ?? 0,
     sides: deform?.sides ?? PLAIN.sides,
@@ -300,8 +309,8 @@ export function effectedOf(
 
 /** Effects kept only where they do something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.options.some((o, i) => (o.segments > 0 && e.radii[i] > 0) || (o.count > 0 && e.amplitudes[i] !== 0))
-    || (e.own.segments > 0 && e.radius > 0) || (e.own.count > 0 && e.amplitude !== 0);
+  const any = e.options.some((o, i) => (o.segments > 0 && e.radii[i] > 0) || (o.spacing > 0 && e.amplitudes[i] !== 0))
+    || (e.own.segments > 0 && e.radius > 0) || (e.own.spacing > 0 && e.amplitude !== 0);
 
   return any ? e : null;
 }
@@ -309,25 +318,28 @@ export function shaping(e: Effected): Effected | null {
 const PATTERNS: readonly Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDED: readonly Sides[] = ['in', 'out', 'both'];
 
-/** Options as numbers, for `remembered`. */
-function optionKey(e: Effecting): number[] {
-  return [e.segments, e.count, PATTERNS.indexOf(e.pattern), e.seed, SIDED.indexOf(e.sides)];
+/** Options as numbers, for `remembered`, the spacing a length divided by
+ * `s`. */
+function optionKey(e: Effecting, s = 1): number[] {
+  return [e.segments, e.spacing / s, PATTERNS.indexOf(e.pattern), e.seed, SIDED.indexOf(e.sides)];
 }
 
 function optionOf(k: readonly number[]): Effecting {
-  return { segments: k[0], count: k[1], pattern: PATTERNS[k[2]], seed: k[3], sides: SIDED[k[4]] };
+  return { segments: k[0], spacing: k[1], pattern: PATTERNS[k[2]], seed: k[3], sides: SIDED[k[4]] };
 }
 
 /** Effects as numbers, lengths divided by `s`, for `project`. */
 function effectKey(e: Effected, s = 1): Key[] {
   return [
-    e.options.map(optionKey),
+    e.options.map(o => optionKey(o, s)),
     e.radii.map(r => r / s),
     e.amplitudes.map(a => a / s),
     e.keys as number[],
-    optionKey(e.own),
+    optionKey(e.own, s),
     e.radius / s,
     e.amplitude / s,
+    (e.runs ?? []).map(r => (r === null ? null : [r.along as number[], r.across.map(a => a / s)])),
+    (e.rises ?? []).map(r => r / s),
   ];
 }
 
@@ -823,10 +835,11 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[],
 ): Imaged => {
-  const [options, radii, amplitudes, keys, own, radius, amplitude] = effects as [
-    number[][], number[], number[], number[], number[], number, number,
+  const [options, radii, amplitudes, keys, own, radius, amplitude, runs, rises] = effects as [
+    number[][], number[], number[], number[], number[], number, number, ([number[], number[]] | null)[], number[],
   ];
   const at = options.map(optionOf);
+  const laid = runs.map((r): EdgeRun | null => (r === null ? null : { along: r[0], across: r[1] }));
 
   return imaged(
     offsetOf(source, rings, erosion, depths),
@@ -838,6 +851,7 @@ const imagedBy = remembered((
     j => amplitudes[j],
     j => keys[j],
     { radius, amplitude, e: optionOf(own) },
+    { runs: j => laid[j] ?? null, rises: i => rises[i] ?? 0 },
   );
 });
 
@@ -865,6 +879,13 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
     edges: im.edges.map(run),
+    bases: im.bases.map(b => {
+      if (b === null) return null;
+
+      const [from, to] = place(at.frame, [b.from, b.to]);
+
+      return { from, to, length: b.length * s };
+    }),
   };
 }
 
@@ -2864,7 +2885,7 @@ function unionKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
   if (fx === undefined) return null;
-  if (!((fx.e.segments > 0 && fx.radius > 0) || (fx.e.count > 0 && fx.amplitude !== 0))) return null;
+  if (!((fx.e.segments > 0 && fx.radius > 0) || (fx.e.spacing > 0 && fx.amplitude !== 0))) return null;
 
   return [fx.radius, fx.amplitude, ...optionKey(fx.e)];
 }

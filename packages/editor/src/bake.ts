@@ -136,14 +136,16 @@ import {
   erodedRingCorners,
   ground,
   SEEDING,
+  countOf,
   keeping,
   mitred,
   nextOf,
+  patternRun,
   prevOf,
   simplify,
   sliced,
 } from './geometry';
-import type { Effecting } from './geometry';
+import type { EdgeRun, Effecting } from './geometry';
 import {
   Affine,
   Contributed,
@@ -701,16 +703,40 @@ interface Moving extends Rider {
    * lerped. See `effectsOver`.
    */
   effected: [Effected, Effected] | null
-  /**
-   * Which edges, by the corner each starts at, are flat at each end: deformed
-   * at one end and not at the other, which a pattern at nought is. `dead` is
-   * the same for a corner's arc. Together they are the slots `invented` puts
-   * back and `fading` fades.
-   */
-  flatEdges: [boolean[], boolean[]]
+  /** Which of `corners` the polygon does not have at each end: the ones
+   * `spanning` invented. `dead` is these, and the corners flat at one end. */
+  missing: [boolean[], boolean[]]
+  /** Each deformed edge's points, written over at both ends. Nothing where
+   * nothing is deformed. See `laid`. */
+  laying: Laying | null
   /** Which corners' arcs stand verticals at their tangent points only. See
    * `Effects.round`. */
   smooth: boolean[]
+}
+
+/**
+ * A polygon's deformed edges across a span, each written over one run of
+ * points at both ends — as many as the busier end needs, since an edge's
+ * count follows its length and its length can change.
+ *
+ * At each end the points lie on the outline the editor draws there: its own
+ * points among them, the rest laid flat on it between them (`flat`). Where a
+ * corner is missing at an end, the edges either side of it are one edge in
+ * the editor, with one pattern, so both edges' points and the corner itself
+ * are laid on that pattern — the corner lifted onto it (`rises`), its arc
+ * with it.
+ */
+interface Laying {
+  /** By edge, the corner it starts at: its points at each end. */
+  runs: [(EdgeRun | null)[], (EdgeRun | null)[]]
+  /** By edge and point: whether it lies flat on the editor's outline at that
+   * end rather than being a point of it. */
+  flat: [boolean[][], boolean[][]]
+  /** By corner: how far its arc is lifted off its place at each end. */
+  rises: [number[], number[]]
+  /** By edge: whether it is deformed at either end. One flat at both lies on
+   * its line throughout, and nothing of it is kept. */
+  shaped: boolean[]
 }
 
 /**
@@ -1049,11 +1075,13 @@ function moving(world: World, from: number): Moving[] {
         depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
         holders: holders(world, from, it.id),
+        missing: [it.corners.map(() => false), it.corners.map(() => false)] as [boolean[], boolean[]],
         ...effectsOver(world, it.id, it.corners, [null, stateAt(world, it.id, far)]),
       };
     }
 
     const over = spanning(was, it);
+    const had = [new Set(was.corners.map(c => c.id)), new Set(it.corners.map(c => c.id))];
 
     return {
       at: it,
@@ -1065,6 +1093,7 @@ function moving(world: World, from: number): Moving[] {
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
       holders: holders(world, from, it.id),
+      missing: had.map(ids => over.corners.map(c => !ids.has(c.id))) as [boolean[], boolean[]],
       ...effectsOver(world, it.id, over.corners, [stateAt(world, it.id, near), stateAt(world, it.id, far)]),
     };
   });
@@ -1090,11 +1119,12 @@ function moving(world: World, from: number): Moving[] {
       depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
       varying: was.depths !== null,
       holders: holders(world, from, id),
+      missing: [was.corners.map(() => false), was.corners.map(() => false)] as [boolean[], boolean[]],
       ...effectsOver(world, id, was.corners, [stateAt(world, id, near), null]),
     });
   }
 
-  return out;
+  return out.map(m => ({ ...m, laying: laid(m) }));
 }
 
 /** A thing's amounts where it is not there: none. */
@@ -1106,8 +1136,8 @@ const NOTHING: Pick<State, 'radius' | 'amplitude' | 'radii' | 'amplitudes'> = {
 };
 
 /**
- * A polygon's effects at both ends of a span, written over the same corners,
- * and which of its edges are flat at each end. Nothing where it has none.
+ * A polygon's effects at both ends of a span, written over the same corners.
+ * Nothing where it has none.
  *
  * A degenerate end is seeded, never collapsed. A radius of nought at one end
  * and more at the other is `SEEDING` of the other there, so the arc turns,
@@ -1115,7 +1145,7 @@ const NOTHING: Pick<State, 'radius' | 'amplitude' | 'radii' | 'amplitudes'> = {
  * the same length at both ends. So is the polygon's own radius and amplitude,
  * which what the erosion made takes and no slot answers for. An edge's
  * amplitude at nought is left there — its points lie on its line, which is
- * that line exactly, so they are marked flat and put back by `invented`, and
+ * that line exactly, so `laid` marks them flat, `invented` puts them back and
  * `fading` brings their verticals in.
  */
 function effectsOver(
@@ -1123,8 +1153,8 @@ function effectsOver(
   id: Id,
   corners: readonly Vertex[],
   ends: [State | null, State | null],
-): Pick<Moving, 'effected' | 'flatEdges' | 'smooth'> {
-  const none = { effected: null, flatEdges: [corners.map(() => false), corners.map(() => false)] as [boolean[], boolean[]], smooth: corners.map(() => false) };
+): Pick<Moving, 'effected' | 'smooth'> {
+  const none = { effected: null, smooth: corners.map(() => false) };
   const two = ends.map(e => effectedOf(world, id, corners, e ?? NOTHING)) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
@@ -1149,12 +1179,8 @@ function effectsOver(
     amplitude: e.amplitude === 0 && o.amplitude !== 0 ? o.amplitude * SEEDING : e.amplitude,
   });
 
-  const flat = (e: Effected, o: Effected): boolean[] =>
-    e.amplitudes.map((x, i) => e.options[i].count > 0 && x === 0 && o.amplitudes[i] !== 0);
-
   return {
     effected: [seeded(a, b), seeded(b, a)],
-    flatEdges: [flat(a, b), flat(b, a)],
     smooth: corners.map(c => {
       const round = world.cornerEffects.get(c.id)?.round ?? fx?.round;
 
@@ -1163,10 +1189,22 @@ function effectsOver(
   };
 }
 
-/** A polygon's effects `t` of the way across a span. */
-function effectedAt(e: [Effected, Effected], t: number): Effected {
-  if (t === 0) return e[0];
-  if (t === 1) return e[1];
+/** A polygon's effects `t` of the way across a span, and its edges' points
+ * laid as the two ends have them, point for point. */
+function effectedAt(e: [Effected, Effected], laying: Laying | null, t: number): Effected {
+  const end = t === 0 ? 0 : t === 1 ? 1 : null;
+  const laid = laying === null ? {} : end !== null ? { runs: laying.runs[end], rises: laying.rises[end] } : {
+    runs: laying.runs[0].map((a, j) => {
+      const b = laying.runs[1][j];
+
+      if (a === null || b === null) return a ?? b;
+
+      return { along: a.along.map((u, k) => mix(u, b.along[k], t)), across: a.across.map((v, k) => mix(v, b.across[k], t)) };
+    }),
+    rises: laying.rises[0].map((r, i) => mix(r, laying.rises[1][i], t)),
+  };
+
+  if (end !== null) return { ...e[end], ...laid };
 
   return {
     ...e[0],
@@ -1174,7 +1212,245 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     amplitudes: e[0].amplitudes.map((a, i) => mix(a, e[1].amplitudes[i], t)),
     radius: mix(e[0].radius, e[1].radius, t),
     amplitude: mix(e[0].amplitude, e[1].amplitude, t),
+    ...laid,
   };
+}
+
+/** What `laid` reads off one end: where the editor's points are, edge by
+ * edge of the span, on the line they are measured along. */
+interface Outline {
+  /** The line: from the end of one present corner's arc to the start of the
+   * next present corner's, and its outward normal. */
+  from: Point
+  to: Point
+  normal: Point
+  /** The part of it this edge covers, as fractions. */
+  range: [number, number]
+  /** The editor's points on this part, and how far off the line each is. */
+  points: { u: number, a: number }[]
+  /** How far off the line the editor's outline is at `u`. */
+  off: (u: number) => number
+  /** Whether this edge is the editor's edge, whole. */
+  whole: boolean
+}
+
+/**
+ * Each deformed edge of a polygon written over one run of points at both ends
+ * of the span. See `Laying`.
+ *
+ * At each end the editor's edge — from a corner the polygon has there to the
+ * next it has — gets the points its pattern gives it, as it would in the
+ * editor, and they go to the span's edges along it by where they fall: all
+ * to one edge where the editor's edge is the span's, and shared out past a
+ * missing corner where it is not. Each span edge carries as many as the end
+ * that gives it most; at the other its points are shared out among them, its
+ * own in order and the rest spread evenly between, flat on its outline.
+ */
+function laid(m: Omit<Moving, 'laying'>): Laying | null {
+  const fx = m.effected;
+
+  if (fx === null || !fx[0].options.some(o => o.spacing > 0)) return null;
+
+  const n = m.corners.length;
+  const rings = ringsOf(m.corners);
+  const next = (i: number): number => nextOf(rings, n, i);
+  const ends = ([0, 1] as const).map(e => outlines(m, e, rings, next));
+  const runs: [(EdgeRun | null)[], (EdgeRun | null)[]] = [[], []];
+  const flat: [boolean[][], boolean[][]] = [[], []];
+  const shaped: boolean[] = [];
+
+  for (let j = 0; j < n; j++) {
+    const two = [ends[0].edges[j], ends[1].edges[j]];
+
+    shaped.push(two.some(o => o !== null && o.points.some(p => p.a !== 0)));
+
+    if (two[0] === null && two[1] === null) {
+      for (const e of [0, 1] as const) {
+        runs[e].push(null);
+        flat[e].push([]);
+      }
+
+      continue;
+    }
+
+    const count = Math.max(...two.map(o => o?.points.length ?? 0));
+
+    for (const e of [0, 1] as const) {
+      const o = two[e] ?? two[1 - e]!;
+      const laid = lay(o, count);
+      const still = o.points.every(p => p.a === 0);
+
+      runs[e].push(o.whole ? { along: laid.u, across: laid.a } : along(o, laid, ends[e].bases[j]!));
+      flat[e].push(laid.own.map(own => !own || still || two[e] === null));
+    }
+  }
+
+  return { runs, flat, rises: [ends[0].rises, ends[1].rises], shaped };
+}
+
+/**
+ * `count` points on an outline's part: its own points among them, spread out
+ * in order, and the rest evenly between them and the ends of the part, on the
+ * outline. `own` says which are the outline's.
+ */
+function lay(o: Outline, count: number): { u: number[], a: number[], own: boolean[] } {
+  const u: number[] = new Array(count).fill(NaN);
+  const own: boolean[] = new Array(count).fill(false);
+  const a: number[] = new Array(count).fill(0);
+  const c = o.points.length;
+
+  // Its own, spread over the slots as evenly as they go: all of them where
+  // there are as many.
+  o.points.forEach((p, k) => {
+    const at = Math.round((k + 1) * (count + 1) / (c + 1)) - 1;
+
+    u[at] = p.u;
+    a[at] = p.a;
+    own[at] = true;
+  });
+
+  // The rest evenly between whatever is either side, on the outline.
+  let lo = -1;
+
+  for (let m = 0; m <= count; m++) {
+    if (m < count && !own[m]) continue;
+
+    const u0 = lo < 0 ? o.range[0] : u[lo];
+    const u1 = m === count ? o.range[1] : u[m];
+
+    for (let k = lo + 1; k < m; k++) {
+      u[k] = u0 + (u1 - u0) * (k - lo) / (m - lo);
+      a[k] = o.off(u[k]);
+    }
+
+    lo = m;
+  }
+
+  return { u, a, own };
+}
+
+/** Points on an outline's line, said along and across a span edge's own
+ * straight run, where the edge is not the whole of the line. */
+function along(o: Outline, laid: { u: number[], a: number[] }, base: { from: Point, to: Point }): EdgeRun {
+  const w = { x: base.to.x - base.from.x, y: base.to.y - base.from.y };
+  const det = w.x * o.normal.y - w.y * o.normal.x;
+  const out = { along: [] as number[], across: [] as number[] };
+
+  laid.u.forEach((u, k) => {
+    const q = {
+      x: o.from.x + (o.to.x - o.from.x) * u + o.normal.x * laid.a[k] - base.from.x,
+      y: o.from.y + (o.to.y - o.from.y) * u + o.normal.y * laid.a[k] - base.from.y,
+    };
+
+    out.along.push(det === 0 ? 0 : (q.x * o.normal.y - q.y * o.normal.x) / det);
+    out.across.push(det === 0 ? 0 : (w.x * q.y - w.y * q.x) / det);
+  });
+
+  return out;
+}
+
+/**
+ * What the editor draws at one end of a span, laid over the span's edges:
+ * each edge's part of the outline, and how far each missing corner is lifted
+ * to be on it. Also each edge's straight run as the construction will lay it
+ * there, lifts in, which is what its points are said along.
+ */
+function outlines(
+  m: Omit<Moving, 'laying'>,
+  e: 0 | 1,
+  rings: readonly number[],
+  next: (i: number) => number,
+): { edges: (Outline | null)[], rises: number[], bases: ({ from: Point, to: Point } | null)[] } {
+  const n = m.corners.length;
+  const fx = m.effected![e];
+  const im = imagesOf({ ...at1(m, e), rings });
+  const edges: (Outline | null)[] = new Array(n).fill(null);
+  const rises: number[] = new Array(n).fill(0);
+  const bases: ({ from: Point, to: Point } | null)[] = new Array(n).fill(null);
+  const missing = m.missing[e];
+
+  if (im === null) return { edges, rises, bases };
+
+  for (let p = 0; p < n; p++) {
+    if (missing[p] || fx.options[p].spacing <= 0) continue;
+
+    // The editor's edge from `p`: on through every corner missing here.
+    const chain = [p];
+
+    for (let k = next(p); missing[k] && k !== p; k = next(k)) chain.push(k);
+
+    const parts = chain.map(j => im.bases[j]);
+
+    if (parts.some(b => b === null)) continue;
+
+    const from = parts[0]!.from, to = parts[parts.length - 1]!.to;
+    const dx = to.x - from.x, dy = to.y - from.y, l2 = dx * dx + dy * dy;
+    const dl = Math.sqrt(l2);
+
+    if (l2 === 0) continue;
+
+    const normal = { x: dy / dl, y: -dx / dl };
+    const length = parts.reduce((t, b) => t + b!.length, 0);
+    const run = patternRun(fx.options[p], fx.keys[p], fx.amplitudes[p], countOf(length, fx.options[p].spacing));
+    const vertices = [{ u: 0, a: 0 }, ...run.along.map((u, k) => ({ u, a: run.across[k] })), { u: 1, a: 0 }];
+    const off = (u: number): number => {
+      for (let k = 1; k < vertices.length; k++) {
+        const v0 = vertices[k - 1], v1 = vertices[k];
+
+        if (u <= v1.u) return v1.u === v0.u ? v1.a : v0.a + (v1.a - v0.a) * (u - v0.u) / (v1.u - v0.u);
+      }
+
+      return 0;
+    };
+    const at = (q: Point): number => ((q.x - from.x) * dx + (q.y - from.y) * dy) / l2;
+
+    // Where each missing corner falls, and its lift onto the outline.
+    const cuts = chain.slice(1).map(x => {
+      const u = at(midpoint(parts[chain.indexOf(x) - 1]!.to, im.bases[x]!.from));
+
+      rises[x] = off(u);
+
+      return u;
+    });
+    const bounds = [0, ...cuts, 1];
+
+    chain.forEach((j, k) => {
+      const range: [number, number] = [bounds[k], bounds[k + 1]];
+
+      edges[j] = {
+        from,
+        to,
+        normal,
+        range,
+        // One at a missing corner is that corner's, lifted onto it.
+        points: run.along.flatMap((u, q) => (amid(u, range) ? [{ u, a: run.across[q] }] : [])),
+        off,
+        whole: chain.length === 1,
+      };
+
+      // Its straight run with the lifts in: the corners either side of it
+      // carry their arcs off the line, and its points are measured from them.
+      const b = parts[k]!;
+      const r0 = rises[j], r1 = rises[next(j)];
+
+      bases[j] = {
+        from: { x: b.from.x + normal.x * r0, y: b.from.y + normal.y * r0 },
+        to: { x: b.to.x + normal.x * r1, y: b.to.y + normal.y * r1 },
+      };
+    });
+  }
+
+  return { edges, rises, bases };
+}
+
+/** Strictly inside a part of an outline, off its ends by more than the
+ * arithmetic that placed them. */
+function amid(u: number, range: [number, number]): boolean {
+  return u > range[0] + 1e-9 && u < range[1] - 1e-9;
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1222,7 +1498,7 @@ function invented(
 
   const rings = ringsOf(m.corners);
 
-  if (m.effected !== null) return slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : []));
+  if (m.effected !== null) return slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? [s.point] : []));
 
   const dead = m.dead[end];
   const out: Point[] = [];
@@ -1249,30 +1525,36 @@ function invented(
  * the projection, `keeping` takes every one of them, and the ring is as long
  * at the end as it is in between.
  */
-function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead: [boolean, boolean] }[] {
+function slots(m: Moving, at: Omit<Resolved, 'shape'>): { point: Point, dead: [boolean, boolean] }[] {
   const im = imagesOf(at);
 
   if (im === null) return [];
 
-  const out: { points: Point[], dead: [boolean, boolean] }[] = [];
+  const out: { point: Point, dead: [boolean, boolean] }[] = [];
 
   m.corners.forEach((_c, i) => {
     const run = im.corners[i];
     const dead: [boolean, boolean] = [m.dead[0][i], m.dead[1][i]];
 
-    if (run !== null && (dead[0] || dead[1])) out.push({ points: run, dead });
+    if (run !== null && (dead[0] || dead[1])) for (const point of run) out.push({ point, dead });
 
     const edge = im.edges[i];
-    const flat: [boolean, boolean] = [m.flatEdges[0][i], m.flatEdges[1][i]];
+    const laying = m.laying;
 
-    if (edge !== null && (flat[0] || flat[1])) out.push({ points: edge, dead: flat });
+    if (edge === null || laying === null || !laying.shaped[i]) return;
+
+    edge.forEach((point, k) => {
+      const flat: [boolean, boolean] = [laying.flat[0][i][k] ?? false, laying.flat[1][i][k] ?? false];
+
+      if (flat[0] || flat[1]) out.push({ point, dead: flat });
+    });
   });
 
   return out;
 }
 
 /** A polygon `t` of the way across the span, without the corners it keeps. */
-function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
+function at1(m: Omit<Moving, 'laying'> & { laying?: Laying | null }, t: number): Omit<Resolved, 'shape' | 'rings'> {
   const local = between(m.local[0], m.local[1], t);
   const frame = riding(m, t);
 
@@ -1287,7 +1569,7 @@ function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
     source: place(frame, local),
     erosion: mix(m.depth[0], m.depth[1], t),
     depths: m.varying ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t)) : null,
-    effected: m.effected === null ? null : effectedAt(m.effected, t),
+    effected: m.effected === null ? null : effectedAt(m.effected, m.laying ?? null, t),
   };
 }
 
@@ -1379,11 +1661,7 @@ function fadingSlots(m: Moving, it: Resolved, t: number): number[][] | null {
     if (at !== null) out[at.ring][at.index] = Math.min(out[at.ring][at.index], v);
   };
 
-  for (const slot of changing) {
-    const v = mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t);
-
-    for (const p of slot.points) dim(p, v);
-  }
+  for (const slot of changing) dim(slot.point, mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t));
 
   if (smooth) {
     const im = imagesOf(it);
@@ -1725,6 +2003,7 @@ function share(at: readonly Contributed[], only: Id): Frame {
 
   const slots = SLOTS[set];
   const rule = (on: readonly boolean[]) => inside(set, on);
+
 
   return boundaryRuns(subject, others, slots, rule, ground([subject, ...others], slots))
     .map(r => ({ id: only, points: r.points, corner: r.corner, whence: r.whence, fill }));

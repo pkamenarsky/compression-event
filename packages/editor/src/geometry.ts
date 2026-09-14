@@ -2588,16 +2588,64 @@ export interface Effecting {
   /** The segments of each rounded corner: nought where corners are not
    * rounded, one for a chamfer. */
   segments: number
-  /** The points put into each deformed edge: nought where edges are not
-   * deformed. */
-  count: number
+  /** How far apart a deformed edge's points are, as a length: each edge
+   * gets as many as fit, one at the least — see `countOf`. Nought where
+   * edges are not deformed. */
+  spacing: number
   pattern: Pattern
   seed: number
   sides: Sides
 }
 
 /** No effects at all: every corner a point and every edge straight. */
-export const PLAIN: Effecting = { segments: 0, count: 0, pattern: 'zigzag', seed: 0, sides: 'both' };
+export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both' };
+
+/**
+ * How many points a deformed edge of `length` gets: as many as fit at
+ * `spacing`, and one at the least. So a pattern has about the same density
+ * everywhere, and an edge split in two by a corner it runs straight through
+ * has about as many teeth as it had whole.
+ *
+ * The edge as the erosion leaves it, corner to corner, before its corners are
+ * rounded: what is seen, less what a radius takes, which would have a count
+ * change as a radius grew.
+ */
+export function countOf(length: number, spacing: number): number {
+  return spacing > 0 ? Math.max(1, Math.round(length / spacing)) : 0;
+}
+
+/**
+ * A deformed edge's points said outright: each a fraction of the way along
+ * the straight run between its two corners' arcs, and a distance off it, out
+ * of the material where positive. What a deform writes, and what the bake
+ * writes instead where an edge's points have to be laid on another outline.
+ */
+export interface EdgeRun {
+  along: readonly number[]
+  across: readonly number[]
+}
+
+/** The straight run an edge's points are laid along, from the end of one
+ * corner's arc to the start of the next's, and the edge's length corner to
+ * corner, which sets its count. */
+export interface Base {
+  from: Point
+  to: Point
+  length: number
+}
+
+/** An edge's points as the pattern lays them: `count` of them, evenly along
+ * it, each off it by `amplitude` of the pattern. */
+export function patternRun(e: Effecting, key: number, amplitude: number, count: number): EdgeRun {
+  const along: number[] = [], across: number[] = [];
+
+  for (let k = 1; k <= count; k++) {
+    along.push(k / (count + 1));
+    across.push(amplitude * patterned(e, key, k, count));
+  }
+
+  return { along, across };
+}
 
 /**
  * How far off its line the `k`-th of an edge's `count` points is pushed, as a
@@ -2608,7 +2656,7 @@ export const PLAIN: Effecting = { segments: 0, count: 0, pattern: 'zigzag', seed
  * moves a corner or a tangent point. `key` is the edge's own, so that noise
  * belongs to the edge rather than to wherever it is in the ring today.
  */
-export function patterned(e: Effecting, key: number, k: number): number {
+export function patterned(e: Effecting, key: number, k: number, count: number): number {
   let v: number;
 
   switch (e.pattern) {
@@ -2618,9 +2666,9 @@ export function patterned(e: Effecting, key: number, k: number): number {
     case 'sine': {
       // Half waves to fit the samples: one sample per crest and trough at the
       // least, so a wave never aliases into a line.
-      const halves = Math.max(1, Math.round((e.count + 1) / 2));
+      const halves = Math.max(1, Math.round((count + 1) / 2));
 
-      v = Math.sin(Math.PI * halves * k / (e.count + 1));
+      v = Math.sin(Math.PI * halves * k / (count + 1));
       break;
     }
     case 'noise':
@@ -2656,6 +2704,17 @@ interface Shaped {
   ring: Ring
   corners: Point[][]
   edges: Point[][]
+  bases: Base[]
+}
+
+/**
+ * What the bake says outright rather than leave to the pattern: an edge's
+ * points, and how far a corner's arc is lifted off its place, along the
+ * corner's own outward normal. Absent is the pattern's, and nought.
+ */
+export interface Laid {
+  runs?: (i: number) => EdgeRun | null
+  rises?: (i: number) => number
 }
 
 /**
@@ -2680,6 +2739,7 @@ function shaped(
   radius: (i: number) => number,
   amplitude: (i: number) => number,
   key: (i: number) => number,
+  laid: Laid = {},
 ): Shaped {
   const n = ring.length;
   const segmentsOf = (i: number): number => Math.max(0, Math.floor(e(i).segments));
@@ -2715,6 +2775,22 @@ function shaped(
   const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
 
   const corners = ring.map((v, i): Point[] => {
+    const run = arc(v, i);
+    const rise = laid.rises?.(i) ?? 0;
+    const { a, b } = ways[i];
+
+    if (rise === 0 || a === null || b === null) return run;
+
+    // Out is to the right of the way round: of the edge in, and of the edge
+    // out, and the corner's between them.
+    const ox = -a.y + b.y, oy = a.x - b.x, ol = Math.hypot(ox, oy);
+
+    if (ol < 1e-12) return run;
+
+    return run.map(p => ({ x: p.x + ox / ol * rise, y: p.y + oy / ol * rise }));
+  });
+
+  function arc(v: Point, i: number): Point[] {
     const { a, b } = ways[i];
     const before = (i - 1 + n) % n, after = (i + 1) % n;
     const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
@@ -2757,34 +2833,28 @@ function shaped(
     if (segments > 0) out.push(t2);
 
     return out;
-  });
+  }
+
+  const bases = ring.map((_v, i): Base => ({
+    from: corners[i][corners[i].length - 1],
+    to: corners[(i + 1) % n][0],
+    length: lengths[i],
+  }));
 
   const edges = ring.map((v, i): Point[] => {
     const deform = e(i);
-    const count = Math.max(0, Math.floor(deform.count));
-
-    if (count === 0) return [];
-
-    const from = corners[i][corners[i].length - 1], to = corners[(i + 1) % n][0];
+    const run = laid.runs?.(i) ?? patternRun(deform, key(i), amplitude(i), countOf(lengths[i], deform.spacing));
+    const { from, to } = bases[i];
     const d = unit(v, ring[(i + 1) % n], lengths[i]);
     const o = d === null ? { x: 0, y: 0 } : { x: d.y, y: -d.x };
-    const amp = amplitude(i), id = key(i);
-    const out: Point[] = [];
 
-    for (let k = 1; k <= count; k++) {
-      const s = k / (count + 1);
-      const push = amp * patterned(deform, id, k);
-
-      out.push({
-        x: from.x + (to.x - from.x) * s + o.x * push,
-        y: from.y + (to.y - from.y) * s + o.y * push,
-      });
-    }
-
-    return out;
+    return run.along.map((s, k) => ({
+      x: from.x + (to.x - from.x) * s + o.x * run.across[k],
+      y: from.y + (to.y - from.y) * s + o.y * run.across[k],
+    }));
   });
 
-  return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges };
+  return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges, bases };
 }
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
@@ -2795,7 +2865,7 @@ export function rounded(ring: Ring, radius: (i: number) => number, segments: num
   return shaped(ring, () => e, radius, () => 0, i => i).ring;
 }
 
-/** A ring with `e.count` points put into each edge, pushed off it by
+/** A ring with points put into each edge at `e.spacing`, pushed off it by
  * `amplitude(i)` of the pattern: each corner, then its edge's points. `key`
  * names each edge for the noise, and is where it is in the ring unless said. */
 export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {
@@ -2879,6 +2949,8 @@ export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
   edges: (Point[] | null)[]
+  /** Each source edge's straight run and length, where it has an image. */
+  bases: (Base | null)[]
 }
 
 export function imaged(
@@ -2891,6 +2963,7 @@ export function imaged(
   amplitude: (j: number) => number,
   key: (j: number) => number,
   rest: { radius: number, amplitude: number, e?: Effecting },
+  laid: Laid = {},
 ): Imaged {
   const options = typeof e === 'function' ? e : () => e;
   const otherwise = rest.e ?? options(0);
@@ -2960,6 +3033,7 @@ export function imaged(
 
   const corners: (Point[] | null)[] = source.map(() => null);
   const edges: (Point[] | null)[] = source.map(() => null);
+  const bases: (Base | null)[] = source.map(() => null);
 
   const shape = owned.map(ring => {
     const m = ring.length;
@@ -2976,6 +3050,10 @@ export function imaged(
       k => (ring[k].owner >= 0 ? radius(ring[k].owner) : rest.radius),
       k => (along[k] >= 0 ? amplitude(along[k]) : rest.amplitude),
       k => (along[k] >= 0 ? key(along[k]) : -1 - k),
+      {
+        runs: k => (along[k] >= 0 ? laid.runs?.(along[k]) ?? null : null),
+        rises: k => (ring[k].owner >= 0 ? laid.rises?.(ring[k].owner) ?? 0 : 0),
+      },
     );
 
     ring.forEach((v, k) => {
@@ -2985,13 +3063,16 @@ export function imaged(
     });
 
     along.forEach((j, k) => {
-      if (j >= 0 && edges[j] === null) edges[j] = out.edges[k];
+      if (j >= 0 && edges[j] === null) {
+        edges[j] = out.edges[k];
+        bases[j] = out.bases[k];
+      }
     });
 
     return out.ring;
   });
 
-  return { shape, corners, edges };
+  return { shape, corners, edges, bases };
 }
 
 /** How far apart what would otherwise be one point is laid, against what it

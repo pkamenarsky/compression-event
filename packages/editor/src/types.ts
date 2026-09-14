@@ -548,12 +548,12 @@ export interface World {
  * - `round`: each corner an arc of `segments` segments, one being a chamfer.
  *   `verticals` off stands verticals only at the tangent points, so the round
  *   reads smooth rather than faceted.
- * - `deform`: `count` points put into each edge, pushed off it by the pattern.
- *   `seed` is the noise's.
+ * - `deform`: points put into each edge every `spacing` of its length, pushed
+ *   off it by the pattern. `seed` is the noise's.
  */
 export interface Effects {
   round?: { segments: number, verticals: boolean }
-  deform?: { count: number, pattern: Pattern, seed: number, sides: Sides }
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides }
 }
 
 /**

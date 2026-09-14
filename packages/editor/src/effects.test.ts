@@ -90,7 +90,7 @@ describe('a polygon\'s effects', () => {
   test('a deform puts its points into every edge, off the line by its amplitude', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out.
-    const fx: Effects = { deform: { count: 3, pattern: 'zigzag', seed: 0, sides: 'out' } };
+    const fx: Effects = { deform: { spacing: 33, pattern: 'zigzag', seed: 0, sides: 'out' } };
     const w = wrote(withEffects(world, id, fx), 0, id, deform(2));
     const ring = shapeOf(w, id)[0];
 
