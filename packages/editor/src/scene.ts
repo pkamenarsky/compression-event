@@ -2945,11 +2945,24 @@ export interface Occupied {
  * What one shut group is on screen as, which is its level side where it has
  * one and its floor where it has nothing else.
  *
+ * Both, where the level side is not a room. A floor is cut to a level and to
+ * nothing else — see `resolves` in `contributed` — so a solid's floor runs
+ * wherever it was laid and is on screen as much as the solid is.
+ *
  * The same fallback the drawing makes and the picking makes, in one place so
  * that they cannot drift: what can be clicked is what is drawn.
  */
 export function occupiedShape(o: Occupied): Shape {
-  return o.shape.length === 0 ? o.floor : o.shape;
+  if (o.shape.length === 0) return o.floor;
+  if (o.floor.length === 0 || floorsIn(o)) return o.shape;
+
+  return unionAll([o.shape, o.floor]);
+}
+
+/** Whether a shut group's floor lies inside its outline: only where the
+ * outline is a room, which is the only thing a floor is cut to. */
+export function floorsIn(o: Occupied): boolean {
+  return o.shape.length !== 0 && o.kind.type === 'level';
 }
 
 /**

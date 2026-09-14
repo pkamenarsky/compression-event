@@ -2578,6 +2578,31 @@ describe('going inside a group', () => {
     expect(contributing(made.world, 0, resolveAt(made.world, 0)).map(it => it.kind)).toEqual([kind('floor')]);
   });
 
+  test('a solid scope\'s floor is still there to be clicked', () => {
+    // A floor is cut to a room and to nothing else, so where the scope is a
+    // solid its floor runs past it — and what is drawn has to be pickable.
+    let world = emptyWorld();
+    const ids: PolygonId[] = [];
+
+    for (const [k, r] of [
+      [{ type: 'solid' }, rect(0, 0, 20, 20)],
+      [{ type: 'floor' }, rect(0, 0, 100, 100)],
+      [{ type: 'void', from: SOLID | FLOOR }, rect(40, 40, 20, 20)],
+    ] as [PolygonKind, Point[]][]) {
+      const made = addPolygon(world, k, r, 0, TOP);
+
+      world = made.world;
+      ids.push(made.id);
+    }
+
+    const made = sealed(world, 0, ids, TOP)!;
+    const items = resolveAt(made.world, 0);
+
+    expect(hitting(made.world, 0, items, [], { x: 10, y: 10 })).toEqual([made.id]);
+    expect(hitting(made.world, 0, items, [], { x: 80, y: 80 })).toEqual([made.id]);
+    expect(hitting(made.world, 0, items, [], { x: 50, y: 50 })).toEqual([]);
+  });
+
   test('a scope keeps its kind when its room is taken out', () => {
     // Read off what it holds, not off what stands: a level with no room left
     // in it is nothing, and not the solids that were in the room.

@@ -73,6 +73,7 @@ import {
   Handle,
   handles,
   occupiedShape,
+  floorsIn,
   occupying,
   occupyingSource,
   outlining,
@@ -3296,9 +3297,12 @@ function groups(
     // outline that is not there would clip it away, which is the group going
     // invisible — and a group must be visible, being the thing being picked
     // and dragged.
+    //
+    // Nor for a group whose outline is a solid: a floor is cut to a room and to
+    // nothing else, so a solid's floor runs wherever it was laid.
     if (g.floor.length === 0) continue;
 
-    const shut = g.shape.length !== 0;
+    const shut = floorsIn(g);
 
     if (shut) {
       ctx.save();
