@@ -24,7 +24,8 @@
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging an icon a keyframe along pushes or pulls it, and what is picked
-// with it. See `keys.ts`.
+// with it. The grip at the start of a thing's life drags its birth along, and
+// its story with it. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
 // in the file. See `Flags`.
@@ -41,7 +42,7 @@ import { Signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input, keyOwned, pressedAway } from './input';
-import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushedAt, samePlace, skipToggledAt, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushedAt, reborn, samePlace, skipToggledAt, timedAt } from './keys';
 import { KeyframeId } from './rig';
 import { order, unchainedAt } from './scene';
 import { theme } from './theme';
@@ -482,6 +483,8 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
     ...arrow(ctx, m, r),
 
+    ...birth(ctx, m, r),
+
     pinned([
       label(r.label, {
         left: `${indent}px`,
@@ -494,6 +497,35 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
       ...(r.corner === null ? switches(ctx, r) : []),
     ]),
   ], { height: `${heightOf(r)}px`, borderTop: `1px solid ${theme.border}`, boxSizing: 'border-box' });
+}
+
+/**
+ * Where a thing is born, at the left edge of the first column it is there in:
+ * dragged along the columns, it is born there instead, and its story goes with
+ * it. See `reborn`. A group has no life of its own to move, and a corner's is
+ * its polygon's to carry.
+ */
+function birth(ctx: Ctx, m: Model, r: Row): VNode[] {
+  const from = r.cells.findIndex(c => c.alive);
+
+  if (r.corner !== null || from < 0 || ctx.state().world.groups.has(r.id)) return [];
+
+  const done = (up: PointerEvent) => {
+    const to = colAt(ctx, up.clientX);
+
+    if (to !== from) ctx.acted(reborn(ctx.state().world, r.id, m.keyframes[to].id));
+  };
+
+  return [box({
+    left: `${m.xs[from] + 1}px`,
+    top: '3px',
+    width: '4px',
+    height: `${ROW - 7}px`,
+    borderRadius: '2px',
+    background: theme.faded,
+    cursor: 'ew-resize',
+    zIndex: 1,
+  }, [], { title: 'Drag to where it is born', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
 }
 
 /** Hide, lock and solo, at the end of a thing's header. */

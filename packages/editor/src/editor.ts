@@ -60,7 +60,9 @@ import {
   Unrolled,
   redone,
   undone,
+  within,
 } from './types';
+import { reborn } from './keys';
 
 /**
  * The editor: a canvas that draws the world, and the chrome floating above it.
@@ -439,6 +441,9 @@ function started(s: EditorState): void {
  * Cmd+U unchains what is picked and Cmd+Shift+U chains it back up, the way
  * Cmd+G and Cmd+Shift+G are one question asked both ways round. See `loosened`.
  *
+ * Cmd+[ and Cmd+] have what is picked born a keyframe earlier or later. See
+ * `rebirthed`.
+ *
  * Every key acted on has to be in the list waited on below, or the bus never
  * wakes for it and the branch that would have handled it is unreachable.
  */
@@ -448,7 +453,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       const e = yield* keyPressed(
         input,
         'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyE', 'KeyG',
-        'KeyU', 'KeyL',
+        'KeyU', 'KeyL', 'BracketLeft', 'BracketRight',
         'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
@@ -459,6 +464,8 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       if (state().roaming && !command) continue;
 
       if (!command) {
+        if (e.code === 'BracketLeft' || e.code === 'BracketRight') continue;
+
         // The grid, finer and coarser. A document key rather than a canvas
         // one: what the grid is set to is a property of the drawing, and every
         // tool snaps to it — so it is reachable whatever is picked and
@@ -516,6 +523,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
       else if (e.code === 'KeyL') {
         update(s => shut(s, !e.shiftKey));
+      }
+      else if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
+        update(s => rebirthed(s, e.code === 'BracketRight' ? 1 : -1));
       }
       else if (e.code === 'KeyE') {
         // Read out here rather than inside the update, because it asks a
@@ -583,6 +593,41 @@ function loosened(s: EditorState, back: boolean): EditorState {
   const how = back ? rechained : unchained;
 
   return marked({ ...s, world: how(s.world, s.keyframe, ids) }, s.world);
+}
+
+/**
+ * The picked things born a keyframe later or earlier, each from its own birth
+ * and taking its story with it. See `reborn`.
+ *
+ * A group is reached through its members, the way a delete reaches it. What
+ * cannot go that far stays where it is, and says why.
+ */
+function rebirthed(s: EditorState, by: 1 | -1): EditorState {
+  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths]
+    .flatMap(id => within(s.world, id));
+  let world = s.world;
+  let refused: string | null = null;
+
+  for (const id of new Set(ids)) {
+    const it = world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
+    if (it === undefined) continue;
+
+    const to = keyAt(world, order(world, it.birth) + by);
+
+    if (to === null) {
+      refused = by < 0 ? 'nothing before the first keyframe to be born at' : 'nothing after the last keyframe to be born at';
+      continue;
+    }
+
+    const out = reborn(world, id, to);
+
+    if ('refused' in out) refused = out.refused;
+    else world = out;
+  }
+
+  if (world === s.world) return refused === null ? s : saying(s, refused);
+
+  return marked({ ...s, world }, s.world);
 }
 
 /** The grid at a new size. Not in the history: what the grid is set to is how

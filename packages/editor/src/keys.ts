@@ -543,6 +543,95 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
   return gone.size === 0 ? out : without(out, gone);
 }
 
+/**
+ * A thing's birth moved to keyframe `to`, and its story with it: everything
+ * written about it, and when each of its corners is born and dies, moves as
+ * many keyframes as the birth did. Its death stays where it is.
+ *
+ * What is moved past the last keyframe goes — a corner born there, and an
+ * entry written there — and a corner that would die there lives to the end.
+ * So does a corner that would be born where the thing is already gone.
+ *
+ * Refused where it would be born at or after its death.
+ */
+export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
+  const keyframes = world.keyframes;
+  const it = world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
+  const t = indexIn(keyframes, to);
+
+  if (it === undefined || t < 0) return world;
+
+  const by = t - indexIn(keyframes, it.birth);
+
+  if (by === 0) return world;
+
+  const end = it.death === null ? keyframes.length : indexIn(keyframes, it.death);
+
+  if (t >= end) return { refused: 'it would be born after it is gone' };
+
+  const shifted = (k: KeyframeId): KeyframeId | null => {
+    const i = indexIn(keyframes, k);
+
+    return i < 0 ? null : keyframes[i + by]?.id ?? null;
+  };
+
+  const entry = <E extends Entry>(e: E): E => {
+    if (e.skip === undefined) return e;
+
+    const skip = new Set([...e.skip].flatMap(s => shifted(s) ?? []));
+    const { skip: _was, ...rest } = e;
+
+    return (skip.size === 0 ? rest : { ...rest, skip }) as E;
+  };
+
+  const entries = <E>(map: ReadonlyMap<KeyframeId, E>, f: (e: E) => E): Map<KeyframeId, E> =>
+    new Map([...map].flatMap(([k, e]) => {
+      const there = shifted(k);
+
+      return there === null ? [] : [[there, f(e)] as const];
+    }));
+
+  const corners = <E extends Entry>(maps: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
+    new Map([...maps].flatMap(([v, map]) => {
+      const m = entries(map, entry);
+
+      return m.size === 0 || gone.has(v) ? [] : [[v, m] as const];
+    }));
+
+  const gone = new Set<VertexId>();
+  let out: World = world;
+  const polygon = world.polygons.get(id);
+
+  if (polygon !== undefined) {
+    const points = polygon.points.flatMap(c => {
+      const birth = c.birth === polygon.birth ? to : shifted(c.birth);
+
+      if (birth === null || indexIn(keyframes, birth) >= end) {
+        gone.add(c.id);
+        return [];
+      }
+
+      return [{ ...c, birth, death: c.death === null ? null : shifted(c.death) }];
+    });
+
+    out = { ...out, polygons: new Map(out.polygons).set(id, { ...polygon, birth: to, points }) };
+  }
+  else if (world.artefacts.has(id)) {
+    out = { ...out, artefacts: new Map(out.artefacts).set(id, { ...world.artefacts.get(id)!, birth: to }) };
+  }
+  else {
+    out = { ...out, paths: new Map(out.paths).set(id, { ...world.paths.get(id)!, birth: to }) };
+  }
+
+  const rig = rigOf(world, id);
+
+  return withRig(out, id, {
+    keys: entries(rig.keys, list => list.map(entry)),
+    nudges: corners(rig.nudges),
+    depths: corners(rig.depths),
+  });
+}
+
 /** A rig's corner maps with `k` taken out: its entries handed to `next`, and
  * added to what is there where both happen as often. */
 function cornerMaps<O extends Op, E extends Entry<O>>(
