@@ -1855,16 +1855,19 @@ describe('round and deform', () => {
   });
 
   test('a pattern is nought at the corners, and out is out of the material', () => {
+    const both = deformed(square, () => 2, zigzag);
+
+    // The bottom edge's three points, out, in and out.
+    expect(both.slice(1, 4).map(p => p.y)).toEqual([-2, 2, -2]);
+    expect(both[0]).toEqual(square[0]);
+    expect(both[4]).toEqual(square[1]);
+
+    // One way only, lifted off the line: teeth rather than a step.
     const out = deformed(square, () => 2, { ...zigzag, sides: 'out' });
-
-    // The bottom edge's three points, each below it.
-    expect(out.slice(1, 4).map(p => p.y)).toEqual([-2, -2, -2]);
-    expect(out[0]).toEqual(square[0]);
-    expect(out[4]).toEqual(square[1]);
-
     const inward = deformed(square, () => 2, { ...zigzag, sides: 'in' });
 
-    expect(inward.slice(1, 4).map(p => p.y)).toEqual([2, 2, 2]);
+    expect(out.slice(1, 4).map(p => p.y)).toEqual([-2, 0, -2]);
+    expect(inward.slice(1, 4).map(p => p.y + 0)).toEqual([2, 0, 2]);
   });
 
   test('noise is the edge\'s own, whatever its place', () => {

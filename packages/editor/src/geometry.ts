@@ -2627,8 +2627,10 @@ export function patterned(e: Effecting, key: number, k: number): number {
       break;
   }
 
-  if (e.sides === 'out') return Math.abs(v);
-  if (e.sides === 'in') return -Math.abs(v);
+  // One way only, the pattern is lifted off the line rather than folded onto
+  // it: a zigzag stays teeth, which folded it would not.
+  if (e.sides === 'out') return (1 + v) / 2;
+  if (e.sides === 'in') return -(1 + v) / 2;
 
   return v;
 }
@@ -2673,14 +2675,13 @@ interface Shaped {
  */
 function shaped(
   ring: Ring,
-  e: Effecting,
+  e: (i: number) => Effecting,
   radius: (i: number) => number,
   amplitude: (i: number) => number,
   key: (i: number) => number,
 ): Shaped {
   const n = ring.length;
-  const segments = Math.max(0, Math.floor(e.segments));
-  const count = Math.max(0, Math.floor(e.count));
+  const segmentsOf = (i: number): number => Math.max(0, Math.floor(e(i).segments));
 
   const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
   const unit = (from: Point, to: Point, l: number): Point | null =>
@@ -2696,7 +2697,7 @@ function shaped(
     const { a, b } = ways[i];
     const r = Math.max(0, radius(i));
 
-    if (segments === 0 || r === 0 || a === null || b === null) return 0;
+    if (segmentsOf(i) === 0 || r === 0 || a === null || b === null) return 0;
 
     const half = Math.acos(Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y))) / 2;
     const tan = Math.tan(half);
@@ -2711,6 +2712,7 @@ function shaped(
     const { a, b } = ways[i];
     const before = (i - 1 + n) % n, after = (i + 1) % n;
     const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
+    const segments = segmentsOf(i);
     const out: Point[] = [];
 
     if (t === 0 || a === null || b === null) {
@@ -2761,6 +2763,9 @@ function shaped(
   });
 
   const edges = ring.map((v, i): Point[] => {
+    const deform = e(i);
+    const count = Math.max(0, Math.floor(deform.count));
+
     if (count === 0) return [];
 
     const from = corners[i][corners[i].length - 1], to = corners[(i + 1) % n][0];
@@ -2771,7 +2776,7 @@ function shaped(
 
     for (let k = 1; k <= count; k++) {
       const s = k / (count + 1);
-      const push = amp * patterned(e, id, k);
+      const push = amp * patterned(deform, id, k);
 
       out.push({
         x: from.x + (to.x - from.x) * s + o.x * push,
@@ -2794,14 +2799,29 @@ function spin(v: Point, angle: number): Point {
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
  * its edges. See `shaped`. */
 export function rounded(ring: Ring, radius: (i: number) => number, segments: number): Ring {
-  return shaped(ring, { ...PLAIN, segments }, radius, () => 0, i => i).ring;
+  const e = { ...PLAIN, segments };
+
+  return shaped(ring, () => e, radius, () => 0, i => i).ring;
 }
 
 /** A ring with `e.count` points put into each edge, pushed off it by
  * `amplitude(i)` of the pattern: each corner, then its edge's points. `key`
  * names each edge for the noise, and is where it is in the ring unless said. */
 export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {
-  return shaped(ring, { ...e, segments: 0 }, () => 0, amplitude, key).ring;
+  const plain = { ...e, segments: 0 };
+
+  return shaped(ring, () => plain, () => 0, amplitude, key).ring;
+}
+
+/**
+ * A whole shape rounded and deformed alike everywhere, and taken through the
+ * arrangement: what a group does to its union, which has no corners of its
+ * own to name. Each edge's noise is keyed by where it is in its ring.
+ */
+export function effected(shape: Shape, e: Effecting, radius: number, amplitude: number): Cut {
+  if (radius <= 0 && amplitude === 0) return simplify(shape);
+
+  return simplify(shape.map(ring => shaped(ring, () => e, () => radius, () => amplitude, k => k).ring));
 }
 
 /**
@@ -2857,6 +2877,9 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
  * edge whose offset line it lies on, running the same way. What is the image
  * of nothing — a corner or an edge the erosion made — takes `rest`.
  *
+ * The options may differ from corner to corner: a corner rounds by its own,
+ * and an edge deforms by the corner's it starts at.
+ *
  * `flat` is, for each source corner whose image runs straight through, the
  * direction of the line it lies on: where its arc's points all coincide, which
  * is where the bake lays them apart. See `seeded`.
@@ -2876,12 +2899,15 @@ export function imaged(
   source: Ring,
   rings: readonly number[],
   depth: (i: number) => number,
-  e: Effecting,
+  e: Effecting | ((i: number) => Effecting),
   radius: (i: number) => number,
   amplitude: (j: number) => number,
   key: (j: number) => number,
-  rest: { radius: number, amplitude: number },
+  rest: { radius: number, amplitude: number, e?: Effecting },
 ): Imaged {
+  const options = typeof e === 'function' ? e : () => e;
+  const otherwise = rest.e ?? options(0);
+
   const n = source.length;
   const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
   const snap = extentOf(eroded.length > 0 ? eroded : [source]) * 1e-7;
@@ -2952,9 +2978,15 @@ export function imaged(
   const shape = owned.map(ring => {
     const m = ring.length;
     const along = ring.map((v, k) => sourceEdge(v, ring[(k + 1) % m]));
+    // A corner's options are its own; an edge's, the corner's it starts at.
     const out = shaped(
       ring.map(v => v.p),
-      e,
+      k => {
+        const round = ring[k].owner >= 0 ? options(ring[k].owner) : otherwise;
+        const deform = along[k] >= 0 ? options(along[k]) : otherwise;
+
+        return { ...deform, segments: round.segments };
+      },
       k => (ring[k].owner >= 0 ? radius(ring[k].owner) : rest.radius),
       k => (along[k] >= 0 ? amplitude(along[k]) : rest.amplitude),
       k => (along[k] >= 0 ? key(along[k]) : -1 - k),
