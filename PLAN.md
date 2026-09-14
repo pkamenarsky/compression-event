@@ -201,7 +201,7 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-Done on branch `timelines`: 1, 2, 3, 3½, 4 and 5, and groups made global. Next: 6.
+Done, and merged: 1, 2, 3, 3½, 4 and 5, and groups made global. Next: 6.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -390,13 +390,164 @@ Done (`timeline.ts`, over the rows `track.ts` works out), with these on top:
   locked and hidden included (`beneath` in `track.ts`, `picker.ts`): each
   with its switches, and picked by its name where it can be. That is how a
   locked thing is got back without finding its row.
-- Corner nudges and depths have no rows yet.
+- A polygon's corners have rows under its own, holding their nudges and
+  depths (`cornerCellsOf`).
 
 ### 6 — effect stack
 
-- Chamfer, round; applied in `project` after erosion. Which effects an object
-  has is one fact about it; their parameters are ops like erosion, so drop,
-  push and repeat apply to them.
+Round and deform, after erosion: `erode → round → deform`, in that order
+always. Chamfer is a round of one segment, so its cut follows the radius
+(`r·tan(θ/2)` along each edge) rather than being a length of its own.
+
+#### Effects are facts, amounts are ops
+
+An effect is not a pass. Nothing is ever rounded twice or deformed twice:
+which effects a thing has, and how, is one fact about it, over every
+keyframe, as its shape is; how much is an op, like erosion.
+
+```ts
+interface Effects {
+  round?: { segments: number, verticals: boolean }
+  deform?: { count: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both' }
+}
+
+// World
+effects: Map<Id, Effects>                        // a polygon or a group
+cornerEffects: Map<VertexId, Partial<Effects>>   // a corner's own, over its thing's
+
+type Op =
+  | …
+  | { kind: 'round', by: number }    // radius
+  | { kind: 'deform', by: number }   // amplitude
+
+interface Rig {
+  …
+  rounds: Map<VertexId, Map<KeyframeId, Entry<Round>>>    // per corner
+  deforms: Map<VertexId, Map<KeyframeId, Entry<Deform>>>  // per edge, by the corner it starts at
+}
+```
+
+- `State` gains `radius` and `amplitude`, summed like `erosion`, and per
+  corner and per edge maps summed like `depths`: a corner's radius is its
+  thing's plus its own. A stand records them.
+- Two of either at one keyframe add, and adjacent ones merge as erosions do.
+  They commute with the frame ops, so their place in a list does not matter.
+  That is the whole answer to applying an effect twice.
+- Drop, push, pull, repeat, copy and paste need nothing new. A repeat grows
+  the amount: `r, 2r, 3r…`.
+- A count, a pattern or a seed does not change over time. What would want one
+  that does is a second effect, not an option changing under the timeline.
+- A group's effects apply to its union, which is how the joins between rooms
+  are rounded. A union has no corner ids, so a group has no per-corner
+  amounts.
+
+#### Geometry
+
+- `rounded`: each corner of the eroded shape becomes `segments + 1` points on
+  the arc tangent to its two edges, the tangent length clamped to half of
+  each edge less what the neighbour takes. Holes too.
+- An arc's points stand verticals by default, so a round is faceted;
+  `round.verticals` off leaves only the tangent points standing them, and
+  the round reads smooth. An option of the round like any other, in the
+  pane.
+- `deformed`: each edge gets `count` points between its ends, pushed along
+  its normal by `amplitude · pattern(s)`. The pattern is nought at both ends,
+  so a deform never moves a corner or a tangent point.
+- Deform belongs to source edges, and a flat source corner splits a straight
+  run into two of them — but `cornersOnly` has taken it out of the eroded
+  shape. Flat corners' images are put back into the eroded edge before
+  deforming; an eroded edge is matched to its source edge by lying on that
+  edge's offset line.
+- **`imaged`**: where one named feature — corner `i`, or edge `j` — lands
+  after erode, round and deform: a run of points, not one. The projection is
+  built by the same construction, and `invented` and `fading` ask it instead
+  of `mitred`, so the two cannot disagree. It is also how an eroded vertex
+  finds the source corner whose radius it takes.
+- In the thing's own frame an eroded corner is `corner + d·mitre`, a tangent
+  point that plus a multiple of `r` along a fixed edge direction, an arc
+  point `centre(r) + r·dirₖ`, a deform point linear in the amplitude. So
+  the bake's lerp between stretch ends is exact wherever only the amounts
+  move, and `projection` divides radius and amplitude by `s` under a
+  similarity, as it does depths.
+
+#### The bake, and the flat-corner machinery
+
+`spanning` writes both ends of a span over one list of corners, and marks a
+corner `dead` at an end where it is missing or flat. `invented` puts a dead
+corner's image back at `t = 0, 1` (`keep`), since the arrangement drops a
+flat point and the ring would change length; `fading` finds the image at
+every instant to fade the corner's vertical. Both take the image from
+`mitred`, erosion's own construction.
+
+With effects that stops being true:
+
+1. A rounded corner's image is `segments + 1` points. Mid-span the mitred
+   point is not a vertex, `fading` finds nothing, and an arriving corner's
+   verticals pop in whole.
+2. At the flat end the run collapses: the tangent length `r·tan(θ/2)` is
+   nought at `θ = 0`, all the points land on one, and `keeping` cannot insert
+   coincident points. The ring changes length at the span's end.
+3. A deform at amplitude nought is flat, and `cornersOnly` drops it.
+
+So:
+
+- **`dead` is per slot, not per corner**: a corner's arc points, an edge's
+  deform points. A slot is dead at an end where it is flat there — its corner
+  missing or flat, or its deform at nought. `invented` and `fading` walk
+  slots, and ask `imaged` where they are.
+- **A degenerate end is seeded, never collapsed.** Where a feature's points
+  would coincide at one end, they are laid along the flat line at `SEED` of
+  their spacing at the other end, as `budding` does a birth. Points on a line
+  are that line exactly, they are distinct, so `keeping` takes them, and the
+  fade starts from them. A radius of nought at one end and more at the other
+  is seeded too: the tiny arc does turn, and the arrangement keeps it unasked.
+- A span whose amounts go from something to nought is the same read backwards.
+- The counts never change, so a ring's length across a span never depends on
+  the options.
+- Just after a flat end an arc's points are nearer than the snap, so the
+  arrangement welds them and the cut finds an event there by measuring. An
+  invented corner is nearer its line than the snap at the same instants, so
+  this is not new.
+- `moves()` and `export.ts` leave the new kinds out: they are not in the
+  frame table. The game does not change — it gets points, and lerps them.
+- It costs: a round multiplies a corner by `segments + 1`, a deform an edge
+  by `count + 1`, and the bake and the buffers grow with them.
+
+#### Editing
+
+- **The gesture** reads two numbers off one drag, as `ngoning` does: sideways
+  is the amount, and it writes an entry; upward is the count, and it sets the
+  thing's option, at every keyframe, with a label by the cursor. With corners
+  picked it writes their entries instead, as deepening does. The first
+  gesture on a thing without the effect gives it the remembered options.
+- **The options pane** sits on the left, under the tool buttons, and blends
+  in while a thing with effects is picked, or an effect entry is picked in
+  the timeline — which is why the timeline's pick moves out of `timeline.ts`'s
+  local state. It edits the thing's `Effects`, or a picked corner's own,
+  whichever entry led there, and removes an effect, which drops its entries.
+  Patterns first: zigzag, sine, seeded noise.
+- Icons for both kinds in the thing's row and in the corner rows (`track.ts`),
+  and double-click editing through `editing`.
+- Picking edges is not a thing yet, so per-edge deform waits for it; per-corner
+  round rides the corner selection there is.
+- `resolve.ts` carries a group's effects and amounts onto the rings it makes,
+  as it does the group's depth.
+- Save format 22; 21 still opens.
+
+#### Order
+
+1. `rig.ts`: the op kinds, `rounds` and `deforms`, `State`, merge, repeat,
+   stands. Tests.
+2. `geometry.ts`: `rounded`, `deformed`, `imaged`, seeding. Tests: counts and
+   order stable, linear in the amounts, clamping, a clockwise ring, and the
+   projection agreeing with `imaged` at every feature.
+3. `scene.ts`: `project` runs the three, `Effects` on the world, groups.
+4. `bake.ts`: slots in `spanning`, `invented`, `fading`; seeding. Tests: a
+   radius growing from nought, a corner arriving into a rounded ring, a
+   deform starting from nought fading its verticals in, a turning room at a
+   fixed radius costing no stretches.
+5. The gestures, the options pane, the icons.
+6. The save format.
 
 ### 7 — later
 
