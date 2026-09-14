@@ -565,9 +565,20 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
   slots, so an end at nought is seeded for them too, deform included.
 - A corner arriving into a rounded ring costs stretches: an arc whose corner
   turns is not a lerp of its ends. It never jumps.
-- Not yet: a flat corner with both a round and a deform on its two edges is
-  not flat in the projection, so its seeded arc finds no edge to land on and
-  the ring is shorter at that end.
+- A flat corner is never seeded after the fact: its tangent length is at
+  least `SEEDING` of its radius, in `shaped` itself, so its arc is a sliver
+  of a run along its wall rather than one point. That lies on an edge
+  whatever the edges beside it do — a deform either side of it included,
+  where laying a collapsed run along the source line found no edge — so
+  `keeping` always takes it back. `seeded` and `Imaged.flat` went with it.
+  The arc is walked from its first tangent point rather than built off a
+  centre, which ran away to infinity as a corner straightened.
+- Not yet: a corner arriving on a deformed edge splits the edge in two
+  source edges at the end where it is flat, each with its own pattern, and
+  the editor's edge there is one. The span holds together — the ring keeps
+  its length and agrees with the cut — but its near end is not the
+  editor's. Putting it right means laying the two halves' points on the
+  whole edge's pattern at that end, with the editor's own points among them.
 - Icons and labels for the two kinds are in, since the timeline's table of
   them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
   a file opens with none.

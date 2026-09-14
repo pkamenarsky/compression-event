@@ -2567,10 +2567,11 @@ function norm(t: number): number {
 // amplitude along a fixed normal. The bake's lerp between two stretch ends is
 // exact wherever only the amounts move.
 //
-// Where the amounts make points coincide — a radius of nought, a flat corner
-// — they are still all there, on one point; the arrangement welds them, and
-// the bake asks for them back apart (`seeded`) where it needs the ring to
-// keep its length.
+// Where a radius of nought makes an arc's points coincide they are still all
+// there, on one point, and the arrangement welds them; the bake seeds such an
+// end rather than collapse it. A corner running straight through never
+// collapses: its arc is a sliver of a run along its wall, which lies on an
+// edge whatever the edges beside it do, so `keeping` can always put it back.
 // -----------------------------------------------------------------------------
 
 /** How a deformed edge is pushed: sharp teeth, a wave, or seeded noise. */
@@ -2699,11 +2700,16 @@ function shaped(
 
     if (segmentsOf(i) === 0 || r === 0 || a === null || b === null) return 0;
 
-    const half = Math.acos(Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y))) / 2;
+    const half = Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y) / 2;
     const tan = Math.tan(half);
 
     // A hairpin wants the whole of both edges, and gets what is left of them.
-    return tan < 1e-12 ? Infinity : r / tan;
+    // A corner running straight through wants a sliver of them, never none:
+    // its arc is then a short straight run along the wall rather than all of
+    // its points on one, so it keeps every one of them whatever lies beside
+    // it. Still linear in the radius, and the same limit a turning corner
+    // approaches as it straightens.
+    return tan < 1e-12 ? Infinity : r * Math.max(1 / tan, SEEDING);
   });
 
   const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
@@ -2721,40 +2727,31 @@ function shaped(
       return out;
     }
 
-    const cos = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y));
-    const theta = Math.acos(cos);
     const t1 = { x: v.x + a.x * t, y: v.y + a.y * t };
     const t2 = { x: v.x + b.x * t, y: v.y + b.y * t };
-    const pa = { x: b.x - cos * a.x, y: b.y - cos * a.y };
-    const pb = { x: a.x - cos * b.x, y: a.y - cos * b.y };
-    const la = Math.hypot(pa.x, pa.y), lb = Math.hypot(pb.x, pb.y);
 
-    // A hairpin's tangent points are one point, and so is its arc.
-    if (la < 1e-12 || lb < 1e-12) {
-      for (let k = 0; k <= segments; k++) out.push(t1);
-
-      return out;
-    }
-
-    const half = theta / 2;
-    const r = t * Math.tan(half);
-    const bl = Math.hypot(a.x + b.x, a.y + b.y);
-    const reach = t / Math.cos(half);
-    const c = { x: v.x + (a.x + b.x) / bl * reach, y: v.y + (a.y + b.y) / bl * reach };
-
-    // From the centre to each tangent point: across each edge, away from the
-    // other one. Neither depends on the radius, which is what keeps an arc
-    // point linear in it.
-    const n1 = { x: -pa.x / la, y: -pa.y / la };
-    const n2 = { x: -pb.x / lb, y: -pb.y / lb };
-    const sweep = (Math.PI - theta) * (n1.x * n2.y - n1.y * n2.x >= 0 ? 1 : -1);
+    // Walked from the first tangent point: heading back along the edge in,
+    // turning through `turn` towards the edge out, on the circle whose
+    // tangent length is `t`. Every step is `t` times something of the angle
+    // alone, which is what keeps it linear in the radius; and a corner
+    // straightening is a turn going to nought, where the arc goes over into
+    // the straight run from one tangent point to the other rather than
+    // sending a centre off to infinity. A hairpin turns right round on a
+    // circle of nothing, and stays on its one tangent point.
+    const cross = a.x * b.y - a.y * b.x;
+    const turn = Math.atan2(Math.abs(cross), -(a.x * b.x + a.y * b.y));
+    const heading = { x: -a.x, y: -a.y };
+    const side = cross > 0 ? -1 : 1;
+    const normal = { x: -heading.y * side, y: heading.x * side };
+    const along = (u: number): number => (turn < 1e-12 ? 2 * u : Math.sin(u * turn) / Math.tan(turn / 2));
+    const across = (u: number): number => (turn < 1e-12 ? 0 : (1 - Math.cos(u * turn)) / Math.tan(turn / 2));
 
     out.push(t1);
 
     for (let k = 1; k < segments; k++) {
-      const d = spin(n1, sweep * k / segments);
+      const f = along(k / segments) * t, g = across(k / segments) * t;
 
-      out.push({ x: c.x + d.x * r, y: c.y + d.y * r });
+      out.push({ x: t1.x + heading.x * f + normal.x * g, y: t1.y + heading.y * f + normal.y * g });
     }
 
     if (segments > 0) out.push(t2);
@@ -2788,12 +2785,6 @@ function shaped(
   });
 
   return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges };
-}
-
-function spin(v: Point, angle: number): Point {
-  const c = Math.cos(angle), s = Math.sin(angle);
-
-  return { x: c * v.x - s * v.y, y: s * v.x + c * v.y };
 }
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
@@ -2880,9 +2871,6 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
  * The options may differ from corner to corner: a corner rounds by its own,
  * and an edge deforms by the corner's it starts at.
  *
- * `flat` is, for each source corner whose image runs straight through, the
- * direction of the line it lies on: where its arc's points all coincide, which
- * is where the bake lays them apart. See `seeded`.
  *
  * The shape is the rings as the construction leaves them, before any
  * arrangement: every arc and every deform point there, coincident or not.
@@ -2891,7 +2879,6 @@ export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
   edges: (Point[] | null)[]
-  flat: (Point | null)[]
 }
 
 export function imaged(
@@ -2973,7 +2960,6 @@ export function imaged(
 
   const corners: (Point[] | null)[] = source.map(() => null);
   const edges: (Point[] | null)[] = source.map(() => null);
-  const flat: (Point | null)[] = source.map(() => null);
 
   const shape = owned.map(ring => {
     const m = ring.length;
@@ -2996,16 +2982,6 @@ export function imaged(
       if (v.owner < 0) return;
 
       corners[v.owner] = out.corners[k];
-
-      const a = ring[(k - 1 + m) % m].p, b = ring[(k + 1) % m].p;
-      const ux = v.p.x - a.x, uy = v.p.y - a.y, wx = b.x - v.p.x, wy = b.y - v.p.y;
-      const reach = Math.max(Math.hypot(ux, uy), Math.hypot(wx, wy));
-
-      if (reach > 0 && Math.abs(ux * wy - uy * wx) / reach <= snap && ux * wx + uy * wy > 0) {
-        const l = Math.hypot(wx, wy) || Math.hypot(ux, uy);
-
-        flat[v.owner] = Math.hypot(wx, wy) > 0 ? { x: wx / l, y: wy / l } : { x: ux / l, y: uy / l };
-      }
     });
 
     along.forEach((j, k) => {
@@ -3015,37 +2991,13 @@ export function imaged(
     return out.ring;
   });
 
-  return { shape, corners, edges, flat };
+  return { shape, corners, edges };
 }
 
-/**
- * A run of points that all coincide at one end of a span, laid apart along
- * the line they lie on: at `SEEDING` of how far apart they are at the other
- * end, measured along that line, about the point they are on.
- *
- * Points on a line are that line exactly and they are distinct, so `keeping`
- * takes them into the projection and the ring keeps its length at the end
- * where it would otherwise lose them. A run already apart is left as it is.
- */
-export function seeded(run: readonly Point[], other: readonly Point[], along: Point): Point[] {
-  if (run.length < 2 || other.length !== run.length) return [...run];
-
-  const spread = Math.max(...run.map(p => Math.hypot(p.x - run[0].x, p.y - run[0].y)));
-  const reach = Math.max(1, ...run.map(p => Math.max(Math.abs(p.x), Math.abs(p.y))));
-
-  if (spread > reach * 1e-9) return [...run];
-
-  const o = other.map(p => (p.x - other[0].x) * along.x + (p.y - other[0].y) * along.y);
-  const mean = o.reduce((a, b) => a + b, 0) / o.length;
-
-  return o.map(d => ({
-    x: run[0].x + (d - mean) * SEEDING * along.x,
-    y: run[0].y + (d - mean) * SEEDING * along.y,
-  }));
-}
-
-/** How far apart a seeded run is, against the other end: small enough to read
- * as a point, and far above the arrangement's own tolerance. */
+/** How far apart what would otherwise be one point is laid, against what it
+ * grows to: small enough to read as a point, and far above the arrangement's
+ * own tolerance. A flat corner's tangent length against its radius, and the
+ * bake's amount at nought against the other end's. */
 export const SEEDING = 1e-3;
 
 // -----------------------------------------------------------------------------

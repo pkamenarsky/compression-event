@@ -865,14 +865,6 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
     edges: im.edges.map(run),
-    flat: im.flat.map(d => {
-      if (d === null) return null;
-
-      const o = place(at.frame, [{ x: 0, y: 0 }, d]);
-      const x = o[1].x - o[0].x, y = o[1].y - o[0].y, l = Math.hypot(x, y);
-
-      return { x: x / l, y: y / l };
-    }),
   };
 }
 

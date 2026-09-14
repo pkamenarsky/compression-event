@@ -2231,6 +2231,31 @@ describe('effects', () => {
     expect(seeds).toEqual([0, 0, 0, 0, 0]);
   });
 
+  test('a corner arriving between two deformed edges of a rounded ring keeps the ring whole', () => {
+    // At the near end the arriving corner is flat in the source but not in
+    // the projection: the deform points either side of it push off the wall.
+    // Were its arc all on one point it would be one vertex there and five a
+    // moment later.
+    const { world, id } = room({ ...ROUND, ...ZIGZAG });
+    const w0 = wrote(world, 0, id, round(20), deform(5));
+    const it = resolveAt(w0, 1).find(r => r.id === id)!;
+    const grown = addVertex(w0, 1, it, 0, { x: 0, y: -100 }).world;
+    const now = resolveAt(grown, 1).find(r => r.id === id)!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const pulled = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
+
+    const span = run(bakeSpan(pulled, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 0.5));
+    expect(count(span, 1)).toEqual(count(span, 0.5));
+    expect(drift(pulled)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(pulled, 1), 6);
+
+    // Not yet the editor's at the near end: there the arriving corner splits
+    // the wall's pattern in two, and the editor's wall has one. See PLAN.md.
+  });
+
   test('a deform starting from nought fades its verticals in', () => {
     const { world, id } = room(ZIGZAG);
     const w = wrote(world, 1, id, deform(10));

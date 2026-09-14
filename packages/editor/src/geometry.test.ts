@@ -41,7 +41,7 @@ import {
   imaged,
   patterned,
   rounded,
-  seeded,
+  SEEDING,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -1899,21 +1899,17 @@ describe('round and deform', () => {
       expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
       expect(it.edges.every(run => run !== null && run.length === 2)).toBe(true);
 
-      // The flat corner's arc is all on its image, along the floor.
-      for (const p of it.corners[1]!) close(p, { x: 5, y: 1 });
-
-      expect(it.flat[1]).toEqual({ x: 1, y: 0 });
-      expect(it.flat[0]).toBeNull();
+      // The flat corner's arc is a sliver of the floor about its image.
+      it.corners[1]!.forEach((p, k) => close(p, { x: 5 + (k / 3 * 2 - 1) * SEEDING, y: 1 }));
     });
 
     test('the projection has every point imaged, where it turns', () => {
       const it = image(i => 1 + i * 0.25, j => 0.3 + j * 0.1);
       const kept = survived(simplify(it.shape));
 
+      // All but the flat corner's inside, which lies along the floor.
       for (const [i, run] of it.corners.entries()) {
-        if (it.flat[i] !== null) continue;
-
-        for (const p of run!) expect(kept(p)).toBe(true);
+        for (const p of i === 1 ? [run![0], run![3]] : run!) expect(kept(p)).toBe(true);
       }
 
       for (const run of it.edges) for (const p of run!) expect(kept(p)).toBe(true);
@@ -1934,16 +1930,18 @@ describe('round and deform', () => {
     });
   });
 
-  test('a run on one point is laid apart along its line, at a sliver of the other end', () => {
-    const run = [{ x: 5, y: 1 }, { x: 5, y: 1 }, { x: 5, y: 1 }];
-    const other = [{ x: 3, y: 1 }, { x: 5, y: 2 }, { x: 7, y: 1 }];
-    const out = seeded(run, other, { x: 1, y: 0 });
+  test('a straight corner is never one point: its arc is a sliver of its wall', () => {
+    const line: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    const out = rounded(line, i => (i === 1 ? 4 : 0), 4);
 
-    for (const p of out) expect(p.y).toBe(1);
+    out.slice(5, 10).forEach((p, k) => close(p, { x: 5 + (k / 2 - 1) * 4 * SEEDING, y: 0 }));
 
-    expect(out[0].x).toBeLessThan(out[1].x);
-    expect(out[1].x).toBeLessThan(out[2].x);
-    expect(out[2].x - out[0].x).toBeCloseTo(4e-3, 12);
-    expect(seeded(other, run, { x: 1, y: 0 })).toEqual(other);
+    // And a corner all but straight comes to the same.
+    const bent = rounded([...line.slice(0, 1), { x: 5, y: -1e-9 }, ...line.slice(2)], i => (i === 1 ? 4 : 0), 4);
+
+    bent.slice(5, 10).forEach((p, k) => {
+      expect(p.x).toBeCloseTo(out[5 + k].x, 9);
+      expect(p.y).toBeCloseTo(out[5 + k].y, 6);
+    });
   });
 });

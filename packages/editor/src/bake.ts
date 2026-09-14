@@ -140,11 +140,10 @@ import {
   mitred,
   nextOf,
   prevOf,
-  seeded,
   simplify,
   sliced,
 } from './geometry';
-import type { Effecting, Imaged } from './geometry';
+import type { Effecting } from './geometry';
 import {
   Affine,
   Contributed,
@@ -1223,7 +1222,7 @@ function invented(
 
   const rings = ringsOf(m.corners);
 
-  if (m.effected !== null) return slots(m, { ...at, rings }, t).flatMap(s => (s.dead[end] ? s.points : []));
+  if (m.effected !== null) return slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : []));
 
   const dead = m.dead[end];
   const out: Point[] = [];
@@ -1245,30 +1244,23 @@ function invented(
  * deform points where the projection has them at `t`, and whether the slot is
  * flat at either end.
  *
- * At an end where a flat corner's arc is all on one point, it is laid apart
- * along the line it is on at `SEEDING` of how its points are spread at the
- * other end — see `seeded` — so that `keeping` can take them all, and the ring
- * is as long at the end as it is in between.
+ * A flat corner's arc is a short run along its wall, never one point — see
+ * `shaped` — so at an end where a slot is flat its points lie on an edge of
+ * the projection, `keeping` takes every one of them, and the ring is as long
+ * at the end as it is in between.
  */
-function slots(m: Moving, at: Omit<Resolved, 'shape'>, t: number): { points: Point[], dead: [boolean, boolean] }[] {
+function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead: [boolean, boolean] }[] {
   const im = imagesOf(at);
 
   if (im === null) return [];
 
-  const end = t === 0 ? 0 : t === 1 ? 1 : null;
-  const other = end === null ? null : endImages(m, 1 - end as 0 | 1);
   const out: { points: Point[], dead: [boolean, boolean] }[] = [];
 
   m.corners.forEach((_c, i) => {
     const run = im.corners[i];
     const dead: [boolean, boolean] = [m.dead[0][i], m.dead[1][i]];
 
-    if (run !== null && (dead[0] || dead[1])) {
-      const there = other?.corners[i] ?? null;
-      const along = im.flat[i];
-
-      out.push({ points: end !== null && there !== null && along !== null ? seeded(run, there, along) : run, dead });
-    }
+    if (run !== null && (dead[0] || dead[1])) out.push({ points: run, dead });
 
     const edge = im.edges[i];
     const flat: [boolean, boolean] = [m.flatEdges[0][i], m.flatEdges[1][i]];
@@ -1277,27 +1269,6 @@ function slots(m: Moving, at: Omit<Resolved, 'shape'>, t: number): { points: Poi
   });
 
   return out;
-}
-
-/** Where each feature lands at one end of the span: asked for at both ends by
- * every instant that ends one, so worked out once. */
-const ends = new WeakMap<Moving, (Imaged | null)[]>();
-
-function endImages(m: Moving, end: 0 | 1): Imaged | null {
-  let held = ends.get(m);
-
-  if (held === undefined) {
-    held = [];
-    ends.set(m, held);
-  }
-
-  if (!(end in held)) {
-    const base = at1(m, end);
-
-    held[end] = imagesOf({ ...base, rings: ringsOf(m.corners) });
-  }
-
-  return held[end];
 }
 
 /** A polygon `t` of the way across the span, without the corners it keeps. */
@@ -1394,7 +1365,7 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * tangent points, at any instant.
  */
 function fadingSlots(m: Moving, it: Resolved, t: number): number[][] | null {
-  const changing = slots(m, it, t);
+  const changing = slots(m, it);
   const smooth = m.smooth.some(x => x);
 
   if (changing.length === 0 && !smooth) return null;
