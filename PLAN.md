@@ -549,6 +549,29 @@ So:
 5. The gestures, the options pane, the icons.
 6. The save format.
 
+Done: 1–4, on the branch `effect-stack`, with these on top:
+
+- A stand carries `radius`, `amplitude`, `radii` and `amplitudes` outright,
+  and the corner maps are listed once (`CORNER_MAPS` in `rig.ts`), so keys,
+  undo's gesture stamp, delete and rebirth take all four alike. A copy
+  carries the effects, the corners' own options and their entries.
+- A one-way deform lifts the pattern off the line, `(1 + v) / 2`, rather than
+  folding it onto it: folded, a zigzag out is a flat step.
+- `imaged` is the construction and `project` simplifies what it builds;
+  `imagesOf` in `scene.ts` is the same taken in world units, which `invented`
+  and `fading` ask. A group's union is rounded and deformed alike everywhere
+  (`effected`), its edges' noise keyed by their place.
+- A group's amounts, and a polygon's own for what the erosion made, have no
+  slots, so an end at nought is seeded for them too, deform included.
+- A corner arriving into a rounded ring costs stretches: an arc whose corner
+  turns is not a lerp of its ends. It never jumps.
+- Not yet: a flat corner with both a round and a deform on its two edges is
+  not flat in the projection, so its seeded arc finds no edge to land on and
+  the ring is shorter at that end.
+- Icons and labels for the two kinds are in, since the timeline's table of
+  them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
+  a file opens with none.
+
 ### 7 — later
 
 Graph editor; motion path on the canvas; radial picker for overlaps; echo
