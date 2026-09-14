@@ -632,6 +632,28 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
   });
 }
 
+/**
+ * A thing taken out at keyframe `at` instead, or living to the end for
+ * nothing. What is written about it stays where it is: past its death it is
+ * inert, and there again if it is brought back.
+ *
+ * Refused where it would die before it is born.
+ */
+export function redied(world: World, id: Id, at: KeyframeId | null): World | Refused {
+  const keyframes = world.keyframes;
+  const it = world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
+
+  if (it === undefined || it.death === at) return world;
+  if (at !== null && indexIn(keyframes, at) <= indexIn(keyframes, it.birth)) {
+    return { refused: 'it would be gone before it is born' };
+  }
+
+  if (world.polygons.has(id)) return { ...world, polygons: new Map(world.polygons).set(id, { ...world.polygons.get(id)!, death: at }) };
+  if (world.artefacts.has(id)) return { ...world, artefacts: new Map(world.artefacts).set(id, { ...world.artefacts.get(id)!, death: at }) };
+
+  return { ...world, paths: new Map(world.paths).set(id, { ...world.paths.get(id)!, death: at }) };
+}
+
 /** A rig's corner maps with `k` taken out: its entries handed to `next`, and
  * added to what is there where both happen as often. */
 function cornerMaps<O extends Op, E extends Entry<O>>(

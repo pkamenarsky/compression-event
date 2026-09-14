@@ -25,7 +25,7 @@
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging an icon a keyframe along pushes or pulls it, and what is picked
 // with it. The grip at the start of a thing's life drags its birth along, and
-// its story with it. See `keys.ts`.
+// its story with it; the one at the end drags its death. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
 // in the file. See `Flags`.
@@ -42,7 +42,7 @@ import { Signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input, keyOwned, pressedAway } from './input';
-import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushedAt, reborn, samePlace, skipToggledAt, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushedAt, reborn, redied, samePlace, skipToggledAt, timedAt } from './keys';
 import { KeyframeId } from './rig';
 import { order, unchainedAt } from './scene';
 import { theme } from './theme';
@@ -485,6 +485,8 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
     ...birth(ctx, m, r),
 
+    ...death(ctx, m, r),
+
     pinned([
       label(r.label, {
         left: `${indent}px`,
@@ -497,6 +499,34 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
       ...(r.corner === null ? switches(ctx, r) : []),
     ]),
   ], { height: `${heightOf(r)}px`, borderTop: `1px solid ${theme.border}`, boxSizing: 'border-box' });
+}
+
+/**
+ * Where a thing is taken out, at the right edge of the last column it is there
+ * in: dragged along the columns, that is the last one it is there in instead,
+ * and dragged to the last of all it lives to the end. See `redied`.
+ */
+function death(ctx: Ctx, m: Model, r: Row): VNode[] {
+  const from = r.cells.findLastIndex(c => c.alive);
+
+  if (r.corner !== null || from < 0 || ctx.state().world.groups.has(r.id)) return [];
+
+  const done = (up: PointerEvent) => {
+    const to = colAt(ctx, up.clientX);
+
+    if (to !== from) ctx.acted(redied(ctx.state().world, r.id, m.keyframes[to + 1]?.id ?? null));
+  };
+
+  return [box({
+    left: `${m.xs[from] + m.widths[from] - 5}px`,
+    top: '3px',
+    width: '4px',
+    height: `${ROW - 7}px`,
+    borderRadius: '2px',
+    background: theme.faded,
+    cursor: 'ew-resize',
+    zIndex: 1,
+  }, [], { title: 'Drag to the last keyframe it is there in', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
 }
 
 /**

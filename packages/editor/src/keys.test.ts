@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, deepened, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, pulled, pulledAt, pushed, pushedAt, reborn, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -344,5 +344,16 @@ describe('rebirth', () => {
     const dying = { ...w, polygons: new Map(w.polygons).set(id, { ...w.polygons.get(id)!, death: 3 }) };
 
     expect(reborn(dying, id, 3)).toEqual({ refused: 'it would be born after it is gone' });
+  });
+});
+
+describe('death', () => {
+  test('moves either way, to the end for nothing, and not before its birth', () => {
+    const { world, id } = room(emptyWorld(), 1);
+    const w = ok(redied(world, id, 3));
+
+    expect(w.polygons.get(id)!.death).toBe(3);
+    expect(ok(redied(w, id, null)).polygons.get(id)!.death).toBe(null);
+    expect(redied(w, id, 1)).toEqual({ refused: 'it would be gone before it is born' });
   });
 });
