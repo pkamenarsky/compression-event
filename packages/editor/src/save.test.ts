@@ -146,10 +146,16 @@ describe('save', () => {
           erosion: 0,
           corners: new Map(),
           depths: new Map(),
+          radius: 0,
+          amplitude: 0,
+          radii: new Map(),
+          amplitudes: new Map(),
         }),
       ]]]),
       nudges: new Map(),
       depths: new Map(),
+      rounds: new Map(),
+      deforms: new Map(),
     };
 
     const file = JSON.parse(JSON.stringify(saved({

@@ -111,7 +111,7 @@ import {
   ungrouping,
   unplace,
 } from './scene';
-import { Entry, Rig, once } from './rig';
+import { CORNER_MAPS, EMPTY_RIG, Entry, Rig, once } from './rig';
 import {
   GroupId,
   Id,
@@ -591,7 +591,7 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   }
 
   for (const m of made) {
-    const rig: Rig = { keys: eroding, nudges: new Map(), depths: new Map() };
+    const rig: Rig = { ...EMPTY_RIG, keys: eroding };
 
     if (eroding.size > 0) rigs.set(m, rig);
   }
@@ -628,8 +628,8 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 function written(rig: Rig, k: KeyframeId): boolean {
   if (rig.keys.has(k)) return true;
 
-  for (const maps of [rig.nudges, rig.depths]) {
-    for (const map of maps.values()) {
+  for (const m of CORNER_MAPS) {
+    for (const map of rig[m].values()) {
       if (map.has(k)) return true;
     }
   }

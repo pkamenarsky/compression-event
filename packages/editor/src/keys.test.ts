@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
-import { Frame, deepened, framed, nudged, repeating, stateAt, worldFrame } from './rig';
+import { Frame, cornerRounded, deepened, edgeDeformed, framed, nudged, repeating, stateAt, worldFrame } from './rig';
 import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
@@ -166,6 +166,25 @@ describe('keyframes', () => {
     expect(listAt(back.world, 1, id)[0].skip).toEqual(new Set([out.key]));
   });
 
+  test('a paste carries the amounts, and a corner\'s rounds after the copy', () => {
+    const { world, id } = room();
+    const corners = world.polygons.get(id)!.points.map(c => c.id);
+    let w = wrote(world, 0, id, { kind: 'round', by: 4 });
+
+    w = wrote(w, 1, id, { kind: 'deform', by: 2 });
+    w = withRig(w, id, cornerRounded(cornerRounded(rigOf(w, id), corners[1], 0, 3), corners[1], 2, 1));
+
+    const { world: out, ids } = pasted(w, 3, copied(w, 1, [id]), { x: 0, y: 0 }, TOP);
+    const copy = ids[0];
+    const renamed = out.polygons.get(copy)!.points[1].id;
+
+    for (const [from, to] of [[1, 3], [2, 4]]) {
+      const was = stateAt(w, id, from), now = stateAt(out, copy, to);
+
+      expect([now.radius, now.amplitude, now.radii.get(renamed)]).toEqual([was.radius, was.amplitude, was.radii.get(corners[1])]);
+    }
+  });
+
   test('a pasted repeat keeps its skip on the keyframe it names, where it reaches it', () => {
     const { world, id } = room();
     const out = inserted(repeated(world, 1, id, move(10, 0), null), 3)!;
@@ -247,6 +266,21 @@ describe('keyframes', () => {
     expect(rigOf(out, id).nudges.get(corner)!.get(3)!.op.by.x).toBe(7);
   });
 
+  test('so do a corner\'s rounds and an edge\'s deforms', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[0].id;
+    let rig = cornerRounded(rigOf(world, id), corner, 2, 3);
+
+    rig = cornerRounded(rig, corner, 3, 4);
+    rig = edgeDeformed(rig, corner, 2, 1);
+
+    const out = ok(deleted(withRig(world, id, rig), 2));
+
+    expect(rigOf(out, id).rounds.get(corner)!.get(3)!.op.by).toBe(7);
+    expect(rigOf(out, id).deforms.get(corner)!.get(3)!.op.by).toBe(1);
+    expect(stateAt(out, id, 3).radii.get(corner)).toBe(7);
+  });
+
   test('the only keyframe stays', () => {
     const world = { ...emptyWorld(), keyframes: [{ id: 0, name: 'v0', visible: true }] };
 
@@ -292,6 +326,20 @@ describe('places', () => {
 
     expect(entryAt(back, other)?.op).toEqual(move(0, 1));
     expect(entryAt(ok(pulledAt(back, [nudge, other])), { ...nudge, at: 0 })?.op).toEqual(move(1, 0));
+  });
+
+  test('a corner\'s round is picked, pushed and dropped by its kind', () => {
+    const { w, id, corners } = rigged();
+    const round: Place = { id, at: 1, corner: corners[0], kind: 'round' };
+    const rounded = withRig(w, id, cornerRounded(rigOf(w, id), corners[0], 1, 5));
+
+    expect(entryAt(rounded, round)?.op).toEqual({ kind: 'round', by: 5 });
+
+    const on = ok(pushedAt(rounded, [round]));
+
+    expect(entryAt(on, { ...round, at: 2 })?.op).toEqual({ kind: 'round', by: 5 });
+    expect(rigOf(droppedAt(rounded, [round]), id).rounds.size).toBe(0);
+    expect(rigOf(droppedAt(rounded, [round]), id).depths.size).toBe(1);
   });
 
   test('a corner repeating unlike the one it would land on stays where it is', () => {

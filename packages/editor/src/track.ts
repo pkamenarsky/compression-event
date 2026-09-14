@@ -10,7 +10,7 @@
 import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
 import { Cornered, Place, entryAt, samePlace } from './keys';
-import { Entry, KeyframeId, Op, counted1, indexIn } from './rig';
+import { CORNER_KINDS, CORNER_MAPS, Entry, KeyframeId, Op, counted1, indexIn } from './rig';
 import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
 import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
 
@@ -97,7 +97,7 @@ export function rowsOf(world: World, roots: readonly Id[], corners = false): Row
       const rig = rigOf(world, id);
 
       world.polygons.get(id)?.points.forEach((c, i) => {
-        if (!rig.nudges.has(c.id) && !rig.depths.has(c.id)) return;
+        if (CORNER_MAPS.every(m => !rig[m].has(c.id))) return;
 
         const cells = cornerCellsOf(world, id, c.id);
 
@@ -156,8 +156,9 @@ function cornerCellsOf(world: World, id: Id, corner: VertexId): Cell[] {
   return world.keyframes.map((f, i) => {
     const places: Place[] = [];
 
-    if (rig.nudges.get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: 'move' });
-    if (rig.depths.get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: 'erode' });
+    for (const m of CORNER_MAPS) {
+      if (rig[m].get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: CORNER_KINDS[m] });
+    }
 
     return { places, kinds: places.map(p => (p as Cornered).kind), alive: i >= birth && i < death };
   });
@@ -285,6 +286,10 @@ export function entryLabel(e: Entry): string {
         return `skew ${short(op.by)}`;
       case 'erode':
         return `erode ${short(op.by)}`;
+      case 'round':
+        return `round ${short(op.by)}`;
+      case 'deform':
+        return `deform ${short(op.by)}`;
       case 'stand':
         return 'unchained';
     }

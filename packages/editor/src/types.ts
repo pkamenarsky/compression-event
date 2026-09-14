@@ -20,7 +20,8 @@ import {
   slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
-import type { Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
+import type { Deform, Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig, Round } from './rig';
+import { CORNER_MAPS, eachCornerMap } from './rig';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
 export type { Keyframe, KeyframeId };
@@ -821,9 +822,12 @@ export interface Timed {
   /** Where it starts: where the keyframe before the copy left it. */
   start: Frame
   erosion: number
+  /** Its radius and amplitude there, as `erosion`. Absent is nought. */
+  radius?: number
+  amplitude?: number
   /** Where it stood at the copy keyframe, everything there in: what a stamp
    * starts at. */
-  stood: { frame: Frame, erosion: number }
+  stood: { frame: Frame, erosion: number, radius?: number, amplitude?: number }
   /** Each keyframe's list from the copy on, by offset. */
   keys: [number, Entry[]][]
   /** The repeats that came across as single entries. */
@@ -857,9 +861,16 @@ export type Clipping =
       points: Vertex[]
       /** The extra depth on single corners at the copy keyframe. */
       depths: [VertexId, number][]
-      /** Nudges and depths on single corners after it, by offset. */
+      /** The extra radius on single corners there, and amplitude on single
+       * edges. Absent is none. */
+      radii?: [VertexId, number][]
+      amplitudes?: [VertexId, number][]
+      /** Nudges, depths, rounds and deforms on single corners after it, by
+       * offset. */
       nudges: [VertexId, [number, Entry<Move>][]][]
       deep: [VertexId, [number, Entry<Erode>][]][]
+      rounds?: [VertexId, [number, Entry<Round>][]][]
+      deforms?: [VertexId, [number, Entry<Deform>][]][]
     } & PolygonKind & Timed)
   | ({
       kind: 'group'
@@ -940,7 +951,7 @@ export function gestured(world: World, was: World): World {
 
     if (old !== undefined) {
       for (const list of old.keys.values()) for (const e of list) ops.add(e.op);
-      for (const map of [...old.nudges.values(), ...old.depths.values()]) for (const e of map.values()) ops.add(e.op);
+      for (const m of CORNER_MAPS) for (const map of old[m].values()) for (const e of map.values()) ops.add(e.op);
     }
 
     let stamped = false;
@@ -955,11 +966,7 @@ export function gestured(world: World, was: World): World {
     const corners = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
       new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, mark(e)]))]));
 
-    const now: Rig = {
-      keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])),
-      nudges: corners(rig.nudges),
-      depths: corners(rig.depths),
-    };
+    const now: Rig = eachCornerMap({ ...rig, keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])) }, corners);
 
     if (stamped) {
       rigs.set(id, now);

@@ -119,7 +119,9 @@ function record(op: Op): number[] {
       return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0];
     }
     case 'erode':
-      throw new Error('an erosion is in the depths, not in the frame table');
+    case 'round':
+    case 'deform':
+      throw new Error('an amount is in the geometry, not in the frame table');
   }
 }
 

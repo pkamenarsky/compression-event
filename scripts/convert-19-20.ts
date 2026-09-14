@@ -472,6 +472,10 @@ export function converted(old: Old): Converted {
           // whatever the footing said.
           corners: new Map([...footing.local].filter(([v]) => !bornAt(id, v, k))),
           depths: new Map(footing.depths),
+          radius: 0,
+          amplitude: 0,
+          radii: new Map(),
+          amplitudes: new Map(),
         });
       }
 
@@ -562,7 +566,7 @@ export function converted(old: Old): Converted {
       }
     }
 
-    if (keys.size > 0 || nudges.size > 0 || depths.size > 0) rigs.set(id, { keys, nudges, depths });
+    if (keys.size > 0 || nudges.size > 0 || depths.size > 0) rigs.set(id, { keys, nudges, depths, rounds: new Map(), deforms: new Map() });
   }
 
   // --- Checking it -----------------------------------------------------------

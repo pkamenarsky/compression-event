@@ -100,6 +100,7 @@ import { remembered } from './memo';
 import { Affine, IDENTITY, compose, place, unplace } from './affine';
 import {
   EMPTY_RIG,
+  Amount,
   Entry,
   Erode,
   Frame,
@@ -114,6 +115,7 @@ import {
   Turn,
   affineOf,
   appending,
+  blank,
   deepened,
   framed,
   heldFrame,
@@ -1024,7 +1026,7 @@ export function rigOf(world: World, id: Id): Rig {
 export function withRig(world: World, id: Id, rig: Rig): World {
   const rigs = new Map(world.rigs);
 
-  if (rig.keys.size === 0 && rig.nudges.size === 0 && rig.depths.size === 0) rigs.delete(id);
+  if (blank(rig)) rigs.delete(id);
   else rigs.set(id, rig);
 
   return { ...world, rigs };
@@ -1373,9 +1375,13 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
 
   let frame = base === null ? REST : before.frame;
   let erosion = base === null ? 0 : before.erosion;
+  let radius = base === null ? 0 : before.radius;
+  let amplitude = base === null ? 0 : before.amplitude;
 
   for (const op of steps) {
     if (op.kind === 'erode') erosion += op.by;
+    else if (op.kind === 'round') radius += op.by;
+    else if (op.kind === 'deform') amplitude += op.by;
     else frame = played(frame, op);
   }
 
@@ -1388,15 +1394,33 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
     return [c, own === undefined ? p : { x: p.x - own.x, y: p.y - own.y }];
   }));
 
-  const depths = new Map<VertexId, number>();
+  // Each corner's amounts less what `v` adds to them.
+  const less = (
+    amounts: ReadonlyMap<VertexId, number>,
+    own: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>,
+  ): Map<VertexId, number> => {
+    const out = new Map<VertexId, number>();
 
-  for (const [c, d] of here.depths) {
-    const left = d - (rig.depths.get(c)?.get(v)?.op.by ?? 0);
+    for (const [c, d] of amounts) {
+      const left = d - (own.get(c)?.get(v)?.op.by ?? 0);
 
-    if (left !== 0) depths.set(c, left);
-  }
+      if (left !== 0) out.set(c, left);
+    }
 
-  return { kind: 'stand', frame, erosion, corners, depths };
+    return out;
+  };
+
+  return {
+    kind: 'stand',
+    frame,
+    erosion,
+    corners,
+    depths: less(here.depths, rig.depths),
+    radius,
+    amplitude,
+    radii: less(here.radii, rig.rounds),
+    amplitudes: less(here.amplitudes, rig.deforms),
+  };
 }
 
 /**
@@ -1561,7 +1585,7 @@ function apart1(world: World, id: GroupId, keep: boolean): { world: World, unrol
 
       unrolled.push(...fold.unrolled);
 
-      if (rig.keys.size === 0 && rig.nudges.size === 0 && rig.depths.size === 0) rigs.delete(member);
+      if (blank(rig)) rigs.delete(member);
       else rigs.set(member, rig);
     }
   }
@@ -1754,6 +1778,8 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op[] | null 
     }
 
     case 'erode':
+    case 'round':
+    case 'deform':
       return [op];
 
     case 'stand': {
@@ -2075,7 +2101,10 @@ function inward1(
     case 'move':
       return [op];
 
+    // A group's amounts are its union's, and never its members'.
     case 'erode':
+    case 'round':
+    case 'deform':
       return [];
 
     case 'turn': {
@@ -2122,7 +2151,13 @@ function inward1(
 
       const held = handed(world, k, m);
 
-      return [{ kind: 'stand', frame, erosion: inner.erosion, corners: held.corners, depths: held.depths }];
+      return [{
+        ...held,
+        frame,
+        erosion: inner.erosion,
+        radius: inner.radius,
+        amplitude: inner.amplitude,
+      }];
     }
   }
 }
@@ -4076,7 +4111,14 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     return {
       start: frame,
       erosion: stand?.erosion ?? was?.erosion ?? 0,
-      stood: { frame: outermost ? unheld(worldFrame(world, id, v)) : state.frame, erosion: state.erosion },
+      radius: stand?.radius ?? was?.radius ?? 0,
+      amplitude: stand?.amplitude ?? was?.amplitude ?? 0,
+      stood: {
+        frame: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
+        erosion: state.erosion,
+        radius: state.radius,
+        amplitude: state.amplitude,
+      },
       keys,
       // What the fold took apart matters only where it goes on past the copy.
       unrolled: freeing.unrolled.filter(reaches),
@@ -4142,8 +4184,12 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       ...kindOf(polygon),
       points,
       depths: [...state.depths],
+      radii: [...state.radii],
+      amplitudes: [...state.amplitudes],
       nudges: [...rig.nudges].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       deep: [...rig.depths].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
+      rounds: [...rig.rounds].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
+      deforms: [...rig.deforms].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       death: outliving(world, polygon, v),
       ...time,
     }];
@@ -4292,13 +4338,21 @@ function written(
   id: Id,
   clip: Timed,
   corners: ReadonlyMap<VertexId, Point>,
-  depths: ReadonlyMap<VertexId, number>,
+  amounts: { depths: ReadonlyMap<VertexId, number>, radii: ReadonlyMap<VertexId, number>, amplitudes: ReadonlyMap<VertexId, number> },
   into: Affine | null,
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
 
   const keys = new Map<KeyframeId, readonly Entry[]>([
-    [v, [once<Stand>({ kind: 'stand', frame: start, erosion: clip.erosion, corners, depths })]],
+    [v, [once<Stand>({
+      kind: 'stand',
+      frame: start,
+      erosion: clip.erosion,
+      corners,
+      ...amounts,
+      radius: clip.radius ?? 0,
+      amplitude: clip.amplitude ?? 0,
+    })]],
   ]);
 
   for (const [offset, list] of clip.keys) {
@@ -4369,7 +4423,7 @@ function restore(
 
     const out = { ...world, artefacts, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, none, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
   }
 
   if (clip.kind === 'path') {
@@ -4380,7 +4434,7 @@ function restore(
 
     const out = { ...world, paths, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, none, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
   }
 
   if (clip.kind === 'group') {
@@ -4400,7 +4454,7 @@ function restore(
     groups.set(id, { members, sealed: clip.sealed });
     out = { ...out, groups, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, none, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
   }
 
   const id = world.nextId;
@@ -4426,17 +4480,23 @@ function restore(
   let out: World = { ...world, polygons, nextId: id + 1 + points.length };
 
   const corners = new Map(points.filter(c => c.birth === v).map(c => [c.id, c.at]));
-  const depths = new Map(clip.depths.flatMap(([c, d]) => {
+  const renaming = (amounts: readonly [VertexId, number][] | undefined) => new Map((amounts ?? []).flatMap(([c, d]) => {
     const now = renamed.get(c);
 
-    return now === undefined ? [] : [[now, d]];
+    return now === undefined ? [] : [[now, d] as const];
   }));
 
-  out = written(out, v, id, clip, corners, depths, into);
+  out = written(out, v, id, clip, corners, {
+    depths: renaming(clip.depths),
+    radii: renaming(clip.radii),
+    amplitudes: renaming(clip.amplitudes),
+  }, into);
   out = withRig(out, id, {
     ...rigOf(out, id),
     nudges: landed(out, v, clip.nudges, renamed),
     depths: landed(out, v, clip.deep, renamed),
+    rounds: landed(out, v, clip.rounds ?? [], renamed),
+    deforms: landed(out, v, clip.deforms ?? [], renamed),
   });
 
   return { world: out, id };
@@ -4555,13 +4615,15 @@ export function stamped(
         keys: [],
         nudges: [],
         deep: [],
+        rounds: [],
+        deforms: [],
       };
 
   return pasted(world, v, clips.map(now), by, where);
 }
 
-function still(clip: Timed): { start: Frame, erosion: number } {
-  return { start: clip.stood.frame, erosion: clip.stood.erosion };
+function still(clip: Timed): Pick<Timed, 'start' | 'erosion' | 'radius' | 'amplitude'> {
+  return { start: clip.stood.frame, erosion: clip.stood.erosion, radius: clip.stood.radius, amplitude: clip.stood.amplitude };
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

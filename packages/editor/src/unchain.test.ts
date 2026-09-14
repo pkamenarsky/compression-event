@@ -22,7 +22,7 @@ import {
   unchainedAt,
   withRig,
 } from './scene';
-import { nudged as nudging, repeating } from './rig';
+import { cornerRounded, nudged as nudging, repeating, stateAt } from './rig';
 import { Writing, erode, move, turned as turning, wrote } from './testing';
 import {
   ArtefactId,
@@ -173,6 +173,25 @@ describe('unchaining', () => {
 
     expect(resolveAt(deeper, 1).find(r => r.id === id)!.erosion).toBe(20);
     expect(resolveAt(deeper, 3).find(r => r.id === id)!.erosion).toBe(6);
+  });
+
+  test('so do upstream rounds and deforms, and the amounts they came to are kept', () => {
+    const { world, id } = square();
+    const corner = world.polygons.get(id)!.points[0].id;
+    let shaped = wrote(world, 1, id, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
+
+    shaped = withRig(shaped, id, cornerRounded(rigOf(shaped, id), corner, 1, 3));
+
+    const loose = unchained(shaped, 3, [id]);
+    const later = wrote(loose, 1, id, { kind: 'round', by: 10 });
+
+    for (const w of [loose, later]) {
+      const state = stateAt(w, id, 3);
+
+      expect([state.radius, state.amplitude, state.radii.get(corner)]).toEqual([4, 2, 3]);
+    }
+
+    expect(stateAt(later, id, 1).radius).toBe(14);
   });
 
   test('a corner an upstream version deletes afterwards stays', () => {

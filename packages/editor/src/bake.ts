@@ -190,7 +190,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { Frame as Pose, Op, REST, affineOf, played, playedAt, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Op, REST, affineOf, played, playedAt, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -293,7 +293,8 @@ export type Origin =
  * the first of which it gets wrong only when the keyframe holds anything else.
  * See `played` in `rig.ts` for how each one goes part way.
  *
- * Only what moves the frame. An erosion is in the depths, which are lerped.
+ * Only what moves the frame. An erosion, a round or a deform is an amount,
+ * which is lerped.
  */
 export interface Flight {
   frame: Pose
@@ -326,7 +327,7 @@ export interface Rider extends Flight {
 
 /** Only what moves a frame: the operations a flight plays. */
 function moves(ops: readonly Op[]): Op[] {
-  return ops.filter(op => op.kind !== 'erode');
+  return ops.filter(op => op.kind !== 'erode' && op.kind !== 'round' && op.kind !== 'deform');
 }
 
 /** A flight `t` of the way through: every operation that far, one after
@@ -570,8 +571,8 @@ export function stamp(world: World, from: number): Stamp {
       if (upto.has(k)) mine.push(k, list);
     }
 
-    for (const maps of [rig.nudges, rig.depths]) {
-      for (const [c, map] of maps) {
+    for (const m of CORNER_MAPS) {
+      for (const [c, map] of rig[m]) {
         for (const [k, e] of map) {
           if (upto.has(k)) mine.push(c, k, e);
         }

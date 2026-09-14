@@ -165,7 +165,7 @@ function savedRig(rig: Rig): SavedRig {
 
 function savedEntry(e: Entry): SavedEntry {
   const op: SavedOp = e.op.kind === 'stand'
-    ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
+    ? { kind: 'stand', frame: e.op.frame, erosion: e.op.erosion, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
   const out: SavedEntry = e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
@@ -181,6 +181,10 @@ function restoredEntry(e: SavedEntry): Entry {
         frame: { ...e.op.frame, skew: e.op.frame.skew ?? 0 },
         corners: new Map(e.op.corners),
         depths: new Map(e.op.depths),
+        radius: 0,
+        amplitude: 0,
+        radii: new Map(),
+        amplitudes: new Map(),
       }
     : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
 
@@ -200,6 +204,8 @@ function restoredRig(rig: SavedRig): Rig {
       c,
       new Map(map.map(([k, e]) => [k, restoredEntry(e) as Entry<Erode>])),
     ])),
+    rounds: new Map(),
+    deforms: new Map(),
   };
 }
 

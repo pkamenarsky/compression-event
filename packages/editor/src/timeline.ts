@@ -598,6 +598,10 @@ const ICONS: Record<Kind, string> = {
   // Out along the diagonal, both ways.
   scale: 'M2 12 L12 2 M2 12 V8.2 M2 12 H5.8 M12 2 V5.8 M12 2 H8.2',
   skew: 'M4.5 3 H12.5 L9.5 11 H1.5 Z',
+  // A corner cut round.
+  round: 'M2 12.5 V7 A5.5 5.5 0 0 1 7.5 1.5 H12.5',
+  // An edge thrown into teeth.
+  deform: 'M1 9 L3.4 5 L5.8 9 L8.2 5 L10.6 9 L13 5',
   // An outline and the one taken in from it.
   erode: 'M1.5 1.5 H12.5 V12.5 H1.5 Z M4.5 4.5 H9.5 V9.5 H4.5 Z',
   stand: 'M3 2 V12 M11 2 V12',
