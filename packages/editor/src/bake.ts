@@ -136,6 +136,7 @@ import {
   erodedRingCorners,
   ground,
   keeping,
+  mitred,
   nextOf,
   prevOf,
   simplify,
@@ -1214,45 +1215,6 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
   }
 
   return out;
-}
-
-/**
- * Where corner `i` of a ring lands once the ring is offset by `depth` — the
- * meeting point of its two edges after each has moved to its left.
- *
- * This is `erode`'s own construction rather than a guess at it: every surviving
- * edge lies on a translate of its own line, so the corner between two of them is
- * where those translates cross. Two edges that run exactly straight through the
- * corner never cross, and then the answer is the corner moved along the shared
- * normal, which is that construction's limit rather than a case beside it.
- *
- * `null` where the corner is not on the offset boundary at all: a ring that
- * doubles back on itself sends the meeting point off towards infinity, and a
- * deep enough offset eats the edges the corner stood between.
- */
-function mitred(ring: Ring, rings: readonly number[], i: number, depth: number): Point | null {
-  const n = ring.length;
-  const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
-
-  const ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy);
-  const vx = c.x - b.x, vy = c.y - b.y, vl = Math.hypot(vx, vy);
-
-  if (ul === 0 || vl === 0) return null;
-
-  const p = { x: ux / ul, y: uy / ul };
-  const q = { x: vx / vl, y: vy / vl };
-
-  // Both moved lines pass through the corner's own offset, one for each edge.
-  const pa = { x: b.x - p.y * depth, y: b.y + p.x * depth };
-  const qa = { x: b.x - q.y * depth, y: b.y + q.x * depth };
-
-  const turn = p.x * q.y - p.y * q.x;
-
-  if (Math.abs(turn) < 1e-12) return pa;
-
-  const s = ((qa.x - pa.x) * q.y - (qa.y - pa.y) * q.x) / turn;
-
-  return { x: pa.x + p.x * s, y: pa.y + p.y * s };
 }
 
 /**

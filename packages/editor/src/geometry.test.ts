@@ -35,6 +35,13 @@ import {
   union,
   winding,
   xor,
+  Effecting,
+  PLAIN,
+  deformed,
+  imaged,
+  patterned,
+  rounded,
+  seeded,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -1776,5 +1783,164 @@ describe('encloses', () => {
   test('nothing is inside anything, and nothing holds nothing', () => {
     expect(encloses(room, [])).toBe(true);
     expect(encloses([], [rect(0, 0, 10, 10)])).toBe(false);
+  });
+});
+
+describe('round and deform', () => {
+  const square: Ring = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+  const close = (p: Point, q: Point): void => {
+    expect(p.x).toBeCloseTo(q.x, 9);
+    expect(p.y).toBeCloseTo(q.y, 9);
+  };
+  const zigzag: Effecting = { ...PLAIN, count: 3, pattern: 'zigzag' };
+
+  test('a corner is always its segments and one, however round, in ring order', () => {
+    for (const r of [0, 1, 2.5, 100]) {
+      const out = rounded(square, () => r, 4);
+
+      expect(out).toHaveLength(20);
+
+      // Each corner's run starts on the edge coming in and ends on the one
+      // going out.
+      close(out[0], { x: 0, y: Math.min(r, 5) });
+      close(out[4], { x: Math.min(r, 5), y: 0 });
+      close(out[5], { x: 10 - Math.min(r, 5), y: 0 });
+    }
+
+    expect(deformed(square, () => 0, zigzag)).toHaveLength(16);
+  });
+
+  test('an arc is tangent to both edges, and on the circle of its radius', () => {
+    const out = rounded(square, () => 2, 6);
+    const centre = { x: 2, y: 2 };
+
+    for (let k = 0; k <= 6; k++) {
+      expect(Math.hypot(out[k].x - centre.x, out[k].y - centre.y)).toBeCloseTo(2, 9);
+    }
+  });
+
+  test('every point is linear in the radius and the amplitude', () => {
+    const e: Effecting = { ...PLAIN, segments: 3, count: 2, pattern: 'sine' };
+    const at = (r: number, a: number) => imaged(
+      [square], square, [0], () => 0, e, () => r, () => a, j => j, { radius: 0, amplitude: 0 },
+    ).shape[0];
+    const a = at(1, 0.5), b = at(3, 1.5), mid = at(2, 1);
+
+    mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
+  });
+
+  test('a tangent length is clamped to half of each edge, less what the neighbour takes', () => {
+    // Too round for the square: every corner meets its neighbours halfway, and
+    // the four arcs make a circle.
+    const full = rounded(square, () => 100, 4);
+
+    for (const p of full) expect(Math.hypot(p.x - 5, p.y - 5)).toBeCloseTo(5, 9);
+
+    // A neighbour that wants little leaves the rest of the edge: the second
+    // corner takes nine of the ten its first corner leaves it.
+    const tall: Ring = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 40 }, { x: 0, y: 40 }];
+    const some = rounded(tall, i => [1, 100, 0, 0][i], 2);
+
+    close(some[2], { x: 1, y: 0 });
+    close(some[3], { x: 1, y: 0 });
+    close(some[5], { x: 10, y: 9 });
+  });
+
+  test('a clockwise ring rounds to the same points', () => {
+    const cw = [...square].reverse();
+    const a = rounded(square, () => 3, 3), b = rounded(cw, () => 3, 3);
+    const key = (p: Point) => `${p.x.toFixed(9)},${p.y.toFixed(9)}`;
+
+    expect(new Set(b.map(key))).toEqual(new Set(a.map(key)));
+  });
+
+  test('a pattern is nought at the corners, and out is out of the material', () => {
+    const out = deformed(square, () => 2, { ...zigzag, sides: 'out' });
+
+    // The bottom edge's three points, each below it.
+    expect(out.slice(1, 4).map(p => p.y)).toEqual([-2, -2, -2]);
+    expect(out[0]).toEqual(square[0]);
+    expect(out[4]).toEqual(square[1]);
+
+    const inward = deformed(square, () => 2, { ...zigzag, sides: 'in' });
+
+    expect(inward.slice(1, 4).map(p => p.y)).toEqual([2, 2, 2]);
+  });
+
+  test('noise is the edge\'s own, whatever its place', () => {
+    const e: Effecting = { ...PLAIN, count: 5, pattern: 'noise', seed: 7 };
+    const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k));
+
+    for (const v of values) expect(Math.abs(v)).toBeLessThanOrEqual(1);
+
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 42, k))).toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 43, k))).not.toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned({ ...e, seed: 8 }, 42, k))).not.toEqual(values);
+  });
+
+  describe('imaged', () => {
+    // A room with a flat corner halfway along its floor.
+    const room: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    const e: Effecting = { ...PLAIN, segments: 3, count: 2, pattern: 'zigzag' };
+    const depth = 1;
+    const eroded = erode(simplify([room]), depth);
+    const image = (radius: (i: number) => number, amplitude: (j: number) => number) =>
+      imaged(eroded, room, [0], () => depth, e, radius, amplitude, j => j, { radius: 0, amplitude: 0 });
+
+    test('a flat corner is put back, and both edges it splits are deformed', () => {
+      expect(eroded[0]).toHaveLength(4);
+
+      const it = image(() => 1, () => 0.5);
+
+      expect(it.shape[0]).toHaveLength(5 * (4 + 2));
+      expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
+      expect(it.edges.every(run => run !== null && run.length === 2)).toBe(true);
+
+      // The flat corner's arc is all on its image, along the floor.
+      for (const p of it.corners[1]!) close(p, { x: 5, y: 1 });
+
+      expect(it.flat[1]).toEqual({ x: 1, y: 0 });
+      expect(it.flat[0]).toBeNull();
+    });
+
+    test('the projection has every point imaged, where it turns', () => {
+      const it = image(i => 1 + i * 0.25, j => 0.3 + j * 0.1);
+      const kept = survived(simplify(it.shape));
+
+      for (const [i, run] of it.corners.entries()) {
+        if (it.flat[i] !== null) continue;
+
+        for (const p of run!) expect(kept(p)).toBe(true);
+      }
+
+      for (const run of it.edges) for (const p of run!) expect(kept(p)).toBe(true);
+    });
+
+    test('a corner the erosion swallowed has no image', () => {
+      // An arm too thin to survive the depth.
+      const arm: Ring = [
+        { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 2 }, { x: 10, y: 2 }, { x: 10, y: 10 }, { x: 0, y: 10 },
+      ];
+      const deep = erode(simplify([arm]), 2);
+      const it = imaged(deep, arm, [0], () => 2, e, () => 1, () => 0, j => j, { radius: 0, amplitude: 0 });
+
+      expect(it.corners[1]).toBeNull();
+      expect(it.corners[2]).toBeNull();
+      expect(it.corners[0]).not.toBeNull();
+      expect(it.edges[1]).toBeNull();
+    });
+  });
+
+  test('a run on one point is laid apart along its line, at a sliver of the other end', () => {
+    const run = [{ x: 5, y: 1 }, { x: 5, y: 1 }, { x: 5, y: 1 }];
+    const other = [{ x: 3, y: 1 }, { x: 5, y: 2 }, { x: 7, y: 1 }];
+    const out = seeded(run, other, { x: 1, y: 0 });
+
+    for (const p of out) expect(p.y).toBe(1);
+
+    expect(out[0].x).toBeLessThan(out[1].x);
+    expect(out[1].x).toBeLessThan(out[2].x);
+    expect(out[2].x - out[0].x).toBeCloseTo(4e-3, 12);
+    expect(seeded(other, run, { x: 1, y: 0 })).toEqual(other);
   });
 });
