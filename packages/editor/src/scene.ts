@@ -33,6 +33,7 @@
 import { Point } from '@ce/game/world';
 import {
   Effecting,
+  Imaged,
   PLAIN,
   Pattern,
   Ring,
@@ -806,19 +807,29 @@ export const project = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[] | null,
 ): Shape => {
-  const eroded = offsetOf(source, rings, erosion, depths);
-
-  if (effects === null) return eroded;
+  if (effects === null) return offsetOf(source, rings, erosion, depths);
 
   // Rounded and then deformed, both built off where each source corner and
   // edge landed: see `imaged`.
+  return simplify(imagedBy(source, rings, erosion, depths, effects).shape);
+});
+
+/** Where each of a polygon's features lands: the construction `project`
+ * builds its effects by, before the arrangement. */
+const imagedBy = remembered((
+  source: Ring,
+  rings: readonly number[],
+  erosion: number,
+  depths: readonly number[] | null,
+  effects: readonly Key[],
+): Imaged => {
   const [options, radii, amplitudes, keys, own, radius, amplitude] = effects as [
     number[][], number[], number[], number[], number[], number, number,
   ];
   const at = options.map(optionOf);
 
-  return simplify(imaged(
-    eroded,
+  return imaged(
+    offsetOf(source, rings, erosion, depths),
     source,
     rings,
     i => depths?.[i] ?? erosion,
@@ -827,8 +838,43 @@ export const project = remembered((
     j => amplitudes[j],
     j => keys[j],
     { radius, amplitude, e: optionOf(own) },
-  ).shape);
+  );
 });
+
+/**
+ * Where each corner's arc and each edge's deform points land in a polygon's
+ * projection, in world units: `imaged`, taken the way `projection` takes it.
+ * Nothing for a polygon with no effects.
+ *
+ * What the bake asks instead of `mitred` wherever effects are on, so that
+ * where it thinks a point is and where the projection put it cannot differ.
+ */
+export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
+  const fx = at.effected ?? null;
+
+  if (fx === null) return null;
+
+  const s = similarity(at.frame);
+
+  if (s === null) return imagedBy(at.source, at.rings, at.erosion, at.depths, effectKey(fx));
+
+  const im = imagedBy(at.local, at.rings, at.erosion / s, scaled(at.depths, s), effectKey(fx, s));
+  const run = (r: Point[] | null) => (r === null ? null : place(at.frame, r));
+
+  return {
+    shape: im.shape.map(ring => place(at.frame, ring)),
+    corners: im.corners.map(run),
+    edges: im.edges.map(run),
+    flat: im.flat.map(d => {
+      if (d === null) return null;
+
+      const o = place(at.frame, [{ x: 0, y: 0 }, d]);
+      const x = o[1].x - o[0].x, y = o[1].y - o[0].y, l = Math.hypot(x, y);
+
+      return { x: x / l, y: y / l };
+    }),
+  };
+}
 
 /** The erosion alone: the first of the three, and all of it for a polygon
  * with no effects. */

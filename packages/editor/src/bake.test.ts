@@ -35,6 +35,7 @@ import {
   EMPTY_BAKE,
 } from './bake';
 import {
+  Effects,
   Id,
   PolygonId,
   FLOOR,
@@ -2154,5 +2155,135 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
     );
 
     agrees(transformed(world, 0, ids[1], { erosion: -100 }));
+  });
+});
+
+describe('effects', () => {
+  const ROUND: Effects = { round: { segments: 4, verticals: true } };
+  const ZIGZAG: Effects = { deform: { count: 3, pattern: 'zigzag', seed: 0, sides: 'both' } };
+  const round = (by: number): Writing => ({ kind: 'round', by });
+  const deform = (by: number): Writing => ({ kind: 'deform', by });
+
+  function room(fx: Effects): { world: World, id: PolygonId } {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
+
+    return { world: { ...world, effects: new Map([[ids[0], fx]]) }, id: ids[0] };
+  }
+
+  /** How many points the span draws at `t`. */
+  const count = (span: Span, t: number) => sample(span, t).reduce((n, r) => n + r.points.length, 0);
+
+  test('a radius growing from nought is one stretch, the ring as long at both ends', () => {
+    const { world, id } = room(ROUND);
+    const w = wrote(world, 1, id, round(30));
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 0.5));
+    expect(count(span, 1)).toEqual(count(span, 0.5));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    // Seeded, not collapsed: at the near end the arcs are a sliver of what
+    // they grow to, and the outline is the editor's to within it.
+    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(30 * 1e-2);
+  });
+
+  test('a turning room at a fixed radius costs no stretches', () => {
+    const { world, id } = room(ROUND);
+    const w = wrote(wrote(world, 0, id, round(30)), 1, id, spun(Math.PI / 3));
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+  });
+
+  test('a corner arriving into a rounded ring arrives as its arc, and nothing jumps', () => {
+    const { world, id } = room(ROUND);
+    const w0 = wrote(world, 0, id, round(20));
+    const it = resolveAt(w0, 1).find(r => r.id === id)!;
+    const grown = addVertex(w0, 1, it, 0, { x: 0, y: -100 }).world;
+    const now = resolveAt(grown, 1).find(r => r.id === id)!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const pulled = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
+
+    const span = run(bakeSpan(pulled, 0));
+
+    // Cut more than once — an arc whose corner turns is not a lerp of its
+    // ends, as a corner alone is — but never jumping: the arriving arc is in
+    // the ring from the start, laid along the wall.
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 0.5));
+    expect(count(span, 1)).toEqual(count(span, 0.5));
+    expect(drift(pulled)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(pulled, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(pulled, 1), 6);
+
+    // Its five points, seeded along the wall about where it grows from, are
+    // dark there.
+    const s = span.tracks[0].stretches[0];
+    const seeds: number[] = [];
+
+    s.a[0].points.forEach((p, j) => {
+      if (Math.abs(p.x) < 1 && Math.abs(p.y + 100) < 1e-6) seeds.push(s.opacity[0][0][j]);
+    });
+
+    expect(seeds).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  test('a deform starting from nought fades its verticals in', () => {
+    const { world, id } = room(ZIGZAG);
+    const w = wrote(world, 1, id, deform(10));
+    const span = run(bakeSpan(w, 0));
+    const s = span.tracks[0].stretches[0];
+
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+
+    // The twelve deform points, flat on the walls at the near end.
+    const flat: [number, number][] = [];
+
+    s.a.forEach((r, i) => r.points.forEach((p, j) => {
+      if (Math.abs(Math.abs(p.x) - 100) + Math.abs(Math.abs(p.y) - 100) > 1e-6) flat.push([i, j]);
+    }));
+
+    expect(new Set(flat.map(([i, j]) => `${s.a[i].points[j].x},${s.a[i].points[j].y}`)).size).toEqual(12);
+
+    for (const [i, j] of flat) {
+      expect(s.opacity[0][i][j]).toBeCloseTo(0, 9);
+      expect(s.opacity[1][i][j]).toBeCloseTo(1, 9);
+    }
+  });
+
+  test('a smooth round stands verticals only at its tangent points', () => {
+    const { world, id } = room({ round: { segments: 4, verticals: false } });
+    const w = wrote(wrote(world, 0, id, round(30)), 1, id, move(10, 0));
+    const s = run(bakeSpan(w, 0)).tracks[0].stretches[0];
+    let dark = 0, lit = 0;
+
+    s.a.forEach((r, i) => r.points.forEach((_p, j) => {
+      if (s.opacity[0][i][j] === 0) dark++;
+      else lit++;
+    }));
+
+    // Three inside each of four arcs; the tangent points, and a closing
+    // point per run, stand.
+    expect(dark).toBeGreaterThanOrEqual(4 * 3);
+    expect(dark).toBeLessThanOrEqual(4 * 3 + 1);
+    expect(lit).toBeGreaterThanOrEqual(4 * 2);
+  });
+
+  test('a group\'s radius growing from nought, on its union', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = wrote({ ...g.world, effects: new Map([[g.id, ROUND]]) }, 1, g.id, round(20));
+    const span = run(bakeSpan(w, 0));
+
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 });
