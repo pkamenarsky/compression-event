@@ -1313,14 +1313,12 @@ function laid(m: Omit<Moving, 'laying'>): Laying | null {
     // same tooth at both: so they are lined up by it, and what one end has
     // and the other does not is at the ends, where the pattern grows.
     const whole = two.every(o => o === null || (o.whole && o.points.every(p => p.tooth !== undefined)));
-    const reach = whole ? Math.max(0, ...two.flatMap(o => o?.points.map(p => Math.abs(p.tooth!)) ?? [])) : 0;
-    const count = whole
-      ? (two.some(o => o !== null && o.points.length > 0) ? 2 * reach + 1 : 0)
-      : Math.max(...two.map(o => o?.points.length ?? 0));
+    const teeth = whole ? toothRange(two.flatMap(o => o?.points.map(p => p.tooth!) ?? [])) : null;
+    const count = teeth !== null ? teeth.count : Math.max(...two.map(o => o?.points.length ?? 0));
 
     for (const e of [0, 1] as const) {
       const o = two[e] ?? two[1 - e]!;
-      const laid = lay(o, count, whole ? o.points.map(p => p.tooth! + reach) : undefined);
+      const laid = lay(o, count, teeth !== null ? o.points.map(p => p.tooth! - teeth.first) : undefined);
       const still = o.points.every(p => p.a === 0);
 
       runs[e].push(o.whole ? { along: laid.u, across: laid.a } : along(o, laid, ends[e].bases[j]!));
@@ -1329,6 +1327,16 @@ function laid(m: Omit<Moving, 'laying'>): Laying | null {
   }
 
   return { runs, flat, rises: [ends[0].rises, ends[1].rises], shaped };
+}
+
+/** The teeth two readings of one edge have between them: from the first to
+ * the last, which is one slot each. */
+function toothRange(teeth: readonly number[]): { first: number, count: number } {
+  if (teeth.length === 0) return { first: 0, count: 0 };
+
+  const first = Math.min(...teeth);
+
+  return { first, count: Math.max(...teeth) - first + 1 };
 }
 
 /**
@@ -1424,7 +1432,9 @@ function outlines(
 
     const parts = chain.map(j => im.bases[j]);
 
-    if (parts.some(b => b === null)) continue;
+    // An edge the erosion has cut in pieces is left to the pattern: a run is
+    // one piece's.
+    if (parts.some(b => b === null) || chain.some(j => im.pieces[j] !== 1)) continue;
 
     const from = parts[0]!.from, to = parts[parts.length - 1]!.to;
     const dx = to.x - from.x, dy = to.y - from.y, l2 = dx * dx + dy * dy;
@@ -1433,7 +1443,15 @@ function outlines(
     if (l2 === 0) continue;
 
     const normal = { x: dy / dl, y: -dx / dl };
-    const run = patternRun(fx.options[p], fx.keys[p], fx.amplitudes[p], dl);
+    // Counted from the middle of the editor's edge, corner to corner: the
+    // span's own where it is that edge, and between the two corners the
+    // editor has either side where a missing one is on it.
+    const last = next(chain[chain.length - 1]);
+    const a = im.images[p], b = im.images[last];
+    const anchor = chain.length === 1
+      ? im.anchors[p] ?? dl / 2
+      : a === null || b === null ? dl / 2 : (((a.x + b.x) / 2 - from.x) * dx + ((a.y + b.y) / 2 - from.y) * dy) / dl;
+    const run = patternRun(fx.options[p], fx.keys[p], fx.amplitudes[p], dl, anchor);
     const vertices = [{ u: 0, a: 0 }, ...run.along.map((u, k) => ({ u, a: run.across[k] })), { u: 1, a: 0 }];
     const off = (u: number): number => {
       for (let k = 1; k < vertices.length; k++) {
@@ -1908,19 +1926,18 @@ function groupLaying(cast: Cast): Map<GroupId, GroupLaying> {
       if (two.some(pieces => pieces?.length !== 1)) continue;
 
       const outlines = two.map((pieces, e) => {
-        const { base } = pieces![0];
-        const run = patternRun(fx.e, key, fx.amplitude[e], Math.hypot(base.to.x - base.from.x, base.to.y - base.from.y));
+        const { base, anchor } = pieces![0];
+        const run = patternRun(fx.e, key, fx.amplitude[e], Math.hypot(base.to.x - base.from.x, base.to.y - base.from.y), anchor);
 
         return { base, outline: outlineOf(run) };
       });
 
-      const reach = Math.max(0, ...outlines.flatMap(o => o.outline.points.map(p => Math.abs(p.tooth!))));
-      const count = outlines.some(o => o.outline.points.length > 0) ? 2 * reach + 1 : 0;
+      const teeth = toothRange(outlines.flatMap(o => o.outline.points.map(p => p.tooth!)));
 
-      if (count === 0 || outlines.every(o => o.outline.points.every(p => p.a === 0))) continue;
+      if (teeth.count === 0 || outlines.every(o => o.outline.points.every(p => p.a === 0))) continue;
 
       outlines.forEach(({ base, outline }, e) => {
-        const layout = lay(outline, count, outline.points.map(p => p.tooth! + reach));
+        const layout = lay(outline, teeth.count, outline.points.map(p => p.tooth! - teeth.first));
         const still = outline.points.every(p => p.a === 0);
         const flat = layout.own.map(own => !own || still);
         const dx = base.to.x - base.from.x, dy = base.to.y - base.from.y, l = Math.hypot(dx, dy);

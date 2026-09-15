@@ -2623,31 +2623,38 @@ export interface Base {
 
 /**
  * An edge's points as the pattern lays them along a straight run of `length`:
- * a tooth every `spacing` out from its middle, as far as the run goes, each
- * off it by `amplitude` of the pattern.
+ * a tooth every `spacing` out from `anchor`, a distance along the run, as far
+ * as the run goes either way, each off it by `amplitude` of the pattern.
  *
- * A tooth near an end is only as tall as it has room to be: one spacing from
- * the end and nearer, it shrinks with the distance, and at the end it is
- * nothing. So the pattern is continuous in the length. An edge growing gains
- * teeth at its ends out of nothing, and shrinking loses them into nothing;
- * none of the others moves off the spacing, and the pattern is about as dense
- * on every edge. Tooth nought is the middle, and a tooth is the same tooth
- * however long the edge is.
+ * The anchor is the edge's by its name — see `Laid.anchors` — and not the
+ * run's: the middle of the edge corner to corner, as the erosion leaves it,
+ * whichever piece of it this run is. So a tooth is the same tooth at every
+ * instant and on every piece of one edge. A piece shows the teeth of its edge
+ * that fall on it, an edge cut in two keeps its teeth where they were, and
+ * two pieces joining are one pattern already. The middle of the run where
+ * nothing says otherwise.
+ *
+ * A tooth near an end of the run is only as tall as it has room to be: one
+ * spacing from the end and nearer, it shrinks with the distance, and at the
+ * end it is nothing. So the pattern is continuous in where the run's ends
+ * are. A run growing gains teeth at its ends out of nothing, and shrinking
+ * loses them into nothing; none of the others moves, and the pattern is
+ * about as dense on every edge.
  */
-export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number, anchor = length / 2): EdgeRun {
   const along: number[] = [], across: number[] = [], teeth: number[] = [];
 
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
 
-  const reach = Math.ceil(length / 2 / e.spacing);
+  const first = Math.ceil(-anchor / e.spacing), last = Math.floor((length - anchor) / e.spacing);
 
-  for (let j = -reach; j <= reach; j++) {
-    const off = Math.abs(j) * e.spacing;
-    const room = Math.min(1, (length / 2 - off) / e.spacing);
+  for (let j = first; j <= last; j++) {
+    const at = anchor + j * e.spacing;
+    const room = Math.min(1, Math.min(at, length - at) / e.spacing);
 
     if (room <= 0) continue;
 
-    along.push(0.5 + j * e.spacing / length);
+    along.push(at / length);
     across.push(amplitude * room * patterned(e, key, j));
     teeth.push(j);
   }
@@ -2710,6 +2717,8 @@ interface Shaped {
   corners: Point[][]
   edges: Point[][]
   bases: Base[]
+  /** Where each edge's teeth are counted from, along its base. */
+  anchors: number[]
 }
 
 /**
@@ -2720,6 +2729,9 @@ interface Shaped {
 export interface Laid {
   runs?: (i: number) => EdgeRun | null
   rises?: (i: number) => number
+  /** Where each edge's teeth are counted from: a point on its line, which
+   * names the edge rather than this piece of it. See `patternRun`. */
+  anchors?: (i: number) => Point | null
 }
 
 /**
@@ -2845,9 +2857,16 @@ function shaped(
     to: corners[(i + 1) % n][0],
   }));
 
+  const anchors = bases.map(({ from, to }, i) => {
+    const a = laid.anchors?.(i) ?? null;
+    const dx = to.x - from.x, dy = to.y - from.y, l = Math.hypot(dx, dy);
+
+    return a === null || l === 0 ? l / 2 : ((a.x - from.x) * dx + (a.y - from.y) * dy) / l;
+  });
+
   const edges = ring.map((v, i): Point[] => {
     const { from, to } = bases[i];
-    const run = laid.runs?.(i) ?? patternRun(e(i), key(i), amplitude(i), Math.hypot(to.x - from.x, to.y - from.y));
+    const run = laid.runs?.(i) ?? patternRun(e(i), key(i), amplitude(i), Math.hypot(to.x - from.x, to.y - from.y), anchors[i]);
     const d = unit(v, ring[(i + 1) % n], lengths[i]);
     const o = d === null ? { x: 0, y: 0 } : { x: d.y, y: -d.x };
 
@@ -2857,7 +2876,7 @@ function shaped(
     }));
   });
 
-  return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges, bases };
+  return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges, bases, anchors };
 }
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
@@ -2886,6 +2905,9 @@ export interface Line {
   from: Point
   to: Point
   key: number
+  /** Where the edge's teeth are counted from. Absent is nowhere in
+   * particular: the middle of whatever piece a union makes of it. */
+  anchor?: Point
 }
 
 /**
@@ -2927,10 +2949,12 @@ export function named(union: Shape, lines: readonly Line[], depth: number): (num
   }));
 }
 
-/** Where a named edge of a union went: its straight run, and its points. */
+/** Where a named edge of a union went: its straight run, its points, and
+ * where along the run its teeth are counted from. */
 export interface NamedEdge {
   base: Base
   points: Point[]
+  anchor: number
 }
 
 /**
@@ -2949,6 +2973,7 @@ export function effected(
   amplitude: number,
   keys: readonly (readonly (number | null)[])[] = [],
   runs: (key: number) => EdgeRun | null = () => null,
+  anchors: (key: number) => Point | null = () => null,
 ): { shape: Cut, edges: Map<number, NamedEdge[]> } {
   const edges = new Map<number, NamedEdge[]>();
 
@@ -2962,12 +2987,17 @@ export function effected(
 
         return key === null ? null : runs(key);
       },
+      anchors: k => {
+        const key = name(k);
+
+        return key === null ? null : anchors(key);
+      },
     });
 
     out.edges.forEach((points, k) => {
       const key = name(k);
 
-      if (key !== null) edges.set(key, [...(edges.get(key) ?? []), { base: out.bases[k], points }]);
+      if (key !== null) edges.set(key, [...(edges.get(key) ?? []), { base: out.bases[k], points, anchor: out.anchors[k] }]);
     });
 
     return out.ring;
@@ -3040,8 +3070,16 @@ export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
   edges: (Point[] | null)[]
-  /** Each source edge's straight run and length, where it has an image. */
+  /** Each source edge's straight run, where it has an image. */
   bases: (Base | null)[]
+  /** Where along it each source edge's teeth are counted from. */
+  anchors: (number | null)[]
+  /** How many pieces each source edge is in: one, or more where the erosion
+   * cut it, or none. */
+  pieces: number[]
+  /** Where each source corner is before it is rounded: `mitred`. What names
+   * an edge's anchor, which is the middle of the two it runs between. */
+  images: (Point | null)[]
 }
 
 export function imaged(
@@ -3125,10 +3163,21 @@ export function imaged(
   const corners: (Point[] | null)[] = source.map(() => null);
   const edges: (Point[] | null)[] = source.map(() => null);
   const bases: (Base | null)[] = source.map(() => null);
+  const anchors: (number | null)[] = source.map(() => null);
+  const pieces: number[] = source.map(() => 0);
+  const alongs = owned.map(ring => ring.map((v, k) => sourceEdge(v, ring[(k + 1) % ring.length])));
 
-  const shape = owned.map(ring => {
-    const m = ring.length;
-    const along = ring.map((v, k) => sourceEdge(v, ring[(k + 1) % m]));
+  for (const j of alongs.flat()) if (j >= 0) pieces[j]++;
+
+  // Each edge's teeth counted from the middle of it, corner to corner.
+  const middle = (j: number): Point | null => {
+    const a = images[j], b = images[nextOf(rings, n, j)];
+
+    return a === null || b === null ? null : { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+
+  const shape = owned.map((ring, r) => {
+    const along = alongs[r];
     // A corner's options are its own; an edge's, the corner's it starts at.
     const out = shaped(
       ring.map(v => v.p),
@@ -3142,8 +3191,10 @@ export function imaged(
       k => (along[k] >= 0 ? amplitude(along[k]) : rest.amplitude),
       k => (along[k] >= 0 ? key(along[k]) : -1 - k),
       {
-        runs: k => (along[k] >= 0 ? laid.runs?.(along[k]) ?? null : null),
+        // Said outright only for an edge in one piece: a run is one piece's.
+        runs: k => (along[k] >= 0 && pieces[along[k]] === 1 ? laid.runs?.(along[k]) ?? null : null),
         rises: k => (ring[k].owner >= 0 ? laid.rises?.(ring[k].owner) ?? 0 : 0),
+        anchors: k => (along[k] >= 0 ? middle(along[k]) : null),
       },
     );
 
@@ -3157,13 +3208,14 @@ export function imaged(
       if (j >= 0 && edges[j] === null) {
         edges[j] = out.edges[k];
         bases[j] = out.bases[k];
+        anchors[j] = out.anchors[k];
       }
     });
 
     return out.ring;
   });
 
-  return { shape, corners, edges, bases };
+  return { shape, corners, edges, bases, anchors, pieces, images };
 }
 
 /** How far apart what would otherwise be one point is laid, against what it

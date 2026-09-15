@@ -889,6 +889,9 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
 
       return { from, to };
     }),
+    anchors: im.anchors.map(a => (a === null ? null : a * s)),
+    pieces: im.pieces,
+    images: im.images.map(p => (p === null ? null : place(at.frame, [p])[0])),
   };
 }
 
@@ -2897,18 +2900,27 @@ const offsetUnion = remembered((
 
   // Named after the lines its members' edges lie along, which is how a
   // union's edge is the same edge from one instant to the next: see `named`.
-  const keys = named(eroded, lines.map(([fx, fy, tx, ty, key]) => ({ from: { x: fx, y: fy }, to: { x: tx, y: ty }, key })), depth);
+  // A name brings where its teeth are counted from.
+  const given: Line[] = lines.map(([fx, fy, tx, ty, key, ax, ay]) => ({
+    from: { x: fx, y: fy },
+    to: { x: tx, y: ty },
+    key,
+    ...(ax === undefined ? {} : { anchor: { x: ax, y: ay } }),
+  }));
+  const anchors = new Map(given.flatMap(l => (l.anchor === undefined ? [] : [[l.key, l.anchor] as const])));
+  const keys = named(eroded, given, depth);
   const out: Line[] = eroded.flatMap((ring, r) => ring.flatMap((p, i) => {
     const key = keys[r][i];
+    const anchor = key === null ? undefined : anchors.get(key);
 
-    return key === null ? [] : [{ from: p, to: ring[(i + 1) % ring.length], key }];
+    return key === null ? [] : [{ from: p, to: ring[(i + 1) % ring.length], key, ...(anchor === undefined ? {} : { anchor }) }];
   }));
 
   if (effects === null || eroded.length === 0) return { shape: eroded, edges: NO_EDGES, lines: out };
 
   const [radius, amplitude, ...option] = effects;
   const laid = new Map(runs.map(([key, along, across]) => [key, { along, across }]));
-  const done = effectedAll(eroded, optionOf(option), radius, amplitude, keys, key => laid.get(key) ?? null);
+  const done = effectedAll(eroded, optionOf(option), radius, amplitude, keys, key => laid.get(key) ?? null, key => anchors.get(key) ?? null);
 
   return { shape: done.shape, edges: done.edges, lines: out };
 });
@@ -2961,7 +2973,14 @@ export function linesOf(it: Resolved): Line[] {
     { radius: 0, amplitude: 0 },
   );
 
-  return im.bases.flatMap((b, j) => (b === null ? [] : [{ from: b.from, to: b.to, key: it.corners[j].id }]));
+  const n = it.corners.length;
+
+  return im.bases.flatMap((b, j) => {
+    const p = im.images[j], q = im.images[nextOf(it.rings, n, j)];
+    const anchor = p === null || q === null ? undefined : { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+
+    return b === null ? [] : [{ from: b.from, to: b.to, key: it.corners[j].id, ...(anchor === undefined ? {} : { anchor }) }];
+  });
 }
 
 export function contributed(
@@ -3072,7 +3091,9 @@ export function contributed(
     // Named only where something reads the names: a deform, or a scope
     // holding this one that does.
     const lines = deforming(here) || naming.has(id)
-      ? group.members.flatMap(m => linesFrom(m, set, k)).map(l => [l.from.x, l.from.y, l.to.x, l.to.y, l.key])
+      ? group.members.flatMap(m => linesFrom(m, set, k)).map(l => [
+          l.from.x, l.from.y, l.to.x, l.to.y, l.key, ...(l.anchor === undefined ? [] : [l.anchor.x, l.anchor.y]),
+        ])
       : [];
     const runs = [...(here?.effects?.runs ?? [])].map(([key, r]) => [key, r.along, r.across] as const);
 

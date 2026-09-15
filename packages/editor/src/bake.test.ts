@@ -2393,6 +2393,34 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
+  test('a union edge cut in two keeps its teeth where they were, a spacing from the cut', () => {
+    // A room rising through the top wall of the room it is sealed in with,
+    // point first: part way, the wall's union edge becomes two, either side
+    // of it. The teeth are counted from the wall's own middle, so the two
+    // pieces show the teeth it had. Only within a spacing of the cut does
+    // anything change at that instant: the teeth there shrink to the new
+    // ends, which are on the wall's line where the pattern was not — a jump
+    // the union makes, being cut before it is deformed.
+    const diamond = [{ x: 104, y: 20 }, { x: 124, y: 40 }, { x: 104, y: 60 }, { x: 84, y: 40 }];
+    const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both' } };
+    let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5));
+
+    w = wrote(w, 1, ids[1], move(0, 60));
+
+    // The wall, away from where it is cut.
+    const wall = (f: Frame) => f.flatMap(r => r.points)
+      .filter(p => p.y > 90 && Math.abs(p.x - 104) > 20)
+      .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+    const key = (f: Frame) => new Set(wall(f));
+
+    // Before the tip reaches the wall at two thirds of the span, and after.
+    expect(key(truth(w, 0, 0.66))).toEqual(key(truth(w, 0, 0.67)));
+    expect(key(truth(w, 0, 0)).size).toBeGreaterThanOrEqual(8);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+  });
+
   test('a group\'s radius growing from nought, on its union', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;

@@ -578,14 +578,19 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
   The arc is walked from its first tangent point rather than built off a
   centre, which ran away to infinity as a corner straightened.
 - A deform has a spacing rather than a count, and its pattern is continuous
-  in the length of the edge (`patternRun`): a tooth every spacing out from
-  the middle of the edge's straight run, and one nearer an end than a
-  spacing only as tall as it has room to be. An edge growing gains teeth at
-  its ends out of nothing and none of the rest moves off the spacing; the
-  pattern is about as dense everywhere, and an edge split by a corner
-  running straight through has about the teeth it had whole. Tooth `j` is
-  the same tooth however long the edge is, which is what lines the two ends
-  of a span up. Sine is six to a wave and never on a zero, where three
+  in where the ends of the edge are (`patternRun`): a tooth every spacing
+  out from the edge's anchor, and one nearer an end than a spacing only as
+  tall as it has room to be. An edge growing gains teeth at its ends out of
+  nothing and none of the rest moves; the pattern is about as dense
+  everywhere, and an edge split by a corner running straight through has
+  about the teeth it had whole.
+- The anchor is the edge's by its name, not the piece's: the middle of the
+  source edge corner to corner as the erosion leaves it (`Imaged.anchors`),
+  or for a union's edge the member edge's it is named after (`Line.anchor`).
+  So tooth `j` is the same tooth at every instant and on every piece of one
+  edge, which is what lines the two ends of a span up, and an edge cut in
+  pieces keeps its teeth where they were. A radius growing tapers the end
+  teeth rather than sliding every tooth by half of it. Sine is six to a wave and never on a zero, where three
   points are in a line and the arrangement drops the middle one.
 - A deform point is linear in the amplitude and not in the radius: its
   teeth are laid along what the arcs leave of the edge, which a radius
@@ -623,6 +628,19 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
   cut finds it by measuring.
 - An edge that is the image of nothing — one the erosion made — has neither
   a name nor a run, so where its count changes the bake finds it as a jump.
+- Where a union's edge is cut in two part way through a span, the teeth
+  more than a spacing from the cut stay where they were, and the ones within
+  it shrink to the new ends at that instant. The ends are on the edge's
+  line, where the union cut it before it was deformed, and the pattern there
+  was not: a jump of up to the amplitude, a spacing either side of the cut.
+  Taking it out would mean lifting the union's new corners onto the pattern,
+  and where two deformed edges meet at one the two lifts disagree. And an
+  edge that comes into a union whole — a member's side rising flat through a
+  wall — brings its teeth with it at once, an instant's height above the
+  wall's own. Both are the deform's, for deforming the union rather than
+  each member: which is what keeps teeth out of the seams between rooms.
+- The bake's jumps pop the verticals of whatever appears or goes at them;
+  that is accepted.
 - A corner missing at one end is put on the straight part of its edge
   there, between the two arcs, as the editor draws it (`straightOf`):
   `spanning`'s choice of where along the edge is mapped into it. Anywhere
