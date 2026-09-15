@@ -2563,7 +2563,9 @@ function norm(t: number): number {
 //
 // A round happens after the erosion, to the boundary: each corner becomes a
 // curve leaving each of its two edges along it and with no curvature, so it
-// runs into them with no seam (`rounded`, and see `Curve`), teeth included. A
+// runs into them with no seam (`rounded`, and see `Curve`). A polygon's teeth
+// are left square, and the corners at the ends of its deformed edges with
+// them unless the deform keeps their bevels clear (`unrounded`). A
 // round's amount is its bevel: how deep from the corner, along each edge, its
 // curve starts — the same at any angle, so a sharp corner and a blunt one are
 // cut back alike. It is faceted where it bends: see `spread`. It is the same

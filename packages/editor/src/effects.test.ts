@@ -323,6 +323,19 @@ describe('editing effects', () => {
     expect(teeth(w(false)).some(p => from(p, a.at) < 30 || from(p, b.at) < 30)).toBe(true);
     expect(teeth(w(true)).every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
     expect(teeth(w(true)).length).toBeGreaterThan(0);
+
+    // The teeth are never rounded, and the corners at the edge's ends only
+    // when cleared: a square corner's arc is the one point.
+    const arcs = (it: Resolved) => imagesOf(it)!.corners.map(r => r?.length);
+    const at = (it: Resolved, id: number) => arcs(it)[it.corners.findIndex(q => q.id === id)];
+
+    [false, true].forEach(clear => {
+      const it = w(clear);
+
+      edgeRun(it, a.id).slice(1, -1).forEach(i => expect(arcs(it)[i] ?? 1).toBe(1));
+      expect(at(it, a.id)).toBe(clear ? 9 : 1);
+      expect(at(it, b.id)).toBe(clear ? 9 : 1);
+    });
   });
 });
 

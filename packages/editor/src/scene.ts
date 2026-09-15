@@ -331,13 +331,30 @@ export function effectedOf(
   const bevels = corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
     (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel), round.tension));
+  const flat = unrounded(corners, deformOf(fx)?.clear === true);
 
   return shaping({
-    facets: corners.map((c, i) => faceted(roundOf(fx, world.cornerEffects.get(c.id)), bevels[i])),
+    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(roundOf(fx, world.cornerEffects.get(c.id)), bevels[i]))),
     bevels,
     own: faceted(roundOf(fx), amounts.bevel),
     bevel: amounts.bevel,
   });
+}
+
+/**
+ * Which of `corners` are deformed geometry, which a round leaves square: every
+ * tooth, and each drawn corner at an end of an edge with teeth — unless its
+ * deform keeps the bevels clear, when the teeth stop short of that corner's
+ * round and it is rounded as any other. See `patternRun`.
+ */
+function unrounded(corners: readonly Vertex[], clear: boolean): boolean[] {
+  const teeth = corners.map(c => c.root !== undefined);
+
+  if (clear || !teeth.some(Boolean)) return teeth;
+
+  const rings = ringsOf(corners), n = corners.length;
+
+  return teeth.map((tooth, i) => tooth || teeth[nextOf(rings, n, i)] || teeth[prevOf(rings, n, i)]);
 }
 
 /** A round kept only where it does something. */
