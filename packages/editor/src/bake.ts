@@ -3177,7 +3177,39 @@ function* fillTrack(
 }
 
 /**
- * One polygon's own cut of the span.
+ * One interval of a track's bisection, as it settled: a stretch across it, or
+ * the two instants either side of an event pinned inside it.
+ *
+ * The pieces tile the span in order, each exactly the interval the bisection
+ * stopped on, which is what lets one of them be cut again on its own. The
+ * bisection is local — what happens inside an interval depends on its two ends
+ * and nothing else — so cutting one piece a decade finer gives exactly what
+ * cutting the whole track a decade finer would have given there.
+ */
+interface Piece {
+  a: Taken
+  b: Taken
+  kept: Stretch[]
+  /** What the check measured across it. Nothing for an event. */
+  off: number
+  /**
+   * Whether it stopped because the interval ran out of width rather than
+   * because it was right. Only these can come out any differently cut finer: a
+   * stretch that passed its check passes it at any depth, so a finer cut would
+   * walk down to it and stop there again.
+   */
+  limited: boolean
+}
+
+/** What cutting one track needs, whatever part of it is being cut. */
+interface Cutting {
+  at: (t: number) => Taken
+  riders: Map<Id, Rider>
+  tol: number
+}
+
+/**
+ * One polygon's own cut of `[from, to]`, as pieces.
  *
  * The measuring is the same as it ever was; what has changed is what is being
  * measured. A stretch used to end when *anything anywhere* changed, which put a
@@ -3185,39 +3217,18 @@ function* fillTrack(
  * both the work and the file grow with the square of the level. A polygon's
  * boundary is a question about its own neighbourhood, so its keyframes are too.
  */
-function* cutTrack(
-  cast: Cast,
-  sub: Moving[],
-  id: Id,
-  riders: Map<Id, Rider>,
-  tol: number,
+function* bisected(
+  c: Cutting,
+  from: Taken,
+  to: Taken,
   limits: Limits,
-  taken: Map<number, Taken>,
-): Generator<number, Cut, void> {
-  const out: Stretch[] = [];
-
-  let evaluations = 0;
-  let worst = 0;
-
-  // Only what was not already worked out counts: `evaluations` is what the
-  // track cost, and an instant a coarser attempt already took costs nothing.
-  const at = (t: number): Taken => {
-    let known = taken.get(t);
-
-    if (known === undefined) {
-      evaluations++;
-      known = evaluate(cast, sub, t, id);
-      taken.set(t, known);
-    }
-
-    return known;
-  };
+): Generator<number, Piece[], void> {
+  const { at, riders, tol } = c;
+  const pieces: Piece[] = [];
 
   // Left to right, so what comes out is in order and the progress is honest:
   // how much of the span has been settled, which only ever goes forwards.
-  const stack: [Taken, Taken][] = [[at(0), at(1)]];
-
-  let done = 0;
+  const stack: [Taken, Taken][] = [[from, to]];
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
@@ -3233,19 +3244,17 @@ function* cutTrack(
 
       // Pinned as far as it is worth pinning: a discontinuity, and the two
       // sides of it genuinely have different geometry. Both are kept.
-      keep(instant(a));
-      keep(instant(b));
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
 
-      done = b.t;
-      yield done;
+      yield b.t;
       continue;
     }
 
     const s = stretchOf(a, b);
 
     // How far the stretch would sit from the truth at an instant inside it.
-    const check = (c: Taken): number =>
-      comparable(a, c) ? apart(drawn(s, riders, c.t), c.out) : Infinity;
+    const check = (x: Taken): number =>
+      comparable(a, x) ? apart(drawn(s, riders, x.t), x.out) : Infinity;
 
     const m = at((a.t + b.t) / 2);
 
@@ -3278,11 +3287,9 @@ function* cutTrack(
     // pinning — the same answer the incomparable path above reaches, from the
     // other side of it.
     if (!Number.isFinite(off)) {
-      keep(instant(a));
-      keep(instant(b));
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
 
-      done = b.t;
-      yield done;
+      yield b.t;
       continue;
     }
 
@@ -3292,15 +3299,56 @@ function* cutTrack(
     // is not that. This used to be the one place a stretch was kept with no
     // check at all, and what it hid was a whole unit of pop in a level with
     // anything much turning in it.
-    worst = Math.max(worst, off);
-    keep(s);
+    pieces.push({ a, b, kept: [s], off, limited: off > tol * MARGIN });
 
-    done = b.t;
-    yield done;
+    yield b.t;
   }
 
-  const kept = out.filter(wide);
+  return pieces;
+}
+
+/**
+ * A track's pieces made into its cut, and which of them are why it is not
+ * inside the tolerance — the ones a finer cut should go back to.
+ */
+function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean[] } {
+  const { riders, tol } = c;
+  const out: Stretch[] = [];
+
+  // Which piece each of `out` came from.
+  const whose: number[] = [];
+  const failing = pieces.map(p => p.limited && p.off > tol);
+
+  let worst = 0;
+
+  pieces.forEach((p, k) => {
+    worst = Math.max(worst, p.off);
+
+    for (const s of p.kept) {
+      const last = out[out.length - 1];
+
+      // Two instants running together, or a stretch that adds nothing.
+      if (last !== undefined && last.t0 === last.t1 && last.t0 === s.t0 && s.t0 === s.t1) continue;
+
+      out.push(s);
+      whose.push(k);
+    }
+  });
+
+  const wideAt = out.flatMap((s, j) => (wide(s) ? [j] : []));
+  const kept = wideAt.map(j => out[j]);
   const cover = abutting(kept);
+
+  // The pieces between two of `kept`, which pinned the event whose gap it is.
+  // `-1` and `pieces.length` stand for the two ends of the span.
+  const between = (from: number, to: number): void => {
+    for (let k = from + 1; k < to; k++) {
+      if (pieces[k].limited) failing[k] = true;
+    }
+  };
+
+  const pieceOf = (i: number): number =>
+    i < 0 ? -1 : i >= kept.length ? pieces.length : whose[wideAt[i]];
 
   // What `abutting` gives away, checked. Closing the gaps around an event hands
   // each neighbour half of one, so a stretch is drawn over a window wider than
@@ -3312,37 +3360,37 @@ function* cutTrack(
   // argued, and what it finds is `worst` like anything else — this was the one
   // region of the cover nothing looked at, and every instant the replay was ever
   // caught out at was inside one.
+  //
+  // Where it is outside, the gap is what is wrong, and the gap is the event
+  // pieces either side of this stretch: those are what a finer cut narrows.
   for (let i = 0; i < cover.length; i++) {
     const grown = cover[i], was = kept[i];
 
-    for (const t of [grown.t0, grown.t1]) {
+    for (const [t, side] of [[grown.t0, -1], [grown.t1, 1]] as const) {
       if (t >= was.t0 && t <= was.t1) continue;
 
-      const c = at(t);
+      const now = c.at(t);
 
       // The two sides of an event genuinely differ, and the size of that is the
       // event's own, not the replay's — the same exclusion `apart` makes by
       // coming back infinite. Here it has to be made in so many words, because
       // `strayed` will cheerfully measure the distance across a discontinuity
       // and report the pop as though the replay had invented it.
-      if (signature(drawn(grown, riders, t)) !== signature(c.out)) continue;
+      if (signature(drawn(grown, riders, t)) !== signature(now.out)) continue;
 
-      worst = Math.max(worst, strayed(drawn(grown, riders, t), c.out));
+      const off = strayed(drawn(grown, riders, t), now.out);
+
+      worst = Math.max(worst, off);
+
+      if (off > tol) {
+        const here = pieceOf(i), there = pieceOf(i + side);
+
+        between(Math.min(here, there), Math.max(here, there));
+      }
     }
   }
 
-  return { stretches: cover, jumps: out.filter(s => !wide(s)), worst, evaluations };
-
-  function keep(s: Stretch): void {
-    const last = out[out.length - 1];
-
-    // Two instants running together, or a stretch that adds nothing.
-    if (last !== undefined && last.t0 === last.t1 && last.t0 === s.t0 && s.t0 === s.t1) {
-      return;
-    }
-
-    out.push(s);
-  }
+  return { stretches: cover, jumps: out.filter(s => !wide(s)), worst, evaluations: 0, failing };
 }
 
 /**
@@ -3627,6 +3675,8 @@ function* chased(
   fill: boolean,
   tol: number,
 ): Generator<number, Cut & { limits: Limits }, void> {
+  if (!fill) return yield* recut(at, i, tol);
+
   const { id } = at.items[i];
 
   let limits = LIMITS;
@@ -3635,19 +3685,10 @@ function* chased(
   let spent = 0;
   let seen = 0;
 
-  // Every attempt bisects the same span from the same ends, so a finer one
-  // passes through every instant the coarser one did before going further.
-  // Those are the same question — the same polygons, the same instant — and
-  // were being answered again from scratch, attempt after attempt. Kept for
-  // this track only: its neighbours ask with a different subject.
-  const taken = new Map<number, Taken>();
-
   while (true) {
-    const inner = fill
-      // Its own members, and nothing else: a floor is not cut against its
-      // neighbours, so resolving them would be work nobody reads.
-      ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits)
-      : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits, taken);
+    // Its own members, and nothing else: a floor is not cut against its
+    // neighbours, so resolving them would be work nobody reads.
+    const inner = fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits);
 
     let cut: Cut | null = null;
 
@@ -3687,6 +3728,103 @@ function* chased(
 
     was = cut.worst;
     limits = finer(limits);
+  }
+}
+
+/**
+ * `chased`, for a track cut against its neighbours: the same decades and the
+ * same rules for stopping, but each decade goes back only to the pieces that
+ * are outside the tolerance.
+ *
+ * It used to cut the whole track again. A track's error is nearly always in one
+ * place — a crossing racing through the gap around one event — and cutting it
+ * again a decade finer pinned every other event in the track a decade finer
+ * too, for nothing: a level whose two busy tracks held three hundred events
+ * each spent half its bake re-pinning the ones that had been fine. The pieces
+ * that come back are the ones the whole track cut finer would have had there,
+ * because the bisection inside an interval is its own; the rest are left as the
+ * coarser decade had them.
+ */
+function* recut(at: Ready, i: number, tol: number): Generator<number, Cut & { limits: Limits }, void> {
+  const { id } = at.items[i];
+  const sub = at.near[i];
+
+  // Every instant this track has looked at, so that a piece cut again finds its
+  // two ends and its middle already worked out. Kept for this track only: its
+  // neighbours ask with a different subject.
+  const taken = new Map<number, Taken>();
+
+  let evaluations = 0;
+  let seen = 0;
+
+  const c: Cutting = {
+    at: t => {
+      let known = taken.get(t);
+
+      if (known === undefined) {
+        evaluations++;
+        known = evaluate(at.cast, sub, t, id);
+        taken.set(t, known);
+      }
+
+      return known;
+    },
+    riders: at.riders,
+    tol,
+  };
+
+  // A piece cut again reports how far it has got, which is behind where the
+  // track has been. What the caller is shown is how far this track has ever
+  // got, so going back reads as a pause rather than as ground given back.
+  function* shown<T>(g: Generator<number, T, void>): Generator<number, T, void> {
+    while (true) {
+      const step = g.next();
+
+      if (step.done) return step.value;
+
+      seen = Math.max(seen, step.value);
+      yield seen;
+    }
+  }
+
+  let limits = LIMITS;
+  let pieces = yield* shown(bisected(c, c.at(0), c.at(1), limits));
+  let cut = settled(c, pieces);
+  let best = { ...cut, limits };
+  let was = Infinity;
+
+  while (true) {
+    // As `chased`: inside the tolerance, out of width, a decade that did not
+    // pay for itself, or a track that pins more events than it keeps
+    // stretches. See `PAYING`, `CHURN`.
+    if (
+      best.worst <= tol
+      || limits.gap <= FINEST
+      || cut.worst > PAYING * was
+      || cut.jumps.length > CHURN * cut.stretches.length
+    ) {
+      return { stretches: best.stretches, jumps: best.jumps, worst: best.worst, evaluations, limits: best.limits };
+    }
+
+    was = cut.worst;
+    limits = finer(limits);
+
+    const next: Piece[] = [];
+
+    for (let k = 0; k < pieces.length; k++) {
+      if (cut.failing[k]) {
+        next.push(...yield* shown(bisected(c, pieces[k].a, pieces[k].b, limits)));
+      }
+      else {
+        next.push(pieces[k]);
+      }
+    }
+
+    pieces = next;
+    cut = settled(c, pieces);
+
+    // The best of the decades, not the last. See `chased`.
+    if (cut.worst < best.worst) best = { ...cut, limits };
   }
 }
 
