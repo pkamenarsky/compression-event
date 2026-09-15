@@ -144,6 +144,33 @@ describe('a group\'s effects', () => {
     expect(shapeArea(csg(sealing(world, id, false), 0))).toBeCloseTo(200 * 100, 9);
   });
 
+  test('its union\'s noise belongs to its members\' edges, whatever else joins it', () => {
+    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both' } };
+    const top = (w: World) => csg(w, 0).flat().filter(p => p.y > 95 && p.x > 5 && p.x < 150);
+    const build = (extra: boolean) => {
+      const a = room(emptyWorld(), rect(0, 0, 100, 100));
+      const b = room(a.world, rect(60, 0, 140, 100));
+      const ids = [a.id, b.id];
+      let w = b.world;
+
+      if (extra) {
+        const c = room(w, rect(190, 30, 40, 40));
+
+        w = c.world;
+        ids.push(c.id);
+      }
+
+      const g = grouped(w, 0, ids, TOP)!;
+
+      return wrote(withEffects(sealing(g.world, g.id, true), g.id, noise), 0, g.id, deform(4));
+    };
+
+    // A room joined on the right comes before the top in the union's ring,
+    // and the teeth along the top do not notice.
+    expect(top(build(true))).toEqual(top(build(false)));
+    expect(top(build(false)).length).toBeGreaterThan(8);
+  });
+
   test('resolved, its rings take the effects and the amounts with them', () => {
     const { world, id } = corridor();
     const out = resolveGroup(world, 0, id)!;

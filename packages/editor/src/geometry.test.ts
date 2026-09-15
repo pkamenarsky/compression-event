@@ -40,8 +40,10 @@ import {
   deformed,
   imaged,
   patterned,
+  named,
   rounded,
   SEEDING,
+  unionAll,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -1969,6 +1971,18 @@ describe('round and deform', () => {
       expect(it.corners[0]).not.toBeNull();
       expect(it.edges[1]).toBeNull();
     });
+  });
+
+  test('a union\'s edges are named after the member edges they lie along, moved in', () => {
+    const a: Ring = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    const b: Ring = [{ x: 5, y: 2 }, { x: 20, y: 2 }, { x: 20, y: 8 }, { x: 5, y: 8 }];
+    const lines = [a, b].flatMap((ring, m) => ring.map((p, i) => ({ from: p, to: ring[(i + 1) % 4], key: m * 10 + i })));
+    const union = erode(unionAll([[a], [b]]), 1);
+    const names = named(union, lines, 1);
+
+    // Every edge is one of theirs: a's bottom, a's left, b's right, and so on.
+    expect(names.flat().every(k => k !== null)).toBe(true);
+    expect(new Set(names.flat())).toEqual(new Set([0, 1, 2, 3, 10, 11, 12]));
   });
 
   test('a straight corner is never one point: its arc is a sliver of its wall', () => {

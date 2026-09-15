@@ -153,6 +153,7 @@ import {
   IDENTITY,
   Placed,
   Resolved,
+  Union,
   artefactsAt,
   centroid,
   chain,
@@ -1804,7 +1805,7 @@ export interface Cast {
    * else ever asks about, and holding all of them would be holding the span
    * over again to save a few per cent.
    */
-  folds: Map<number, Map<string, Shape>>
+  folds: Map<number, Map<string, Union>>
 }
 
 function casting(world: World, from: number): Cast {

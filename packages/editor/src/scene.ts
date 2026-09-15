@@ -34,6 +34,8 @@ import { Point } from '@ce/game/world';
 import {
   Effecting,
   Imaged,
+  Line,
+  NamedEdge,
   PLAIN,
   EdgeRun,
   Pattern,
@@ -49,6 +51,7 @@ import {
   imaged,
   isCCW,
   keeping,
+  named,
   nextOf,
   onBoundary,
   simplify,
@@ -2774,8 +2777,20 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its rounds and deforms, on its union after the depth. Absent is none. */
-  effects?: { e: Effecting, radius: number, amplitude: number }
+  /**
+   * Its rounds and deforms, on its union after the depth. Absent is none.
+   *
+   * `runs` are what the bake lays outright for its named edges, and `keep`
+   * the points of them it needs kept where they lie flat on the outline —
+   * see `Laying` in `bake.ts`.
+   */
+  effects?: {
+    e: Effecting
+    radius: number
+    amplitude: number
+    runs?: ReadonlyMap<number, EdgeRun>
+    keep?: readonly Point[]
+  }
   /**
    * The frame to keep the union's points in.
    *
@@ -2868,16 +2883,48 @@ function polygonsUnder(world: World, id: Id): PolygonKind[] {
  * and once more for every ghost on screen, about groups the hand is nowhere
  * near. See `remembered`.
  */
-const offsetUnion = remembered((shapes: readonly Shape[], depth: number, effects: readonly number[] | null): Shape => {
+const offsetUnion = remembered((
+  shapes: readonly Shape[],
+  depth: number,
+  effects: readonly number[] | null,
+  lines: readonly (readonly number[])[],
+  runs: readonly (readonly [number, readonly number[], readonly number[]])[],
+): Union => {
   const all = unionAll(shapes);
   const eroded = depth === 0 || all.length === 0 ? all : erode(all, depth);
 
-  if (effects === null || eroded.length === 0) return eroded;
+  if (lines.length === 0 && effects === null) return { shape: eroded, edges: NO_EDGES, lines: [] };
+
+  // Named after the lines its members' edges lie along, which is how a
+  // union's edge is the same edge from one instant to the next: see `named`.
+  const keys = named(eroded, lines.map(([fx, fy, tx, ty, key]) => ({ from: { x: fx, y: fy }, to: { x: tx, y: ty }, key })), depth);
+  const out: Line[] = eroded.flatMap((ring, r) => ring.flatMap((p, i) => {
+    const key = keys[r][i];
+
+    return key === null ? [] : [{ from: p, to: ring[(i + 1) % ring.length], key }];
+  }));
+
+  if (effects === null || eroded.length === 0) return { shape: eroded, edges: NO_EDGES, lines: out };
 
   const [radius, amplitude, ...option] = effects;
+  const laid = new Map(runs.map(([key, along, across]) => [key, { along, across }]));
+  const done = effectedAll(eroded, optionOf(option), radius, amplitude, keys, key => laid.get(key) ?? null);
 
-  return effectedAll(eroded, optionOf(option), radius, amplitude);
+  return { shape: done.shape, edges: done.edges, lines: out };
 });
+
+/**
+ * One slot of a scope, or all of what it puts into a set: its shape, where
+ * each of its named edges went (see `effected` in `geometry.ts`), and the
+ * named lines it hands on to a scope holding it.
+ */
+export interface Union {
+  shape: Shape
+  edges: ReadonlyMap<number, readonly NamedEdge[]>
+  lines: readonly Line[]
+}
+
+const NO_EDGES: ReadonlyMap<number, readonly NamedEdge[]> = new Map();
 
 /** A group's effects as `offsetUnion` takes them, or nothing where they do
  * nothing. */
@@ -2888,6 +2935,33 @@ function unionKey(s: Standing | null): number[] | null {
   if (!((fx.e.segments > 0 && fx.radius > 0) || (fx.e.spacing > 0 && fx.amplitude !== 0))) return null;
 
   return [fx.radius, fx.amplitude, ...optionKey(fx.e)];
+}
+
+/** Whether a group deforms, which is the one thing that reads its edges'
+ * names. */
+function deforming(s: Standing | null): boolean {
+  return s?.effects !== undefined && s.effects.e.spacing > 0;
+}
+
+/**
+ * A polygon's edges as lines, each named by the corner it starts at: the
+ * straight runs of its projection, which is what a union it is in has its
+ * edges along.
+ */
+export function linesOf(it: Resolved): Line[] {
+  const im = imagesOf(it) ?? imaged(
+    it.shape,
+    it.source,
+    it.rings,
+    i => it.depths?.[i] ?? it.erosion,
+    PLAIN,
+    () => 0,
+    () => 0,
+    j => j,
+    { radius: 0, amplitude: 0 },
+  );
+
+  return im.bases.flatMap((b, j) => (b === null ? [] : [{ from: b.from, to: b.to, key: it.corners[j].id }]));
 }
 
 export function contributed(
@@ -2903,7 +2977,10 @@ export function contributed(
    * owns the map because only the caller knows what makes two asks the same
    * ask — for the bake, the same instant.
    */
-  held?: Map<string, Shape>,
+  held?: Map<string, Union>,
+  /** Where each standing group's named edges went, by the group, for a caller
+   * that wants them: the bake, to lay and fade them. */
+  images?: Map<GroupId, Map<number, readonly NamedEdge[]>>,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
@@ -2946,18 +3023,33 @@ export function contributed(
     // back. A loose group, or one standing open, has no scope of its own and
     // hands its members up into this one.
     if (group.sealed && standing(id) !== null) {
-      return k === top(id, set) ? [resolves(id, set)] : [];
+      return k === top(id, set) ? [resolves(id, set).shape] : [];
     }
 
     return group.members.flatMap(m => from(m, set, k));
   };
 
-  /** One slot of one scope, offset by that scope's own depth the way the
-   * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): Shape => {
+  /** The named lines a member's edges lie along, as `from` gives its shapes:
+   * a polygon's own, and what a scope inside hands on. */
+  const linesFrom = (id: Id, set: SetName, k: number): readonly Line[] => {
+    const it = mine.get(id);
+
+    if (it !== undefined) return slotOf(kindOf(it.polygon), set) === k ? linesOf(it) : [];
+
     const group = world.groups.get(id);
 
     if (group === undefined) return [];
+    if (group.sealed && standing(id) !== null) return k === top(id, set) ? resolves(id, set).lines : [];
+
+    return group.members.flatMap(m => linesFrom(m, set, k));
+  };
+
+  /** One slot of one scope, offset by that scope's own depth the way the
+   * slot's place in the rule means. */
+  const slotted = (id: Id, set: SetName, k: number): Union => {
+    const group = world.groups.get(id);
+
+    if (group === undefined) return { shape: [], edges: NO_EDGES, lines: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -2977,8 +3069,25 @@ export function contributed(
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
 
-    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here));
+    // Named only where something reads the names: a deform, or a scope
+    // holding this one that does.
+    const lines = deforming(here) || naming.has(id)
+      ? group.members.flatMap(m => linesFrom(m, set, k)).map(l => [l.from.x, l.from.y, l.to.x, l.to.y, l.key])
+      : [];
+    const runs = [...(here?.effects?.runs ?? [])].map(([key, r]) => [key, r.along, r.across] as const);
+
+    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here), lines, runs);
   };
+
+  // The scopes whose edges something reads the names of: every one with a
+  // deform, and every scope inside one of those.
+  const naming = new Set<Id>();
+
+  for (const [id, group] of world.groups) {
+    if (group.sealed && deforming(standing(id))) {
+      for (const m of within(world, id)) naming.add(m);
+    }
+  }
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -2999,25 +3108,49 @@ export function contributed(
    * The fold starts at the scope's outermost slot rather than the first, so a
    * solid with voids in it is `solid - void` and not `nothing - (solid - void)`.
    */
-  const resolves = (id: Id, set: SetName): Shape => {
+  const resolves = (id: Id, set: SetName): Union => {
     const key = `${id}:${set}`;
-    const known = held?.get(key);
+    const known = local.get(key) ?? held?.get(key);
 
-    if (known !== undefined) return known;
+    if (known !== undefined) {
+      seen(id, known);
+
+      return known;
+    }
 
     const from = top(id, set);
-    const slots: Shape[] = [];
+    const slots: Union[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
-    const settles = slots.length === 0 ? [] : settled(slots);
-    const out = set === 'floor' && top(id, 'level') === 0
-      ? underfoot(settles, resolves(id, 'level'))
+    const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
+    const shape = set === 'floor' && top(id, 'level') === 0
+      ? underfoot(settles, resolves(id, 'level').shape)
       : settles;
+    const out: Union = {
+      shape,
+      edges: slots.length === 1 ? slots[0].edges : new Map(slots.flatMap(u => [...u.edges])),
+      lines: slots.flatMap(u => u.lines),
+    };
 
+    local.set(key, out);
     held?.set(key, out);
+    seen(id, out);
 
     return out;
+  };
+
+  const local = new Map<string, Union>();
+
+  /** A scope's named edges, for whoever asked for them. */
+  const seen = (id: Id, u: Union): void => {
+    if (images === undefined || u.edges.size === 0) return;
+
+    const mine = images.get(id) ?? new Map<number, readonly NamedEdge[]>();
+
+    for (const [key, edges] of u.edges) mine.set(key, edges);
+
+    images.set(id, mine);
   };
 
   const emit = (id: Id): void => {
@@ -3060,7 +3193,9 @@ export function contributed(
     // here and a floor there, and nothing that cuts either. Two ids, because
     // they are two boundaries. See `outermostSlot`.
     for (const set of SETS) {
-      const shape = resolves(id, set);
+      const union = resolves(id, set).shape;
+      const keep = how.effects?.keep ?? [];
+      const shape = keep.length === 0 ? union : keeping(union, keep);
 
       if (shape.length === 0) continue;
 
@@ -3308,7 +3443,7 @@ function withExtents(
    */
   const extent = (id: Id): Shape => held.get(id)
     ?? mine.get(id)
-    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0, null);
+    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0, null, [], []).shape;
 
   for (const id of missing) {
     const shape = extent(id);

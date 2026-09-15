@@ -2878,14 +2878,102 @@ export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effect
 }
 
 /**
+ * A line of a boundary, named: an edge of a member of a union, from one
+ * corner to the next, and the corner it starts at, whose id names it. What a
+ * union's edges are named after. See `named`.
+ */
+export interface Line {
+  from: Point
+  to: Point
+  key: number
+}
+
+/**
+ * Each edge of a union, named after the line it lies along: the member edge,
+ * moved in by `depth` as the union's own erosion moved it, running the same
+ * way. `null` where it lies along none — an edge the erosion made.
+ *
+ * A union keeps no names of its own; this reads them back off where each edge
+ * is, which is exact, because a union's edges are pieces of its members' and
+ * an offset moves each parallel to itself.
+ */
+export function named(union: Shape, lines: readonly Line[], depth: number): (number | null)[][] {
+  const snap = extentOf(union.length > 0 ? union : [[{ x: 0, y: 0 }]]) * 1e-7;
+  const moved = lines.flatMap(l => {
+    const dx = l.to.x - l.from.x, dy = l.to.y - l.from.y, len = Math.hypot(dx, dy);
+
+    if (len === 0) return [];
+
+    const ux = dx / len, uy = dy / len;
+
+    return [{ key: l.key, ux, uy, x: l.from.x - uy * depth, y: l.from.y + ux * depth }];
+  });
+
+  return union.map(ring => ring.map((p, i) => {
+    const q = ring[(i + 1) % ring.length];
+    const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy);
+
+    if (len === 0) return null;
+
+    for (const l of moved) {
+      if (dx * l.ux + dy * l.uy <= 0) continue;
+      if (Math.abs(dx * l.uy - dy * l.ux) / len > 1e-9) continue;
+      if (Math.abs((p.x - l.x) * l.uy - (p.y - l.y) * l.ux) > snap) continue;
+
+      return l.key;
+    }
+
+    return null;
+  }));
+}
+
+/** Where a named edge of a union went: its straight run, and its points. */
+export interface NamedEdge {
+  base: Base
+  points: Point[]
+}
+
+/**
  * A whole shape rounded and deformed alike everywhere, and taken through the
  * arrangement: what a group does to its union, which has no corners of its
- * own to name. Each edge's noise is keyed by where it is in its ring.
+ * own. Each edge's noise is keyed by its name where it has one — see `named` —
+ * and by where it is in its ring where it has none, and a named edge can have
+ * its points said outright (`runs`), which is what the bake does across a
+ * span. `edges` is where each named edge went: several, where a member's edge
+ * came out of the union in pieces.
  */
-export function effected(shape: Shape, e: Effecting, radius: number, amplitude: number): Cut {
-  if (radius <= 0 && amplitude === 0) return simplify(shape);
+export function effected(
+  shape: Shape,
+  e: Effecting,
+  radius: number,
+  amplitude: number,
+  keys: readonly (readonly (number | null)[])[] = [],
+  runs: (key: number) => EdgeRun | null = () => null,
+): { shape: Cut, edges: Map<number, NamedEdge[]> } {
+  const edges = new Map<number, NamedEdge[]>();
 
-  return simplify(shape.map(ring => shaped(ring, () => e, () => radius, () => amplitude, k => k).ring));
+  if (radius <= 0 && amplitude === 0) return { shape: simplify(shape), edges };
+
+  const rings = shape.map((ring, r) => {
+    const name = (k: number): number | null => keys[r]?.[k] ?? null;
+    const out = shaped(ring, () => e, () => radius, () => amplitude, k => name(k) ?? -1 - k, {
+      runs: k => {
+        const key = name(k);
+
+        return key === null ? null : runs(key);
+      },
+    });
+
+    out.edges.forEach((points, k) => {
+      const key = name(k);
+
+      if (key !== null) edges.set(key, [...(edges.get(key) ?? []), { base: out.bases[k], points }]);
+    });
+
+    return out.ring;
+  });
+
+  return { shape: simplify(rings), edges };
 }
 
 /**
