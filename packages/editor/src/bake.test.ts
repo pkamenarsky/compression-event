@@ -2194,8 +2194,8 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 });
 
 describe('effects', () => {
-  const ROUND: Effects = { round: { segments: 4, verticals: true } };
-  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both' } };
+  const ROUND: Effects = { round: { segments: 4, verticals: true, ends: true } };
+  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
 
@@ -2237,7 +2237,7 @@ describe('effects', () => {
     return worst;
   }
 
-  test('a radius growing from nought is one stretch, the ring as long at both ends', () => {
+  test('a bevel growing from nought is one stretch, the ring as long at both ends', () => {
     const { world, id } = room(ROUND);
     const w = wrote(world, 1, id, round(30));
     const span = run(bakeSpan(w, 0));
@@ -2253,7 +2253,7 @@ describe('effects', () => {
     expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(30 * 1e-2);
   });
 
-  test('a turning room at a fixed radius costs no stretches', () => {
+  test('a turning room at a fixed bevel costs no stretches', () => {
     const { world, id } = room(ROUND);
     const w = wrote(wrote(world, 0, id, round(30)), 1, id, spun(Math.PI / 3));
     const span = run(bakeSpan(w, 0));
@@ -2326,7 +2326,7 @@ describe('effects', () => {
     // Where a rounded tooth goes through straight on its way, its arc lies on
     // a line for an instant and the arrangement drops it there, and the bake
     // pins that instant; nothing moves either side of it.
-    const w = arriving({ ...ROUND, ...ZIGZAG }, round(20), deform(5));
+    const w = arriving({ ...ROUND, ...ZIGZAG }, round(10), deform(5));
     const span = run(bakeSpan(w, 0));
 
     expect(steadiest(w)).toBeLessThan(0.5);
@@ -2359,22 +2359,26 @@ describe('effects', () => {
   });
 
   test('a corner arriving inside a rounded corner\'s reach starts on the editor\'s outline', () => {
-    // Twenty along from a corner rounded at forty: on the stretch of wall the
-    // arc has rounded away. Put there, it would clamp the arc short at the
+    // Ten along from a corner rounded fifteen deep: on the stretch of wall
+    // the arc has rounded away. Put there, it would clamp the arc short at the
     // near end, where the editor has it whole.
+    //
+    // Not asked to be free of jumps: as it turns it wants more than half of
+    // the short wall between it and the corner, as that corner does, and the
+    // two arcs meet in the middle of it — an event, which the bake keeps as
+    // one.
     const { world, id } = room(ROUND);
-    const w0 = wrote(world, 0, id, round(40));
+    const w0 = wrote(world, 0, id, round(15));
     const it = resolveAt(w0, 1).find(r => r.id === id)!;
-    const grown = addVertex(w0, 1, it, 0, { x: -80, y: -100 }).world;
+    const grown = addVertex(w0, 1, it, 0, { x: -90, y: -100 }).world;
     const now = resolveAt(grown, 1).find(r => r.id === id)!;
     const where = now.corners.findIndex(c => c.birth === 1);
     const w = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -60 });
     const span = run(bakeSpan(w, 0));
 
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
     expect(count(span, 0)).toEqual(count(span, 1));
     expect(drift(w)).toBeLessThan(TOLERANCE);
-    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(40 * 1e-3);
+    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(15 * 1e-3);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
@@ -2406,7 +2410,7 @@ describe('effects', () => {
   });
 
   test('a smooth round stands verticals only at its tangent points', () => {
-    const { world, id } = room({ round: { segments: 4, verticals: false } });
+    const { world, id } = room({ round: { segments: 4, verticals: false, ends: true } });
     const w = wrote(wrote(world, 0, id, round(30)), 1, id, move(10, 0));
     const s = run(bakeSpan(w, 0)).tracks[0].stretches[0];
     let dark = 0, lit = 0;
@@ -2490,7 +2494,7 @@ describe('effects', () => {
     const diamond = [{ x: 104, y: 20 }, { x: 124, y: 40 }, { x: 104, y: 60 }, { x: 84, y: 40 }];
     const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
     const g = sealed(world, 0, ids, TOP)!;
-    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both' } };
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
     let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5));
 
     w = wrote(w, 1, ids[1], move(0, 60));
@@ -2507,7 +2511,7 @@ describe('effects', () => {
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
-  test('a group\'s radius growing from nought, on its union', () => {
+  test('a group\'s bevel growing from nought, on its union', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
     const w = wrote({ ...g.world, effects: new Map([[g.id, ROUND]]) }, 1, g.id, round(20));

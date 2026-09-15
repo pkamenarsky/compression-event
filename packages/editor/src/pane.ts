@@ -55,16 +55,21 @@ interface Model {
   pattern: Pattern
   sides: Sides
   seed: number
+  jitter: number
   erode: Some
   round: Some
   segments: number
   verticals: boolean
+  ends: boolean
   corners: boolean
   own: Some
 }
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDES: Sides[] = ['both', 'out', 'in'];
+
+/** The most jitter, in percent of the spacing. */
+const JITTER = 90;
 
 /** What the pane is about: the things picked, or the polygons of the corners
  * or edges picked. */
@@ -150,10 +155,12 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
     pattern: d.pattern,
     sides: d.sides,
     seed: d.seed,
+    jitter: d.jitter,
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     segments: r.segments,
     verticals: r.verticals,
+    ends: r.ends,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
@@ -185,8 +192,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     }
 
     const shown = name === 'round'
-      ? { segments: m.segments(), verticals: m.verticals() }
-      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed() };
+      ? { segments: m.segments(), verticals: m.verticals(), ends: m.ends() }
+      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
     return marked({ ...s, world, remembered }, s.world);
@@ -208,8 +215,11 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       field('spacing', number(m.spacing, 1, v => changed('deform', { spacing: v }))),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
-      // A seed is the noise's alone.
-      show(() => m.pattern() === 'noise', fragment(field('seed', number(m.seed, 0, v => changed('deform', { seed: Math.round(v) }))))),
+      // Out of the spacing, as a percentage, and short of a whole one: teeth
+      // strayed by as much as their spacing would pass each other.
+      field('jitter %', number(() => Math.round(m.jitter() * 100), 0, v => changed('deform', { jitter: Math.round(v) / 100 }), JITTER)),
+      // A seed is the noise's and the jitter's.
+      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', number(m.seed, 0, v => changed('deform', { seed: Math.round(v) }))))),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
@@ -218,6 +228,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     options(m.round, [
       field('segments', number(m.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
       field('verticals', tick(m.verticals, v => changed('round', { verticals: v }))),
+      // Where the arc starts off its edges.
+      field('ends', tick(m.ends, v => changed('round', { ends: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
@@ -271,11 +283,12 @@ const CONTROL = {
   padding: '1px 4px',
 } as const;
 
-function number(value: Value<number>, min: number, onchange: (v: number) => void): VNode {
+function number(value: Value<number>, min: number, onchange: (v: number) => void, max = Infinity): VNode {
   return input({
     type: 'number',
     value: () => String(value()),
     min: String(min),
+    ...(max === Infinity ? {} : { max: String(max) }),
     style: CONTROL,
     onchange: (e: Event) => {
       const el = e.target as HTMLInputElement;
@@ -284,7 +297,7 @@ function number(value: Value<number>, min: number, onchange: (v: number) => void
       el.blur();
 
       // Nothing it would take: back to what it says.
-      if (Number.isFinite(v) && v >= min) onchange(v);
+      if (Number.isFinite(v) && v >= min && v <= max) onchange(v);
       else el.value = String(value());
     },
   });

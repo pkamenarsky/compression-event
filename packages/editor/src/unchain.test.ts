@@ -188,10 +188,10 @@ describe('unchaining', () => {
     for (const w of [loose, later]) {
       const state = stateAt(w, id, 3);
 
-      expect([state.radius, state.amplitude, state.radii.get(corner)]).toEqual([4, 2, 3]);
+      expect([state.bevel, state.amplitude, state.bevels.get(corner)]).toEqual([4, 2, 3]);
     }
 
-    expect(stateAt(later, id, 1).radius).toBe(14);
+    expect(stateAt(later, id, 1).bevel).toBe(14);
   });
 
   test('a corner an upstream version deletes afterwards stays', () => {

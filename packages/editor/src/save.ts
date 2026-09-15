@@ -46,7 +46,10 @@ import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
  * 22: effects — which a thing has and how (`World.effects`, a corner's own in
  * `cornerEffects`), and the rounds and deforms in its timeline, a stand's
  * included. A 21 is the same with none, and is read as that; its bake stands,
- * since a world without effects bakes as it did.
+ * since a world without effects bakes as it did. A round's `ends` and a
+ * deform's `jitter` came later in 22, and are what they start as where a file
+ * has none; and a stand's bevels were first called its radius and radii,
+ * which are read as them.
  *
  * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
  * 20 is the same with every skew nought, and is read as that; its bake, which
@@ -142,10 +145,13 @@ export type SavedOp =
       corners: [VertexId, Point][]
       depths: [VertexId, number][]
       /** Absent in a 21, where they are nought. */
-      radius?: number
+      bevel?: number
       amplitude?: number
-      radii?: [VertexId, number][]
+      bevels?: [VertexId, number][]
       amplitudes?: [VertexId, number][]
+      /** What a 22 first called the bevels, when they were radii. */
+      radius?: number
+      radii?: [VertexId, number][]
     };
 
 export function saved(state: EditorState): Saved {
@@ -196,9 +202,9 @@ function savedEntry(e: Entry): SavedEntry {
         erosion: e.op.erosion,
         corners: [...e.op.corners],
         depths: [...e.op.depths],
-        radius: e.op.radius,
+        bevel: e.op.bevel,
         amplitude: e.op.amplitude,
-        radii: [...e.op.radii],
+        bevels: [...e.op.bevels],
         amplitudes: [...e.op.amplitudes],
       }
     : e.op;
@@ -212,13 +218,14 @@ function restoredEntry(e: SavedEntry): Entry {
   // A 20 has no skews: absent is nought.
   const op: Op = e.op.kind === 'stand'
     ? {
-        ...e.op,
+        kind: 'stand',
         frame: { ...e.op.frame, skew: e.op.frame.skew ?? 0 },
+        erosion: e.op.erosion,
         corners: new Map(e.op.corners),
         depths: new Map(e.op.depths),
-        radius: e.op.radius ?? 0,
+        bevel: e.op.bevel ?? e.op.radius ?? 0,
         amplitude: e.op.amplitude ?? 0,
-        radii: new Map(e.op.radii ?? []),
+        bevels: new Map(e.op.bevels ?? e.op.radii ?? []),
         amplitudes: new Map(e.op.amplitudes ?? []),
       }
     : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
@@ -256,8 +263,8 @@ export function restored(file: Saved): EditorState {
     keyframes: file.world.keyframes,
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredRig(rig)])),
     flags: new Map(file.world.flags ?? []),
-    effects: new Map(file.world.effects ?? []),
-    cornerEffects: new Map(file.world.cornerEffects ?? []),
+    effects: new Map((file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)])),
+    cornerEffects: new Map((file.world.cornerEffects ?? []).map(([c, fx]) => [c, optioned(fx)])),
   };
 
   return {
@@ -385,4 +392,15 @@ export function upload(then: (state: EditorState) => void): void {
   });
 
   input.click();
+}
+
+/** Effects with any option they were saved without at what it starts as: a
+ * round's `ends` and a deform's `jitter` came after the format did, and a file
+ * without them has every vertical and no jitter. */
+function optioned<E extends Partial<Effects>>(fx: E): E {
+  return {
+    ...fx,
+    ...(fx.round === undefined ? {} : { round: { ...REMEMBERED.round, ...fx.round } }),
+    ...(fx.deform === undefined ? {} : { deform: { ...REMEMBERED.deform, ...fx.deform } }),
+  };
 }

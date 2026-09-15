@@ -2559,16 +2559,18 @@ function norm(t: number): number {
 // the way corners do, and the machinery for that is the one already there.
 //
 // A round happens after the erosion, to the boundary: each corner becomes an
-// arc tangent to its two edges (`rounded`), teeth included. A round of `r`
-// is the same radius wherever it is, since it is taken of what is seen; and a
-// group's is taken of its union, so the joins between its rooms are not
-// rounded.
+// arc tangent to its two edges (`rounded`), teeth included. A round's amount
+// is its bevel: how deep from the corner, along each edge, its arc starts —
+// the same at any angle, so a sharp corner and a blunt one are cut back
+// alike, and the radius is whatever the angle makes of it. It is the same
+// bevel wherever it is, since it is taken of what is seen; and a group's is
+// taken of its union, so the joins between its rooms are not rounded.
 //
-// A rounded corner is always `segments + 1` points, whatever its radius,
+// A rounded corner is always `segments + 1` points, whatever its bevel,
 // nought included, and in the thing's own frame every point is linear in the
-// radius: a tangent point is the corner plus a multiple of it along a fixed
-// edge direction, an arc point a centre moving with it plus the radius along
-// a fixed direction. Where a radius of nought makes an arc's points coincide
+// bevel: a tangent point is the corner plus it along a fixed edge direction,
+// an arc point the tangent point plus a multiple of it along fixed
+// directions. Where a bevel of nought makes an arc's points coincide
 // they are still all there, on one point, and the arrangement welds them; the
 // bake seeds such an end rather than collapse it. A corner running straight
 // through never collapses: its arc is a sliver of a run along its wall, which
@@ -2596,10 +2598,15 @@ export interface Effecting {
   pattern: Pattern
   seed: number
   sides: Sides
+  /** How far each tooth may stray from where the spacing puts it, as a
+   * fraction of the spacing: the gaps between teeth come out anywhere within
+   * that fraction of the spacing either way. Below one, so that no two teeth
+   * pass each other. */
+  jitter: number
 }
 
 /** No effects at all: every corner a point and every edge straight. */
-export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both' };
+export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
 
 /** An edge's teeth: each a fraction of the way along it, a distance off it
  * out of the material where positive, and which tooth it is, counted from
@@ -2622,6 +2629,10 @@ export interface EdgeRun {
  * loses them into nothing; none of the others moves off the spacing, and the
  * pattern is about as dense on every edge. Tooth `j` is the same tooth
  * however long the edge is.
+ *
+ * With a jitter, each tooth is moved off its place along the edge by up to
+ * half the jitter's share of the spacing, either way, by the seed: its own
+ * stray, the same however long the edge is, so the pattern stays continuous.
  */
 export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
   const anchor = length / 2;
@@ -2632,7 +2643,8 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   const first = Math.ceil(-anchor / e.spacing), last = Math.floor((length - anchor) / e.spacing);
 
   for (let j = first; j <= last; j++) {
-    const at = anchor + j * e.spacing;
+    const stray = e.jitter > 0 ? e.jitter * e.spacing * (hashed(e.seed, ~key, j) - 0.5) : 0;
+    const at = anchor + j * e.spacing + stray;
     const room = Math.min(1, Math.min(at, length - at) / e.spacing);
 
     if (room <= 0) continue;
@@ -2755,17 +2767,17 @@ export function subdivided(
  * `segments + 1` points of its arc from the edge coming in to the edge going
  * out.
  *
- * The arc is tangent to both edges, and the tangent length `r · tan(θ/2)` is
- * clamped to half of each edge less what the neighbour takes of it — all of
- * what is left, where the neighbour wants less than half. A clamped corner is
- * rounded at the radius that fits. A radius of nought is its arc's points all
- * on the corner.
+ * The arc is tangent to both edges, `bevel` along each from the corner, or
+ * less where the corner barely turns (see `BLUNT`), and clamped to half of
+ * each edge less what the neighbour takes of it — all of what is left, where
+ * the neighbour wants less than half. A bevel of nought is its arc's points
+ * all on the corner.
  *
  * Nothing here cares which way the ring is wound: an arc lies inside the
  * angle of its corner, which takes material off a corner that turns in and
  * adds it to one that turns out.
  */
-function arcs(ring: Ring, segmentsOf: (i: number) => number, radius: (i: number) => number): Point[][] {
+function arcs(ring: Ring, segmentsOf: (i: number) => number, bevel: (i: number) => number): Point[][] {
   const n = ring.length;
   const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
   const unit = (from: Point, to: Point, l: number): Point | null =>
@@ -2777,22 +2789,22 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, radius: (i: number)
     b: unit(v, ring[(i + 1) % n], lengths[i]),
   }));
 
+  // A corner that barely turns is cut back less than its bevel, down to a
+  // sliver of it where it runs straight through. A corner arriving on an edge
+  // is flat as it comes, and at its whole bevel it would take room from the
+  // arcs beside it the instant it appeared, and move them. A sliver rather
+  // than none: its arc is then a short straight run along the wall, not all
+  // of its points on one, so it keeps every one of them whatever lies beside
+  // it. Still linear in the bevel.
   const wants = ring.map((_v, i) => {
     const { a, b } = ways[i];
-    const r = Math.max(0, radius(i));
+    const d = Math.max(0, bevel(i));
 
-    if (segmentsOf(i) === 0 || r === 0 || a === null || b === null) return 0;
+    if (segmentsOf(i) === 0 || d === 0 || a === null || b === null) return 0;
 
-    const half = Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y) / 2;
-    const tan = Math.tan(half);
+    const turn = Math.PI - Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y);
 
-    // A hairpin wants the whole of both edges, and gets what is left of them.
-    // A corner running straight through wants a sliver of them, never none:
-    // its arc is then a short straight run along the wall rather than all of
-    // its points on one, so it keeps every one of them whatever lies beside
-    // it. Still linear in the radius, and the same limit a turning corner
-    // approaches as it straightens.
-    return tan < 1e-12 ? Infinity : r * Math.max(1 / tan, SEEDING);
+    return d * Math.max(SEEDING, Math.sin(Math.PI / 2 * Math.min(1, turn / BLUNT)));
   });
 
   const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
@@ -2818,7 +2830,7 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, radius: (i: number)
     // Walked from the first tangent point: heading back along the edge in,
     // turning through `turn` towards the edge out, on the circle whose
     // tangent length is `t`. Every step is `t` times something of the angle
-    // alone, which is what keeps it linear in the radius; and a corner
+    // alone, which is what keeps it linear in the bevel; and a corner
     // straightening is a turn going to nought, where the arc goes over into
     // the straight run from one tangent point to the other rather than
     // sending a centre off to infinity. A hairpin turns right round on a
@@ -2847,8 +2859,33 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, radius: (i: number)
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
  * its edges. See `arcs`. */
-export function rounded(ring: Ring, radius: (i: number) => number, segments: number): Ring {
-  return arcs(ring, () => segments, radius).flat();
+export function rounded(ring: Ring, bevel: (i: number) => number, segments: number): Ring {
+  return arcs(ring, () => segments, bevel).flat();
+}
+
+/** Where a round stands its verticals: along the inside of its arcs, and at
+ * their two ends, where it starts off the edges. See `Effects.round`. */
+export interface Stands {
+  verticals: boolean
+  ends: boolean
+}
+
+/**
+ * The points of one corner's arc that stand no vertical: its inside unless it
+ * stands `verticals`, and its two ends unless it stands `ends`. An arc of no
+ * bevel is a corner, and stands one.
+ *
+ * The one answer to the question, which the still and the morph both ask
+ * here — for a polygon's corners and a group's union alike — so the walls
+ * standing and the walls in flight cannot disagree about a vertical.
+ */
+export function unstood(run: readonly Point[], stands: Stands): Point[] {
+  const n = run.length;
+  const first = run[0], last = run[n - 1];
+
+  if (n < 2 || (first.x === last.x && first.y === last.y)) return [];
+
+  return run.filter((_p, k) => (k === 0 || k === n - 1 ? !stands.ends : !stands.verticals));
 }
 
 /** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
@@ -2858,24 +2895,24 @@ export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effect
 }
 
 /**
- * The points of a whole shape's arcs, rounded alike everywhere, bar each arc's
- * tangent points: where a round that stands no verticals along its arcs has
- * none. The same construction as `effected`, before the arrangement.
+ * The points of a whole shape's arcs, rounded alike everywhere, that stand no
+ * vertical. See `unstood`. The same construction as `effected`, before the
+ * arrangement.
  */
-export function arcInteriors(shape: Shape, segments: number, radius: number): Point[] {
-  if (radius <= 0 || segments <= 1) return [];
+export function unstoodAll(shape: Shape, segments: number, bevel: number, stands: Stands): Point[] {
+  if (bevel <= 0 || segments <= 0 || (stands.verticals && stands.ends)) return [];
 
-  return shape.flatMap(ring => arcs(ring, () => segments, () => radius).flatMap(run => run.slice(1, -1)));
+  return shape.flatMap(ring => arcs(ring, () => segments, () => bevel).flatMap(run => unstood(run, stands)));
 }
 
 /**
  * A whole shape rounded alike everywhere, and taken through the arrangement:
  * what a group does to its union, which has no corners of its own to name.
  */
-export function effected(shape: Shape, segments: number, radius: number): Cut {
-  if (radius <= 0 || segments <= 0) return simplify(shape);
+export function effected(shape: Shape, segments: number, bevel: number): Cut {
+  if (bevel <= 0 || segments <= 0) return simplify(shape);
 
-  return simplify(shape.map(ring => rounded(ring, () => radius, segments)));
+  return simplify(shape.map(ring => rounded(ring, () => bevel, segments)));
 }
 
 /**
@@ -2924,7 +2961,7 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
  *
  * The one construction for both. A source corner's image is where `mitred`
  * puts it, matched to a vertex of `eroded` by position; that vertex takes the
- * corner's radius and segments. A corner that is flat in the source is not a
+ * corner's bevel and segments. A corner that is flat in the source is not a
  * vertex of `eroded` — the arrangement dropped it — so its image is put back
  * into the edge it lies on first, where its arc is a sliver along it. What is
  * the image of nothing — a corner the erosion made — takes `rest`.
@@ -2943,8 +2980,8 @@ export function imaged(
   rings: readonly number[],
   depth: (i: number) => number,
   segments: (i: number) => number,
-  radius: (i: number) => number,
-  rest: { radius: number, segments: number },
+  bevel: (i: number) => number,
+  rest: { bevel: number, segments: number },
 ): Imaged {
   const n = source.length;
   const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
@@ -2989,7 +3026,7 @@ export function imaged(
     const run = arcs(
       ring.map(v => v.p),
       k => (ring[k].owner >= 0 ? segments(ring[k].owner) : rest.segments),
-      k => (ring[k].owner >= 0 ? radius(ring[k].owner) : rest.radius),
+      k => (ring[k].owner >= 0 ? bevel(ring[k].owner) : rest.bevel),
     );
 
     ring.forEach((v, k) => {
@@ -3002,10 +3039,14 @@ export function imaged(
   return { shape, corners };
 }
 
+/** How little a corner may turn and still be cut back its whole bevel: less,
+ * and it is cut back in proportion, down to `SEEDING` of it. See `arcs`. */
+const BLUNT = Math.PI / 6;
+
 /** How far apart what would otherwise be one point is laid, against what it
  * grows to: small enough to read as a point, and far above the arrangement's
- * own tolerance. A flat corner's tangent length against its radius, and the
- * bake's amount at nought against the other end's. */
+ * own tolerance. A straight corner's cut against its bevel, and the bake's
+ * amount at nought against the other end's. */
 export const SEEDING = 1e-3;
 
 // -----------------------------------------------------------------------------

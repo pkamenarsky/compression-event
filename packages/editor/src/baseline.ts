@@ -213,7 +213,11 @@ export function digest(world: World): Record<string, string> {
 
   for (const [from, span] of spans) out[`span ${from}`] = hashed(span);
 
-  out.shipped = hashed(shipped(world, { spans, progress: null }));
+  // Without the walls each version stands, which master does not ship: they
+  // are the editor's own view's, and held to the bake by `export.test.ts`.
+  const level = shipped(world, { spans, progress: null });
+
+  out.shipped = hashed({ ...level, versions: level.versions.map(({ walls: _walls, ...v }) => v) });
 
   return out;
 }
@@ -227,8 +231,8 @@ function hashed(value: unknown): string {
 
     // A stand's amounts, which a world without effects has at nought and
     // master did not write at all.
-    if ((key === 'radius' || key === 'amplitude') && v === 0) return undefined;
-    if ((key === 'radii' || key === 'amplitudes') && v instanceof Map && v.size === 0) return undefined;
+    if ((key === 'bevel' || key === 'amplitude') && v === 0) return undefined;
+    if ((key === 'bevels' || key === 'amplitudes') && v instanceof Map && v.size === 0) return undefined;
 
     if (v instanceof Map) return { map: [...v] };
     if (v instanceof Set) return { set: [...v] };

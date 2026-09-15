@@ -571,18 +571,21 @@ export interface World {
  *
  * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
  * effects a thing has, and how, is one fact about it over every keyframe, as
- * its shape is, and how much — the radius, the amplitude — is an operation,
+ * its shape is, and how much — the bevel, the amplitude — is an operation,
  * like erosion. A count, a pattern or a seed does not change over time.
  *
- * - `round`: each corner an arc of `segments` segments, one being a chamfer.
- *   `verticals` off stands verticals only at the tangent points, so the round
- *   reads smooth rather than faceted.
- * - `deform`: points put into each edge every `spacing` of its length, pushed
- *   off it by the pattern. `seed` is the noise's.
+ * - `round`: each corner an arc of `segments` segments, one being a chamfer,
+ *   starting as deep along each edge as its bevel. `verticals` off stands
+ *   none along the inside of its arcs, so the round reads smooth rather than
+ *   faceted; `ends` off none where they start off the edges, so it runs into
+ *   them unbroken. See `unstood` in `geometry.ts`.
+ * - `deform`: points put into each edge every `spacing` of its length, each
+ *   strayed along it by up to `jitter` of the spacing, and pushed off it by
+ *   the pattern. `seed` is the noise's and the jitter's.
  */
 export interface Effects {
-  round?: { segments: number, verticals: boolean, off?: boolean }
-  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, off?: boolean }
+  round?: { segments: number, verticals: boolean, ends: boolean, off?: boolean }
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
 }
@@ -592,8 +595,8 @@ export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
 
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
-  round: { segments: 4, verticals: true },
-  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both' },
+  round: { segments: 4, verticals: true, ends: true },
+  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
 };
 
 /**
@@ -895,12 +898,12 @@ export interface Timed {
   /** Where it starts: where the keyframe before the copy left it. */
   start: Frame
   erosion: number
-  /** Its radius and amplitude there, as `erosion`. Absent is nought. */
-  radius?: number
+  /** Its bevel and amplitude there, as `erosion`. Absent is nought. */
+  bevel?: number
   amplitude?: number
   /** Where it stood at the copy keyframe, everything there in: what a stamp
    * starts at. */
-  stood: { frame: Frame, erosion: number, radius?: number, amplitude?: number }
+  stood: { frame: Frame, erosion: number, bevel?: number, amplitude?: number }
   /** Each keyframe's list from the copy on, by offset. */
   keys: [number, Entry[]][]
   /** Its effects. Absent is none. */
@@ -936,9 +939,9 @@ export type Clipping =
       points: Vertex[]
       /** The extra depth on single corners at the copy keyframe. */
       depths: [VertexId, number][]
-      /** The extra radius on single corners there, and amplitude on single
+      /** The extra bevel on single corners there, and amplitude on single
        * edges. Absent is none. */
-      radii?: [VertexId, number][]
+      bevels?: [VertexId, number][]
       amplitudes?: [VertexId, number][]
       /** Nudges, depths, rounds and deforms on single corners after it, by
        * offset. */

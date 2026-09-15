@@ -501,7 +501,7 @@ describe('effect amounts', () => {
 
     tl = keyed(tl, 2, P, [repeating(round(1), null), repeating(deform(0.5), 2)]);
 
-    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).radius)).toEqual([5, 5, 6, 7, 8]);
+    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).bevel)).toEqual([5, 5, 6, 7, 8]);
     expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).amplitude)).toEqual([1, 1, 1.5, 2, 2]);
   });
 
@@ -519,7 +519,7 @@ describe('effect amounts', () => {
     expect(appending([once(erode(2))], once(round(0)))).toEqual([once(erode(2))]);
   });
 
-  test('a corner\'s radius and an edge\'s amplitude are over the thing\'s own, and repeat', () => {
+  test('a corner\'s bevel and an edge\'s amplitude are over the thing\'s own, and repeat', () => {
     let rig = cornerRounded(EMPTY_RIG, 102, 0, 3);
 
     rig = edgeDeformed(rig, 101, 1, 2);
@@ -527,8 +527,8 @@ describe('effect amounts', () => {
 
     const tl = rigged(room, P, rig);
 
-    expect(stateAt(tl, P, 0).radii.get(102)).toBe(3);
-    expect(stateAt(tl, P, 3).radii.get(102)).toBe(3);
+    expect(stateAt(tl, P, 0).bevels.get(102)).toBe(3);
+    expect(stateAt(tl, P, 3).bevels.get(102)).toBe(3);
     expect(stateAt(tl, P, 0).amplitudes.has(101)).toBe(false);
     expect(stateAt(tl, P, 3).amplitudes.get(101)).toBe(6);
     expect(cornerRounded(rig, 102, 0, -3).rounds.size).toBe(0);
@@ -541,14 +541,14 @@ describe('effect amounts', () => {
     tl = keyed(tl, 3, P, [{
       ...NOTHING_STANDS,
       corners: stateAt(tl, P, 2).corners,
-      radius: 2,
+      bevel: 2,
       amplitude: 1,
-      radii: new Map([[102, 1]]),
+      bevels: new Map([[102, 1]]),
     }]);
 
-    expect(stateAt(tl, P, 3).radius).toBe(2);
+    expect(stateAt(tl, P, 3).bevel).toBe(2);
     expect(stateAt(tl, P, 3).amplitude).toBe(1);
-    expect([...stateAt(tl, P, 3).radii]).toEqual([[102, 1]]);
+    expect([...stateAt(tl, P, 3).bevels]).toEqual([[102, 1]]);
     expect(stateAt(tl, P, 5).amplitude).toBe(3);
   });
 
@@ -566,9 +566,9 @@ const NOTHING_STANDS: Stand = {
   erosion: 0,
   corners: new Map(),
   depths: new Map(),
-  radius: 0,
+  bevel: 0,
   amplitude: 0,
-  radii: new Map(),
+  bevels: new Map(),
   amplitudes: new Map(),
 };
 
@@ -582,9 +582,9 @@ describe('stands', () => {
     erosion: 4,
     corners: new Map([[100, { x: 0, y: 0 }], [101, { x: 20, y: 0 }], [102, { x: 20, y: 20 }]]),
     depths: new Map([[101, 1]]),
-    radius: 0,
+    bevel: 0,
     amplitude: 0,
-    radii: new Map(),
+    bevels: new Map(),
     amplitudes: new Map(),
   };
 

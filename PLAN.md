@@ -400,8 +400,7 @@ Deform and round, around erosion: `deform → erode → round`, in that order
 always. A deform happens to a thing's rings before anything else, as though
 its teeth had been drawn by hand; a round happens to the boundary the
 erosion leaves, teeth included, so a rounded zigzag is a wave. Chamfer is a
-round of one segment, so its cut follows the radius (`r·tan(θ/2)` along each
-edge) rather than being a length of its own.
+round of one segment, so its cut is the round's bevel along each edge.
 
 Done, on the branch `effect-stack`.
 
@@ -419,8 +418,8 @@ keyframe, as its shape is; how much is an op, like erosion.
 
 ```ts
 interface Effects {
-  round?: { segments: number, verticals: boolean }
-  deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both' }
+  round?: { segments: number, verticals: boolean, ends: boolean }
+  deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both', jitter: number }
 }
 
 // World
@@ -429,7 +428,7 @@ cornerEffects: Map<VertexId, Partial<Effects>>   // a corner's own, over its thi
 
 type Op =
   | …
-  | { kind: 'round', by: number }    // radius
+  | { kind: 'round', by: number }    // bevel
   | { kind: 'deform', by: number }   // amplitude
 
 interface Rig {
@@ -439,9 +438,9 @@ interface Rig {
 }
 ```
 
-- `State` gains `radius` and `amplitude`, summed like `erosion`, and per
-  corner and per edge maps (`radii`, `amplitudes`) summed like `depths`: a
-  corner's radius is its thing's plus its own, and an edge's amplitude its
+- `State` gains `bevel` and `amplitude`, summed like `erosion`, and per
+  corner and per edge maps (`bevels`, `amplitudes`) summed like `depths`: a
+  corner's bevel is its thing's plus its own, and an edge's amplitude its
   thing's plus its own. A stand records all four.
 - Two of either at one keyframe add, and adjacent ones merge as erosions do.
   They commute with the frame ops, so their place in a list does not matter.
@@ -465,6 +464,10 @@ interface Rig {
   `spacing` out from its middle, pushed off it by the amplitude times the
   pattern, and from there the teeth are corners like any other — eroded,
   rounded, drawn, baked. Taking the effect off undoes it.
+- **A jitter** strays each tooth along its edge by up to `jitter / 2` of the
+  spacing either way, by the seed and the tooth, so the gaps come out within
+  `jitter` of the spacing. Below one, so no two teeth pass each other; the
+  stray is the tooth's own, so the pattern stays continuous.
 - **Spacing and amplitude are lengths in the world**, taken of the ring as
   placed, so density follows the edge as drawn and a room scaled up gains
   teeth.
@@ -493,31 +496,41 @@ interface Rig {
 
 #### Round
 
+- **The amount is a bevel**: how far along each edge from the corner the arc
+  starts, the same at any angle: its `bevel`, and a corner's own `bevels`
+  (it was a radius first, and a 22 saved then says `radius` and `radii`).
+  A corner turning less than `BLUNT` (30°) is cut back
+  in proportion, on a sine, down to a sliver: one arriving flat on an edge
+  would otherwise take room from the arcs beside it as it appeared.
 - `rounded`, on the eroded boundary: each corner becomes `segments + 1`
   points on the arc tangent to its two edges, the tangent length clamped to
   half of each edge less what the neighbour takes of it — all of what is
   left, where the neighbour wants less. Holes too. The arc is walked from its
   first tangent point, so it stays exact as a corner straightens.
-- A corner running straight through has a tangent length of at least
-  `SEEDING` of its radius, so its arc is a sliver of a run along its wall,
-  never one point.
+- A corner running straight through has a tangent length of `SEEDING` of
+  its depth, so its arc is a sliver of a run along its wall, never one point.
 - An arc's points stand verticals by default, so a round is faceted;
-  `round.verticals` off leaves only the tangent points standing them, and
-  the round reads smooth.
+  `round.verticals` off stands none along its inside, so it reads smooth,
+  and `round.ends` off none at its tangent points, so it runs into its edges
+  unbroken. Which points is `unstood`'s answer alone, and both the still
+  (`sourced`, through `Contributed.unstood`) and the bake (`fadingPoints`,
+  `groupFading`) ask it, so they cannot disagree. An arc of no depth is a
+  corner and stands one; in a span, what an arc hides is solid at an end
+  where it has none, so nothing pops at a keyframe.
 - **`imaged`**: the round built off where each source corner lands after
   the erosion (`mitred`), matched to the eroded boundary by position, with a
   corner flat in the source put back on its edge first; and where each
   corner's arc went. The projection is built by it, and the bake asks it
   (`imagesOf` in world units) rather than `mitred`, so the two cannot
   disagree.
-- In the thing's own frame a tangent point is the corner plus a multiple of
-  `r` along a fixed edge direction, and an arc point a centre moving with `r`
-  plus `r` along a fixed direction: linear in the radius, so the bake's lerp
-  is exact wherever only the radius moves, and `projection` divides radius
-  by `s` under a similarity as it does depths.
+- In the thing's own frame a tangent point is the corner plus the bevel
+  along a fixed edge direction, and an arc point that plus a multiple of it
+  along fixed directions: linear in the bevel, so the bake's lerp is exact
+  wherever only the bevel moves, and `projection` divides the bevel by `s`
+  under a similarity as it does depths.
 - **A group rounds its union** (`effected`, in `offsetUnion`), after its
   depth, so the joins between its rooms are not rounded. A union has no
-  corner ids, so a group has no per-corner radii.
+  corner ids, so a group has no per-corner bevels.
 
 #### The bake
 
@@ -534,7 +547,7 @@ vertical over the span.
 - **A rounded corner's image is `segments + 1` points**, so `invented` and
   `fading` walk a rounded polygon's arcs as slots and ask `imaged` where
   they are.
-- **A degenerate end is seeded, never collapsed.** A radius of nought at one
+- **A degenerate end is seeded, never collapsed.** A bevel of nought at one
   end and more at the other is `SEEDING` of the other there; the tiny arc
   turns, and the arrangement keeps it unasked. A flat corner's arc is
   already a sliver along its wall, which `keeping` takes.
@@ -629,7 +642,7 @@ Done (`effects.ts`, `pane.ts`), differently in these places:
    kept points and fading. Tests. — done
 5. The gestures, the options pane, the icons. — done
 6. The save format. — done: 22 writes `effects` and `cornerEffects`, a
-   rig's `rounds` and `deforms`, and a stand's radius, amplitude and their
+   rig's `rounds` and `deforms`, and a stand's bevel, amplitude and their
    per-corner maps. A 21 reads as a world without effects, its bake kept. The
    converter still writes 21.
 
@@ -688,7 +701,7 @@ Graph editor; motion path on the canvas; radial picker for overlaps; echo
   going through straight.
 - **Erosion eats teeth.** A deform is drawn in before the erosion, so an
   erosion deep enough wears the teeth down, as it would teeth drawn by hand.
-- **A rounded, deformed near end is a sliver off.** A radius seeded from
+- **A rounded, deformed near end is a sliver off.** A bevel seeded from
   nought is `SEEDING` of the far end's, so the bake's first frame is that far
   from the editor's.
 - **Resolving a deformed group bakes what is inside it.** Its members' own

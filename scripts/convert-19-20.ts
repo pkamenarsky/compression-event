@@ -472,9 +472,9 @@ export function converted(old: Old): Converted {
           // whatever the footing said.
           corners: new Map([...footing.local].filter(([v]) => !bornAt(id, v, k))),
           depths: new Map(footing.depths),
-          radius: 0,
+          bevel: 0,
           amplitude: 0,
-          radii: new Map(),
+          bevels: new Map(),
           amplitudes: new Map(),
         });
       }

@@ -136,6 +136,7 @@ import {
   erodedRingCorners,
   ground,
   SEEDING,
+  Stands,
   keeping,
   mitred,
   nextOf,
@@ -148,6 +149,7 @@ import {
   Contributed,
   EMPTY_LIVE,
   Effected,
+  Fade,
   IDENTITY,
   Placed,
   Resolved,
@@ -176,6 +178,7 @@ import {
   unplace,
   resolveAt,
   roundOf,
+  unstoodOf,
 } from './scene';
 import {
   ArtefactId,
@@ -711,9 +714,10 @@ interface Moving extends Rider {
    * lerped. See `effectsOver`.
    */
   effected: [Effected, Effected] | null
-  /** Which corners' arcs stand verticals at their tangent points only. See
-   * `Effects.round`. */
-  smooth: boolean[]
+  /** Which corners are rounded by anything at each end, before any seeding:
+   * where an arc stands fewer verticals than a corner does, an end that is a
+   * corner has them solid. See `unstoodOf`. */
+  rounded: [boolean[], boolean[]]
 }
 
 /**
@@ -1183,9 +1187,9 @@ function moving(world: World, from: number): Moving[] {
 }
 
 /** A thing's amounts where it is not there: none. */
-const NOTHING: Pick<State, 'radius' | 'radii'> = {
-  radius: 0,
-  radii: new Map(),
+const NOTHING: Pick<State, 'bevel' | 'bevels'> = {
+  bevel: 0,
+  bevels: new Map(),
 };
 
 /**
@@ -1193,10 +1197,10 @@ const NOTHING: Pick<State, 'radius' | 'radii'> = {
  * Nothing where it has none. Its deform is not here: that is in its corners
  * already, teeth and all, and the bake carries them as it carries any.
  *
- * A degenerate end is seeded, never collapsed. A radius of nought at one end
+ * A degenerate end is seeded, never collapsed. A bevel of nought at one end
  * and more at the other is `SEEDING` of the other there, so the arc turns,
  * however little, and the arrangement keeps its points unasked: the ring is
- * the same length at both ends. So is the polygon's own radius, which what
+ * the same length at both ends. So is the polygon's own bevel, which what
  * the erosion made takes and no slot answers for.
  */
 function effectsOver(
@@ -1204,32 +1208,28 @@ function effectsOver(
   id: Id,
   corners: readonly Vertex[],
   ends: [State | null, State | null],
-): Pick<Moving, 'effected' | 'smooth'> {
-  const none = { effected: null, smooth: corners.map(() => false) };
+): Pick<Moving, 'effected' | 'rounded'> {
+  const square = corners.map(() => false);
+  const none = { effected: null, rounded: [square, square] as [boolean[], boolean[]] };
   const two = ends.map(e => effectedOf(world, id, corners, e ?? NOTHING)) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
   // Where it has no effects at one end, it has them at nought there: the
   // options are a fact about the thing, and the same at both.
-  const fx = world.effects.get(id);
-  const bare = (e: Effected | null, other: Effected): Effected => e ?? { ...other, radii: other.radii.map(() => 0), radius: 0 };
+  const bare = (e: Effected | null, other: Effected): Effected => e ?? { ...other, bevels: other.bevels.map(() => 0), bevel: 0 };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
-    radii: e.radii.map((r, i) => (e.segments[i] > 0 ? seed(r, o.radii[i]) : r)),
-    radius: seed(e.radius, o.radius),
+    bevels: e.bevels.map((r, i) => (e.segments[i] > 0 ? seed(r, o.bevels[i]) : r)),
+    bevel: seed(e.bevel, o.bevel),
   });
 
   return {
     effected: [seeded(a, b), seeded(b, a)],
-    smooth: corners.map(c => {
-      const round = roundOf(fx, world.cornerEffects.get(c.id));
-
-      return round !== undefined && !round.verticals && round.segments > 1;
-    }),
+    rounded: two.map(e => corners.map((_c, i) => e !== null && e.segments[i] > 0 && e.bevels[i] > 0)) as [boolean[], boolean[]],
   };
 }
 
@@ -1240,8 +1240,8 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
 
   return {
     ...e[0],
-    radii: e[0].radii.map((r, i) => mix(r, e[1].radii[i], t)),
-    radius: mix(e[0].radius, e[1].radius, t),
+    bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
+    bevel: mix(e[0].bevel, e[1].bevel, t),
   };
 }
 
@@ -1389,8 +1389,8 @@ function world1(items: Moving[], t: number): Resolved[] {
  * the span and one arriving goes 0 to 1, so the line fades over exactly the
  * stretch the vertex is emerging through.
  */
-function fading(m: Moving, it: Resolved, t: number): number[][] | null {
-  return paintedOn(it.shape, fadingPoints(m, it, t));
+function fading(world: World, m: Moving, it: Resolved, t: number): number[][] | null {
+  return paintedOn(it.shape, fadingPoints(world, m, it, t));
 }
 
 /**
@@ -1399,9 +1399,17 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * shape, so that a scope holding the polygon can put it onto its own. See
  * `groupFading`.
  */
-function fadingPoints(m: Moving, it: Resolved, t: number): { p: Point, v: number }[] {
-  if (m.effected !== null) return fadingSlots(m, it, t);
+function fadingPoints(world: World, m: Moving, it: Resolved, t: number): Fade[] {
+  if (m.effected === null) return fadingCorners(m, it, t);
 
+  // Where its arcs stand no vertical, solid only where an end has no arc.
+  const unstood = unstoodOf(world, it, i => mix(m.rounded[0][i] ? 0 : 1, m.rounded[1][i] ? 0 : 1, t));
+
+  return [...fadingSlots(m, it, t), ...unstood];
+}
+
+/** `fadingPoints` for a polygon with no round: its corners dead at an end. */
+function fadingCorners(m: Moving, it: Resolved, t: number): Fade[] {
   const out: { p: Point, v: number }[] = [];
 
   for (let i = 0; i < m.corners.length; i++) {
@@ -1438,29 +1446,14 @@ function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): nu
   return any ? out : null;
 }
 
-/**
- * `fadingPoints` for a polygon with a round, slot by slot: every point of a slot
- * flat at one end fades over the span. And a smooth corner's arc stands no
- * verticals but at its tangent points, at any instant.
- */
-function fadingSlots(m: Moving, it: Resolved, t: number): { p: Point, v: number }[] {
-  const out = slots(m, it).flatMap(slot => {
+/** `fadingPoints` for a polygon with a round, slot by slot: every point of a
+ * slot flat at one end fades over the span. */
+function fadingSlots(m: Moving, it: Resolved, t: number): Fade[] {
+  return slots(m, it).flatMap(slot => {
     const v = mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t);
 
     return slot.points.map(p => ({ p, v }));
   });
-
-  if (m.smooth.some(x => x)) {
-    const im = imagesOf(it);
-
-    m.smooth.forEach((on, i) => {
-      const run = on ? im?.corners[i] : null;
-
-      if (run !== null && run !== undefined) for (const p of run.slice(1, -1)) out.push({ p, v: 0 });
-    });
-  }
-
-  return out;
 }
 
 /**
@@ -1485,15 +1478,15 @@ function groupFading(
 
   const set = setOf(side.kind);
 
-  // A smooth round's arcs stand nothing but at their tangent points.
-  const points: { p: Point, v: number }[] = (side.smooth ?? []).map(p => ({ p, v: 0 }));
+  // Where its own arcs stand no vertical.
+  const points: Fade[] = [...(side.unstood ?? [])];
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
 
     if (m === undefined || it === undefined) continue;
 
-    const mine = fadingPoints(m, it, t);
+    const mine = fadingPoints(world, m, it, t);
 
     if (mine.length === 0) continue;
 
@@ -1591,9 +1584,9 @@ export interface Cast {
   /** Group to its depth at each end of the span, for the groups that have one
    * at either end. A depth arriving is a depth in flight like any other. */
   scopes: Map<GroupId, [number, number]>
-  /** Each scope's effects: its options, and its radius and amplitude at each
+  /** Each scope's effects: its options, and its bevel and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, { segments: number, radius: [number, number], smooth: boolean }>
+  shapes: Map<GroupId, { segments: number, bevel: [number, number], stands: Stands, rounded: [boolean, boolean] }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1653,8 +1646,9 @@ function casting(world: World, from: number): Cast {
 
     shapes.set(id, {
       segments: round.segments,
-      radius: [seed(was.radius, now.radius), seed(now.radius, was.radius)],
-      smooth: !round.verticals,
+      bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
+      stands: round,
+      rounded: [was.bevel > 0, now.bevel > 0],
     });
   }
 
@@ -1709,7 +1703,13 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: { segments: fx.segments, radius: mix(fx.radius[0], fx.radius[1], t), smooth: fx.smooth },
+          effects: {
+            segments: fx.segments,
+            bevel: mix(fx.bevel[0], fx.bevel[1], t),
+            stands: fx.stands,
+            // As a polygon's: solid only where an end has no arc. See `fadingPoints`.
+            solid: mix(fx.rounded[0] ? 0 : 1, fx.rounded[1] ? 0 : 1, t),
+          },
         }),
       };
     },
@@ -1906,7 +1906,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     // Only a polygon has source corners, and only they can be invented; a
     // scope's side fades where its polygons' do.
     const m = moving.get(it.id), mine = was.get(it.id);
-    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
+    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(cast.world, m, mine, t);
 
     if (how !== null) fade.set(it.id, how);
   }

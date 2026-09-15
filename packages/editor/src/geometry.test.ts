@@ -40,9 +40,11 @@ import {
   deformed,
   imaged,
   patterned,
+  patternRun,
   rounded,
   SEEDING,
   subdivided,
+  unstood,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -1811,7 +1813,7 @@ describe('round and deform', () => {
     expect(deformed(square, () => 0, zigzag)).toHaveLength(16);
   });
 
-  test('an arc is tangent to both edges, and on the circle of its radius', () => {
+  test('an arc is tangent to both edges, and on a circle', () => {
     const out = rounded(square, () => 2, 6);
     const centre = { x: 2, y: 2 };
 
@@ -1820,10 +1822,10 @@ describe('round and deform', () => {
     }
   });
 
-  test('an arc is linear in its radius, and a tooth in its amplitude', () => {
+  test('an arc is linear in its bevel, and a tooth in its amplitude', () => {
     const lerps = (a: Point[], b: Point[], mid: Point[]) =>
       mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
-    const arcs = (r: number) => imaged([square], square, [0], () => 0, () => 3, () => r, { radius: 0, segments: 0 }).shape[0];
+    const arcs = (r: number) => imaged([square], square, [0], () => 0, () => 3, () => r, { bevel: 0, segments: 0 }).shape[0];
 
     lerps(arcs(1), arcs(3), arcs(2));
 
@@ -1921,8 +1923,8 @@ describe('round and deform', () => {
     const room: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
     const depth = 1;
     const eroded = erode(simplify([room]), depth);
-    const image = (radius: (i: number) => number) =>
-      imaged(eroded, room, [0], () => depth, () => 3, radius, { radius: 0, segments: 0 });
+    const image = (bevel: (i: number) => number) =>
+      imaged(eroded, room, [0], () => depth, () => 3, bevel, { bevel: 0, segments: 0 });
 
     test('a flat corner is put back, and its arc is a sliver of the floor', () => {
       expect(eroded[0]).toHaveLength(4);
@@ -1950,7 +1952,7 @@ describe('round and deform', () => {
         { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 2 }, { x: 10, y: 2 }, { x: 10, y: 10 }, { x: 0, y: 10 },
       ];
       const deep = erode(simplify([arm]), 2);
-      const it = imaged(deep, arm, [0], () => 2, () => 3, () => 1, { radius: 0, segments: 0 });
+      const it = imaged(deep, arm, [0], () => 2, () => 3, () => 1, { bevel: 0, segments: 0 });
 
       expect(it.corners[1]).toBeNull();
       expect(it.corners[2]).toBeNull();
@@ -1987,5 +1989,63 @@ describe('round and deform', () => {
       expect(p.x).toBeCloseTo(out[5 + k].x, 9);
       expect(p.y).toBeCloseTo(out[5 + k].y, 6);
     });
+  });
+
+  test('a round starts as deep along each edge as it says, whatever the angle', () => {
+    // A right angle, a sharp one and a blunt one, each rounded four deep.
+    const rings: Ring[] = [
+      [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 0, y: 20 }],
+      [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20 * Math.cos(Math.PI / 6), y: 20 * Math.sin(Math.PI / 6) }],
+      [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20 * Math.cos(2 * Math.PI / 3), y: 20 * Math.sin(2 * Math.PI / 3) }],
+    ];
+
+    for (const ring of rings) {
+      const out = rounded(ring, i => (i === 0 ? 4 : 0), 3);
+      const [a, b] = [out[0], out[3]];
+
+      expect(Math.hypot(a.x, a.y)).toBeCloseTo(4, 9);
+      expect(Math.hypot(b.x, b.y)).toBeCloseTo(4, 9);
+    }
+  });
+
+  test('which of an arc\'s points stand no vertical', () => {
+    const arc = rounded(square, i => (i === 0 ? 4 : 0), 4).slice(0, 5);
+
+    expect(unstood(arc, { verticals: true, ends: true })).toEqual([]);
+    expect(unstood(arc, { verticals: false, ends: true })).toEqual(arc.slice(1, 4));
+    expect(unstood(arc, { verticals: true, ends: false })).toEqual([arc[0], arc[4]]);
+    expect(unstood(arc, { verticals: false, ends: false })).toEqual(arc);
+
+    // An arc of no depth is a corner, and stands its one vertical.
+    const none = rounded(square, () => 0, 4).slice(0, 5);
+
+    expect(unstood(none, { verticals: false, ends: false })).toEqual([]);
+  });
+
+  test('a jitter strays each tooth by its seed, and keeps it the same tooth', () => {
+    const plain = patternRun(zigzag, 5, 1, 40);
+    const jittered = patternRun({ ...zigzag, jitter: 0.5, seed: 3 }, 5, 1, 40);
+    const at = (run: typeof plain) => run.along.map(u => u * 40);
+
+    // The same teeth, each moved, and none further than a quarter of the
+    // spacing: half the jitter's share of it, either way.
+    expect(jittered.teeth).toEqual(plain.teeth);
+    expect(at(jittered)).not.toEqual(at(plain));
+    at(jittered).forEach((x, k) => expect(Math.abs(x - at(plain)[k])).toBeLessThanOrEqual(3 * 0.25));
+
+    // The gaps within half the spacing of it, either way.
+    at(jittered).slice(1).forEach((x, k) => {
+      const gap = x - at(jittered)[k];
+
+      expect(gap).toBeGreaterThanOrEqual(3 * 0.5);
+      expect(gap).toBeLessThanOrEqual(3 * 1.5);
+    });
+
+    // Its own stray, the same on a longer edge: tooth for tooth, off the
+    // middle by the same.
+    const longer = patternRun({ ...zigzag, jitter: 0.5, seed: 3 }, 5, 1, 46);
+    const mid = (run: typeof plain, l: number, j: number) => run.along[run.teeth.indexOf(j)] * l - l / 2;
+
+    expect(mid(longer, 46, 2)).toBeCloseTo(mid(jittered, 40, 2), 9);
   });
 });

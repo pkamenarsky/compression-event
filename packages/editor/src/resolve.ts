@@ -616,19 +616,19 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // ring is the union they rounded and deformed.
   const eroding = new Map<KeyframeId, readonly Entry[]>();
   const fx = world.effects.get(id);
-  let was = { erosion: 0, radius: 0, amplitude: 0 };
+  let was = { erosion: 0, bevel: 0, amplitude: 0 };
 
   for (const k of standing) {
     const state = stateAt(world, id, k);
     const now = {
       erosion: depths(world, k).get(id) ?? 0,
-      radius: fx === undefined ? 0 : state.radius,
+      bevel: fx === undefined ? 0 : state.bevel,
       amplitude: fx === undefined ? 0 : state.amplitude,
     };
     const list: Entry[] = [];
 
     if (now.erosion !== was.erosion) list.push(once({ kind: 'erode', by: now.erosion - was.erosion }));
-    if (now.radius !== was.radius) list.push(once({ kind: 'round', by: now.radius - was.radius }));
+    if (now.bevel !== was.bevel) list.push(once({ kind: 'round', by: now.bevel - was.bevel }));
     if (now.amplitude !== was.amplitude) list.push(once({ kind: 'deform', by: now.amplitude - was.amplitude }));
     if (list.length > 0) eroding.set(k, list);
 

@@ -18,7 +18,7 @@
 //   skew   p = F(ref);  shear by `by` about p along the thing's first axis;
 //          then T(shift)
 //   erode  erosion += by
-//   round  radius += by
+//   round  bevel += by
 //   deform amplitude += by
 //   stand  the state is these numbers, whatever came before
 //
@@ -148,10 +148,10 @@ export interface Erode {
 }
 
 /**
- * How far a thing's corners are rounded: the radius of the arc each becomes.
- * Which rounding — how many segments, whether they stand verticals — is not
- * an operation but a fact about the thing, over every keyframe. See `Effects`
- * in `types.ts`.
+ * How far a thing's corners are rounded: its bevel, how deep along each edge
+ * from the corner the arc each becomes starts. Which rounding — how many segments, where they stand
+ * verticals — is not an operation but a fact about the thing, over every
+ * keyframe. See `Effects` in `types.ts`.
  */
 export interface Round {
   kind: 'round'
@@ -173,7 +173,7 @@ export type Amount = Erode | Round | Deform;
 /**
  * A thing's state, outright: what unchaining writes.
  *
- * Everything the walk carries, frozen — the frame, the depth, radius and
+ * Everything the walk carries, frozen — the frame, the depth, bevel and
  * amplitude, which corners stand and where, and the amounts on single corners
  * and edges. Played, it replaces
  * whatever the walk had arrived at, so a thing standing on one stops hearing
@@ -187,9 +187,9 @@ export interface Stand {
    * which corners there were. */
   corners: ReadonlyMap<VertexId, Point>
   depths: ReadonlyMap<VertexId, number>
-  radius: number
+  bevel: number
   amplitude: number
-  radii: ReadonlyMap<VertexId, number>
+  bevels: ReadonlyMap<VertexId, number>
   amplitudes: ReadonlyMap<VertexId, number>
 }
 
@@ -230,7 +230,7 @@ export interface Rig {
   nudges: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Move>>>
   /** Extra depth on single corners, over the thing's own. */
   depths: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Erode>>>
-  /** Extra radius on single corners, over the thing's own. */
+  /** Extra bevel on single corners, over the thing's own. */
   rounds: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Round>>>
   /** Extra amplitude on single edges, over the thing's own, each by the
    * corner it starts at. */
@@ -327,11 +327,11 @@ export interface State {
   depths: ReadonlyMap<VertexId, number>
   /** How far its corners are rounded, and its edges deformed: what its
    * rounds and deforms add up to. */
-  radius: number
+  bevel: number
   amplitude: number
-  /** The extra radius on single corners, and amplitude on single edges by
+  /** The extra bevel on single corners, and amplitude on single edges by
    * the corner each starts at. Absent is nought. */
-  radii: ReadonlyMap<VertexId, number>
+  bevels: ReadonlyMap<VertexId, number>
   amplitudes: ReadonlyMap<VertexId, number>
 }
 
@@ -345,9 +345,9 @@ const UNBORN: State = {
   erosion: 0,
   corners: NO_CORNERS,
   depths: NO_DEPTHS,
-  radius: 0,
+  bevel: 0,
   amplitude: 0,
-  radii: NO_DEPTHS,
+  bevels: NO_DEPTHS,
   amplitudes: NO_DEPTHS,
 };
 
@@ -675,7 +675,7 @@ function walk(
 
   let frame = REST;
   let erosion = 0;
-  let radius = 0;
+  let bevel = 0;
   let amplitude = 0;
   let running: Running[] = [];
 
@@ -697,7 +697,7 @@ function walk(
         erosion += op.by;
       }
       else if (op.kind === 'round') {
-        radius += op.by;
+        bevel += op.by;
       }
       else if (op.kind === 'deform') {
         amplitude += op.by;
@@ -705,7 +705,7 @@ function walk(
       else if (op.kind === 'stand') {
         frame = op.frame;
         erosion = op.erosion;
-        radius = op.radius;
+        bevel = op.bevel;
         amplitude = op.amplitude;
       }
       else {
@@ -750,9 +750,9 @@ function walk(
       erosion,
       corners: none ? NO_CORNERS : standingAt(keyframes, rig, corners, stood, i),
       depths: none ? NO_DEPTHS : amountsAt(keyframes, rig.depths, stood?.op.depths, corners, stood, i),
-      radius,
+      bevel,
       amplitude,
-      radii: none ? NO_DEPTHS : amountsAt(keyframes, rig.rounds, stood?.op.radii, corners, stood, i),
+      bevels: none ? NO_DEPTHS : amountsAt(keyframes, rig.rounds, stood?.op.bevels, corners, stood, i),
       amplitudes: none ? NO_DEPTHS : amountsAt(keyframes, rig.deforms, stood?.op.amplitudes, corners, stood, i),
     };
   }
@@ -819,7 +819,7 @@ function standingAt(
 }
 
 /**
- * One of the amounts kept by corner — depths, radii, amplitudes — for every
+ * One of the amounts kept by corner — depths, bevels, amplitudes — for every
  * corner standing at `i`: what the stand froze, and what its entries have added
  * since.
  */

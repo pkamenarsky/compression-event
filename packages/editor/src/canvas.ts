@@ -140,7 +140,6 @@ import {
   EMPTY_SELECTION,
   ArtefactType,
   EditorState,
-  Effects,
   Id,
   Options as EffectOptions,
   PathId,
@@ -581,9 +580,9 @@ export function worldCanvas(
           return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
         }
 
-        // A radius and an amplitude the same way, with right as more: a
-        // corner rounded further and an edge thrown further out both add to
-        // the shape rather than eat into it. The vertical is the option's.
+        // A bevel and an amplitude the same way, with right as more:
+        // a corner rounded further and an edge thrown further out both add to
+        // the shape rather than eat into it. The vertical is the spacing's.
         if (code === 'KeyB' || code === 'KeyD') {
           const more = to.x - from.x;
 
@@ -742,7 +741,7 @@ export function worldCanvas(
       // where it is.
       const kind = AMOUNTS[code];
 
-      // A depth, a radius and an amplitude are all about an outline, and a
+      // A depth, a bevel and an amplitude are all about an outline, and a
       // point has none. So an artefact sits them out rather than being handed
       // a key that means nothing to it — every other transform means what it
       // means to anything else.
@@ -790,7 +789,6 @@ export function worldCanvas(
       // amount of something that does not apply is invisible — and gives one
       // that has never had it the options last used. From there it works
       // over that.
-      const effect = kind === 'round' || kind === 'deform' ? kind : null;
       const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
       const on = kind === undefined ? was : switchedOn(was, targets, kind, remembered());
 
@@ -865,9 +863,11 @@ export function worldCanvas(
 
       const { aim, scaling } = readers(code, pivot, from, down);
 
-      // The first target's options as the vertical has left them, which is
-      // what the label says and what is remembered at the end.
-      let options: Options | null = null;
+      // The first target's deform as the vertical has left its spacing, which
+      // is what the label says and what is remembered at the end. A round's
+      // vertical is drift: its bevel is the amount, and its segments are the
+      // pane's.
+      let options: Spacing | null = null;
 
       const end = yield* select({
         moving: pointerMoved(e => {
@@ -875,11 +875,11 @@ export function worldCanvas(
           const factor = scaling(e);
           const by = to.y - from.y;
 
-          // Each thing's own option, moved by the same reading of the
+          // Each thing's own spacing, moved by the same reading of the
           // vertical, at every keyframe: an option is not in the timeline.
-          const each = effect === null
+          const each = kind !== 'deform'
             ? []
-            : targets.map(id => [id, optioned(base.effects.get(id)![effect]!, down.y - e.clientY, free(e))] as const);
+            : targets.map(id => [id, spaced(base.effects.get(id)!.deform!, down.y - e.clientY, free(e))] as const);
 
           options = each[0]?.[1] ?? null;
 
@@ -888,7 +888,7 @@ export function worldCanvas(
           update(s => {
             let world = base;
 
-            for (const [id, now] of each) world = withEffect(world, id, effect!, now);
+            for (const [id, now] of each) world = withEffect(world, id, 'deform', now);
 
             // Its own point and its own facing, off the same reading of the
             // drag the operations get: a move is where the cursor has gone, and
@@ -926,13 +926,13 @@ export function worldCanvas(
       setLocal({ ...local(), previewing: false, reading: null });
       cursor('');
 
-      // What was used is what the next thing given this effect starts with.
-      const used = end.tag === 'cancel' || effect === null ? null : options;
+      // What was used is what the next thing deformed starts with.
+      const used = end.tag === 'cancel' ? null : options;
 
       update(s => {
         const out = settled(s, was, end.tag === 'cancel');
 
-        return used === null || effect === null ? out : { ...out, remembered: { ...out.remembered, [effect]: used } };
+        return used === null ? out : { ...out, remembered: { ...out.remembered, deform: used } };
       });
     }
 
@@ -2333,7 +2333,7 @@ export function worldCanvas(
               removing();
             }
             // The amounts are the transforms the corner and edge tools have a
-            // use for: a depth, a radius or an amplitude on what is picked is
+            // use for: a depth, a bevel or an amplitude on what is picked is
             // a corner's gesture or an edge's. Every other transform is about
             // where a whole thing is and stays where it was.
             else if (tool() === 'point' && AMOUNTS[e.code] !== undefined
@@ -2724,42 +2724,32 @@ const EDITED: Partial<Record<Operation['kind'], string>> = {
   deform: 'KeyD',
 };
 
-/** A round's options or a deform's. */
-type Options = Required<Effects>['round' | 'deform'];
+/** A deform's options, whose spacing the vertical moves. */
+type Spacing = EffectOptions['deform'];
 
 /** Screen pixels of vertical drift an effect gesture ignores, so that a hand
  * dragging sideways for the amount leaves the option alone. */
 const DRIFT = 12;
 
-/** The most segments a round is given from the hand. */
-const SEGMENTS = 16;
-
 /**
- * An effect's option moved by how far the hand has gone up, past the drift:
- * a segment every `PER_SIDE` pixels, as an n-gon gains sides, or the spacing
+ * A deform's spacing moved by how far the hand has gone up, past the drift:
  * doubled every `DOUBLING`, as a scale is — a spacing is a length, and wants
  * a factor rather than a step.
  */
-function optioned(o: Options, up: number, free: boolean): Options {
+function spaced(o: Spacing, up: number, free: boolean): Spacing {
   const past = Math.sign(up) * Math.max(0, Math.abs(up) - DRIFT);
-
-  if ('segments' in o) {
-    return { ...o, segments: Math.min(SEGMENTS, Math.max(1, o.segments + Math.round(past / PER_SIDE))) };
-  }
-
   const spacing = o.spacing * Math.pow(2, past / DOUBLING);
 
   return { ...o, spacing: free ? spacing : Math.max(1, Math.round(spacing)) };
 }
 
 /** What an amount gesture has come to, for the label by the cursor. */
-function amountLabel(kind: AmountKind, by: number, o: Options | null): string {
+function amountLabel(kind: AmountKind, by: number, o: Spacing | null): string {
   const n = `${by > 0 ? '+' : ''}${Math.round(by * 10) / 10}`;
 
-  if (o !== null && 'segments' in o) return `radius ${n} · ${o.segments} ${o.segments === 1 ? 'segment' : 'segments'}`;
   if (o !== null) return `amplitude ${n} · every ${Math.round(o.spacing * 10) / 10}`;
 
-  return kind === 'erode' ? `depth ${n}` : `${kind} ${n}`;
+  return kind === 'erode' ? `depth ${n}` : kind === 'round' ? `bevel ${n}` : `${kind} ${n}`;
 }
 
 /** The gestures that write an amount rather than move anything, and the kind
@@ -2791,7 +2781,7 @@ const TRANSFORMS: Record<string, Mode> = {
   // thing whichever way a group has been turned.
   KeyE: (_p, { from, to }) => ({ kind: 'erode', by: to.y - from.y }),
 
-  // The same for a radius and an amplitude, which are lengths in no frame
+  // The same for a bevel and an amplitude, which are lengths in no frame
   // either.
   KeyB: (_p, { from, to }) => ({ kind: 'round', by: to.y - from.y }),
   KeyD: (_p, { from, to }) => ({ kind: 'deform', by: to.y - from.y }),

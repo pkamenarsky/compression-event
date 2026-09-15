@@ -53,10 +53,12 @@ import {
   subdivided,
   simplify,
   sliced,
+  Stands,
   intersect,
   subtract,
   unionAll,
-  arcInteriors,
+  unstood,
+  unstoodAll,
 } from './geometry';
 import {
   ArtefactId,
@@ -244,8 +246,8 @@ export interface Resolved {
 
 /**
  * What rounds a polygon's projection, corner by corner and index for index
- * with `Resolved.corners`: each corner's segments, and its whole radius — the
- * polygon's with the corner's own on top. `own` and `radius` are the
+ * with `Resolved.corners`: each corner's segments, and its whole bevel — the
+ * polygon's with the corner's own on top. `own` and `bevel` are the
  * polygon's, for a corner the erosion made rather than any of its own.
  *
  * A length, so a frame that scales divides it the way it divides a depth.
@@ -254,9 +256,9 @@ export interface Resolved {
  */
 export interface Effected {
   segments: readonly number[]
-  radii: readonly number[]
+  bevels: readonly number[]
   own: number
-  radius: number
+  bevel: number
 }
 
 /**
@@ -286,6 +288,38 @@ export function eroding(world: World, id: Id): boolean {
   return world.effects.get(id)?.erode?.off !== true;
 }
 
+/** A point with how solid the vertical standing on it is: nought for none. */
+export interface Fade {
+  p: Point
+  v: number
+}
+
+/**
+ * The points of a polygon's arcs that stand no vertical, each as solid as
+ * `solid` says of the corner it is on: nought at a keyframe, and part way
+ * where the bake is bringing an arc in. See `unstood`, which says which.
+ */
+export function unstoodOf(world: Pick<World, 'effects' | 'cornerEffects'>, it: Resolved, solid: (corner: number) => number): Fade[] {
+  const fx = world.effects.get(it.id);
+  const rounds = it.corners.map(c => roundOf(fx, world.cornerEffects.get(c.id)));
+
+  if (rounds.every(r => r === undefined || (r.verticals && r.ends))) return [];
+
+  const im = imagesOf(it);
+
+  if (im === null) return [];
+
+  return rounds.flatMap((r, i) => {
+    const run = im.corners[i];
+
+    if (r === undefined || run === null) return [];
+
+    const v = solid(i);
+
+    return unstood(run, r).map(p => ({ p, v }));
+  });
+}
+
 /** A thing's options, with a corner's own over them where it has them. */
 export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effecting {
   const round = roundOf(fx, own);
@@ -297,12 +331,13 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
     pattern: deform?.pattern ?? PLAIN.pattern,
     seed: deform?.seed ?? 0,
     sides: deform?.sides ?? PLAIN.sides,
+    jitter: deform?.jitter ?? 0,
   };
 }
 
 /**
  * A polygon's round at its standing corners, from its options in the world
- * and its radii as a keyframe leaves them — or as the bake has them part way
+ * and its bevels as a keyframe leaves them — or as the bake has them part way
  * along. Nothing where it is not rounded, or not by anything there: then the
  * projection is its erosion alone, exactly as it always was.
  */
@@ -310,7 +345,7 @@ export function effectedOf(
   world: Pick<World, 'effects' | 'cornerEffects'>,
   id: Id,
   corners: readonly Vertex[],
-  amounts: Pick<State, 'radius' | 'radii'>,
+  amounts: Pick<State, 'bevel' | 'bevels'>,
 ): Effected | null {
   const fx = world.effects.get(id);
 
@@ -318,22 +353,22 @@ export function effectedOf(
 
   return shaping({
     segments: corners.map(c => effecting(fx, world.cornerEffects.get(c.id)).segments),
-    radii: corners.map(c => amounts.radius + (amounts.radii.get(c.id) ?? 0)),
+    bevels: corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0)),
     own: effecting(fx).segments,
-    radius: amounts.radius,
+    bevel: amounts.bevel,
   });
 }
 
 /** A round kept only where it does something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.segments.some((n, i) => n > 0 && e.radii[i] > 0) || (e.own > 0 && e.radius > 0);
+  const any = e.segments.some((n, i) => n > 0 && e.bevels[i] > 0) || (e.own > 0 && e.bevel > 0);
 
   return any ? e : null;
 }
 
 /** A round as numbers, lengths divided by `s`, for `project`. */
 function effectKey(e: Effected, s = 1): Key[] {
-  return [e.segments as number[], e.radii.map(r => r / s), e.own, e.radius / s];
+  return [e.segments as number[], e.bevels.map(r => r / s), e.own, e.bevel / s];
 }
 
 /**
@@ -828,7 +863,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[],
 ): Imaged => {
-  const [segments, radii, own, radius] = effects as [number[], number[], number, number];
+  const [segments, bevels, own, bevel] = effects as [number[], number[], number, number];
 
   return imaged(
     offsetOf(source, rings, erosion, depths),
@@ -836,8 +871,8 @@ const imagedBy = remembered((
     rings,
     i => depths?.[i] ?? erosion,
     i => segments[i],
-    i => radii[i],
-    { radius, segments: own },
+    i => bevels[i],
+    { bevel, segments: own },
   );
 });
 
@@ -1676,12 +1711,12 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
 
   let frame = base === null ? REST : before.frame;
   let erosion = base === null ? 0 : before.erosion;
-  let radius = base === null ? 0 : before.radius;
+  let bevel = base === null ? 0 : before.bevel;
   let amplitude = base === null ? 0 : before.amplitude;
 
   for (const op of steps) {
     if (op.kind === 'erode') erosion += op.by;
-    else if (op.kind === 'round') radius += op.by;
+    else if (op.kind === 'round') bevel += op.by;
     else if (op.kind === 'deform') amplitude += op.by;
     else frame = played(frame, op);
   }
@@ -1717,9 +1752,9 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
     erosion,
     corners,
     depths: less(here.depths, rig.depths),
-    radius,
+    bevel,
     amplitude,
-    radii: less(here.radii, rig.rounds),
+    bevels: less(here.bevels, rig.rounds),
     amplitudes: less(here.amplitudes, rig.deforms),
   };
 }
@@ -2456,7 +2491,7 @@ function inward1(
         ...held,
         frame,
         erosion: inner.erosion,
-        radius: inner.radius,
+        bevel: inner.bevel,
         amplitude: inner.amplitude,
       }];
     }
@@ -2697,9 +2732,9 @@ export interface Contributed {
   /** The bake's invented corners, carried through the arrangement. A group's
    * union has none: nothing invents a corner on it. See `Resolved.keep`. */
   keep?: readonly Point[]
-  /** A group's arc points that stand no verticals: its round's, where the
-   * round is smooth. See `Effects.round`. */
-  smooth?: readonly Point[]
+  /** Its arcs' points that stand no vertical, and how solid each is. See
+   * `unstood` in `geometry.ts`. */
+  unstood?: readonly Fade[]
 }
 
 /**
@@ -2731,7 +2766,7 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
 
   if (round === undefined) return undefined;
 
-  return { segments: round.segments, radius: stateAt(world, id, v).radius, smooth: !round.verticals };
+  return { segments: round.segments, bevel: stateAt(world, id, v).bevel, stands: round };
 }
 
 /**
@@ -2882,9 +2917,10 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its round, on its union after the depth, and whether its arcs stand
-   * verticals only at their tangent points. Absent is none. */
-  effects?: { segments: number, radius: number, smooth?: boolean }
+  /** Its round, on its union after the depth, and where its arcs stand
+   * verticals — how solid those they do not stand are, nought unless the
+   * bake says otherwise. Absent is none. */
+  effects?: { segments: number, bevel: number, stands?: Stands, solid?: number }
   /**
    * The frame to keep the union's points in.
    *
@@ -3016,7 +3052,7 @@ const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: 
 function unionKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
-  return fx === undefined || fx.segments <= 0 || fx.radius <= 0 ? null : [fx.segments, fx.radius];
+  return fx === undefined || fx.segments <= 0 || fx.bevel <= 0 ? null : [fx.segments, fx.bevel];
 }
 
 export function contributed(
@@ -3109,10 +3145,11 @@ export function contributed(
     const round = unionKey(here);
     const union = offsetUnion(shapes, depth, round);
 
-    // Where a round standing no verticals along its arcs has its arcs, for the
-    // bake to lay flat. Off the union before the round, as `effected` takes it.
-    const smooth = round !== null && here?.effects?.smooth === true
-      ? arcInteriors(offsetUnion(shapes, depth, null), round[0], round[1])
+    // Where its arcs stand no verticals, for the walls to leave out. Off the
+    // union before the round, as `effected` takes it.
+    const stands = here?.effects?.stands;
+    const smooth = round !== null && stands !== undefined
+      ? unstoodAll(offsetUnion(shapes, depth, null), round[0], round[1], stands)
       : [];
 
     // What its members keep for the bake, moved in with their edges: a union
@@ -3208,6 +3245,10 @@ export function contributed(
     const it = mine.get(id);
 
     if (it !== undefined) {
+      // At an instant an arc of no depth is a corner, and `unstood` says so:
+      // nothing here is part way.
+      const unstoodHere = unstoodOf(world, it, () => 0);
+
       parts(kindOf(it.polygon)).forEach((kind, k) => {
         out.push({
           id: k === 0 ? id : sideOf(id, kind),
@@ -3217,6 +3258,7 @@ export function contributed(
           // Already an arrangement, whatever its depth. See `plainly`.
           simple: true,
           keep: it.keep,
+          ...(unstoodHere.length === 0 ? {} : { unstood: unstoodHere }),
         });
       });
 
@@ -3249,7 +3291,8 @@ export function contributed(
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
-      const smooth = smoothed.get(`${id}:${set}`) ?? [];
+      const v = how.effects?.solid ?? 0;
+      const unstood = (smoothed.get(`${id}:${set}`) ?? []).map(p => ({ p, v }));
 
       out.push({
         id: sideOf(id, kind),
@@ -3257,7 +3300,7 @@ export function contributed(
         shape,
         frame: how.frame ?? IDENTITY,
         simple: true,
-        ...(smooth.length === 0 ? {} : { smooth }),
+        ...(unstood.length === 0 ? {} : { unstood }),
       });
     }
   };
@@ -3876,8 +3919,23 @@ export function floorRuns(l: Live): Point[][] {
  * agree about every vertical.
  */
 export function sourced(l: Live): { points: Point[], corner: boolean[] }[] {
-  return pieces(l.level).map(p => ({ points: p.points, corner: p.corner }));
+  return pieces(l.level).map(p => {
+    const off = (l.seen.get(p.source)?.unstood ?? []).filter(f => f.v < 0.5);
+
+    if (off.length === 0) return { points: p.points, corner: p.corner };
+
+    // Where its arcs stand no vertical, the same points the bake fades. See
+    // `unstood` in `geometry.ts`.
+    const snap = SNAP * Math.max(1, ...off.map(f => Math.max(Math.abs(f.p.x), Math.abs(f.p.y))));
+    const flat = (q: Point) => off.some(f => Math.abs(f.p.x - q.x) <= snap && Math.abs(f.p.y - q.y) <= snap);
+
+    return { points: p.points, corner: p.corner.map((c, i) => c && !flat(p.points[i])) };
+  });
 }
+
+/** How near a piece's point is to one of its arcs', against how far out they
+ * are: far under any arc's spacing, and over the arrangement's. */
+const SNAP = 1e-7;
 
 /**
  * The sets brought up to date against `items`, doing only the work the
@@ -4534,12 +4592,12 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     return {
       start: frame,
       erosion: stand?.erosion ?? was?.erosion ?? 0,
-      radius: stand?.radius ?? was?.radius ?? 0,
+      bevel: stand?.bevel ?? was?.bevel ?? 0,
       amplitude: stand?.amplitude ?? was?.amplitude ?? 0,
       stood: {
         frame: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
         erosion: state.erosion,
-        radius: state.radius,
+        bevel: state.bevel,
         amplitude: state.amplitude,
       },
       keys,
@@ -4608,7 +4666,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       ...kindOf(polygon),
       points,
       depths: [...state.depths],
-      radii: [...state.radii],
+      bevels: [...state.bevels],
       amplitudes: [...state.amplitudes],
       nudges: [...rig.nudges].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       deep: [...rig.depths].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
@@ -4763,7 +4821,7 @@ function written(
   id: Id,
   clip: Timed,
   corners: ReadonlyMap<VertexId, Point>,
-  amounts: { depths: ReadonlyMap<VertexId, number>, radii: ReadonlyMap<VertexId, number>, amplitudes: ReadonlyMap<VertexId, number> },
+  amounts: { depths: ReadonlyMap<VertexId, number>, bevels: ReadonlyMap<VertexId, number>, amplitudes: ReadonlyMap<VertexId, number> },
   into: Affine | null,
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
@@ -4775,7 +4833,7 @@ function written(
       erosion: clip.erosion,
       corners,
       ...amounts,
-      radius: clip.radius ?? 0,
+      bevel: clip.bevel ?? 0,
       amplitude: clip.amplitude ?? 0,
     })]],
   ]);
@@ -4853,7 +4911,7 @@ function restore(
 
     const out = { ...world, artefacts, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
   }
 
   if (clip.kind === 'path') {
@@ -4864,7 +4922,7 @@ function restore(
 
     const out = { ...world, paths, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
   }
 
   if (clip.kind === 'group') {
@@ -4884,7 +4942,7 @@ function restore(
     groups.set(id, { members, sealed: clip.sealed });
     out = effectsPasted({ ...out, groups, nextId: id + 1 }, id, clip.effects);
 
-    return { world: written(out, v, id, clip, none, { depths: none, radii: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
   }
 
   const id = world.nextId;
@@ -4930,7 +4988,7 @@ function restore(
 
   out = written(out, v, id, clip, corners, {
     depths: renaming(clip.depths),
-    radii: renaming(clip.radii),
+    bevels: renaming(clip.bevels),
     amplitudes: renaming(clip.amplitudes),
   }, into);
   out = withRig(out, id, {
@@ -5064,8 +5122,8 @@ export function stamped(
   return pasted(world, v, clips.map(now), by, where);
 }
 
-function still(clip: Timed): Pick<Timed, 'start' | 'erosion' | 'radius' | 'amplitude'> {
-  return { start: clip.stood.frame, erosion: clip.stood.erosion, radius: clip.stood.radius, amplitude: clip.stood.amplitude };
+function still(clip: Timed): Pick<Timed, 'start' | 'erosion' | 'bevel' | 'amplitude'> {
+  return { start: clip.stood.frame, erosion: clip.stood.erosion, bevel: clip.stood.bevel, amplitude: clip.stood.amplitude };
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

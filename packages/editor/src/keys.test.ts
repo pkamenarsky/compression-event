@@ -181,7 +181,7 @@ describe('keyframes', () => {
     for (const [from, to] of [[1, 3], [2, 4]]) {
       const was = stateAt(w, id, from), now = stateAt(out, copy, to);
 
-      expect([now.radius, now.amplitude, now.radii.get(renamed)]).toEqual([was.radius, was.amplitude, was.radii.get(corners[1])]);
+      expect([now.bevel, now.amplitude, now.bevels.get(renamed)]).toEqual([was.bevel, was.amplitude, was.bevels.get(corners[1])]);
     }
   });
 
@@ -278,7 +278,7 @@ describe('keyframes', () => {
 
     expect(rigOf(out, id).rounds.get(corner)!.get(3)!.op.by).toBe(7);
     expect(rigOf(out, id).deforms.get(corner)!.get(3)!.op.by).toBe(1);
-    expect(stateAt(out, id, 3).radii.get(corner)).toBe(7);
+    expect(stateAt(out, id, 3).bevels.get(corner)).toBe(7);
   });
 
   test('the only keyframe stays', () => {

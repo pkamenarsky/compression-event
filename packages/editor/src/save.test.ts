@@ -126,17 +126,17 @@ describe('save', () => {
     w = {
       ...w,
       effects: new Map([
-        [b, { round: { segments: 3, verticals: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', off: true } }],
+        [b, { round: { segments: 3, verticals: false, ends: true }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, verticals: true, off: true } }]]),
+      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, verticals: true, ends: true, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
     const stood = rigOf(w, b).keys.get(4)![0].op;
 
-    expect(stood.kind === 'stand' && stood.radius).toBe(4);
-    expect(stood.kind === 'stand' && stood.radii.get(corners[0].id)).toBe(3);
+    expect(stood.kind === 'stand' && stood.bevel).toBe(4);
+    expect(stood.kind === 'stand' && stood.bevels.get(corners[0].id)).toBe(3);
 
     const after = trip({ ...before, world: w });
 
@@ -157,6 +157,54 @@ describe('save', () => {
     }
 
     expect(restored(file).world).toEqual(before.world);
+  });
+
+  test('a stand saved when its bevels were radii keeps them', () => {
+    const before = world();
+    const [id] = [...before.world.polygons.keys()];
+    const corner = before.world.polygons.get(id)!.points[0].id;
+    let w = wrote(before.world, 1, id, { kind: 'round', by: 4 });
+
+    w = withRig(w, id, cornerRounded(rigOf(w, id), corner, 1, 3));
+    w = keyed(w, 2, id, [once(handed(w, 2, id))]);
+
+    const file = JSON.parse(JSON.stringify(saved({ ...before, world: w })));
+    let stands = 0;
+
+    for (const [, rig] of file.world.rigs) {
+      for (const [, entries] of rig.keys) {
+        for (const e of entries) {
+          if (e.op.kind !== 'stand') continue;
+
+          stands++;
+          e.op.radius = e.op.bevel;
+          e.op.radii = e.op.bevels;
+          delete e.op.bevel;
+          delete e.op.bevels;
+        }
+      }
+    }
+
+    expect(stands).toBeGreaterThan(0);
+    expect(restored(file).world).toEqual(w);
+  });
+
+  test('effects saved before `ends` and `jitter` have every vertical and no jitter', () => {
+    const before = world();
+    const [id] = [...before.world.polygons.keys()];
+    const corner = before.world.polygons.get(id)!.points[0].id;
+    const file = JSON.parse(JSON.stringify(saved(before)));
+
+    file.world.effects = [[id, { round: { segments: 3, verticals: false }, deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out' } }]];
+    file.world.cornerEffects = [[corner, { round: { segments: 2, verticals: true, off: true } }]];
+
+    const w = restored(file).world;
+
+    expect(w.effects.get(id)).toEqual({
+      round: { segments: 3, verticals: false, ends: true },
+      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
+    });
+    expect(w.cornerEffects.get(corner)).toEqual({ round: { segments: 2, verticals: true, ends: true, off: true } });
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {
@@ -190,9 +238,9 @@ describe('save', () => {
           erosion: 0,
           corners: new Map(),
           depths: new Map(),
-          radius: 0,
+          bevel: 0,
           amplitude: 0,
-          radii: new Map(),
+          bevels: new Map(),
           amplitudes: new Map(),
         }),
       ]]]),
