@@ -21,7 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { Point } from '@ce/game/world';
-import { bakeAll } from './bake';
+import { EXACT_GAP, TOLERANCE, bakeAll } from './bake';
 import { shipped } from './export';
 import { deepened, nudged } from './rig';
 import {
@@ -199,7 +199,9 @@ export const SCENES: [string, () => World][] = [
  * sets at each keyframe, each span as baked, and the shipped level. */
 export function digest(world: World): Record<string, string> {
   const out: Record<string, string> = {};
-  const g = bakeAll(world);
+  // At the depth master baked to, which holds the tolerance everywhere: what
+  // this compares is the bake's answer, not how finely it was asked for.
+  const g = bakeAll(world, TOLERANCE, EXACT_GAP);
   let step = g.next();
 
   while (!step.done) step = g.next();

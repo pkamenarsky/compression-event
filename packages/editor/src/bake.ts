@@ -124,6 +124,7 @@
 // -----------------------------------------------------------------------------
 
 import type { BakedLevel } from '@ce/game';
+import { REPLAY_MS } from '@ce/game/replay';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
@@ -2330,6 +2331,9 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
  * reader there takes it up. See `TOLERANCE`. */
 export { TOLERANCE };
 
+/** One frame, at the rate the game is assumed to be drawn at. See `GAP`. */
+const FRAME_MS = 1000 / 60;
+
 /**
  * How thin an interval has to get before the bisection gives up on it.
  *
@@ -2364,8 +2368,26 @@ export { TOLERANCE };
  * a whole level for the depth two crossings need is the wrong shape, so a track
  * that comes back outside the tolerance is cut again a decade finer and only
  * that track pays. This is where it begins; see `chased` for where it ends.
+ *
+ * Tied to what is actually shown, now. A span plays in `REPLAY_MS` and nobody
+ * sees it at more than sixty frames a second, so an event pinned to within a
+ * tenth of a frame pops at the frame it would have popped at anyway, and the
+ * half gap `abutting` hands each side of it is a window most frames never land
+ * in. On the level that asked for this — two bevelled solids crossing, three
+ * hundred events a track — it took the bake from 12s to a few seconds, for a
+ * `worst` of a unit or two inside those windows where `EXACT_GAP` held it to
+ * four hundredths everywhere.
+ *
+ * Linear in `t`, which the easing is not: where it is slow a frame covers less
+ * of the span than this assumes, and where it is fast, more.
+ *
+ * To go back to holding the tolerance everywhere, make this `EXACT_GAP`.
  */
-const GAP = 1e-4;
+export const GAP = FRAME_MS / REPLAY_MS / 10;
+
+/** What `GAP` was before it was counted in frames: a width chosen to hold the
+ * tolerance, whatever the frame rate. */
+export const EXACT_GAP = 1e-4;
 
 /**
  * The same, for an interval whose two ends agree and whose middle the stretch
@@ -2398,13 +2420,16 @@ export interface Limits {
   bend: number
 }
 
-/** What a track is cut at until it gives the bake reason to go finer. */
-export const LIMITS: Limits = { gap: GAP, bend: BEND };
+/** What a track is cut at until it gives the bake reason to go finer, starting
+ * events at `gap`. */
+function limitsFrom(gap: number): Limits {
+  return { gap, bend: BEND };
+}
 
 /**
  * As far as a re-cut will ever go, whatever the measure says.
  *
- * Three decades below `LIMITS`, and it is a real bound rather than a formality.
+ * Three decades below `EXACT_GAP`, and it is a real bound rather than a formality.
  * `PAYING` stops a track whose error has stopped falling, which is the case it
  * was written for; it does not stop one whose error keeps falling towards a
  * tolerance it will never reach. That track chases every decade, and a decade
@@ -3460,7 +3485,7 @@ function wide(s: Stretch): boolean {
  * bake tried. `gap` is the reading to go by, and it says which of three things
  * happened:
  *
- * - `LIMITS.gap` — never re-cut at all, because the track pins more events than
+ * - The starting gap — never re-cut at all, because the track pins more events than
  *   it keeps stretches. Its ring crosses itself; the arrangement is churning
  *   rather than moving, and depth would find more churn rather than less error.
  *   The polygon is what wants fixing, not the bake. See `CHURN`.
@@ -3644,7 +3669,7 @@ export function ready(world: World, from: number): Ready {
  * hundredths and the only thing to do was to reach for `GAP` by hand, which
  * charges the whole level for the depth two crossings needed.
  *
- * So the depth is per track and it is driven by the measure. Cut at `LIMITS`;
+ * So the depth is per track and it is driven by the measure. Cut at the starting `gap`;
  * if what comes back is outside the tolerance, cut the same track again a
  * decade finer, and again, until it is inside or the widths reach `FINEST`.
  *
@@ -3674,12 +3699,13 @@ function* chased(
   i: number,
   fill: boolean,
   tol: number,
+  gap: number,
 ): Generator<number, Cut & { limits: Limits }, void> {
-  if (!fill) return yield* recut(at, i, tol);
+  if (!fill) return yield* recut(at, i, tol, gap);
 
   const { id } = at.items[i];
 
-  let limits = LIMITS;
+  let limits = limitsFrom(gap);
   let best: (Cut & { limits: Limits }) | null = null;
   let was = Infinity;
   let spent = 0;
@@ -3745,7 +3771,7 @@ function* chased(
  * because the bisection inside an interval is its own; the rest are left as the
  * coarser decade had them.
  */
-function* recut(at: Ready, i: number, tol: number): Generator<number, Cut & { limits: Limits }, void> {
+function* recut(at: Ready, i: number, tol: number, gap: number): Generator<number, Cut & { limits: Limits }, void> {
   const { id } = at.items[i];
   const sub = at.near[i];
 
@@ -3787,7 +3813,7 @@ function* recut(at: Ready, i: number, tol: number): Generator<number, Cut & { li
     }
   }
 
-  let limits = LIMITS;
+  let limits = limitsFrom(gap);
   let pieces = yield* shown(bisected(c, c.at(0), c.at(1), limits));
   let cut = settled(c, pieces);
   let best = { ...cut, limits };
@@ -3832,6 +3858,7 @@ export function* cutSome(
   at: Ready,
   which: readonly number[],
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Slice, void> {
   const began = now();
   const tracks: Track[] = [];
@@ -3848,7 +3875,7 @@ export function* cutSome(
     // above it. Everything else is its share of a boundary and is measured
     // against the CSG.
     const cut = yield* weighted(
-      chased(at, i, fill, tol),
+      chased(at, i, fill, tol, gap),
       k / which.length,
       1 / which.length,
     );
@@ -3878,13 +3905,14 @@ export function* bakeSlice(
   index: number,
   of: number,
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Slice, void> {
   const at = ready(world, from);
   const which: number[] = [];
 
   for (let i = index; i < at.items.length; i += of) which.push(i);
 
-  const slice = yield* cutSome(at, which, tol);
+  const slice = yield* cutSome(at, which, tol, gap);
 
   return { ...slice, setup: at.setup };
 }
@@ -3921,19 +3949,24 @@ export function* bakeSpan(
   world: World,
   from: number,
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Span, void> {
-  const slice = yield* bakeSlice(world, from, 0, 1, tol);
+  const slice = yield* bakeSlice(world, from, 0, 1, tol, gap);
 
   return joined(world, from, ridersOf(world, from), [slice]);
 }
 
 /** Every span in the chain, one after the other. */
-export function* bakeAll(world: World): Generator<number, Map<number, Span>, void> {
+export function* bakeAll(
+  world: World,
+  tol: number = TOLERANCE,
+  gap: number = GAP,
+): Generator<number, Map<number, Span>, void> {
   const out = new Map<number, Span>();
   const count = world.keyframes.length - 1;
 
   for (let k = 0; k < count; k++) {
-    const span = yield* weighted(bakeSpan(world, k), k / count, 1 / count);
+    const span = yield* weighted(bakeSpan(world, k, tol, gap), k / count, 1 / count);
 
     out.set(k, span);
   }

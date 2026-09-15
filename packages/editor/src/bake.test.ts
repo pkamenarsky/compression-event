@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import {
+  EXACT_GAP,
   Frame,
   Origin,
   Span,
@@ -195,7 +196,7 @@ function editorAt(world: World, v: KeyframeId): number {
  * caught both the signature scan's blind spot and the crossings sliding.
  */
 function drift(world: World, from = 0, steps = 40): number {
-  const span = run(bakeSpan(world, from));
+  const span = run(bakeSpan(world, from, TOLERANCE, EXACT_GAP));
   let worst = 0;
 
   for (let i = 0; i <= steps; i++) {
@@ -221,14 +222,14 @@ function cut(span: Span): number[] {
 
 /** Where the span was cut, rounded to something a test can name. */
 function cuts(world: World, from = 0): number[] {
-  const span = run(bakeSpan(world, from));
+  const span = run(bakeSpan(world, from, TOLERANCE, EXACT_GAP));
 
   return cut(span).slice(1).map(t => Number(t.toFixed(4)));
 }
 
 /** What the bake says its own error was, which is the number that matters. */
 function worst(world: World, from = 0): number {
-  return run(bakeSpan(world, from)).worst;
+  return run(bakeSpan(world, from, TOLERANCE, EXACT_GAP)).worst;
 }
 
 
@@ -1017,7 +1018,7 @@ describe('a turning world is no worse than it says it is', () => {
   test('at instants the bake did not choose to look at', () => {
     for (const spin of [20]) {
       const world = boxes(spin);
-      const span = run(bakeSpan(world, 0));
+      const span = run(bakeSpan(world, 0, TOLERANCE, EXACT_GAP));
 
       let seen = 0, worst = 0;
 

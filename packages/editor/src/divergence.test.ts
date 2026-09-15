@@ -20,7 +20,7 @@
 
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
+import { EXACT_GAP, Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
 import { TOP, addPolygon, addVertex, deepen, depths, grouped, removeVertices, sealing, resolveAt, rigOf, withRig } from './scene';
 import { FLOOR, Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 import { nudged } from './rig';
@@ -155,7 +155,7 @@ const rows: string[] = [];
 
 function report(name: string, w: World) {
   const t0 = Date.now();
-  const span = run(bakeSpan(w, 0));
+  const span = run(bakeSpan(w, 0, TOLERANCE, EXACT_GAP));
   const ms = Date.now() - t0;
 
   // Deliberately not on the stretch midpoints the bake checked itself at.
