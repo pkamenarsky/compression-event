@@ -3160,16 +3160,25 @@ function* cutTrack(
   riders: Map<Id, Rider>,
   tol: number,
   limits: Limits,
+  taken: Map<number, Taken>,
 ): Generator<number, Cut, void> {
   const out: Stretch[] = [];
 
   let evaluations = 0;
   let worst = 0;
 
+  // Only what was not already worked out counts: `evaluations` is what the
+  // track cost, and an instant a coarser attempt already took costs nothing.
   const at = (t: number): Taken => {
-    evaluations++;
+    let known = taken.get(t);
 
-    return evaluate(cast, sub, t, id);
+    if (known === undefined) {
+      evaluations++;
+      known = evaluate(cast, sub, t, id);
+      taken.set(t, known);
+    }
+
+    return known;
   };
 
   // Left to right, so what comes out is in order and the progress is honest:
@@ -3594,12 +3603,19 @@ function* chased(
   let spent = 0;
   let seen = 0;
 
+  // Every attempt bisects the same span from the same ends, so a finer one
+  // passes through every instant the coarser one did before going further.
+  // Those are the same question — the same polygons, the same instant — and
+  // were being answered again from scratch, attempt after attempt. Kept for
+  // this track only: its neighbours ask with a different subject.
+  const taken = new Map<number, Taken>();
+
   while (true) {
     const inner = fill
       // Its own members, and nothing else: a floor is not cut against its
       // neighbours, so resolving them would be work nobody reads.
       ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits)
-      : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits);
+      : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits, taken);
 
     let cut: Cut | null = null;
 

@@ -302,40 +302,247 @@ export function has(tree: Tree, id: number, b: AABB): boolean {
 export function build(items: readonly { id: number, box: AABB }[]): Tree {
   if (items.length === 0) return null;
 
-  return split(items.slice());
-}
+  const n = items.length;
+  const xs = new Float64Array(n), ys = new Float64Array(n);
+  const order = new Int32Array(n);
 
-function split(items: { id: number, box: AABB }[]): Node {
-  if (items.length === 1) return { tag: 'leaf', box: items[0].box, id: items[0].id };
+  for (let i = 0; i < n; i++) {
+    const b = items[i].box;
 
-  const centres = items.map(i => ({
-    item: i,
-    x: (i.box.minX + i.box.maxX) / 2,
-    y: (i.box.minY + i.box.maxY) / 2,
-  }));
-
-  // Walked rather than spread into `Math.max`. A build is handed one box per
-  // segment of an arrangement, and a level of ten thousand polygons is eighty
-  // thousand of them — the same order as the argument count an engine will
-  // take before a spread overflows the stack, which it does by throwing rather
-  // than by slowing down.
-  let loX = Infinity, hiX = -Infinity, loY = Infinity, hiY = -Infinity;
-
-  for (const c of centres) {
-    if (c.x < loX) loX = c.x;
-    if (c.x > hiX) hiX = c.x;
-    if (c.y < loY) loY = c.y;
-    if (c.y > hiY) hiY = c.y;
+    xs[i] = (b.minX + b.maxX) / 2;
+    ys[i] = (b.minY + b.maxY) / 2;
+    order[i] = i;
   }
 
-  const wide = hiX - loX >= hiY - loY;
+  // Sorted in place, a run at a time, rather than copied out into fresh arrays
+  // of fresh objects at every level. The bake builds a tree per arrangement,
+  // several per combine, and making them was a third of its time.
+  const byX = (a: number, b: number) => xs[a] - xs[b];
+  const byY = (a: number, b: number) => ys[a] - ys[b];
 
-  centres.sort((a, b) => (wide ? a.x - b.x : a.y - b.y));
+  const split = (lo: number, hi: number): Node => {
+    if (hi - lo === 1) return { tag: 'leaf', box: items[order[lo]].box, id: items[order[lo]].id };
 
-  const half = centres.length >> 1;
+    // Walked rather than spread into `Math.max`. A build is handed one box per
+    // segment of an arrangement, and a level of ten thousand polygons is eighty
+    // thousand of them — the same order as the argument count an engine will
+    // take before a spread overflows the stack, which it does by throwing
+    // rather than by slowing down.
+    let loX = Infinity, hiX = -Infinity, loY = Infinity, hiY = -Infinity;
 
-  return join(
-    split(centres.slice(0, half).map(c => c.item)),
-    split(centres.slice(half).map(c => c.item)),
-  );
+    for (let k = lo; k < hi; k++) {
+      const x = xs[order[k]], y = ys[order[k]];
+
+      if (x < loX) loX = x;
+      if (x > hiX) hiX = x;
+      if (y < loY) loY = y;
+      if (y > hiY) hiY = y;
+    }
+
+    // Stable, as the sort of a plain array is, so that ties keep the order the
+    // run arrived in and the tree comes out the shape it always did.
+    order.subarray(lo, hi).sort(hiX - loX >= hiY - loY ? byX : byY);
+
+    const mid = lo + ((hi - lo) >> 1);
+
+    return join(split(lo, mid), split(mid, hi));
+  };
+
+  return split(0, n);
+}
+
+// -----------------------------------------------------------------------------
+// A packed tree
+//
+// The tree above is persistent, which is what an editor wants of the set it
+// keeps and edits. A boolean wants something else: a tree over every segment of
+// one arrangement, made, asked a few thousand questions and thrown away. That is
+// built several times per combine, and a bake runs combines by the thousand, so
+// making it and walking it had come to a third of the bake between them — most
+// of it objects, allocated per node and per query box, and a full sort at every
+// level where a median was all that was wanted.
+//
+// So this one is flat. Nodes are laid out depth first in typed arrays: a
+// branch's first child is the next node, and every node knows where its subtree
+// ends, so a query is a loop down the array skipping whatever misses, with no
+// stack and no recursion. Leaves hold a few items rather than one, which halves
+// the nodes and tests the boxes that would have been their leaves in a row.
+//
+// Ids are positions in the array it was built from, since that is what every
+// caller was handing in anyway.
+// -----------------------------------------------------------------------------
+
+export interface Packed {
+  /** Per node, `minX, minY, maxX, maxY`. */
+  nodes: Float64Array
+  /** Per node, the index just past its subtree. */
+  skip: Int32Array
+  /** Per node, where its items start in `ids`, or `-1` for a branch. */
+  start: Int32Array
+  count: Int32Array
+  /** Items in leaf order, and their boxes alongside, four numbers apiece. */
+  ids: Int32Array
+  boxes: Float64Array
+}
+
+/** Items per leaf, at most. */
+const LEAF = 4;
+
+/**
+ * A tree over `boxes`, four numbers an item, where item `i` is the `i`th four.
+ * The array is read and not kept.
+ */
+export function pack(boxes: Float64Array): Packed {
+  const n = boxes.length >> 2;
+  const order = new Int32Array(n);
+  const xs = new Float64Array(n), ys = new Float64Array(n);
+
+  for (let i = 0; i < n; i++) {
+    order[i] = i;
+    xs[i] = (boxes[i * 4] + boxes[i * 4 + 2]) / 2;
+    ys[i] = (boxes[i * 4 + 1] + boxes[i * 4 + 3]) / 2;
+  }
+
+  // A tree of `n` items split down the middle has fewer than `n` nodes once the
+  // leaves hold two or more, and never more than `2n` however it falls.
+  const cap = Math.max(1, 2 * n);
+  const nodes = new Float64Array(cap * 4);
+  const skip = new Int32Array(cap);
+  const start = new Int32Array(cap);
+  const count = new Int32Array(cap);
+  let used = 0;
+
+  const make = (lo: number, hi: number): void => {
+    const at = used++;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let loX = Infinity, hiX = -Infinity, loY = Infinity, hiY = -Infinity;
+
+    for (let k = lo; k < hi; k++) {
+      const i = order[k], b = i * 4;
+
+      if (boxes[b] < minX) minX = boxes[b];
+      if (boxes[b + 1] < minY) minY = boxes[b + 1];
+      if (boxes[b + 2] > maxX) maxX = boxes[b + 2];
+      if (boxes[b + 3] > maxY) maxY = boxes[b + 3];
+
+      if (xs[i] < loX) loX = xs[i];
+      if (xs[i] > hiX) hiX = xs[i];
+      if (ys[i] < loY) loY = ys[i];
+      if (ys[i] > hiY) hiY = ys[i];
+    }
+
+    nodes[at * 4] = minX;
+    nodes[at * 4 + 1] = minY;
+    nodes[at * 4 + 2] = maxX;
+    nodes[at * 4 + 3] = maxY;
+
+    if (hi - lo <= LEAF) {
+      start[at] = lo;
+      count[at] = hi - lo;
+    }
+    else {
+      const mid = lo + ((hi - lo) >> 1);
+
+      select(order, hiX - loX >= hiY - loY ? xs : ys, lo, hi, mid);
+
+      start[at] = -1;
+      make(lo, mid);
+      make(mid, hi);
+    }
+
+    skip[at] = used;
+  };
+
+  if (n > 0) make(0, n);
+
+  const out = new Float64Array(n * 4);
+
+  for (let k = 0; k < n; k++) {
+    const b = order[k] * 4;
+
+    out[k * 4] = boxes[b];
+    out[k * 4 + 1] = boxes[b + 1];
+    out[k * 4 + 2] = boxes[b + 2];
+    out[k * 4 + 3] = boxes[b + 3];
+  }
+
+  return { nodes, skip, start, count, ids: order, boxes: out };
+}
+
+/**
+ * Rearranges `order[lo, hi)` so that the item at `k` is the one a sort by `key`
+ * would put there, everything before it no greater and everything after no
+ * less. The median is all a split needs, and this finds it in linear time.
+ */
+function select(order: Int32Array, key: Float64Array, lo: number, hi: number, k: number): void {
+  let l = lo, r = hi - 1;
+
+  while (r > l) {
+    const pivot = key[order[(l + r) >> 1]];
+    let i = l, j = r;
+
+    while (i <= j) {
+      while (key[order[i]] < pivot) i++;
+      while (key[order[j]] > pivot) j--;
+
+      if (i <= j) {
+        const t = order[i];
+        order[i] = order[j];
+        order[j] = t;
+        i++;
+        j--;
+      }
+    }
+
+    if (k <= j) {
+      r = j;
+    }
+    else if (k >= i) {
+      l = i;
+    }
+    else {
+      break;
+    }
+  }
+}
+
+/**
+ * Every id whose box overlaps the one given, touching included, in no order a
+ * caller should rely on. The box is four numbers rather than an `AABB` so that
+ * a query in a hot loop allocates nothing.
+ */
+export function eachPacked(
+  t: Packed,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  fn: (id: number) => void,
+): void {
+  const { nodes, skip, start, count, ids, boxes } = t;
+  const end = skip.length === 0 || ids.length === 0 ? 0 : skip[0];
+  let i = 0;
+
+  while (i < end) {
+    const b = i * 4;
+
+    if (nodes[b] > maxX || nodes[b + 2] < minX || nodes[b + 1] > maxY || nodes[b + 3] < minY) {
+      i = skip[i];
+      continue;
+    }
+
+    const s = start[i];
+
+    if (s >= 0) {
+      for (let k = s, e = s + count[i]; k < e; k++) {
+        const c = k * 4;
+
+        if (boxes[c] <= maxX && boxes[c + 2] >= minX && boxes[c + 1] <= maxY && boxes[c + 3] >= minY) {
+          fn(ids[k]);
+        }
+      }
+    }
+
+    i++;
+  }
 }

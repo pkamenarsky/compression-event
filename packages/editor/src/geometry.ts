@@ -20,7 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { AABB, Tree, box, build, containsBox, each, emptyTree, expand, ofRings } from './aabb';
+import { Packed, containsBox, eachPacked, ofRings, pack } from './aabb';
 
 export type { Point };
 
@@ -862,18 +862,18 @@ function turn(a: Point, b: Point, p: Point): number {
 
 export interface Field {
   shape: Shape
-  tree: Tree
+  tree: Packed
   /** `a` and `b` of each edge, flattened, four numbers apiece. */
   edges: Float64Array
 }
 
 export function field(shape: Shape): Field {
-  const boxes: { id: number, box: AABB }[] = [];
   let n = 0;
 
   for (const ring of shape) n += ring.length;
 
   const edges = new Float64Array(n * 4);
+  const boxes = new Float64Array(n * 4);
   let id = 0;
 
   for (const ring of shape) {
@@ -886,21 +886,16 @@ export function field(shape: Shape): Field {
       edges[at + 2] = b.x;
       edges[at + 3] = b.y;
 
-      boxes.push({
-        id,
-        box: box(
-          Math.min(a.x, b.x),
-          Math.min(a.y, b.y),
-          Math.max(a.x, b.x),
-          Math.max(a.y, b.y),
-        ),
-      });
+      boxes[at] = Math.min(a.x, b.x);
+      boxes[at + 1] = Math.min(a.y, b.y);
+      boxes[at + 2] = Math.max(a.x, b.x);
+      boxes[at + 3] = Math.max(a.y, b.y);
 
       id++;
     }
   }
 
-  return { shape, tree: build(boxes), edges };
+  return { shape, tree: pack(boxes), edges };
 }
 
 export function fieldWinding(f: Field, p: Point): number {
@@ -908,7 +903,7 @@ export function fieldWinding(f: Field, p: Point): number {
   let w = 0;
 
   // Everything the ray could meet: to the right of `p`, and level with it.
-  each(f.tree, box(p.x, p.y, Infinity, p.y), id => {
+  eachPacked(f.tree, p.x, p.y, Infinity, p.y, id => {
     const at = id * 4;
 
     w += turn(
@@ -980,14 +975,12 @@ export function encloses(outer: Shape, inner: Shape): boolean {
 
       let clear = true;
 
-      each(
+      eachPacked(
         f.tree,
-        expand(box(
-          Math.min(a.x, b.x),
-          Math.min(a.y, b.y),
-          Math.max(a.x, b.x),
-          Math.max(a.y, b.y),
-        ), eps),
+        Math.min(a.x, b.x) - eps,
+        Math.min(a.y, b.y) - eps,
+        Math.max(a.x, b.x) + eps,
+        Math.max(a.y, b.y) + eps,
         id => {
           if (!clear) return;
 
@@ -1177,20 +1170,8 @@ function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
   // The boxes are grown by `eps` because `intersectInto` counts anything within
   // that distance as touching, so two segments can meet without their exact
   // boxes overlapping.
-  const boxes = segs.map((g, id) => ({
-    id,
-    box: expand(
-      box(
-        Math.min(g.a.x, g.b.x),
-        Math.min(g.a.y, g.b.y),
-        Math.max(g.a.x, g.b.x),
-        Math.max(g.a.y, g.b.y),
-      ),
-      eps,
-    ),
-  }));
-
-  const tree = build(boxes);
+  const boxes = boxesOf(segs, eps);
+  const tree = pack(boxes);
   const near: number[] = [];
 
   for (let i = 0; i < primary; i++) {
@@ -1199,7 +1180,7 @@ function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
     // A pair of primaries would be visited from both ends, so it is taken from
     // the lower one only. A pair with a secondary in it is reached from the
     // primary end alone, so it is always taken.
-    each(tree, boxes[i].box, j => {
+    eachPacked(tree, boxes[i * 4], boxes[i * 4 + 1], boxes[i * 4 + 2], boxes[i * 4 + 3], j => {
       if (j !== i && (j > i || j >= primary)) near.push(j);
     });
 
@@ -1501,23 +1482,13 @@ export function combineTagged(
  * that comes back empty for all but a handful of a level's segments.
  */
 function clearance(segs: Seg[], reach: number, snap: number): number[] {
-  const boxes = segs.map((s, id) => ({
-    id,
-    box: box(
-      Math.min(s.a.x, s.b.x),
-      Math.min(s.a.y, s.b.y),
-      Math.max(s.a.x, s.b.x),
-      Math.max(s.a.y, s.b.y),
-    ),
-  }));
-
-  const tree = build(boxes);
+  const tree = pack(boxesOf(segs, 0));
   const out = segs.map(() => Infinity);
 
   segs.forEach((s, i) => {
     const mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
 
-    each(tree, expand(box(mx, my, mx, my), reach), j => {
+    eachPacked(tree, mx - reach, my - reach, mx + reach, my + reach, j => {
       if (j === i) return;
 
       const d = toSegment(segs[j], mx, my);
@@ -1531,6 +1502,22 @@ function clearance(segs: Seg[], reach: number, snap: number): number[] {
   });
 
   return out.map(d => d / 2);
+}
+
+/** Each segment's box grown by `by`, four numbers apiece, for `pack`. */
+function boxesOf(segs: readonly Seg[], by: number): Float64Array {
+  const out = new Float64Array(segs.length * 4);
+
+  for (let i = 0; i < segs.length; i++) {
+    const { a, b } = segs[i];
+
+    out[i * 4] = Math.min(a.x, b.x) - by;
+    out[i * 4 + 1] = Math.min(a.y, b.y) - by;
+    out[i * 4 + 2] = Math.max(a.x, b.x) + by;
+    out[i * 4 + 3] = Math.max(a.y, b.y) + by;
+  }
+
+  return out;
 }
 
 /** How far `(x, y)` is from the segment, endpoints included. */
@@ -1706,7 +1693,7 @@ export type Ground = readonly Slot[];
 
 /** One slot's members, each prepared on its own and findable by where it is. */
 interface Slot {
-  tree: Tree
+  tree: Packed
   parts: Field[]
 }
 
@@ -1717,10 +1704,10 @@ interface Slot {
  */
 export function ground(members: Iterable<Member>, slots: number): Ground {
   const all: Slot[] = [];
-  const boxes: { id: number, box: AABB }[][] = [];
+  const boxes: number[][] = [];
 
   for (let k = 0; k < slots; k++) {
-    all.push({ tree: emptyTree, parts: [] });
+    all.push({ tree: pack(new Float64Array(0)), parts: [] });
     boxes.push([]);
   }
 
@@ -1729,11 +1716,13 @@ export function ground(members: Iterable<Member>, slots: number): Ground {
 
     const slot = all[m.slot];
 
-    boxes[m.slot].push({ id: slot.parts.length, box: ofRings(m.shape) });
+    const b = ofRings(m.shape);
+
+    boxes[m.slot].push(b.minX, b.minY, b.maxX, b.maxY);
     slot.parts.push(field(m.shape));
   }
 
-  for (let k = 0; k < slots; k++) all[k].tree = build(boxes[k]);
+  for (let k = 0; k < slots; k++) all[k].tree = pack(Float64Array.from(boxes[k]));
 
   return all;
 }
@@ -1746,7 +1735,7 @@ export function ground(members: Iterable<Member>, slots: number): Ground {
 function covers(slot: Slot, p: Point): boolean {
   let w = 0;
 
-  each(slot.tree, box(p.x, p.y, p.x, p.y), i => {
+  eachPacked(slot.tree, p.x, p.y, p.x, p.y, i => {
     w += fieldWinding(slot.parts[i], p);
   });
 
@@ -2081,18 +2070,8 @@ function cornering(
   // Everything the neighbourhood could put on a point, found by where it is.
   // The boxes are grown by `snap` because a neighbour's edge only has to come
   // within that of a point to be lying on it.
-  const tree = build(segs.map((s, id) => ({
-    id,
-    box: expand(
-      box(
-        Math.min(s.a.x, s.b.x),
-        Math.min(s.a.y, s.b.y),
-        Math.max(s.a.x, s.b.x),
-        Math.max(s.a.y, s.b.y),
-      ),
-      snap,
-    ),
-  })));
+  const tree = pack(boxesOf(segs, snap));
+  const near: number[] = [];
 
   const answered = new Map<number, boolean>();
 
@@ -2103,26 +2082,32 @@ function cornering(
     const mine = known.get(id) ?? [];
     const ways: Way[] = mine.map(w => ({ ...w }));
 
-    each(tree, box(p.x, p.y, p.x, p.y), i => {
+    // In index order: two edges pointing all but the same way are one way, and
+    // which of them it keeps should not depend on how the tree fell.
+    near.length = 0;
+    eachPacked(tree, p.x, p.y, p.x, p.y, i => near.push(i));
+    near.sort((x, y) => x - y);
+
+    for (const i of near) {
       const s = segs[i];
       const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
       const l = Math.hypot(dx, dy);
 
-      if (l === 0) return;
+      if (l === 0) continue;
 
       const ux = dx / l, uy = dy / l;
       const t = (p.x - s.a.x) * ux + (p.y - s.a.y) * uy;
 
       // Off the end of it, or off to one side: not an edge lying on this point.
-      if (t < -snap || t > l + snap) return;
-      if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) return;
+      if (t < -snap || t > l + snap) continue;
+      if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) continue;
 
       // One direction for each way there is still edge to go — and only for
       // those. An edge that ends on this point offers nothing in the direction
       // it came from, and a direction with no length is not one.
       if (l - t > snap) add(ways, { x: ux, y: uy }, l - t);
       if (t > snap) add(ways, { x: -ux, y: -uy }, t);
-    });
+    }
 
     // Nothing lies on it but the run itself, so there is nothing to classify:
     // the two directions it came with are the boundary, and the only question
@@ -2271,11 +2256,23 @@ interface Welder {
  * the cut, where there is something to be done about it.
  */
 function welder(snap: number): Welder {
-  const cells = new Map<string, number[]>();
+  // Keyed by a hash of the cell rather than by its name written out, which is
+  // what this spent most of its time doing: a weld is asked about every end of
+  // every segment of every arrangement. Cells that share a hash share a list,
+  // so each point also remembers its own cell and a lookup reads only those.
+  const cells = new Map<number, number[]>();
   const at: Point[] = [];
+  const inX: number[] = [], inY: number[] = [];
+
+  const hash = (cx: number, cy: number) => Math.imul(cx | 0, 0x9e3779b1) ^ (cy | 0);
 
   const look = (cx: number, cy: number, p: Point): number | null => {
-    for (const i of cells.get(`${cx},${cy}`) ?? []) {
+    const here = cells.get(hash(cx, cy));
+
+    if (here === undefined) return null;
+
+    for (const i of here) {
+      if (inX[i] !== cx || inY[i] !== cy) continue;
       if (Math.abs(at[i].x - p.x) <= snap && Math.abs(at[i].y - p.y) <= snap) return i;
     }
 
@@ -2297,11 +2294,13 @@ function welder(snap: number): Welder {
 
       if (found !== null) return found;
 
-      const key = `${cx},${cy}`;
+      const key = hash(cx, cy);
       const here = cells.get(key);
       const i = at.length;
 
       at.push(p);
+      inX.push(cx);
+      inY.push(cy);
 
       if (here === undefined) {
         cells.set(key, [i]);

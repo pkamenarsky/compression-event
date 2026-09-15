@@ -224,10 +224,11 @@ export function digest(world: World): Record<string, string> {
 
 function hashed(value: unknown): string {
   const text = JSON.stringify(value, (key, v: unknown) => {
-    // How long the bake took over it, which is the clock's, and what it was
-    // baked from, which is the world's bookkeeping for when to bake again:
-    // neither is what it made.
-    if (key === 'setup' || key === 'cut' || key === 'stamp') return undefined;
+    // How long the bake took over it, which is the clock's, how many instants
+    // it had to work out to get there, which is its cost, and what it was baked
+    // from, which is the world's bookkeeping for when to bake again: none of
+    // them is what it made.
+    if (key === 'setup' || key === 'cut' || key === 'stamp' || key === 'evaluations') return undefined;
 
     // A stand's amounts, which a world without effects has at nought and
     // master did not write at all.
