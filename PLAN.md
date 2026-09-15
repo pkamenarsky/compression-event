@@ -201,8 +201,8 @@ the fixed-point recovery in the bake, old save formats.
 
 ## Phases
 
-Done, and merged: 1, 2, 3, 3½, 4 and 5, and groups made global. In progress: 6, on
-the branch `effect-stack` — its steps 1–5 are done, the save format to come.
+Done, and merged: 1, 2, 3, 3½, 4 and 5, and groups made global. 6 is done, on
+the branch `effect-stack`.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -403,7 +403,7 @@ erosion leaves, teeth included, so a rounded zigzag is a wave. Chamfer is a
 round of one segment, so its cut follows the radius (`r·tan(θ/2)` along each
 edge) rather than being a length of its own.
 
-Steps 1–5 are done on the branch `effect-stack`; 6 is to come.
+Done, on the branch `effect-stack`.
 
 (The deform was first built after the erosion, on the boundary, with the
 bake writing each edge's teeth over both ends of a span. It jumped wherever
@@ -580,8 +580,7 @@ vertical over the span.
   as it does its depth — done. It reads the group without its own deform,
   which the rings then take on with its timeline; what is inside it comes
   into the rings as the shape it makes.
-- Save format 22; 21 still opens. Nothing saves effects yet: a file opens
-  with none, and a stand's amounts are not written.
+- Save format 22; 21 still opens.
 
 Done (`effects.ts`, `pane.ts`), differently in these places:
 
@@ -629,7 +628,10 @@ Done (`effects.ts`, `pane.ts`), differently in these places:
 4. `bake.ts`: teeth as corners, arcs as slots, seeding, sealed groups'
    kept points and fading. Tests. — done
 5. The gestures, the options pane, the icons. — done
-6. The save format.
+6. The save format. — done: 22 writes `effects` and `cornerEffects`, a
+   rig's `rounds` and `deforms`, and a stand's radius, amplitude and their
+   per-corner maps. A 21 reads as a world without effects, its bake kept. The
+   converter still writes 21.
 
 ### 7 — later
 

@@ -14,7 +14,7 @@ import {
   rigOf,
   withRig,
 } from './scene';
-import { Op, Rig, deepened, nudged, once, repeating } from './rig';
+import { Op, Rig, cornerRounded, deepened, edgeDeformed, nudged, once, repeating } from './rig';
 import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
@@ -113,6 +113,50 @@ describe('save', () => {
     expect(entry.op.kind).toBe('stand');
     expect(entry.op.kind === 'stand' && entry.op.corners).toBeInstanceOf(Map);
     expect(after.world).toEqual(stood);
+  });
+
+  test('effects survive the trip: options, a corner\'s own, amounts, and a stand\'s', () => {
+    const before = world();
+    const [a, b] = [...before.world.polygons.keys()];
+    const corners = before.world.polygons.get(b)!.points;
+    let w = wrote(before.world, 1, b, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
+
+    w = withRig(w, b, cornerRounded(rigOf(w, b), corners[0].id, 2, 3));
+    w = withRig(w, b, edgeDeformed(rigOf(w, b), corners[1].id, 2, -1));
+    w = {
+      ...w,
+      effects: new Map([
+        [b, { round: { segments: 3, verticals: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', off: true } }],
+        [a, { erode: { off: true } }],
+      ]),
+      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, verticals: true, off: true } }]]),
+    };
+    w = keyed(w, 4, b, [once(handed(w, 4, b))]);
+
+    const stood = rigOf(w, b).keys.get(4)![0].op;
+
+    expect(stood.kind === 'stand' && stood.radius).toBe(4);
+    expect(stood.kind === 'stand' && stood.radii.get(corners[0].id)).toBe(3);
+
+    const after = trip({ ...before, world: w });
+
+    expect(after.world).toEqual(w);
+  });
+
+  test('a 21, which had no effects, reads as one with none', () => {
+    const before = world();
+    const file = JSON.parse(JSON.stringify(saved(before)));
+
+    file.format = 21;
+    delete file.world.effects;
+    delete file.world.cornerEffects;
+
+    for (const [, rig] of file.world.rigs) {
+      delete rig.rounds;
+      delete rig.deforms;
+    }
+
+    expect(restored(file).world).toEqual(before.world);
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {

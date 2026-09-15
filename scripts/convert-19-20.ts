@@ -671,7 +671,7 @@ function savedRig(rig: Rig): SavedRig {
 
 function savedEntry(e: Entry): SavedEntry {
   const op = e.op.kind === 'stand'
-    ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
+    ? { kind: 'stand' as const, frame: e.op.frame, erosion: e.op.erosion, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
   return { op, times: e.times };
