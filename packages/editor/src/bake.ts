@@ -136,7 +136,6 @@ import {
   erodedRingCorners,
   ground,
   SEEDING,
-  Stands,
   keeping,
   mitred,
   nextOf,
@@ -149,7 +148,6 @@ import {
   Contributed,
   EMPTY_LIVE,
   Effected,
-  Fade,
   IDENTITY,
   Placed,
   Resolved,
@@ -178,7 +176,6 @@ import {
   unplace,
   resolveAt,
   roundOf,
-  unstoodOf,
 } from './scene';
 import {
   ArtefactId,
@@ -714,10 +711,6 @@ interface Moving extends Rider {
    * lerped. See `effectsOver`.
    */
   effected: [Effected, Effected] | null
-  /** Which corners are rounded by anything at each end, before any seeding:
-   * where an arc stands fewer verticals than a corner does, an end that is a
-   * corner has them solid. See `unstoodOf`. */
-  rounded: [boolean[], boolean[]]
 }
 
 /**
@@ -1208,9 +1201,8 @@ function effectsOver(
   id: Id,
   corners: readonly Vertex[],
   ends: [State | null, State | null],
-): Pick<Moving, 'effected' | 'rounded'> {
-  const square = corners.map(() => false);
-  const none = { effected: null, rounded: [square, square] as [boolean[], boolean[]] };
+): Pick<Moving, 'effected'> {
+  const none = { effected: null };
   const two = ends.map(e => effectedOf(world, id, corners, e ?? NOTHING)) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
@@ -1229,7 +1221,6 @@ function effectsOver(
 
   return {
     effected: [seeded(a, b), seeded(b, a)],
-    rounded: two.map(e => corners.map((_c, i) => e !== null && e.segments[i] > 0 && e.bevels[i] > 0)) as [boolean[], boolean[]],
   };
 }
 
@@ -1389,8 +1380,14 @@ function world1(items: Moving[], t: number): Resolved[] {
  * the span and one arriving goes 0 to 1, so the line fades over exactly the
  * stretch the vertex is emerging through.
  */
-function fading(world: World, m: Moving, it: Resolved, t: number): number[][] | null {
-  return paintedOn(it.shape, fadingPoints(world, m, it, t));
+function fading(m: Moving, it: Resolved, t: number): number[][] | null {
+  return paintedOn(it.shape, fadingPoints(m, it, t));
+}
+
+/** A point with how solid the vertical standing on it is. */
+interface Fade {
+  p: Point
+  v: number
 }
 
 /**
@@ -1399,13 +1396,8 @@ function fading(world: World, m: Moving, it: Resolved, t: number): number[][] | 
  * shape, so that a scope holding the polygon can put it onto its own. See
  * `groupFading`.
  */
-function fadingPoints(world: World, m: Moving, it: Resolved, t: number): Fade[] {
-  if (m.effected === null) return fadingCorners(m, it, t);
-
-  // Where its arcs stand no vertical, solid only where an end has no arc.
-  const unstood = unstoodOf(world, it, i => mix(m.rounded[0][i] ? 0 : 1, m.rounded[1][i] ? 0 : 1, t));
-
-  return [...fadingSlots(m, it, t), ...unstood];
+function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
+  return m.effected === null ? fadingCorners(m, it, t) : fadingSlots(m, it, t);
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */
@@ -1478,15 +1470,14 @@ function groupFading(
 
   const set = setOf(side.kind);
 
-  // Where its own arcs stand no vertical.
-  const points: Fade[] = [...(side.unstood ?? [])];
+  const points: Fade[] = [];
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
 
     if (m === undefined || it === undefined) continue;
 
-    const mine = fadingPoints(world, m, it, t);
+    const mine = fadingPoints(m, it, t);
 
     if (mine.length === 0) continue;
 
@@ -1586,7 +1577,7 @@ export interface Cast {
   scopes: Map<GroupId, [number, number]>
   /** Each scope's effects: its options, and its bevel and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, { segments: number, bevel: [number, number], stands: Stands, rounded: [boolean, boolean] }>
+  shapes: Map<GroupId, { segments: number, bevel: [number, number] }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1647,8 +1638,6 @@ function casting(world: World, from: number): Cast {
     shapes.set(id, {
       segments: round.segments,
       bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
-      stands: round,
-      rounded: [was.bevel > 0, now.bevel > 0],
     });
   }
 
@@ -1703,13 +1692,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: {
-            segments: fx.segments,
-            bevel: mix(fx.bevel[0], fx.bevel[1], t),
-            stands: fx.stands,
-            // As a polygon's: solid only where an end has no arc. See `fadingPoints`.
-            solid: mix(fx.rounded[0] ? 0 : 1, fx.rounded[1] ? 0 : 1, t),
-          },
+          effects: { segments: fx.segments, bevel: mix(fx.bevel[0], fx.bevel[1], t) },
         }),
       };
     },
@@ -1906,7 +1889,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     // Only a polygon has source corners, and only they can be invented; a
     // scope's side fades where its polygons' do.
     const m = moving.get(it.id), mine = was.get(it.id);
-    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(cast.world, m, mine, t);
+    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
 
     if (how !== null) fade.set(it.id, how);
   }

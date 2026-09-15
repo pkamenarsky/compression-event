@@ -59,8 +59,6 @@ interface Model {
   erode: Some
   round: Some
   segments: number
-  verticals: boolean
-  ends: boolean
   corners: boolean
   own: Some
 }
@@ -159,8 +157,6 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     segments: r.segments,
-    verticals: r.verticals,
-    ends: r.ends,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
@@ -192,7 +188,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     }
 
     const shown = name === 'round'
-      ? { segments: m.segments(), verticals: m.verticals(), ends: m.ends() }
+      ? { segments: m.segments() }
       : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
@@ -227,9 +223,6 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     heading(() => (m.corners() ? 'Round corners' : 'Round'), 'b', m.round, rounded),
     options(m.round, [
       field('segments', number(m.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
-      field('verticals', tick(m.verticals, v => changed('round', { verticals: v }))),
-      // Where the arc starts off its edges.
-      field('ends', tick(m.ends, v => changed('round', { ends: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
@@ -313,20 +306,6 @@ function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: 
       onchange(el.value as T);
     },
   }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
-}
-
-function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
-  return input({
-    type: 'checkbox',
-    checked: value,
-    style: { justifySelf: 'start' },
-    onchange: (e: Event) => {
-      const el = e.target as HTMLInputElement;
-
-      el.blur();
-      onchange(el.checked);
-    },
-  });
 }
 
 /** A button that reads as text: taking something back rather than setting it. */

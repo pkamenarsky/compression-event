@@ -126,10 +126,10 @@ describe('save', () => {
     w = {
       ...w,
       effects: new Map([
-        [b, { round: { segments: 3, verticals: false, ends: true }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
+        [b, { round: { segments: 3 }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, verticals: true, ends: true, off: true } }]]),
+      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
@@ -189,7 +189,7 @@ describe('save', () => {
     expect(restored(file).world).toEqual(w);
   });
 
-  test('effects saved before `ends` and `jitter` have every vertical and no jitter', () => {
+  test('effects saved with verticals and without a jitter read without the one and with none', () => {
     const before = world();
     const [id] = [...before.world.polygons.keys()];
     const corner = before.world.polygons.get(id)!.points[0].id;
@@ -201,10 +201,10 @@ describe('save', () => {
     const w = restored(file).world;
 
     expect(w.effects.get(id)).toEqual({
-      round: { segments: 3, verticals: false, ends: true },
+      round: { segments: 3 },
       deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
-    expect(w.cornerEffects.get(corner)).toEqual({ round: { segments: 2, verticals: true, ends: true, off: true } });
+    expect(w.cornerEffects.get(corner)).toEqual({ round: { segments: 2, off: true } });
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {

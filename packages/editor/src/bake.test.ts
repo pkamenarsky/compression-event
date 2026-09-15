@@ -2194,7 +2194,7 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 });
 
 describe('effects', () => {
-  const ROUND: Effects = { round: { segments: 4, verticals: true, ends: true } };
+  const ROUND: Effects = { round: { segments: 4 } };
   const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
@@ -2407,24 +2407,6 @@ describe('effects', () => {
       expect(s.opacity[0][i][j]).toBeCloseTo(0, 9);
       expect(s.opacity[1][i][j]).toBeCloseTo(1, 9);
     }
-  });
-
-  test('a smooth round stands verticals only at its tangent points', () => {
-    const { world, id } = room({ round: { segments: 4, verticals: false, ends: true } });
-    const w = wrote(wrote(world, 0, id, round(30)), 1, id, move(10, 0));
-    const s = run(bakeSpan(w, 0)).tracks[0].stretches[0];
-    let dark = 0, lit = 0;
-
-    s.a.forEach((r, i) => r.points.forEach((_p, j) => {
-      if (s.opacity[0][i][j] === 0) dark++;
-      else lit++;
-    }));
-
-    // Three inside each of four arcs; the tangent points, and a closing
-    // point per run, stand.
-    expect(dark).toBeGreaterThanOrEqual(4 * 3);
-    expect(dark).toBeLessThanOrEqual(4 * 3 + 1);
-    expect(lit).toBeGreaterThanOrEqual(4 * 2);
   });
 
   test('a group growing gains teeth on its rooms that fade in, and nothing jumps', () => {

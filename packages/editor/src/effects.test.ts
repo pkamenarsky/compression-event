@@ -49,7 +49,7 @@ function shapeOf(world: World, id: Id) {
   return resolveAt(world, 0).find(it => it.id === id)!.shape;
 }
 
-const ROUND: Effects = { round: { segments: 8, verticals: true, ends: true } };
+const ROUND: Effects = { round: { segments: 8 } };
 
 describe('a polygon\'s effects', () => {
   test('a rounded room is its arcs, after its erosion', () => {
@@ -85,7 +85,7 @@ describe('a polygon\'s effects', () => {
   test('a corner rounds on its own, over its room\'s', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[2].id;
-    const w = withRig(withEffects(world, id, { round: { segments: 4, verticals: true, ends: true } }), id, cornerRounded(rigOf(world, id), corner, 0, 10));
+    const w = withRig(withEffects(world, id, { round: { segments: 4 } }), id, cornerRounded(rigOf(world, id), corner, 0, 10));
     const shape = shapeOf(w, id);
 
     expect(shape[0]).toHaveLength(3 + 5);
@@ -98,7 +98,7 @@ describe('a polygon\'s effects', () => {
     const corner = world.polygons.get(id)!.points[0].id;
     let w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
 
-    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2, verticals: true, ends: true } }]]) };
+    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2 } }]]) };
 
     expect(shapeOf(w, id)[0]).toHaveLength(3 * 9 + 3);
   });
@@ -123,7 +123,7 @@ describe('a polygon\'s effects', () => {
     const corner = world.polygons.get(id)!.points[0].id;
     let w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
 
-    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2, verticals: true, ends: true } }]]) };
+    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2 } }]]) };
 
     const after = pasted(w, 0, copied(w, 0, [id]), { x: 300, y: 0 }, TOP);
     const copy = after.ids[0];
@@ -143,17 +143,6 @@ describe('a group\'s effects', () => {
 
     return { world, id: g.id };
   }
-
-  test('a smooth round lays its union\'s arcs flat but at their tangent points', () => {
-    const { world, id } = corridor();
-    const smooth = { ...world, effects: new Map(world.effects).set(id, { round: { segments: 8, verticals: false, ends: true } }) };
-    const side = (w: World) => contributing(w, 0, resolveAt(w, 0)).find(c => !w.polygons.has(c.id))!;
-
-    expect(side(world).unstood).toBeUndefined();
-
-    // The corridor is a rectangle: four corners, seven points inside each arc.
-    expect(side(smooth).unstood).toHaveLength(4 * 7);
-  });
 
   test('they apply to the union, so the join between rooms is not rounded', () => {
     const { world } = corridor();
@@ -215,9 +204,9 @@ describe('editing effects', () => {
   test('switched on, an effect keeps the options a thing already had', () => {
     const { world, id } = room();
     const other = room(world, rect(200, 0, 50, 50));
-    const w = switchedOn(withEffects(other.world, id, { round: { segments: 2, verticals: false, ends: true } }), [id, other.id], 'round', REMEMBERED);
+    const w = switchedOn(withEffects(other.world, id, { round: { segments: 2 } }), [id, other.id], 'round', REMEMBERED);
 
-    expect(w.effects.get(id)).toEqual({ round: { segments: 2, verticals: false, ends: true } });
+    expect(w.effects.get(id)).toEqual({ round: { segments: 2 } });
     expect(w.effects.get(other.id)).toEqual({ round: REMEMBERED.round });
   });
 
@@ -269,7 +258,7 @@ describe('editing effects', () => {
 
     const finer = cornersOptioned(w, [a.id], { segments: 12 }, REMEMBERED);
 
-    expect(finer.cornerEffects.get(a.id)!.round).toEqual({ segments: 12, verticals: true, ends: true });
+    expect(finer.cornerEffects.get(a.id)!.round).toEqual({ segments: 12 });
     expect(shapeOf(finer, id)[0]).toHaveLength(ring() + 4);
     expect(shapeOf(cornersInheriting(finer, [a.id]), id)).toEqual(shapeOf(w, id));
 
@@ -313,7 +302,7 @@ describe('the bake hears of effects', () => {
     const bake = { spans: new Map([[0, { stamp: stamp(w, 0) } as Span]]), progress: null };
 
     expect(spanAt(bake, w, 0)).not.toBeNull();
-    expect(spanAt(bake, withEffects(w, id, { round: { segments: 8, verticals: false, ends: true } }), 0)).toBeNull();
+    expect(spanAt(bake, withEffects(w, id, { round: { segments: 8 } }), 0)).toBeNull();
     expect(spanAt(bake, switchedOff(w, [id], 'round'), 0)).toBeNull();
   });
 });

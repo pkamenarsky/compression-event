@@ -575,16 +575,13 @@ export interface World {
  * like erosion. A count, a pattern or a seed does not change over time.
  *
  * - `round`: each corner an arc of `segments` segments, one being a chamfer,
- *   starting as deep along each edge as its bevel. `verticals` off stands
- *   none along the inside of its arcs, so the round reads smooth rather than
- *   faceted; `ends` off none where they start off the edges, so it runs into
- *   them unbroken. See `unstood` in `geometry.ts`.
+ *   starting as deep along each edge as its bevel.
  * - `deform`: points put into each edge every `spacing` of its length, each
  *   strayed along it by up to `jitter` of the spacing, and pushed off it by
  *   the pattern. `seed` is the noise's and the jitter's.
  */
 export interface Effects {
-  round?: { segments: number, verticals: boolean, ends: boolean, off?: boolean }
+  round?: { segments: number, off?: boolean }
   deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
@@ -595,7 +592,7 @@ export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
 
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
-  round: { segments: 4, verticals: true, ends: true },
+  round: { segments: 4 },
   deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
 };
 

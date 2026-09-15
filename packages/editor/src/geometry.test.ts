@@ -44,7 +44,6 @@ import {
   rounded,
   SEEDING,
   subdivided,
-  unstood,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -2006,20 +2005,6 @@ describe('round and deform', () => {
       expect(Math.hypot(a.x, a.y)).toBeCloseTo(4, 9);
       expect(Math.hypot(b.x, b.y)).toBeCloseTo(4, 9);
     }
-  });
-
-  test('which of an arc\'s points stand no vertical', () => {
-    const arc = rounded(square, i => (i === 0 ? 4 : 0), 4).slice(0, 5);
-
-    expect(unstood(arc, { verticals: true, ends: true })).toEqual([]);
-    expect(unstood(arc, { verticals: false, ends: true })).toEqual(arc.slice(1, 4));
-    expect(unstood(arc, { verticals: true, ends: false })).toEqual([arc[0], arc[4]]);
-    expect(unstood(arc, { verticals: false, ends: false })).toEqual(arc);
-
-    // An arc of no depth is a corner, and stands its one vertical.
-    const none = rounded(square, () => 0, 4).slice(0, 5);
-
-    expect(unstood(none, { verticals: false, ends: false })).toEqual([]);
   });
 
   test('a jitter strays each tooth by its seed, and keeps it the same tooth', () => {

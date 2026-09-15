@@ -418,7 +418,7 @@ keyframe, as its shape is; how much is an op, like erosion.
 
 ```ts
 interface Effects {
-  round?: { segments: number, verticals: boolean, ends: boolean }
+  round?: { segments: number }
   deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both', jitter: number }
 }
 
@@ -508,15 +508,12 @@ interface Rig {
   left, where the neighbour wants less. Holes too. The arc is walked from its
   first tangent point, so it stays exact as a corner straightens.
 - A corner running straight through has a tangent length of `SEEDING` of
-  its depth, so its arc is a sliver of a run along its wall, never one point.
-- An arc's points stand verticals by default, so a round is faceted;
-  `round.verticals` off stands none along its inside, so it reads smooth,
-  and `round.ends` off none at its tangent points, so it runs into its edges
-  unbroken. Which points is `unstood`'s answer alone, and both the still
-  (`sourced`, through `Contributed.unstood`) and the bake (`fadingPoints`,
-  `groupFading`) ask it, so they cannot disagree. An arc of no depth is a
-  corner and stands one; in a span, what an arc hides is solid at an end
-  where it has none, so nothing pops at a keyframe.
+  its bevel, so its arc is a sliver of a run along its wall, never one point.
+- Every point of an arc stands a vertical: a round is faceted. (Options to
+  stand none along an arc's inside, or at its ends, came and went.)
+- The game's still draws the walls each version ships (`Version.walls`),
+  which are the editor's own view's (`sourced`), rather than standing a
+  vertical at every point of the collision rings.
 - **`imaged`**: the round built off where each source corner lands after
   the erosion (`mitred`), matched to the eroded boundary by position, with a
   corner flat in the source put back on its edge first; and where each
@@ -624,9 +621,7 @@ Done (`effects.ts`, `pane.ts`), differently in these places:
   unticked and optioned per corner (`cornersSwitched`, `cornersOptioned`),
   and put back to its polygon's (`cornersInheriting`). A corner's own switched
   off is square; its polygon's switched off squares every corner (`roundOf`).
-- **Verticals** off now reach a group's union too: it hands the bake its arc
-  points (`Contributed.smooth`, `arcInteriors`), and `groupFading` lays them
-  flat. The bake's stamp holds `effects` and `cornerEffects`, so a change to
+- The bake's stamp holds `effects` and `cornerEffects`, so a change to
   either is a span gone stale; before, an option changed kept the old bake.
 - Delete under the edge tool takes out both ends of every edge picked.
 - Keys typed into a field are the field's (`typing` in `input.ts`).

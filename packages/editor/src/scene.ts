@@ -53,12 +53,9 @@ import {
   subdivided,
   simplify,
   sliced,
-  Stands,
   intersect,
   subtract,
   unionAll,
-  unstood,
-  unstoodAll,
 } from './geometry';
 import {
   ArtefactId,
@@ -286,38 +283,6 @@ export function deformOf(fx: Effects | undefined, own?: Partial<Effects>): Effec
 /** Whether a thing's erosion applies: it does unless switched off. */
 export function eroding(world: World, id: Id): boolean {
   return world.effects.get(id)?.erode?.off !== true;
-}
-
-/** A point with how solid the vertical standing on it is: nought for none. */
-export interface Fade {
-  p: Point
-  v: number
-}
-
-/**
- * The points of a polygon's arcs that stand no vertical, each as solid as
- * `solid` says of the corner it is on: nought at a keyframe, and part way
- * where the bake is bringing an arc in. See `unstood`, which says which.
- */
-export function unstoodOf(world: Pick<World, 'effects' | 'cornerEffects'>, it: Resolved, solid: (corner: number) => number): Fade[] {
-  const fx = world.effects.get(it.id);
-  const rounds = it.corners.map(c => roundOf(fx, world.cornerEffects.get(c.id)));
-
-  if (rounds.every(r => r === undefined || (r.verticals && r.ends))) return [];
-
-  const im = imagesOf(it);
-
-  if (im === null) return [];
-
-  return rounds.flatMap((r, i) => {
-    const run = im.corners[i];
-
-    if (r === undefined || run === null) return [];
-
-    const v = solid(i);
-
-    return unstood(run, r).map(p => ({ p, v }));
-  });
 }
 
 /** A thing's options, with a corner's own over them where it has them. */
@@ -2732,9 +2697,6 @@ export interface Contributed {
   /** The bake's invented corners, carried through the arrangement. A group's
    * union has none: nothing invents a corner on it. See `Resolved.keep`. */
   keep?: readonly Point[]
-  /** Its arcs' points that stand no vertical, and how solid each is. See
-   * `unstood` in `geometry.ts`. */
-  unstood?: readonly Fade[]
 }
 
 /**
@@ -2766,7 +2728,7 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
 
   if (round === undefined) return undefined;
 
-  return { segments: round.segments, bevel: stateAt(world, id, v).bevel, stands: round };
+  return { segments: round.segments, bevel: stateAt(world, id, v).bevel };
 }
 
 /**
@@ -2917,10 +2879,8 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its round, on its union after the depth, and where its arcs stand
-   * verticals — how solid those they do not stand are, nought unless the
-   * bake says otherwise. Absent is none. */
-  effects?: { segments: number, bevel: number, stands?: Stands, solid?: number }
+  /** Its round, on its union after the depth. Absent is none. */
+  effects?: { segments: number, bevel: number }
   /**
    * The frame to keep the union's points in.
    *
@@ -3119,10 +3079,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], smooth: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [], smooth: [] };
+    if (group === undefined) return { shape: [], keep: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -3145,19 +3105,12 @@ export function contributed(
     const round = unionKey(here);
     const union = offsetUnion(shapes, depth, round);
 
-    // Where its arcs stand no verticals, for the walls to leave out. Off the
-    // union before the round, as `effected` takes it.
-    const stands = here?.effects?.stands;
-    const smooth = round !== null && stands !== undefined
-      ? unstoodAll(offsetUnion(shapes, depth, null), round[0], round[1], stands)
-      : [];
-
     // What its members keep for the bake, moved in with their edges: a union
     // is an arrangement, and would drop them — see `Resolved.keep`.
     const keep = group.members.flatMap(m => keptFrom(m, set, k))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, smooth };
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep };
   };
 
   /**
@@ -3184,7 +3137,6 @@ export function contributed(
   };
 
   const kept = new Map<string, Point[]>();
-  const smoothed = new Map<string, Point[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -3211,13 +3163,12 @@ export function contributed(
 
     if (known !== undefined) {
       kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
-      smoothed.set(key, held?.get(`${key}:smooth`)?.[0] ?? []);
 
       return known;
     }
 
     const from = top(id, set);
-    const slots: { shape: Shape, keep: Point[], smooth: Point[] }[] = [];
+    const slots: { shape: Shape, keep: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
@@ -3230,13 +3181,9 @@ export function contributed(
     const keep = slots.flatMap(u => u.keep);
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
-    const smooth = slots.flatMap(u => u.smooth);
-
     kept.set(key, keep);
-    smoothed.set(key, smooth);
     held?.set(key, out);
     held?.set(`${key}:keep`, [keep]);
-    held?.set(`${key}:smooth`, [smooth]);
 
     return out;
   };
@@ -3245,10 +3192,6 @@ export function contributed(
     const it = mine.get(id);
 
     if (it !== undefined) {
-      // At an instant an arc of no depth is a corner, and `unstood` says so:
-      // nothing here is part way.
-      const unstoodHere = unstoodOf(world, it, () => 0);
-
       parts(kindOf(it.polygon)).forEach((kind, k) => {
         out.push({
           id: k === 0 ? id : sideOf(id, kind),
@@ -3258,7 +3201,6 @@ export function contributed(
           // Already an arrangement, whatever its depth. See `plainly`.
           simple: true,
           keep: it.keep,
-          ...(unstoodHere.length === 0 ? {} : { unstood: unstoodHere }),
         });
       });
 
@@ -3291,16 +3233,12 @@ export function contributed(
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
-      const v = how.effects?.solid ?? 0;
-      const unstood = (smoothed.get(`${id}:${set}`) ?? []).map(p => ({ p, v }));
-
       out.push({
         id: sideOf(id, kind),
         kind,
         shape,
         frame: how.frame ?? IDENTITY,
         simple: true,
-        ...(unstood.length === 0 ? {} : { unstood }),
       });
     }
   };
@@ -3919,23 +3857,8 @@ export function floorRuns(l: Live): Point[][] {
  * agree about every vertical.
  */
 export function sourced(l: Live): { points: Point[], corner: boolean[] }[] {
-  return pieces(l.level).map(p => {
-    const off = (l.seen.get(p.source)?.unstood ?? []).filter(f => f.v < 0.5);
-
-    if (off.length === 0) return { points: p.points, corner: p.corner };
-
-    // Where its arcs stand no vertical, the same points the bake fades. See
-    // `unstood` in `geometry.ts`.
-    const snap = SNAP * Math.max(1, ...off.map(f => Math.max(Math.abs(f.p.x), Math.abs(f.p.y))));
-    const flat = (q: Point) => off.some(f => Math.abs(f.p.x - q.x) <= snap && Math.abs(f.p.y - q.y) <= snap);
-
-    return { points: p.points, corner: p.corner.map((c, i) => c && !flat(p.points[i])) };
-  });
+  return pieces(l.level).map(p => ({ points: p.points, corner: p.corner }));
 }
-
-/** How near a piece's point is to one of its arcs', against how far out they
- * are: far under any arc's spacing, and over the arrangement's. */
-const SNAP = 1e-7;
 
 /**
  * The sets brought up to date against `items`, doing only the work the

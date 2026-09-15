@@ -1312,8 +1312,8 @@ describe('the standing walls and the bake agree about every vertical', () => {
   });
 
   /** A round of four segments, thirty deep, on the one thing `made` names. */
-  function rounded(made: { world: World, id: Id }, stands: { verticals: boolean, ends: boolean }): World {
-    const world = { ...made.world, effects: new Map([[made.id, { round: { segments: 4, ...stands } }]]) };
+  function rounded(made: { world: World, id: Id }): World {
+    const world = { ...made.world, effects: new Map([[made.id, { round: { segments: 4 } }]]) };
 
     return wrote(world, 0, made.id, { kind: 'round', by: 30 });
   }
@@ -1324,34 +1324,21 @@ describe('the standing walls and the bake agree about every vertical', () => {
     return { world, id: ids[0] as Id };
   };
 
-  // Four arcs of five points each: three inside, two ends.
-  test('a rounded room standing no verticals along its arcs', () => {
-    expect(same(rounded(room(), { verticals: false, ends: true }))).toEqual(4 * 3);
+  test('a rounded room', () => {
+    expect(same(rounded(room()))).toEqual(0);
   });
 
   test('and the game\'s still is handed the very walls the editor stands', () => {
-    const w = rounded(room(), { verticals: false, ends: true });
-    const standing = sourced(live(EMPTY_LIVE, contributing(w, 0, resolveAt(w, 0))));
+    const w = rounded(room());
 
-    expect(versionOf(w, 0).walls).toEqual(standing);
-    expect(standing.flatMap(r => r.corner).filter(t => !t)).toHaveLength(4 * 3);
+    expect(versionOf(w, 0).walls).toEqual(sourced(live(EMPTY_LIVE, contributing(w, 0, resolveAt(w, 0)))));
   });
 
-  test('a rounded room standing none where its arcs start', () => {
-    expect(same(rounded(room(), { verticals: true, ends: false }))).toEqual(4 * 2);
-  });
-
-  test('a rounded room standing none on its arcs at all', () => {
-    expect(same(rounded(room(), { verticals: false, ends: false }))).toEqual(4 * 5);
-  });
-
-  test('a sealed group\'s union, rounded and standing none on its arcs', () => {
+  test('a sealed group\'s union, rounded', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 300, 300)], ['level', rect(300, 100, 100, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
 
-    // The union has eight corners, every one of them rounded, and no two of
-    // its arcs meet.
-    expect(same(rounded({ world: g.world, id: g.id }, { verticals: false, ends: false }))).toEqual(8 * 5);
+    expect(same(rounded({ world: g.world, id: g.id }))).toEqual(0);
   });
 });
 

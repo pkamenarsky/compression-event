@@ -1,7 +1,7 @@
-* adaptive subdivision in round
-* verticals should always be on i think
 * polygon masks
 ** level + void{solid} etc etc
+* ops should be append-only? e.g. how to repeat the last small translate otherwise?
+** or should repeatable transforms be "effects" as well? and only effects can repeat?
 
 * ask yes/no if level unsaved
 * no need to rebake on artifact change

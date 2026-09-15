@@ -149,9 +149,9 @@ export interface Erode {
 
 /**
  * How far a thing's corners are rounded: its bevel, how deep along each edge
- * from the corner the arc each becomes starts. Which rounding — how many segments, where they stand
- * verticals — is not an operation but a fact about the thing, over every
- * keyframe. See `Effects` in `types.ts`.
+ * from the corner the arc each becomes starts. How many segments is not an
+ * operation but a fact about the thing, over every keyframe. See `Effects` in
+ * `types.ts`.
  */
 export interface Round {
   kind: 'round'

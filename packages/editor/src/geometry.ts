@@ -2863,46 +2863,10 @@ export function rounded(ring: Ring, bevel: (i: number) => number, segments: numb
   return arcs(ring, () => segments, bevel).flat();
 }
 
-/** Where a round stands its verticals: along the inside of its arcs, and at
- * their two ends, where it starts off the edges. See `Effects.round`. */
-export interface Stands {
-  verticals: boolean
-  ends: boolean
-}
-
-/**
- * The points of one corner's arc that stand no vertical: its inside unless it
- * stands `verticals`, and its two ends unless it stands `ends`. An arc of no
- * bevel is a corner, and stands one.
- *
- * The one answer to the question, which the still and the morph both ask
- * here — for a polygon's corners and a group's union alike — so the walls
- * standing and the walls in flight cannot disagree about a vertical.
- */
-export function unstood(run: readonly Point[], stands: Stands): Point[] {
-  const n = run.length;
-  const first = run[0], last = run[n - 1];
-
-  if (n < 2 || (first.x === last.x && first.y === last.y)) return [];
-
-  return run.filter((_p, k) => (k === 0 || k === n - 1 ? !stands.ends : !stands.verticals));
-}
-
 /** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
  * Out is to the right of the way round, as a counter-clockwise ring has it. */
 export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {
   return subdivided(ring, e, amplitude, key, 1).map(c => c.at);
-}
-
-/**
- * The points of a whole shape's arcs, rounded alike everywhere, that stand no
- * vertical. See `unstood`. The same construction as `effected`, before the
- * arrangement.
- */
-export function unstoodAll(shape: Shape, segments: number, bevel: number, stands: Stands): Point[] {
-  if (bevel <= 0 || segments <= 0 || (stands.verticals && stands.ends)) return [];
-
-  return shape.flatMap(ring => arcs(ring, () => segments, () => bevel).flatMap(run => unstood(run, stands)));
 }
 
 /**
