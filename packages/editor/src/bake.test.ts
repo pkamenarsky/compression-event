@@ -2196,7 +2196,7 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 
 describe('effects', () => {
   const ROUND: Effects = { round: inSegments(4, 20) };
-  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
+  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
 
@@ -2500,7 +2500,7 @@ describe('effects', () => {
     const diamond = [{ x: 104, y: 20 }, { x: 124, y: 40 }, { x: 104, y: 60 }, { x: 84, y: 40 }];
     const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
     const g = sealed(world, 0, ids, TOP)!;
-    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
     let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5));
 
     w = wrote(w, 1, ids[1], move(0, 60));

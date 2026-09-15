@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { rounded, shapeArea } from './geometry';
-import { TOP, addPolygon, contributing, copied, csg, grouped, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
@@ -106,7 +106,7 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out, on the line, out — every
     // twenty from the middle of each wall, the two at its ends half as tall.
-    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0 } };
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
     const w = wrote(withEffects(world, id, fx), 0, id, deform(2));
     const ring = shapeOf(w, id)[0];
 
@@ -160,7 +160,7 @@ describe('a group\'s effects', () => {
   });
 
   test('its union\'s noise belongs to its members\' edges, whatever else joins it', () => {
-    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both', jitter: 0 } };
+    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both', jitter: 0, clear: false } };
     const top = (w: World) => csg(w, 0).flat().filter(p => p.y > 95 && p.x > 5 && p.x < 150);
     const build = (extra: boolean) => {
       const a = room(emptyWorld(), rect(0, 0, 100, 100));
@@ -198,7 +198,7 @@ describe('a group\'s effects', () => {
 });
 
 describe('editing effects', () => {
-  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0 } };
+  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
 
   test('switched on, an effect keeps the options a thing already had', () => {
     const { world, id } = room();
@@ -291,6 +291,38 @@ describe('editing effects', () => {
 
     // The top edge alone lies wholly inside a box round it, teeth and all.
     expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
+  });
+
+  test('one edge deformed leaves the others straight, and their corners\' bevels whole', () => {
+    const { world, id } = room();
+    const [a, b, c, d] = world.polygons.get(id)!.points;
+    const rounded = wrote(withEffects(world, id, { round: inSegments(8, 30), ...DEFORM }), 0, id, round(30));
+    const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
+    const it = resolveAt(w, 0).find(r => r.id === id)!;
+
+    expect(edgeRun(it, a.id).length).toBeGreaterThan(2);
+    [b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
+
+    // The corner the deformed edge does not touch is rounded as it was.
+    const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];
+
+    expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
+  });
+
+  test('cleared, a polygon\'s teeth stop short of its corners\' bevels', () => {
+    const { world, id } = room();
+    const [a, b] = world.polygons.get(id)!.points;
+    const w = (clear: boolean) => {
+      const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, clear } };
+
+      return resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
+    };
+    const teeth = (it: Resolved) => edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
+    const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
+
+    expect(teeth(w(false)).some(p => from(p, a.at) < 30 || from(p, b.at) < 30)).toBe(true);
+    expect(teeth(w(true)).every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
+    expect(teeth(w(true)).length).toBeGreaterThan(0);
   });
 });
 

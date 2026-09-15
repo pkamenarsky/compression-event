@@ -56,6 +56,9 @@ interface Model {
   sides: Sides
   seed: number
   jitter: number
+  clear: boolean
+  /** Whether a polygon is among them: `clear` is a polygon's alone. */
+  polygons: boolean
   erode: Some
   round: Some
   precision: number
@@ -160,6 +163,8 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
     sides: d.sides,
     seed: d.seed,
     jitter: d.jitter,
+    clear: d.clear,
+    polygons: ids.some(id => world.polygons.has(id)),
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     precision: r.precision,
@@ -197,7 +202,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
 
     const shown = name === 'round'
       ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer() }
-      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
+      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter(), clear: m.clear() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
     return marked({ ...s, world, remembered }, s.world);
@@ -224,6 +229,9 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       field('jitter %', number(() => Math.round(m.jitter() * 100), 0, v => changed('deform', { jitter: Math.round(v) / 100 }), JITTER)),
       // A seed is the noise's and the jitter's.
       show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', number(m.seed, 0, v => changed('deform', { seed: Math.round(v) }))))),
+      // Teeth stopping short of the corners' rounds rather than running into
+      // them. A group's round is of its union, which has no corners to keep.
+      show(m.polygons, fragment(field('clear corners', tick(m.clear, v => changed('deform', { clear: v }))))),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),

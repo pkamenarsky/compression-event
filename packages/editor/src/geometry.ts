@@ -2735,7 +2735,8 @@ export interface Subdivision {
  * `out` is which side of the ring's edges is out of the material: 1 for the
  * right, which a counter-clockwise outline has, and -1 for the left. `key`
  * names each edge to the noise. `clear` is how far from each corner its round
- * keeps the teeth: see `patternRun`.
+ * keeps the teeth: see `patternRun`. An edge that is not `toothed` is left
+ * as it is.
  */
 export function subdivided(
   ring: Ring,
@@ -2744,6 +2745,7 @@ export function subdivided(
   key: (i: number) => number,
   out: 1 | -1,
   clear: (i: number) => number = () => 0,
+  toothed: (i: number) => boolean = () => true,
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2754,7 +2756,7 @@ export function subdivided(
     const b = ring[(i + 1) % n];
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
 
-    if (l === 0) return;
+    if (l === 0 || !toothed(i)) return;
 
     const nx = dy / l * out, ny = -dx / l * out;
     const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n));

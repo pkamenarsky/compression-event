@@ -1106,8 +1106,8 @@ function varying(
  * starts at: the thing's own amplitude, and for a polygon's own deform the
  * edge's on top.
  */
-export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Effecting, amplitude: (from: VertexId) => number }[] {
-  const out: { owner: Id, e: Effecting, amplitude: (from: VertexId) => number }[] = [];
+export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
+  const out: Deforming[] = [];
 
   for (const owner of [id, ...enclosing(world, id)]) {
     const fx = world.effects.get(owner);
@@ -1115,15 +1115,58 @@ export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Ef
     if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
 
     const state = stateAt(world, owner, v);
+    const ever = everDeformed(rigOf(world, owner));
+    const own = owner === id;
 
     out.push({
       owner,
       e: effecting(fx),
-      amplitude: owner === id ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
+      amplitude: own ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
+      toothed: own ? from => ever.all || ever.edges.has(from) : () => ever.all,
+      clear: own && fx.deform.clear,
     });
   }
 
   return out;
+}
+
+/**
+ * One deform a polygon's rings go through. `toothed` is whether an edge gets
+ * teeth at all: only one some amount somewhere in the timeline deforms, so an
+ * edge deformed on its own leaves the others straight and their corners' bevels
+ * whole. `clear` is whether its teeth keep out of the drawn corners' bevels.
+ */
+interface Deforming {
+  owner: Id
+  e: Effecting
+  amplitude: (from: VertexId) => number
+  toothed: (from: VertexId) => boolean
+  clear: boolean
+}
+
+/**
+ * What a thing's timeline ever deforms: all its edges, where an amount is
+ * written about the whole thing, and the edges written about one by one.
+ * Over every keyframe rather than at one, so an edge has its teeth at each —
+ * flat where its amplitude is nought — and they never come or go with it.
+ */
+function everDeformed(rig: Rig): { all: boolean, edges: ReadonlySet<VertexId> } {
+  const edges = new Set(rig.deforms.keys());
+  let all = false;
+
+  for (const list of rig.keys.values()) {
+    for (const { op } of list) {
+      if (op.kind === 'deform' && op.by !== 0) all = true;
+
+      if (op.kind === 'stand') {
+        if (op.amplitude !== 0) all = true;
+
+        op.amplitudes.forEach((a, from) => a !== 0 && edges.add(from));
+      }
+    }
+  }
+
+  return { all, edges };
 }
 
 /**
@@ -1138,9 +1181,9 @@ export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Ef
  * a varying erosion leaves a straight edge straight. What has no deform comes
  * back as it came.
  *
- * Each drawn corner's bevel is kept clear of teeth, so that a round and a
- * deform together are both there: see `patternRun`. A tooth's own round is
- * only ever as big as the teeth beside it leave it, and keeps nothing clear.
+ * A polygon's own deform with `clear` keeps each drawn corner's bevel free of
+ * teeth, which then stop short of the round rather than running into it: see
+ * `patternRun`. A tooth's own round keeps nothing clear.
  */
 function deformedAt(
   world: World,
@@ -1160,7 +1203,7 @@ function deformedAt(
   let pts: Point[] = place(frame, local);
   let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
 
-  for (const { owner, e, amplitude } of chain) {
+  for (const { owner, e, amplitude, toothed, clear: clearing } of chain) {
     const rings = ringsOf(cs);
     const slices = sliced(pts, rings);
 
@@ -1172,9 +1215,10 @@ function deformedAt(
     slices.forEach((ring, r) => {
       const at = rings[r];
 
-      const clear = (i: number) => (cs[at + i].root === undefined ? Math.max(0, bevel(cs[at + i])) : 0);
+      const clear = (i: number) => (clearing && cs[at + i].root === undefined ? Math.max(0, bevel(cs[at + i])) : 0);
+      const laid = subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out, clear, i => toothed(cs[at + i].root ?? cs[at + i].id));
 
-      for (const made of subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out, clear)) {
+      for (const made of laid) {
         const from = cs[at + made.from];
         const d0 = deep[at + made.from], d1 = deep[at + (made.from + 1) % ring.length];
 

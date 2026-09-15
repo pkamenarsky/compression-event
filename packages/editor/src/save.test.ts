@@ -126,7 +126,7 @@ describe('save', () => {
     w = {
       ...w,
       effects: new Map([
-        [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
+        [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, clear: false, off: true } }],
         [a, { erode: { off: true } }],
       ]),
       cornerEffects: new Map([[corners[0].id, { round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } }]]),
@@ -202,7 +202,7 @@ describe('save', () => {
 
     expect(w.effects.get(id)).toEqual({
       round: { precision: 0.5, tension: 0.5, chamfer: false },
-      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
+      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
     });
     expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
   });

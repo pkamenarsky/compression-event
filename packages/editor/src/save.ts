@@ -47,8 +47,8 @@ import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
  * 22: effects — which a thing has and how (`World.effects`, a corner's own in
  * `cornerEffects`), and the rounds and deforms in its timeline, a stand's
  * included. A 21 is the same with none, and is read as that; its bake stands,
- * since a world without effects bakes as it did. A deform's `jitter` came
- * later in 22, and is nought where a file has none; a round's `verticals` and
+ * since a world without effects bakes as it did. A deform's `jitter` and
+ * `clear` came later in 22, and are nought and off where a file has none; a round's `verticals` and
  * `ends` came and went, and are dropped; a round was first a number of
  * `segments`, and reads as a chamfer where that was one and at the precision
  * a round starts with otherwise, and one without a `tension` at the tension
@@ -399,8 +399,8 @@ export function upload(then: (state: EditorState) => void): void {
 }
 
 /** Effects as this reads them, from whenever in 22 they were saved: a
- * deform's `jitter` came after the format did, and a file without one has
- * none; a round's `verticals` and `ends` came and went, and its `segments`
+ * deform's `jitter` and `clear` came after the format did, and a file
+ * without them has neither; a round's `verticals` and `ends` came and went, and its `segments`
  * became a precision. */
 function optioned<E extends Partial<Effects>>(fx: E): E {
   return {
