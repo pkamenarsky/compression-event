@@ -2619,6 +2619,31 @@ function polygonsUnder(world: World, id: Id): PolygonKind[] {
 }
 
 /**
+ * Each of `points` that is a vertex of `shape`, with the inward normal of the
+ * edge through it: the left of the way round, which is where the material is
+ * for any ring an arrangement makes. What moves a kept point in with the
+ * edge it is kept on when the edge is offset.
+ */
+function inwards(shape: Shape, points: readonly Point[]): { p: Point, n: Point }[] {
+  if (points.length === 0) return [];
+
+  return points.flatMap(p => {
+    for (const ring of shape) {
+      const i = ring.findIndex(q => q.x === p.x && q.y === p.y);
+
+      if (i < 0) continue;
+
+      const a = ring[(i - 1 + ring.length) % ring.length], b = ring[(i + 1) % ring.length];
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+      return l === 0 ? [] : [{ p, n: { x: -dy / l, y: dx / l } }];
+    }
+
+    return [];
+  });
+}
+
+/**
  * The union of `shapes`, offset by `depth`: what one slot of a scope comes to.
  *
  * Remembered, because a group with erosion on it is two arrangements per slot
@@ -2696,10 +2721,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): Shape => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return [];
+    if (group === undefined) return { shape: [], keep: [] };
 
     const d = standing(id)?.depth ?? 0;
 
@@ -2717,9 +2742,40 @@ export function contributed(
     // its voids grow against it.
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
+    const union = offsetUnion(group.members.flatMap(m => from(m, set, k)), depth);
 
-    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth);
+    // What its members keep for the bake, moved in with their edges: a union
+    // is an arrangement, and would drop them — see `Resolved.keep`.
+    const keep = group.members.flatMap(m => keptFrom(m, set, k))
+      .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
+
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep };
   };
+
+  /**
+   * The points a member keeps for the bake, on its shape, each with the
+   * inward normal of the edge it lies on: a polygon's own, and a scope's
+   * inside, which kept its members'.
+   */
+  const keptFrom = (id: Id, set: SetName, k: number): { p: Point, n: Point }[] => {
+    const it = mine.get(id);
+
+    if (it !== undefined) {
+      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, it.keep ?? []) : [];
+    }
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return [];
+
+    if (group.sealed && standing(id) !== null) {
+      return k === top(id, set) ? inwards(resolves(id, set), kept.get(`${id}:${set}`) ?? []) : [];
+    }
+
+    return group.members.flatMap(m => keptFrom(m, set, k));
+  };
+
+  const kept = new Map<string, Point[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -2744,19 +2800,29 @@ export function contributed(
     const key = `${id}:${set}`;
     const known = held?.get(key);
 
-    if (known !== undefined) return known;
+    if (known !== undefined) {
+      kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
+
+      return known;
+    }
 
     const from = top(id, set);
-    const slots: Shape[] = [];
+    const slots: { shape: Shape, keep: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
-    const settles = slots.length === 0 ? [] : settled(slots);
-    const out = set === 'floor' && top(id, 'level') === 0
+    const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
+    const cut = set === 'floor' && top(id, 'level') === 0
       ? underfoot(settles, resolves(id, 'level'))
       : settles;
 
+    // Folding the slots is an arrangement again, and would drop them again.
+    const keep = slots.flatMap(u => u.keep);
+    const out = keep.length === 0 ? cut : keeping(cut, keep);
+
+    kept.set(key, keep);
     held?.set(key, out);
+    held?.set(`${key}:keep`, [keep]);
 
     return out;
   };

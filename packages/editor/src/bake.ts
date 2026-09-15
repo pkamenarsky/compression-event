@@ -158,6 +158,7 @@ import {
   groupFrame,
   keyAt,
   order,
+  outermostSlot,
   parts,
   placeAt,
   sidedWith,
@@ -178,15 +179,18 @@ import {
   PolygonId,
   PolygonKind,
   SLOTS,
+  SLOT_KINDS,
   SetName,
   KeyframeId,
   Vertex,
   VertexId,
   World,
   enclosing,
+  inverted,
   inside,
   kindKey,
   kindOf,
+  within,
   ringsOf,
   slotOf,
 } from './types';
@@ -1186,33 +1190,117 @@ function world1(items: Moving[], t: number): Resolved[] {
  * stretch the vertex is emerging through.
  */
 function fading(m: Moving, it: Resolved, t: number): number[][] | null {
-  const changing: number[] = [];
+  return paintedOn(it.shape, fadingPoints(m, it, t));
+}
+
+/**
+ * The points of a polygon's projection that are not wholly solid at `t`,
+ * each with how solid it is: `fading`'s answer before it is put onto a
+ * shape, so that a scope holding the polygon can put it onto its own. See
+ * `groupFading`.
+ */
+function fadingPoints(m: Moving, it: Resolved, t: number): { p: Point, v: number }[] {
+  const out: { p: Point, v: number }[] = [];
 
   for (let i = 0; i < m.corners.length; i++) {
-    if (m.dead[0][i] || m.dead[1][i]) changing.push(i);
-  }
+    if (!m.dead[0][i] && !m.dead[1][i]) continue;
 
-  if (changing.length === 0) return null;
-
-  const full = it.shape;
-  const snap = near(new Map([[it.id, full]]));
-  const out = full.map(ring => ring.map(() => 1));
-
-  for (const i of changing) {
     const image = mitred(it.source, it.rings, i, it.depths === null ? it.erosion : it.depths[i]);
 
     // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
     // it nowhere to be, and a point that is not drawn needs no opacity.
-    if (image === null) continue;
-
-    const at = corner(full, image, snap);
-
-    if (at === null) continue;
-
-    out[at.ring][at.index] = mix(m.dead[0][i] ? 0 : 1, m.dead[1][i] ? 0 : 1, t);
+    if (image !== null) out.push({ p: image, v: mix(m.dead[0][i] ? 0 : 1, m.dead[1][i] ? 0 : 1, t) });
   }
 
   return out;
+}
+
+/** Points with how solid each is, put onto a shape: every point of it one of
+ * them lands on, and the rest wholly solid. Nothing where none lands. */
+function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): number[][] | null {
+  if (points.length === 0) return null;
+
+  const snap = near(new Map([[0, shape]]));
+  const out = shape.map(ring => ring.map(() => 1));
+  let any = false;
+
+  for (const { p, v } of points) {
+    const at = corner(shape, p, snap);
+
+    if (at === null) continue;
+
+    out[at.ring][at.index] = Math.min(out[at.ring][at.index], v);
+    any = true;
+  }
+
+  return any ? out : null;
+}
+
+/**
+ * How solid each point of a scope's side is at `t`: its polygons' fading,
+ * carried onto it. A polygon's point is moved in by the depth of every scope
+ * from the polygon's up to this one, the way the erosion moves a corner —
+ * offsets of one shape add, so the depths can be taken together — and put
+ * onto the side's shape where it lands. Without this, a corner arriving on a
+ * room inside a sealed group stood its vertical all at once.
+ */
+function groupFading(
+  cast: Cast,
+  side: Contributed,
+  moving: ReadonlyMap<Id, Moving>,
+  was: ReadonlyMap<Id, Resolved>,
+  t: number,
+): number[][] | null {
+  const group = sidedWith(side.id) ?? side.id;
+  const world = cast.world;
+
+  if (!world.groups.has(group)) return null;
+
+  const set = setOf(side.kind);
+  const points: { p: Point, v: number }[] = [];
+
+  for (const id of within(world, group)) {
+    const m = moving.get(id), it = was.get(id);
+
+    if (m === undefined || it === undefined) continue;
+
+    const mine = fadingPoints(m, it, t);
+
+    if (mine.length === 0) continue;
+
+    // Every sealed scope from the polygon's up to this one, each at the depth
+    // it stands at, turned the way the slot the one inside it fills is.
+    let depth = 0;
+    let slot = slotOf(kindOf(it.polygon), set);
+
+    for (const g of enclosing(world, id)) {
+      const both = cast.scopes.get(g);
+
+      if (both !== undefined && slot !== null) {
+        const top = outermostSlot(world, g, set) ?? 0;
+        const kinds = SLOT_KINDS[set];
+
+        depth += mix(both[0], both[1], t) * (inverted(kinds[slot]) !== inverted(kinds[top]) ? -1 : 1);
+        slot = top;
+      }
+
+      if (g === group) break;
+    }
+
+    const snap = near(new Map([[id, it.shape]]));
+
+    for (const { p, v } of mine) {
+      const at = corner(it.shape, p, snap);
+
+      if (at === null) continue;
+
+      const moved = depth === 0 ? it.shape[at.ring][at.index] : mitred(it.shape[at.ring], [0], at.index, depth);
+
+      if (moved !== null) points.push({ p: moved, v });
+    }
+  }
+
+  return paintedOn(side.shape, points);
 }
 
 /**
@@ -1601,7 +1689,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     // Only a polygon has source corners, and only they can be invented. A
     // group's union boundary has none to fade.
     const m = moving.get(it.id), mine = was.get(it.id);
-    const how = m === undefined || mine === undefined ? null : fading(m, mine, t);
+    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
 
     if (how !== null) fade.set(it.id, how);
   }

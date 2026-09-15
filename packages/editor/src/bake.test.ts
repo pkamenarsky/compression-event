@@ -1902,6 +1902,41 @@ describe('a corner arriving right beside one that is leaving', () => {
   });
 });
 
+describe('a corner arriving on a room inside a sealed group', () => {
+  // The group's union is an arrangement, and dropped the point the room keeps
+  // on its wall at the near end: the ring was a point short there, and the
+  // corner's vertical stood all at once. See `slotted` in `scene.ts` and
+  // `groupFading`.
+  function arriving(depth: number): World {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)], ['level', rect(300, 0, 50, 50)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = depth === 0 ? g.world : wrote(g.world, 0, g.id, erode(depth));
+    const it = resolveAt(w, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(w, 1, it, 0, { x: 0, y: -100 });
+
+    return nudging(grown.world, 1, ids[0], grown.vertex, { x: 0, y: -80 });
+  }
+
+  for (const depth of [0, 10]) {
+    test(`is one stretch, and its vertical fades in${depth === 0 ? '' : ', the group eroding'}`, () => {
+      const w = arriving(depth);
+      const span = run(bakeSpan(w, 0));
+      const s = span.tracks[0].stretches[0];
+
+      expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+      expect(drift(w)).toBeLessThan(TOLERANCE);
+      expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+
+      // The one on the floor, off the corners, dark at the near end.
+      const floor = s.a.flatMap((r, i) => r.points.flatMap((p, j) => (
+        Math.abs(p.y + 100 - depth) < 1e-6 && Math.abs(p.x) < 50 ? [s.opacity[0][i][j]] : []
+      )));
+
+      expect(floor).toEqual([0]);
+    });
+  }
+});
+
 describe('a crossing is rebuilt from the edges it was named against', () => {
   // A crossing is not a position, it is two edges, and `drawn` rebuilds it at
   // every instant by indexing into each polygon's own shape. So the index has to
