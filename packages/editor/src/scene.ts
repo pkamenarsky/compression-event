@@ -1137,6 +1137,10 @@ export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Ef
  * any other. A tooth's extra depth is its edge's, in proportion along it, so
  * a varying erosion leaves a straight edge straight. What has no deform comes
  * back as it came.
+ *
+ * Each drawn corner's bevel is kept clear of teeth, so that a round and a
+ * deform together are both there: see `patternRun`. A tooth's own round is
+ * only ever as big as the teeth beside it leave it, and keeps nothing clear.
  */
 function deformedAt(
   world: World,
@@ -1146,6 +1150,7 @@ function deformedAt(
   local: readonly Point[],
   frame: Affine,
   over: ReadonlyMap<VertexId, number>,
+  bevel: (c: Vertex) => number,
 ): { corners: Vertex[], local: Point[], source: Point[], over: ReadonlyMap<VertexId, number> } {
   const chain = deforms(world, v, id);
 
@@ -1167,7 +1172,9 @@ function deformedAt(
     slices.forEach((ring, r) => {
       const at = rings[r];
 
-      for (const made of subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out)) {
+      const clear = (i: number) => (cs[at + i].root === undefined ? Math.max(0, bevel(cs[at + i])) : 0);
+
+      for (const made of subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out, clear)) {
         const from = cs[at + made.from];
         const d0 = deep[at + made.from], d1 = deep[at + (made.from + 1) % ring.length];
 
@@ -1307,7 +1314,9 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     if (corners.length < 3) continue;
 
     const frame = worldFrame(world, id, v);
-    const drawn = deformedAt(world, v, id, corners, corners.map(c => state.corners.get(c.id)!), frame, state.depths);
+    const fx = world.effects.get(id);
+    const bevel = (c: Vertex) => (roundOf(fx, world.cornerEffects.get(c.id)) === undefined ? 0 : state.bevel + (state.bevels.get(c.id) ?? 0));
+    const drawn = deformedAt(world, v, id, corners, corners.map(c => state.corners.get(c.id)!), frame, state.depths, bevel);
 
     out.push(resolved({
       id,

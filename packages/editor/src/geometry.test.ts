@@ -2144,4 +2144,18 @@ describe('round and deform', () => {
 
     expect(mid(longer, 46, 2)).toBeCloseTo(mid(jittered, 40, 2), 9);
   });
+
+  test('teeth keep clear of the bevels at the ends, and stay the same teeth', () => {
+    const plain = patternRun(zigzag, 5, 1, 40);
+    const cleared = patternRun(zigzag, 5, 1, 40, 10, 4);
+    const at = (run: typeof plain) => run.along.map(u => u * 40);
+
+    // None inside either bevel, and the rest where the spacing puts them.
+    expect(Math.min(...at(cleared))).toBeGreaterThan(10);
+    expect(Math.max(...at(cleared))).toBeLessThan(36);
+    cleared.teeth.forEach((j, k) => expect(at(cleared)[k]).toBeCloseTo(at(plain)[plain.teeth.indexOf(j)], 12));
+
+    // Bevels meeting leave none at all.
+    expect(patternRun(zigzag, 5, 1, 40, 20, 20).teeth).toEqual([]);
+  });
 });

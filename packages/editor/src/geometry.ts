@@ -2633,8 +2633,14 @@ export interface EdgeRun {
  * With a jitter, each tooth is moved off its place along the edge by up to
  * half the jitter's share of the spacing, either way, by the seed: its own
  * stray, the same however long the edge is, so the pattern stays continuous.
+ *
+ * `clear` and `clearTo` are how much of each end is kept free of teeth, for
+ * the round of the corner there: a tooth inside a bevel would be a corner the
+ * bevel cannot reach past, and would cut it down to the tooth. The teeth
+ * shrink to nothing at that line as they do at an end, and stay where the
+ * spacing puts them, so they are continuous in the bevel too.
  */
-export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number, clear = 0, clearTo = 0): EdgeRun {
   const anchor = length / 2;
   const along: number[] = [], across: number[] = [], teeth: number[] = [];
 
@@ -2645,7 +2651,7 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   for (let j = first; j <= last; j++) {
     const stray = e.jitter > 0 ? e.jitter * e.spacing * (hashed(e.seed, ~key, j) - 0.5) : 0;
     const at = anchor + j * e.spacing + stray;
-    const room = Math.min(1, Math.min(at, length - at) / e.spacing);
+    const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / e.spacing);
 
     if (room <= 0) continue;
 
@@ -2728,7 +2734,8 @@ export interface Subdivision {
  *
  * `out` is which side of the ring's edges is out of the material: 1 for the
  * right, which a counter-clockwise outline has, and -1 for the left. `key`
- * names each edge to the noise.
+ * names each edge to the noise. `clear` is how far from each corner its round
+ * keeps the teeth: see `patternRun`.
  */
 export function subdivided(
   ring: Ring,
@@ -2736,6 +2743,7 @@ export function subdivided(
   amplitude: (i: number) => number,
   key: (i: number) => number,
   out: 1 | -1,
+  clear: (i: number) => number = () => 0,
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2749,7 +2757,7 @@ export function subdivided(
     if (l === 0) return;
 
     const nx = dy / l * out, ny = -dx / l * out;
-    const run = patternRun(e, key(i), amplitude(i), l);
+    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n));
 
     run.along.forEach((u, k) => done.push({
       at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
