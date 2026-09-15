@@ -202,8 +202,7 @@ the fixed-point recovery in the bake, old save formats.
 ## Phases
 
 Done, and merged: 1, 2, 3, 3½, 4 and 5, and groups made global. In progress: 6, on
-the branch `effect-stack` — its steps 1–4 are done, the editing and the save
-format to come.
+the branch `effect-stack` — its steps 1–5 are done, the save format to come.
 
 ### 1 — types and evaluator (`rig.ts`, pure, not wired) — done
 
@@ -404,7 +403,7 @@ erosion leaves, teeth included, so a rounded zigzag is a wave. Chamfer is a
 round of one segment, so its cut follows the radius (`r·tan(θ/2)` along each
 edge) rather than being a length of its own.
 
-Steps 1–4 are done on the branch `effect-stack`; 5 and 6 are to come.
+Steps 1–5 are done on the branch `effect-stack`; 6 is to come.
 
 (The deform was first built after the erosion, on the boundary, with the
 bake writing each edge's teeth over both ends of a span. It jumped wherever
@@ -559,7 +558,7 @@ vertical over the span.
   gets, made on master and checked on the branch. Regenerated only on
   master; see the file.
 
-#### Editing (to come)
+#### Editing
 
 - **The gesture** reads two numbers off one drag, as `ngoning` does: sideways
   is the amount, and it writes an entry; upward is the segments or the
@@ -584,6 +583,31 @@ vertical over the span.
 - Save format 22; 21 still opens. Nothing saves effects yet: a file opens
   with none, and a stand's amounts are not written.
 
+Done (`effects.ts`, `pane.ts`), differently in these places:
+
+- **One select tool, three pickings.** The corner and polygon tools are one
+  button, with polygon / edge / corner beside it as the create tool has its
+  figures (`Picking`); `v` and `a` still reach the first and last. The edge
+  picking picks, marquees and drags edges, each named by the drawn corner it
+  starts at (`Selection.edges`), a tooth's edge being its root's.
+- **`e`, `b` and `d`** are erode, round (bevel) and deform, held and dragged
+  as `e` always was: sideways the amount, right as more for the two new ones;
+  upward past a little drift the segments or the spacing (`optioned`), with a
+  label by the cursor. On whole things they write an entry; on corners a
+  corner's, and a deform on the edges picked — or, with corners picked, the
+  edges between two of them. The first on a thing without the effect gives
+  it the options last used (`EditorState.remembered`, not in the file), and
+  a round, like an erosion, refuses a loose group.
+- **The pane** is on whenever something is picked under the select tool, and
+  is about the things picked or the polygons of the corners and edges picked.
+  Its boxes give and take effects; an option changed is changed on every one
+  that has the effect. Erosion's box only goes off (`unEroded`), since there
+  is nothing to give. It does not follow a pick in the keyframes, and it does
+  not edit a corner's own options yet.
+- Taking an effect off drops its entries, its corners', its corners' own
+  options, and what stands hold of it (`withoutEffect`).
+- Keys typed into a field are the field's (`typing` in `input.ts`).
+
 #### Order
 
 1. `rig.ts`: the op kinds, `rounds` and `deforms`, `State`, merge, repeat,
@@ -593,7 +617,7 @@ vertical over the span.
    world, groups. — done
 4. `bake.ts`: teeth as corners, arcs as slots, seeding, sealed groups'
    kept points and fading. Tests. — done
-5. The gestures, the options pane, the icons.
+5. The gestures, the options pane, the icons. — done
 6. The save format.
 
 ### 7 — later

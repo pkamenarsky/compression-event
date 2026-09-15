@@ -121,7 +121,7 @@ export function timeline(
     let last: { key: string, model: Model } | null = null;
 
     const model = (): Model => {
-      const m = modelOf(world(), selection(), keyframe(), local(), state().tool === 'point');
+      const m = modelOf(world(), selection(), keyframe(), local(), state().tool === 'point' || state().tool === 'edge');
       const key = JSON.stringify(m);
 
       if (last !== null && last.key === key) return last.model;
@@ -223,7 +223,7 @@ function keys(ctx: Ctx, input: Input): VNode {
 // -----------------------------------------------------------------------------
 
 /** With `corners`, the rows of the corners written about come under their
- * polygons': what the point tool is about. */
+ * polygons': what the corner and edge tools are about. */
 function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local, corners: boolean): Model {
   const rows = rowsOf(world, rootsOf(world, selection), corners);
   const picked = valid(world, local.picked);

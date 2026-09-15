@@ -84,7 +84,24 @@ export function toStep(n: number, step: number): number {
 // Tools
 // -----------------------------------------------------------------------------
 
-export type Tool = 'point' | 'create' | 'artefact' | 'polygon' | 'path';
+export type Tool = Picking | 'create' | 'artefact' | 'path';
+
+/**
+ * The selection tool, by what it picks: whole things, edges, or corners.
+ *
+ * One tool with three answers rather than three tools, because they share
+ * everything but the question — a click picks, a drag moves what is picked,
+ * and the effect keys act on it — and a toolbar with a row for each would be
+ * a toolbar about selecting. They are chosen beside it once it is up, the way
+ * the create tool picks its figure.
+ */
+export type Picking = 'polygon' | 'edge' | 'point';
+
+export const PICKINGS: Picking[] = ['polygon', 'edge', 'point'];
+
+export function picks(tool: Tool): tool is Picking {
+  return tool === 'polygon' || tool === 'edge' || tool === 'point';
+}
 
 /**
  * What the create tool draws.
@@ -562,6 +579,12 @@ export interface Effects {
   deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides }
 }
 
+/** The options an effect starts with before any has been chosen. */
+export const REMEMBERED: Required<Effects> = {
+  round: { segments: 4, verticals: true },
+  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both' },
+};
+
 /**
  * How the editor treats a thing, rather than what it is: the switches on a
  * timeline row.
@@ -782,6 +805,9 @@ export function opened(world: World, inside: GroupId | null): GroupId[] {
 export interface Selection {
   polygons: PolygonId[]
   vertices: VertexId[]
+  /** Picked edges, each by the drawn corner it starts at — the corner its
+   * amplitude is kept by. */
+  edges: VertexId[]
   artefacts: ArtefactId[]
   /**
    * The picked paths, whole.
@@ -809,6 +835,7 @@ export interface Selection {
 export const EMPTY_SELECTION: Selection = {
   polygons: [],
   vertices: [],
+  edges: [],
   artefacts: [],
   paths: [],
   start: false,
@@ -1068,6 +1095,7 @@ function settled(s: EditorState, was: World): EditorState {
         id => s.world.polygons.has(id) || s.world.groups.has(id),
       ),
       vertices: s.selection.vertices.filter(id => corners.has(id)),
+      edges: s.selection.edges.filter(id => corners.has(id)),
       // Always there, so nothing can have taken it away.
       start: s.selection.start,
       artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
@@ -1153,6 +1181,12 @@ export interface EditorState {
   tool: Tool
   /** What the create tool draws, which is only about that tool. */
   figure: Figure
+  /**
+   * The effect options last used: what `b` and `d` give a thing that has
+   * none, and what the effects pane shows for an effect nothing picked has.
+   * About this sitting, so not in the file.
+   */
+  remembered: Required<Effects>
 
   /** A version switch being watched go by, rather than jumped. Null between
    * them, which is nearly always. */
@@ -1232,6 +1266,7 @@ export function initialState(world: World): EditorState {
     view: defaultView,
     tool: 'point',
     figure: 'rect',
+    remembered: REMEMBERED,
     replay: null,
     preview: false,
     roaming: false,

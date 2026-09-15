@@ -4,6 +4,18 @@ import { shapeArea } from './geometry';
 import { TOP, addPolygon, copied, csg, grouped, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
+import {
+  amountWritten,
+  cornersAmounted,
+  edgeRun,
+  edgesBetween,
+  edgesWithinBox,
+  endsOf,
+  eroded,
+  givenEffect,
+  unEroded,
+  withoutEffect,
+} from './effects';
 import { erode, move, scaled, turned, wrote } from './testing';
 import { Effects, Id, PolygonId, World, emptyWorld } from './types';
 
@@ -179,5 +191,83 @@ describe('a group\'s effects', () => {
     expect(out.world.effects.get(made)).toEqual(ROUND);
     expect(stateAt(out.world, made, 0).radius).toBe(10);
     expect(shapeArea(csg(out.world, 0))).toBeCloseTo(shapeArea(csg(world, 0)), 6);
+  });
+});
+
+describe('editing effects', () => {
+  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out' } };
+
+  test('given, an effect keeps the options a thing already had', () => {
+    const { world, id } = room();
+    const other = room(world, rect(200, 0, 50, 50));
+    const w = givenEffect(withEffects(other.world, id, { round: { segments: 2, verticals: false } }), [id, other.id], 'round', ROUND.round!);
+
+    expect(w.effects.get(id)).toEqual({ round: { segments: 2, verticals: false } });
+    expect(w.effects.get(other.id)).toEqual(ROUND);
+  });
+
+  test('taken off, an effect takes its amounts, its corners\' and its corners\' options with it', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[0].id;
+    let w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2));
+
+    w = cornersAmounted(w, 1, id, 'round', new Set([corner]), 4);
+    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2, verticals: true } }]]) };
+
+    const off = withoutEffect(w, id, 'round');
+
+    expect(off.effects.get(id)).toEqual(DEFORM);
+    expect(off.cornerEffects.has(corner)).toBe(false);
+    expect(rigOf(off, id).rounds.size).toBe(0);
+    expect(rigOf(off, id).keys.get(0)!.map(e => e.op.kind)).toEqual(['erode', 'deform']);
+    expect(shapeOf(off, id)).toEqual(shapeOf(wrote(withEffects(world, id, DEFORM), 0, id, erode(3), deform(2)), id));
+
+    const bare = withoutEffect(off, id, 'deform');
+
+    expect(bare.effects.has(id)).toBe(false);
+  });
+
+  test('erosion has nothing to give, and taken off goes from the thing and its corners', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[0].id;
+
+    expect(eroded(world, id)).toBe(false);
+
+    const w = cornersAmounted(amountWritten(world, 0, id, 'erode', 5), 1, id, 'erode', new Set([corner]), 2);
+
+    expect(eroded(w, id)).toBe(true);
+
+    const out = unEroded(w, id);
+
+    expect(eroded(out, id)).toBe(false);
+    expect(stateAt(out, id, 1).erosion).toBe(0);
+  });
+
+  test('an edge\'s amplitude is its own, over its polygon\'s', () => {
+    const { world, id } = room();
+    const [a] = world.polygons.get(id)!.points;
+    const w = cornersAmounted(wrote(withEffects(world, id, DEFORM), 0, id, deform(1)), 0, id, 'deform', new Set([a.id]), 3);
+
+    expect(rigOf(w, id).deforms.get(a.id)!.get(0)!.op.by).toBe(3);
+    expect(stateAt(w, id, 0).amplitudes.get(a.id)).toBe(3);
+  });
+
+  test('an edge runs from its drawn corner to the next, through its teeth', () => {
+    const { world, id } = room();
+    const points = world.polygons.get(id)!.points;
+    const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(2));
+    const it = resolveAt(w, 0).find(r => r.id === id)!;
+    const run = edgeRun(it, points[0].id);
+
+    expect(it.corners[run[0]].id).toBe(points[0].id);
+    expect(it.corners[run[run.length - 1]].id).toBe(points[1].id);
+    expect(run.slice(1, -1).every(i => it.corners[i].root === points[0].id)).toBe(true);
+    expect(run.length).toBeGreaterThan(2);
+
+    expect(endsOf([it], [points[3].id]).sort()).toEqual([points[3].id, points[0].id].sort());
+    expect(edgesBetween([it], [points[0].id, points[1].id, points[3].id]).sort()).toEqual([points[0].id, points[3].id].sort());
+
+    // The top edge alone lies wholly inside a box round it, teeth and all.
+    expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
   });
 });

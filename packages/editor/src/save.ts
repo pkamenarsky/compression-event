@@ -32,6 +32,7 @@ import {
   VertexId,
   View,
   Point,
+  REMEMBERED,
   World,
   Start,
 } from './types';
@@ -236,6 +237,7 @@ export function restored(file: Saved): EditorState {
     selection: {
       polygons: file.selection,
       vertices: [],
+      edges: [],
       artefacts: file.artefacts,
       paths: file.paths,
       start: false,
@@ -264,6 +266,7 @@ export function restored(file: Saved): EditorState {
     history: EMPTY_HISTORY,
     clipboard: [],
     beneath: null,
+    remembered: REMEMBERED,
   };
 }
 

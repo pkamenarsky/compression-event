@@ -101,6 +101,10 @@ export function createInput(): Input {
   const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
+    // Typed into a field, it is the field's: a digit in the effects pane is
+    // a number, not a retype.
+    if (typing(e.target)) return;
+
     down.add(e.code);
 
     let owner: object | null = null;
@@ -185,6 +189,15 @@ export function createInput(): Input {
       };
     },
   };
+}
+
+/** Whether a key is going into something that takes typing. */
+function typing(target: EventTarget | null): boolean {
+  const el = target as Partial<HTMLInputElement> | null;
+  const tag = el?.tagName;
+
+  // A checkbox takes no typing, and one just clicked still has the focus.
+  return (tag === 'INPUT' && el?.type !== 'checkbox') || tag === 'SELECT' || tag === 'TEXTAREA';
 }
 
 /** Holds the listeners for as long as it is mounted. */
