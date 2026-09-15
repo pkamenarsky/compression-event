@@ -3253,7 +3253,7 @@ export function effectedSquare(
     if (flat[i]) left.push(...run);
     else runs.push(run);
   });
-  im.rest.forEach(run => (run.length === 1 ? left.push(run[0]) : runs.push(run)));
+  im.rest.forEach((run, k) => (im.restSquare[k] ? left.push(...run) : runs.push(run)));
 
   return { shape: simplify(im.shape), runs, square: left };
 }
@@ -3319,6 +3319,8 @@ export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
   rest: Point[][]
+  /** Which of `rest` were left square, beside deformed geometry. */
+  restSquare: boolean[]
 }
 
 export function imaged(
@@ -3370,6 +3372,7 @@ export function imaged(
 
   const corners: (Point[] | null)[] = source.map(() => null);
   const made: Point[][] = [];
+  const madeSquare: boolean[] = [];
 
   const shape = owned.map(ring => {
     /** Whether a corner the erosion made is next to deformed geometry: the
@@ -3392,13 +3395,16 @@ export function imaged(
 
     ring.forEach((v, k) => {
       if (v.owner >= 0) corners[v.owner] = run[k];
-      else made.push(run[k]);
+      else {
+        made.push(run[k]);
+        madeSquare.push(taking[k] !== rest);
+      }
     });
 
     return run.flat();
   });
 
-  return { shape, corners, rest: made };
+  return { shape, corners, rest: made, restSquare: madeSquare };
 }
 
 /** How little a corner may turn and still be cut back its whole bevel: less,

@@ -188,6 +188,24 @@ describe('a group\'s effects', () => {
     vertices(whole).forEach(p => expect(drawn.has(p)).toBe(true));
   });
 
+  test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
+    const a = room(emptyWorld(), rect(0, 0, 100, 100));
+    const s = addPolygon(a.world, { type: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
+    const g = grouped(s.world, 0, [a.id, s.id], TOP)!;
+    const w = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 5) }), 0, g.id, round(5));
+    const vertices = new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+
+    // Where the solid crosses the wall, and its own corners in the room: none
+    // of them a point any more, each an arc.
+    ['100,40', '100,60', '80,40', '80,60', '0,0'].forEach(p => {
+      const [x, y] = p.split(',').map(Number);
+
+      expect(vertices.has(`${x.toFixed(6)},${y.toFixed(6)}`)).toBe(false);
+    });
+
+    expect(csg(w, 0).flat().length).toBe(8 * 9 + 1);
+  });
+
   test('a loose group has none to give', () => {
     const { world, id } = corridor();
 
