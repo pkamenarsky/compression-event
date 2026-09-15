@@ -466,7 +466,8 @@ interface Rig {
   finds the source corner whose radius it takes.
 - In the thing's own frame an eroded corner is `corner + d·mitre`, a tangent
   point that plus a multiple of `r` along a fixed edge direction, an arc
-  point `centre(r) + r·dirₖ`, a deform point linear in the amplitude. So
+  point `centre(r) + r·dirₖ`, a deform point linear in the amplitude (and,
+  as it turned out, not in the radius: see *Done*). So
   the bake's lerp between stretch ends is exact wherever only the amounts
   move, and `projection` divides radius and amplitude by `s` under a
   similarity, as it does depths.
@@ -563,7 +564,7 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
 - `imaged` is the construction and `project` simplifies what it builds;
   `imagesOf` in `scene.ts` is the same taken in world units, which `invented`
   and `fading` ask. A group's union is rounded and deformed alike everywhere
-  (`effected`), its edges' noise keyed by their place.
+  (`effected`).
 - A group's amounts, and a polygon's own for what the erosion made, have no
   slots, so an end at nought is seeded for them too, deform included.
 - A corner arriving into a rounded ring costs stretches: an arc whose corner
@@ -576,10 +577,20 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
   `keeping` always takes it back. `seeded` and `Imaged.flat` went with it.
   The arc is walked from its first tangent point rather than built off a
   centre, which ran away to infinity as a corner straightened.
-- A deform has a spacing rather than a count: an edge gets as many points
-  as fit on it, corner to corner as the erosion leaves it (`countOf`), so
-  the pattern has about the same density everywhere, and an edge split by a
-  corner running straight through has about the teeth it had whole.
+- A deform has a spacing rather than a count, and its pattern is continuous
+  in the length of the edge (`patternRun`): a tooth every spacing out from
+  the middle of the edge's straight run, and one nearer an end than a
+  spacing only as tall as it has room to be. An edge growing gains teeth at
+  its ends out of nothing and none of the rest moves off the spacing; the
+  pattern is about as dense everywhere, and an edge split by a corner
+  running straight through has about the teeth it had whole. Tooth `j` is
+  the same tooth however long the edge is, which is what lines the two ends
+  of a span up. Sine is six to a wave and never on a zero, where three
+  points are in a line and the arrangement drops the middle one.
+- A deform point is linear in the amplitude and not in the radius: its
+  teeth are laid along what the arcs leave of the edge, which a radius
+  shortens. So a radius moving under a deform is cut more finely; nothing
+  jumps.
 - So an edge's count can change across a span, and the bake writes both ends
   over one run (`laid`): a deform point is a fraction along its edge and a
   distance off it (`EdgeRun`), which the geometry takes outright in place of
@@ -598,15 +609,30 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
 - A tooth that goes from out to in across a span lies on its line for an
   instant half way, and the arrangement drops it there; the bake pins that
   instant. The outline is the same either side.
-- A group's union, and an edge that is the image of nothing, have no runs to
-  lay, so where their counts change with their length the bake finds it by
-  measuring, as a jump.
+- A group's union names its edges after its members' (`named`): each lies
+  along a member's edge, moved in by the group's depth, and takes the id of
+  the corner that edge starts at — a polygon's through `imaged`, a scope
+  inside through its own names. Corner ids are the world's, so a deformed
+  union's noise stays on its edges whatever joins the group or wherever its
+  rings start.
+- With names a union's edges are laid over a span as a polygon's are
+  (`groupLaying`): one run of teeth per named edge, the extras flat at the
+  end that lacks them, kept there and fading. Only where the name is one
+  piece at both ends; a member's edge coming out of the union in pieces, or
+  there at one end alone, is a change in what the union is made of, and the
+  cut finds it by measuring.
+- An edge that is the image of nothing — one the erosion made — has neither
+  a name nor a run, so where its count changes the bake finds it as a jump.
 - A corner missing at one end is put on the straight part of its edge
   there, between the two arcs, as the editor draws it (`straightOf`):
   `spanning`'s choice of where along the edge is mapped into it. Anywhere
   else it could sit on a stretch a neighbour's arc has rounded away, which
   is not on the editor's outline, and clamp that arc short at the end where
   the editor has it whole.
+- Worlds without effects are held to master bit for bit (`baseline.ts`): a
+  handful of worlds built only from what master has, and digests of every
+  set the editor draws, every span the bake makes and the level the game
+  gets, made on master and checked on the branch.
 - Icons and labels for the two kinds are in, since the timeline's table of
   them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
   a file opens with none.

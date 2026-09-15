@@ -2354,6 +2354,45 @@ describe('effects', () => {
     expect(lit).toBeGreaterThanOrEqual(4 * 2);
   });
 
+  test('a group growing gains teeth on its union that fade in, and nothing jumps', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
+
+    w = wrote(w, 1, g.id, scaled(1.8, 1.8, { x: 100, y: 50 }));
+
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 0.5));
+    expect(count(span, 1)).toEqual(count(span, 0.5));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    // The ones it gains are dark at the near end, and coming up.
+    const s = span.tracks[0].stretches[0];
+    const later = s.opacity[1].flat();
+
+    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('a group eroding loses teeth that fade out, and nothing jumps', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
+
+    w = wrote(w, 1, g.id, erode(30));
+
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
   test('a group\'s radius growing from nought, on its union', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;

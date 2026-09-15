@@ -144,7 +144,7 @@ import {
   simplify,
   sliced,
 } from './geometry';
-import type { EdgeRun, Effecting } from './geometry';
+import type { EdgeRun, Effecting, NamedEdge } from './geometry';
 import {
   Affine,
   Contributed,
@@ -1780,6 +1780,9 @@ export interface Cast {
   /** Each scope's effects: its options, and its radius and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
   shapes: Map<GroupId, { e: Effecting, radius: [number, number], amplitude: [number, number] }>
+  /** Each deformed scope's named edges, laid over both ends. See
+   * `GroupLaying`. */
+  laid: Map<GroupId, GroupLaying>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1857,14 +1860,184 @@ function casting(world: World, from: number): Cast {
     });
   }
 
-  return { world, items: moving(world, from), scopes, shapes, riders, folds: new Map() };
+  const items = moving(world, from);
+  const cast: Cast = { world, items, scopes, shapes, laid: new Map(), riders, folds: new Map() };
+
+  if ([...shapes.values()].some(fx => fx.e.spacing > 0)) cast.laid = groupLaying(cast);
+
+  return cast;
+}
+
+/**
+ * A deformed scope's named edges across a span: each written over one run of
+ * teeth at both ends, as a polygon's are — see `Laying` — so that a union
+ * edge gaining teeth as it grows gains them flat at the near end and fading
+ * in, rather than all at once part way.
+ *
+ * Only an edge that is one piece at both ends, by its name. One in pieces, or
+ * there at one end alone, is a change in what the union is made of, which the
+ * cut finds by measuring as it finds any other.
+ */
+interface GroupLaying {
+  runs: [Map<number, EdgeRun>, Map<number, EdgeRun>]
+  flat: [Map<number, boolean[]>, Map<number, boolean[]>]
+  /** Where the flat ones are at each end, for `keeping`. */
+  keep: [Point[], Point[]]
+}
+
+/** Every deformed scope's named edges, laid over both ends of the span. */
+function groupLaying(cast: Cast): Map<GroupId, GroupLaying> {
+  const ends = ([0, 1] as const).map(e => {
+    const images = new Map<GroupId, Map<number, readonly NamedEdge[]>>();
+
+    folded(cast, world1(cast.items, e), e, images, true);
+
+    return images;
+  });
+  const out = new Map<GroupId, GroupLaying>();
+
+  for (const [id, fx] of cast.shapes) {
+    if (fx.e.spacing <= 0) continue;
+
+    const laid: GroupLaying = { runs: [new Map(), new Map()], flat: [new Map(), new Map()], keep: [[], []] };
+    const keys = new Set([...(ends[0].get(id)?.keys() ?? []), ...(ends[1].get(id)?.keys() ?? [])]);
+
+    for (const key of keys) {
+      const two = ends.map(im => im.get(id)?.get(key));
+
+      if (two.some(pieces => pieces?.length !== 1)) continue;
+
+      const outlines = two.map((pieces, e) => {
+        const { base } = pieces![0];
+        const run = patternRun(fx.e, key, fx.amplitude[e], Math.hypot(base.to.x - base.from.x, base.to.y - base.from.y));
+
+        return { base, outline: outlineOf(run) };
+      });
+
+      const reach = Math.max(0, ...outlines.flatMap(o => o.outline.points.map(p => Math.abs(p.tooth!))));
+      const count = outlines.some(o => o.outline.points.length > 0) ? 2 * reach + 1 : 0;
+
+      if (count === 0 || outlines.every(o => o.outline.points.every(p => p.a === 0))) continue;
+
+      outlines.forEach(({ base, outline }, e) => {
+        const layout = lay(outline, count, outline.points.map(p => p.tooth! + reach));
+        const still = outline.points.every(p => p.a === 0);
+        const flat = layout.own.map(own => !own || still);
+        const dx = base.to.x - base.from.x, dy = base.to.y - base.from.y, l = Math.hypot(dx, dy);
+
+        laid.runs[e].set(key, { along: layout.u, across: layout.a });
+        laid.flat[e].set(key, flat);
+
+        flat.forEach((f, k) => {
+          if (f && l > 0) {
+            laid.keep[e].push({
+              x: base.from.x + dx * layout.u[k] + dy / l * layout.a[k],
+              y: base.from.y + dy * layout.u[k] - dx / l * layout.a[k],
+            });
+          }
+        });
+      });
+    }
+
+    if (laid.runs[0].size > 0) out.set(id, laid);
+  }
+
+  return out;
+}
+
+/** A pattern's run as the outline `lay` shares points out along: the whole
+ * edge, its teeth, and the outline between them. */
+function outlineOf(run: EdgeRun): Outline {
+  const points = run.along.map((u, k) => ({ u, a: run.across[k], tooth: run.teeth?.[k] }));
+  const vertices = [{ u: 0, a: 0 }, ...points, { u: 1, a: 0 }];
+
+  return {
+    from: ORIGIN,
+    to: ORIGIN,
+    normal: ORIGIN,
+    range: [0, 1],
+    points,
+    off: u => {
+      for (let k = 1; k < vertices.length; k++) {
+        const v0 = vertices[k - 1], v1 = vertices[k];
+
+        if (u <= v1.u) return v1.u === v0.u ? v1.a : v0.a + (v1.a - v0.a) * (u - v0.u) / (v1.u - v0.u);
+      }
+
+      return 0;
+    },
+    whole: true,
+  };
+}
+
+/** A scope's named edges' runs `t` of the way across the span. */
+function laidAt(laid: GroupLaying, t: number): Map<number, EdgeRun> {
+  if (t === 0) return laid.runs[0];
+  if (t === 1) return laid.runs[1];
+
+  return new Map([...laid.runs[0]].map(([key, a]) => {
+    const b = laid.runs[1].get(key)!;
+
+    return [key, { along: a.along.map((u, k) => mix(u, b.along[k], t)), across: a.across.map((v, k) => mix(v, b.across[k], t)) }];
+  }));
+}
+
+/**
+ * How solid each point of a scope's union is at `t`: every laid point flat
+ * at one end fades over the span, as a polygon's slots do. Nothing where the
+ * scope has none.
+ */
+function groupFading(
+  cast: Cast,
+  at: readonly Contributed[],
+  images: ReadonlyMap<GroupId, ReadonlyMap<number, readonly NamedEdge[]>>,
+  t: number,
+  fade: Map<Id, number[][]>,
+): void {
+  for (const [id, laid] of cast.laid) {
+    const mine = images.get(id);
+    const sides = at.filter(c => c.id === id || sidedWith(c.id) === id);
+
+    if (mine === undefined || sides.length === 0) continue;
+
+    for (const [key, flat0] of laid.flat[0]) {
+      const flat1 = laid.flat[1].get(key)!;
+      const pieces = mine.get(key);
+
+      if (pieces?.length !== 1) continue;
+
+      pieces[0].points.forEach((p, k) => {
+        if (!flat0[k] && !flat1[k]) return;
+
+        const v = mix(flat0[k] ? 0 : 1, flat1[k] ? 0 : 1, t);
+
+        for (const side of sides) {
+          const snap = near(new Map([[side.id, side.shape]]));
+          const where = corner(side.shape, p, snap);
+
+          if (where === null) continue;
+
+          const out = fade.get(side.id) ?? side.shape.map(ring => ring.map(() => 1));
+
+          out[where.ring][where.index] = Math.min(out[where.ring][where.index], v);
+          fade.set(side.id, out);
+        }
+      });
+    }
+  }
 }
 
 /** How many instants' worth of group projections to hold at once. */
 const FOLDS = 512;
 
 /** The polygons at an instant, folded into what the CSG sees there. */
-function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
+function folded(
+  cast: Cast,
+  at: Resolved[],
+  t: number,
+  images?: Map<GroupId, Map<number, readonly NamedEdge[]>>,
+  bare = false,
+): Contributed[] {
   let held = cast.folds.get(t);
 
   // Full, and then closed rather than emptied. The instants that get asked
@@ -1891,16 +2064,23 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
       if (both === undefined) return null;
 
       const fx = cast.shapes.get(id);
+      const laid = bare ? undefined : cast.laid.get(id);
 
       return {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: { e: fx.e, radius: mix(fx.radius[0], fx.radius[1], t), amplitude: mix(fx.amplitude[0], fx.amplitude[1], t) },
+          effects: {
+            e: fx.e,
+            radius: mix(fx.radius[0], fx.radius[1], t),
+            amplitude: mix(fx.amplitude[0], fx.amplitude[1], t),
+            ...(laid === undefined ? {} : { runs: laidAt(laid, t), keep: t === 0 ? laid.keep[0] : t === 1 ? laid.keep[1] : [] }),
+          },
         }),
       };
     },
-    held,
+    bare ? undefined : held,
+    images,
   );
 
   // Every side of it, floors included. An eroding group hands over one union
@@ -2078,7 +2258,8 @@ function everything(at: readonly Contributed[]): Frame {
 
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
   const resolved = world1(items, t);
-  const at = folded(cast, resolved, t);
+  const images = new Map<GroupId, Map<number, readonly NamedEdge[]>>();
+  const at = folded(cast, resolved, t, images);
 
   const frames = new Map(at.map(it => [it.id, it.frame]));
   const table = new Map<Id, Shape>();
@@ -2098,6 +2279,8 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
 
     if (how !== null) fade.set(it.id, how);
   }
+
+  if (cast.laid.size > 0) groupFading(cast, at, images, t, fade);
 
   const out = only === null ? everything(at) : share(at, only);
 
