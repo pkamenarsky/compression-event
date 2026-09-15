@@ -2588,9 +2588,8 @@ export interface Effecting {
   /** The segments of each rounded corner: nought where corners are not
    * rounded, one for a chamfer. */
   segments: number
-  /** How far apart a deformed edge's points are, as a length: each edge
-   * gets as many as fit, one at the least — see `countOf`. Nought where
-   * edges are not deformed. */
+  /** How far apart a deformed edge's teeth are, as a length — see
+   * `patternRun`. Nought where edges are not deformed. */
   spacing: number
   pattern: Pattern
   seed: number
@@ -2601,20 +2600,6 @@ export interface Effecting {
 export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both' };
 
 /**
- * How many points a deformed edge of `length` gets: as many as fit at
- * `spacing`, and one at the least. So a pattern has about the same density
- * everywhere, and an edge split in two by a corner it runs straight through
- * has about as many teeth as it had whole.
- *
- * The edge as the erosion leaves it, corner to corner, before its corners are
- * rounded: what is seen, less what a radius takes, which would have a count
- * change as a radius grew.
- */
-export function countOf(length: number, spacing: number): number {
-  return spacing > 0 ? Math.max(1, Math.round(length / spacing)) : 0;
-}
-
-/**
  * A deformed edge's points said outright: each a fraction of the way along
  * the straight run between its two corners' arcs, and a distance off it, out
  * of the material where positive. What a deform writes, and what the bake
@@ -2623,56 +2608,76 @@ export function countOf(length: number, spacing: number): number {
 export interface EdgeRun {
   along: readonly number[]
   across: readonly number[]
+  /** Which tooth each point is, counted from the middle of the edge — see
+   * `patternRun`. What lines two readings of one edge up. Absent where the
+   * points are not the pattern's. */
+  teeth?: readonly number[]
 }
 
-/** The straight run an edge's points are laid along, from the end of one
- * corner's arc to the start of the next's, and the edge's length corner to
- * corner, which sets its count. */
+/** The straight run an edge's points are laid along: from the end of one
+ * corner's arc to the start of the next's. */
 export interface Base {
   from: Point
   to: Point
-  length: number
-}
-
-/** An edge's points as the pattern lays them: `count` of them, evenly along
- * it, each off it by `amplitude` of the pattern. */
-export function patternRun(e: Effecting, key: number, amplitude: number, count: number): EdgeRun {
-  const along: number[] = [], across: number[] = [];
-
-  for (let k = 1; k <= count; k++) {
-    along.push(k / (count + 1));
-    across.push(amplitude * patterned(e, key, k, count));
-  }
-
-  return { along, across };
 }
 
 /**
- * How far off its line the `k`-th of an edge's `count` points is pushed, as a
- * fraction of the amplitude: out of the material where it is positive.
+ * An edge's points as the pattern lays them along a straight run of `length`:
+ * a tooth every `spacing` out from its middle, as far as the run goes, each
+ * off it by `amplitude` of the pattern.
  *
- * `k` runs from 1 to `count`. The ends of the edge are its corners, which are
- * never sampled, so every pattern is nought at both ends and a deform never
- * moves a corner or a tangent point. `key` is the edge's own, so that noise
- * belongs to the edge rather than to wherever it is in the ring today.
+ * A tooth near an end is only as tall as it has room to be: one spacing from
+ * the end and nearer, it shrinks with the distance, and at the end it is
+ * nothing. So the pattern is continuous in the length. An edge growing gains
+ * teeth at its ends out of nothing, and shrinking loses them into nothing;
+ * none of the others moves off the spacing, and the pattern is about as dense
+ * on every edge. Tooth nought is the middle, and a tooth is the same tooth
+ * however long the edge is.
  */
-export function patterned(e: Effecting, key: number, k: number, count: number): number {
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
+  const along: number[] = [], across: number[] = [], teeth: number[] = [];
+
+  if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
+
+  const reach = Math.ceil(length / 2 / e.spacing);
+
+  for (let j = -reach; j <= reach; j++) {
+    const off = Math.abs(j) * e.spacing;
+    const room = Math.min(1, (length / 2 - off) / e.spacing);
+
+    if (room <= 0) continue;
+
+    along.push(0.5 + j * e.spacing / length);
+    across.push(amplitude * room * patterned(e, key, j));
+    teeth.push(j);
+  }
+
+  return { along, across, teeth };
+}
+
+/**
+ * How far off its line tooth `j` of an edge is pushed, as a fraction of the
+ * amplitude: out of the material where it is positive.
+ *
+ * `j` counts out from the middle of the edge, either way. `key` is the edge's
+ * own, so that noise belongs to the edge rather than to wherever it is in the
+ * ring today.
+ */
+export function patterned(e: Effecting, key: number, j: number): number {
   let v: number;
 
   switch (e.pattern) {
     case 'zigzag':
-      v = k % 2 === 1 ? 1 : -1;
+      v = j % 2 === 0 ? 1 : -1;
       break;
-    case 'sine': {
-      // Half waves to fit the samples: one sample per crest and trough at the
-      // least, so a wave never aliases into a line.
-      const halves = Math.max(1, Math.round((count + 1) / 2));
-
-      v = Math.sin(Math.PI * halves * k / (count + 1));
+    case 'sine':
+      // Six to a wave, and none on a zero: three points about a zero crossing
+      // of anything so even are in a line, and the arrangement would drop the
+      // middle one.
+      v = Math.cos(Math.PI * j / 3);
       break;
-    }
     case 'noise':
-      v = hashed(e.seed, key, k) * 2 - 1;
+      v = hashed(e.seed, key, j) * 2 - 1;
       break;
   }
 
@@ -2838,13 +2843,11 @@ function shaped(
   const bases = ring.map((_v, i): Base => ({
     from: corners[i][corners[i].length - 1],
     to: corners[(i + 1) % n][0],
-    length: lengths[i],
   }));
 
   const edges = ring.map((v, i): Point[] => {
-    const deform = e(i);
-    const run = laid.runs?.(i) ?? patternRun(deform, key(i), amplitude(i), countOf(lengths[i], deform.spacing));
     const { from, to } = bases[i];
+    const run = laid.runs?.(i) ?? patternRun(e(i), key(i), amplitude(i), Math.hypot(to.x - from.x, to.y - from.y));
     const d = unit(v, ring[(i + 1) % n], lengths[i]);
     const o = d === null ? { x: 0, y: 0 } : { x: d.y, y: -d.x };
 
@@ -2865,7 +2868,7 @@ export function rounded(ring: Ring, radius: (i: number) => number, segments: num
   return shaped(ring, () => e, radius, () => 0, i => i).ring;
 }
 
-/** A ring with points put into each edge at `e.spacing`, pushed off it by
+/** A ring with teeth put into each edge every `e.spacing`, pushed off it by
  * `amplitude(i)` of the pattern: each corner, then its edge's points. `key`
  * names each edge for the noise, and is where it is in the ring unless said. */
 export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {

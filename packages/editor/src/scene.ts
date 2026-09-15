@@ -884,7 +884,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
 
       const [from, to] = place(at.frame, [b.from, b.to]);
 
-      return { from, to, length: b.length * s };
+      return { from, to };
     }),
   };
 }

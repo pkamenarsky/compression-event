@@ -1819,14 +1819,22 @@ describe('round and deform', () => {
     }
   });
 
-  test('every point is linear in the radius and the amplitude', () => {
-    const e: Effecting = { ...PLAIN, segments: 3, spacing: 5, pattern: 'sine' };
-    const at = (r: number, a: number) => imaged(
+  test('an arc is linear in its radius, and a deform point in its amplitude', () => {
+    const at = (e: Effecting, r: number, a: number) => imaged(
       [square], square, [0], () => 0, e, () => r, () => a, j => j, { radius: 0, amplitude: 0 },
     ).shape[0];
-    const a = at(1, 0.5), b = at(3, 1.5), mid = at(2, 1);
+    const lerps = (a: Point[], b: Point[], mid: Point[]) =>
+      mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
 
-    mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
+    const round: Effecting = { ...PLAIN, segments: 3 };
+
+    lerps(at(round, 1, 0), at(round, 3, 0), at(round, 2, 0));
+
+    // Not in the radius, with both: the teeth are laid along what the arcs
+    // leave of the edge, and that shortens as they grow.
+    const both: Effecting = { ...PLAIN, segments: 3, spacing: 2, pattern: 'sine' };
+
+    lerps(at(both, 2, 0.5), at(both, 2, 1.5), at(both, 2, 1));
   });
 
   test('a tangent length is clamped to half of each edge, less what the neighbour takes', () => {
@@ -1855,10 +1863,11 @@ describe('round and deform', () => {
   });
 
   test('a pattern is nought at the corners, and out is out of the material', () => {
+    // Every three along the bottom edge from its middle: in, out and in, the
+    // two either side two thirds as tall, with two of the five to its end.
     const both = deformed(square, () => 2, zigzag);
 
-    // The bottom edge's three points, out, in and out.
-    expect(both.slice(1, 4).map(p => p.y)).toEqual([-2, 2, -2]);
+    both.slice(1, 4).forEach((p, k) => close(p, [{ x: 2, y: 4 / 3 }, { x: 5, y: -2 }, { x: 8, y: 4 / 3 }][k]));
     expect(both[0]).toEqual(square[0]);
     expect(both[4]).toEqual(square[1]);
 
@@ -1866,32 +1875,49 @@ describe('round and deform', () => {
     const out = deformed(square, () => 2, { ...zigzag, sides: 'out' });
     const inward = deformed(square, () => 2, { ...zigzag, sides: 'in' });
 
-    expect(out.slice(1, 4).map(p => p.y)).toEqual([-2, 0, -2]);
-    expect(inward.slice(1, 4).map(p => p.y + 0)).toEqual([2, 0, 2]);
+    expect(out.slice(1, 4).map(p => p.y + 0)).toEqual([0, -2, 0]);
+    expect(inward.slice(1, 4).map(p => p.y + 0)).toEqual([0, 2, 0]);
   });
 
-  test('an edge has as many points as fit at the spacing, one at the least', () => {
+  test('an edge has a tooth every spacing out from its middle, as far as it goes', () => {
     const e: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag' };
     const long: Ring = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 1 }, { x: 0, y: 1 }];
 
-    // Ten along the long edges, one along the short.
-    expect(deformed(long, () => 1, e)).toHaveLength(4 + 10 + 1 + 10 + 1);
+    // Nine along the long edges, four either side of the middle; one along
+    // the short, a sixth as tall as it would be.
+    expect(deformed(long, () => 1, e)).toHaveLength(4 + 9 + 1 + 9 + 1);
+    expect(deformed(long, () => 1, e)[11].x).toBeCloseTo(30 + 1 / 6, 12);
 
-    // And an edge split in two along its line has about as many as it had.
+    // An edge split in two along its line has about as many as it had.
     const split: Ring = [{ x: 0, y: 0 }, { x: 13, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 1 }, { x: 0, y: 1 }];
 
-    expect(deformed(split, () => 1, e)).toHaveLength(5 + 4 + 6 + 1 + 10 + 1);
+    expect(deformed(split, () => 1, e)).toHaveLength(5 + 5 + 5 + 1 + 9 + 1);
+  });
+
+  test('a pattern is continuous in its edge\'s length: a tooth arrives out of nothing', () => {
+    const e: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag' };
+    const line = (l: number) => deformed([{ x: 0, y: 0 }, { x: l, y: 0 }, { x: l / 2, y: 10 }], () => 1, e);
+
+    // Just short of room for the fourth tooth either side, and just past it.
+    const before = line(18 - 1e-9), after = line(18 + 1e-9);
+
+    expect(after.length).toBe(before.length + 2);
+
+    // The new teeth are on the line, next to the corners, and nothing else
+    // has moved further than the edge grew.
+    expect(Math.hypot(after[1].x, after[1].y)).toBeLessThan(1e-8);
+    before.slice(1, 6).forEach((p, k) => expect(Math.hypot(after[k + 2].x - p.x, after[k + 2].y - p.y)).toBeLessThan(1e-8));
   });
 
   test('noise is the edge\'s own, whatever its place', () => {
     const e: Effecting = { ...PLAIN, spacing: 1, pattern: 'noise', seed: 7 };
-    const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k, 5));
+    const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k));
 
     for (const v of values) expect(Math.abs(v)).toBeLessThanOrEqual(1);
 
-    expect([1, 2, 3, 4, 5].map(k => patterned(e, 42, k, 5))).toEqual(values);
-    expect([1, 2, 3, 4, 5].map(k => patterned(e, 43, k, 5))).not.toEqual(values);
-    expect([1, 2, 3, 4, 5].map(k => patterned({ ...e, seed: 8 }, 42, k, 5))).not.toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 42, k))).toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned(e, 43, k))).not.toEqual(values);
+    expect([1, 2, 3, 4, 5].map(k => patterned({ ...e, seed: 8 }, 42, k))).not.toEqual(values);
   });
 
   describe('imaged', () => {
@@ -1908,11 +1934,11 @@ describe('round and deform', () => {
 
       const it = image(() => 1, () => 0.5);
 
-      // Each edge as many points as fit at its spacing: the floor's two
-      // halves one each, the walls two.
-      expect(it.shape[0]).toHaveLength(5 * 4 + 8);
+      // Each edge a tooth in its middle: what the arcs leave of it is less
+      // than two spacings.
+      expect(it.shape[0]).toHaveLength(5 * 4 + 5);
       expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
-      expect(it.edges.map(run => run!.length)).toEqual([1, 1, 2, 2, 2]);
+      expect(it.edges.map(run => run!.length)).toEqual([1, 1, 1, 1, 1]);
 
       // The flat corner's arc is a sliver of the floor about its image.
       it.corners[1]!.forEach((p, k) => close(p, { x: 5 + (k / 3 * 2 - 1) * SEEDING, y: 1 }));

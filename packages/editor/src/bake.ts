@@ -136,7 +136,6 @@ import {
   erodedRingCorners,
   ground,
   SEEDING,
-  countOf,
   keeping,
   mitred,
   nextOf,
@@ -1261,8 +1260,9 @@ interface Outline {
   normal: Point
   /** The part of it this edge covers, as fractions. */
   range: [number, number]
-  /** The editor's points on this part, and how far off the line each is. */
-  points: { u: number, a: number }[]
+  /** The editor's points on this part, how far off the line each is, and
+   * which tooth of the pattern, where the part is the whole edge. */
+  points: { u: number, a: number, tooth?: number }[]
   /** How far off the line the editor's outline is at `u`. */
   off: (u: number) => number
   /** Whether this edge is the editor's edge, whole. */
@@ -1308,11 +1308,18 @@ function laid(m: Omit<Moving, 'laying'>): Laying | null {
       continue;
     }
 
-    const count = Math.max(...two.map(o => o?.points.length ?? 0));
+    // A whole edge at both ends is the same pattern twice, and a tooth is the
+    // same tooth at both: so they are lined up by it, and what one end has
+    // and the other does not is at the ends, where the pattern grows.
+    const whole = two.every(o => o === null || (o.whole && o.points.every(p => p.tooth !== undefined)));
+    const reach = whole ? Math.max(0, ...two.flatMap(o => o?.points.map(p => Math.abs(p.tooth!)) ?? [])) : 0;
+    const count = whole
+      ? (two.some(o => o !== null && o.points.length > 0) ? 2 * reach + 1 : 0)
+      : Math.max(...two.map(o => o?.points.length ?? 0));
 
     for (const e of [0, 1] as const) {
       const o = two[e] ?? two[1 - e]!;
-      const laid = lay(o, count);
+      const laid = lay(o, count, whole ? o.points.map(p => p.tooth! + reach) : undefined);
       const still = o.points.every(p => p.a === 0);
 
       runs[e].push(o.whole ? { along: laid.u, across: laid.a } : along(o, laid, ends[e].bases[j]!));
@@ -1324,20 +1331,20 @@ function laid(m: Omit<Moving, 'laying'>): Laying | null {
 }
 
 /**
- * `count` points on an outline's part: its own points among them, spread out
- * in order, and the rest evenly between them and the ends of the part, on the
- * outline. `own` says which are the outline's.
+ * `count` points on an outline's part: its own points among them, in `slots`
+ * or spread out in order, and the rest evenly between them and the ends of
+ * the part, on the outline. `own` says which are the outline's.
  */
-function lay(o: Outline, count: number): { u: number[], a: number[], own: boolean[] } {
+function lay(o: Outline, count: number, slots?: readonly number[]): { u: number[], a: number[], own: boolean[] } {
   const u: number[] = new Array(count).fill(NaN);
   const own: boolean[] = new Array(count).fill(false);
   const a: number[] = new Array(count).fill(0);
   const c = o.points.length;
 
-  // Its own, spread over the slots as evenly as they go: all of them where
-  // there are as many.
+  // Its own in the slots said, or spread over them as evenly as they go: all
+  // of them where there are as many.
   o.points.forEach((p, k) => {
-    const at = Math.round((k + 1) * (count + 1) / (c + 1)) - 1;
+    const at = slots?.[k] ?? Math.round((k + 1) * (count + 1) / (c + 1)) - 1;
 
     u[at] = p.u;
     a[at] = p.a;
@@ -1425,8 +1432,7 @@ function outlines(
     if (l2 === 0) continue;
 
     const normal = { x: dy / dl, y: -dx / dl };
-    const length = parts.reduce((t, b) => t + b!.length, 0);
-    const run = patternRun(fx.options[p], fx.keys[p], fx.amplitudes[p], countOf(length, fx.options[p].spacing));
+    const run = patternRun(fx.options[p], fx.keys[p], fx.amplitudes[p], dl);
     const vertices = [{ u: 0, a: 0 }, ...run.along.map((u, k) => ({ u, a: run.across[k] })), { u: 1, a: 0 }];
     const off = (u: number): number => {
       for (let k = 1; k < vertices.length; k++) {
@@ -1458,7 +1464,7 @@ function outlines(
         normal,
         range,
         // One at a missing corner is that corner's, lifted onto it.
-        points: run.along.flatMap((u, q) => (amid(u, range) ? [{ u, a: run.across[q] }] : [])),
+        points: run.along.flatMap((u, q) => (amid(u, range) ? [{ u, a: run.across[q], tooth: run.teeth?.[q] }] : [])),
         off,
         whole: chain.length === 1,
       };

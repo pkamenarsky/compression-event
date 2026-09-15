@@ -89,18 +89,17 @@ describe('a polygon\'s effects', () => {
 
   test('a deform puts its points into every edge, off the line by its amplitude', () => {
     const { world, id } = room();
-    // Out, a zigzag is teeth: out, on the line, out.
-    const fx: Effects = { deform: { spacing: 33, pattern: 'zigzag', seed: 0, sides: 'out' } };
+    // Out, a zigzag is teeth: out, on the line, out, on the line, out — every
+    // twenty from the middle of each wall, the two at its ends half as tall.
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out' } };
     const w = wrote(withEffects(world, id, fx), 0, id, deform(2));
     const ring = shapeOf(w, id)[0];
 
-    expect(ring).toHaveLength(4 * 4);
+    expect(ring).toHaveLength(4 * 6);
 
-    const out = ring.filter(p => p.x < 0 || p.x > 100 || p.y < 0 || p.y > 100);
+    const out = ring.map(p => Math.max(-p.x, p.x - 100, -p.y, p.y - 100)).filter(d => d > 0);
 
-    expect(out).toHaveLength(8);
-
-    for (const p of out) expect(Math.max(-p.x, p.x - 100, -p.y, p.y - 100)).toBeCloseTo(2, 12);
+    expect(out.sort()).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2]);
   });
 
   test('a pasted room comes with its effects and its corners\' own', () => {
