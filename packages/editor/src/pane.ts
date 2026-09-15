@@ -15,8 +15,8 @@
 // that has the effect, and is what the next thing given it starts with.
 // -----------------------------------------------------------------------------
 
-import { Value } from '@incpt/kontinuum';
-import { VNode, dynamic, show, text } from '@incpt/kontinuum-dom';
+import { ObjectValue, Value } from '@incpt/kontinuum';
+import { VNode, fragment, object, show, text } from '@incpt/kontinuum-dom';
 import { div, input, label, option, select, span } from '@incpt/kontinuum-dom/html';
 
 import {
@@ -40,12 +40,27 @@ import { Id, Options, Selection, Tool, Update, VertexId, World, marked, picks } 
 
 type Some = 'all' | 'some' | 'none';
 
+/**
+ * What the pane says, flat and in plain values, so that `object` wakes each
+ * control for its own field alone: the pane is made once, and a change moves
+ * what it shows rather than making it again — a field being typed into keeps
+ * its focus and a select stays open.
+ *
+ * With `corners`, the round is about the picked corners' own, and `own` is
+ * how many of them have options of their own.
+ */
 interface Model {
-  deform: { on: Some, options: Options['deform'] }
+  deform: Some
+  spacing: number
+  pattern: Pattern
+  sides: Sides
+  seed: number
   erode: Some
-  /** With `corners`, about the picked corners' own rounds, and `own` is how
-   * many of them have options of their own. */
-  round: { on: Some, options: Options['round'], corners: boolean, own: Some }
+  round: Some
+  segments: number
+  verticals: boolean
+  corners: boolean
+  own: Some
 }
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
@@ -73,8 +88,7 @@ export function effectsPane(
   // A round under the corner tool is about the corners picked.
   const corners = () => (tool() === 'point' ? selection().vertices : []);
 
-  // Rebuilt only when what it says changes, not on every edit to the world.
-  const model = (): string => JSON.stringify(modelOf(world(), targets(), corners(), remembered()));
+  const model = (): Model => modelOf(world(), targets(), corners(), remembered());
 
   return show(
     () => targets().length > 0,
@@ -98,7 +112,7 @@ export function effectsPane(
           gap: '6px',
         },
       },
-      [dynamic(model, m => body(JSON.parse(m) as Model, targets, corners, update))],
+      [object(model, m => body(m, targets, corners, update))],
     ),
   );
 }
@@ -123,27 +137,29 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
   const shown = <N extends EffectName>(name: N): Options[N] => {
     const id = ids.find(i => world.effects.get(i)?.[name] !== undefined);
 
-    return bare(id === undefined ? remembered[name] : world.effects.get(id)![name]! as Options[N]);
+    return id === undefined ? remembered[name] : world.effects.get(id)![name]! as Options[N];
   };
 
   const mine = corners.length > 0;
-  const first = mine ? cornerRound(world, corners[0]) : undefined;
+  const d = shown('deform');
+  const r = mine ? cornerRound(world, corners[0]) ?? remembered.round : shown('round');
 
   return {
-    deform: { on: some(ids, id => applies(world, id, 'deform')), options: shown('deform') },
+    deform: some(ids, id => applies(world, id, 'deform')),
+    spacing: d.spacing,
+    pattern: d.pattern,
+    sides: d.sides,
+    seed: d.seed,
     erode: some(ids, id => applies(world, id, 'erode')),
-    round: mine
-      ? {
-          on: some(corners, c => cornerRounding(world, c)),
-          options: first === undefined ? remembered.round : bare(first),
-          corners: true,
-          own: some(corners, c => ownRound(world, c)),
-        }
-      : { on: some(ids, id => applies(world, id, 'round')), options: shown('round'), corners: false, own: 'none' },
+    round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
+    segments: r.segments,
+    verticals: r.verticals,
+    corners: mine,
+    own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
 }
 
-function body(m: Model, targets: () => Id[], corners: () => VertexId[], update: Update): VNode {
+function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexId[], update: Update): VNode {
   /** Switched on for every one of them, or off where every one had it on. */
   const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
@@ -152,12 +168,12 @@ function body(m: Model, targets: () => Id[], corners: () => VertexId[], update: 
     return marked({ ...s, world }, s.world);
   });
 
-  /** One option changed on every one that has the effect, on or off, and
-   * remembered. */
+  /** One option changed on every one that has the effect, on or off — or on
+   * the picked corners' own rounds — and remembered. */
   const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>) => update(s => {
     let world = s.world;
 
-    if (name === 'round' && m.round.corners) {
+    if (name === 'round' && m.corners()) {
       world = cornersOptioned(world, corners(), patch, s.remembered);
     }
     else {
@@ -168,48 +184,53 @@ function body(m: Model, targets: () => Id[], corners: () => VertexId[], update: 
       }
     }
 
-    const remembered = { ...s.remembered, [name]: { ...m[name].options, ...patch } };
+    const shown = name === 'round'
+      ? { segments: m.segments(), verticals: m.verticals() }
+      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed() };
+    const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
     return marked({ ...s, world, remembered }, s.world);
   });
 
-  const cornered = (on: boolean) => update(s => marked({ ...s, world: cornersSwitched(s.world, corners(), on, s.remembered) }, s.world));
+  const rounded = () => {
+    if (!m.corners()) return toggled('round', m.round());
+
+    const on = m.round() !== 'all';
+
+    update(s => marked({ ...s, world: cornersSwitched(s.world, corners(), on, s.remembered) }, s.world));
+  };
+
   const inherited = () => update(s => marked({ ...s, world: cornersInheriting(s.world, corners()) }, s.world));
 
-  const d = m.deform.options, r = m.round.options;
-
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
-    heading('Deform', 'd', m.deform.on, () => toggled('deform', m.deform.on)),
-    options(m.deform.on, [
-      field('spacing', number(d.spacing, 1, v => changed('deform', { spacing: v }))),
-      field('pattern', choice(PATTERNS, d.pattern, v => changed('deform', { pattern: v }))),
-      field('sides', choice(SIDES, d.sides, v => changed('deform', { sides: v }))),
-      ...(d.pattern === 'noise' ? [field('seed', number(d.seed, 0, v => changed('deform', { seed: Math.round(v) })))] : []),
+    heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
+    options(m.deform, [
+      field('spacing', number(m.spacing, 1, v => changed('deform', { spacing: v }))),
+      field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
+      field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
+      // A seed is the noise's alone.
+      show(() => m.pattern() === 'noise', fragment(field('seed', number(m.seed, 0, v => changed('deform', { seed: Math.round(v) }))))),
     ]),
 
-    heading('Erode', 'e', m.erode, () => toggled('erode', m.erode)),
+    heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
 
-    heading(m.round.corners ? 'Round corners' : 'Round', 'b', m.round.on, () => {
-      if (m.round.corners) cornered(m.round.on !== 'all');
-      else toggled('round', m.round.on);
-    }),
-    options(m.round.on, [
-      field('segments', number(r.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
-      field('verticals', tick(r.verticals, v => changed('round', { verticals: v }))),
-      ...(m.round.own === 'none' ? [] : [field('', link('as the polygon', inherited))]),
+    heading(() => (m.corners() ? 'Round corners' : 'Round'), 'b', m.round, rounded),
+    options(m.round, [
+      field('segments', number(m.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
+      field('verticals', tick(m.verticals, v => changed('round', { verticals: v }))),
+      show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
 }
 
 /** An effect's box, its name and its key. */
-function heading(name: string, key: string, on: Some, onchange: () => void): VNode {
+function heading(name: Value<string>, key: string, on: Value<Some>, onchange: () => void): VNode {
   return label({ style: { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, [
     input({
       type: 'checkbox',
-      checked: on === 'all',
-      ref: (el: HTMLInputElement) => {
-        el.indeterminate = on === 'some';
-      },
+      checked: () => on() === 'all',
+      // A property kontinuum sets as one, missing from its attribute types.
+      ...({ indeterminate: () => on() === 'some' } as object),
       onchange: (e: Event) => {
         (e.target as HTMLInputElement).blur();
         onchange();
@@ -222,7 +243,7 @@ function heading(name: string, key: string, on: Some, onchange: () => void): VNo
 
 /** An effect's options, under its box, faded while it applies to nothing
  * picked: changed then, they are what it will be when it does. */
-function options(on: Some, fields: VNode[][]): VNode {
+function options(on: Value<Some>, fields: (VNode | VNode[])[]): VNode {
   return div({
     style: {
       display: 'grid',
@@ -230,7 +251,7 @@ function options(on: Some, fields: VNode[][]): VNode {
       alignItems: 'center',
       gap: '4px 8px',
       paddingLeft: '22px',
-      opacity: on === 'none' ? '0.5' : '1',
+      opacity: () => (on() === 'none' ? '0.5' : '1'),
     },
   }, fields.flat());
 }
@@ -250,10 +271,10 @@ const CONTROL = {
   padding: '1px 4px',
 } as const;
 
-function number(value: number, min: number, onchange: (v: number) => void): VNode {
+function number(value: Value<number>, min: number, onchange: (v: number) => void): VNode {
   return input({
     type: 'number',
-    value: String(value),
+    value: () => String(value()),
     min: String(min),
     style: CONTROL,
     onchange: (e: Event) => {
@@ -262,12 +283,14 @@ function number(value: number, min: number, onchange: (v: number) => void): VNod
 
       el.blur();
 
+      // Nothing it would take: back to what it says.
       if (Number.isFinite(v) && v >= min) onchange(v);
+      else el.value = String(value());
     },
   });
 }
 
-function choice<T extends string>(all: readonly T[], value: T, onchange: (v: T) => void): VNode {
+function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: (v: T) => void): VNode {
   return select({
     style: CONTROL,
     onchange: (e: Event) => {
@@ -276,10 +299,10 @@ function choice<T extends string>(all: readonly T[], value: T, onchange: (v: T) 
       el.blur();
       onchange(el.value as T);
     },
-  }, all.map(v => option({ value: v, selected: v === value }, [text(v)])));
+  }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
 }
 
-function tick(value: boolean, onchange: (v: boolean) => void): VNode {
+function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
   return input({
     type: 'checkbox',
     checked: value,

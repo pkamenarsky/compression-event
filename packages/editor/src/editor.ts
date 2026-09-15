@@ -140,9 +140,7 @@ export function editor(initial: World): VNode {
           pickBar(s.tool, update),
           effectsPane(s.world, s.selection, s.tool, s.remembered, 12 + TOOLBAR + 8, update),
           typeBar(s.world, s.selection, s.tool, update),
-          // Ticked by the spans, so made again when there are more or fewer of
-          // them.
-          dynamic(() => s.world().keyframes.length, count => bakeButton(count, state, s.world, s.bake, update)),
+          bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
 
           // Along the whole bottom, the status line sitting on the keyframes:
@@ -1348,20 +1346,19 @@ const PANEL_WIDTH = 132;
 const BAKE_HEIGHT = 52;
 
 function bakeButton(
-  count: number,
   state: Value<EditorState>,
   world: Value<World>,
   bake: Value<Bake>,
   update: Update,
 ): VNode {
-  const spans = Math.max(1, count - 1);
+  const spans = () => Math.max(1, world().keyframes.length - 1);
   const running = () => bake().progress !== null;
 
   const done = () => {
     const b = bake(), w = world();
     let n = 0;
 
-    for (let k = 0; k < spans; k++) {
+    for (let k = 0; k < spans(); k++) {
       if (spanAt(b, w, k) !== null) n++;
     }
 
@@ -1370,7 +1367,7 @@ function bakeButton(
 
   const label = () => (running()
     ? `baking ${Math.round((bake().progress ?? 0) * 100)}%`
-    : `bake  ${done()} / ${spans}`);
+    : `bake  ${done()} / ${spans()}`);
 
   return svg(
     {
@@ -1441,20 +1438,22 @@ function bakeButton(
         x: PADDING,
         y: BAKE_HEIGHT - PADDING - 10,
         width: () => (PANEL_WIDTH - 2 * PADDING)
-          * (running() ? bake().progress ?? 0 : done() / spans),
+          * (running() ? bake().progress ?? 0 : done() / spans()),
         height: 6,
         rx: 3,
         fill: () => (running() ? theme.accent : theme.csg),
       }),
 
-      ...Array.from({ length: spans - 1 }, (_unused, i) => line({
-        x1: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+      // One tick per gap between spans: their number is the structure, so
+      // they alone are made again when it changes.
+      dynamic(spans, n => g({}, Array.from({ length: n - 1 }, (_unused, i) => line({
+        x1: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / n),
         y1: BAKE_HEIGHT - PADDING - 10,
-        x2: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        x2: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / n),
         y2: BAKE_HEIGHT - PADDING - 4,
         stroke: theme.panel,
         'stroke-width': 1,
-      })),
+      })))),
     ],
   );
 }
@@ -1559,7 +1558,7 @@ function statusbar(status: Value<string | null>): VNode {
           pointerEvents: 'none',
         },
       },
-      [dynamic(() => status() ?? '', at => textNode(at))],
+      [textNode(() => status() ?? '')],
     ),
   );
 }
