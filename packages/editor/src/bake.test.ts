@@ -2289,6 +2289,26 @@ describe('effects', () => {
     expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(2);
   });
 
+  test('a corner arriving inside a rounded corner\'s reach starts on the editor\'s outline', () => {
+    // Twenty along from a corner rounded at forty: on the stretch of wall the
+    // arc has rounded away. Put there, it would clamp the arc short at the
+    // near end, where the editor has it whole.
+    const { world, id } = room(ROUND);
+    const w0 = wrote(world, 0, id, round(40));
+    const it = resolveAt(w0, 1).find(r => r.id === id)!;
+    const grown = addVertex(w0, 1, it, 0, { x: -80, y: -100 }).world;
+    const now = resolveAt(grown, 1).find(r => r.id === id)!;
+    const where = now.corners.findIndex(c => c.birth === 1);
+    const w = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -60 });
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(40 * 1e-3);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
   test('a deform starting from nought fades its verticals in', () => {
     const { world, id } = room(ZIGZAG);
     const w = wrote(world, 1, id, deform(10));

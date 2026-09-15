@@ -792,6 +792,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   const n = corners.length;
   const ends = [here, there] as const;
   const ends2 = [was.erosion, now.erosion] as const;
+  const straight = [straightOf(was), straightOf(now)] as const;
   const local: [Ring, Ring] = [
     corners.map(c => here.get(c.id) ?? ORIGIN),
     corners.map(c => there.get(c.id) ?? ORIGIN),
@@ -828,9 +829,15 @@ function spanning(was: Resolved, now: Resolved): Spanned {
 
       // Everything strictly between two neighbours is missing here by
       // construction, so its place in that run is all the spreading needs.
-      const at = sameBefore && sameAfter
+      const taste = sameBefore && sameAfter
         ? fraction(other.get(corners[before].id)!, other.get(corners[after].id)!, other.get(c.id)!)
         : betweenOf(rings, n, before, i) / betweenOf(rings, n, before, after);
+
+      // On the edge as it is drawn there: between the two corners' arcs, and
+      // not on a stretch one of them has rounded away, where it would clamp
+      // that arc short of the one the editor draws.
+      const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
+      const at = lo + (hi - lo) * taste;
 
       local[side][i] = between2(from, to, at);
 
@@ -845,6 +852,34 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   });
 
   return straightened(corners, local, dead, depths);
+}
+
+/**
+ * Where along an edge of the polygon as drawn the straight part is, as
+ * fractions of the source edge from one corner to the next: between the end
+ * of the first corner's arc and the start of the second's. The whole of it
+ * for a polygon that is not rounded.
+ *
+ * An eroded edge is parallel to its source edge, so a point on it is read off
+ * the source line by where its foot falls.
+ */
+function straightOf(it: Resolved): (a: VertexId, b: VertexId, from: Point, to: Point) => [number, number] {
+  const im = it.effected?.options.some(o => o.segments > 0) ? imagesOf(it) : null;
+
+  if (im === null) return () => [0, 1];
+
+  const index = new Map(it.corners.map((c, i) => [c.id, i]));
+
+  return (a, b, from, to) => {
+    const first = im.corners[index.get(a)!], second = im.corners[index.get(b)!];
+
+    if (first === null || second === null) return [0, 1];
+
+    const lo = fraction(from, to, unplace(it.frame, first[first.length - 1]));
+    const hi = fraction(from, to, unplace(it.frame, second[0]));
+
+    return lo < hi ? [lo, hi] : [0, 1];
+  };
 }
 
 /** What `Resolved.depths` says, by corner id, and nothing where the polygon is

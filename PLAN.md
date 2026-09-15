@@ -601,9 +601,12 @@ Done: 1–4, on the branch `effect-stack`, with these on top:
 - A group's union, and an edge that is the image of nothing, have no runs to
   lay, so where their counts change with their length the bake finds it by
   measuring, as a jump.
-- Where an arriving corner is nearer its neighbour than that neighbour's
-  tangent length, the neighbour's arc is clamped by it the moment it turns,
-  and not at the end where it is flat: a step in the arc there.
+- A corner missing at one end is put on the straight part of its edge
+  there, between the two arcs, as the editor draws it (`straightOf`):
+  `spanning`'s choice of where along the edge is mapped into it. Anywhere
+  else it could sit on a stretch a neighbour's arc has rounded away, which
+  is not on the editor's outline, and clamp that arc short at the end where
+  the editor has it whole.
 - Icons and labels for the two kinds are in, since the timeline's table of
   them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
   a file opens with none.
