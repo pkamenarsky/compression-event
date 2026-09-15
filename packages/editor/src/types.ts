@@ -283,6 +283,12 @@ export interface Vertex {
   birth: KeyframeId
   /** The keyframe that took it out, or nothing while it still stands. */
   death: KeyframeId | null
+  /**
+   * For a tooth a deform made, the corner of the polygon's own whose edge it
+   * is on: what puts it in its place among the corners. Absent for a corner
+   * of the polygon's own. See `deformedAt` in `scene.ts`.
+   */
+  root?: VertexId
 }
 
 /**

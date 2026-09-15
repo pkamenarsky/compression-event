@@ -2550,28 +2550,30 @@ function norm(t: number): number {
 }
 
 // -----------------------------------------------------------------------------
-// Effects: round and deform
+// Effects: deform and round
 //
-// What happens to a boundary after it is eroded, always in that order: each
-// corner becomes an arc, and then each edge between two arcs is pushed off its
-// line in a pattern. Neither is a pass that can be taken twice — what a thing
-// has is one fact about it, and how much is its radius and its amplitude.
+// A deform happens to a thing's rings before anything else does: each edge is
+// subdivided and its new corners pushed off it in a pattern, as though they
+// had been drawn by hand (`subdivided`). From there they are corners like any
+// other — eroded, rounded, carried by the bake — so they appear, go and move
+// the way corners do, and the machinery for that is the one already there.
 //
-// The counts never depend on the amounts: a rounded corner is `segments + 1`
-// points and a deformed edge `count` more, whatever the radius and amplitude
-// are, nought included. So a ring keeps its length across a span however the
-// amounts move, and in the thing's own frame every point is linear in them —
-// a tangent point is the corner plus a multiple of the radius along a fixed
-// edge direction, an arc point a centre moving with the radius plus the radius
-// along a fixed direction, a deform point a spot on the edge plus the
-// amplitude along a fixed normal. The bake's lerp between two stretch ends is
-// exact wherever only the amounts move.
+// A round happens after the erosion, to the boundary: each corner becomes an
+// arc tangent to its two edges (`rounded`), teeth included. A round of `r`
+// is the same radius wherever it is, since it is taken of what is seen; and a
+// group's is taken of its union, so the joins between its rooms are not
+// rounded.
 //
-// Where a radius of nought makes an arc's points coincide they are still all
-// there, on one point, and the arrangement welds them; the bake seeds such an
-// end rather than collapse it. A corner running straight through never
-// collapses: its arc is a sliver of a run along its wall, which lies on an
-// edge whatever the edges beside it do, so `keeping` can always put it back.
+// A rounded corner is always `segments + 1` points, whatever its radius,
+// nought included, and in the thing's own frame every point is linear in the
+// radius: a tangent point is the corner plus a multiple of it along a fixed
+// edge direction, an arc point a centre moving with it plus the radius along
+// a fixed direction. Where a radius of nought makes an arc's points coincide
+// they are still all there, on one point, and the arrangement welds them; the
+// bake seeds such an end rather than collapse it. A corner running straight
+// through never collapses: its arc is a sliver of a run along its wall, which
+// lies on an edge whatever the edges beside it do, so `keeping` can always
+// put it back.
 // -----------------------------------------------------------------------------
 
 /** How a deformed edge is pushed: sharp teeth, a wave, or seeded noise. */
@@ -2588,8 +2590,8 @@ export interface Effecting {
   /** The segments of each rounded corner: nought where corners are not
    * rounded, one for a chamfer. */
   segments: number
-  /** How far apart a deformed edge's teeth are, as a length — see
-   * `patternRun`. Nought where edges are not deformed. */
+  /** How far apart a deformed edge's teeth are, as a length in the world —
+   * see `patternRun`. Nought where edges are not deformed. */
   spacing: number
   pattern: Pattern
   seed: number
@@ -2599,49 +2601,30 @@ export interface Effecting {
 /** No effects at all: every corner a point and every edge straight. */
 export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both' };
 
-/**
- * A deformed edge's points said outright: each a fraction of the way along
- * the straight run between its two corners' arcs, and a distance off it, out
- * of the material where positive. What a deform writes, and what the bake
- * writes instead where an edge's points have to be laid on another outline.
- */
+/** An edge's teeth: each a fraction of the way along it, a distance off it
+ * out of the material where positive, and which tooth it is, counted from
+ * the middle of the edge. */
 export interface EdgeRun {
   along: readonly number[]
   across: readonly number[]
-  /** Which tooth each point is, counted from the middle of the edge — see
-   * `patternRun`. What lines two readings of one edge up. Absent where the
-   * points are not the pattern's. */
-  teeth?: readonly number[]
-}
-
-/** The straight run an edge's points are laid along: from the end of one
- * corner's arc to the start of the next's. */
-export interface Base {
-  from: Point
-  to: Point
+  teeth: readonly number[]
 }
 
 /**
- * An edge's points as the pattern lays them along a straight run of `length`:
- * a tooth every `spacing` out from `anchor`, a distance along the run, as far
- * as the run goes either way, each off it by `amplitude` of the pattern.
+ * An edge's teeth as the pattern lays them along an edge of `length`: a tooth
+ * every `spacing` out from its middle, as far as the edge goes either way,
+ * each off it by `amplitude` of the pattern.
  *
- * The anchor is the edge's by its name — see `Laid.anchors` — and not the
- * run's: the middle of the edge corner to corner, as the erosion leaves it,
- * whichever piece of it this run is. So a tooth is the same tooth at every
- * instant and on every piece of one edge. A piece shows the teeth of its edge
- * that fall on it, an edge cut in two keeps its teeth where they were, and
- * two pieces joining are one pattern already. The middle of the run where
- * nothing says otherwise.
- *
- * A tooth near an end of the run is only as tall as it has room to be: one
+ * A tooth near an end of the edge is only as tall as it has room to be: one
  * spacing from the end and nearer, it shrinks with the distance, and at the
- * end it is nothing. So the pattern is continuous in where the run's ends
- * are. A run growing gains teeth at its ends out of nothing, and shrinking
- * loses them into nothing; none of the others moves, and the pattern is
- * about as dense on every edge.
+ * end it is nothing. So the pattern is continuous in where the edge's ends
+ * are. An edge growing gains teeth at its ends out of nothing, and shrinking
+ * loses them into nothing; none of the others moves off the spacing, and the
+ * pattern is about as dense on every edge. Tooth `j` is the same tooth
+ * however long the edge is.
  */
-export function patternRun(e: Effecting, key: number, amplitude: number, length: number, anchor = length / 2): EdgeRun {
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
+  const anchor = length / 2;
   const along: number[] = [], across: number[] = [], teeth: number[] = [];
 
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
@@ -2710,57 +2693,80 @@ function hashed(a: number, b: number, c: number): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** One ring rounded and deformed, and where each of its corners and edges
- * went: runs of points, index for index with the ring. */
-interface Shaped {
-  ring: Ring
-  corners: Point[][]
-  edges: Point[][]
-  bases: Base[]
-  /** Where each edge's teeth are counted from, along its base. */
-  anchors: number[]
-}
-
 /**
- * What the bake says outright rather than leave to the pattern: an edge's
- * points, and how far a corner's arc is lifted off its place, along the
- * corner's own outward normal. Absent is the pattern's, and nought.
+ * One corner of a ring a deform has been through: an input corner (`j` is
+ * null), or tooth `j` of the edge starting at input corner `from`.
  */
-export interface Laid {
-  runs?: (i: number) => EdgeRun | null
-  rises?: (i: number) => number
-  /** Where each edge's teeth are counted from: a point on its line, which
-   * names the edge rather than this piece of it. See `patternRun`. */
-  anchors?: (i: number) => Point | null
+export interface Subdivision {
+  at: Point
+  from: number
+  j: number | null
+  /** How far along its edge, as a fraction: nought for an input corner. */
+  along: number
 }
 
 /**
- * A ring with its corners rounded and its edges deformed: for each corner in
- * order, the `segments + 1` points of its arc from the edge coming in to the
- * edge going out, and then the `count` points of the edge after it.
+ * A ring with its edges subdivided and perturbed, before anything else is
+ * done to it: as though its teeth had been drawn by hand. Each edge gets a
+ * tooth every `e.spacing` out from its middle, off it by `amplitude(i)` of the
+ * pattern, and the teeth are corners like any other from here on — eroded,
+ * rounded, and carried by the bake — so they appear, go and move as corners
+ * do. See `patternRun` for how they are laid and why they are continuous in
+ * where the edge's ends are.
+ *
+ * `out` is which side of the ring's edges is out of the material: 1 for the
+ * right, which a counter-clockwise outline has, and -1 for the left. `key`
+ * names each edge to the noise.
+ */
+export function subdivided(
+  ring: Ring,
+  e: Effecting,
+  amplitude: (i: number) => number,
+  key: (i: number) => number,
+  out: 1 | -1,
+): Subdivision[] {
+  const n = ring.length;
+  const done: Subdivision[] = [];
+
+  ring.forEach((a, i) => {
+    done.push({ at: a, from: i, j: null, along: 0 });
+
+    const b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    if (l === 0) return;
+
+    const nx = dy / l * out, ny = -dx / l * out;
+    const run = patternRun(e, key(i), amplitude(i), l);
+
+    run.along.forEach((u, k) => done.push({
+      at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
+      from: i,
+      j: run.teeth[k],
+      along: u,
+    }));
+  });
+
+  return done;
+}
+
+/**
+ * A ring with its corners rounded: for each corner in order, the
+ * `segments + 1` points of its arc from the edge coming in to the edge going
+ * out.
  *
  * The arc is tangent to both edges, and the tangent length `r · tan(θ/2)` is
  * clamped to half of each edge less what the neighbour takes of it — all of
  * what is left, where the neighbour wants less than half. A clamped corner is
- * rounded at the radius that fits. A corner that runs straight through, or a
- * radius of nought, is its arc's points all on the corner.
+ * rounded at the radius that fits. A radius of nought is its arc's points all
+ * on the corner.
  *
- * Nothing here cares which way the ring is wound: an arc lies inside the angle
- * of its corner, which takes material off a corner that turns in and adds it
- * to one that turns out. Out, for a deform, is to the right of the edge, which
- * is off the material for any ring an arrangement makes.
+ * Nothing here cares which way the ring is wound: an arc lies inside the
+ * angle of its corner, which takes material off a corner that turns in and
+ * adds it to one that turns out.
  */
-function shaped(
-  ring: Ring,
-  e: (i: number) => Effecting,
-  radius: (i: number) => number,
-  amplitude: (i: number) => number,
-  key: (i: number) => number,
-  laid: Laid = {},
-): Shaped {
+function arcs(ring: Ring, segmentsOf: (i: number) => number, radius: (i: number) => number): Point[][] {
   const n = ring.length;
-  const segmentsOf = (i: number): number => Math.max(0, Math.floor(e(i).segments));
-
   const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
   const unit = (from: Point, to: Point, l: number): Point | null =>
     l === 0 ? null : { x: (to.x - from.x) / l, y: (to.y - from.y) / l };
@@ -2791,21 +2797,7 @@ function shaped(
 
   const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
 
-  const corners = ring.map((v, i): Point[] => {
-    const run = arc(v, i);
-    const rise = laid.rises?.(i) ?? 0;
-    const { a, b } = ways[i];
-
-    if (rise === 0 || a === null || b === null) return run;
-
-    // Out is to the right of the way round: of the edge in, and of the edge
-    // out, and the corner's between them.
-    const ox = -a.y + b.y, oy = a.x - b.x, ol = Math.hypot(ox, oy);
-
-    if (ol < 1e-12) return run;
-
-    return run.map(p => ({ x: p.x + ox / ol * rise, y: p.y + oy / ol * rise }));
-  });
+  return ring.map((v, i) => arc(v, i));
 
   function arc(v: Point, i: number): Point[] {
     const { a, b } = ways[i];
@@ -2851,159 +2843,28 @@ function shaped(
 
     return out;
   }
-
-  const bases = ring.map((_v, i): Base => ({
-    from: corners[i][corners[i].length - 1],
-    to: corners[(i + 1) % n][0],
-  }));
-
-  const anchors = bases.map(({ from, to }, i) => {
-    const a = laid.anchors?.(i) ?? null;
-    const dx = to.x - from.x, dy = to.y - from.y, l = Math.hypot(dx, dy);
-
-    return a === null || l === 0 ? l / 2 : ((a.x - from.x) * dx + (a.y - from.y) * dy) / l;
-  });
-
-  const edges = ring.map((v, i): Point[] => {
-    const { from, to } = bases[i];
-    const run = laid.runs?.(i) ?? patternRun(e(i), key(i), amplitude(i), Math.hypot(to.x - from.x, to.y - from.y), anchors[i]);
-    const d = unit(v, ring[(i + 1) % n], lengths[i]);
-    const o = d === null ? { x: 0, y: 0 } : { x: d.y, y: -d.x };
-
-    return run.along.map((s, k) => ({
-      x: from.x + (to.x - from.x) * s + o.x * run.across[k],
-      y: from.y + (to.y - from.y) * s + o.y * run.across[k],
-    }));
-  });
-
-  return { ring: corners.flatMap((run, i) => [...run, ...edges[i]]), corners, edges, bases, anchors };
 }
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
- * its edges. See `shaped`. */
+ * its edges. See `arcs`. */
 export function rounded(ring: Ring, radius: (i: number) => number, segments: number): Ring {
-  const e = { ...PLAIN, segments };
-
-  return shaped(ring, () => e, radius, () => 0, i => i).ring;
+  return arcs(ring, () => segments, radius).flat();
 }
 
-/** A ring with teeth put into each edge every `e.spacing`, pushed off it by
- * `amplitude(i)` of the pattern: each corner, then its edge's points. `key`
- * names each edge for the noise, and is where it is in the ring unless said. */
+/** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
+ * Out is to the right of the way round, as a counter-clockwise ring has it. */
 export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {
-  const plain = { ...e, segments: 0 };
-
-  return shaped(ring, () => plain, () => 0, amplitude, key).ring;
+  return subdivided(ring, e, amplitude, key, 1).map(c => c.at);
 }
 
 /**
- * A line of a boundary, named: an edge of a member of a union, from one
- * corner to the next, and the corner it starts at, whose id names it. What a
- * union's edges are named after. See `named`.
+ * A whole shape rounded alike everywhere, and taken through the arrangement:
+ * what a group does to its union, which has no corners of its own to name.
  */
-export interface Line {
-  from: Point
-  to: Point
-  key: number
-  /** Where the edge's teeth are counted from. Absent is nowhere in
-   * particular: the middle of whatever piece a union makes of it. */
-  anchor?: Point
-}
+export function effected(shape: Shape, segments: number, radius: number): Cut {
+  if (radius <= 0 || segments <= 0) return simplify(shape);
 
-/**
- * Each edge of a union, named after the line it lies along: the member edge,
- * moved in by `depth` as the union's own erosion moved it, running the same
- * way. `null` where it lies along none — an edge the erosion made.
- *
- * A union keeps no names of its own; this reads them back off where each edge
- * is, which is exact, because a union's edges are pieces of its members' and
- * an offset moves each parallel to itself.
- */
-export function named(union: Shape, lines: readonly Line[], depth: number): (number | null)[][] {
-  const snap = extentOf(union.length > 0 ? union : [[{ x: 0, y: 0 }]]) * 1e-7;
-  const moved = lines.flatMap(l => {
-    const dx = l.to.x - l.from.x, dy = l.to.y - l.from.y, len = Math.hypot(dx, dy);
-
-    if (len === 0) return [];
-
-    const ux = dx / len, uy = dy / len;
-
-    return [{ key: l.key, ux, uy, x: l.from.x - uy * depth, y: l.from.y + ux * depth }];
-  });
-
-  return union.map(ring => ring.map((p, i) => {
-    const q = ring[(i + 1) % ring.length];
-    const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy);
-
-    if (len === 0) return null;
-
-    for (const l of moved) {
-      if (dx * l.ux + dy * l.uy <= 0) continue;
-      if (Math.abs(dx * l.uy - dy * l.ux) / len > 1e-9) continue;
-      if (Math.abs((p.x - l.x) * l.uy - (p.y - l.y) * l.ux) > snap) continue;
-
-      return l.key;
-    }
-
-    return null;
-  }));
-}
-
-/** Where a named edge of a union went: its straight run, its points, and
- * where along the run its teeth are counted from. */
-export interface NamedEdge {
-  base: Base
-  points: Point[]
-  anchor: number
-}
-
-/**
- * A whole shape rounded and deformed alike everywhere, and taken through the
- * arrangement: what a group does to its union, which has no corners of its
- * own. Each edge's noise is keyed by its name where it has one — see `named` —
- * and by where it is in its ring where it has none, and a named edge can have
- * its points said outright (`runs`), which is what the bake does across a
- * span. `edges` is where each named edge went: several, where a member's edge
- * came out of the union in pieces.
- */
-export function effected(
-  shape: Shape,
-  e: Effecting,
-  radius: number,
-  amplitude: number,
-  keys: readonly (readonly (number | null)[])[] = [],
-  runs: (key: number) => EdgeRun | null = () => null,
-  anchors: (key: number) => Point | null = () => null,
-): { shape: Cut, edges: Map<number, NamedEdge[]> } {
-  const edges = new Map<number, NamedEdge[]>();
-
-  if (radius <= 0 && amplitude === 0) return { shape: simplify(shape), edges };
-
-  const rings = shape.map((ring, r) => {
-    const name = (k: number): number | null => keys[r]?.[k] ?? null;
-    const out = shaped(ring, () => e, () => radius, () => amplitude, k => name(k) ?? -1 - k, {
-      runs: k => {
-        const key = name(k);
-
-        return key === null ? null : runs(key);
-      },
-      anchors: k => {
-        const key = name(k);
-
-        return key === null ? null : anchors(key);
-      },
-    });
-
-    out.edges.forEach((points, k) => {
-      const key = name(k);
-
-      if (key !== null) edges.set(key, [...(edges.get(key) ?? []), { base: out.bases[k], points, anchor: out.anchors[k] }]);
-    });
-
-    return out.ring;
-  });
-
-  return { shape: simplify(rings), edges };
+  return simplify(shape.map(ring => rounded(ring, () => radius, segments)));
 }
 
 /**
@@ -3046,40 +2907,23 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
 }
 
 /**
- * An eroded boundary rounded and deformed, and where each named feature of the
- * source landed in it: corner `i` as the run of its arc, edge `j` as the run
- * of its deform points. `null` for a feature not on the eroded boundary at all.
+ * An eroded boundary rounded, and where each corner of the source landed in
+ * it: corner `i` as the run of its arc, or `null` for a corner not on the
+ * eroded boundary at all.
  *
  * The one construction for both. A source corner's image is where `mitred`
  * puts it, matched to a vertex of `eroded` by position; that vertex takes the
- * corner's radius. A corner that is flat in the source is not a vertex of
- * `eroded` — the arrangement dropped it — so its image is put back into the
- * edge it lies on first: it splits a straight run into two source edges, and
- * each has its own deform. An eroded edge takes the amplitude of the source
- * edge whose offset line it lies on, running the same way. What is the image
- * of nothing — a corner or an edge the erosion made — takes `rest`.
- *
- * The options may differ from corner to corner: a corner rounds by its own,
- * and an edge deforms by the corner's it starts at.
- *
+ * corner's radius and segments. A corner that is flat in the source is not a
+ * vertex of `eroded` — the arrangement dropped it — so its image is put back
+ * into the edge it lies on first, where its arc is a sliver along it. What is
+ * the image of nothing — a corner the erosion made — takes `rest`.
  *
  * The shape is the rings as the construction leaves them, before any
- * arrangement: every arc and every deform point there, coincident or not.
+ * arrangement: every arc there, coincident points or not.
  */
 export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
-  edges: (Point[] | null)[]
-  /** Each source edge's straight run, where it has an image. */
-  bases: (Base | null)[]
-  /** Where along it each source edge's teeth are counted from. */
-  anchors: (number | null)[]
-  /** How many pieces each source edge is in: one, or more where the erosion
-   * cut it, or none. */
-  pieces: number[]
-  /** Where each source corner is before it is rounded: `mitred`. What names
-   * an edge's anchor, which is the middle of the two it runs between. */
-  images: (Point | null)[]
 }
 
 export function imaged(
@@ -3087,16 +2931,10 @@ export function imaged(
   source: Ring,
   rings: readonly number[],
   depth: (i: number) => number,
-  e: Effecting | ((i: number) => Effecting),
+  segments: (i: number) => number,
   radius: (i: number) => number,
-  amplitude: (j: number) => number,
-  key: (j: number) => number,
-  rest: { radius: number, amplitude: number, e?: Effecting },
-  laid: Laid = {},
+  rest: { radius: number, segments: number },
 ): Imaged {
-  const options = typeof e === 'function' ? e : () => e;
-  const otherwise = rest.e ?? options(0);
-
   const n = source.length;
   const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
   const snap = extentOf(eroded.length > 0 ? eroded : [source]) * 1e-7;
@@ -3134,88 +2972,23 @@ export function imaged(
     placed.add(i);
   }
 
-  // The source edge each eroded edge lies along: between the images of its
-  // two ends where it is those, and otherwise on the offset line of one.
-  const sourceEdge = (u: { p: Point, owner: number }, w: { p: Point, owner: number }): number => {
-    if (u.owner >= 0 && w.owner >= 0 && nextOf(rings, n, u.owner) === w.owner) return u.owner;
-
-    const dx = w.p.x - u.p.x, dy = w.p.y - u.p.y, l = Math.hypot(dx, dy);
-
-    if (l === 0) return -1;
-
-    for (let j = 0; j < n; j++) {
-      const a = images[j], b = images[nextOf(rings, n, j)];
-
-      if (a === null || b === null) continue;
-
-      const ex = b.x - a.x, ey = b.y - a.y, el = Math.hypot(ex, ey);
-
-      if (el === 0 || (dx * ex + dy * ey) <= 0) continue;
-      if (Math.abs(dx * ey - dy * ex) / el > snap) continue;
-      if (Math.abs((u.p.x - a.x) * ey - (u.p.y - a.y) * ex) / el > snap) continue;
-
-      return j;
-    }
-
-    return -1;
-  };
-
   const corners: (Point[] | null)[] = source.map(() => null);
-  const edges: (Point[] | null)[] = source.map(() => null);
-  const bases: (Base | null)[] = source.map(() => null);
-  const anchors: (number | null)[] = source.map(() => null);
-  const pieces: number[] = source.map(() => 0);
-  const alongs = owned.map(ring => ring.map((v, k) => sourceEdge(v, ring[(k + 1) % ring.length])));
 
-  for (const j of alongs.flat()) if (j >= 0) pieces[j]++;
-
-  // Each edge's teeth counted from the middle of it, corner to corner.
-  const middle = (j: number): Point | null => {
-    const a = images[j], b = images[nextOf(rings, n, j)];
-
-    return a === null || b === null ? null : { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  };
-
-  const shape = owned.map((ring, r) => {
-    const along = alongs[r];
-    // A corner's options are its own; an edge's, the corner's it starts at.
-    const out = shaped(
+  const shape = owned.map(ring => {
+    const run = arcs(
       ring.map(v => v.p),
-      k => {
-        const round = ring[k].owner >= 0 ? options(ring[k].owner) : otherwise;
-        const deform = along[k] >= 0 ? options(along[k]) : otherwise;
-
-        return { ...deform, segments: round.segments };
-      },
+      k => (ring[k].owner >= 0 ? segments(ring[k].owner) : rest.segments),
       k => (ring[k].owner >= 0 ? radius(ring[k].owner) : rest.radius),
-      k => (along[k] >= 0 ? amplitude(along[k]) : rest.amplitude),
-      k => (along[k] >= 0 ? key(along[k]) : -1 - k),
-      {
-        // Said outright only for an edge in one piece: a run is one piece's.
-        runs: k => (along[k] >= 0 && pieces[along[k]] === 1 ? laid.runs?.(along[k]) ?? null : null),
-        rises: k => (ring[k].owner >= 0 ? laid.rises?.(ring[k].owner) ?? 0 : 0),
-        anchors: k => (along[k] >= 0 ? middle(along[k]) : null),
-      },
     );
 
     ring.forEach((v, k) => {
-      if (v.owner < 0) return;
-
-      corners[v.owner] = out.corners[k];
+      if (v.owner >= 0) corners[v.owner] = run[k];
     });
 
-    along.forEach((j, k) => {
-      if (j >= 0 && edges[j] === null) {
-        edges[j] = out.edges[k];
-        bases[j] = out.bases[k];
-        anchors[j] = out.anchors[k];
-      }
-    });
-
-    return out.ring;
+    return run.flat();
   });
 
-  return { shape, corners, edges, bases, anchors, pieces, images };
+  return { shape, corners };
 }
 
 /** How far apart what would otherwise be one point is laid, against what it

@@ -34,14 +34,9 @@ import { Point } from '@ce/game/world';
 import {
   Effecting,
   Imaged,
-  Line,
-  NamedEdge,
   PLAIN,
-  EdgeRun,
-  Pattern,
   Ring,
   Shape,
-  Sides,
   contains,
   effected as effectedAll,
   encloses,
@@ -51,9 +46,11 @@ import {
   imaged,
   isCCW,
   keeping,
-  named,
   nextOf,
   onBoundary,
+  prevOf,
+  signedArea2,
+  subdivided,
   simplify,
   sliced,
   intersect,
@@ -245,31 +242,20 @@ export interface Resolved {
 }
 
 /**
- * What rounds and deforms a polygon's projection, corner by corner and index
- * for index with `Resolved.corners`: each corner's options, its whole radius,
- * the whole amplitude of the edge it starts, and its id, which names that edge
- * to the noise. `own` and the two amounts beside it are the polygon's, for
- * what the erosion made rather than any corner.
+ * What rounds a polygon's projection, corner by corner and index for index
+ * with `Resolved.corners`: each corner's segments, and its whole radius — the
+ * polygon's with the corner's own on top. `own` and `radius` are the
+ * polygon's, for a corner the erosion made rather than any of its own.
  *
- * Whole: the polygon's amount with the corner's own on top. A length, so a
- * frame that scales divides it the way it divides a depth.
+ * A length, so a frame that scales divides it the way it divides a depth.
+ * Only a round is here: a deform has happened to the corners already. See
+ * `deforms`.
  */
 export interface Effected {
-  options: readonly Effecting[]
+  segments: readonly number[]
   radii: readonly number[]
-  amplitudes: readonly number[]
-  keys: readonly number[]
-  own: Effecting
+  own: number
   radius: number
-  amplitude: number
-  /**
-   * What the bake lays outright, index for index with the corners: each
-   * edge's points, and each corner's arc lifted off its place — see `Laid` in
-   * `geometry.ts`. Lengths in world units. Absent is the pattern's, and
-   * nought.
-   */
-  runs?: readonly (EdgeRun | null)[]
-  rises?: readonly number[]
 }
 
 /** A thing's options, with a corner's own over them where it has them. */
@@ -287,63 +273,39 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
 }
 
 /**
- * A polygon's effects at its standing corners, from its options in the world
- * and its amounts as a keyframe leaves them — or as the bake has them part way
- * along. Nothing where it has no effects, or where none of them does anything
- * there: then the projection is its erosion alone, exactly as it always was.
+ * A polygon's round at its standing corners, from its options in the world
+ * and its radii as a keyframe leaves them — or as the bake has them part way
+ * along. Nothing where it is not rounded, or not by anything there: then the
+ * projection is its erosion alone, exactly as it always was.
  */
 export function effectedOf(
   world: Pick<World, 'effects' | 'cornerEffects'>,
   id: Id,
   corners: readonly Vertex[],
-  amounts: Pick<State, 'radius' | 'amplitude' | 'radii' | 'amplitudes'>,
+  amounts: Pick<State, 'radius' | 'radii'>,
 ): Effected | null {
   const fx = world.effects.get(id);
 
-  if (fx === undefined && !corners.some(c => world.cornerEffects.has(c.id))) return null;
+  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) return null;
 
-  const options = corners.map(c => effecting(fx, world.cornerEffects.get(c.id)));
-  const radii = corners.map(c => amounts.radius + (amounts.radii.get(c.id) ?? 0));
-  const amplitudes = corners.map(c => amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0));
-  const own = effecting(fx);
-
-  return shaping({ options, radii, amplitudes, keys: corners.map(c => c.id), own, radius: amounts.radius, amplitude: amounts.amplitude });
+  return shaping({
+    segments: corners.map(c => effecting(fx, world.cornerEffects.get(c.id)).segments),
+    radii: corners.map(c => amounts.radius + (amounts.radii.get(c.id) ?? 0)),
+    own: effecting(fx).segments,
+    radius: amounts.radius,
+  });
 }
 
-/** Effects kept only where they do something. */
+/** A round kept only where it does something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.options.some((o, i) => (o.segments > 0 && e.radii[i] > 0) || (o.spacing > 0 && e.amplitudes[i] !== 0))
-    || (e.own.segments > 0 && e.radius > 0) || (e.own.spacing > 0 && e.amplitude !== 0);
+  const any = e.segments.some((n, i) => n > 0 && e.radii[i] > 0) || (e.own > 0 && e.radius > 0);
 
   return any ? e : null;
 }
 
-const PATTERNS: readonly Pattern[] = ['zigzag', 'sine', 'noise'];
-const SIDED: readonly Sides[] = ['in', 'out', 'both'];
-
-/** Options as numbers, for `remembered`, the spacing a length divided by
- * `s`. */
-function optionKey(e: Effecting, s = 1): number[] {
-  return [e.segments, e.spacing / s, PATTERNS.indexOf(e.pattern), e.seed, SIDED.indexOf(e.sides)];
-}
-
-function optionOf(k: readonly number[]): Effecting {
-  return { segments: k[0], spacing: k[1], pattern: PATTERNS[k[2]], seed: k[3], sides: SIDED[k[4]] };
-}
-
-/** Effects as numbers, lengths divided by `s`, for `project`. */
+/** A round as numbers, lengths divided by `s`, for `project`. */
 function effectKey(e: Effected, s = 1): Key[] {
-  return [
-    e.options.map(o => optionKey(o, s)),
-    e.radii.map(r => r / s),
-    e.amplitudes.map(a => a / s),
-    e.keys as number[],
-    optionKey(e.own, s),
-    e.radius / s,
-    e.amplitude / s,
-    (e.runs ?? []).map(r => (r === null ? null : [r.along as number[], r.across.map(a => a / s)])),
-    (e.rises ?? []).map(r => r / s),
-  ];
+  return [e.segments as number[], e.radii.map(r => r / s), e.own, e.radius / s];
 }
 
 /**
@@ -838,23 +800,16 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[],
 ): Imaged => {
-  const [options, radii, amplitudes, keys, own, radius, amplitude, runs, rises] = effects as [
-    number[][], number[], number[], number[], number[], number, number, ([number[], number[]] | null)[], number[],
-  ];
-  const at = options.map(optionOf);
-  const laid = runs.map((r): EdgeRun | null => (r === null ? null : { along: r[0], across: r[1] }));
+  const [segments, radii, own, radius] = effects as [number[], number[], number, number];
 
   return imaged(
     offsetOf(source, rings, erosion, depths),
     source,
     rings,
     i => depths?.[i] ?? erosion,
-    i => at[i],
+    i => segments[i],
     i => radii[i],
-    j => amplitudes[j],
-    j => keys[j],
-    { radius, amplitude, e: optionOf(own) },
-    { runs: j => laid[j] ?? null, rises: i => rises[i] ?? 0 },
+    { radius, segments: own },
   );
 });
 
@@ -881,17 +836,6 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
   return {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
-    edges: im.edges.map(run),
-    bases: im.bases.map(b => {
-      if (b === null) return null;
-
-      const [from, to] = place(at.frame, [b.from, b.to]);
-
-      return { from, to };
-    }),
-    anchors: im.anchors.map(a => (a === null ? null : a * s)),
-    pieces: im.pieces,
-    images: im.images.map(p => (p === null ? null : place(at.frame, [p])[0])),
   };
 }
 
@@ -1097,6 +1041,131 @@ function varying(
 }
 
 /**
+ * The deforms a polygon's rings go through at keyframe `v`, in the order they
+ * are done: its own, and then each group's holding it, outwards. A group's
+ * deform is its members', each on its own rings — what a group deforms is
+ * what it holds, and taking the deform off the group takes it off them all.
+ *
+ * Each with its options, and the amplitude of each edge by the corner it
+ * starts at: the thing's own amplitude, and for a polygon's own deform the
+ * edge's on top.
+ */
+export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Effecting, amplitude: (from: VertexId) => number }[] {
+  const out: { owner: Id, e: Effecting, amplitude: (from: VertexId) => number }[] = [];
+
+  for (const owner of [id, ...enclosing(world, id)]) {
+    const fx = world.effects.get(owner);
+
+    if (fx?.deform === undefined || !(fx.deform.spacing > 0)) continue;
+
+    const state = stateAt(world, owner, v);
+
+    out.push({
+      owner,
+      e: effecting(fx),
+      amplitude: owner === id ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * A polygon's standing corners with its deforms done to them: its rings
+ * subdivided and perturbed, in the world, before anything else happens to
+ * them. See `subdivided` in `geometry.ts`.
+ *
+ * The teeth are corners from here on, each with an id of its own made from
+ * who deforms it, the corner its edge starts at, and which tooth it is — so it
+ * is the same corner at every keyframe, and the bake carries it as it carries
+ * any other. A tooth's extra depth is its edge's, in proportion along it, so
+ * a varying erosion leaves a straight edge straight. What has no deform comes
+ * back as it came.
+ */
+function deformedAt(
+  world: World,
+  v: KeyframeId,
+  id: Id,
+  corners: readonly Vertex[],
+  local: readonly Point[],
+  frame: Affine,
+  over: ReadonlyMap<VertexId, number>,
+): { corners: Vertex[], local: Point[], source: Point[], over: ReadonlyMap<VertexId, number> } {
+  const chain = deforms(world, v, id);
+
+  if (chain.length === 0) return { corners: [...corners], local: [...local], source: place(frame, local), over };
+
+  let cs: Vertex[] = [...corners];
+  let pts: Point[] = place(frame, local);
+  let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
+
+  for (const { owner, e, amplitude } of chain) {
+    const rings = ringsOf(cs);
+    const slices = sliced(pts, rings);
+
+    // Out of the material is to the right of a ring wound the way the outline
+    // is, counter-clockwise, and a hole is wound the other way.
+    const out: 1 | -1 = signedArea2(slices[0]) >= 0 ? 1 : -1;
+    const next: Vertex[] = [], placed: Point[] = [], depths: number[] = [];
+
+    slices.forEach((ring, r) => {
+      const at = rings[r];
+
+      for (const made of subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out)) {
+        const from = cs[at + made.from];
+        const d0 = deep[at + made.from], d1 = deep[at + (made.from + 1) % ring.length];
+
+        placed.push(made.at);
+
+        if (made.j === null) {
+          next.push(from);
+          depths.push(d0);
+          continue;
+        }
+
+        next.push({ ...from, id: toothId(owner, from.id, made.j), root: from.root ?? from.id });
+        depths.push(d0 + (d1 - d0) * made.along);
+      }
+    });
+
+    cs = next;
+    pts = placed;
+    deep = depths;
+  }
+
+  const inverse = pts.map(p => unplace(frame, p));
+  const deeper = over.size === 0 ? over : new Map(cs.flatMap((c, i) => (deep[i] === 0 ? [] : [[c.id, deep[i]] as const])));
+
+  // A tooth is where it is, in the polygon's own frame, like any corner.
+  return {
+    corners: cs.map((c, i) => (c.root === undefined ? c : { ...c, at: inverse[i] })),
+    local: inverse,
+    source: pts,
+    over: deeper,
+  };
+}
+
+/**
+ * A tooth's id: who deformed it, the corner its edge starts at, and which
+ * tooth. Negative, so nothing counted out of `nextId` is ever one, and the
+ * same numbers every time.
+ */
+function toothId(owner: Id, from: VertexId, j: number): VertexId {
+  const text = `${owner}:${from}:${j}`;
+  let a = 0x811c9dc5, b = 0x01000193;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995);
+    b ^= b >>> 13;
+  }
+
+  return -((a >>> 0) * 0x100000 + ((b >>> 0) >>> 12)) - 1;
+}
+
+/**
  * The corners standing at a version, ring by ring, with the rings that are no
  * longer rings left out.
  *
@@ -1181,20 +1250,20 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     // resolving is not the place to be sure of that.
     if (corners.length < 3) continue;
 
-    const local = corners.map(c => state.corners.get(c.id)!);
     const frame = worldFrame(world, id, v);
+    const drawn = deformedAt(world, v, id, corners, corners.map(c => state.corners.get(c.id)!), frame, state.depths);
 
     out.push(resolved({
       id,
       polygon,
-      corners,
-      local,
+      corners: drawn.corners,
+      local: drawn.local,
       frame,
-      source: place(frame, local),
+      source: drawn.source,
       erosion: state.erosion,
-      over: state.depths,
-      depths: varying(corners, state.erosion, state.depths),
-      effected: effectedOf(world, id, corners, state),
+      over: drawn.over,
+      depths: varying(drawn.corners, state.erosion, drawn.over),
+      effected: effectedOf(world, id, drawn.corners, state),
     }));
   }
 
@@ -2620,16 +2689,13 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   return out;
 }
 
-/** A group's effects as keyframe `v` leaves them: its options and its amounts.
- * Nothing where it has none. */
+/** A group's round as keyframe `v` leaves it. Nothing where it has none. */
 export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
-  const fx = world.effects.get(id);
+  const round = world.effects.get(id)?.round;
 
-  if (fx === undefined) return undefined;
+  if (round === undefined) return undefined;
 
-  const state = stateAt(world, id, v);
-
-  return { e: effecting(fx), radius: state.radius, amplitude: state.amplitude };
+  return { segments: round.segments, radius: stateAt(world, id, v).radius };
 }
 
 /**
@@ -2780,20 +2846,8 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /**
-   * Its rounds and deforms, on its union after the depth. Absent is none.
-   *
-   * `runs` are what the bake lays outright for its named edges, and `keep`
-   * the points of them it needs kept where they lie flat on the outline —
-   * see `Laying` in `bake.ts`.
-   */
-  effects?: {
-    e: Effecting
-    radius: number
-    amplitude: number
-    runs?: ReadonlyMap<number, EdgeRun>
-    keep?: readonly Point[]
-  }
+  /** Its round, on its union after the depth. Absent is none. */
+  effects?: { segments: number, radius: number }
   /**
    * The frame to keep the union's points in.
    *
@@ -2879,6 +2933,31 @@ function polygonsUnder(world: World, id: Id): PolygonKind[] {
 }
 
 /**
+ * Each of `points` that is a vertex of `shape`, with the inward normal of the
+ * edge through it: the left of the way round, which is where the material is
+ * for any ring an arrangement makes. What moves a kept point in with the
+ * edge it is kept on when the edge is offset.
+ */
+function inwards(shape: Shape, points: readonly Point[]): { p: Point, n: Point }[] {
+  if (points.length === 0) return [];
+
+  return points.flatMap(p => {
+    for (const ring of shape) {
+      const i = ring.findIndex(q => q.x === p.x && q.y === p.y);
+
+      if (i < 0) continue;
+
+      const a = ring[(i - 1 + ring.length) % ring.length], b = ring[(i + 1) % ring.length];
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+      return l === 0 ? [] : [{ p, n: { x: -dy / l, y: dx / l } }];
+    }
+
+    return [];
+  });
+}
+
+/**
  * The union of `shapes`, offset by `depth`: what one slot of a scope comes to.
  *
  * Remembered, because a group with erosion on it is two arrangements per slot
@@ -2886,101 +2965,21 @@ function polygonsUnder(world: World, id: Id): PolygonKind[] {
  * and once more for every ghost on screen, about groups the hand is nowhere
  * near. See `remembered`.
  */
-const offsetUnion = remembered((
-  shapes: readonly Shape[],
-  depth: number,
-  effects: readonly number[] | null,
-  lines: readonly (readonly number[])[],
-  runs: readonly (readonly [number, readonly number[], readonly number[]])[],
-): Union => {
+const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: readonly number[] | null): Shape => {
   const all = unionAll(shapes);
   const eroded = depth === 0 || all.length === 0 ? all : erode(all, depth);
 
-  if (lines.length === 0 && effects === null) return { shape: eroded, edges: NO_EDGES, lines: [] };
+  if (round === null || eroded.length === 0) return eroded;
 
-  // Named after the lines its members' edges lie along, which is how a
-  // union's edge is the same edge from one instant to the next: see `named`.
-  // A name brings where its teeth are counted from.
-  const given: Line[] = lines.map(([fx, fy, tx, ty, key, ax, ay]) => ({
-    from: { x: fx, y: fy },
-    to: { x: tx, y: ty },
-    key,
-    ...(ax === undefined ? {} : { anchor: { x: ax, y: ay } }),
-  }));
-  const anchors = new Map(given.flatMap(l => (l.anchor === undefined ? [] : [[l.key, l.anchor] as const])));
-  const keys = named(eroded, given, depth);
-  const out: Line[] = eroded.flatMap((ring, r) => ring.flatMap((p, i) => {
-    const key = keys[r][i];
-    const anchor = key === null ? undefined : anchors.get(key);
-
-    return key === null ? [] : [{ from: p, to: ring[(i + 1) % ring.length], key, ...(anchor === undefined ? {} : { anchor }) }];
-  }));
-
-  if (effects === null || eroded.length === 0) return { shape: eroded, edges: NO_EDGES, lines: out };
-
-  const [radius, amplitude, ...option] = effects;
-  const laid = new Map(runs.map(([key, along, across]) => [key, { along, across }]));
-  const done = effectedAll(eroded, optionOf(option), radius, amplitude, keys, key => laid.get(key) ?? null, key => anchors.get(key) ?? null);
-
-  return { shape: done.shape, edges: done.edges, lines: out };
+  return effectedAll(eroded, round[0], round[1]);
 });
 
-/**
- * One slot of a scope, or all of what it puts into a set: its shape, where
- * each of its named edges went (see `effected` in `geometry.ts`), and the
- * named lines it hands on to a scope holding it.
- */
-export interface Union {
-  shape: Shape
-  edges: ReadonlyMap<number, readonly NamedEdge[]>
-  lines: readonly Line[]
-}
-
-const NO_EDGES: ReadonlyMap<number, readonly NamedEdge[]> = new Map();
-
-/** A group's effects as `offsetUnion` takes them, or nothing where they do
- * nothing. */
+/** A group's round as `offsetUnion` takes it, or nothing where it does
+ * nothing. A group's deform is not here: it is its members'. See `deforms`. */
 function unionKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
-  if (fx === undefined) return null;
-  if (!((fx.e.segments > 0 && fx.radius > 0) || (fx.e.spacing > 0 && fx.amplitude !== 0))) return null;
-
-  return [fx.radius, fx.amplitude, ...optionKey(fx.e)];
-}
-
-/** Whether a group deforms, which is the one thing that reads its edges'
- * names. */
-function deforming(s: Standing | null): boolean {
-  return s?.effects !== undefined && s.effects.e.spacing > 0;
-}
-
-/**
- * A polygon's edges as lines, each named by the corner it starts at: the
- * straight runs of its projection, which is what a union it is in has its
- * edges along.
- */
-export function linesOf(it: Resolved): Line[] {
-  const im = imagesOf(it) ?? imaged(
-    it.shape,
-    it.source,
-    it.rings,
-    i => it.depths?.[i] ?? it.erosion,
-    PLAIN,
-    () => 0,
-    () => 0,
-    j => j,
-    { radius: 0, amplitude: 0 },
-  );
-
-  const n = it.corners.length;
-
-  return im.bases.flatMap((b, j) => {
-    const p = im.images[j], q = im.images[nextOf(it.rings, n, j)];
-    const anchor = p === null || q === null ? undefined : { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-
-    return b === null ? [] : [{ from: b.from, to: b.to, key: it.corners[j].id, ...(anchor === undefined ? {} : { anchor }) }];
-  });
+  return fx === undefined || fx.segments <= 0 || fx.radius <= 0 ? null : [fx.segments, fx.radius];
 }
 
 export function contributed(
@@ -2996,10 +2995,7 @@ export function contributed(
    * owns the map because only the caller knows what makes two asks the same
    * ask — for the bake, the same instant.
    */
-  held?: Map<string, Union>,
-  /** Where each standing group's named edges went, by the group, for a caller
-   * that wants them: the bake, to lay and fade them. */
-  images?: Map<GroupId, Map<number, readonly NamedEdge[]>>,
+  held?: Map<string, Shape>,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
@@ -3042,33 +3038,18 @@ export function contributed(
     // back. A loose group, or one standing open, has no scope of its own and
     // hands its members up into this one.
     if (group.sealed && standing(id) !== null) {
-      return k === top(id, set) ? [resolves(id, set).shape] : [];
+      return k === top(id, set) ? [resolves(id, set)] : [];
     }
 
     return group.members.flatMap(m => from(m, set, k));
   };
 
-  /** The named lines a member's edges lie along, as `from` gives its shapes:
-   * a polygon's own, and what a scope inside hands on. */
-  const linesFrom = (id: Id, set: SetName, k: number): readonly Line[] => {
-    const it = mine.get(id);
-
-    if (it !== undefined) return slotOf(kindOf(it.polygon), set) === k ? linesOf(it) : [];
-
-    const group = world.groups.get(id);
-
-    if (group === undefined) return [];
-    if (group.sealed && standing(id) !== null) return k === top(id, set) ? resolves(id, set).lines : [];
-
-    return group.members.flatMap(m => linesFrom(m, set, k));
-  };
-
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): Union => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], edges: NO_EDGES, lines: [] };
+    if (group === undefined) return { shape: [], keep: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -3087,28 +3068,40 @@ export function contributed(
     // its voids grow against it.
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
+    const union = offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here));
 
-    // Named only where something reads the names: a deform, or a scope
-    // holding this one that does.
-    const lines = deforming(here) || naming.has(id)
-      ? group.members.flatMap(m => linesFrom(m, set, k)).map(l => [
-          l.from.x, l.from.y, l.to.x, l.to.y, l.key, ...(l.anchor === undefined ? [] : [l.anchor.x, l.anchor.y]),
-        ])
-      : [];
-    const runs = [...(here?.effects?.runs ?? [])].map(([key, r]) => [key, r.along, r.across] as const);
+    // What its members keep for the bake, moved in with their edges: a union
+    // is an arrangement, and would drop them — see `Resolved.keep`.
+    const keep = group.members.flatMap(m => keptFrom(m, set, k))
+      .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
-    return offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here), lines, runs);
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep };
   };
 
-  // The scopes whose edges something reads the names of: every one with a
-  // deform, and every scope inside one of those.
-  const naming = new Set<Id>();
+  /**
+   * The points a member keeps for the bake, on its shape, each with the
+   * inward normal of the edge it lies on: a polygon's own, and a scope's
+   * inside, which kept its members'.
+   */
+  const keptFrom = (id: Id, set: SetName, k: number): { p: Point, n: Point }[] => {
+    const it = mine.get(id);
 
-  for (const [id, group] of world.groups) {
-    if (group.sealed && deforming(standing(id))) {
-      for (const m of within(world, id)) naming.add(m);
+    if (it !== undefined) {
+      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, it.keep ?? []) : [];
     }
-  }
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return [];
+
+    if (group.sealed && standing(id) !== null) {
+      return k === top(id, set) ? inwards(resolves(id, set), kept.get(`${id}:${set}`) ?? []) : [];
+    }
+
+    return group.members.flatMap(m => keptFrom(m, set, k));
+  };
+
+  const kept = new Map<string, Point[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -3129,49 +3122,35 @@ export function contributed(
    * The fold starts at the scope's outermost slot rather than the first, so a
    * solid with voids in it is `solid - void` and not `nothing - (solid - void)`.
    */
-  const resolves = (id: Id, set: SetName): Union => {
+  const resolves = (id: Id, set: SetName): Shape => {
     const key = `${id}:${set}`;
-    const known = local.get(key) ?? held?.get(key);
+    const known = held?.get(key);
 
     if (known !== undefined) {
-      seen(id, known);
+      kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
 
       return known;
     }
 
     const from = top(id, set);
-    const slots: Union[] = [];
+    const slots: { shape: Shape, keep: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
     const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
-    const shape = set === 'floor' && top(id, 'level') === 0
-      ? underfoot(settles, resolves(id, 'level').shape)
+    const cut = set === 'floor' && top(id, 'level') === 0
+      ? underfoot(settles, resolves(id, 'level'))
       : settles;
-    const out: Union = {
-      shape,
-      edges: slots.length === 1 ? slots[0].edges : new Map(slots.flatMap(u => [...u.edges])),
-      lines: slots.flatMap(u => u.lines),
-    };
 
-    local.set(key, out);
+    // Folding the slots is an arrangement again, and would drop them again.
+    const keep = slots.flatMap(u => u.keep);
+    const out = keep.length === 0 ? cut : keeping(cut, keep);
+
+    kept.set(key, keep);
     held?.set(key, out);
-    seen(id, out);
+    held?.set(`${key}:keep`, [keep]);
 
     return out;
-  };
-
-  const local = new Map<string, Union>();
-
-  /** A scope's named edges, for whoever asked for them. */
-  const seen = (id: Id, u: Union): void => {
-    if (images === undefined || u.edges.size === 0) return;
-
-    const mine = images.get(id) ?? new Map<number, readonly NamedEdge[]>();
-
-    for (const [key, edges] of u.edges) mine.set(key, edges);
-
-    images.set(id, mine);
   };
 
   const emit = (id: Id): void => {
@@ -3214,9 +3193,7 @@ export function contributed(
     // here and a floor there, and nothing that cuts either. Two ids, because
     // they are two boundaries. See `outermostSlot`.
     for (const set of SETS) {
-      const union = resolves(id, set).shape;
-      const keep = how.effects?.keep ?? [];
-      const shape = keep.length === 0 ? union : keeping(union, keep);
+      const shape = resolves(id, set);
 
       if (shape.length === 0) continue;
 
@@ -3464,7 +3441,7 @@ function withExtents(
    */
   const extent = (id: Id): Shape => held.get(id)
     ?? mine.get(id)
-    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0, null, [], []).shape;
+    ?? offsetUnion((world.groups.get(id)?.members ?? []).map(extent), 0, null);
 
   for (const id of missing) {
     const shape = extent(id);
@@ -3710,6 +3687,10 @@ export function handles(
 
     it.source.forEach((at, index) => {
       if (edge !== undefined && !edge(at)) return;
+
+      // A tooth a deform made is not a corner anyone drew, and there is
+      // nothing of it to move: its place is its edge's.
+      if (it.corners[index].root !== undefined) return;
 
       out.push({ id: it.id, index, vertex: it.corners[index].id, at });
     });
@@ -4173,9 +4154,18 @@ export function addVertex(
   index: number,
   at: Point,
 ): { world: World, vertex: VertexId } {
+  // On the edge as drawn: a deform's teeth are not corners of the polygon's,
+  // so an edge through them is the one between the drawn corners either side.
+  const n = it.corners.length;
+
+  while (it.corners[index].root !== undefined) index = prevOf(it.rings, n, index);
+
   // Round its own ring rather than round the list: the corner after the last
   // of a hole is the first of that hole, not the first of the outline.
-  const next = nextOf(it.rings, it.corners.length, index);
+  let next = nextOf(it.rings, n, index);
+
+  while (it.corners[next].root !== undefined) next = nextOf(it.rings, n, next);
+
   const t = fraction(it.source[index], it.source[next], at);
 
   const from = it.corners[index].at, to = it.corners[next].at;

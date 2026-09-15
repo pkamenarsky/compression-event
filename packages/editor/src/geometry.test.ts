@@ -40,10 +40,9 @@ import {
   deformed,
   imaged,
   patterned,
-  named,
   rounded,
   SEEDING,
-  unionAll,
+  subdivided,
 } from './geometry';
 
 // -----------------------------------------------------------------------------
@@ -1821,22 +1820,17 @@ describe('round and deform', () => {
     }
   });
 
-  test('an arc is linear in its radius, and a deform point in its amplitude', () => {
-    const at = (e: Effecting, r: number, a: number) => imaged(
-      [square], square, [0], () => 0, e, () => r, () => a, j => j, { radius: 0, amplitude: 0 },
-    ).shape[0];
+  test('an arc is linear in its radius, and a tooth in its amplitude', () => {
     const lerps = (a: Point[], b: Point[], mid: Point[]) =>
       mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
+    const arcs = (r: number) => imaged([square], square, [0], () => 0, () => 3, () => r, { radius: 0, segments: 0 }).shape[0];
 
-    const round: Effecting = { ...PLAIN, segments: 3 };
+    lerps(arcs(1), arcs(3), arcs(2));
 
-    lerps(at(round, 1, 0), at(round, 3, 0), at(round, 2, 0));
+    const sine: Effecting = { ...PLAIN, spacing: 2, pattern: 'sine' };
+    const teeth = (a: number) => deformed(square, () => a, sine);
 
-    // Not in the radius, with both: the teeth are laid along what the arcs
-    // leave of the edge, and that shortens as they grow.
-    const both: Effecting = { ...PLAIN, segments: 3, spacing: 2, pattern: 'sine' };
-
-    lerps(at(both, 2, 0.5), at(both, 2, 1.5), at(both, 2, 1));
+    lerps(teeth(0.5), teeth(1.5), teeth(1));
   });
 
   test('a tangent length is clamped to half of each edge, less what the neighbour takes', () => {
@@ -1925,37 +1919,29 @@ describe('round and deform', () => {
   describe('imaged', () => {
     // A room with a flat corner halfway along its floor.
     const room: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
-    const e: Effecting = { ...PLAIN, segments: 3, spacing: 4, pattern: 'zigzag' };
     const depth = 1;
     const eroded = erode(simplify([room]), depth);
-    const image = (radius: (i: number) => number, amplitude: (j: number) => number) =>
-      imaged(eroded, room, [0], () => depth, e, radius, amplitude, j => j, { radius: 0, amplitude: 0 });
+    const image = (radius: (i: number) => number) =>
+      imaged(eroded, room, [0], () => depth, () => 3, radius, { radius: 0, segments: 0 });
 
-    test('a flat corner is put back, and both edges it splits are deformed', () => {
+    test('a flat corner is put back, and its arc is a sliver of the floor', () => {
       expect(eroded[0]).toHaveLength(4);
 
-      const it = image(() => 1, () => 0.5);
+      const it = image(() => 1);
 
-      // Each edge a tooth in its middle: what the arcs leave of it is less
-      // than two spacings.
-      expect(it.shape[0]).toHaveLength(5 * 4 + 5);
+      expect(it.shape[0]).toHaveLength(5 * 4);
       expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
-      expect(it.edges.map(run => run!.length)).toEqual([1, 1, 1, 1, 1]);
-
-      // The flat corner's arc is a sliver of the floor about its image.
       it.corners[1]!.forEach((p, k) => close(p, { x: 5 + (k / 3 * 2 - 1) * SEEDING, y: 1 }));
     });
 
     test('the projection has every point imaged, where it turns', () => {
-      const it = image(i => 1 + i * 0.25, j => 0.3 + j * 0.1);
+      const it = image(i => 1 + i * 0.25);
       const kept = survived(simplify(it.shape));
 
-      // All but the flat corner's inside, which lies along the floor.
+      // All but the flat corner's, which lies along the floor.
       for (const [i, run] of it.corners.entries()) {
-        for (const p of i === 1 ? [run![0], run![3]] : run!) expect(kept(p)).toBe(true);
+        if (i !== 1) for (const p of run!) expect(kept(p)).toBe(true);
       }
-
-      for (const run of it.edges) for (const p of run!) expect(kept(p)).toBe(true);
     });
 
     test('a corner the erosion swallowed has no image', () => {
@@ -1964,25 +1950,28 @@ describe('round and deform', () => {
         { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 2 }, { x: 10, y: 2 }, { x: 10, y: 10 }, { x: 0, y: 10 },
       ];
       const deep = erode(simplify([arm]), 2);
-      const it = imaged(deep, arm, [0], () => 2, e, () => 1, () => 0, j => j, { radius: 0, amplitude: 0 });
+      const it = imaged(deep, arm, [0], () => 2, () => 3, () => 1, { radius: 0, segments: 0 });
 
       expect(it.corners[1]).toBeNull();
       expect(it.corners[2]).toBeNull();
       expect(it.corners[0]).not.toBeNull();
-      expect(it.edges[1]).toBeNull();
     });
   });
 
-  test('a union\'s edges are named after the member edges they lie along, moved in', () => {
-    const a: Ring = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
-    const b: Ring = [{ x: 5, y: 2 }, { x: 20, y: 2 }, { x: 20, y: 8 }, { x: 5, y: 8 }];
-    const lines = [a, b].flatMap((ring, m) => ring.map((p, i) => ({ from: p, to: ring[(i + 1) % 4], key: m * 10 + i })));
-    const union = erode(unionAll([[a], [b]]), 1);
-    const names = named(union, lines, 1);
+  test('a subdivision says which corner each point is, and which tooth of which edge', () => {
+    const e: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag' };
+    const done = subdivided(square, e, () => 2, i => i, 1);
 
-    // Every edge is one of theirs: a's bottom, a's left, b's right, and so on.
-    expect(names.flat().every(k => k !== null)).toBe(true);
-    expect(new Set(names.flat())).toEqual(new Set([0, 1, 2, 3, 10, 11, 12]));
+    expect(done.map(d => [d.from, d.j])).toEqual([
+      [0, null], [0, -1], [0, 0], [0, 1],
+      [1, null], [1, -1], [1, 0], [1, 1],
+      [2, null], [2, -1], [2, 0], [2, 1],
+      [3, null], [3, -1], [3, 0], [3, 1],
+    ]);
+
+    // Out is to the left for a ring wound the other way.
+    expect(subdivided(square, e, () => 2, i => i, -1)[2].at).toEqual({ x: 5, y: 2 });
+    expect(done[2].at).toEqual({ x: 5, y: -2 });
   });
 
   test('a straight corner is never one point: its arc is a sliver of its wall', () => {

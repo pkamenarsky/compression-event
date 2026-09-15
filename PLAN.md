@@ -553,104 +553,80 @@ So:
 5. The gestures, the options pane, the icons.
 6. The save format.
 
-Done: 1–4, on the branch `effect-stack`, with these on top:
+Done: 1–4, on the branch `effect-stack`, with these on top. The deform is
+not what the paragraphs above describe: it happens before the erosion, to
+the thing's rings, and the order is `deform → erode → round`.
 
+- **A deform subdivides and perturbs a thing's rings before anything else
+  happens to them** (`subdivided`, `deformedAt` in `scene.ts`): as though
+  its teeth had been drawn by hand, and undone by taking the effect off.
+  Each tooth is a corner from there on, with an id of its own made from who
+  deformed it, the corner its edge starts at and which tooth it is
+  (`toothId`, `Vertex.root`), so the bake carries teeth as it carries any
+  corner: arriving flat and fading in, leaving the same way, moving by
+  lerp. Nothing about a deform is laid, named or lifted after the fact.
+- **A group's deform is its members'.** Each polygon asks the scopes holding
+  it what deforms it has, and does them in turn: its own, then each group's
+  outwards (`deforms`). Taking the deform off a group takes it off them all.
+  Where members overlap, each has its own teeth along the stretch they
+  share and the union is whichever is further out; where they are flush,
+  two inward teeth can open a crack between them. The outline stays
+  continuous either way; where one member's tooth passes another's, a
+  crossing comes or goes, which the bake pins, and its vertical pops.
+- **Spacing and amplitude are lengths in the world**, taken of the placed
+  ring, so density follows the edge as drawn and a room scaled up gains
+  teeth. The pattern is continuous in where an edge's ends are
+  (`patternRun`): a tooth every spacing out from the middle of the edge,
+  and one nearer an end than a spacing only as tall as it has room to be.
+  An edge growing gains teeth at its ends out of nothing; none of the rest
+  moves off the spacing. Sine is six to a wave and never on a zero, where
+  three points are in a line and the arrangement drops the middle one.
+- A one-way deform lifts the pattern off the line, `(1 + v) / 2`, rather
+  than folding it onto it: folded, a zigzag out is a flat step.
+- **A round is taken after the erosion, of the boundary** (`imaged`, and
+  `effected` for a group's union), teeth included: a rounded zigzag is a
+  wave. `imagesOf` in `scene.ts` is the same taken in world units, which
+  `invented` and `fading` ask. A group rounds its union, so the joins
+  between its rooms are not rounded.
 - A stand carries `radius`, `amplitude`, `radii` and `amplitudes` outright,
   and the corner maps are listed once (`CORNER_MAPS` in `rig.ts`), so keys,
   undo's gesture stamp, delete and rebirth take all four alike. A copy
   carries the effects, the corners' own options and their entries.
-- A one-way deform lifts the pattern off the line, `(1 + v) / 2`, rather than
-  folding it onto it: folded, a zigzag out is a flat step.
-- `imaged` is the construction and `project` simplifies what it builds;
-  `imagesOf` in `scene.ts` is the same taken in world units, which `invented`
-  and `fading` ask. A group's union is rounded and deformed alike everywhere
-  (`effected`).
-- A group's amounts, and a polygon's own for what the erosion made, have no
-  slots, so an end at nought is seeded for them too, deform included.
+- A flat corner's tangent length is at least `SEEDING` of its radius, in
+  `arcs` itself, so its arc is a sliver of a run along its wall rather than
+  one point, which `keeping` always takes back. The arc is walked from its
+  first tangent point rather than built off a centre, which ran away to
+  infinity as a corner straightened. A radius of nought at one end of a
+  span is seeded, as a group's is.
 - A corner arriving into a rounded ring costs stretches: an arc whose corner
-  turns is not a lerp of its ends. It never jumps.
-- A flat corner is never seeded after the fact: its tangent length is at
-  least `SEEDING` of its radius, in `shaped` itself, so its arc is a sliver
-  of a run along its wall rather than one point. That lies on an edge
-  whatever the edges beside it do — a deform either side of it included,
-  where laying a collapsed run along the source line found no edge — so
-  `keeping` always takes it back. `seeded` and `Imaged.flat` went with it.
-  The arc is walked from its first tangent point rather than built off a
-  centre, which ran away to infinity as a corner straightened.
-- A deform has a spacing rather than a count, and its pattern is continuous
-  in where the ends of the edge are (`patternRun`): a tooth every spacing
-  out from the edge's anchor, and one nearer an end than a spacing only as
-  tall as it has room to be. An edge growing gains teeth at its ends out of
-  nothing and none of the rest moves; the pattern is about as dense
-  everywhere, and an edge split by a corner running straight through has
-  about the teeth it had whole.
-- The anchor is the edge's by its name, not the piece's: the middle of the
-  source edge corner to corner as the erosion leaves it (`Imaged.anchors`),
-  or for a union's edge the member edge's it is named after (`Line.anchor`).
-  So tooth `j` is the same tooth at every instant and on every piece of one
-  edge, which is what lines the two ends of a span up, and an edge cut in
-  pieces keeps its teeth where they were. A radius growing tapers the end
-  teeth rather than sliding every tooth by half of it. Sine is six to a wave and never on a zero, where three
-  points are in a line and the arrangement drops the middle one.
-- A deform point is linear in the amplitude and not in the radius: its
-  teeth are laid along what the arcs leave of the edge, which a radius
-  shortens. So a radius moving under a deform is cut more finely; nothing
-  jumps.
-- So an edge's count can change across a span, and the bake writes both ends
-  over one run (`laid`): a deform point is a fraction along its edge and a
-  distance off it (`EdgeRun`), which the geometry takes outright in place of
-  the pattern; each edge carries as many as its busier end needs, and at the
-  other end the extras lie flat on that end's outline between its own,
-  fading in or out. Between the ends both numbers are lerped, and the
-  construction lays them, so the cut and the replay agree.
-- A corner missing at one end is part of the editor's edge there: the edges
-  either side of it are one, with one pattern, so their points are shared
-  out along it by where they fall, and the corner is lifted onto it (`rises`,
-  its arc with it). A tooth that falls on the corner is the corner's.
-- Rounded, that lifted corner's arc is a sliver along the wall's line rather
-  than bent to the tooth it lands on, so the near end is off the editor's
-  outline by about `SEEDING` of the radius. The same order as a radius
-  seeded from nought.
-- A tooth that goes from out to in across a span lies on its line for an
-  instant half way, and the arrangement drops it there; the bake pins that
-  instant. The outline is the same either side.
-- A group's union names its edges after its members' (`named`): each lies
-  along a member's edge, moved in by the group's depth, and takes the id of
-  the corner that edge starts at — a polygon's through `imaged`, a scope
-  inside through its own names. Corner ids are the world's, so a deformed
-  union's noise stays on its edges whatever joins the group or wherever its
-  rings start.
-- With names a union's edges are laid over a span as a polygon's are
-  (`groupLaying`): one run of teeth per named edge, the extras flat at the
-  end that lacks them, kept there and fading. Only where the name is one
-  piece at both ends; a member's edge coming out of the union in pieces, or
-  there at one end alone, is a change in what the union is made of, and the
-  cut finds it by measuring.
-- An edge that is the image of nothing — one the erosion made — has neither
-  a name nor a run, so where its count changes the bake finds it as a jump.
-- Where a union's edge is cut in two part way through a span, the teeth
-  more than a spacing from the cut stay where they were, and the ones within
-  it shrink to the new ends at that instant. The ends are on the edge's
-  line, where the union cut it before it was deformed, and the pattern there
-  was not: a jump of up to the amplitude, a spacing either side of the cut.
-  Taking it out would mean lifting the union's new corners onto the pattern,
-  and where two deformed edges meet at one the two lifts disagree. And an
-  edge that comes into a union whole — a member's side rising flat through a
-  wall — brings its teeth with it at once, an instant's height above the
-  wall's own. Both are the deform's, for deforming the union rather than
-  each member: which is what keeps teeth out of the seams between rooms.
-- The bake's jumps pop the verticals of whatever appears or goes at them;
-  that is accepted.
-- A corner missing at one end is put on the straight part of its edge
-  there, between the two arcs, as the editor draws it (`straightOf`):
-  `spanning`'s choice of where along the edge is mapped into it. Anywhere
-  else it could sit on a stretch a neighbour's arc has rounded away, which
-  is not on the editor's outline, and clamp that arc short at the end where
-  the editor has it whole.
+  turns is not a lerp of its ends. It never jumps. A corner missing at one
+  end is put on the straight part of its edge there (`straightOf`), so it
+  never clamps a neighbour's arc short at the end where the editor has it
+  whole.
+- A rounded tooth that goes through straight on its way lies on a line for
+  an instant and the arrangement drops its arc there; the bake pins that
+  instant and nothing moves either side of it. Master does the same with
+  any corner going through straight.
+- `spanning` writes both ends over the two ends' own corners merged
+  (`merged`), since a tooth is not in the polygon's list of points; without
+  teeth that is the list, filtered, as before.
+- **A corner arriving on a room inside a sealed group** jumped at the near
+  end, on master as well: the group's union is an arrangement and dropped
+  the point the room keeps on its wall, and the corner's vertical was never
+  faded. A sealed group's union now keeps its members' kept points, moved in
+  with their edges (`slotted`, `inwards`), and a scope's side fades where
+  its polygons do (`groupFading`). Teeth made this matter everywhere.
+- Resolving a group reads it without its own deform, and the rings it makes
+  take the deform on with its timeline; its members' deforms, and those of
+  groups within it, come into the rings as the shape they make.
+- A tooth is not picked or handled, and a click on a deformed edge adds a
+  corner to the edge between the drawn corners either side.
 - Worlds without effects are held to master bit for bit (`baseline.ts`): a
   handful of worlds built only from what master has, and digests of every
   set the editor draws, every span the bake makes and the level the game
   gets, made on master and checked on the branch.
+- The bake's jumps pop the verticals of whatever appears or goes at them;
+  that is accepted.
 - Icons and labels for the two kinds are in, since the timeline's table of
   them has to be whole; the rest of 5 is not. Nothing saves effects yet (6):
   a file opens with none.

@@ -508,7 +508,15 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  const readings = readingAt(world, v, id);
+  // Read without its own deform: the rings it makes take the deform on,
+  // with its timeline, and would otherwise have it done to them twice. What
+  // is inside it — its members' own deforms, and those of groups within —
+  // comes into the rings as the shape they make.
+  const own = world.effects.get(id);
+  const bare = own?.deform === undefined
+    ? world
+    : { ...world, effects: new Map(world.effects).set(id, { ...own, deform: undefined }) };
+  const readings = readingAt(bare, v, id);
 
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.

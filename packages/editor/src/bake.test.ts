@@ -1903,6 +1903,41 @@ describe('a corner arriving right beside one that is leaving', () => {
   });
 });
 
+describe('a corner arriving on a room inside a sealed group', () => {
+  // The group's union is an arrangement, and dropped the point the room keeps
+  // on its wall at the near end: the ring was a point short there, and the
+  // corner's vertical stood all at once. See `slotted` in `scene.ts` and
+  // `groupFading`.
+  function arriving(depth: number): World {
+    const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)], ['level', rect(300, 0, 50, 50)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = depth === 0 ? g.world : wrote(g.world, 0, g.id, erode(depth));
+    const it = resolveAt(w, 1).find(r => r.id === ids[0])!;
+    const grown = addVertex(w, 1, it, 0, { x: 0, y: -100 });
+
+    return nudging(grown.world, 1, ids[0], grown.vertex, { x: 0, y: -80 });
+  }
+
+  for (const depth of [0, 10]) {
+    test(`is one stretch, and its vertical fades in${depth === 0 ? '' : ', the group eroding'}`, () => {
+      const w = arriving(depth);
+      const span = run(bakeSpan(w, 0));
+      const s = span.tracks[0].stretches[0];
+
+      expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+      expect(drift(w)).toBeLessThan(TOLERANCE);
+      expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+
+      // The one on the floor, off the corners, dark at the near end.
+      const floor = s.a.flatMap((r, i) => r.points.flatMap((p, j) => (
+        Math.abs(p.y + 100 - depth) < 1e-6 && Math.abs(p.x) < 50 ? [s.opacity[0][i][j]] : []
+      )));
+
+      expect(floor).toEqual([0]);
+    });
+  }
+});
+
 describe('a crossing is rebuilt from the edges it was named against', () => {
   // A crossing is not a position, it is two edges, and `drawn` rebuilds it at
   // every instant by indexing into each polygon's own shape. So the index has to
@@ -2173,6 +2208,35 @@ describe('effects', () => {
   /** How many points the span draws at `t`. */
   const count = (span: Span, t: number) => sample(span, t).reduce((n, r) => n + r.points.length, 0);
 
+  /**
+   * The furthest the truth moves between two neighbouring instants of four
+   * hundred across the span: every point of each from the other's outline. A
+   * boundary that popped would be as far as what popped; one that moves
+   * steadily is as far as it moves.
+   */
+  function steadiest(w: World): number {
+    const segments = (f: Frame) => f.flatMap(r => r.points.slice(1).map((q, i) => [r.points[i], q] as const));
+    const off = (p: Point, f: Frame) => Math.min(...segments(f).map(([a, c]) => {
+      const dx = c.x - a.x, dy = c.y - a.y, l2 = dx * dx + dy * dy;
+      const u = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+
+      return Math.hypot(a.x + dx * u - p.x, a.y + dy * u - p.y);
+    }));
+    const apart = (a: Frame, c: Frame) => Math.max(...a.flatMap(r => r.points.map(p => off(p, c))), ...c.flatMap(r => r.points.map(p => off(p, a))));
+
+    let worst = 0;
+    let was = truth(w, 0, 0);
+
+    for (let i = 1; i <= 400; i++) {
+      const now = truth(w, 0, i / 400);
+
+      worst = Math.max(worst, apart(was, now));
+      was = now;
+    }
+
+    return worst;
+  }
+
   test('a radius growing from nought is one stretch, the ring as long at both ends', () => {
     const { world, id } = room(ROUND);
     const w = wrote(world, 1, id, round(30));
@@ -2244,27 +2308,32 @@ describe('effects', () => {
     return nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
   }
 
-  // Rounded, the arriving corner's arc is a sliver along the floor's line,
-  // lifted onto the tooth it lands on rather than bent to it: off the editor's
-  // outline by a sliver of its radius.
-  for (const [named, fx, ops, near] of [
-    ['a deformed floor', ZIGZAG, [deform(5)], 1e-6],
-    ['a rounded, deformed floor', { ...ROUND, ...ZIGZAG }, [round(20), deform(5)], 20 * 1e-3],
-  ] as [string, Effects, Writing[], number][]) {
-    test(`a corner arriving on ${named} starts from the editor's pattern, and nothing jumps`, () => {
-      // At the near end the floor is one edge with one pattern, and the
-      // corner is a point of it; at the far end it is two, each with its own.
-      const w = arriving(fx, ...ops);
-      const span = run(bakeSpan(w, 0));
+  test('a corner arriving on a deformed floor starts from the editor\'s pattern, and nothing jumps', () => {
+    // At the near end the floor is one edge with one pattern; at the far end
+    // it is two, each with its own. The teeth are corners, so the ones the
+    // halves gain arrive as corners do, and the ones the floor loses go.
+    const w = arriving(ZIGZAG, deform(5));
+    const span = run(bakeSpan(w, 0));
 
-      expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-      expect(count(span, 0)).toEqual(count(span, 0.5));
-      expect(count(span, 1)).toEqual(count(span, 0.5));
-      expect(drift(w)).toBeLessThan(TOLERANCE);
-      expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(near);
-      expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
-    });
-  }
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
+  test('rounded as well, its outline never pops', () => {
+    // Where a rounded tooth goes through straight on its way, its arc lies on
+    // a line for an instant and the arrangement drops it there, and the bake
+    // pins that instant; nothing moves either side of it.
+    const w = arriving({ ...ROUND, ...ZIGZAG }, round(20), deform(5));
+    const span = run(bakeSpan(w, 0));
+
+    expect(steadiest(w)).toBeLessThan(0.5);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
 
   test('an edge growing longer gets more points, and they fade in', () => {
     // The right wall pulled out to twice its length: three teeth at the near
@@ -2354,7 +2423,33 @@ describe('effects', () => {
     expect(lit).toBeGreaterThanOrEqual(4 * 2);
   });
 
-  test('a group growing gains teeth on its union that fade in, and nothing jumps', () => {
+  test('a group growing gains teeth on its rooms that fade in, and nothing jumps', () => {
+    // Its deform is its rooms': each has teeth of its own, and gains them as
+    // any deformed room does.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(160, 0, 100, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
+
+    w = wrote(w, 1, g.id, scaled(1.8, 1.8, { x: 130, y: 50 }));
+
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    const s = span.tracks[0].stretches[0];
+    const later = s.opacity[1].flat();
+
+    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('where a deformed group\'s rooms overlap, their teeth cross, and the outline never pops', () => {
+    // Two rooms on one line: along the stretch they share, each has its own
+    // teeth, and the union is whichever is further out. Where one tooth
+    // passes another, a crossing comes or goes, which the bake pins.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
     let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
@@ -2363,18 +2458,9 @@ describe('effects', () => {
 
     const span = run(bakeSpan(w, 0));
 
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 0.5));
-    expect(count(span, 1)).toEqual(count(span, 0.5));
-    expect(drift(w)).toBeLessThan(TOLERANCE);
-    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(steadiest(w)).toBeLessThan(0.5);
+    expect(span.worst).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
-
-    // The ones it gains are dark at the near end, and coming up.
-    const s = span.tracks[0].stretches[0];
-    const later = s.opacity[1].flat();
-
-    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(4);
   });
 
   test('a group eroding loses teeth that fade out, and nothing jumps', () => {
