@@ -1222,15 +1222,15 @@ function effectsOver(
   // Where it has no effects at one end, it has them at nought there: the
   // options are a fact about the thing, and the same at both.
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
-    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1) : f)),
+    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
     bevels: other.bevels.map(() => 0),
-    own: other.own.n > 0 ? facetsOf(1) : other.own,
+    own: other.own.n > 0 ? facetsOf(1, other.own.tension) : other.own,
     bevel: 0,
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
   // One count for the span, laid as each end's own at that end.
-  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at });
+  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension });
   const ended = (e: Effected, at: number): Effected => ({
     ...e,
     facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
@@ -1704,7 +1704,7 @@ function casting(world: World, from: number): Cast {
     const from = segmentsOf(round, was.bevel), to = segmentsOf(round, now.bevel);
 
     shapes.set(id, {
-      facets: { n: Math.max(from, to), from, to, at: 0 },
+      facets: { n: Math.max(from, to), from, to, at: 0, tension: round.tension },
       bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
     });
   }

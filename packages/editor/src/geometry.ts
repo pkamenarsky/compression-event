@@ -2560,7 +2560,7 @@ function norm(t: number): number {
 //
 // A round happens after the erosion, to the boundary: each corner becomes a
 // curve leaving each of its two edges along it and with no curvature, so it
-// runs into them with no seam (`rounded`, and see `NEAR`), teeth included. A
+// runs into them with no seam (`rounded`, and see `Curve`), teeth included. A
 // round's amount is its bevel: how deep from the corner, along each edge, its
 // curve starts — the same at any angle, so a sharp corner and a blunt one are
 // cut back alike. It is faceted where it bends: see `spread`. It is the same
@@ -2766,18 +2766,22 @@ export function subdivided(
  * facets, straight between the points it turns at, so it is the same outline
  * as that arc alone; the bake keeps them there, and their verticals come up
  * as the arc gains its segments. At a keyframe the three are one. `n` of
- * nought is a corner not rounded.
+ * nought is a corner not rounded. `tension` is the curve's: see `curveOf`.
  */
 export interface Facets {
   n: number
   from: number
   to: number
   at: number
+  tension: number
 }
 
+/** The tension a round starts with. See `curveOf`. */
+export const TENSION = 0.5;
+
 /** A corner rounded in `n` segments, standing still. */
-export function facetsOf(n: number): Facets {
-  return { n, from: n, to: n, at: 0 };
+export function facetsOf(n: number, tension = TENSION): Facets {
+  return { n, from: n, to: n, at: 0, tension };
 }
 
 /** A corner not rounded. */
@@ -2789,22 +2793,62 @@ export const SQUARE: Facets = facetsOf(0);
  * from nought at the tangent point on `a` to one at the one on `b`.
  *
  * A quintic Bézier whose first three control points lie along `a` — at one,
- * `NEAR` and `INNER` of the bevel from the corner — and whose last three
+ * `near` and `inner` of the bevel from the corner — and whose last three
  * mirror them along `b`. Three in a line at each end is what makes it leave
  * each edge not only along it but with no curvature at all, so the edge runs
  * into it with no seam to be seen, where a circle's curvature jumps from
  * nothing to all of it at the tangent point. It bends least at its ends and
  * most in its middle, and that is where `spread` puts its points.
  *
+ * How far in the two stand is its tension (see `TENSION`): at nought they
+ * are out along the edges, and the curve bends about as evenly as a circle;
+ * at one they are pulled into the corner, and it runs straight off its edges
+ * and turns hard in its middle.
+ *
  * `A` and `B` are of `u` alone, not of the corner, so every point of it is
  * the bevel times something of the corner's angle: linear in the bevel.
  */
-const NEAR = 0.6;
-const INNER = 0.3;
+interface Curve {
+  alongA: number[]
+  alongB: number[]
+  /** At each of the samples: both weights' first and second derivatives,
+   * which are all the curvature needs and are the same at every corner. */
+  sampled: { a1: number, b1: number, a2: number, b2: number }[]
+  /** How far a bevel of one in one segment can be off it: see `sagging`. */
+  sagging: number
+}
 
-/** The curve's weights on `a` and on `b`, as one-dimensional Béziers. */
-const ALONG_A = [1, NEAR, INNER, 0, 0, 0];
-const ALONG_B = [0, 0, 0, INNER, NEAR, 1];
+const curves = new Map<number, Curve>();
+
+/** The curve at a tension, worked out once for each. */
+function curveOf(tension: number): Curve {
+  const known = curves.get(tension);
+
+  if (known !== undefined) return known;
+
+  const t = Math.min(1, Math.max(0, tension));
+  const near = 0.7 - 0.3 * t, inner = 0.45 * (1 - t);
+  const alongA = [1, near, inner, 0, 0, 0];
+  const alongB = [0, 0, 0, inner, near, 1];
+
+  const sampled = Array.from({ length: SAMPLES + 1 }, (_s, k) => {
+    const u = k / SAMPLES;
+
+    return {
+      a1: bezier(differenced(alongA), u),
+      b1: bezier(differenced(alongB), u),
+      a2: bezier(differenced(differenced(alongA)), u),
+      b2: bezier(differenced(differenced(alongB)), u),
+    };
+  });
+
+  const partial = { alongA, alongB, sampled, sagging: 0 };
+  const curve = { ...partial, sagging: sagging(partial) };
+
+  curves.set(tension, curve);
+
+  return curve;
+}
 
 /** A one-dimensional Bézier of `c`'s control values at `u`. */
 function bezier(c: readonly number[], u: number): number {
@@ -2832,19 +2876,6 @@ function differenced(c: readonly number[]): number[] {
 /** How finely `spread` reads the curve. */
 const SAMPLES = 48;
 
-/** At each of the samples: both weights' first and second derivatives,
- * which are all the curvature needs and are the same at every corner. */
-const SAMPLED = Array.from({ length: SAMPLES + 1 }, (_s, k) => {
-  const u = k / SAMPLES;
-
-  return {
-    a1: bezier(differenced(ALONG_A), u),
-    b1: bezier(differenced(ALONG_B), u),
-    a2: bezier(differenced(differenced(ALONG_A)), u),
-    b2: bezier(differenced(differenced(ALONG_B)), u),
-  };
-});
-
 /**
  * How much each sample of the curve counts, for a corner whose edges' ways
  * out meet at a cosine of `c`: `√κ · |C′|`, less the `√(sin θ)` every sample
@@ -2852,8 +2883,8 @@ const SAMPLED = Array.from({ length: SAMPLES + 1 }, (_s, k) => {
  * by about `e² / 8`, so points laid where it adds up evenly are off by the
  * same everywhere: close where the curve bends, far apart where it does not.
  */
-function weights(c: number): number[] {
-  return SAMPLED.map(({ a1, b1, a2, b2 }) => {
+function weights(curve: Curve, c: number): number[] {
+  return curve.sampled.map(({ a1, b1, a2, b2 }) => {
     const speed = Math.sqrt(Math.max(0, a1 * a1 + b1 * b1 + 2 * a1 * b1 * c));
 
     return Math.sqrt(Math.abs(a1 * b2 - b1 * a2) / Math.max(speed, 1e-12));
@@ -2877,8 +2908,12 @@ function added(w: readonly number[]): number[] {
  * included: every sample's `√(sin θ)` has been taken out, so what is left
  * does not vanish there. Evenly along the curve where nothing is to be read.
  */
-export function spread(c: number, s: number): number[] {
-  const sum = added(weights(c));
+export function spread(c: number, s: number, tension = TENSION): number[] {
+  return spreadOn(curveOf(tension), c, s);
+}
+
+function spreadOn(curve: Curve, c: number, s: number): number[] {
+  const sum = added(weights(curve, c));
   const total = sum[SAMPLES];
 
   return Array.from({ length: s + 1 }, (_q, q) => {
@@ -2908,7 +2943,7 @@ export function spread(c: number, s: number): number[] {
  * little more than it says, which is why it is measured. With a twentieth
  * over, for the angles between the ones measured.
  */
-const SAGGING = (() => {
+function sagging(curve: Curve): number {
   const FINE = 256;
   let worst = 0;
 
@@ -2916,24 +2951,24 @@ const SAGGING = (() => {
     const theta = Math.PI * d / 90;
     const c = Math.cos(theta), s = Math.sin(theta);
     const at = (u: number): Point => {
-      const p = bezier(ALONG_A, u), q = bezier(ALONG_B, u);
+      const p = bezier(curve.alongA, u), q = bezier(curve.alongB, u);
 
       return { x: p + c * q, y: s * q };
     };
-    const curve = Array.from({ length: FINE + 1 }, (_f, f) => at(f / FINE));
+    const fine = Array.from({ length: FINE + 1 }, (_f, f) => at(f / FINE));
 
     for (const k of [1, 2, 3, 4, 6, 8, 12]) {
-      const facets = spread(c, k).map(at);
+      const facets = spreadOn(curve, c, k).map(at);
       let off = 0;
 
-      for (const p of curve) off = Math.max(off, Math.min(...facets.slice(1).map((q, j) => fromSegment(p, facets[j], q))));
+      for (const p of fine) off = Math.max(off, Math.min(...facets.slice(1).map((q, j) => fromSegment(p, facets[j], q))));
 
       worst = Math.max(worst, off * k * k);
     }
   }
 
   return worst * 1.05;
-})();
+}
 
 /** How far `p` is from the segment `a`–`b`. */
 function fromSegment(p: Point, a: Point, b: Point): number {
@@ -2956,16 +2991,15 @@ export const FINEST = 64;
  * ends from its amounts alone. What the angle and the clamping take off the
  * arc only makes it sag less.
  */
-export function segmentsFor(bevel: number, precision: number): number {
+export function segmentsFor(bevel: number, precision: number, tension = TENSION): number {
   if (!(bevel > 0) || !(precision > 0)) return 1;
 
-  return Math.min(FINEST, Math.max(1, Math.ceil(Math.sqrt(SAGGING * bevel / precision))));
+  return Math.min(FINEST, Math.max(1, Math.ceil(Math.sqrt(curveOf(tension).sagging * bevel / precision))));
 }
 
-/** The precision that makes `segments` of `bevel`, and no fewer: for tests,
- * and for reading a count saved before there were precisions. */
-export function precisionFor(segments: number, bevel: number): number {
-  return SAGGING * bevel / (segments * segments) * (1 + 1e-9);
+/** The precision that makes `segments` of `bevel`, and no fewer: for tests. */
+export function precisionFor(segments: number, bevel: number, tension = TENSION): number {
+  return curveOf(tension).sagging * bevel / (segments * segments) * (1 + 1e-9);
 }
 
 /**
@@ -3034,17 +3068,18 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
     const t2 = { x: v.x + b.x * t, y: v.y + b.y * t };
 
     // Along the curve: the corner plus `t` times a combination of its two
-    // ways out that is of `u` alone — see `NEAR` — so linear in the bevel. A
+    // ways out that is of `u` alone — see `Curve` — so linear in the bevel. A
     // corner running straight through is a straight run along its wall, from
     // one tangent point to the other.
     const c = a.x * b.x + a.y * b.y;
+    const curve = curveOf(facets.tension);
 
     /** The point `u` of the way along the curve; both tangent points exact. */
     const on = (u: number): Point => {
       if (u <= 0) return t1;
       if (u >= 1) return t2;
 
-      const p = bezier(ALONG_A, u) * t, q = bezier(ALONG_B, u) * t;
+      const p = bezier(curve.alongA, u) * t, q = bezier(curve.alongB, u) * t;
 
       return { x: v.x + a.x * p + b.x * q, y: v.y + a.y * p + b.y * q };
     };
@@ -3053,7 +3088,7 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
      * `n / s` apart, as near as whole points go, and the rest along the
      * facets between them. Each is linear in `t`, as `on` is. */
     const laid = (s: number): Point[] => {
-      const turns = spread(c, s).map(on);
+      const turns = spreadOn(curve, c, s).map(on);
       const index = (q: number): number => Math.round(q * facets.n / s);
       const out: Point[] = [];
 
@@ -3090,8 +3125,8 @@ function mix(a: number, b: number, t: number): number {
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
  * its edges. See `arcs`. */
-export function rounded(ring: Ring, bevel: (i: number) => number, segments: number): Ring {
-  return arcs(ring, () => facetsOf(segments), bevel).flat();
+export function rounded(ring: Ring, bevel: (i: number) => number, segments: number, tension = TENSION): Ring {
+  return arcs(ring, () => facetsOf(segments, tension), bevel).flat();
 }
 
 /** The arcs of a whole shape, rounded alike everywhere, one run per corner:

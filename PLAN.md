@@ -418,7 +418,7 @@ keyframe, as its shape is; how much is an op, like erosion.
 
 ```ts
 interface Effects {
-  round?: { precision: number, chamfer: boolean }
+  round?: { precision: number, tension: number, chamfer: boolean }
   deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both', jitter: number }
 }
 
@@ -507,11 +507,16 @@ interface Rig {
   half of each edge less what the neighbour takes of it — all of what is
   left, where the neighbour wants less. Holes too.
 - **The curve is curvature-continuous**: a quintic Bézier with three control
-  points along each edge (at 1, `NEAR` 0.6 and `INNER` 0.3 of the bevel), so
+  points along each edge (at 1, `near` and `inner` of the bevel), so
   it leaves each edge tangent and with no curvature — no seam where the edge
   runs into it, as a circle has — and bends most in its middle. Its weights
   on the two edge directions are of `u` alone, so each point is linear in
   the bevel, and a straight corner is a straight run along its wall.
+- **Its tension** (`Effects.round.tension`, 0 to 1, starting at 0.5) says
+  where those two stand: `near = 0.7 − 0.3τ`, `inner = 0.45 (1 − τ)`. At
+  nought it bends about as evenly as a circle; at one it runs straight off
+  its edges and turns hard in its middle. Each tension's curve, and its
+  `sagging`, is worked out once (`curveOf`), and travels in `Facets`.
 - **Faceted where it bends** (`spread`): the points are laid at equal steps
   of `∫√κ ds`, which gives every facet about the same sag — close together
   in the middle, far apart where it leaves the edges. The steps are of the

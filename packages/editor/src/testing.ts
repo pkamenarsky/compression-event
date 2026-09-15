@@ -10,7 +10,7 @@
 import { Point } from '@ce/game/world';
 import { appended, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
 import { Erode, Move, Op, repeating, withKeys } from './rig';
-import { precisionFor } from './geometry';
+import { TENSION, precisionFor } from './geometry';
 import { Id, KeyframeId, Options, World } from './types';
 
 /** An operation, or one worked out from the world as it stands when it is
@@ -69,5 +69,7 @@ export function scaled(x: number, y: number, centre: Point = { x: 0, y: 0 }): Wr
 /** A round's options that make exactly `segments` of a bevel of `bevel`:
  * what a test that counts points asks for. See `segmentsFor`. */
 export function inSegments(segments: number, bevel: number): Options['round'] {
-  return segments === 1 ? { precision: 1, chamfer: true } : { precision: precisionFor(segments, bevel), chamfer: false };
+  return segments === 1
+    ? { precision: 1, tension: TENSION, chamfer: true }
+    : { precision: precisionFor(segments, bevel), tension: TENSION, chamfer: false };
 }

@@ -126,10 +126,10 @@ describe('save', () => {
     w = {
       ...w,
       effects: new Map([
-        [b, { round: { precision: 0.3, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
+        [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[0].id, { round: { precision: 0.5, chamfer: true, off: true } }]]),
+      cornerEffects: new Map([[corners[0].id, { round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
@@ -201,10 +201,10 @@ describe('save', () => {
     const w = restored(file).world;
 
     expect(w.effects.get(id)).toEqual({
-      round: { precision: 0.5, chamfer: false },
+      round: { precision: 0.5, tension: 0.5, chamfer: false },
       deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
-    expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, chamfer: true, off: true } });
+    expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {

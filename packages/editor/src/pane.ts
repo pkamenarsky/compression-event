@@ -59,6 +59,7 @@ interface Model {
   erode: Some
   round: Some
   precision: number
+  tension: number
   chamfer: boolean
   corners: boolean
   own: Some
@@ -162,6 +163,7 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     precision: r.precision,
+    tension: r.tension,
     chamfer: r.chamfer,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
@@ -194,7 +196,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     }
 
     const shown = name === 'round'
-      ? { precision: m.precision(), chamfer: m.chamfer() }
+      ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer() }
       : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
@@ -231,6 +233,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
       show(() => !m.chamfer(), fragment(field('precision', number(m.precision, PRECISEST, v => changed('round', { precision: v }), Infinity, 'any')))),
+      // From about a circle at nought to tight in the corner at one.
+      show(() => !m.chamfer(), fragment(field('tension', number(m.tension, 0, v => changed('round', { tension: v }), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),

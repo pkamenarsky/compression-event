@@ -578,12 +578,15 @@ export interface World {
  *   bevel, along a curve that leaves the edges with no curvature, in as many
  *   segments as keep it within `precision` of that curve — closer where it
  *   bends more (see `segmentsFor`, `spread`) — or one for a `chamfer`.
+ *   `tension` is how hard it turns in its middle and how straight it runs
+ *   off its edges, from about a circle at nought to tight in the corner at
+ *   one (see `curveOf`).
  * - `deform`: points put into each edge every `spacing` of its length, each
  *   strayed along it by up to `jitter` of the spacing, and pushed off it by
  *   the pattern. `seed` is the noise's and the jitter's.
  */
 export interface Effects {
-  round?: { precision: number, chamfer: boolean, off?: boolean }
+  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean }
   deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
@@ -594,7 +597,7 @@ export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
 
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
-  round: { precision: 0.5, chamfer: false },
+  round: { precision: 0.5, tension: 0.5, chamfer: false },
   deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
 };
 

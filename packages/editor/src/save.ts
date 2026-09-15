@@ -51,7 +51,8 @@ import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
  * later in 22, and is nought where a file has none; a round's `verticals` and
  * `ends` came and went, and are dropped; a round was first a number of
  * `segments`, and reads as a chamfer where that was one and at the precision
- * a round starts with otherwise; and a stand's bevels were first called its
+ * a round starts with otherwise, and one without a `tension` at the tension
+ * one starts with; and a stand's bevels were first called its
  * radius and radii, which are read as them.
  *
  * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
@@ -415,6 +416,7 @@ function rounding(round: Effects['round'] & object): Options['round'] {
 
   return {
     precision: was.precision ?? REMEMBERED.round.precision,
+    tension: was.tension ?? REMEMBERED.round.tension,
     chamfer: was.chamfer ?? was.segments === 1,
     ...(was.off === undefined ? {} : { off: was.off }),
   };

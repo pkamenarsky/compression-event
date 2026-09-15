@@ -2054,18 +2054,18 @@ describe('round and deform', () => {
       return Math.hypot(p.x - a.x - dx * f, p.y - a.y - dy * f);
     };
 
-    for (const bevel of [1, 7, 40]) {
+    for (const [bevel, tension] of [[1, 0], [7, 0.5], [40, 1], [7, 0], [40, 0.5], [1, 1]]) {
       for (const precision of [0.05, 0.5, 2]) {
-        const k = segmentsFor(bevel, precision);
+        const k = segmentsFor(bevel, precision, tension);
 
         // Turning at least `BLUNT`, where a corner is cut back its whole bevel.
         for (const turn of [0.6, 1, Math.PI / 2, 2.2, 3]) {
           const ring: Ring = [{ x: -100, y: 0 }, { x: 0, y: 0 }, { x: 100 * Math.cos(turn), y: 100 * Math.sin(turn) }];
-          const facets = rounded(ring, i => (i === 1 ? bevel : 0), k).slice(k + 1, 2 * k + 2);
+          const facets = rounded(ring, i => (i === 1 ? bevel : 0), k, tension).slice(k + 1, 2 * k + 2);
 
           // The curve itself, as finely as it goes: every point of it within
           // the precision of the facets.
-          const curve = rounded(ring, i => (i === 1 ? bevel : 0), 64).slice(65, 130);
+          const curve = rounded(ring, i => (i === 1 ? bevel : 0), 64, tension).slice(65, 130);
 
           for (const p of curve) {
             const off = Math.min(...facets.slice(1).map((q, j) => offSegment(p, facets[j], q)));
@@ -2080,11 +2080,29 @@ describe('round and deform', () => {
     expect(segmentsFor(10, precisionFor(5, 10))).toEqual(5);
   });
 
+  test('a tension pulls a bevel into its corner: about a circle at nought, tight at one', () => {
+    // The middle of a right angle's bevel of one, and how far it is from the
+    // corner. A circle's is √2 − 1.
+    const middle = (tension: number) => {
+      const p = rounded(square, i => (i === 0 ? 1 : 0), 64, tension)[32];
+
+      return Math.hypot(p.x, p.y);
+    };
+
+    expect(Math.abs(middle(0) - (Math.SQRT2 - 1))).toBeLessThan(0.02);
+    expect(middle(0.5)).toBeLessThan(middle(0));
+    expect(middle(1)).toBeLessThan(middle(0.5));
+    expect(middle(1)).toBeLessThan(0.2);
+
+    // Tighter is more to be faceted in its middle.
+    expect(segmentsFor(10, 0.1, 1)).toBeGreaterThan(segmentsFor(10, 0.1, 0));
+  });
+
   test('an arc laid between two counts is the coarser\'s outline at its end, and the finer\'s at the other', () => {
     const cross = (a: Point, b: Point, p: Point) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
     const coarse = rounded(square, i => (i === 0 ? 4 : 0), 2).slice(0, 3);
     const fine = rounded(square, i => (i === 0 ? 4 : 0), 6).slice(0, 7);
-    const laid = (at: number) => imaged([square], square, [0], () => 0, i => (i === 0 ? { n: 6, from: 2, to: 6, at } : SQUARE), () => 4, { bevel: 0, facets: SQUARE }).corners[0]!;
+    const laid = (at: number) => imaged([square], square, [0], () => 0, i => (i === 0 ? { n: 6, from: 2, to: 6, at, tension: 0.5 } : SQUARE), () => 4, { bevel: 0, facets: SQUARE }).corners[0]!;
 
     // Seven points at both ends, the coarse arc's three among them and the
     // rest on its two facets.
@@ -2095,7 +2113,7 @@ describe('round and deform', () => {
     laid(1).forEach((p, j) => close(p, fine[j]));
 
     // The ones on facets at the near end fade in; the coarse arc's own stand.
-    const fades = facetFades(laid(0.25), { n: 6, from: 2, to: 6, at: 0.25 });
+    const fades = facetFades(laid(0.25), { n: 6, from: 2, to: 6, at: 0.25, tension: 0.5 });
 
     expect(fades.map(f => f.v)).toEqual([0.25, 0.25, 0.25, 0.25]);
   });

@@ -268,7 +268,7 @@ export interface Effected {
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
 export function segmentsOf(round: Options['round'], bevel: number): number {
-  return round.chamfer ? 1 : segmentsFor(bevel, round.precision);
+  return round.chamfer ? 1 : segmentsFor(bevel, round.precision, round.tension);
 }
 
 /**
@@ -330,7 +330,7 @@ export function effectedOf(
 
   const bevels = corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
-    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel)));
+    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel), round.tension));
 
   return shaping({
     facets: corners.map((c, i) => faceted(roundOf(fx, world.cornerEffects.get(c.id)), bevels[i])),
@@ -353,13 +353,13 @@ function effectKey(e: Effected, s = 1): Key[] {
 }
 
 function facetKey(f: Facets): number[] {
-  return [f.n, f.from, f.to, f.at];
+  return [f.n, f.from, f.to, f.at, f.tension];
 }
 
 function facetsFrom(k: Key): Facets {
-  const [n, from, to, at] = k as number[];
+  const [n, from, to, at, tension] = k as number[];
 
-  return { n, from, to, at };
+  return { n, from, to, at, tension };
 }
 
 /**
@@ -2761,7 +2761,7 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
 
   const bevel = stateAt(world, id, v).bevel;
 
-  return { facets: facetsOf(segmentsOf(round, bevel)), bevel };
+  return { facets: facetsOf(segmentsOf(round, bevel), round.tension), bevel };
 }
 
 /**
@@ -3037,9 +3037,9 @@ const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: 
 
   if (round === null || eroded.length === 0) return eroded;
 
-  const [n, from, to, at, bevel] = round;
+  const [n, from, to, at, tension, bevel] = round;
 
-  return effectedAll(eroded, { n, from, to, at }, bevel);
+  return effectedAll(eroded, { n, from, to, at, tension }, bevel);
 });
 
 /** A group's round as `offsetUnion` takes it, or nothing where it does
