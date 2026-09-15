@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { shapeArea } from './geometry';
+import { rounded, shapeArea } from './geometry';
 import { TOP, addPolygon, contributing, copied, csg, grouped, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
@@ -38,11 +38,10 @@ function withEffects(world: World, id: Id, fx: Effects): World {
 const round = (by: number) => ({ kind: 'round' as const, by });
 const deform = (by: number) => ({ kind: 'deform' as const, by });
 
-/** A square's area less its four corners rounded at `r`, as `segments` chords. */
-function roundedSquare(side: number, r: number, segments: number): number {
-  const sector = segments * r * r * Math.sin(Math.PI / 2 / segments) / 2;
-
-  return side * side - 4 * (r * r - sector);
+/** A `w` by `h` rectangle's area with its four corners rounded `r` deep in
+ * `segments`, as the geometry rounds a ring on its own. */
+function roundedRect(w: number, h: number, r: number, segments: number): number {
+  return shapeArea([rounded(rect(0, 0, w, h), () => r, segments)]);
 }
 
 function shapeOf(world: World, id: Id) {
@@ -59,7 +58,7 @@ describe('a polygon\'s effects', () => {
 
     expect(shape).toHaveLength(1);
     expect(shape[0]).toHaveLength(4 * 9);
-    expect(shapeArea(shape)).toBeCloseTo(roundedSquare(80, 5, 8), 6);
+    expect(shapeArea(shape)).toBeCloseTo(roundedRect(80, 80, 5, 8), 6);
   });
 
   test('with nothing to them, the projection is the erosion alone', () => {
@@ -74,12 +73,12 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room();
     const w = wrote(withEffects(world, id, ROUND), 0, id, round(5), scaled(2, 2), turned(0.3), move(40, -7));
 
-    expect(shapeArea(shapeOf(w, id))).toBeCloseTo(roundedSquare(200, 5, 8), 6);
+    expect(shapeArea(shapeOf(w, id))).toBeCloseTo(roundedRect(200, 200, 5, 8), 6);
 
     // And squashed, where the projection is taken in the world instead.
     const squashed = wrote(withEffects(world, id, ROUND), 0, id, round(5), scaled(2, 1));
 
-    expect(shapeArea(shapeOf(squashed, id))).toBeCloseTo(200 * 100 - 4 * (25 - 8 * 25 * Math.sin(Math.PI / 16) / 2), 6);
+    expect(shapeArea(shapeOf(squashed, id))).toBeCloseTo(roundedRect(200, 100, 5, 8), 6);
   });
 
   test('a corner rounds on its own, over its room\'s', () => {
@@ -151,7 +150,7 @@ describe('a group\'s effects', () => {
     // A run closes on its first point.
     expect(set).toHaveLength(1);
     expect(set[0]).toHaveLength(4 * 9 + 1);
-    expect(shapeArea(set)).toBeCloseTo(200 * 100 - 4 * (100 - 8 * 100 * Math.sin(Math.PI / 16) / 2), 6);
+    expect(shapeArea(set)).toBeCloseTo(roundedRect(200, 100, 10, 8), 6);
   });
 
   test('a loose group has none to give', () => {

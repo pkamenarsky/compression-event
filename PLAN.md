@@ -502,11 +502,20 @@ interface Rig {
   A corner turning less than `BLUNT` (30°) is cut back
   in proportion, on a sine, down to a sliver: one arriving flat on an edge
   would otherwise take room from the arcs beside it as it appeared.
-- `arcs`, on the eroded boundary: each corner becomes `n + 1`
-  points on the arc tangent to its two edges, the tangent length clamped to
+- `arcs`, on the eroded boundary: each corner becomes `n + 1` points on a
+  curve from one tangent point to the other, the tangent length clamped to
   half of each edge less what the neighbour takes of it — all of what is
-  left, where the neighbour wants less. Holes too. The arc is walked from its
-  first tangent point, so it stays exact as a corner straightens.
+  left, where the neighbour wants less. Holes too.
+- **The curve is curvature-continuous**: a quintic Bézier with three control
+  points along each edge (at 1, `NEAR` 0.6 and `INNER` 0.3 of the bevel), so
+  it leaves each edge tangent and with no curvature — no seam where the edge
+  runs into it, as a circle has — and bends most in its middle. Its weights
+  on the two edge directions are of `u` alone, so each point is linear in
+  the bevel, and a straight corner is a straight run along its wall.
+- **Faceted where it bends** (`spread`): the points are laid at equal steps
+  of `∫√κ ds`, which gives every facet about the same sag — close together
+  in the middle, far apart where it leaves the edges. The steps are of the
+  corner's angle alone, read off 48 samples of the curve.
 - A corner running straight through has a tangent length of `SEEDING` of
   its bevel, so its arc is a sliver of a run along its wall, never one point.
 - Every point of an arc stands a vertical: a round is faceted. (Options to
@@ -545,8 +554,9 @@ vertical over the span.
   `fading` walk a rounded polygon's arcs as slots and ask `imaged` where
   they are.
 - **A round is faceted by a precision**, a length: each corner in as many
-  segments as keep its arc within it of the circle at any angle
-  (`segmentsFor`: `ceil(√(SAGGING · bevel / precision))`, at most `FINEST`),
+  segments as keep it within that of its curve at any angle (`segmentsFor`:
+  `ceil(√(SAGGING · bevel / precision))`, at most `FINEST`; `SAGGING`
+  measured at load, over angles and counts, from the facets `spread` lays),
   or one for a chamfer. Of the bevel alone, not the angle or the clamping,
   so a span knows every corner's count at both ends from its amounts.
 - **A span lays each corner in the finer end's count** (`Facets`,

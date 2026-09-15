@@ -228,8 +228,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
 
     heading(() => (m.corners() ? 'Round corners' : 'Round'), 'b', m.round, rounded),
     options(m.round, [
-      // How near its facets keep to the circle, as a length: finer is more
-      // of them, and they are as many as each corner's bevel needs.
+      // How near its facets keep to its curve, as a length: finer is more of
+      // them, as many as each corner's bevel needs, closest where it bends.
       show(() => !m.chamfer(), fragment(field('precision', number(m.precision, PRECISEST, v => changed('round', { precision: v }), Infinity, 'any')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),

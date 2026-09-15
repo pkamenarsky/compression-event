@@ -575,8 +575,9 @@ export interface World {
  * like erosion. A count, a pattern or a seed does not change over time.
  *
  * - `round`: each corner an arc starting as deep along each edge as its
- *   bevel, in as many segments as keep it within `precision` of its circle
- *   (see `segmentsFor`), or one for a `chamfer`.
+ *   bevel, along a curve that leaves the edges with no curvature, in as many
+ *   segments as keep it within `precision` of that curve — closer where it
+ *   bends more (see `segmentsFor`, `spread`) — or one for a `chamfer`.
  * - `deform`: points put into each edge every `spacing` of its length, each
  *   strayed along it by up to `jitter` of the spacing, and pushed off it by
  *   the pattern. `seed` is the noise's and the jitter's.

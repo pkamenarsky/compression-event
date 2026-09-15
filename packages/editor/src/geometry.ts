@@ -2558,19 +2558,19 @@ function norm(t: number): number {
 // other — eroded, rounded, carried by the bake — so they appear, go and move
 // the way corners do, and the machinery for that is the one already there.
 //
-// A round happens after the erosion, to the boundary: each corner becomes an
-// arc tangent to its two edges (`rounded`), teeth included. A round's amount
-// is its bevel: how deep from the corner, along each edge, its arc starts —
-// the same at any angle, so a sharp corner and a blunt one are cut back
-// alike, and the radius is whatever the angle makes of it. It is the same
+// A round happens after the erosion, to the boundary: each corner becomes a
+// curve leaving each of its two edges along it and with no curvature, so it
+// runs into them with no seam (`rounded`, and see `NEAR`), teeth included. A
+// round's amount is its bevel: how deep from the corner, along each edge, its
+// curve starts — the same at any angle, so a sharp corner and a blunt one are
+// cut back alike. It is faceted where it bends: see `spread`. It is the same
 // bevel wherever it is, since it is taken of what is seen; and a group's is
 // taken of its union, so the joins between its rooms are not rounded.
 //
-// A rounded corner is always `segments + 1` points, whatever its bevel,
-// nought included, and in the thing's own frame every point is linear in the
-// bevel: a tangent point is the corner plus it along a fixed edge direction,
-// an arc point the tangent point plus a multiple of it along fixed
-// directions. Where a bevel of nought makes an arc's points coincide
+// A rounded corner is always `n + 1` points, whatever its bevel, nought
+// included, and in the thing's own frame every point is linear in the bevel:
+// each is the corner plus multiples of it along its two edge directions, the
+// multiples of the corner's angle alone. Where a bevel of nought makes an arc's points coincide
 // they are still all there, on one point, and the arrangement welds them; the
 // bake seeds such an end rather than collapse it. A corner running straight
 // through never collapses: its arc is a sliver of a run along its wall, which
@@ -2784,30 +2784,171 @@ export function facetsOf(n: number): Facets {
 export const SQUARE: Facets = facetsOf(0);
 
 /**
- * How far an arc of one segment can be off its circle, per unit of bevel,
- * whatever the corner's angle: the worst of `cot(θ/2) · θ² / 8` over every
- * turn θ, which is the sagitta of an arc turning θ, of bevel one, with the
- * chord's `1 - cos` taken as its square. An arc of `k` segments is that over
- * `k²`, since each segment turns a `k`th as far.
+ * The curve a corner is rounded along, for a corner at the origin whose edges
+ * leave it along `a` and `b` and a bevel of one: `a · A(u) + b · B(u)`, `u`
+ * from nought at the tangent point on `a` to one at the one on `b`.
+ *
+ * A quintic Bézier whose first three control points lie along `a` — at one,
+ * `NEAR` and `INNER` of the bevel from the corner — and whose last three
+ * mirror them along `b`. Three in a line at each end is what makes it leave
+ * each edge not only along it but with no curvature at all, so the edge runs
+ * into it with no seam to be seen, where a circle's curvature jumps from
+ * nothing to all of it at the tangent point. It bends least at its ends and
+ * most in its middle, and that is where `spread` puts its points.
+ *
+ * `A` and `B` are of `u` alone, not of the corner, so every point of it is
+ * the bevel times something of the corner's angle: linear in the bevel.
+ */
+const NEAR = 0.6;
+const INNER = 0.3;
+
+/** The curve's weights on `a` and on `b`, as one-dimensional Béziers. */
+const ALONG_A = [1, NEAR, INNER, 0, 0, 0];
+const ALONG_B = [0, 0, 0, INNER, NEAR, 1];
+
+/** A one-dimensional Bézier of `c`'s control values at `u`. */
+function bezier(c: readonly number[], u: number): number {
+  const d = c.length - 1;
+  let out = 0;
+
+  for (let k = 0; k <= d; k++) out += c[k] * binomial(d, k) * Math.pow(u, k) * Math.pow(1 - u, d - k);
+
+  return out;
+}
+
+function binomial(n: number, k: number): number {
+  let out = 1;
+
+  for (let i = 1; i <= k; i++) out = out * (n - k + i) / i;
+
+  return out;
+}
+
+/** A Bézier's control values differenced: its derivative's, over `d`. */
+function differenced(c: readonly number[]): number[] {
+  return c.slice(1).map((x, k) => (x - c[k]) * (c.length - 1));
+}
+
+/** How finely `spread` reads the curve. */
+const SAMPLES = 48;
+
+/** At each of the samples: both weights' first and second derivatives,
+ * which are all the curvature needs and are the same at every corner. */
+const SAMPLED = Array.from({ length: SAMPLES + 1 }, (_s, k) => {
+  const u = k / SAMPLES;
+
+  return {
+    a1: bezier(differenced(ALONG_A), u),
+    b1: bezier(differenced(ALONG_B), u),
+    a2: bezier(differenced(differenced(ALONG_A)), u),
+    b2: bezier(differenced(differenced(ALONG_B)), u),
+  };
+});
+
+/**
+ * How much each sample of the curve counts, for a corner whose edges' ways
+ * out meet at a cosine of `c`: `√κ · |C′|`, less the `√(sin θ)` every sample
+ * has alike. A facet over a stretch where that adds to `e` is off the curve
+ * by about `e² / 8`, so points laid where it adds up evenly are off by the
+ * same everywhere: close where the curve bends, far apart where it does not.
+ */
+function weights(c: number): number[] {
+  return SAMPLED.map(({ a1, b1, a2, b2 }) => {
+    const speed = Math.sqrt(Math.max(0, a1 * a1 + b1 * b1 + 2 * a1 * b1 * c));
+
+    return Math.sqrt(Math.abs(a1 * b2 - b1 * a2) / Math.max(speed, 1e-12));
+  });
+}
+
+/** The weights added up along the curve, from nought. */
+function added(w: readonly number[]): number[] {
+  const out = [0];
+
+  for (let k = 1; k < w.length; k++) out.push(out[k - 1] + (w[k - 1] + w[k]) / 2 / SAMPLES);
+
+  return out;
+}
+
+/**
+ * Where on the curve `s` segments turn, for a corner whose ways out meet at a
+ * cosine of `c`: `s + 1` values of `u`, from nought to one, spread evenly by
+ * `weights`. Of the corner's angle alone — so the points are still linear in
+ * the bevel — and continuous in it, a corner running straight through
+ * included: every sample's `√(sin θ)` has been taken out, so what is left
+ * does not vanish there. Evenly along the curve where nothing is to be read.
+ */
+export function spread(c: number, s: number): number[] {
+  const sum = added(weights(c));
+  const total = sum[SAMPLES];
+
+  return Array.from({ length: s + 1 }, (_q, q) => {
+    if (q === 0) return 0;
+    if (q === s) return 1;
+    if (!(total > 1e-12)) return q / s;
+
+    const want = total * q / s;
+    let k = 0;
+
+    while (k < SAMPLES - 1 && sum[k + 1] < want) k++;
+
+    const f = (want - sum[k]) / Math.max(sum[k + 1] - sum[k], 1e-300);
+
+    return (k + Math.min(1, Math.max(0, f))) / SAMPLES;
+  });
+}
+
+/**
+ * How far a bevel of one in one segment can be off its curve, whatever the
+ * corner's angle, such that `k` segments are off by that over `k²` at most.
+ *
+ * Measured rather than worked out: the facets `spread` lays, held against the
+ * curve read finely, over a spread of angles and of counts, the worst of each
+ * taken times its count squared. `e² / 8` over `weights` is what that comes
+ * to for many short facets, and is why the square; a few long ones sag a
+ * little more than it says, which is why it is measured. With a twentieth
+ * over, for the angles between the ones measured.
  */
 const SAGGING = (() => {
+  const FINE = 256;
   let worst = 0;
 
-  for (let k = 1; k < 1000; k++) {
-    const turn = Math.PI * k / 1000;
+  for (let d = 1; d < 90; d++) {
+    const theta = Math.PI * d / 90;
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const at = (u: number): Point => {
+      const p = bezier(ALONG_A, u), q = bezier(ALONG_B, u);
 
-    worst = Math.max(worst, turn * turn / Math.tan(turn / 2) / 8);
+      return { x: p + c * q, y: s * q };
+    };
+    const curve = Array.from({ length: FINE + 1 }, (_f, f) => at(f / FINE));
+
+    for (const k of [1, 2, 3, 4, 6, 8, 12]) {
+      const facets = spread(c, k).map(at);
+      let off = 0;
+
+      for (const p of curve) off = Math.max(off, Math.min(...facets.slice(1).map((q, j) => fromSegment(p, facets[j], q))));
+
+      worst = Math.max(worst, off * k * k);
+    }
   }
 
-  return worst;
+  return worst * 1.05;
 })();
+
+/** How far `p` is from the segment `a`–`b`. */
+function fromSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  const f = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+
+  return Math.hypot(p.x - a.x - dx * f, p.y - a.y - dy * f);
+}
 
 /** The most segments a round is given, however fine it is asked to be. */
 export const FINEST = 64;
 
 /**
- * How many segments an arc of `bevel` needs to lie within `precision` of its
- * circle at any angle: the fewest that do, one at the least. A length, as the
+ * How many segments a bevel of `bevel` needs to lie within `precision` of
+ * its curve at any angle: the fewest that do, one at the least. A length, as the
  * bevel is, so a round is as smooth to the eye wherever it is.
  *
  * Of the bevel and nothing else — not the corner's angle, nor what its
@@ -2892,37 +3033,27 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
     const t1 = { x: v.x + a.x * t, y: v.y + a.y * t };
     const t2 = { x: v.x + b.x * t, y: v.y + b.y * t };
 
-    // Walked from the first tangent point: heading back along the edge in,
-    // turning through `turn` towards the edge out, on the circle whose
-    // tangent length is `t`. Every step is `t` times something of the angle
-    // alone, which is what keeps it linear in the bevel; and a corner
-    // straightening is a turn going to nought, where the arc goes over into
-    // the straight run from one tangent point to the other rather than
-    // sending a centre off to infinity. A hairpin turns right round on a
-    // circle of nothing, and stays on its one tangent point.
-    const cross = a.x * b.y - a.y * b.x;
-    const turn = Math.atan2(Math.abs(cross), -(a.x * b.x + a.y * b.y));
-    const heading = { x: -a.x, y: -a.y };
-    const side = cross > 0 ? -1 : 1;
-    const normal = { x: -heading.y * side, y: heading.x * side };
-    const along = (u: number): number => (turn < 1e-12 ? 2 * u : Math.sin(u * turn) / Math.tan(turn / 2));
-    const across = (u: number): number => (turn < 1e-12 ? 0 : (1 - Math.cos(u * turn)) / Math.tan(turn / 2));
+    // Along the curve: the corner plus `t` times a combination of its two
+    // ways out that is of `u` alone — see `NEAR` — so linear in the bevel. A
+    // corner running straight through is a straight run along its wall, from
+    // one tangent point to the other.
+    const c = a.x * b.x + a.y * b.y;
 
-    /** The point `u` of the way round the arc; both tangent points exact. */
+    /** The point `u` of the way along the curve; both tangent points exact. */
     const on = (u: number): Point => {
       if (u <= 0) return t1;
       if (u >= 1) return t2;
 
-      const f = along(u) * t, g = across(u) * t;
+      const p = bezier(ALONG_A, u) * t, q = bezier(ALONG_B, u) * t;
 
-      return { x: t1.x + heading.x * f + normal.x * g, y: t1.y + heading.y * f + normal.y * g };
+      return { x: v.x + a.x * p + b.x * q, y: v.y + a.y * p + b.y * q };
     };
 
     /** The `n + 1` points laid as an arc of `s` segments: its own points at
      * `n / s` apart, as near as whole points go, and the rest along the
      * facets between them. Each is linear in `t`, as `on` is. */
     const laid = (s: number): Point[] => {
-      const turns = Array.from({ length: s + 1 }, (_u, q) => on(q / s));
+      const turns = spread(c, s).map(on);
       const index = (q: number): number => Math.round(q * facets.n / s);
       const out: Point[] = [];
 

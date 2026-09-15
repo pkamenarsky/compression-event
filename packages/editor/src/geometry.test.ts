@@ -1817,13 +1817,34 @@ describe('round and deform', () => {
     expect(deformed(square, () => 0, zigzag)).toHaveLength(16);
   });
 
-  test('an arc is tangent to both edges, and on a circle', () => {
-    const out = rounded(square, () => 2, 6);
-    const centre = { x: 2, y: 2 };
+  test('a bevel runs between its tangent points inside the corner, the same from either end, finest in its middle', () => {
+    // The corner at the origin, its edges out along y and along x.
+    const out = rounded(square, () => 2, 6).slice(0, 7);
 
-    for (let k = 0; k <= 6; k++) {
-      expect(Math.hypot(out[k].x - centre.x, out[k].y - centre.y)).toBeCloseTo(2, 9);
-    }
+    close(out[0], { x: 0, y: 2 });
+    close(out[6], { x: 2, y: 0 });
+
+    // Inside the triangle the corner and the tangent points make, and each
+    // point the mirror of its partner across the corner's bisector.
+    out.forEach((p, k) => {
+      expect(p.x).toBeGreaterThanOrEqual(-1e-12);
+      expect(p.y).toBeGreaterThanOrEqual(-1e-12);
+      expect(p.x + p.y).toBeLessThanOrEqual(2 + 1e-12);
+      close(p, { x: out[6 - k].y, y: out[6 - k].x });
+    });
+
+    // It bends least where it leaves its edges, so its facets are longest
+    // there and shortest in its middle.
+    const facet = (k: number) => Math.hypot(out[k + 1].x - out[k].x, out[k + 1].y - out[k].y);
+
+    expect(facet(0)).toBeGreaterThan(facet(1));
+    expect(facet(1)).toBeGreaterThan(facet(2));
+
+    // And leaves each edge along it, with no curvature: its first facet
+    // turns from the edge by less than the next turns from it.
+    const heading = (k: number) => Math.atan2(out[k + 1].y - out[k].y, out[k + 1].x - out[k].x);
+
+    expect(Math.abs(heading(0) + Math.PI / 2)).toBeLessThan(Math.abs(heading(1) - heading(0)));
   });
 
   test('an arc is linear in its bevel, and a tooth in its amplitude', () => {
@@ -1844,7 +1865,9 @@ describe('round and deform', () => {
     // the four arcs make a circle.
     const full = rounded(square, () => 100, 4);
 
-    for (const p of full) expect(Math.hypot(p.x - 5, p.y - 5)).toBeCloseTo(5, 9);
+    close(full[0], { x: 0, y: 5 });
+    close(full[4], { x: 5, y: 0 });
+    close(full[5], { x: 5, y: 0 });
 
     // A neighbour that wants little leaves the rest of the edge: the second
     // corner takes nine of the ten its first corner leaves it.
@@ -1937,7 +1960,13 @@ describe('round and deform', () => {
 
       expect(it.shape[0]).toHaveLength(5 * 4);
       expect(it.corners.every(run => run !== null && run.length === 4)).toBe(true);
-      it.corners[1]!.forEach((p, k) => close(p, { x: 5 + (k / 3 * 2 - 1) * SEEDING, y: 1 }));
+      // A run along the floor, a sliver either side of where the corner is.
+      const run = it.corners[1]!;
+
+      run.forEach(p => expect(p.y).toBeCloseTo(1, 9));
+      close(run[0], { x: 5 - SEEDING, y: 1 });
+      close(run[3], { x: 5 + SEEDING, y: 1 });
+      run.slice(1).forEach((p, k) => expect(p.x).toBeGreaterThan(run[k].x));
     });
 
     test('the projection has every point imaged, where it turns', () => {
@@ -1984,7 +2013,12 @@ describe('round and deform', () => {
     const line: Ring = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
     const out = rounded(line, i => (i === 1 ? 4 : 0), 4);
 
-    out.slice(5, 10).forEach((p, k) => close(p, { x: 5 + (k / 2 - 1) * 4 * SEEDING, y: 0 }));
+    const run = out.slice(5, 10);
+
+    run.forEach(p => expect(p.y).toBeCloseTo(0, 12));
+    close(run[0], { x: 5 - 4 * SEEDING, y: 0 });
+    close(run[4], { x: 5 + 4 * SEEDING, y: 0 });
+    run.slice(1).forEach((p, k) => expect(p.x).toBeGreaterThan(run[k].x));
 
     // And a corner all but straight comes to the same.
     const bent = rounded([...line.slice(0, 1), { x: 5, y: -1e-9 }, ...line.slice(2)], i => (i === 1 ? 4 : 0), 4);
@@ -2013,23 +2047,30 @@ describe('round and deform', () => {
   });
 
   test('a round is as many segments as keep it within its precision, at any angle', () => {
+    const offSegment = (p: Point, a: Point, b: Point) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const f = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+
+      return Math.hypot(p.x - a.x - dx * f, p.y - a.y - dy * f);
+    };
+
     for (const bevel of [1, 7, 40]) {
       for (const precision of [0.05, 0.5, 2]) {
         const k = segmentsFor(bevel, precision);
 
         // Turning at least `BLUNT`, where a corner is cut back its whole bevel.
         for (const turn of [0.6, 1, Math.PI / 2, 2.2, 3]) {
-          // A corner turning `turn`, rounded `bevel` deep.
           const ring: Ring = [{ x: -100, y: 0 }, { x: 0, y: 0 }, { x: 100 * Math.cos(turn), y: 100 * Math.sin(turn) }];
-          const arc = rounded(ring, i => (i === 1 ? bevel : 0), k).slice(k + 1, 2 * k + 2);
-          const r = bevel / Math.tan(turn / 2);
-          const c = { x: 0 - bevel, y: r };
+          const facets = rounded(ring, i => (i === 1 ? bevel : 0), k).slice(k + 1, 2 * k + 2);
 
-          // Every facet's middle within the precision of the circle.
-          for (let j = 0; j < k; j++) {
-            const m = { x: (arc[j].x + arc[j + 1].x) / 2, y: (arc[j].y + arc[j + 1].y) / 2 };
+          // The curve itself, as finely as it goes: every point of it within
+          // the precision of the facets.
+          const curve = rounded(ring, i => (i === 1 ? bevel : 0), 64).slice(65, 130);
 
-            expect(Math.abs(r) - Math.hypot(m.x - c.x, m.y - c.y)).toBeLessThanOrEqual(precision + 1e-9);
+          for (const p of curve) {
+            const off = Math.min(...facets.slice(1).map((q, j) => offSegment(p, facets[j], q)));
+
+            expect(off).toBeLessThanOrEqual(precision + 1e-9);
           }
         }
       }
