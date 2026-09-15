@@ -135,7 +135,11 @@ import {
   betweenOf,
   erodedRingCorners,
   ground,
+  Facets,
+  Fade,
   SEEDING,
+  facetFades,
+  facetsOf,
   keeping,
   mitred,
   nextOf,
@@ -176,6 +180,7 @@ import {
   unplace,
   resolveAt,
   roundOf,
+  segmentsOf,
 } from './scene';
 import {
   ArtefactId,
@@ -1195,6 +1200,13 @@ const NOTHING: Pick<State, 'bevel' | 'bevels'> = {
  * however little, and the arrangement keeps its points unasked: the ring is
  * the same length at both ends. So is the polygon's own bevel, which what
  * the erosion made takes and no slot answers for.
+ *
+ * Nor does a corner's count of points change across a span, though its
+ * segments do: each end's are what its bevel asks for, the still's at that
+ * keyframe, and the span lays every corner in as many points as the finer
+ * end has. At the coarser end the points it has over are on its facets, so
+ * its outline is the still's; across the span the arc goes over from the one
+ * to the other. See `Facets`.
  */
 function effectsOver(
   world: World,
@@ -1209,18 +1221,31 @@ function effectsOver(
 
   // Where it has no effects at one end, it has them at nought there: the
   // options are a fact about the thing, and the same at both.
-  const bare = (e: Effected | null, other: Effected): Effected => e ?? { ...other, bevels: other.bevels.map(() => 0), bevel: 0 };
+  const bare = (e: Effected | null, other: Effected): Effected => e ?? {
+    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1) : f)),
+    bevels: other.bevels.map(() => 0),
+    own: other.own.n > 0 ? facetsOf(1) : other.own,
+    bevel: 0,
+  };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
+
+  // One count for the span, laid as each end's own at that end.
+  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at });
+  const ended = (e: Effected, at: number): Effected => ({
+    ...e,
+    facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
+    own: spanned(a.own, b.own, at),
+  });
 
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
-    bevels: e.bevels.map((r, i) => (e.segments[i] > 0 ? seed(r, o.bevels[i]) : r)),
+    bevels: e.bevels.map((r, i) => (e.facets[i].n > 0 ? seed(r, o.bevels[i]) : r)),
     bevel: seed(e.bevel, o.bevel),
   });
 
   return {
-    effected: [seeded(a, b), seeded(b, a)],
+    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
   };
 }
 
@@ -1230,10 +1255,26 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
   if (t === 1) return e[1];
 
   return {
-    ...e[0],
+    facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
+    own: { ...e[0].own, at: weighed(e[0].bevel, e[1].bevel, t) },
     bevel: mix(e[0].bevel, e[1].bevel, t),
   };
+}
+
+/**
+ * How far an arc has gone over from its near layout to its far one, `t` of
+ * the way across a span whose bevel goes from `a` to `b`: by the bevel, not
+ * by the time. Each layout's points are the bevel times something of the
+ * corner alone, so blended by `t · b / bevel(t)` a point is the lerp of its
+ * two ends exactly, as it is where the layout does not change — and the
+ * bake's lerp is exact again. By the time, it would be a product of two
+ * lerps, and every stretch a curve to be cut up.
+ */
+function weighed(a: number, b: number, t: number): number {
+  const bevel = mix(a, b, t);
+
+  return bevel > 0 ? t * b / bevel : t;
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1270,6 +1311,10 @@ function between(a: Ring, b: Ring, t: number): Ring {
  * position moved along the shared normal by the depth: the mitre a corner would
  * get has nothing to bite on. That is the offset `moved` takes in `erode`, and
  * it has to be, or the point would miss the edge it is meant to land on.
+ *
+ * And the points of an arc laid on its facets at this end — see
+ * `effectsOver` — which are as flat here as an invented corner, and for the
+ * same while.
  */
 function invented(
   m: Moving,
@@ -1281,7 +1326,12 @@ function invented(
 
   const rings = ringsOf(m.corners);
 
-  if (m.effected !== null) return slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : []));
+  if (m.effected !== null) {
+    return [
+      ...slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : [])),
+      ...facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p),
+    ];
+  }
 
   const dead = m.dead[end];
   const out: Point[] = [];
@@ -1384,12 +1434,6 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
   return paintedOn(it.shape, fadingPoints(m, it, t));
 }
 
-/** A point with how solid the vertical standing on it is. */
-interface Fade {
-  p: Point
-  v: number
-}
-
 /**
  * The points of a polygon's projection that are not wholly solid at `t`,
  * each with how solid it is: `fading`'s answer before it is put onto a
@@ -1397,7 +1441,28 @@ interface Fade {
  * `groupFading`.
  */
 function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
-  return m.effected === null ? fadingCorners(m, it, t) : fadingSlots(m, it, t);
+  return m.effected === null ? fadingCorners(m, it, t) : [...fadingSlots(m, it, t), ...facetsFading(it)];
+}
+
+/** Where its arcs' points are on their facets at one end of the span or the
+ * other, and fading. See `facetFades`. */
+function facetsFading(it: Omit<Resolved, 'shape'>): Fade[] {
+  const e = it.effected ?? null;
+
+  if (e === null) return [];
+
+  const faded = (f: Facets) => f.n > 0 && (f.from !== f.to || f.from < f.n);
+
+  if (!e.facets.some(faded) && !faded(e.own)) return [];
+
+  const im = imagesOf(it);
+
+  if (im === null) return [];
+
+  return [
+    ...im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i]))),
+    ...im.rest.flatMap(run => facetFades(run, e.own)),
+  ];
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */
@@ -1470,7 +1535,7 @@ function groupFading(
 
   const set = setOf(side.kind);
 
-  const points: Fade[] = [];
+  const points: Fade[] = [...(side.faded ?? [])];
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
@@ -1577,7 +1642,7 @@ export interface Cast {
   scopes: Map<GroupId, [number, number]>
   /** Each scope's effects: its options, and its bevel and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, { segments: number, bevel: [number, number] }>
+  shapes: Map<GroupId, { facets: Facets, bevel: [number, number] }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1635,8 +1700,11 @@ function casting(world: World, from: number): Cast {
 
     const was = stateAt(world, id, near), now = stateAt(world, id, far);
 
+    // Laid as a polygon's corners are across a span: see `effectsOver`.
+    const from = segmentsOf(round, was.bevel), to = segmentsOf(round, now.bevel);
+
     shapes.set(id, {
-      segments: round.segments,
+      facets: { n: Math.max(from, to), from, to, at: 0 },
       bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
     });
   }
@@ -1692,7 +1760,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: { segments: fx.segments, bevel: mix(fx.bevel[0], fx.bevel[1], t) },
+          effects: { facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) }, bevel: mix(fx.bevel[0], fx.bevel[1], t) },
         }),
       };
     },

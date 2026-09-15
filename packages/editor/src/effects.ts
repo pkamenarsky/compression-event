@@ -110,7 +110,7 @@ function withEffects(world: World, id: Id, fx: Effects): World {
 // A corner's own round
 //
 // Over its polygon's, and switched on and off on its own: a corner can be
-// left square on a rounded room, or rounded with more segments than the rest.
+// left square on a rounded room, or rounded finer than the rest.
 // Its polygon's round switched off leaves it square whatever it says itself.
 // -----------------------------------------------------------------------------
 

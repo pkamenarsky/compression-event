@@ -30,7 +30,7 @@ import {
   withRig,
 } from './scene';
 import { nudged } from './rig';
-import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
 import {
   EMPTY_BAKE,
 } from './bake';
@@ -2194,7 +2194,7 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 });
 
 describe('effects', () => {
-  const ROUND: Effects = { round: { segments: 4 } };
+  const ROUND: Effects = { round: inSegments(4, 20) };
   const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
@@ -2251,6 +2251,29 @@ describe('effects', () => {
     // Seeded, not collapsed: at the near end the arcs are a sliver of what
     // they grow to, and the outline is the editor's to within it.
     expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(30 * 1e-2);
+  });
+
+  test('a bevel growing finer keeps its ring, draws the editor\'s outline at both ends, and fades its new points in', () => {
+    // At a precision of `inSegments(4, 20)`, ten deep is three segments and
+    // forty is six: the span lays six at both ends, three of them on facets
+    // at the near one.
+    const { world, id } = room({ round: inSegments(4, 20) });
+    const w = wrote(wrote(world, 0, id, round(10)), 1, id, round(30));
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 0.5));
+    expect(count(span, 1)).toEqual(count(span, 0.5));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    // Dark at the near end where they lie on a facet, and coming up.
+    const s = span.tracks[0].stretches[0];
+    const later = s.opacity[1].flat();
+
+    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0)).toHaveLength(4 * 3);
   });
 
   test('a turning room at a fixed bevel costs no stretches', () => {
@@ -2501,6 +2524,20 @@ describe('effects', () => {
 
     expect(count(span, 0)).toEqual(count(span, 1));
     expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
+  test('and growing finer on its union, the editor\'s outline at both ends', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const fx = { ...g.world, effects: new Map([[g.id, { round: inSegments(4, 20) }]]) };
+    const w = wrote(wrote(fx, 0, g.id, round(10)), 1, g.id, round(30));
+    const span = run(bakeSpan(w, 0));
+
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 });

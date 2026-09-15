@@ -418,7 +418,7 @@ keyframe, as its shape is; how much is an op, like erosion.
 
 ```ts
 interface Effects {
-  round?: { segments: number }
+  round?: { precision: number, chamfer: boolean }
   deform?: { spacing: number, pattern: 'zigzag' | 'sine' | 'noise', seed: number, sides: 'in' | 'out' | 'both', jitter: number }
 }
 
@@ -502,7 +502,7 @@ interface Rig {
   A corner turning less than `BLUNT` (30°) is cut back
   in proportion, on a sine, down to a sliver: one arriving flat on an edge
   would otherwise take room from the arcs beside it as it appeared.
-- `rounded`, on the eroded boundary: each corner becomes `segments + 1`
+- `arcs`, on the eroded boundary: each corner becomes `n + 1`
   points on the arc tangent to its two edges, the tangent length clamped to
   half of each edge less what the neighbour takes of it — all of what is
   left, where the neighbour wants less. Holes too. The arc is walked from its
@@ -541,9 +541,24 @@ vertical over the span.
   merges the two ends' own corner lists (`merged`), since a tooth is not in
   the polygon's list of points; without teeth that is the list, filtered, as
   it always was.
-- **A rounded corner's image is `segments + 1` points**, so `invented` and
+- **A rounded corner's image is `n + 1` points**, so `invented` and
   `fading` walk a rounded polygon's arcs as slots and ask `imaged` where
   they are.
+- **A round is faceted by a precision**, a length: each corner in as many
+  segments as keep its arc within it of the circle at any angle
+  (`segmentsFor`: `ceil(√(SAGGING · bevel / precision))`, at most `FINEST`),
+  or one for a chamfer. Of the bevel alone, not the angle or the clamping,
+  so a span knows every corner's count at both ends from its amounts.
+- **A span lays each corner in the finer end's count** (`Facets`,
+  `effectsOver`): at the coarser end the points it has over lie on its
+  facets, so its outline is that keyframe's still exactly. Across the span
+  the arc goes over from the one layout to the other weighted by the bevel
+  (`weighed`: `t · b₁ / bevel(t)`), which keeps every point the lerp of its
+  two ends, so the lerp is exact where only the bevel moves. The points on
+  facets are kept through the arrangement at their end (`invented`, and
+  `slotted`'s keep for a union), and their verticals fade in or out over
+  the span (`facetFades`; `Contributed.faded` for a union). The still at a
+  keyframe has none of them: it draws its own count.
 - **A degenerate end is seeded, never collapsed.** A bevel of nought at one
   end and more at the other is `SEEDING` of the other there; the tiny arc
   turns, and the arrangement keeps it unasked. A flat corner's arc is
@@ -560,8 +575,8 @@ vertical over the span.
 - `moves()` and `export.ts` leave the new kinds out: they are not in the
   frame table. The game does not change — it gets points, and lerps them.
 - It costs: a tooth is a corner before the erosion and the CSG, and a round
-  multiplies a corner by `segments + 1`; the bake and the buffers grow with
-  both.
+  multiplies a corner by its segments and one; the bake and the buffers grow
+  with both.
 - Worlds without effects are held to master bit for bit (`baseline.ts`): a
   handful of worlds built only from what master has, and digests of every
   set the editor draws, every span the bake makes and the level the game
@@ -571,8 +586,8 @@ vertical over the span.
 #### Editing
 
 - **The gesture** reads two numbers off one drag, as `ngoning` does: sideways
-  is the amount, and it writes an entry; upward is the segments or the
-  spacing, and it sets the thing's option, at every keyframe, with a label by
+  is the amount, and it writes an entry; upward is a deform's spacing (a
+  round's is drift: its precision is the pane's), and it sets the thing's option, at every keyframe, with a label by
   the cursor. With corners picked it writes their entries instead, as
   deepening does. The first gesture on a thing without the effect gives it
   the remembered options.
@@ -601,7 +616,7 @@ Done (`effects.ts`, `pane.ts`), differently in these places:
   starts at (`Selection.edges`), a tooth's edge being its root's.
 - **`e`, `b` and `d`** are erode, round (bevel) and deform, held and dragged
   as `e` always was: sideways the amount, right as more for the two new ones;
-  upward past a little drift the segments or the spacing (`optioned`), with a
+  upward past a little drift a deform's spacing (`spaced`), with a
   label by the cursor. On whole things they write an entry; on corners a
   corner's, and a deform on the edges picked — or, with corners picked, the
   edges between two of them. The first on a thing without the effect gives

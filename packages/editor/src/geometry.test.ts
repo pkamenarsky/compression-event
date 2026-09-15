@@ -41,6 +41,11 @@ import {
   imaged,
   patterned,
   patternRun,
+  facetsOf,
+  SQUARE,
+  precisionFor,
+  segmentsFor,
+  facetFades,
   rounded,
   SEEDING,
   subdivided,
@@ -1824,7 +1829,7 @@ describe('round and deform', () => {
   test('an arc is linear in its bevel, and a tooth in its amplitude', () => {
     const lerps = (a: Point[], b: Point[], mid: Point[]) =>
       mid.forEach((p, i) => close(p, { x: (a[i].x + b[i].x) / 2, y: (a[i].y + b[i].y) / 2 }));
-    const arcs = (r: number) => imaged([square], square, [0], () => 0, () => 3, () => r, { bevel: 0, segments: 0 }).shape[0];
+    const arcs = (r: number) => imaged([square], square, [0], () => 0, () => facetsOf(3), () => r, { bevel: 0, facets: SQUARE }).shape[0];
 
     lerps(arcs(1), arcs(3), arcs(2));
 
@@ -1923,7 +1928,7 @@ describe('round and deform', () => {
     const depth = 1;
     const eroded = erode(simplify([room]), depth);
     const image = (bevel: (i: number) => number) =>
-      imaged(eroded, room, [0], () => depth, () => 3, bevel, { bevel: 0, segments: 0 });
+      imaged(eroded, room, [0], () => depth, () => facetsOf(3), bevel, { bevel: 0, facets: SQUARE });
 
     test('a flat corner is put back, and its arc is a sliver of the floor', () => {
       expect(eroded[0]).toHaveLength(4);
@@ -1951,7 +1956,7 @@ describe('round and deform', () => {
         { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 2 }, { x: 10, y: 2 }, { x: 10, y: 10 }, { x: 0, y: 10 },
       ];
       const deep = erode(simplify([arm]), 2);
-      const it = imaged(deep, arm, [0], () => 2, () => 3, () => 1, { bevel: 0, segments: 0 });
+      const it = imaged(deep, arm, [0], () => 2, () => facetsOf(3), () => 1, { bevel: 0, facets: SQUARE });
 
       expect(it.corners[1]).toBeNull();
       expect(it.corners[2]).toBeNull();
@@ -2005,6 +2010,53 @@ describe('round and deform', () => {
       expect(Math.hypot(a.x, a.y)).toBeCloseTo(4, 9);
       expect(Math.hypot(b.x, b.y)).toBeCloseTo(4, 9);
     }
+  });
+
+  test('a round is as many segments as keep it within its precision, at any angle', () => {
+    for (const bevel of [1, 7, 40]) {
+      for (const precision of [0.05, 0.5, 2]) {
+        const k = segmentsFor(bevel, precision);
+
+        // Turning at least `BLUNT`, where a corner is cut back its whole bevel.
+        for (const turn of [0.6, 1, Math.PI / 2, 2.2, 3]) {
+          // A corner turning `turn`, rounded `bevel` deep.
+          const ring: Ring = [{ x: -100, y: 0 }, { x: 0, y: 0 }, { x: 100 * Math.cos(turn), y: 100 * Math.sin(turn) }];
+          const arc = rounded(ring, i => (i === 1 ? bevel : 0), k).slice(k + 1, 2 * k + 2);
+          const r = bevel / Math.tan(turn / 2);
+          const c = { x: 0 - bevel, y: r };
+
+          // Every facet's middle within the precision of the circle.
+          for (let j = 0; j < k; j++) {
+            const m = { x: (arc[j].x + arc[j + 1].x) / 2, y: (arc[j].y + arc[j + 1].y) / 2 };
+
+            expect(Math.abs(r) - Math.hypot(m.x - c.x, m.y - c.y)).toBeLessThanOrEqual(precision + 1e-9);
+          }
+        }
+      }
+    }
+
+    expect(segmentsFor(40, 0.5)).toBeGreaterThan(segmentsFor(10, 0.5));
+    expect(segmentsFor(10, precisionFor(5, 10))).toEqual(5);
+  });
+
+  test('an arc laid between two counts is the coarser\'s outline at its end, and the finer\'s at the other', () => {
+    const cross = (a: Point, b: Point, p: Point) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    const coarse = rounded(square, i => (i === 0 ? 4 : 0), 2).slice(0, 3);
+    const fine = rounded(square, i => (i === 0 ? 4 : 0), 6).slice(0, 7);
+    const laid = (at: number) => imaged([square], square, [0], () => 0, i => (i === 0 ? { n: 6, from: 2, to: 6, at } : SQUARE), () => 4, { bevel: 0, facets: SQUARE }).corners[0]!;
+
+    // Seven points at both ends, the coarse arc's three among them and the
+    // rest on its two facets.
+    expect(laid(0)).toHaveLength(7);
+    [0, 3, 6].forEach((j, q) => close(laid(0)[j], coarse[q]));
+    [1, 2].forEach(j => expect(Math.abs(cross(coarse[0], coarse[1], laid(0)[j]))).toBeLessThan(1e-9));
+    [4, 5].forEach(j => expect(Math.abs(cross(coarse[1], coarse[2], laid(0)[j]))).toBeLessThan(1e-9));
+    laid(1).forEach((p, j) => close(p, fine[j]));
+
+    // The ones on facets at the near end fade in; the coarse arc's own stand.
+    const fades = facetFades(laid(0.25), { n: 6, from: 2, to: 6, at: 0.25 });
+
+    expect(fades.map(f => f.v)).toEqual([0.25, 0.25, 0.25, 0.25]);
   });
 
   test('a jitter strays each tooth by its seed, and keeps it the same tooth', () => {

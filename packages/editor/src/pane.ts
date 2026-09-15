@@ -58,7 +58,8 @@ interface Model {
   jitter: number
   erode: Some
   round: Some
-  segments: number
+  precision: number
+  chamfer: boolean
   corners: boolean
   own: Some
 }
@@ -68,6 +69,10 @@ const SIDES: Sides[] = ['both', 'out', 'in'];
 
 /** The most jitter, in percent of the spacing. */
 const JITTER = 90;
+
+/** The finest precision a round is asked for: past it, `FINEST` segments
+ * cap it anyway. */
+const PRECISEST = 0.01;
 
 /** What the pane is about: the things picked, or the polygons of the corners
  * or edges picked. */
@@ -156,7 +161,8 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
     jitter: d.jitter,
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
-    segments: r.segments,
+    precision: r.precision,
+    chamfer: r.chamfer,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
@@ -188,7 +194,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     }
 
     const shown = name === 'round'
-      ? { segments: m.segments() }
+      ? { precision: m.precision(), chamfer: m.chamfer() }
       : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
@@ -222,7 +228,10 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
 
     heading(() => (m.corners() ? 'Round corners' : 'Round'), 'b', m.round, rounded),
     options(m.round, [
-      field('segments', number(m.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
+      // How near its facets keep to the circle, as a length: finer is more
+      // of them, and they are as many as each corner's bevel needs.
+      show(() => !m.chamfer(), fragment(field('precision', number(m.precision, PRECISEST, v => changed('round', { precision: v }), Infinity, 'any')))),
+      field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
@@ -276,11 +285,12 @@ const CONTROL = {
   padding: '1px 4px',
 } as const;
 
-function number(value: Value<number>, min: number, onchange: (v: number) => void, max = Infinity): VNode {
+function number(value: Value<number>, min: number, onchange: (v: number) => void, max = Infinity, step?: string): VNode {
   return input({
     type: 'number',
     value: () => String(value()),
     min: String(min),
+    ...(step === undefined ? {} : { step }),
     ...(max === Infinity ? {} : { max: String(max) }),
     style: CONTROL,
     onchange: (e: Event) => {
@@ -306,6 +316,20 @@ function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: 
       onchange(el.value as T);
     },
   }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
+}
+
+function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
+  return input({
+    type: 'checkbox',
+    checked: value,
+    style: { justifySelf: 'start' },
+    onchange: (e: Event) => {
+      const el = e.target as HTMLInputElement;
+
+      el.blur();
+      onchange(el.checked);
+    },
+  });
 }
 
 /** A button that reads as text: taking something back rather than setting it. */

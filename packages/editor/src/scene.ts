@@ -33,8 +33,15 @@
 import { Point } from '@ce/game/world';
 import {
   Effecting,
+  Facets,
   Imaged,
   PLAIN,
+  SQUARE,
+  Fade,
+  arcRuns,
+  facetFades,
+  facetsOf,
+  segmentsFor,
   Ring,
   Shape,
   contains,
@@ -63,6 +70,7 @@ import {
   Clipping,
   Effects,
   GroupId,
+  Options,
   IconType,
   FLOOR,
   Id,
@@ -243,7 +251,7 @@ export interface Resolved {
 
 /**
  * What rounds a polygon's projection, corner by corner and index for index
- * with `Resolved.corners`: each corner's segments, and its whole bevel — the
+ * with `Resolved.corners`: each corner's facets, and its whole bevel — the
  * polygon's with the corner's own on top. `own` and `bevel` are the
  * polygon's, for a corner the erosion made rather than any of its own.
  *
@@ -252,10 +260,15 @@ export interface Resolved {
  * `deforms`.
  */
 export interface Effected {
-  segments: readonly number[]
+  facets: readonly Facets[]
   bevels: readonly number[]
-  own: number
+  own: Facets
   bevel: number
+}
+
+/** How many segments a round of `bevel` is in. See `segmentsFor`. */
+export function segmentsOf(round: Options['round'], bevel: number): number {
+  return round.chamfer ? 1 : segmentsFor(bevel, round.precision);
 }
 
 /**
@@ -291,7 +304,6 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
   const deform = deformOf(fx, own);
 
   return {
-    segments: round?.segments ?? 0,
     spacing: deform?.spacing ?? 0,
     pattern: deform?.pattern ?? PLAIN.pattern,
     seed: deform?.seed ?? 0,
@@ -316,24 +328,38 @@ export function effectedOf(
 
   if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) return null;
 
+  const bevels = corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
+  const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
+    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel)));
+
   return shaping({
-    segments: corners.map(c => effecting(fx, world.cornerEffects.get(c.id)).segments),
-    bevels: corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0)),
-    own: effecting(fx).segments,
+    facets: corners.map((c, i) => faceted(roundOf(fx, world.cornerEffects.get(c.id)), bevels[i])),
+    bevels,
+    own: faceted(roundOf(fx), amounts.bevel),
     bevel: amounts.bevel,
   });
 }
 
 /** A round kept only where it does something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.segments.some((n, i) => n > 0 && e.bevels[i] > 0) || (e.own > 0 && e.bevel > 0);
+  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0) || (e.own.n > 0 && e.bevel > 0);
 
   return any ? e : null;
 }
 
 /** A round as numbers, lengths divided by `s`, for `project`. */
 function effectKey(e: Effected, s = 1): Key[] {
-  return [e.segments as number[], e.bevels.map(r => r / s), e.own, e.bevel / s];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), facetKey(e.own), e.bevel / s];
+}
+
+function facetKey(f: Facets): number[] {
+  return [f.n, f.from, f.to, f.at];
+}
+
+function facetsFrom(k: Key): Facets {
+  const [n, from, to, at] = k as number[];
+
+  return { n, from, to, at };
 }
 
 /**
@@ -828,16 +854,17 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[],
 ): Imaged => {
-  const [segments, bevels, own, bevel] = effects as [number[], number[], number, number];
+  const [facets, bevels, own, bevel] = effects as [Key[], number[], Key, number];
+  const each = facets.map(facetsFrom);
 
   return imaged(
     offsetOf(source, rings, erosion, depths),
     source,
     rings,
     i => depths?.[i] ?? erosion,
-    i => segments[i],
+    i => each[i],
     i => bevels[i],
-    { bevel, segments: own },
+    { bevel, facets: facetsFrom(own) },
   );
 });
 
@@ -864,6 +891,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
   return {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
+    rest: im.rest.map(r => place(at.frame, r)),
   };
 }
 
@@ -2697,6 +2725,9 @@ export interface Contributed {
   /** The bake's invented corners, carried through the arrangement. A group's
    * union has none: nothing invents a corner on it. See `Resolved.keep`. */
   keep?: readonly Point[]
+  /** A group's arc points on their facets part way through a span, with how
+   * solid each stands. See `facetFades`. */
+  faded?: readonly Fade[]
 }
 
 /**
@@ -2728,7 +2759,9 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
 
   if (round === undefined) return undefined;
 
-  return { segments: round.segments, bevel: stateAt(world, id, v).bevel };
+  const bevel = stateAt(world, id, v).bevel;
+
+  return { facets: facetsOf(segmentsOf(round, bevel)), bevel };
 }
 
 /**
@@ -2880,7 +2913,7 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 export interface Standing {
   depth: number
   /** Its round, on its union after the depth. Absent is none. */
-  effects?: { segments: number, bevel: number }
+  effects?: { facets: Facets, bevel: number }
   /**
    * The frame to keep the union's points in.
    *
@@ -3004,7 +3037,9 @@ const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: 
 
   if (round === null || eroded.length === 0) return eroded;
 
-  return effectedAll(eroded, round[0], round[1]);
+  const [n, from, to, at, bevel] = round;
+
+  return effectedAll(eroded, { n, from, to, at }, bevel);
 });
 
 /** A group's round as `offsetUnion` takes it, or nothing where it does
@@ -3012,7 +3047,7 @@ const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: 
 function unionKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
-  return fx === undefined || fx.segments <= 0 || fx.bevel <= 0 ? null : [fx.segments, fx.bevel];
+  return fx === undefined || fx.facets.n <= 0 || fx.bevel <= 0 ? null : [...facetKey(fx.facets), fx.bevel];
 }
 
 export function contributed(
@@ -3079,10 +3114,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], faded: Fade[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [] };
+    if (group === undefined) return { shape: [], keep: [], faded: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -3105,12 +3140,23 @@ export function contributed(
     const round = unionKey(here);
     const union = offsetUnion(shapes, depth, round);
 
-    // What its members keep for the bake, moved in with their edges: a union
-    // is an arrangement, and would drop them — see `Resolved.keep`.
-    const keep = group.members.flatMap(m => keptFrom(m, set, k))
-      .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
+    // Where the bake has its arcs on their facets, fading: see `facetFades`.
+    // Off the union before the round, as `effected` takes it.
+    const fx = here?.effects;
+    const faded = fx === undefined || round === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
+      ? []
+      : arcRuns(offsetUnion(shapes, depth, null), fx.facets, fx.bevel).flatMap(run => facetFades(run, fx.facets));
 
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep };
+    // What its members keep for the bake, moved in with their edges: a union
+    // is an arrangement, and would drop them — see `Resolved.keep`. And the
+    // points its own arcs have on their facets, at the end they lie straight.
+    const keep = [
+      ...group.members.flatMap(m => keptFrom(m, set, k))
+        .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth })),
+      ...faded.filter(f => f.v === 0).map(f => f.p),
+    ];
+
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, faded };
   };
 
   /**
@@ -3137,6 +3183,7 @@ export function contributed(
   };
 
   const kept = new Map<string, Point[]>();
+  const fading = new Map<string, Fade[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -3164,11 +3211,17 @@ export function contributed(
     if (known !== undefined) {
       kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
 
+      // Held as a shape, as everything here is: the points, and beside them
+      // how solid each is.
+      const [points = [], solid = []] = held?.get(`${key}:faded`) ?? [];
+
+      fading.set(key, points.map((p, i) => ({ p, v: solid[i].x })));
+
       return known;
     }
 
     const from = top(id, set);
-    const slots: { shape: Shape, keep: Point[] }[] = [];
+    const slots: { shape: Shape, keep: Point[], faded: Fade[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
@@ -3181,9 +3234,13 @@ export function contributed(
     const keep = slots.flatMap(u => u.keep);
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
+    const faded = slots.flatMap(u => u.faded);
+
     kept.set(key, keep);
+    fading.set(key, faded);
     held?.set(key, out);
     held?.set(`${key}:keep`, [keep]);
+    held?.set(`${key}:faded`, [faded.map(f => f.p), faded.map(f => ({ x: f.v, y: 0 }))]);
 
     return out;
   };
@@ -3233,12 +3290,15 @@ export function contributed(
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
+      const faded = fading.get(`${id}:${set}`) ?? [];
+
       out.push({
         id: sideOf(id, kind),
         kind,
         shape,
         frame: how.frame ?? IDENTITY,
         simple: true,
+        ...(faded.length === 0 ? {} : { faded }),
       });
     }
   };

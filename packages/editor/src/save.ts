@@ -49,8 +49,10 @@ import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
  * included. A 21 is the same with none, and is read as that; its bake stands,
  * since a world without effects bakes as it did. A deform's `jitter` came
  * later in 22, and is nought where a file has none; a round's `verticals` and
- * `ends` came and went, and are dropped; and a stand's bevels were first
- * called its radius and radii, which are read as them.
+ * `ends` came and went, and are dropped; a round was first a number of
+ * `segments`, and reads as a chamfer where that was one and at the precision
+ * a round starts with otherwise; and a stand's bevels were first called its
+ * radius and radii, which are read as them.
  *
  * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
  * 20 is the same with every skew nought, and is read as that; its bake, which
@@ -397,7 +399,8 @@ export function upload(then: (state: EditorState) => void): void {
 
 /** Effects as this reads them, from whenever in 22 they were saved: a
  * deform's `jitter` came after the format did, and a file without one has
- * none; a round's `verticals` and `ends` came and went. */
+ * none; a round's `verticals` and `ends` came and went, and its `segments`
+ * became a precision. */
 function optioned<E extends Partial<Effects>>(fx: E): E {
   return {
     ...fx,
@@ -406,9 +409,13 @@ function optioned<E extends Partial<Effects>>(fx: E): E {
   };
 }
 
-/** A round as saved, without what it once said about verticals. */
+/** A round as saved, from whenever in 22: see `FORMAT`. */
 function rounding(round: Effects['round'] & object): Options['round'] {
-  const { verticals: _verticals, ends: _ends, ...rest } = round as Options['round'] & { verticals?: boolean, ends?: boolean };
+  const was = round as Partial<Options['round']> & { segments?: number };
 
-  return rest;
+  return {
+    precision: was.precision ?? REMEMBERED.round.precision,
+    chamfer: was.chamfer ?? was.segments === 1,
+    ...(was.off === undefined ? {} : { off: was.off }),
+  };
 }

@@ -149,9 +149,9 @@ export interface Erode {
 
 /**
  * How far a thing's corners are rounded: its bevel, how deep along each edge
- * from the corner the arc each becomes starts. How many segments is not an
- * operation but a fact about the thing, over every keyframe. See `Effects` in
- * `types.ts`.
+ * from the corner the arc each becomes starts. How precisely it is faceted
+ * is not an operation but a fact about the thing, over every keyframe. See
+ * `Effects` in `types.ts`.
  */
 export interface Round {
   kind: 'round'
@@ -160,7 +160,7 @@ export interface Round {
 
 /** How far a thing's edges are pushed off their lines: the amplitude of the
  * pattern each carries. What pattern is a fact about the thing, as a round's
- * segments are. */
+ * precision is. */
 export interface Deform {
   kind: 'deform'
   by: number

@@ -2589,9 +2589,6 @@ export type Sides = 'in' | 'out' | 'both';
  * and how a deform goes. The amounts are asked for per corner and per edge.
  */
 export interface Effecting {
-  /** The segments of each rounded corner: nought where corners are not
-   * rounded, one for a chamfer. */
-  segments: number
   /** How far apart a deformed edge's teeth are, as a length in the world —
    * see `patternRun`. Nought where edges are not deformed. */
   spacing: number
@@ -2606,7 +2603,7 @@ export interface Effecting {
 }
 
 /** No effects at all: every corner a point and every edge straight. */
-export const PLAIN: Effecting = { segments: 0, spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+export const PLAIN: Effecting = { spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
 
 /** An edge's teeth: each a fraction of the way along it, a distance off it
  * out of the material where positive, and which tooth it is, counted from
@@ -2763,9 +2760,77 @@ export function subdivided(
 }
 
 /**
- * A ring with its corners rounded: for each corner in order, the
- * `segments + 1` points of its arc from the edge coming in to the edge going
- * out.
+ * How a corner's arc is faceted: `n + 1` points, laid as an arc of `from`
+ * segments at the near end of a span and of `to` at the far, `at` of the way
+ * across. An arc of fewer segments than `n` has its other points on its
+ * facets, straight between the points it turns at, so it is the same outline
+ * as that arc alone; the bake keeps them there, and their verticals come up
+ * as the arc gains its segments. At a keyframe the three are one. `n` of
+ * nought is a corner not rounded.
+ */
+export interface Facets {
+  n: number
+  from: number
+  to: number
+  at: number
+}
+
+/** A corner rounded in `n` segments, standing still. */
+export function facetsOf(n: number): Facets {
+  return { n, from: n, to: n, at: 0 };
+}
+
+/** A corner not rounded. */
+export const SQUARE: Facets = facetsOf(0);
+
+/**
+ * How far an arc of one segment can be off its circle, per unit of bevel,
+ * whatever the corner's angle: the worst of `cot(θ/2) · θ² / 8` over every
+ * turn θ, which is the sagitta of an arc turning θ, of bevel one, with the
+ * chord's `1 - cos` taken as its square. An arc of `k` segments is that over
+ * `k²`, since each segment turns a `k`th as far.
+ */
+const SAGGING = (() => {
+  let worst = 0;
+
+  for (let k = 1; k < 1000; k++) {
+    const turn = Math.PI * k / 1000;
+
+    worst = Math.max(worst, turn * turn / Math.tan(turn / 2) / 8);
+  }
+
+  return worst;
+})();
+
+/** The most segments a round is given, however fine it is asked to be. */
+export const FINEST = 64;
+
+/**
+ * How many segments an arc of `bevel` needs to lie within `precision` of its
+ * circle at any angle: the fewest that do, one at the least. A length, as the
+ * bevel is, so a round is as smooth to the eye wherever it is.
+ *
+ * Of the bevel and nothing else — not the corner's angle, nor what its
+ * neighbours leave it — so that a span knows every corner's count at both
+ * ends from its amounts alone. What the angle and the clamping take off the
+ * arc only makes it sag less.
+ */
+export function segmentsFor(bevel: number, precision: number): number {
+  if (!(bevel > 0) || !(precision > 0)) return 1;
+
+  return Math.min(FINEST, Math.max(1, Math.ceil(Math.sqrt(SAGGING * bevel / precision))));
+}
+
+/** The precision that makes `segments` of `bevel`, and no fewer: for tests,
+ * and for reading a count saved before there were precisions. */
+export function precisionFor(segments: number, bevel: number): number {
+  return SAGGING * bevel / (segments * segments) * (1 + 1e-9);
+}
+
+/**
+ * A ring with its corners rounded: for each corner in order, the `n + 1`
+ * points of its arc from the edge coming in to the edge going out, faceted
+ * as `Facets` says.
  *
  * The arc is tangent to both edges, `bevel` along each from the corner, or
  * less where the corner barely turns (see `BLUNT`), and clamped to half of
@@ -2777,7 +2842,7 @@ export function subdivided(
  * angle of its corner, which takes material off a corner that turns in and
  * adds it to one that turns out.
  */
-function arcs(ring: Ring, segmentsOf: (i: number) => number, bevel: (i: number) => number): Point[][] {
+function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) => number): Point[][] {
   const n = ring.length;
   const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
   const unit = (from: Point, to: Point, l: number): Point | null =>
@@ -2800,7 +2865,7 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, bevel: (i: number) 
     const { a, b } = ways[i];
     const d = Math.max(0, bevel(i));
 
-    if (segmentsOf(i) === 0 || d === 0 || a === null || b === null) return 0;
+    if (facetsOf(i).n === 0 || d === 0 || a === null || b === null) return 0;
 
     const turn = Math.PI - Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y);
 
@@ -2815,11 +2880,11 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, bevel: (i: number) 
     const { a, b } = ways[i];
     const before = (i - 1 + n) % n, after = (i + 1) % n;
     const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
-    const segments = segmentsOf(i);
+    const facets = facetsOf(i);
     const out: Point[] = [];
 
     if (t === 0 || a === null || b === null) {
-      for (let k = 0; k <= segments; k++) out.push(v);
+      for (let k = 0; k <= facets.n; k++) out.push(v);
 
       return out;
     }
@@ -2843,24 +2908,100 @@ function arcs(ring: Ring, segmentsOf: (i: number) => number, bevel: (i: number) 
     const along = (u: number): number => (turn < 1e-12 ? 2 * u : Math.sin(u * turn) / Math.tan(turn / 2));
     const across = (u: number): number => (turn < 1e-12 ? 0 : (1 - Math.cos(u * turn)) / Math.tan(turn / 2));
 
-    out.push(t1);
+    /** The point `u` of the way round the arc; both tangent points exact. */
+    const on = (u: number): Point => {
+      if (u <= 0) return t1;
+      if (u >= 1) return t2;
 
-    for (let k = 1; k < segments; k++) {
-      const f = along(k / segments) * t, g = across(k / segments) * t;
+      const f = along(u) * t, g = across(u) * t;
 
-      out.push({ x: t1.x + heading.x * f + normal.x * g, y: t1.y + heading.y * f + normal.y * g });
-    }
+      return { x: t1.x + heading.x * f + normal.x * g, y: t1.y + heading.y * f + normal.y * g };
+    };
 
-    if (segments > 0) out.push(t2);
+    /** The `n + 1` points laid as an arc of `s` segments: its own points at
+     * `n / s` apart, as near as whole points go, and the rest along the
+     * facets between them. Each is linear in `t`, as `on` is. */
+    const laid = (s: number): Point[] => {
+      const turns = Array.from({ length: s + 1 }, (_u, q) => on(q / s));
+      const index = (q: number): number => Math.round(q * facets.n / s);
+      const out: Point[] = [];
 
-    return out;
+      for (let q = 0; q < s; q++) {
+        const p = turns[q], r = turns[q + 1], from = index(q), to = index(q + 1);
+
+        for (let j = from; j < to; j++) {
+          const f = (j - from) / (to - from);
+
+          out.push(f === 0 ? p : { x: mix(p.x, r.x, f), y: mix(p.y, r.y, f) });
+        }
+      }
+
+      out.push(turns[s]);
+
+      return out;
+    };
+
+    const near = laid(Math.max(1, Math.min(facets.n, facets.from)));
+
+    if (facets.from === facets.to || facets.at === 0) return near;
+
+    const far = laid(Math.max(1, Math.min(facets.n, facets.to)));
+
+    if (facets.at === 1) return far;
+
+    return near.map((p, j) => ({ x: mix(p.x, far[j].x, facets.at), y: mix(p.y, far[j].y, facets.at) }));
   }
+}
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 /** A ring with each corner an arc of `segments + 1` points, tangent to both
  * its edges. See `arcs`. */
 export function rounded(ring: Ring, bevel: (i: number) => number, segments: number): Ring {
-  return arcs(ring, () => segments, bevel).flat();
+  return arcs(ring, () => facetsOf(segments), bevel).flat();
+}
+
+/** The arcs of a whole shape, rounded alike everywhere, one run per corner:
+ * what `effected` builds, before the arrangement. */
+export function arcRuns(shape: Shape, facets: Facets, bevel: number): Point[][] {
+  if (bevel <= 0 || facets.n <= 0) return [];
+
+  return shape.flatMap(ring => arcs(ring, () => facets, () => bevel));
+}
+
+/** A point with how solid the vertical standing on it is. */
+export interface Fade {
+  p: Point
+  v: number
+}
+
+/** Which of `n + 1` points an arc laid in `s` segments turns at: the rest
+ * are on its facets. See `arcs`. */
+function turning(n: number, s: number): boolean[] {
+  const segments = Math.max(1, Math.min(n, s));
+  const out = new Array<boolean>(n + 1).fill(false);
+
+  for (let q = 0; q <= segments; q++) out[Math.round(q * n / segments)] = true;
+
+  return out;
+}
+
+/**
+ * The points of an arc that are on its facets at one end of a span or the
+ * other, each as solid as it is corner: nought at the end where it lies
+ * straight, whole at the end where the arc turns there, and in between as
+ * far as the arc has gone over. Nothing for an arc laid alike at both ends.
+ * What the bake fades these points' verticals by, and — at an end, where
+ * they are nought — what it keeps through the arrangement.
+ */
+export function facetFades(run: readonly Point[], f: Facets): Fade[] {
+  if (f.n === 0 || (f.from === f.to && f.from >= f.n)) return [];
+
+  const near = turning(f.n, f.from), far = turning(f.n, f.to);
+
+  return run.flatMap((p, j) => (near[j] && far[j] ? [] : [{ p, v: mix(near[j] ? 1 : 0, far[j] ? 1 : 0, f.at) }]));
 }
 
 /** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
@@ -2873,10 +3014,10 @@ export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effect
  * A whole shape rounded alike everywhere, and taken through the arrangement:
  * what a group does to its union, which has no corners of its own to name.
  */
-export function effected(shape: Shape, segments: number, bevel: number): Cut {
-  if (bevel <= 0 || segments <= 0) return simplify(shape);
+export function effected(shape: Shape, facets: Facets, bevel: number): Cut {
+  if (bevel <= 0 || facets.n <= 0) return simplify(shape);
 
-  return simplify(shape.map(ring => rounded(ring, () => bevel, segments)));
+  return simplify(shape.map(ring => arcs(ring, () => facets, () => bevel).flat()));
 }
 
 /**
@@ -2925,17 +3066,19 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
  *
  * The one construction for both. A source corner's image is where `mitred`
  * puts it, matched to a vertex of `eroded` by position; that vertex takes the
- * corner's bevel and segments. A corner that is flat in the source is not a
+ * corner's bevel and facets. A corner that is flat in the source is not a
  * vertex of `eroded` — the arrangement dropped it — so its image is put back
  * into the edge it lies on first, where its arc is a sliver along it. What is
  * the image of nothing — a corner the erosion made — takes `rest`.
  *
  * The shape is the rings as the construction leaves them, before any
- * arrangement: every arc there, coincident points or not.
+ * arrangement: every arc there, coincident points or not. `rest` is the arcs
+ * of the corners the erosion made, which no source corner names.
  */
 export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
+  rest: Point[][]
 }
 
 export function imaged(
@@ -2943,9 +3086,9 @@ export function imaged(
   source: Ring,
   rings: readonly number[],
   depth: (i: number) => number,
-  segments: (i: number) => number,
+  facets: (i: number) => Facets,
   bevel: (i: number) => number,
-  rest: { bevel: number, segments: number },
+  rest: { bevel: number, facets: Facets },
 ): Imaged {
   const n = source.length;
   const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
@@ -2985,22 +3128,24 @@ export function imaged(
   }
 
   const corners: (Point[] | null)[] = source.map(() => null);
+  const made: Point[][] = [];
 
   const shape = owned.map(ring => {
     const run = arcs(
       ring.map(v => v.p),
-      k => (ring[k].owner >= 0 ? segments(ring[k].owner) : rest.segments),
+      k => (ring[k].owner >= 0 ? facets(ring[k].owner) : rest.facets),
       k => (ring[k].owner >= 0 ? bevel(ring[k].owner) : rest.bevel),
     );
 
     ring.forEach((v, k) => {
       if (v.owner >= 0) corners[v.owner] = run[k];
+      else made.push(run[k]);
     });
 
     return run.flat();
   });
 
-  return { shape, corners };
+  return { shape, corners, rest: made };
 }
 
 /** How little a corner may turn and still be cut back its whole bevel: less,

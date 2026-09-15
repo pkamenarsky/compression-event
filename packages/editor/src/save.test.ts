@@ -126,10 +126,10 @@ describe('save', () => {
     w = {
       ...w,
       effects: new Map([
-        [b, { round: { segments: 3 }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
+        [b, { round: { precision: 0.3, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[0].id, { round: { segments: 1, off: true } }]]),
+      cornerEffects: new Map([[corners[0].id, { round: { precision: 0.5, chamfer: true, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
@@ -189,22 +189,22 @@ describe('save', () => {
     expect(restored(file).world).toEqual(w);
   });
 
-  test('effects saved with verticals and without a jitter read without the one and with none', () => {
+  test('effects saved with segments, verticals and no jitter read with a precision, without verticals and with none', () => {
     const before = world();
     const [id] = [...before.world.polygons.keys()];
     const corner = before.world.polygons.get(id)!.points[0].id;
     const file = JSON.parse(JSON.stringify(saved(before)));
 
     file.world.effects = [[id, { round: { segments: 3, verticals: false }, deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out' } }]];
-    file.world.cornerEffects = [[corner, { round: { segments: 2, verticals: true, off: true } }]];
+    file.world.cornerEffects = [[corner, { round: { segments: 1, verticals: true, off: true } }]];
 
     const w = restored(file).world;
 
     expect(w.effects.get(id)).toEqual({
-      round: { segments: 3 },
+      round: { precision: 0.5, chamfer: false },
       deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
-    expect(w.cornerEffects.get(corner)).toEqual({ round: { segments: 2, off: true } });
+    expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, chamfer: true, off: true } });
   });
 
   test('the polygons keep their ids, not their positions in a list', () => {

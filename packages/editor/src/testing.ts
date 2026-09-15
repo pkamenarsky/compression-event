@@ -10,7 +10,8 @@
 import { Point } from '@ce/game/world';
 import { appended, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
 import { Erode, Move, Op, repeating, withKeys } from './rig';
-import { Id, KeyframeId, World } from './types';
+import { precisionFor } from './geometry';
+import { Id, KeyframeId, Options, World } from './types';
 
 /** An operation, or one worked out from the world as it stands when it is
  * written — which is what a gesture's is. */
@@ -63,4 +64,10 @@ export function spun(angle: number): Writing {
  * origin, unless said otherwise. */
 export function scaled(x: number, y: number, centre: Point = { x: 0, y: 0 }): Writing {
   return (world, v, id) => scaleOf(painted(world, v, id), centre, { x, y });
+}
+
+/** A round's options that make exactly `segments` of a bevel of `bevel`:
+ * what a test that counts points asks for. See `segmentsFor`. */
+export function inSegments(segments: number, bevel: number): Options['round'] {
+  return segments === 1 ? { precision: 1, chamfer: true } : { precision: precisionFor(segments, bevel), chamfer: false };
 }
