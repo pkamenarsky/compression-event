@@ -2680,20 +2680,32 @@ function phase(a: Turnable, b: Turnable): number | null {
 
   if (n < 1 || b.points.length !== a.points.length) return null;
 
+  // Every rotation against every other is quadratic in the ring, and a bevel
+  // makes rings long. So the names are written out once rather than per pair,
+  // a rotation is dropped as soon as it is already further than the best, and
+  // the names are only counted for one that can still win.
+  const an = a.whence.slice(0, n).map(names), bn = b.whence.slice(0, n).map(names);
+
   let best = 0, cost = Infinity, agree = -1;
 
   for (let k = 0; k < n; k++) {
-    let far = 0, same = 0;
+    let far = 0;
 
-    for (let j = 0; j < n; j++) {
+    for (let j = 0; j < n && far <= cost; j++) {
       const p = a.points[j], q = b.points[(j + k) % n];
 
       far += (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
-
-      if (names(a.whence[j]) === names(b.whence[(j + k) % n])) same++;
     }
 
-    if (far < cost || (far === cost && same > agree)) {
+    if (far > cost) continue;
+
+    let same = 0;
+
+    for (let j = 0; j < n; j++) {
+      if (an[j] === bn[(j + k) % n]) same++;
+    }
+
+    if (far < cost || same > agree) {
       best = k; cost = far; agree = same;
     }
   }
@@ -2762,13 +2774,14 @@ function lining(to: Frame, from: Frame): { at: number, k: number }[] | null {
   // visits. A set rather than a list, because the order is the thing in
   // question — and a ring's first point is written down twice, which a list
   // would count and a set does not.
-  const which = (run: Run) =>
-    `${run.id}:${[...new Set(run.whence.map(names))].sort().join(',')}`;
+  const which = (run: Run) => `${run.id}:${visits(run.whence)}`;
 
   const spare = new Map<string, number>();
 
   from.forEach((run, i) => {
-    if (!spare.has(which(run))) spare.set(which(run), i);
+    const key = which(run);
+
+    if (!spare.has(key)) spare.set(key, i);
   });
 
   const taken = new Set<number>();
@@ -2790,6 +2803,25 @@ function lining(to: Frame, from: Frame): { at: number, k: number }[] | null {
   }
 
   return plan;
+}
+
+/**
+ * The points of the arrangement a run visits, as one string. Remembered by the
+ * run's names, which are never written to once made: the same reading is lined
+ * up against every other it is compared with, and writing this out was the
+ * greater part of the cost of lining one up.
+ */
+const visited = new WeakMap<readonly Origin[], string>();
+
+function visits(whence: readonly Origin[]): string {
+  let known = visited.get(whence);
+
+  if (known === undefined) {
+    known = [...new Set(whence.map(names))].sort().join(',');
+    visited.set(whence, known);
+  }
+
+  return known;
 }
 
 /** A reading put in the order a plan asks for. The same `from` back when the

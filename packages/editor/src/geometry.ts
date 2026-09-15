@@ -1379,23 +1379,27 @@ const NEARBY = 3;
  * meet where the vertex is.
  */
 function touching(s: Seg, u: Seg, ts: Param[], us: Param[], reach: number): boolean {
-  let found = false;
+  // Written out rather than looped over pairs: this is asked of every pair of
+  // segments whose boxes meet, and the loop was allocating its own arrays to
+  // walk four points.
+  // All four, in this order, whatever the first ones found.
+  const one = landed(s, u.a, u.ta, ts, reach);
+  const two = landed(s, u.b, u.tb, ts, reach);
+  const three = landed(u, s.a, s.ta, us, reach);
+  const four = landed(u, s.b, s.tb, us, reach);
 
-  for (const [host, guest, into, ta, tb] of [
-    [s, u, ts, u.ta, u.tb] as const,
-    [u, s, us, s.ta, s.tb] as const,
-  ]) {
-    for (const [p, tag] of [[guest.a, ta] as const, [guest.b, tb] as const]) {
-      const at = footOf(host, p, reach);
+  return one || two || three || four;
+}
 
-      if (at === null) continue;
+/** `p` cut into `host` where it lands, when it lands on it at all. */
+function landed(host: Seg, p: Point, tag: Tag, into: Param[], reach: number): boolean {
+  const at = footOf(host, p, reach);
 
-      addParam(into, at, tag, p);
-      found = true;
-    }
-  }
+  if (at === null) return false;
 
-  return found;
+  addParam(into, at, tag, p);
+
+  return true;
 }
 
 /** How far along a segment a point within `reach` of it sits, or nothing where

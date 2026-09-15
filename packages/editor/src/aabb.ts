@@ -386,7 +386,7 @@ export interface Packed {
 }
 
 /** Items per leaf, at most. */
-const LEAF = 4;
+const LEAF = 16;
 
 /**
  * A tree over `boxes`, four numbers an item, where item `i` is the `i`th four.

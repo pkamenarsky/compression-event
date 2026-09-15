@@ -25,3 +25,5 @@ while (!step.done) {
   step = job.next();
 }
 console.log('done', step.done, (performance.now() - t0).toFixed(0), 'ms');
+const g = (globalThis as { gc?: () => void }).gc;
+if (g !== undefined) { g(); console.log('heap', (process.memoryUsage().heapUsed / 1e6).toFixed(0), 'MB'); }
