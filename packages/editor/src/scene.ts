@@ -46,6 +46,7 @@ import {
   Shape,
   contains,
   effected as effectedAll,
+  effectedSquare,
   encloses,
   erode,
   erodeAt,
@@ -53,6 +54,7 @@ import {
   imaged,
   isCCW,
   keeping,
+  mitred,
   nextOf,
   onBoundary,
   prevOf,
@@ -264,6 +266,9 @@ export interface Effected {
   bevels: readonly number[]
   own: Facets
   bevel: number
+  /** Which corners are deformed geometry, left square along with what the
+   * erosion makes of them. See `unrounded`. */
+  flat: readonly boolean[]
 }
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
@@ -338,6 +343,7 @@ export function effectedOf(
     bevels,
     own: faceted(roundOf(fx), amounts.bevel),
     bevel: amounts.bevel,
+    flat,
   });
 }
 
@@ -366,7 +372,7 @@ export function shaping(e: Effected): Effected | null {
 
 /** A round as numbers, lengths divided by `s`, for `project`. */
 function effectKey(e: Effected, s = 1): Key[] {
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), facetKey(e.own), e.bevel / s];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), facetKey(e.own), e.bevel / s, e.flat.map(Number)];
 }
 
 function facetKey(f: Facets): number[] {
@@ -871,7 +877,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Key[],
 ): Imaged => {
-  const [facets, bevels, own, bevel] = effects as [Key[], number[], Key, number];
+  const [facets, bevels, own, bevel, flat] = effects as [Key[], number[], Key, number, number[]];
   const each = facets.map(facetsFrom);
 
   return imaged(
@@ -882,6 +888,7 @@ const imagedBy = remembered((
     i => each[i],
     i => bevels[i],
     { bevel, facets: facetsFrom(own) },
+    i => flat[i] === 1,
   );
 });
 
@@ -3112,6 +3119,41 @@ const offsetUnion = remembered((shapes: readonly Shape[], depth: number, round: 
   return effectedAll(eroded, { n, from, to, at, tension }, bevel);
 });
 
+/** `offsetUnion` with its deformed geometry left square: see `effectedSquare`.
+ * Only ever asked with a round and something to leave square. */
+const squaredUnion = remembered((shapes: readonly Shape[], depth: number, round: readonly number[], square: readonly Point[]) => {
+  const all = unionAll(shapes);
+  const eroded = depth === 0 || all.length === 0 ? all : erode(all, depth);
+
+  if (eroded.length === 0) return { shape: eroded as Shape, runs: [] as Point[][], square: [] as Point[] };
+
+  const [n, from, to, at, tension, bevel] = round;
+
+  return effectedSquare(shapes, all, eroded, depth, { n, from, to, at, tension }, bevel, square);
+});
+
+/**
+ * The points of a polygon's shape that are deformed geometry, which a group's
+ * round leaves square as the polygon's own does: its teeth, the corners at the
+ * ends of its edges with teeth — whether or not its own deform clears them,
+ * since that is of its own bevels — and what its erosion made of them.
+ */
+function squareIn(it: Resolved): Point[] {
+  const flags = unrounded(it.corners, false);
+
+  if (!flags.some(Boolean)) return [];
+
+  const im = imagesOf(it);
+
+  if (im !== null) return [...flags.flatMap((f, i) => (f ? im.corners[i] ?? [] : [])), ...im.rest.filter(r => r.length === 1).flat()];
+
+  return flags.flatMap((f, i) => {
+    const m = f ? mitred(it.source, it.rings, i, it.depths?.[i] ?? it.erosion) : null;
+
+    return m === null ? [] : [m];
+  });
+}
+
 /** A group's round as `offsetUnion` takes it, or nothing where it does
  * nothing. A group's deform is not here: it is its members'. See `deforms`. */
 function unionKey(s: Standing | null): number[] | null {
@@ -3184,10 +3226,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], faded: Fade[] } => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], faded: Fade[], square: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [], faded: [] };
+    if (group === undefined) return { shape: [], keep: [], faded: [], square: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -3208,14 +3250,21 @@ export function contributed(
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
     const shapes = group.members.flatMap(m => from(m, set, k));
     const round = unionKey(here);
-    const union = offsetUnion(shapes, depth, round);
+
+    // What its members' deforms made, which its round leaves square. Unrounded
+    // and eroded, they are no longer where they were, and nothing is left of
+    // them to say so; unrounded and uneroded, they are.
+    const inside = round === null && depth !== 0 ? [] : group.members.flatMap(m => squareFrom(m, set, k));
+    const squared = round !== null && inside.length > 0 ? squaredUnion(shapes, depth, round, inside) : null;
+    const union = squared?.shape ?? offsetUnion(shapes, depth, round);
+    const square = squared?.square ?? (round === null ? inside : []);
 
     // Where the bake has its arcs on their facets, fading: see `facetFades`.
     // Off the union before the round, as `effected` takes it.
     const fx = here?.effects;
     const faded = fx === undefined || round === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
       ? []
-      : arcRuns(offsetUnion(shapes, depth, null), fx.facets, fx.bevel).flatMap(run => facetFades(run, fx.facets));
+      : (squared?.runs ?? arcRuns(offsetUnion(shapes, depth, null), fx.facets, fx.bevel)).flatMap(run => facetFades(run, fx.facets));
 
     // What its members keep for the bake, moved in with their edges: a union
     // is an arrangement, and would drop them — see `Resolved.keep`. And the
@@ -3226,7 +3275,32 @@ export function contributed(
       ...faded.filter(f => f.v === 0).map(f => f.p),
     ];
 
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, faded };
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, faded, square };
+  };
+
+  /** The points of what one member puts into slot `k` of `set` that are
+   * deformed geometry: see `squareIn`. A scope's are what it left square. */
+  const squareFrom = (id: Id, set: SetName, k: number): Point[] => {
+    const it = mine.get(id);
+
+    if (it !== undefined) return slotOf(kindOf(it.polygon), set) === k ? squareIn(it) : [];
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return [];
+
+    if (group.sealed && standing(id) !== null) {
+      if (k !== top(id, set)) return [];
+
+      // Resolved already, as `from` put it in.
+      const key = `${id}:${set}`;
+
+      if (!squares.has(key)) resolves(id, set);
+
+      return squares.get(key) ?? [];
+    }
+
+    return group.members.flatMap(m => squareFrom(m, set, k));
   };
 
   /**
@@ -3254,6 +3328,7 @@ export function contributed(
 
   const kept = new Map<string, Point[]>();
   const fading = new Map<string, Fade[]>();
+  const squares = new Map<string, Point[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -3280,6 +3355,7 @@ export function contributed(
 
     if (known !== undefined) {
       kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
+      squares.set(key, held?.get(`${key}:square`)?.[0] ?? []);
 
       // Held as a shape, as everything here is: the points, and beside them
       // how solid each is.
@@ -3291,7 +3367,7 @@ export function contributed(
     }
 
     const from = top(id, set);
-    const slots: { shape: Shape, keep: Point[], faded: Fade[] }[] = [];
+    const slots: { shape: Shape, keep: Point[], faded: Fade[], square: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
@@ -3306,10 +3382,14 @@ export function contributed(
 
     const faded = slots.flatMap(u => u.faded);
 
+    const square = slots.flatMap(u => u.square);
+
     kept.set(key, keep);
     fading.set(key, faded);
+    squares.set(key, square);
     held?.set(key, out);
     held?.set(`${key}:keep`, [keep]);
+    held?.set(`${key}:square`, [square]);
     held?.set(`${key}:faded`, [faded.map(f => f.p), faded.map(f => ({ x: f.v, y: 0 }))]);
 
     return out;

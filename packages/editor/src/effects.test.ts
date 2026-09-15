@@ -153,6 +153,41 @@ describe('a group\'s effects', () => {
     expect(shapeArea(set)).toBeCloseTo(roundedRect(200, 100, 10, 8), 6);
   });
 
+  test('its round leaves its members\' deformed geometry square, and its own deform\'s', () => {
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0, clear: false };
+    const a = room(emptyWorld(), rect(0, 0, 100, 100));
+    const b = room(a.world, rect(60, 0, 140, 100));
+    const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
+    const sealed = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) }), 0, g.id, round(10));
+    const vertices = (w: World) => new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    const teethOf = (w: World, id: Id) => {
+      const it = resolveAt(w, 0).find(r => r.id === id)!;
+
+      // Those standing off the wall: the rest are on its line, and the union,
+      // an arrangement, drops them.
+      return it.source.filter((p, i) => it.corners[i].root !== undefined && p.y > 100 + 1e-9);
+    };
+
+    // One edge of a room deformed: its teeth and its ends are where they are
+    // in the union, square, and the rest of the union rounded as before.
+    const top = (world: World) => cornersAmounted(withEffects(world, a.id, { deform: zigzag }), 0, a.id, 'deform', new Set([a.world.polygons.get(a.id)!.points[2].id]), 4);
+    const one = top(sealed);
+    const teeth = teethOf(one, a.id);
+
+    expect(teeth.length).toBeGreaterThan(0);
+    teeth.forEach(p => expect(vertices(one).has(`${p.x.toFixed(6)},${p.y.toFixed(6)}`)).toBe(true));
+    expect(vertices(one).has('0.000000,100.000000')).toBe(true);
+    expect(vertices(one).has('0.000000,0.000000')).toBe(false);
+
+    // Deformed by the group itself, the same.
+    const whole = wrote(withEffects(sealed, g.id, { round: inSegments(8, 10), deform: zigzag }), 0, g.id, deform(4));
+
+    // Every vertex of the union a point of its rooms', and none of an arc.
+    const drawn = new Set(resolveAt(whole, 0).flatMap(it => it.source).map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+
+    vertices(whole).forEach(p => expect(drawn.has(p)).toBe(true));
+  });
+
   test('a loose group has none to give', () => {
     const { world, id } = corridor();
 
@@ -307,6 +342,18 @@ describe('editing effects', () => {
     const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];
 
     expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
+  });
+
+  test('eroded, what a deform made stays square', () => {
+    const { world, id } = room();
+    const [a] = world.polygons.get(id)!.points;
+    const fx = { round: inSegments(8, 6), deform: { ...DEFORM.deform!, sides: 'in' as const } };
+    const w = cornersAmounted(wrote(withEffects(world, id, fx), 0, id, erode(10), round(6)), 0, id, 'deform', new Set([a.id]), 3);
+    const im = imagesOf(resolveAt(w, 0).find(r => r.id === id)!)!;
+
+    // The erosion eats teeth, and what it makes of them is square.
+    expect(im.rest.length).toBeGreaterThan(0);
+    im.rest.forEach(run => expect(run).toHaveLength(1));
   });
 
   test('cleared, a polygon\'s teeth stop short of its corners\' bevels', () => {

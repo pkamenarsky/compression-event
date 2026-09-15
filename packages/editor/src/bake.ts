@@ -1227,6 +1227,7 @@ function effectsOver(
     bevels: other.bevels.map(() => 0),
     own: other.own.n > 0 ? facetsOf(1, other.own.tension) : other.own,
     bevel: 0,
+    flat: other.flat,
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
@@ -1260,6 +1261,7 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
     own: { ...e[0].own, at: weighed(e[0].bevel, e[1].bevel, t) },
     bevel: mix(e[0].bevel, e[1].bevel, t),
+    flat: e[0].flat,
   };
 }
 

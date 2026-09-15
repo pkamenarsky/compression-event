@@ -3202,6 +3202,63 @@ export function effected(shape: Shape, facets: Facets, bevel: number): Cut {
 }
 
 /**
+ * A union of `shapes` eroded by `depth` into `eroded` and rounded alike
+ * everywhere, but for its deformed geometry: the vertices of `all` at a point
+ * of `square` are left square, and so are those the union made beside them —
+ * where a tooth crosses another's wall — with whatever the erosion makes of
+ * them. See `imaged`.
+ *
+ * With the arcs of the corners that are rounded, as `arcRuns` has them, and
+ * the points left square, for a group holding this one to leave square too.
+ */
+export function effectedSquare(
+  shapes: readonly Shape[],
+  all: Shape,
+  eroded: Shape,
+  depth: number,
+  facets: Facets,
+  bevel: number,
+  square: readonly Point[],
+): { shape: Cut, runs: Point[][], square: Point[] } {
+  const source = all.flat();
+  const rings = all.reduce<number[]>((out, _ring, r) => [...out, r === 0 ? 0 : out[r - 1] + all[r - 1].length], []);
+  const n = source.length;
+
+  // The points by cell, so each vertex looks at its own and those around it.
+  const snap = extentOf(all) * 1e-7, cell = snap * 4;
+  const cellOf = (p: Point): [number, number] => [Math.round(p.x / cell), Math.round(p.y / cell)];
+  const cellsOf = (points: Iterable<Point>) => new Set([...points].map(p => cellOf(p).join(',')));
+  const near = (cells: ReadonlySet<string>, p: Point): boolean => {
+    const [x, y] = cellOf(p);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (cells.has(`${x + dx},${y + dy}`)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  const squares = cellsOf(square), theirs = cellsOf(shapes.flat(2));
+  const hit = source.map(p => near(squares, p));
+  const made = source.map(p => !near(theirs, p));
+  const flat = hit.map((h, i) => h || (made[i] && (hit[prevOf(rings, n, i)] || hit[nextOf(rings, n, i)])));
+  const im = imaged(eroded, source, rings, () => depth, i => (flat[i] ? SQUARE : facets), () => bevel, { bevel, facets }, i => flat[i]);
+  const runs: Point[][] = [], left: Point[] = [];
+
+  im.corners.forEach((run, i) => {
+    if (run === null) return;
+
+    if (flat[i]) left.push(...run);
+    else runs.push(run);
+  });
+  im.rest.forEach(run => (run.length === 1 ? left.push(run[0]) : runs.push(run)));
+
+  return { shape: simplify(im.shape), runs, square: left };
+}
+
+/**
  * Where corner `i` of a ring lands once the ring is offset by `depth` — the
  * meeting point of its two edges after each has moved to its left.
  *
@@ -3250,7 +3307,9 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
  * corner's bevel and facets. A corner that is flat in the source is not a
  * vertex of `eroded` — the arrangement dropped it — so its image is put back
  * into the edge it lies on first, where its arc is a sliver along it. What is
- * the image of nothing — a corner the erosion made — takes `rest`.
+ * the image of nothing — a corner the erosion made — takes `rest`, unless the
+ * source corner nearest it either way round is `flat`: deformed geometry,
+ * which a round leaves square, and so what the erosion makes of it too.
  *
  * The shape is the rings as the construction leaves them, before any
  * arrangement: every arc there, coincident points or not. `rest` is the arcs
@@ -3270,6 +3329,7 @@ export function imaged(
   facets: (i: number) => Facets,
   bevel: (i: number) => number,
   rest: { bevel: number, facets: Facets },
+  flat: (i: number) => boolean = () => false,
 ): Imaged {
   const n = source.length;
   const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
@@ -3312,10 +3372,22 @@ export function imaged(
   const made: Point[][] = [];
 
   const shape = owned.map(ring => {
+    /** Whether a corner the erosion made is next to deformed geometry: the
+     * source corner nearest it, one way round or the other, is flat. */
+    const beside = (k: number): boolean => [1, -1].some(way => {
+      for (let s = 1; s < ring.length; s++) {
+        const { owner } = ring[(k + way * s + ring.length * s) % ring.length];
+
+        if (owner >= 0) return flat(owner);
+      }
+
+      return false;
+    });
+    const taking = ring.map((v, k) => (v.owner >= 0 ? null : beside(k) ? { facets: SQUARE, bevel: 0 } : rest));
     const run = arcs(
       ring.map(v => v.p),
-      k => (ring[k].owner >= 0 ? facets(ring[k].owner) : rest.facets),
-      k => (ring[k].owner >= 0 ? bevel(ring[k].owner) : rest.bevel),
+      k => taking[k]?.facets ?? facets(ring[k].owner),
+      k => taking[k]?.bevel ?? bevel(ring[k].owner),
     );
 
     ring.forEach((v, k) => {
