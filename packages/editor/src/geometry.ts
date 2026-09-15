@@ -20,7 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { AABB, Tree, box, build, containsBox, each, emptyTree, expand, ofRings } from './aabb';
+import { Packed, containsBox, eachPacked, ofRings, pack } from './aabb';
 
 export type { Point };
 
@@ -862,18 +862,18 @@ function turn(a: Point, b: Point, p: Point): number {
 
 export interface Field {
   shape: Shape
-  tree: Tree
+  tree: Packed
   /** `a` and `b` of each edge, flattened, four numbers apiece. */
   edges: Float64Array
 }
 
 export function field(shape: Shape): Field {
-  const boxes: { id: number, box: AABB }[] = [];
   let n = 0;
 
   for (const ring of shape) n += ring.length;
 
   const edges = new Float64Array(n * 4);
+  const boxes = new Float64Array(n * 4);
   let id = 0;
 
   for (const ring of shape) {
@@ -886,21 +886,16 @@ export function field(shape: Shape): Field {
       edges[at + 2] = b.x;
       edges[at + 3] = b.y;
 
-      boxes.push({
-        id,
-        box: box(
-          Math.min(a.x, b.x),
-          Math.min(a.y, b.y),
-          Math.max(a.x, b.x),
-          Math.max(a.y, b.y),
-        ),
-      });
+      boxes[at] = Math.min(a.x, b.x);
+      boxes[at + 1] = Math.min(a.y, b.y);
+      boxes[at + 2] = Math.max(a.x, b.x);
+      boxes[at + 3] = Math.max(a.y, b.y);
 
       id++;
     }
   }
 
-  return { shape, tree: build(boxes), edges };
+  return { shape, tree: pack(boxes), edges };
 }
 
 export function fieldWinding(f: Field, p: Point): number {
@@ -908,7 +903,7 @@ export function fieldWinding(f: Field, p: Point): number {
   let w = 0;
 
   // Everything the ray could meet: to the right of `p`, and level with it.
-  each(f.tree, box(p.x, p.y, Infinity, p.y), id => {
+  eachPacked(f.tree, p.x, p.y, Infinity, p.y, id => {
     const at = id * 4;
 
     w += turn(
@@ -980,14 +975,12 @@ export function encloses(outer: Shape, inner: Shape): boolean {
 
       let clear = true;
 
-      each(
+      eachPacked(
         f.tree,
-        expand(box(
-          Math.min(a.x, b.x),
-          Math.min(a.y, b.y),
-          Math.max(a.x, b.x),
-          Math.max(a.y, b.y),
-        ), eps),
+        Math.min(a.x, b.x) - eps,
+        Math.min(a.y, b.y) - eps,
+        Math.max(a.x, b.x) + eps,
+        Math.max(a.y, b.y) + eps,
         id => {
           if (!clear) return;
 
@@ -1177,20 +1170,8 @@ function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
   // The boxes are grown by `eps` because `intersectInto` counts anything within
   // that distance as touching, so two segments can meet without their exact
   // boxes overlapping.
-  const boxes = segs.map((g, id) => ({
-    id,
-    box: expand(
-      box(
-        Math.min(g.a.x, g.b.x),
-        Math.min(g.a.y, g.b.y),
-        Math.max(g.a.x, g.b.x),
-        Math.max(g.a.y, g.b.y),
-      ),
-      eps,
-    ),
-  }));
-
-  const tree = build(boxes);
+  const boxes = boxesOf(segs, eps);
+  const tree = pack(boxes);
   const near: number[] = [];
 
   for (let i = 0; i < primary; i++) {
@@ -1199,7 +1180,7 @@ function split(segs: Seg[], eps: number, primary = segs.length): Seg[] {
     // A pair of primaries would be visited from both ends, so it is taken from
     // the lower one only. A pair with a secondary in it is reached from the
     // primary end alone, so it is always taken.
-    each(tree, boxes[i].box, j => {
+    eachPacked(tree, boxes[i * 4], boxes[i * 4 + 1], boxes[i * 4 + 2], boxes[i * 4 + 3], j => {
       if (j !== i && (j > i || j >= primary)) near.push(j);
     });
 
@@ -1398,23 +1379,27 @@ const NEARBY = 3;
  * meet where the vertex is.
  */
 function touching(s: Seg, u: Seg, ts: Param[], us: Param[], reach: number): boolean {
-  let found = false;
+  // Written out rather than looped over pairs: this is asked of every pair of
+  // segments whose boxes meet, and the loop was allocating its own arrays to
+  // walk four points.
+  // All four, in this order, whatever the first ones found.
+  const one = landed(s, u.a, u.ta, ts, reach);
+  const two = landed(s, u.b, u.tb, ts, reach);
+  const three = landed(u, s.a, s.ta, us, reach);
+  const four = landed(u, s.b, s.tb, us, reach);
 
-  for (const [host, guest, into, ta, tb] of [
-    [s, u, ts, u.ta, u.tb] as const,
-    [u, s, us, s.ta, s.tb] as const,
-  ]) {
-    for (const [p, tag] of [[guest.a, ta] as const, [guest.b, tb] as const]) {
-      const at = footOf(host, p, reach);
+  return one || two || three || four;
+}
 
-      if (at === null) continue;
+/** `p` cut into `host` where it lands, when it lands on it at all. */
+function landed(host: Seg, p: Point, tag: Tag, into: Param[], reach: number): boolean {
+  const at = footOf(host, p, reach);
 
-      addParam(into, at, tag, p);
-      found = true;
-    }
-  }
+  if (at === null) return false;
 
-  return found;
+  addParam(into, at, tag, p);
+
+  return true;
 }
 
 /** How far along a segment a point within `reach` of it sits, or nothing where
@@ -1501,23 +1486,13 @@ export function combineTagged(
  * that comes back empty for all but a handful of a level's segments.
  */
 function clearance(segs: Seg[], reach: number, snap: number): number[] {
-  const boxes = segs.map((s, id) => ({
-    id,
-    box: box(
-      Math.min(s.a.x, s.b.x),
-      Math.min(s.a.y, s.b.y),
-      Math.max(s.a.x, s.b.x),
-      Math.max(s.a.y, s.b.y),
-    ),
-  }));
-
-  const tree = build(boxes);
+  const tree = pack(boxesOf(segs, 0));
   const out = segs.map(() => Infinity);
 
   segs.forEach((s, i) => {
     const mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
 
-    each(tree, expand(box(mx, my, mx, my), reach), j => {
+    eachPacked(tree, mx - reach, my - reach, mx + reach, my + reach, j => {
       if (j === i) return;
 
       const d = toSegment(segs[j], mx, my);
@@ -1531,6 +1506,22 @@ function clearance(segs: Seg[], reach: number, snap: number): number[] {
   });
 
   return out.map(d => d / 2);
+}
+
+/** Each segment's box grown by `by`, four numbers apiece, for `pack`. */
+function boxesOf(segs: readonly Seg[], by: number): Float64Array {
+  const out = new Float64Array(segs.length * 4);
+
+  for (let i = 0; i < segs.length; i++) {
+    const { a, b } = segs[i];
+
+    out[i * 4] = Math.min(a.x, b.x) - by;
+    out[i * 4 + 1] = Math.min(a.y, b.y) - by;
+    out[i * 4 + 2] = Math.max(a.x, b.x) + by;
+    out[i * 4 + 3] = Math.max(a.y, b.y) + by;
+  }
+
+  return out;
 }
 
 /** How far `(x, y)` is from the segment, endpoints included. */
@@ -1706,7 +1697,7 @@ export type Ground = readonly Slot[];
 
 /** One slot's members, each prepared on its own and findable by where it is. */
 interface Slot {
-  tree: Tree
+  tree: Packed
   parts: Field[]
 }
 
@@ -1717,10 +1708,10 @@ interface Slot {
  */
 export function ground(members: Iterable<Member>, slots: number): Ground {
   const all: Slot[] = [];
-  const boxes: { id: number, box: AABB }[][] = [];
+  const boxes: number[][] = [];
 
   for (let k = 0; k < slots; k++) {
-    all.push({ tree: emptyTree, parts: [] });
+    all.push({ tree: pack(new Float64Array(0)), parts: [] });
     boxes.push([]);
   }
 
@@ -1729,11 +1720,13 @@ export function ground(members: Iterable<Member>, slots: number): Ground {
 
     const slot = all[m.slot];
 
-    boxes[m.slot].push({ id: slot.parts.length, box: ofRings(m.shape) });
+    const b = ofRings(m.shape);
+
+    boxes[m.slot].push(b.minX, b.minY, b.maxX, b.maxY);
     slot.parts.push(field(m.shape));
   }
 
-  for (let k = 0; k < slots; k++) all[k].tree = build(boxes[k]);
+  for (let k = 0; k < slots; k++) all[k].tree = pack(Float64Array.from(boxes[k]));
 
   return all;
 }
@@ -1746,7 +1739,7 @@ export function ground(members: Iterable<Member>, slots: number): Ground {
 function covers(slot: Slot, p: Point): boolean {
   let w = 0;
 
-  each(slot.tree, box(p.x, p.y, p.x, p.y), i => {
+  eachPacked(slot.tree, p.x, p.y, p.x, p.y, i => {
     w += fieldWinding(slot.parts[i], p);
   });
 
@@ -2081,18 +2074,8 @@ function cornering(
   // Everything the neighbourhood could put on a point, found by where it is.
   // The boxes are grown by `snap` because a neighbour's edge only has to come
   // within that of a point to be lying on it.
-  const tree = build(segs.map((s, id) => ({
-    id,
-    box: expand(
-      box(
-        Math.min(s.a.x, s.b.x),
-        Math.min(s.a.y, s.b.y),
-        Math.max(s.a.x, s.b.x),
-        Math.max(s.a.y, s.b.y),
-      ),
-      snap,
-    ),
-  })));
+  const tree = pack(boxesOf(segs, snap));
+  const near: number[] = [];
 
   const answered = new Map<number, boolean>();
 
@@ -2103,26 +2086,32 @@ function cornering(
     const mine = known.get(id) ?? [];
     const ways: Way[] = mine.map(w => ({ ...w }));
 
-    each(tree, box(p.x, p.y, p.x, p.y), i => {
+    // In index order: two edges pointing all but the same way are one way, and
+    // which of them it keeps should not depend on how the tree fell.
+    near.length = 0;
+    eachPacked(tree, p.x, p.y, p.x, p.y, i => near.push(i));
+    near.sort((x, y) => x - y);
+
+    for (const i of near) {
       const s = segs[i];
       const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
       const l = Math.hypot(dx, dy);
 
-      if (l === 0) return;
+      if (l === 0) continue;
 
       const ux = dx / l, uy = dy / l;
       const t = (p.x - s.a.x) * ux + (p.y - s.a.y) * uy;
 
       // Off the end of it, or off to one side: not an edge lying on this point.
-      if (t < -snap || t > l + snap) return;
-      if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) return;
+      if (t < -snap || t > l + snap) continue;
+      if (Math.abs((p.x - s.a.x) * uy - (p.y - s.a.y) * ux) > snap) continue;
 
       // One direction for each way there is still edge to go — and only for
       // those. An edge that ends on this point offers nothing in the direction
       // it came from, and a direction with no length is not one.
       if (l - t > snap) add(ways, { x: ux, y: uy }, l - t);
       if (t > snap) add(ways, { x: -ux, y: -uy }, t);
-    });
+    }
 
     // Nothing lies on it but the run itself, so there is nothing to classify:
     // the two directions it came with are the boundary, and the only question
@@ -2271,11 +2260,23 @@ interface Welder {
  * the cut, where there is something to be done about it.
  */
 function welder(snap: number): Welder {
-  const cells = new Map<string, number[]>();
+  // Keyed by a hash of the cell rather than by its name written out, which is
+  // what this spent most of its time doing: a weld is asked about every end of
+  // every segment of every arrangement. Cells that share a hash share a list,
+  // so each point also remembers its own cell and a lookup reads only those.
+  const cells = new Map<number, number[]>();
   const at: Point[] = [];
+  const inX: number[] = [], inY: number[] = [];
+
+  const hash = (cx: number, cy: number) => Math.imul(cx | 0, 0x9e3779b1) ^ (cy | 0);
 
   const look = (cx: number, cy: number, p: Point): number | null => {
-    for (const i of cells.get(`${cx},${cy}`) ?? []) {
+    const here = cells.get(hash(cx, cy));
+
+    if (here === undefined) return null;
+
+    for (const i of here) {
+      if (inX[i] !== cx || inY[i] !== cy) continue;
       if (Math.abs(at[i].x - p.x) <= snap && Math.abs(at[i].y - p.y) <= snap) return i;
     }
 
@@ -2297,11 +2298,13 @@ function welder(snap: number): Welder {
 
       if (found !== null) return found;
 
-      const key = `${cx},${cy}`;
+      const key = hash(cx, cy);
       const here = cells.get(key);
       const i = at.length;
 
       at.push(p);
+      inX.push(cx);
+      inY.push(cy);
 
       if (here === undefined) {
         cells.set(key, [i]);
@@ -2548,6 +2551,781 @@ function norm(t: number): number {
 
   return x;
 }
+
+// -----------------------------------------------------------------------------
+// Effects: deform and round
+//
+// A deform happens to a thing's rings before anything else does: each edge is
+// subdivided and its new corners pushed off it in a pattern, as though they
+// had been drawn by hand (`subdivided`). From there they are corners like any
+// other — eroded, rounded, carried by the bake — so they appear, go and move
+// the way corners do, and the machinery for that is the one already there.
+//
+// A round happens after the erosion, to the boundary: each corner becomes a
+// curve leaving each of its two edges along it and with no curvature, so it
+// runs into them with no seam (`rounded`, and see `Curve`), teeth included. A
+// round's amount is its bevel: how deep from the corner, along each edge, its
+// curve starts — the same at any angle, so a sharp corner and a blunt one are
+// cut back alike. It is faceted where it bends: see `spread`. It is the same
+// bevel wherever it is, since it is taken of what is seen; and a group's is
+// taken of its union, so the joins between its rooms are not rounded.
+//
+// A rounded corner is always `n + 1` points, whatever its bevel, nought
+// included, and in the thing's own frame every point is linear in the bevel:
+// each is the corner plus multiples of it along its two edge directions, the
+// multiples of the corner's angle alone. Where a bevel of nought makes an arc's points coincide
+// they are still all there, on one point, and the arrangement welds them; the
+// bake seeds such an end rather than collapse it. A corner running straight
+// through never collapses: its arc is a sliver of a run along its wall, which
+// lies on an edge whatever the edges beside it do, so `keeping` can always
+// put it back.
+// -----------------------------------------------------------------------------
+
+/** How a deformed edge is pushed: sharp teeth, a wave, or seeded noise. */
+export type Pattern = 'zigzag' | 'sine' | 'noise';
+
+/** Which way off its line: out of the material, into it, or both. */
+export type Sides = 'in' | 'out' | 'both';
+
+/**
+ * The effects on a boundary, for the geometry: how many points each makes,
+ * and how a deform goes. The amounts are asked for per corner and per edge.
+ */
+export interface Effecting {
+  /** How far apart a deformed edge's teeth are, as a length in the world —
+   * see `patternRun`. Nought where edges are not deformed. */
+  spacing: number
+  pattern: Pattern
+  seed: number
+  sides: Sides
+  /** How far each tooth may stray from where the spacing puts it, as a
+   * fraction of the spacing: the gaps between teeth come out anywhere within
+   * that fraction of the spacing either way. Below one, so that no two teeth
+   * pass each other. */
+  jitter: number
+}
+
+/** No effects at all: every corner a point and every edge straight. */
+export const PLAIN: Effecting = { spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+
+/** An edge's teeth: each a fraction of the way along it, a distance off it
+ * out of the material where positive, and which tooth it is, counted from
+ * the middle of the edge. */
+export interface EdgeRun {
+  along: readonly number[]
+  across: readonly number[]
+  teeth: readonly number[]
+}
+
+/**
+ * An edge's teeth as the pattern lays them along an edge of `length`: a tooth
+ * every `spacing` out from its middle, as far as the edge goes either way,
+ * each off it by `amplitude` of the pattern.
+ *
+ * A tooth near an end of the edge is only as tall as it has room to be: one
+ * spacing from the end and nearer, it shrinks with the distance, and at the
+ * end it is nothing. So the pattern is continuous in where the edge's ends
+ * are. An edge growing gains teeth at its ends out of nothing, and shrinking
+ * loses them into nothing; none of the others moves off the spacing, and the
+ * pattern is about as dense on every edge. Tooth `j` is the same tooth
+ * however long the edge is.
+ *
+ * With a jitter, each tooth is moved off its place along the edge by up to
+ * half the jitter's share of the spacing, either way, by the seed: its own
+ * stray, the same however long the edge is, so the pattern stays continuous.
+ */
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number): EdgeRun {
+  const anchor = length / 2;
+  const along: number[] = [], across: number[] = [], teeth: number[] = [];
+
+  if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
+
+  const first = Math.ceil(-anchor / e.spacing), last = Math.floor((length - anchor) / e.spacing);
+
+  for (let j = first; j <= last; j++) {
+    const stray = e.jitter > 0 ? e.jitter * e.spacing * (hashed(e.seed, ~key, j) - 0.5) : 0;
+    const at = anchor + j * e.spacing + stray;
+    const room = Math.min(1, Math.min(at, length - at) / e.spacing);
+
+    if (room <= 0) continue;
+
+    along.push(at / length);
+    across.push(amplitude * room * patterned(e, key, j));
+    teeth.push(j);
+  }
+
+  return { along, across, teeth };
+}
+
+/**
+ * How far off its line tooth `j` of an edge is pushed, as a fraction of the
+ * amplitude: out of the material where it is positive.
+ *
+ * `j` counts out from the middle of the edge, either way. `key` is the edge's
+ * own, so that noise belongs to the edge rather than to wherever it is in the
+ * ring today.
+ */
+export function patterned(e: Effecting, key: number, j: number): number {
+  let v: number;
+
+  switch (e.pattern) {
+    case 'zigzag':
+      v = j % 2 === 0 ? 1 : -1;
+      break;
+    case 'sine':
+      // Six to a wave, and none on a zero: three points about a zero crossing
+      // of anything so even are in a line, and the arrangement would drop the
+      // middle one.
+      v = Math.cos(Math.PI * j / 3);
+      break;
+    case 'noise':
+      v = hashed(e.seed, key, j) * 2 - 1;
+      break;
+  }
+
+  // One way only, the pattern is lifted off the line rather than folded onto
+  // it: a zigzag stays teeth, which folded it would not.
+  if (e.sides === 'out') return (1 + v) / 2;
+  if (e.sides === 'in') return -(1 + v) / 2;
+
+  return v;
+}
+
+/** Three integers to a number in [0, 1), the same every time. */
+function hashed(a: number, b: number, c: number): number {
+  let h = 0x9e3779b9 ^ Math.imul(a | 0, 0x85ebca6b);
+
+  h = Math.imul(h ^ (b | 0), 0xc2b2ae35);
+  h ^= h >>> 16;
+  h = Math.imul(h ^ (c | 0), 0x27d4eb2f);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * One corner of a ring a deform has been through: an input corner (`j` is
+ * null), or tooth `j` of the edge starting at input corner `from`.
+ */
+export interface Subdivision {
+  at: Point
+  from: number
+  j: number | null
+  /** How far along its edge, as a fraction: nought for an input corner. */
+  along: number
+}
+
+/**
+ * A ring with its edges subdivided and perturbed, before anything else is
+ * done to it: as though its teeth had been drawn by hand. Each edge gets a
+ * tooth every `e.spacing` out from its middle, off it by `amplitude(i)` of the
+ * pattern, and the teeth are corners like any other from here on — eroded,
+ * rounded, and carried by the bake — so they appear, go and move as corners
+ * do. See `patternRun` for how they are laid and why they are continuous in
+ * where the edge's ends are.
+ *
+ * `out` is which side of the ring's edges is out of the material: 1 for the
+ * right, which a counter-clockwise outline has, and -1 for the left. `key`
+ * names each edge to the noise.
+ */
+export function subdivided(
+  ring: Ring,
+  e: Effecting,
+  amplitude: (i: number) => number,
+  key: (i: number) => number,
+  out: 1 | -1,
+): Subdivision[] {
+  const n = ring.length;
+  const done: Subdivision[] = [];
+
+  ring.forEach((a, i) => {
+    done.push({ at: a, from: i, j: null, along: 0 });
+
+    const b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    if (l === 0) return;
+
+    const nx = dy / l * out, ny = -dx / l * out;
+    const run = patternRun(e, key(i), amplitude(i), l);
+
+    run.along.forEach((u, k) => done.push({
+      at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
+      from: i,
+      j: run.teeth[k],
+      along: u,
+    }));
+  });
+
+  return done;
+}
+
+/**
+ * How a corner's arc is faceted: `n + 1` points, laid as an arc of `from`
+ * segments at the near end of a span and of `to` at the far, `at` of the way
+ * across. An arc of fewer segments than `n` has its other points on its
+ * facets, straight between the points it turns at, so it is the same outline
+ * as that arc alone; the bake keeps them there, and their verticals come up
+ * as the arc gains its segments. At a keyframe the three are one. `n` of
+ * nought is a corner not rounded. `tension` is the curve's: see `curveOf`.
+ */
+export interface Facets {
+  n: number
+  from: number
+  to: number
+  at: number
+  tension: number
+}
+
+/** The tension a round starts with. See `curveOf`. */
+export const TENSION = 0.5;
+
+/** A corner rounded in `n` segments, standing still. */
+export function facetsOf(n: number, tension = TENSION): Facets {
+  return { n, from: n, to: n, at: 0, tension };
+}
+
+/** A corner not rounded. */
+export const SQUARE: Facets = facetsOf(0);
+
+/**
+ * The curve a corner is rounded along, for a corner at the origin whose edges
+ * leave it along `a` and `b` and a bevel of one: `a · A(u) + b · B(u)`, `u`
+ * from nought at the tangent point on `a` to one at the one on `b`.
+ *
+ * A quintic Bézier whose first three control points lie along `a` — at one,
+ * `near` and `inner` of the bevel from the corner — and whose last three
+ * mirror them along `b`. Three in a line at each end is what makes it leave
+ * each edge not only along it but with no curvature at all, so the edge runs
+ * into it with no seam to be seen, where a circle's curvature jumps from
+ * nothing to all of it at the tangent point. It bends least at its ends and
+ * most in its middle, and that is where `spread` puts its points.
+ *
+ * How far in the two stand is its tension (see `TENSION`): at nought they
+ * are out along the edges, and the curve bends about as evenly as a circle;
+ * at one they are pulled into the corner, and it runs straight off its edges
+ * and turns hard in its middle.
+ *
+ * `A` and `B` are of `u` alone, not of the corner, so every point of it is
+ * the bevel times something of the corner's angle: linear in the bevel.
+ */
+interface Curve {
+  alongA: number[]
+  alongB: number[]
+  /** At each of the samples: both weights' first and second derivatives,
+   * which are all the curvature needs and are the same at every corner. */
+  sampled: { a1: number, b1: number, a2: number, b2: number }[]
+  /** How far a bevel of one in one segment can be off it: see `sagging`. */
+  sagging: number
+}
+
+const curves = new Map<number, Curve>();
+
+/** The curve at a tension, worked out once for each. */
+function curveOf(tension: number): Curve {
+  const known = curves.get(tension);
+
+  if (known !== undefined) return known;
+
+  const t = Math.min(1, Math.max(0, tension));
+  const near = 0.7 - 0.3 * t, inner = 0.45 * (1 - t);
+  const alongA = [1, near, inner, 0, 0, 0];
+  const alongB = [0, 0, 0, inner, near, 1];
+
+  const sampled = Array.from({ length: SAMPLES + 1 }, (_s, k) => {
+    const u = k / SAMPLES;
+
+    return {
+      a1: bezier(differenced(alongA), u),
+      b1: bezier(differenced(alongB), u),
+      a2: bezier(differenced(differenced(alongA)), u),
+      b2: bezier(differenced(differenced(alongB)), u),
+    };
+  });
+
+  const partial = { alongA, alongB, sampled, sagging: 0 };
+  const curve = { ...partial, sagging: sagging(partial) };
+
+  curves.set(tension, curve);
+
+  return curve;
+}
+
+/** A one-dimensional Bézier of `c`'s control values at `u`. */
+function bezier(c: readonly number[], u: number): number {
+  const d = c.length - 1;
+  let out = 0;
+
+  for (let k = 0; k <= d; k++) out += c[k] * binomial(d, k) * Math.pow(u, k) * Math.pow(1 - u, d - k);
+
+  return out;
+}
+
+function binomial(n: number, k: number): number {
+  let out = 1;
+
+  for (let i = 1; i <= k; i++) out = out * (n - k + i) / i;
+
+  return out;
+}
+
+/** A Bézier's control values differenced: its derivative's, over `d`. */
+function differenced(c: readonly number[]): number[] {
+  return c.slice(1).map((x, k) => (x - c[k]) * (c.length - 1));
+}
+
+/** How finely `spread` reads the curve. */
+const SAMPLES = 48;
+
+/**
+ * How much each sample of the curve counts, for a corner whose edges' ways
+ * out meet at a cosine of `c`: `√κ · |C′|`, less the `√(sin θ)` every sample
+ * has alike. A facet over a stretch where that adds to `e` is off the curve
+ * by about `e² / 8`, so points laid where it adds up evenly are off by the
+ * same everywhere: close where the curve bends, far apart where it does not.
+ */
+function weights(curve: Curve, c: number): number[] {
+  return curve.sampled.map(({ a1, b1, a2, b2 }) => {
+    const speed = Math.sqrt(Math.max(0, a1 * a1 + b1 * b1 + 2 * a1 * b1 * c));
+
+    return Math.sqrt(Math.abs(a1 * b2 - b1 * a2) / Math.max(speed, 1e-12));
+  });
+}
+
+/** The weights added up along the curve, from nought. */
+function added(w: readonly number[]): number[] {
+  const out = [0];
+
+  for (let k = 1; k < w.length; k++) out.push(out[k - 1] + (w[k - 1] + w[k]) / 2 / SAMPLES);
+
+  return out;
+}
+
+/**
+ * Where on the curve `s` segments turn, for a corner whose ways out meet at a
+ * cosine of `c`: `s + 1` values of `u`, from nought to one, spread evenly by
+ * `weights`. Of the corner's angle alone — so the points are still linear in
+ * the bevel — and continuous in it, a corner running straight through
+ * included: every sample's `√(sin θ)` has been taken out, so what is left
+ * does not vanish there. Evenly along the curve where nothing is to be read.
+ */
+export function spread(c: number, s: number, tension = TENSION): number[] {
+  return spreadOn(curveOf(tension), c, s);
+}
+
+function spreadOn(curve: Curve, c: number, s: number): number[] {
+  const sum = added(weights(curve, c));
+  const total = sum[SAMPLES];
+
+  return Array.from({ length: s + 1 }, (_q, q) => {
+    if (q === 0) return 0;
+    if (q === s) return 1;
+    if (!(total > 1e-12)) return q / s;
+
+    const want = total * q / s;
+    let k = 0;
+
+    while (k < SAMPLES - 1 && sum[k + 1] < want) k++;
+
+    const f = (want - sum[k]) / Math.max(sum[k + 1] - sum[k], 1e-300);
+
+    return (k + Math.min(1, Math.max(0, f))) / SAMPLES;
+  });
+}
+
+/**
+ * How far a bevel of one in one segment can be off its curve, whatever the
+ * corner's angle, such that `k` segments are off by that over `k²` at most.
+ *
+ * Measured rather than worked out: the facets `spread` lays, held against the
+ * curve read finely, over a spread of angles and of counts, the worst of each
+ * taken times its count squared. `e² / 8` over `weights` is what that comes
+ * to for many short facets, and is why the square; a few long ones sag a
+ * little more than it says, which is why it is measured. With a twentieth
+ * over, for the angles between the ones measured.
+ */
+function sagging(curve: Curve): number {
+  const FINE = 256;
+  let worst = 0;
+
+  for (let d = 1; d < 90; d++) {
+    const theta = Math.PI * d / 90;
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const at = (u: number): Point => {
+      const p = bezier(curve.alongA, u), q = bezier(curve.alongB, u);
+
+      return { x: p + c * q, y: s * q };
+    };
+    const fine = Array.from({ length: FINE + 1 }, (_f, f) => at(f / FINE));
+
+    for (const k of [1, 2, 3, 4, 6, 8, 12]) {
+      const facets = spreadOn(curve, c, k).map(at);
+      let off = 0;
+
+      for (const p of fine) off = Math.max(off, Math.min(...facets.slice(1).map((q, j) => fromSegment(p, facets[j], q))));
+
+      worst = Math.max(worst, off * k * k);
+    }
+  }
+
+  return worst * 1.05;
+}
+
+/** How far `p` is from the segment `a`–`b`. */
+function fromSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  const f = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+
+  return Math.hypot(p.x - a.x - dx * f, p.y - a.y - dy * f);
+}
+
+/** The most segments a round is given, however fine it is asked to be. */
+export const FINEST = 64;
+
+/**
+ * How many segments a bevel of `bevel` needs to lie within `precision` of
+ * its curve at any angle: the fewest that do, one at the least. A length, as the
+ * bevel is, so a round is as smooth to the eye wherever it is.
+ *
+ * Of the bevel and nothing else — not the corner's angle, nor what its
+ * neighbours leave it — so that a span knows every corner's count at both
+ * ends from its amounts alone. What the angle and the clamping take off the
+ * arc only makes it sag less.
+ */
+export function segmentsFor(bevel: number, precision: number, tension = TENSION): number {
+  if (!(bevel > 0) || !(precision > 0)) return 1;
+
+  return Math.min(FINEST, Math.max(1, Math.ceil(Math.sqrt(curveOf(tension).sagging * bevel / precision))));
+}
+
+/** The precision that makes `segments` of `bevel`, and no fewer: for tests. */
+export function precisionFor(segments: number, bevel: number, tension = TENSION): number {
+  return curveOf(tension).sagging * bevel / (segments * segments) * (1 + 1e-9);
+}
+
+/**
+ * A ring with its corners rounded: for each corner in order, the `n + 1`
+ * points of its arc from the edge coming in to the edge going out, faceted
+ * as `Facets` says.
+ *
+ * The arc is tangent to both edges, `bevel` along each from the corner, or
+ * less where the corner barely turns (see `BLUNT`), and clamped to half of
+ * each edge less what the neighbour takes of it — all of what is left, where
+ * the neighbour wants less than half. A bevel of nought is its arc's points
+ * all on the corner.
+ *
+ * Nothing here cares which way the ring is wound: an arc lies inside the
+ * angle of its corner, which takes material off a corner that turns in and
+ * adds it to one that turns out.
+ */
+function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) => number): Point[][] {
+  const n = ring.length;
+  const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
+  const unit = (from: Point, to: Point, l: number): Point | null =>
+    l === 0 ? null : { x: (to.x - from.x) / l, y: (to.y - from.y) / l };
+
+  // Each corner's two ways out, towards the corner before and the one after.
+  const ways = ring.map((v, i) => ({
+    a: unit(v, ring[(i - 1 + n) % n], lengths[(i - 1 + n) % n]),
+    b: unit(v, ring[(i + 1) % n], lengths[i]),
+  }));
+
+  // A corner that barely turns is cut back less than its bevel, down to a
+  // sliver of it where it runs straight through. A corner arriving on an edge
+  // is flat as it comes, and at its whole bevel it would take room from the
+  // arcs beside it the instant it appeared, and move them. A sliver rather
+  // than none: its arc is then a short straight run along the wall, not all
+  // of its points on one, so it keeps every one of them whatever lies beside
+  // it. Still linear in the bevel.
+  const wants = ring.map((_v, i) => {
+    const { a, b } = ways[i];
+    const d = Math.max(0, bevel(i));
+
+    if (facetsOf(i).n === 0 || d === 0 || a === null || b === null) return 0;
+
+    const turn = Math.PI - Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y);
+
+    return d * Math.max(SEEDING, Math.sin(Math.PI / 2 * Math.min(1, turn / BLUNT)));
+  });
+
+  const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
+
+  return ring.map((v, i) => arc(v, i));
+
+  function arc(v: Point, i: number): Point[] {
+    const { a, b } = ways[i];
+    const before = (i - 1 + n) % n, after = (i + 1) % n;
+    const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
+    const facets = facetsOf(i);
+    const out: Point[] = [];
+
+    if (t === 0 || a === null || b === null) {
+      for (let k = 0; k <= facets.n; k++) out.push(v);
+
+      return out;
+    }
+
+    const t1 = { x: v.x + a.x * t, y: v.y + a.y * t };
+    const t2 = { x: v.x + b.x * t, y: v.y + b.y * t };
+
+    // Along the curve: the corner plus `t` times a combination of its two
+    // ways out that is of `u` alone — see `Curve` — so linear in the bevel. A
+    // corner running straight through is a straight run along its wall, from
+    // one tangent point to the other.
+    const c = a.x * b.x + a.y * b.y;
+    const curve = curveOf(facets.tension);
+
+    /** The point `u` of the way along the curve; both tangent points exact. */
+    const on = (u: number): Point => {
+      if (u <= 0) return t1;
+      if (u >= 1) return t2;
+
+      const p = bezier(curve.alongA, u) * t, q = bezier(curve.alongB, u) * t;
+
+      return { x: v.x + a.x * p + b.x * q, y: v.y + a.y * p + b.y * q };
+    };
+
+    /** The `n + 1` points laid as an arc of `s` segments: its own points at
+     * `n / s` apart, as near as whole points go, and the rest along the
+     * facets between them. Each is linear in `t`, as `on` is. */
+    const laid = (s: number): Point[] => {
+      const turns = spreadOn(curve, c, s).map(on);
+      const index = (q: number): number => Math.round(q * facets.n / s);
+      const out: Point[] = [];
+
+      for (let q = 0; q < s; q++) {
+        const p = turns[q], r = turns[q + 1], from = index(q), to = index(q + 1);
+
+        for (let j = from; j < to; j++) {
+          const f = (j - from) / (to - from);
+
+          out.push(f === 0 ? p : { x: mix(p.x, r.x, f), y: mix(p.y, r.y, f) });
+        }
+      }
+
+      out.push(turns[s]);
+
+      return out;
+    };
+
+    const near = laid(Math.max(1, Math.min(facets.n, facets.from)));
+
+    if (facets.from === facets.to || facets.at === 0) return near;
+
+    const far = laid(Math.max(1, Math.min(facets.n, facets.to)));
+
+    if (facets.at === 1) return far;
+
+    return near.map((p, j) => ({ x: mix(p.x, far[j].x, facets.at), y: mix(p.y, far[j].y, facets.at) }));
+  }
+}
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** A ring with each corner an arc of `segments + 1` points, tangent to both
+ * its edges. See `arcs`. */
+export function rounded(ring: Ring, bevel: (i: number) => number, segments: number, tension = TENSION): Ring {
+  return arcs(ring, () => facetsOf(segments, tension), bevel).flat();
+}
+
+/** The arcs of a whole shape, rounded alike everywhere, one run per corner:
+ * what `effected` builds, before the arrangement. */
+export function arcRuns(shape: Shape, facets: Facets, bevel: number): Point[][] {
+  if (bevel <= 0 || facets.n <= 0) return [];
+
+  return shape.flatMap(ring => arcs(ring, () => facets, () => bevel));
+}
+
+/** A point with how solid the vertical standing on it is. */
+export interface Fade {
+  p: Point
+  v: number
+}
+
+/** Which of `n + 1` points an arc laid in `s` segments turns at: the rest
+ * are on its facets. See `arcs`. */
+function turning(n: number, s: number): boolean[] {
+  const segments = Math.max(1, Math.min(n, s));
+  const out = new Array<boolean>(n + 1).fill(false);
+
+  for (let q = 0; q <= segments; q++) out[Math.round(q * n / segments)] = true;
+
+  return out;
+}
+
+/**
+ * The points of an arc that are on its facets at one end of a span or the
+ * other, each as solid as it is corner: nought at the end where it lies
+ * straight, whole at the end where the arc turns there, and in between as
+ * far as the arc has gone over. Nothing for an arc laid alike at both ends.
+ * What the bake fades these points' verticals by, and — at an end, where
+ * they are nought — what it keeps through the arrangement.
+ */
+export function facetFades(run: readonly Point[], f: Facets): Fade[] {
+  if (f.n === 0 || (f.from === f.to && f.from >= f.n)) return [];
+
+  const near = turning(f.n, f.from), far = turning(f.n, f.to);
+
+  return run.flatMap((p, j) => (near[j] && far[j] ? [] : [{ p, v: mix(near[j] ? 1 : 0, far[j] ? 1 : 0, f.at) }]));
+}
+
+/** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
+ * Out is to the right of the way round, as a counter-clockwise ring has it. */
+export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effecting, key: (i: number) => number = i => i): Ring {
+  return subdivided(ring, e, amplitude, key, 1).map(c => c.at);
+}
+
+/**
+ * A whole shape rounded alike everywhere, and taken through the arrangement:
+ * what a group does to its union, which has no corners of its own to name.
+ */
+export function effected(shape: Shape, facets: Facets, bevel: number): Cut {
+  if (bevel <= 0 || facets.n <= 0) return simplify(shape);
+
+  return simplify(shape.map(ring => arcs(ring, () => facets, () => bevel).flat()));
+}
+
+/**
+ * Where corner `i` of a ring lands once the ring is offset by `depth` — the
+ * meeting point of its two edges after each has moved to its left.
+ *
+ * This is `erode`'s own construction rather than a guess at it: every surviving
+ * edge lies on a translate of its own line, so the corner between two of them is
+ * where those translates cross. Two edges that run exactly straight through the
+ * corner never cross, and then the answer is the corner moved along the shared
+ * normal, which is that construction's limit rather than a case beside it.
+ *
+ * `null` where the corner is not on the offset boundary at all: a ring that
+ * doubles back on itself sends the meeting point off towards infinity, and a
+ * deep enough offset eats the edges the corner stood between.
+ */
+export function mitred(ring: Ring, rings: readonly number[], i: number, depth: number): Point | null {
+  const n = ring.length;
+  const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
+
+  const ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy);
+  const vx = c.x - b.x, vy = c.y - b.y, vl = Math.hypot(vx, vy);
+
+  if (ul === 0 || vl === 0) return null;
+
+  const p = { x: ux / ul, y: uy / ul };
+  const q = { x: vx / vl, y: vy / vl };
+
+  // Both moved lines pass through the corner's own offset, one for each edge.
+  const pa = { x: b.x - p.y * depth, y: b.y + p.x * depth };
+  const qa = { x: b.x - q.y * depth, y: b.y + q.x * depth };
+
+  const turn = p.x * q.y - p.y * q.x;
+
+  if (Math.abs(turn) < 1e-12) return pa;
+
+  const s = ((qa.x - pa.x) * q.y - (qa.y - pa.y) * q.x) / turn;
+
+  return { x: pa.x + p.x * s, y: pa.y + p.y * s };
+}
+
+/**
+ * An eroded boundary rounded, and where each corner of the source landed in
+ * it: corner `i` as the run of its arc, or `null` for a corner not on the
+ * eroded boundary at all.
+ *
+ * The one construction for both. A source corner's image is where `mitred`
+ * puts it, matched to a vertex of `eroded` by position; that vertex takes the
+ * corner's bevel and facets. A corner that is flat in the source is not a
+ * vertex of `eroded` — the arrangement dropped it — so its image is put back
+ * into the edge it lies on first, where its arc is a sliver along it. What is
+ * the image of nothing — a corner the erosion made — takes `rest`.
+ *
+ * The shape is the rings as the construction leaves them, before any
+ * arrangement: every arc there, coincident points or not. `rest` is the arcs
+ * of the corners the erosion made, which no source corner names.
+ */
+export interface Imaged {
+  shape: Shape
+  corners: (Point[] | null)[]
+  rest: Point[][]
+}
+
+export function imaged(
+  eroded: Shape,
+  source: Ring,
+  rings: readonly number[],
+  depth: (i: number) => number,
+  facets: (i: number) => Facets,
+  bevel: (i: number) => number,
+  rest: { bevel: number, facets: Facets },
+): Imaged {
+  const n = source.length;
+  const images = source.map((_p, i) => mitred(source, rings, i, depth(i)));
+  const snap = extentOf(eroded.length > 0 ? eroded : [source]) * 1e-7;
+  const at = (p: Point, q: Point): boolean => Math.hypot(p.x - q.x, p.y - q.y) <= snap;
+
+  // Each ring's vertices, with the source corner each is the image of.
+  const owned = eroded.map(ring => ring.map(p => ({ p, owner: images.findIndex(m => m !== null && at(m, p)) })));
+  const placed = new Set(owned.flatMap(ring => ring.map(v => v.owner)));
+
+  // The flat corners, put back on the edge they lie on.
+  for (let i = 0; i < n; i++) {
+    const m = images[i];
+
+    if (m === null || placed.has(i)) continue;
+
+    let best: { ring: number, index: number, along: number } | null = null;
+
+    owned.forEach((ring, r) => ring.forEach((v, k) => {
+      const w = ring[(k + 1) % ring.length].p;
+      const dx = w.x - v.p.x, dy = w.y - v.p.y, l = Math.hypot(dx, dy);
+
+      if (l === 0) return;
+
+      const off = Math.abs((m.x - v.p.x) * dy - (m.y - v.p.y) * dx) / l;
+      const along = ((m.x - v.p.x) * dx + (m.y - v.p.y) * dy) / l;
+
+      if (off <= snap && along > snap && along < l - snap && best === null) best = { ring: r, index: k, along };
+    }));
+
+    if (best === null) continue;
+
+    const { ring, index } = best;
+
+    owned[ring].splice(index + 1, 0, { p: m, owner: i });
+    placed.add(i);
+  }
+
+  const corners: (Point[] | null)[] = source.map(() => null);
+  const made: Point[][] = [];
+
+  const shape = owned.map(ring => {
+    const run = arcs(
+      ring.map(v => v.p),
+      k => (ring[k].owner >= 0 ? facets(ring[k].owner) : rest.facets),
+      k => (ring[k].owner >= 0 ? bevel(ring[k].owner) : rest.bevel),
+    );
+
+    ring.forEach((v, k) => {
+      if (v.owner >= 0) corners[v.owner] = run[k];
+      else made.push(run[k]);
+    });
+
+    return run.flat();
+  });
+
+  return { shape, corners, rest: made };
+}
+
+/** How little a corner may turn and still be cut back its whole bevel: less,
+ * and it is cut back in proportion, down to `SEEDING` of it. See `arcs`. */
+const BLUNT = Math.PI / 6;
+
+/** How far apart what would otherwise be one point is laid, against what it
+ * grows to: small enough to read as a point, and far above the arrangement's
+ * own tolerance. A straight corner's cut against its bevel, and the bake's
+ * amount at nought against the other end's. */
+export const SEEDING = 1e-3;
 
 // -----------------------------------------------------------------------------
 // Rings that are made rather than drawn

@@ -11,7 +11,24 @@
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
 
-import { Entry, Erode, Keyframe, KeyframeId, Move, Op, Rig, cornered, counted1, indexIn, skipping, withKeys } from './rig';
+import {
+  Amount,
+  CornerKind,
+  Entry,
+  Keyframe,
+  KeyframeId,
+  Move,
+  Op,
+  Rig,
+  blank,
+  cornerMapOf,
+  cornered,
+  counted1,
+  eachCornerMap,
+  indexIn,
+  skipping,
+  withKeys,
+} from './rig';
 import { rigOf, withRig, without } from './scene';
 import { Id, VertexId, World } from './types';
 
@@ -21,8 +38,8 @@ export type Which = number | readonly number[] | Op['kind'] | 'all';
 
 /**
  * Where one entry is written: the `index`-th of what keyframe `at` does to a
- * thing, or a corner's nudge or depth there, which have maps of their own —
- * see `Rig`. What the keyframe view picks.
+ * thing, or a corner's nudge, depth, round or deform there, which have maps of
+ * their own — see `Rig`. What the keyframe view picks.
  */
 export type Place = Listed | Cornered;
 
@@ -36,7 +53,7 @@ export interface Cornered {
   id: Id
   at: KeyframeId
   corner: VertexId
-  kind: 'move' | 'erode'
+  kind: CornerKind
 }
 
 export function samePlace(a: Place, b: Place): boolean {
@@ -219,7 +236,7 @@ export function entryAt(world: World, p: Place): Entry | undefined {
 
   if ('index' in p) return rig.keys.get(p.at)?.[p.index];
 
-  return (p.kind === 'move' ? rig.nudges : rig.depths).get(p.corner)?.get(p.at);
+  return rig[cornerMapOf(p.kind)].get(p.corner)?.get(p.at);
 }
 
 /** The entry at `p` written over with `e`, or taken out. */
@@ -233,9 +250,9 @@ function rewritten(world: World, p: Place, e: Entry | null): World {
     return withRig(world, p.id, withKeys(rig, p.at, now));
   }
 
-  return withRig(world, p.id, p.kind === 'move'
-    ? { ...rig, nudges: cornered(rig.nudges, p.corner, p.at, e as Entry<Move> | null) }
-    : { ...rig, depths: cornered(rig.depths, p.corner, p.at, e as Entry<Erode> | null) });
+  const map = cornerMapOf(p.kind);
+
+  return withRig(world, p.id, { ...rig, [map]: cornered(rig[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry>>, p.corner, p.at, e) });
 }
 
 /** Places in one thing's list at one keyframe, together, and the corners' one
@@ -333,16 +350,16 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
       return { refused: 'a corner would have two repeats at one keyframe' };
     }
 
-    landed = { ...there, op: added(moved.op as Move | Erode, there.op as Move | Erode) };
+    landed = { ...there, op: added(moved.op as Move | Amount, there.op as Move | Amount) };
   }
 
   return rewritten(rewritten(world, p, null), { ...p, at: to }, landed);
 }
 
-/** Two nudges or two depths of one corner, as one. */
-function added<O extends Move | Erode>(a: O, b: O): O {
+/** Two of one corner's entries of one kind, as one. */
+function added<O extends Move | Amount>(a: O, b: O): O {
   if (a.kind === 'move' && b.kind === 'move') return { kind: 'move', by: { x: a.by.x + b.by.x, y: a.by.y + b.by.y } } as O;
-  if (a.kind === 'erode' && b.kind === 'erode') return { kind: 'erode', by: a.by + b.by } as O;
+  if (a.kind !== 'move' && b.kind === a.kind) return { kind: a.kind, by: a.by + (b as Amount).by } as O;
 
   return b;
 }
@@ -368,16 +385,12 @@ function stepsAt(keyframes: readonly Keyframe[], e: Entry, j: number, i: number)
 }
 
 /** Every entry of a rig, wherever it is written, through `f`: the lists and
- * both corner maps. */
+ * every corner map. */
 function everyEntry(rig: Rig, f: <E extends Entry>(e: E, k: KeyframeId) => E): Rig {
   const maps = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
     new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, f(e, k)]))]));
 
-  return {
-    keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(e => f(e, k))])),
-    nudges: maps(rig.nudges),
-    depths: maps(rig.depths),
-  };
+  return eachCornerMap({ ...rig, keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(e => f(e, k))])) }, maps);
 }
 
 export interface Inserted {
@@ -460,14 +473,19 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
     if (next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
 
-    const nudges = cornerMaps<Move, Entry<Move>>(rig.nudges, k, next, added);
-    const depths = cornerMaps<Erode, Entry<Erode>>(rig.depths, k, next, added);
+    let refused = false;
 
-    if (nudges === null || depths === null) {
-      return { refused: 'a corner would have two repeats at one keyframe' };
-    }
+    const handed = eachCornerMap({ ...rig, keys }, m => {
+      const out = cornerMaps(m, k, next, added);
 
-    rigs.set(id, { keys, nudges, depths });
+      if (out === null) refused = true;
+
+      return out ?? m;
+    });
+
+    if (refused) return { refused: 'a corner would have two repeats at one keyframe' };
+
+    rigs.set(id, handed);
   }
   // A death moved off `k`, or nothing for what was born there.
   const life = <T extends { birth: KeyframeId, death: KeyframeId | null }>(it: T): T | null => {
@@ -524,10 +542,7 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
   if (corners.size > 0) {
     for (const [id, rig] of rigs) {
-      const nudges = new Map([...rig.nudges].filter(([v]) => !corners.has(v)));
-      const depths = new Map([...rig.depths].filter(([v]) => !corners.has(v)));
-
-      rigs.set(id, { ...rig, nudges, depths });
+      rigs.set(id, eachCornerMap(rig, m => new Map([...m].filter(([v]) => !corners.has(v)))));
     }
   }
 
@@ -537,7 +552,7 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
     polygons,
     artefacts,
     paths,
-    rigs: new Map([...rigs].filter(([, r]) => r.keys.size > 0 || r.nudges.size > 0 || r.depths.size > 0)),
+    rigs: new Map([...rigs].filter(([, r]) => !blank(r))),
   };
 
   return gone.size === 0 ? out : without(out, gone);
@@ -620,11 +635,7 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
 
   const rig = rigOf(world, id);
 
-  return withRig(out, id, {
-    keys: entries(rig.keys, list => list.map(entry)),
-    nudges: corners(rig.nudges),
-    depths: corners(rig.depths),
-  });
+  return withRig(out, id, eachCornerMap({ ...rig, keys: entries(rig.keys, list => list.map(entry)) }, corners));
 }
 
 /**
@@ -651,11 +662,11 @@ export function redied(world: World, id: Id, at: KeyframeId | null): World | Ref
 
 /** A rig's corner maps with `k` taken out: its entries handed to `next`, and
  * added to what is there where both happen as often. */
-function cornerMaps<O extends Op, E extends Entry<O>>(
+function cornerMaps<E extends Entry>(
   maps: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
   k: KeyframeId,
   next: KeyframeId | null,
-  add: (a: O, b: O) => O,
+  add: <O extends Move | Amount>(a: O, b: O) => O,
 ): Map<VertexId, Map<KeyframeId, E>> | null {
   const out = new Map<VertexId, Map<KeyframeId, E>>();
 
@@ -669,7 +680,7 @@ function cornerMaps<O extends Op, E extends Entry<O>>(
       const there = m.get(next);
 
       if (there === undefined) m.set(next, mine);
-      else if (there.times === mine.times && sameSkips(there, mine)) m.set(next, { ...there, op: add(mine.op, there.op) });
+      else if (there.times === mine.times && sameSkips(there, mine)) m.set(next, { ...there, op: add(mine.op as Move | Amount, there.op as Move | Amount) });
       else return null;
     }
 

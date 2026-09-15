@@ -1,0 +1,733 @@
+{
+  "format": 22,
+  "tool": "polygon",
+  "figure": "polyline",
+  "keyframe": 0,
+  "selection": [
+    5
+  ],
+  "artefacts": [],
+  "paths": [],
+  "settings": {
+    "gridSize": 100,
+    "showGrid": true
+  },
+  "view": {
+    "x": -2104.3125,
+    "y": -1438.984375,
+    "zoom": 0.25,
+    "width": 1470,
+    "height": 831,
+    "dpr": 2
+  },
+  "world": {
+    "nextId": 37,
+    "polygons": [
+      [
+        0,
+        {
+          "type": "level",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -900,
+                "y": -700
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 900,
+                "y": -700
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": 900,
+                "y": 900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -900,
+                "y": 900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        5,
+        {
+          "type": "solid",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 6,
+              "at": {
+                "x": -300,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 7,
+              "at": {
+                "x": -300,
+                "y": -500
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 100,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": 300,
+                "y": -300
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 10,
+              "at": {
+                "x": 300,
+                "y": 0
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 11,
+              "at": {
+                "x": 100,
+                "y": -100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 12,
+              "at": {
+                "x": -200,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 13,
+              "at": {
+                "x": -300,
+                "y": -100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 14,
+              "at": {
+                "x": -500,
+                "y": 0
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 15,
+              "at": {
+                "x": -400,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        21,
+        {
+          "type": "solid",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 22,
+              "at": {
+                "x": -300,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 23,
+              "at": {
+                "x": -300,
+                "y": -500
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 24,
+              "at": {
+                "x": 100,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 25,
+              "at": {
+                "x": 300,
+                "y": -300
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 26,
+              "at": {
+                "x": 300,
+                "y": 0
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 27,
+              "at": {
+                "x": 100,
+                "y": -100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 28,
+              "at": {
+                "x": -200,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 29,
+              "at": {
+                "x": -300,
+                "y": -100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 30,
+              "at": {
+                "x": -500,
+                "y": 0
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 31,
+              "at": {
+                "x": -400,
+                "y": -400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "artefacts": [],
+    "paths": [],
+    "start": {
+      "at": {
+        "x": 0,
+        "y": 0
+      },
+      "facing": 0
+    },
+    "keyframes": [
+      {
+        "id": 0,
+        "name": "v0",
+        "visible": true
+      },
+      {
+        "id": 1,
+        "name": "v1",
+        "visible": true
+      },
+      {
+        "id": 2,
+        "name": "v2",
+        "visible": true
+      },
+      {
+        "id": 3,
+        "name": "v3",
+        "visible": true
+      },
+      {
+        "id": 4,
+        "name": "v4",
+        "visible": true
+      },
+      {
+        "id": 5,
+        "name": "v5",
+        "visible": true
+      },
+      {
+        "id": 6,
+        "name": "v6",
+        "visible": true
+      },
+      {
+        "id": 7,
+        "name": "v7",
+        "visible": true
+      },
+      {
+        "id": 8,
+        "name": "v8",
+        "visible": true
+      }
+    ],
+    "rigs": [
+      [
+        5,
+        {
+          "keys": [
+            [
+              0,
+              [
+                {
+                  "op": {
+                    "kind": "round",
+                    "by": 200
+                  },
+                  "times": 1,
+                  "gesture": 16
+                }
+              ]
+            ],
+            [
+              1,
+              [
+                {
+                  "op": {
+                    "kind": "erode",
+                    "by": 24.15625
+                  },
+                  "times": 1,
+                  "gesture": 35
+                }
+              ]
+            ]
+          ],
+          "nudges": [
+            [
+              12,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 0,
+                        "y": 200
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 17
+                  }
+                ]
+              ]
+            ],
+            [
+              13,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 100,
+                        "y": -100
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 18
+                  }
+                ]
+              ]
+            ],
+            [
+              11,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": -100,
+                        "y": -100
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 19
+                  }
+                ]
+              ]
+            ],
+            [
+              10,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 100,
+                        "y": 200
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 20
+                  }
+                ]
+              ]
+            ]
+          ],
+          "depths": [],
+          "rounds": [],
+          "deforms": []
+        }
+      ],
+      [
+        21,
+        {
+          "keys": [
+            [
+              0,
+              [
+                {
+                  "op": {
+                    "kind": "stand",
+                    "frame": {
+                      "t": {
+                        "x": 100,
+                        "y": 100
+                      },
+                      "angle": 0,
+                      "skew": 0,
+                      "scale": {
+                        "x": 1,
+                        "y": 1
+                      }
+                    },
+                    "erosion": 0,
+                    "corners": [
+                      [
+                        22,
+                        {
+                          "x": -300,
+                          "y": -400
+                        }
+                      ],
+                      [
+                        23,
+                        {
+                          "x": -300,
+                          "y": -500
+                        }
+                      ],
+                      [
+                        24,
+                        {
+                          "x": 100,
+                          "y": -400
+                        }
+                      ],
+                      [
+                        25,
+                        {
+                          "x": 300,
+                          "y": -300
+                        }
+                      ],
+                      [
+                        26,
+                        {
+                          "x": 300,
+                          "y": 0
+                        }
+                      ],
+                      [
+                        27,
+                        {
+                          "x": 100,
+                          "y": -100
+                        }
+                      ],
+                      [
+                        28,
+                        {
+                          "x": -200,
+                          "y": 100
+                        }
+                      ],
+                      [
+                        29,
+                        {
+                          "x": -300,
+                          "y": -100
+                        }
+                      ],
+                      [
+                        30,
+                        {
+                          "x": -500,
+                          "y": 0
+                        }
+                      ],
+                      [
+                        31,
+                        {
+                          "x": -400,
+                          "y": -400
+                        }
+                      ]
+                    ],
+                    "depths": [],
+                    "bevel": 0,
+                    "amplitude": 0,
+                    "bevels": [],
+                    "amplitudes": []
+                  },
+                  "times": 1,
+                  "gesture": 32
+                },
+                {
+                  "op": {
+                    "kind": "round",
+                    "by": 200
+                  },
+                  "times": 1,
+                  "gesture": 32
+                },
+                {
+                  "op": {
+                    "kind": "turn",
+                    "angle": 0.5235987755982987,
+                    "ref": {
+                      "x": -91.68881782854956,
+                      "y": -210.63078385986853
+                    },
+                    "about": {
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  "times": 1,
+                  "gesture": 33
+                },
+                {
+                  "op": {
+                    "kind": "move",
+                    "by": {
+                      "x": 300,
+                      "y": 100
+                    }
+                  },
+                  "times": 1,
+                  "gesture": 34
+                }
+              ]
+            ],
+            [
+              1,
+              [
+                {
+                  "op": {
+                    "kind": "erode",
+                    "by": 90.9375
+                  },
+                  "times": 1,
+                  "gesture": 36
+                }
+              ]
+            ]
+          ],
+          "nudges": [
+            [
+              28,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 0,
+                        "y": 200
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 32
+                  }
+                ]
+              ]
+            ],
+            [
+              29,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 100,
+                        "y": -100
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 32
+                  }
+                ]
+              ]
+            ],
+            [
+              27,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": -100,
+                        "y": -100
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 32
+                  }
+                ]
+              ]
+            ],
+            [
+              26,
+              [
+                [
+                  1,
+                  {
+                    "op": {
+                      "kind": "move",
+                      "by": {
+                        "x": 100,
+                        "y": 200
+                      }
+                    },
+                    "times": 1,
+                    "gesture": 32
+                  }
+                ]
+              ]
+            ]
+          ],
+          "depths": [],
+          "rounds": [],
+          "deforms": []
+        }
+      ]
+    ],
+    "flags": [],
+    "effects": [
+      [
+        5,
+        {
+          "round": {
+            "precision": 0.5,
+            "tension": 0.5,
+            "chamfer": false
+          }
+        }
+      ],
+      [
+        21,
+        {
+          "round": {
+            "precision": 0.5,
+            "tension": 0.5,
+            "chamfer": false
+          }
+        }
+      ]
+    ],
+    "cornerEffects": []
+  }
+}

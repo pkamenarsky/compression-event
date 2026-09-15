@@ -124,6 +124,7 @@
 // -----------------------------------------------------------------------------
 
 import type { BakedLevel } from '@ce/game';
+import { REPLAY_MS } from '@ce/game/replay';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
@@ -135,7 +136,13 @@ import {
   betweenOf,
   erodedRingCorners,
   ground,
+  Facets,
+  Fade,
+  SEEDING,
+  facetFades,
+  facetsOf,
   keeping,
+  mitred,
   nextOf,
   prevOf,
   simplify,
@@ -145,6 +152,7 @@ import {
   Affine,
   Contributed,
   EMPTY_LIVE,
+  Effected,
   IDENTITY,
   Placed,
   Resolved,
@@ -154,8 +162,10 @@ import {
   compose,
   contributed,
   depths,
+  effectedOf,
   facing,
   groupFrame,
+  imagesOf,
   keyAt,
   order,
   outermostSlot,
@@ -170,6 +180,8 @@ import {
   under,
   unplace,
   resolveAt,
+  roundOf,
+  segmentsOf,
 } from './scene';
 import {
   ArtefactId,
@@ -194,7 +206,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { Frame as Pose, Op, REST, affineOf, played, playedAt, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, played, playedAt, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -297,7 +309,8 @@ export type Origin =
  * the first of which it gets wrong only when the keyframe holds anything else.
  * See `played` in `rig.ts` for how each one goes part way.
  *
- * Only what moves the frame. An erosion is in the depths, which are lerped.
+ * Only what moves the frame. An erosion, a round or a deform is an amount,
+ * which is lerped.
  */
 export interface Flight {
   frame: Pose
@@ -330,7 +343,7 @@ export interface Rider extends Flight {
 
 /** Only what moves a frame: the operations a flight plays. */
 function moves(ops: readonly Op[]): Op[] {
-  return ops.filter(op => op.kind !== 'erode');
+  return ops.filter(op => op.kind !== 'erode' && op.kind !== 'round' && op.kind !== 'deform');
 }
 
 /** A flight `t` of the way through: every operation that far, one after
@@ -534,6 +547,10 @@ export interface Stamp {
   polygons: unknown
   groups: unknown
   artefacts: unknown
+  /** Which effects things have, and how: one fact over every keyframe, so
+   * every span hears of a change to it. */
+  effects: unknown
+  cornerEffects: unknown
 }
 
 export interface Bake {
@@ -574,8 +591,8 @@ export function stamp(world: World, from: number): Stamp {
       if (upto.has(k)) mine.push(k, list);
     }
 
-    for (const maps of [rig.nudges, rig.depths]) {
-      for (const [c, map] of maps) {
+    for (const m of CORNER_MAPS) {
+      for (const [c, map] of rig[m]) {
         for (const [k, e] of map) {
           if (upto.has(k)) mine.push(c, k, e);
         }
@@ -591,6 +608,8 @@ export function stamp(world: World, from: number): Stamp {
     polygons: world.polygons,
     groups: world.groups,
     artefacts: world.artefacts,
+    effects: world.effects,
+    cornerEffects: world.cornerEffects,
   };
 }
 
@@ -612,6 +631,7 @@ function stamped(a: Stamp, b: Stamp): boolean {
   if (a.polygons !== b.polygons) return false;
   if (a.groups !== b.groups) return false;
   if (a.artefacts !== b.artefacts) return false;
+  if (a.effects !== b.effects || a.cornerEffects !== b.cornerEffects) return false;
   if (a.order !== b.order) return false;
   if (a.written.length !== b.written.length) return false;
 
@@ -691,6 +711,12 @@ interface Moving extends Rider {
   /** Whether either end offsets a corner apart from the rest. Almost never, and
    * the uniform road is the one whose arithmetic has not moved. */
   varying: boolean
+  /**
+   * Its rounds and deforms at the two ends, over `corners`, or nothing where
+   * it has no effects. The options are the same at both ends; the amounts are
+   * lerped. See `effectsOver`.
+   */
+  effected: [Effected, Effected] | null
 }
 
 /**
@@ -725,7 +751,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   const there = new Map(now.corners.map((c, i) => [c.id, now.local[i]]));
   const deep = [depthsOf(was), depthsOf(now)] as const;
 
-  const corners = was.polygon.points.filter(c => here.has(c.id) || there.has(c.id));
+  const corners = merged(was.corners, now.corners, was.polygon.points);
 
   const dead: [boolean[], boolean[]] = [
     corners.map(c => !here.has(c.id)),
@@ -746,6 +772,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   const n = corners.length;
   const ends = [here, there] as const;
   const ends2 = [was.erosion, now.erosion] as const;
+  const straight = [straightOf(was), straightOf(now)] as const;
   const local: [Ring, Ring] = [
     corners.map(c => here.get(c.id) ?? ORIGIN),
     corners.map(c => there.get(c.id) ?? ORIGIN),
@@ -782,9 +809,15 @@ function spanning(was: Resolved, now: Resolved): Spanned {
 
       // Everything strictly between two neighbours is missing here by
       // construction, so its place in that run is all the spreading needs.
-      const at = sameBefore && sameAfter
+      const taste = sameBefore && sameAfter
         ? fraction(other.get(corners[before].id)!, other.get(corners[after].id)!, other.get(c.id)!)
         : betweenOf(rings, n, before, i) / betweenOf(rings, n, before, after);
+
+      // On the edge as it is drawn there: between the two corners' arcs, and
+      // not on a stretch one of them has rounded away, where it would clamp
+      // that arc short of the one the editor draws.
+      const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
+      const at = lo + (hi - lo) * taste;
 
       local[side][i] = between2(from, to, at);
 
@@ -799,6 +832,81 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   });
 
   return straightened(corners, local, dead, depths);
+}
+
+/**
+ * Every corner either end of a span has, in ring order: what `spanning` writes
+ * both ends over.
+ *
+ * The polygon's own corners are in its list of points, dead ones in place, and
+ * that is their order. A tooth a deform made is not — see `Vertex.root` — so
+ * the two ends' own orders are what is merged: what both have keeps the order
+ * both give it, and between two such, what one end has alone goes in by where
+ * its own corner, or the one its edge starts at, is in the polygon's list,
+ * the near end's first. Without teeth that is the polygon's list, filtered.
+ */
+function merged(a: readonly Vertex[], b: readonly Vertex[], points: readonly Vertex[]): Vertex[] {
+  const place = new Map(points.map((c, i) => [c.id, i]));
+  const rank = (c: Vertex): number => place.get(c.root ?? c.id) ?? Infinity;
+  const inB = new Set(b.map(c => c.id)), inA = new Set(a.map(c => c.id));
+  const out: Vertex[] = [];
+
+  let i = 0, j = 0;
+
+  while (i < a.length || j < b.length) {
+    const x = a[i], y = b[j];
+
+    // Both at a corner the other has too: the same corner, since the two
+    // orders agree on what they share.
+    if (x !== undefined && y !== undefined && inB.has(x.id) && inA.has(y.id)) {
+      out.push(x);
+      i++;
+      j++;
+      continue;
+    }
+
+    const takeA = x !== undefined && !inB.has(x.id)
+      && (y === undefined || inA.has(y.id) || rank(x) <= rank(y));
+
+    if (takeA) {
+      out.push(x);
+      i++;
+    }
+    else {
+      out.push(y!);
+      j++;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Where along an edge of the polygon as drawn the straight part is, as
+ * fractions of the source edge from one corner to the next: between the end
+ * of the first corner's arc and the start of the second's. The whole of it
+ * for a polygon that is not rounded.
+ *
+ * An eroded edge is parallel to its source edge, so a point on it is read off
+ * the source line by where its foot falls.
+ */
+function straightOf(it: Resolved): (a: VertexId, b: VertexId, from: Point, to: Point) => [number, number] {
+  const im = it.effected ? imagesOf(it) : null;
+
+  if (im === null) return () => [0, 1];
+
+  const index = new Map(it.corners.map((c, i) => [c.id, i]));
+
+  return (a, b, from, to) => {
+    const first = im.corners[index.get(a)!], second = im.corners[index.get(b)!];
+
+    if (first === null || second === null) return [0, 1];
+
+    const lo = fraction(from, to, unplace(it.frame, first[first.length - 1]));
+    const hi = fraction(from, to, unplace(it.frame, second[0]));
+
+    return lo < hi ? [lo, hi] : [0, 1];
+  };
 }
 
 /** What `Resolved.depths` says, by corner id, and nothing where the polygon is
@@ -1029,6 +1137,7 @@ function moving(world: World, from: number): Moving[] {
         depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
         holders: holders(world, from, it.id),
+        ...effectsOver(world, it.id, it.corners, [null, stateAt(world, it.id, far)]),
       };
     }
 
@@ -1044,6 +1153,7 @@ function moving(world: World, from: number): Moving[] {
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
       holders: holders(world, from, it.id),
+      ...effectsOver(world, it.id, over.corners, [stateAt(world, it.id, near), stateAt(world, it.id, far)]),
     };
   });
 
@@ -1068,10 +1178,104 @@ function moving(world: World, from: number): Moving[] {
       depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
       varying: was.depths !== null,
       holders: holders(world, from, id),
+      ...effectsOver(world, id, was.corners, [stateAt(world, id, near), null]),
     });
   }
 
   return out;
+}
+
+/** A thing's amounts where it is not there: none. */
+const NOTHING: Pick<State, 'bevel' | 'bevels'> = {
+  bevel: 0,
+  bevels: new Map(),
+};
+
+/**
+ * A polygon's round at both ends of a span, written over the same corners.
+ * Nothing where it has none. Its deform is not here: that is in its corners
+ * already, teeth and all, and the bake carries them as it carries any.
+ *
+ * A degenerate end is seeded, never collapsed. A bevel of nought at one end
+ * and more at the other is `SEEDING` of the other there, so the arc turns,
+ * however little, and the arrangement keeps its points unasked: the ring is
+ * the same length at both ends. So is the polygon's own bevel, which what
+ * the erosion made takes and no slot answers for.
+ *
+ * Nor does a corner's count of points change across a span, though its
+ * segments do: each end's are what its bevel asks for, the still's at that
+ * keyframe, and the span lays every corner in as many points as the finer
+ * end has. At the coarser end the points it has over are on its facets, so
+ * its outline is the still's; across the span the arc goes over from the one
+ * to the other. See `Facets`.
+ */
+function effectsOver(
+  world: World,
+  id: Id,
+  corners: readonly Vertex[],
+  ends: [State | null, State | null],
+): Pick<Moving, 'effected'> {
+  const none = { effected: null };
+  const two = ends.map(e => effectedOf(world, id, corners, e ?? NOTHING)) as [Effected | null, Effected | null];
+
+  if (two[0] === null && two[1] === null) return none;
+
+  // Where it has no effects at one end, it has them at nought there: the
+  // options are a fact about the thing, and the same at both.
+  const bare = (e: Effected | null, other: Effected): Effected => e ?? {
+    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
+    bevels: other.bevels.map(() => 0),
+    own: other.own.n > 0 ? facetsOf(1, other.own.tension) : other.own,
+    bevel: 0,
+  };
+  const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
+
+  // One count for the span, laid as each end's own at that end.
+  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension });
+  const ended = (e: Effected, at: number): Effected => ({
+    ...e,
+    facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
+    own: spanned(a.own, b.own, at),
+  });
+
+  const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
+  const seeded = (e: Effected, o: Effected): Effected => ({
+    ...e,
+    bevels: e.bevels.map((r, i) => (e.facets[i].n > 0 ? seed(r, o.bevels[i]) : r)),
+    bevel: seed(e.bevel, o.bevel),
+  });
+
+  return {
+    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
+  };
+}
+
+/** A polygon's effects `t` of the way across a span. */
+function effectedAt(e: [Effected, Effected], t: number): Effected {
+  if (t === 0) return e[0];
+  if (t === 1) return e[1];
+
+  return {
+    facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
+    bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
+    own: { ...e[0].own, at: weighed(e[0].bevel, e[1].bevel, t) },
+    bevel: mix(e[0].bevel, e[1].bevel, t),
+  };
+}
+
+/**
+ * How far an arc has gone over from its near layout to its far one, `t` of
+ * the way across a span whose bevel goes from `a` to `b`: by the bevel, not
+ * by the time. Each layout's points are the bevel times something of the
+ * corner alone, so blended by `t · b / bevel(t)` a point is the lerp of its
+ * two ends exactly, as it is where the layout does not change — and the
+ * bake's lerp is exact again. By the time, it would be a product of two
+ * lerps, and every stretch a curve to be cut up.
+ */
+function weighed(a: number, b: number, t: number): number {
+  const bevel = mix(a, b, t);
+
+  return bevel > 0 ? t * b / bevel : t;
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1108,23 +1312,36 @@ function between(a: Ring, b: Ring, t: number): Ring {
  * position moved along the shared normal by the depth: the mitre a corner would
  * get has nothing to bite on. That is the offset `moved` takes in `erode`, and
  * it has to be, or the point would miss the edge it is meant to land on.
+ *
+ * And the points of an arc laid on its facets at this end — see
+ * `effectsOver` — which are as flat here as an invented corner, and for the
+ * same while.
  */
 function invented(
   m: Moving,
-  source: Ring,
-  erosion: number | readonly number[],
+  at: Omit<Resolved, 'shape' | 'rings'>,
   t: number,
 ): Point[] {
-  const dead = t === 0 ? m.dead[0] : t === 1 ? m.dead[1] : null;
-  if (dead === null) return [];
+  const end = t === 0 ? 0 : t === 1 ? 1 : null;
+  if (end === null) return [];
 
-  const out: Point[] = [];
   const rings = ringsOf(m.corners);
 
-  for (let i = 0; i < source.length; i++) {
+  if (m.effected !== null) {
+    return [
+      ...slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : [])),
+      ...facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p),
+    ];
+  }
+
+  const dead = m.dead[end];
+  const out: Point[] = [];
+  const erosion = at.depths ?? at.erosion;
+
+  for (let i = 0; i < at.source.length; i++) {
     if (dead[i] !== true) continue;
 
-    const p = mitred(source, rings, i, typeof erosion === 'number' ? erosion : erosion[i]);
+    const p = mitred(at.source, rings, i, typeof erosion === 'number' ? erosion : erosion[i]);
 
     if (p !== null) out.push(p);
   }
@@ -1132,35 +1349,60 @@ function invented(
   return out;
 }
 
-/** The world at one instant inside the span, resolved. */
-function world1(items: Moving[], t: number): Resolved[] {
-  const out: Resolved[] = [];
+/**
+ * A polygon with effects, slot by slot: each corner's arc and each edge's
+ * deform points where the projection has them at `t`, and whether the slot is
+ * flat at either end.
+ *
+ * A flat corner's arc is a short run along its wall, never one point — see
+ * `shaped` — so at an end where a slot is flat its points lie on an edge of
+ * the projection, `keeping` takes every one of them, and the ring is as long
+ * at the end as it is in between.
+ */
+function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead: [boolean, boolean] }[] {
+  const im = imagesOf(at);
 
-  for (const m of items) {
-    const local = between(m.local[0], m.local[1], t);
-    const frame = riding(m, t);
-    const source = place(frame, local);
-    const erosion = mix(m.depth[0], m.depth[1], t);
-    const depths = m.varying
-      ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t))
-      : null;
+  if (im === null) return [];
 
-    // Named rather than spread: spreading `m.at` would read its projection,
-    // which is the one thing worth not doing here.
-    out.push(resolved({
-      id: m.at.id,
-      polygon: m.at.polygon,
-      corners: m.corners,
-      local,
-      frame,
-      source,
-      erosion,
-      depths,
-      keep: invented(m, source, depths ?? erosion, t),
-    }));
-  }
+  const out: { points: Point[], dead: [boolean, boolean] }[] = [];
+
+  m.corners.forEach((_c, i) => {
+    const run = im.corners[i];
+    const dead: [boolean, boolean] = [m.dead[0][i], m.dead[1][i]];
+
+    if (run !== null && (dead[0] || dead[1])) out.push({ points: run, dead });
+  });
 
   return out;
+}
+
+/** A polygon `t` of the way across the span, without the corners it keeps. */
+function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
+  const local = between(m.local[0], m.local[1], t);
+  const frame = riding(m, t);
+
+  // Named rather than spread: spreading `m.at` would read its projection,
+  // which is the one thing worth not doing here.
+  return {
+    id: m.at.id,
+    polygon: m.at.polygon,
+    corners: m.corners,
+    local,
+    frame,
+    source: place(frame, local),
+    erosion: mix(m.depth[0], m.depth[1], t),
+    depths: m.varying ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t)) : null,
+    effected: m.effected === null ? null : effectedAt(m.effected, t),
+  };
+}
+
+/** The world at one instant inside the span, resolved. */
+function world1(items: Moving[], t: number): Resolved[] {
+  return items.map(m => {
+    const at = at1(m, t);
+
+    return resolved({ ...at, keep: invented(m, at, t) });
+  });
 }
 
 /**
@@ -1199,7 +1441,33 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * shape, so that a scope holding the polygon can put it onto its own. See
  * `groupFading`.
  */
-function fadingPoints(m: Moving, it: Resolved, t: number): { p: Point, v: number }[] {
+function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
+  return m.effected === null ? fadingCorners(m, it, t) : [...fadingSlots(m, it, t), ...facetsFading(it)];
+}
+
+/** Where its arcs' points are on their facets at one end of the span or the
+ * other, and fading. See `facetFades`. */
+function facetsFading(it: Omit<Resolved, 'shape'>): Fade[] {
+  const e = it.effected ?? null;
+
+  if (e === null) return [];
+
+  const faded = (f: Facets) => f.n > 0 && (f.from !== f.to || f.from < f.n);
+
+  if (!e.facets.some(faded) && !faded(e.own)) return [];
+
+  const im = imagesOf(it);
+
+  if (im === null) return [];
+
+  return [
+    ...im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i]))),
+    ...im.rest.flatMap(run => facetFades(run, e.own)),
+  ];
+}
+
+/** `fadingPoints` for a polygon with no round: its corners dead at an end. */
+function fadingCorners(m: Moving, it: Resolved, t: number): Fade[] {
   const out: { p: Point, v: number }[] = [];
 
   for (let i = 0; i < m.corners.length; i++) {
@@ -1236,6 +1504,16 @@ function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): nu
   return any ? out : null;
 }
 
+/** `fadingPoints` for a polygon with a round, slot by slot: every point of a
+ * slot flat at one end fades over the span. */
+function fadingSlots(m: Moving, it: Resolved, t: number): Fade[] {
+  return slots(m, it).flatMap(slot => {
+    const v = mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t);
+
+    return slot.points.map(p => ({ p, v }));
+  });
+}
+
 /**
  * How solid each point of a scope's side is at `t`: its polygons' fading,
  * carried onto it. A polygon's point is moved in by the depth of every scope
@@ -1257,7 +1535,8 @@ function groupFading(
   if (!world.groups.has(group)) return null;
 
   const set = setOf(side.kind);
-  const points: { p: Point, v: number }[] = [];
+
+  const points: Fade[] = [...(side.faded ?? [])];
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
@@ -1301,45 +1580,6 @@ function groupFading(
   }
 
   return paintedOn(side.shape, points);
-}
-
-/**
- * Where corner `i` of a ring lands once the ring is offset by `depth` — the
- * meeting point of its two edges after each has moved to its left.
- *
- * This is `erode`'s own construction rather than a guess at it: every surviving
- * edge lies on a translate of its own line, so the corner between two of them is
- * where those translates cross. Two edges that run exactly straight through the
- * corner never cross, and then the answer is the corner moved along the shared
- * normal, which is that construction's limit rather than a case beside it.
- *
- * `null` where the corner is not on the offset boundary at all: a ring that
- * doubles back on itself sends the meeting point off towards infinity, and a
- * deep enough offset eats the edges the corner stood between.
- */
-function mitred(ring: Ring, rings: readonly number[], i: number, depth: number): Point | null {
-  const n = ring.length;
-  const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
-
-  const ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy);
-  const vx = c.x - b.x, vy = c.y - b.y, vl = Math.hypot(vx, vy);
-
-  if (ul === 0 || vl === 0) return null;
-
-  const p = { x: ux / ul, y: uy / ul };
-  const q = { x: vx / vl, y: vy / vl };
-
-  // Both moved lines pass through the corner's own offset, one for each edge.
-  const pa = { x: b.x - p.y * depth, y: b.y + p.x * depth };
-  const qa = { x: b.x - q.y * depth, y: b.y + q.x * depth };
-
-  const turn = p.x * q.y - p.y * q.x;
-
-  if (Math.abs(turn) < 1e-12) return pa;
-
-  const s = ((qa.x - pa.x) * q.y - (qa.y - pa.y) * q.x) / turn;
-
-  return { x: pa.x + p.x * s, y: pa.y + p.y * s };
 }
 
 /**
@@ -1401,6 +1641,9 @@ export interface Cast {
   /** Group to its depth at each end of the span, for the groups that have one
    * at either end. A depth arriving is a depth in flight like any other. */
   scopes: Map<GroupId, [number, number]>
+  /** Each scope's effects: its options, and its bevel and amplitude at each
+   * end, seeded where one end has nought. Absent is none. */
+  shapes: Map<GroupId, { facets: Facets, bevel: [number, number] }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1446,6 +1689,27 @@ function casting(world: World, from: number): Cast {
     if (group.sealed) scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
+  // A union has no slots to put back, so an end at nought is seeded: the arc
+  // turns, however little, and the ring keeps its length.
+  const shapes: Cast['shapes'] = new Map();
+  const seed = (x: number, y: number): number => (x === 0 && y !== 0 ? y * SEEDING : x);
+
+  for (const id of scopes.keys()) {
+    const round = roundOf(world.effects.get(id));
+
+    if (round === undefined) continue;
+
+    const was = stateAt(world, id, near), now = stateAt(world, id, far);
+
+    // Laid as a polygon's corners are across a span: see `effectsOver`.
+    const from = segmentsOf(round, was.bevel), to = segmentsOf(round, now.bevel);
+
+    shapes.set(id, {
+      facets: { n: Math.max(from, to), from, to, at: 0, tension: round.tension },
+      bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
+    });
+  }
+
   const there = new Set(chain(world, far));
   const riders = new Map<GroupId, Rider>();
 
@@ -1458,7 +1722,7 @@ function casting(world: World, from: number): Cast {
     });
   }
 
-  return { world, items: moving(world, from), scopes, riders, folds: new Map() };
+  return { world, items: moving(world, from), scopes, shapes, riders, folds: new Map() };
 }
 
 /** How many instants' worth of group projections to hold at once. */
@@ -1491,9 +1755,14 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
 
       if (both === undefined) return null;
 
+      const fx = cast.shapes.get(id);
+
       return {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
+        ...(fx === undefined ? {} : {
+          effects: { facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) }, bevel: mix(fx.bevel[0], fx.bevel[1], t) },
+        }),
       };
     },
     held,
@@ -1686,8 +1955,8 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     world.set(it.id, it.shape);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
 
-    // Only a polygon has source corners, and only they can be invented. A
-    // group's union boundary has none to fade.
+    // Only a polygon has source corners, and only they can be invented; a
+    // scope's side fades where its polygons' do.
     const m = moving.get(it.id), mine = was.get(it.id);
     const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
 
@@ -2062,6 +2331,9 @@ function corner(shape: Shape, p: Point, snap: number): { ring: number, index: nu
  * reader there takes it up. See `TOLERANCE`. */
 export { TOLERANCE };
 
+/** One frame, at the rate the game is assumed to be drawn at. See `GAP`. */
+const FRAME_MS = 1000 / 60;
+
 /**
  * How thin an interval has to get before the bisection gives up on it.
  *
@@ -2096,8 +2368,26 @@ export { TOLERANCE };
  * a whole level for the depth two crossings need is the wrong shape, so a track
  * that comes back outside the tolerance is cut again a decade finer and only
  * that track pays. This is where it begins; see `chased` for where it ends.
+ *
+ * Tied to what is actually shown, now. A span plays in `REPLAY_MS` and nobody
+ * sees it at more than sixty frames a second, so an event pinned to within a
+ * tenth of a frame pops at the frame it would have popped at anyway, and the
+ * half gap `abutting` hands each side of it is a window most frames never land
+ * in. On the level that asked for this — two bevelled solids crossing, three
+ * hundred events a track — it took the bake from 12s to a few seconds, for a
+ * `worst` of a unit or two inside those windows where `EXACT_GAP` held it to
+ * four hundredths everywhere.
+ *
+ * Linear in `t`, which the easing is not: where it is slow a frame covers less
+ * of the span than this assumes, and where it is fast, more.
+ *
+ * To go back to holding the tolerance everywhere, make this `EXACT_GAP`.
  */
-const GAP = 1e-4;
+export const GAP = FRAME_MS / REPLAY_MS / 10;
+
+/** What `GAP` was before it was counted in frames: a width chosen to hold the
+ * tolerance, whatever the frame rate. */
+export const EXACT_GAP = 1e-4;
 
 /**
  * The same, for an interval whose two ends agree and whose middle the stretch
@@ -2130,13 +2420,16 @@ export interface Limits {
   bend: number
 }
 
-/** What a track is cut at until it gives the bake reason to go finer. */
-export const LIMITS: Limits = { gap: GAP, bend: BEND };
+/** What a track is cut at until it gives the bake reason to go finer, starting
+ * events at `gap`. */
+function limitsFrom(gap: number): Limits {
+  return { gap, bend: BEND };
+}
 
 /**
  * As far as a re-cut will ever go, whatever the measure says.
  *
- * Three decades below `LIMITS`, and it is a real bound rather than a formality.
+ * Three decades below `EXACT_GAP`, and it is a real bound rather than a formality.
  * `PAYING` stops a track whose error has stopped falling, which is the case it
  * was written for; it does not stop one whose error keeps falling towards a
  * tolerance it will never reach. That track chases every decade, and a decade
@@ -2412,20 +2705,32 @@ function phase(a: Turnable, b: Turnable): number | null {
 
   if (n < 1 || b.points.length !== a.points.length) return null;
 
+  // Every rotation against every other is quadratic in the ring, and a bevel
+  // makes rings long. So the names are written out once rather than per pair,
+  // a rotation is dropped as soon as it is already further than the best, and
+  // the names are only counted for one that can still win.
+  const an = a.whence.slice(0, n).map(names), bn = b.whence.slice(0, n).map(names);
+
   let best = 0, cost = Infinity, agree = -1;
 
   for (let k = 0; k < n; k++) {
-    let far = 0, same = 0;
+    let far = 0;
 
-    for (let j = 0; j < n; j++) {
+    for (let j = 0; j < n && far <= cost; j++) {
       const p = a.points[j], q = b.points[(j + k) % n];
 
       far += (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
-
-      if (names(a.whence[j]) === names(b.whence[(j + k) % n])) same++;
     }
 
-    if (far < cost || (far === cost && same > agree)) {
+    if (far > cost) continue;
+
+    let same = 0;
+
+    for (let j = 0; j < n; j++) {
+      if (an[j] === bn[(j + k) % n]) same++;
+    }
+
+    if (far < cost || same > agree) {
       best = k; cost = far; agree = same;
     }
   }
@@ -2494,13 +2799,14 @@ function lining(to: Frame, from: Frame): { at: number, k: number }[] | null {
   // visits. A set rather than a list, because the order is the thing in
   // question — and a ring's first point is written down twice, which a list
   // would count and a set does not.
-  const which = (run: Run) =>
-    `${run.id}:${[...new Set(run.whence.map(names))].sort().join(',')}`;
+  const which = (run: Run) => `${run.id}:${visits(run.whence)}`;
 
   const spare = new Map<string, number>();
 
   from.forEach((run, i) => {
-    if (!spare.has(which(run))) spare.set(which(run), i);
+    const key = which(run);
+
+    if (!spare.has(key)) spare.set(key, i);
   });
 
   const taken = new Set<number>();
@@ -2522,6 +2828,25 @@ function lining(to: Frame, from: Frame): { at: number, k: number }[] | null {
   }
 
   return plan;
+}
+
+/**
+ * The points of the arrangement a run visits, as one string. Remembered by the
+ * run's names, which are never written to once made: the same reading is lined
+ * up against every other it is compared with, and writing this out was the
+ * greater part of the cost of lining one up.
+ */
+const visited = new WeakMap<readonly Origin[], string>();
+
+function visits(whence: readonly Origin[]): string {
+  let known = visited.get(whence);
+
+  if (known === undefined) {
+    known = [...new Set(whence.map(names))].sort().join(',');
+    visited.set(whence, known);
+  }
+
+  return known;
 }
 
 /** A reading put in the order a plan asks for. The same `from` back when the
@@ -2877,7 +3202,39 @@ function* fillTrack(
 }
 
 /**
- * One polygon's own cut of the span.
+ * One interval of a track's bisection, as it settled: a stretch across it, or
+ * the two instants either side of an event pinned inside it.
+ *
+ * The pieces tile the span in order, each exactly the interval the bisection
+ * stopped on, which is what lets one of them be cut again on its own. The
+ * bisection is local — what happens inside an interval depends on its two ends
+ * and nothing else — so cutting one piece a decade finer gives exactly what
+ * cutting the whole track a decade finer would have given there.
+ */
+interface Piece {
+  a: Taken
+  b: Taken
+  kept: Stretch[]
+  /** What the check measured across it. Nothing for an event. */
+  off: number
+  /**
+   * Whether it stopped because the interval ran out of width rather than
+   * because it was right. Only these can come out any differently cut finer: a
+   * stretch that passed its check passes it at any depth, so a finer cut would
+   * walk down to it and stop there again.
+   */
+  limited: boolean
+}
+
+/** What cutting one track needs, whatever part of it is being cut. */
+interface Cutting {
+  at: (t: number) => Taken
+  riders: Map<Id, Rider>
+  tol: number
+}
+
+/**
+ * One polygon's own cut of `[from, to]`, as pieces.
  *
  * The measuring is the same as it ever was; what has changed is what is being
  * measured. A stretch used to end when *anything anywhere* changed, which put a
@@ -2885,30 +3242,18 @@ function* fillTrack(
  * both the work and the file grow with the square of the level. A polygon's
  * boundary is a question about its own neighbourhood, so its keyframes are too.
  */
-function* cutTrack(
-  cast: Cast,
-  sub: Moving[],
-  id: Id,
-  riders: Map<Id, Rider>,
-  tol: number,
+function* bisected(
+  c: Cutting,
+  from: Taken,
+  to: Taken,
   limits: Limits,
-): Generator<number, Cut, void> {
-  const out: Stretch[] = [];
-
-  let evaluations = 0;
-  let worst = 0;
-
-  const at = (t: number): Taken => {
-    evaluations++;
-
-    return evaluate(cast, sub, t, id);
-  };
+): Generator<number, Piece[], void> {
+  const { at, riders, tol } = c;
+  const pieces: Piece[] = [];
 
   // Left to right, so what comes out is in order and the progress is honest:
   // how much of the span has been settled, which only ever goes forwards.
-  const stack: [Taken, Taken][] = [[at(0), at(1)]];
-
-  let done = 0;
+  const stack: [Taken, Taken][] = [[from, to]];
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
@@ -2924,19 +3269,17 @@ function* cutTrack(
 
       // Pinned as far as it is worth pinning: a discontinuity, and the two
       // sides of it genuinely have different geometry. Both are kept.
-      keep(instant(a));
-      keep(instant(b));
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
 
-      done = b.t;
-      yield done;
+      yield b.t;
       continue;
     }
 
     const s = stretchOf(a, b);
 
     // How far the stretch would sit from the truth at an instant inside it.
-    const check = (c: Taken): number =>
-      comparable(a, c) ? apart(drawn(s, riders, c.t), c.out) : Infinity;
+    const check = (x: Taken): number =>
+      comparable(a, x) ? apart(drawn(s, riders, x.t), x.out) : Infinity;
 
     const m = at((a.t + b.t) / 2);
 
@@ -2969,11 +3312,9 @@ function* cutTrack(
     // pinning — the same answer the incomparable path above reaches, from the
     // other side of it.
     if (!Number.isFinite(off)) {
-      keep(instant(a));
-      keep(instant(b));
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
 
-      done = b.t;
-      yield done;
+      yield b.t;
       continue;
     }
 
@@ -2983,15 +3324,56 @@ function* cutTrack(
     // is not that. This used to be the one place a stretch was kept with no
     // check at all, and what it hid was a whole unit of pop in a level with
     // anything much turning in it.
-    worst = Math.max(worst, off);
-    keep(s);
+    pieces.push({ a, b, kept: [s], off, limited: off > tol * MARGIN });
 
-    done = b.t;
-    yield done;
+    yield b.t;
   }
 
-  const kept = out.filter(wide);
+  return pieces;
+}
+
+/**
+ * A track's pieces made into its cut, and which of them are why it is not
+ * inside the tolerance — the ones a finer cut should go back to.
+ */
+function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean[] } {
+  const { riders, tol } = c;
+  const out: Stretch[] = [];
+
+  // Which piece each of `out` came from.
+  const whose: number[] = [];
+  const failing = pieces.map(p => p.limited && p.off > tol);
+
+  let worst = 0;
+
+  pieces.forEach((p, k) => {
+    worst = Math.max(worst, p.off);
+
+    for (const s of p.kept) {
+      const last = out[out.length - 1];
+
+      // Two instants running together, or a stretch that adds nothing.
+      if (last !== undefined && last.t0 === last.t1 && last.t0 === s.t0 && s.t0 === s.t1) continue;
+
+      out.push(s);
+      whose.push(k);
+    }
+  });
+
+  const wideAt = out.flatMap((s, j) => (wide(s) ? [j] : []));
+  const kept = wideAt.map(j => out[j]);
   const cover = abutting(kept);
+
+  // The pieces between two of `kept`, which pinned the event whose gap it is.
+  // `-1` and `pieces.length` stand for the two ends of the span.
+  const between = (from: number, to: number): void => {
+    for (let k = from + 1; k < to; k++) {
+      if (pieces[k].limited) failing[k] = true;
+    }
+  };
+
+  const pieceOf = (i: number): number =>
+    i < 0 ? -1 : i >= kept.length ? pieces.length : whose[wideAt[i]];
 
   // What `abutting` gives away, checked. Closing the gaps around an event hands
   // each neighbour half of one, so a stretch is drawn over a window wider than
@@ -3003,37 +3385,37 @@ function* cutTrack(
   // argued, and what it finds is `worst` like anything else — this was the one
   // region of the cover nothing looked at, and every instant the replay was ever
   // caught out at was inside one.
+  //
+  // Where it is outside, the gap is what is wrong, and the gap is the event
+  // pieces either side of this stretch: those are what a finer cut narrows.
   for (let i = 0; i < cover.length; i++) {
     const grown = cover[i], was = kept[i];
 
-    for (const t of [grown.t0, grown.t1]) {
+    for (const [t, side] of [[grown.t0, -1], [grown.t1, 1]] as const) {
       if (t >= was.t0 && t <= was.t1) continue;
 
-      const c = at(t);
+      const now = c.at(t);
 
       // The two sides of an event genuinely differ, and the size of that is the
       // event's own, not the replay's — the same exclusion `apart` makes by
       // coming back infinite. Here it has to be made in so many words, because
       // `strayed` will cheerfully measure the distance across a discontinuity
       // and report the pop as though the replay had invented it.
-      if (signature(drawn(grown, riders, t)) !== signature(c.out)) continue;
+      if (signature(drawn(grown, riders, t)) !== signature(now.out)) continue;
 
-      worst = Math.max(worst, strayed(drawn(grown, riders, t), c.out));
+      const off = strayed(drawn(grown, riders, t), now.out);
+
+      worst = Math.max(worst, off);
+
+      if (off > tol) {
+        const here = pieceOf(i), there = pieceOf(i + side);
+
+        between(Math.min(here, there), Math.max(here, there));
+      }
     }
   }
 
-  return { stretches: cover, jumps: out.filter(s => !wide(s)), worst, evaluations };
-
-  function keep(s: Stretch): void {
-    const last = out[out.length - 1];
-
-    // Two instants running together, or a stretch that adds nothing.
-    if (last !== undefined && last.t0 === last.t1 && last.t0 === s.t0 && s.t0 === s.t1) {
-      return;
-    }
-
-    out.push(s);
-  }
+  return { stretches: cover, jumps: out.filter(s => !wide(s)), worst, evaluations: 0, failing };
 }
 
 /**
@@ -3103,7 +3485,7 @@ function wide(s: Stretch): boolean {
  * bake tried. `gap` is the reading to go by, and it says which of three things
  * happened:
  *
- * - `LIMITS.gap` — never re-cut at all, because the track pins more events than
+ * - The starting gap — never re-cut at all, because the track pins more events than
  *   it keeps stretches. Its ring crosses itself; the arrangement is churning
  *   rather than moving, and depth would find more churn rather than less error.
  *   The polygon is what wants fixing, not the bake. See `CHURN`.
@@ -3287,7 +3669,7 @@ export function ready(world: World, from: number): Ready {
  * hundredths and the only thing to do was to reach for `GAP` by hand, which
  * charges the whole level for the depth two crossings needed.
  *
- * So the depth is per track and it is driven by the measure. Cut at `LIMITS`;
+ * So the depth is per track and it is driven by the measure. Cut at the starting `gap`;
  * if what comes back is outside the tolerance, cut the same track again a
  * decade finer, and again, until it is inside or the widths reach `FINEST`.
  *
@@ -3317,21 +3699,22 @@ function* chased(
   i: number,
   fill: boolean,
   tol: number,
+  gap: number,
 ): Generator<number, Cut & { limits: Limits }, void> {
+  if (!fill) return yield* recut(at, i, tol, gap);
+
   const { id } = at.items[i];
 
-  let limits = LIMITS;
+  let limits = limitsFrom(gap);
   let best: (Cut & { limits: Limits }) | null = null;
   let was = Infinity;
   let spent = 0;
   let seen = 0;
 
   while (true) {
-    const inner = fill
-      // Its own members, and nothing else: a floor is not cut against its
-      // neighbours, so resolving them would be work nobody reads.
-      ? fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits)
-      : cutTrack(at.cast, at.near[i], id, at.riders, tol, limits);
+    // Its own members, and nothing else: a floor is not cut against its
+    // neighbours, so resolving them would be work nobody reads.
+    const inner = fillTrack(at.cast, at.items[i].mine, id, at.items[i].slot, tol, limits);
 
     let cut: Cut | null = null;
 
@@ -3374,10 +3757,108 @@ function* chased(
   }
 }
 
+/**
+ * `chased`, for a track cut against its neighbours: the same decades and the
+ * same rules for stopping, but each decade goes back only to the pieces that
+ * are outside the tolerance.
+ *
+ * It used to cut the whole track again. A track's error is nearly always in one
+ * place — a crossing racing through the gap around one event — and cutting it
+ * again a decade finer pinned every other event in the track a decade finer
+ * too, for nothing: a level whose two busy tracks held three hundred events
+ * each spent half its bake re-pinning the ones that had been fine. The pieces
+ * that come back are the ones the whole track cut finer would have had there,
+ * because the bisection inside an interval is its own; the rest are left as the
+ * coarser decade had them.
+ */
+function* recut(at: Ready, i: number, tol: number, gap: number): Generator<number, Cut & { limits: Limits }, void> {
+  const { id } = at.items[i];
+  const sub = at.near[i];
+
+  // Every instant this track has looked at, so that a piece cut again finds its
+  // two ends and its middle already worked out. Kept for this track only: its
+  // neighbours ask with a different subject.
+  const taken = new Map<number, Taken>();
+
+  let evaluations = 0;
+  let seen = 0;
+
+  const c: Cutting = {
+    at: t => {
+      let known = taken.get(t);
+
+      if (known === undefined) {
+        evaluations++;
+        known = evaluate(at.cast, sub, t, id);
+        taken.set(t, known);
+      }
+
+      return known;
+    },
+    riders: at.riders,
+    tol,
+  };
+
+  // A piece cut again reports how far it has got, which is behind where the
+  // track has been. What the caller is shown is how far this track has ever
+  // got, so going back reads as a pause rather than as ground given back.
+  function* shown<T>(g: Generator<number, T, void>): Generator<number, T, void> {
+    while (true) {
+      const step = g.next();
+
+      if (step.done) return step.value;
+
+      seen = Math.max(seen, step.value);
+      yield seen;
+    }
+  }
+
+  let limits = limitsFrom(gap);
+  let pieces = yield* shown(bisected(c, c.at(0), c.at(1), limits));
+  let cut = settled(c, pieces);
+  let best = { ...cut, limits };
+  let was = Infinity;
+
+  while (true) {
+    // As `chased`: inside the tolerance, out of width, a decade that did not
+    // pay for itself, or a track that pins more events than it keeps
+    // stretches. See `PAYING`, `CHURN`.
+    if (
+      best.worst <= tol
+      || limits.gap <= FINEST
+      || cut.worst > PAYING * was
+      || cut.jumps.length > CHURN * cut.stretches.length
+    ) {
+      return { stretches: best.stretches, jumps: best.jumps, worst: best.worst, evaluations, limits: best.limits };
+    }
+
+    was = cut.worst;
+    limits = finer(limits);
+
+    const next: Piece[] = [];
+
+    for (let k = 0; k < pieces.length; k++) {
+      if (cut.failing[k]) {
+        next.push(...yield* shown(bisected(c, pieces[k].a, pieces[k].b, limits)));
+      }
+      else {
+        next.push(pieces[k]);
+      }
+    }
+
+    pieces = next;
+    cut = settled(c, pieces);
+
+    // The best of the decades, not the last. See `chased`.
+    if (cut.worst < best.worst) best = { ...cut, limits };
+  }
+}
+
 export function* cutSome(
   at: Ready,
   which: readonly number[],
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Slice, void> {
   const began = now();
   const tracks: Track[] = [];
@@ -3394,7 +3875,7 @@ export function* cutSome(
     // above it. Everything else is its share of a boundary and is measured
     // against the CSG.
     const cut = yield* weighted(
-      chased(at, i, fill, tol),
+      chased(at, i, fill, tol, gap),
       k / which.length,
       1 / which.length,
     );
@@ -3424,13 +3905,14 @@ export function* bakeSlice(
   index: number,
   of: number,
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Slice, void> {
   const at = ready(world, from);
   const which: number[] = [];
 
   for (let i = index; i < at.items.length; i += of) which.push(i);
 
-  const slice = yield* cutSome(at, which, tol);
+  const slice = yield* cutSome(at, which, tol, gap);
 
   return { ...slice, setup: at.setup };
 }
@@ -3467,19 +3949,24 @@ export function* bakeSpan(
   world: World,
   from: number,
   tol: number = TOLERANCE,
+  gap: number = GAP,
 ): Generator<number, Span, void> {
-  const slice = yield* bakeSlice(world, from, 0, 1, tol);
+  const slice = yield* bakeSlice(world, from, 0, 1, tol, gap);
 
   return joined(world, from, ridersOf(world, from), [slice]);
 }
 
 /** Every span in the chain, one after the other. */
-export function* bakeAll(world: World): Generator<number, Map<number, Span>, void> {
+export function* bakeAll(
+  world: World,
+  tol: number = TOLERANCE,
+  gap: number = GAP,
+): Generator<number, Map<number, Span>, void> {
   const out = new Map<number, Span>();
   const count = world.keyframes.length - 1;
 
   for (let k = 0; k < count; k++) {
-    const span = yield* weighted(bakeSpan(world, k), k / count, 1 / count);
+    const span = yield* weighted(bakeSpan(world, k, tol, gap), k / count, 1 / count);
 
     out.set(k, span);
   }

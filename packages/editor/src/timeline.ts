@@ -87,7 +87,6 @@ interface Model {
   /** Where each column starts, from the left of the view, and how wide it is. */
   xs: number[]
   widths: number[]
-  current: number
   rows: Row[]
   picked: Picked | null
 }
@@ -121,7 +120,7 @@ export function timeline(
     let last: { key: string, model: Model } | null = null;
 
     const model = (): Model => {
-      const m = modelOf(world(), selection(), keyframe(), local(), state().tool === 'point');
+      const m = modelOf(world(), selection(), local(), state().tool === 'point' || state().tool === 'edge');
       const key = JSON.stringify(m);
 
       if (last !== null && last.key === key) return last.model;
@@ -131,7 +130,12 @@ export function timeline(
       return m;
     };
 
-    const ctx: Ctx = { state, update, go, edits, local, change, acted, letGo, inner: null, model: null, clicked: null };
+    // Which keyframe is on screen is a highlight rather than a change to what
+    // the view is made of, so it is read where it is drawn and not in the
+    // model: stepping through the keyframes rebuilds nothing.
+    const current = () => order(world(), keyframe());
+
+    const ctx: Ctx = { state, update, go, edits, local, change, acted, letGo, current, inner: null, model: null, clicked: null };
 
     let root: (() => void) | null = null;
 
@@ -185,6 +189,8 @@ interface Ctx {
   change: (f: (l: Local) => Local) => void
   acted: (out: World | Refused) => void
   letGo: () => void
+  /** Where the keyframe on screen is in the order. */
+  current: Value<number>
   inner: HTMLElement | null
   model: Model | null
   /** The last click on an icon, and when: the second of two is a double
@@ -223,8 +229,8 @@ function keys(ctx: Ctx, input: Input): VNode {
 // -----------------------------------------------------------------------------
 
 /** With `corners`, the rows of the corners written about come under their
- * polygons': what the point tool is about. */
-function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local, corners: boolean): Model {
+ * polygons': what the corner and edge tools are about. */
+function modelOf(world: World, selection: Selection, local: Local, corners: boolean): Model {
   const rows = rowsOf(world, rootsOf(world, selection), corners);
   const picked = valid(world, local.picked);
 
@@ -250,7 +256,6 @@ function modelOf(world: World, selection: Selection, k: KeyframeId, local: Local
     })),
     xs,
     widths,
-    current: order(world, k),
     rows,
     picked,
   };
@@ -282,7 +287,7 @@ function unchains(world: World, k: KeyframeId, selection: Selection): boolean {
 // everything else, which scrolls under them.
 // -----------------------------------------------------------------------------
 
-type Style = Record<string, string | number>;
+type Style = Record<string, string | number | (() => string | number)>;
 
 function box(style: Style, children: VNode[] = [], attrs: Record<string, unknown> = {}): VNode {
   return div({ ...attrs, style: { position: 'absolute', boxSizing: 'border-box', ...style } }, children);
@@ -350,9 +355,9 @@ function body(ctx: Ctx, m: Model): VNode {
     [
       // The keyframe on screen, down the whole view.
       box({
-        left: `${m.xs[m.current]}px`,
+        left: () => `${m.xs[ctx.current()] ?? 0}px`,
         top: '0',
-        width: `${m.widths[m.current]}px`,
+        width: () => `${m.widths[ctx.current()] ?? 0}px`,
         height: `${height}px`,
         background: 'rgba(91, 140, 255, 0.12)',
       }),
@@ -431,10 +436,10 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
 /** A keyframe's heading: its name, which stands in it, and its eye. */
 function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): VNode {
   const x = m.xs[i], w = m.widths[i];
-  const current = i === m.current;
+  const current = () => i === ctx.current();
 
   return fragment([
-    box({ left: `${x}px`, top: '0', width: `${w}px`, height: '100%', background: current ? 'rgba(91, 140, 255, 0.16)' : 'transparent' }),
+    box({ left: `${x}px`, top: '0', width: `${w}px`, height: '100%', background: () => (current() ? 'rgba(91, 140, 255, 0.16)' : 'transparent') }),
 
     label(f.name, {
       left: `${x}px`,
@@ -442,8 +447,8 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
       width: `${w}px`,
       textAlign: 'center',
       cursor: 'pointer',
-      color: current ? theme.accent : theme.text,
-      fontWeight: current ? '600' : '400',
+      color: () => (current() ? theme.accent : theme.text),
+      fontWeight: () => (current() ? '600' : '400'),
     }, { onclick: () => ctx.go(f.id) }),
 
     // Whether it draws as a ghost while another is on screen. Through the
@@ -598,6 +603,10 @@ const ICONS: Record<Kind, string> = {
   // Out along the diagonal, both ways.
   scale: 'M2 12 L12 2 M2 12 V8.2 M2 12 H5.8 M12 2 V5.8 M12 2 H8.2',
   skew: 'M4.5 3 H12.5 L9.5 11 H1.5 Z',
+  // A corner cut round.
+  round: 'M2 12.5 V7 A5.5 5.5 0 0 1 7.5 1.5 H12.5',
+  // An edge thrown into teeth.
+  deform: 'M1 9 L3.4 5 L5.8 9 L8.2 5 L10.6 9 L13 5',
   // An outline and the one taken in from it.
   erode: 'M1.5 1.5 H12.5 V12.5 H1.5 Z M4.5 4.5 H9.5 V9.5 H4.5 Z',
   stand: 'M3 2 V12 M11 2 V12',

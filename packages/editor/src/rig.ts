@@ -18,6 +18,8 @@
 //   skew   p = F(ref);  shear by `by` about p along the thing's first axis;
 //          then T(shift)
 //   erode  erosion += by
+//   round  bevel += by
+//   deform amplitude += by
 //   stand  the state is these numbers, whatever came before
 //
 // `ref` is a painted point: a point of the thing, in its rest frame, that the
@@ -146,10 +148,34 @@ export interface Erode {
 }
 
 /**
+ * How far a thing's corners are rounded: its bevel, how deep along each edge
+ * from the corner the arc each becomes starts. How precisely it is faceted
+ * is not an operation but a fact about the thing, over every keyframe. See
+ * `Effects` in `types.ts`.
+ */
+export interface Round {
+  kind: 'round'
+  by: number
+}
+
+/** How far a thing's edges are pushed off their lines: the amplitude of the
+ * pattern each carries. What pattern is a fact about the thing, as a round's
+ * precision is. */
+export interface Deform {
+  kind: 'deform'
+  by: number
+}
+
+/** The operations that say how much of something rather than where: they
+ * commute with the frame and with each other, and add. */
+export type Amount = Erode | Round | Deform;
+
+/**
  * A thing's state, outright: what unchaining writes.
  *
- * Everything the walk carries, frozen — the frame, the depth, which corners
- * stand and where, and the depths on single corners. Played, it replaces
+ * Everything the walk carries, frozen — the frame, the depth, bevel and
+ * amplitude, which corners stand and where, and the amounts on single corners
+ * and edges. Played, it replaces
  * whatever the walk had arrived at, so a thing standing on one stops hearing
  * from anything before it.
  */
@@ -161,9 +187,13 @@ export interface Stand {
    * which corners there were. */
   corners: ReadonlyMap<VertexId, Point>
   depths: ReadonlyMap<VertexId, number>
+  bevel: number
+  amplitude: number
+  bevels: ReadonlyMap<VertexId, number>
+  amplitudes: ReadonlyMap<VertexId, number>
 }
 
-export type Op = Move | Turn | Scale | Skew | Erode | Stand;
+export type Op = Move | Turn | Scale | Skew | Erode | Round | Deform | Stand;
 
 export interface Entry<O extends Op = Op> {
   op: O
@@ -200,9 +230,42 @@ export interface Rig {
   nudges: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Move>>>
   /** Extra depth on single corners, over the thing's own. */
   depths: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Erode>>>
+  /** Extra bevel on single corners, over the thing's own. */
+  rounds: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Round>>>
+  /** Extra amplitude on single edges, over the thing's own, each by the
+   * corner it starts at. */
+  deforms: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Deform>>>
 }
 
-export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map() };
+export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map(), rounds: new Map(), deforms: new Map() };
+
+/** The maps a rig keeps by corner, by name: the one place that lists them. */
+export const CORNER_MAPS = ['nudges', 'depths', 'rounds', 'deforms'] as const;
+
+export type CornerMap = typeof CORNER_MAPS[number];
+
+/** The kind of operation each corner map holds. */
+export const CORNER_KINDS = { nudges: 'move', depths: 'erode', rounds: 'round', deforms: 'deform' } as const;
+
+export type CornerKind = typeof CORNER_KINDS[CornerMap];
+
+/** The corner map holding entries of one kind. */
+export function cornerMapOf(kind: CornerKind): CornerMap {
+  return CORNER_MAPS.find(m => CORNER_KINDS[m] === kind)!;
+}
+
+/** Whether nothing at all is written in a rig. */
+export function blank(rig: Rig): boolean {
+  return rig.keys.size === 0 && CORNER_MAPS.every(m => rig[m].size === 0);
+}
+
+/** Every corner map of a rig through `f`, keys left as they are. */
+export function eachCornerMap(
+  rig: Rig,
+  f: <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) => ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
+): Rig {
+  return { ...rig, nudges: f(rig.nudges), depths: f(rig.depths), rounds: f(rig.rounds), deforms: f(rig.deforms) };
+}
 
 /** An entry that contributes once, at its own keyframe. */
 export function once<O extends Op>(op: O): Entry<O> {
@@ -262,6 +325,14 @@ export interface State {
   corners: ReadonlyMap<VertexId, Point>
   /** The extra depth on single corners. Absent is nought. */
   depths: ReadonlyMap<VertexId, number>
+  /** How far its corners are rounded, and its edges deformed: what its
+   * rounds and deforms add up to. */
+  bevel: number
+  amplitude: number
+  /** The extra bevel on single corners, and amplitude on single edges by
+   * the corner each starts at. Absent is nought. */
+  bevels: ReadonlyMap<VertexId, number>
+  amplitudes: ReadonlyMap<VertexId, number>
 }
 
 const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
@@ -269,7 +340,16 @@ const NO_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
 
 /** What a thing is before it is born, and what anything the world does not
  * know is: at rest, with nothing on it. */
-const UNBORN: State = { frame: REST, erosion: 0, corners: NO_CORNERS, depths: NO_DEPTHS };
+const UNBORN: State = {
+  frame: REST,
+  erosion: 0,
+  corners: NO_CORNERS,
+  depths: NO_DEPTHS,
+  bevel: 0,
+  amplitude: 0,
+  bevels: NO_DEPTHS,
+  amplitudes: NO_DEPTHS,
+};
 
 // -----------------------------------------------------------------------------
 // Frames
@@ -419,6 +499,8 @@ export function played(f: Frame, op: Op, u = 1): Frame {
     }
 
     case 'erode':
+    case 'round':
+    case 'deform':
       return f;
 
     case 'stand':
@@ -593,6 +675,8 @@ function walk(
 
   let frame = REST;
   let erosion = 0;
+  let bevel = 0;
+  let amplitude = 0;
   let running: Running[] = [];
 
   // The last stand played, and where. Corners and their depths are read from
@@ -612,9 +696,17 @@ function walk(
       if (op.kind === 'erode') {
         erosion += op.by;
       }
+      else if (op.kind === 'round') {
+        bevel += op.by;
+      }
+      else if (op.kind === 'deform') {
+        amplitude += op.by;
+      }
       else if (op.kind === 'stand') {
         frame = op.frame;
         erosion = op.erosion;
+        bevel = op.bevel;
+        amplitude = op.amplitude;
       }
       else {
         frame = played(frame, op);
@@ -651,11 +743,17 @@ function walk(
       }
     }
 
+    const none = corners.length === 0;
+
     out.states[i] = {
       frame,
       erosion,
-      corners: corners.length === 0 ? NO_CORNERS : standingAt(keyframes, rig, corners, stood, i),
-      depths: corners.length === 0 ? NO_DEPTHS : deepAt(keyframes, rig, corners, stood, i),
+      corners: none ? NO_CORNERS : standingAt(keyframes, rig, corners, stood, i),
+      depths: none ? NO_DEPTHS : amountsAt(keyframes, rig.depths, stood?.op.depths, corners, stood, i),
+      bevel,
+      amplitude,
+      bevels: none ? NO_DEPTHS : amountsAt(keyframes, rig.rounds, stood?.op.bevels, corners, stood, i),
+      amplitudes: none ? NO_DEPTHS : amountsAt(keyframes, rig.deforms, stood?.op.amplitudes, corners, stood, i),
     };
   }
 
@@ -720,14 +818,20 @@ function standingAt(
   return out;
 }
 
-function deepAt(
+/**
+ * One of the amounts kept by corner — depths, bevels, amplitudes — for every
+ * corner standing at `i`: what the stand froze, and what its entries have added
+ * since.
+ */
+function amountsAt(
   keyframes: readonly Keyframe[],
-  rig: Rig,
+  written: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>,
+  frozen: ReadonlyMap<VertexId, number> | undefined,
   corners: readonly Placing[],
   stood: { at: number, op: Stand } | null,
   i: number,
 ): ReadonlyMap<VertexId, number> {
-  if (rig.depths.size === 0 && (stood === null || stood.op.depths.size === 0)) return NO_DEPTHS;
+  if (written.size === 0 && (frozen === undefined || frozen.size === 0)) return NO_DEPTHS;
 
   const out = new Map<VertexId, number>();
 
@@ -736,9 +840,9 @@ function deepAt(
 
     if (from === null) continue;
 
-    let d = stood?.op.depths.get(c.corner.id) ?? 0;
+    let d = frozen?.get(c.corner.id) ?? 0;
 
-    for (const [k, e] of rig.depths.get(c.corner.id) ?? []) {
+    for (const [k, e] of written.get(c.corner.id) ?? []) {
       d += e.op.by * applications(keyframes, e, k, from, i);
     }
 
@@ -853,6 +957,8 @@ export function trivial(op: Op): boolean {
     case 'skew':
       return op.by === 0 && op.shift.x === 0 && op.shift.y === 0;
     case 'erode':
+    case 'round':
+    case 'deform':
       return op.by === 0;
     case 'stand':
       return false;
@@ -871,7 +977,7 @@ export function near(p: Point, q: Point): boolean {
  * `'gone'` where together they do nothing, or nothing where they cannot be one.
  *
  * Only ever what a hand repeating itself writes. Two moves add, and so do two
- * erosions. Two scales about the same painted point multiply, and their slides
+ * erosions, two rounds and two deforms. Two scales about the same painted point multiply, and their slides
  * add, and two skews about one add in both — the second's is taken from where the first left the painted point, and
  * that is where the combined one's is taken from too. Two turns about the same
  * centre add; the second's offset from the painted point is the first's turned
@@ -897,6 +1003,12 @@ export function merged(a: Entry, b: Entry): Entry | 'gone' | null {
   }
   else if (x.kind === 'erode' && y.kind === 'erode') {
     op = { kind: 'erode', by: x.by + y.by };
+  }
+  else if (x.kind === 'round' && y.kind === 'round') {
+    op = { kind: 'round', by: x.by + y.by };
+  }
+  else if (x.kind === 'deform' && y.kind === 'deform') {
+    op = { kind: 'deform', by: x.by + y.by };
   }
   else if (x.kind === 'turn' && y.kind === 'turn') {
     if (!near(x.ref, y.ref) || !near(spun(x.about, x.angle), y.about)) return null;
@@ -978,13 +1090,28 @@ export function nudged(rig: Rig, vertex: VertexId, k: KeyframeId, by: Point): Ri
 }
 
 export function deepened(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
-  const was = rig.depths.get(vertex)?.get(k);
-  const sum = (was?.op.by ?? 0) + by;
-  const entry = sum === 0
-    ? null
-    : { ...(was ?? once<Erode>({ kind: 'erode', by: sum })), op: { kind: 'erode' as const, by: sum } };
+  return amounted(rig, 'depths', vertex, k, by);
+}
 
-  return { ...rig, depths: cornered(rig.depths, vertex, k, entry) };
+/** One corner rounded further at a keyframe, the way `deepened` deepens it. */
+export function cornerRounded(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
+  return amounted(rig, 'rounds', vertex, k, by);
+}
+
+/** One edge, by the corner it starts at, deformed further at a keyframe. */
+export function edgeDeformed(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
+  return amounted(rig, 'deforms', vertex, k, by);
+}
+
+function amounted(rig: Rig, map: 'depths' | 'rounds' | 'deforms', vertex: VertexId, k: KeyframeId, by: number): Rig {
+  const kind = CORNER_KINDS[map];
+  const maps = rig[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>;
+  const was = maps.get(vertex)?.get(k);
+  const sum = (was?.op.by ?? 0) + by;
+  const op = { kind, by: sum } as Amount;
+  const entry = sum === 0 ? null : { ...(was ?? once(op)), op };
+
+  return { ...rig, [map]: cornered(maps, vertex, k, entry) };
 }
 
 export function cornered<E>(

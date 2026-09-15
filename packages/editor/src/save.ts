@@ -14,6 +14,7 @@
 import {
   Artefact,
   ArtefactId,
+  Effects,
   EMPTY_HISTORY,
   EditorState,
   Flags,
@@ -32,15 +33,28 @@ import {
   VertexId,
   View,
   Point,
+  Options,
+  REMEMBERED,
   World,
   Start,
 } from './types';
 import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
 import { bakedLevel } from './export';
-import { Entry, Erode, Frame, Move, Op, Rig } from './rig';
+import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
 
 /**
+ * 22: effects — which a thing has and how (`World.effects`, a corner's own in
+ * `cornerEffects`), and the rounds and deforms in its timeline, a stand's
+ * included. A 21 is the same with none, and is read as that; its bake stands,
+ * since a world without effects bakes as it did. A deform's `jitter` came
+ * later in 22, and is nought where a file has none; a round's `verticals` and
+ * `ends` came and went, and are dropped; a round was first a number of
+ * `segments`, and reads as a chamfer where that was one and at the precision
+ * a round starts with otherwise, and one without a `tension` at the tension
+ * one starts with; and a stand's bevels were first called its
+ * radius and radii, which are read as them.
+ *
  * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
  * 20 is the same with every skew nought, and is read as that; its bake, which
  * is in a layout the game no longer reads, is left behind to be baked again.
@@ -57,7 +71,7 @@ import { Entry, Erode, Frame, Move, Op, Rig } from './rig';
  *
  * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
  */
-export const FORMAT = 21;
+export const FORMAT = 22;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 20;
@@ -86,6 +100,9 @@ export interface Saved {
     rigs: [Id, SavedRig][]
     /** Absent is none, which is every file from before there were any. */
     flags?: [Id, Flags][]
+    /** Absent is none: a 21. */
+    effects?: [Id, Effects][]
+    cornerEffects?: [VertexId, Partial<Effects>][]
   }
   /**
    * The bake, where there was one: every span of it that still stood when the
@@ -108,6 +125,9 @@ export interface SavedRig {
   keys: [KeyframeId, SavedEntry[]][]
   nudges: [VertexId, [KeyframeId, SavedEntry][]][]
   depths: [VertexId, [KeyframeId, SavedEntry][]][]
+  /** Absent in a 21, which had none. */
+  rounds?: [VertexId, [KeyframeId, SavedEntry][]][]
+  deforms?: [VertexId, [KeyframeId, SavedEntry][]][]
 }
 
 export interface SavedEntry {
@@ -128,6 +148,14 @@ export type SavedOp =
       erosion: number
       corners: [VertexId, Point][]
       depths: [VertexId, number][]
+      /** Absent in a 21, where they are nought. */
+      bevel?: number
+      amplitude?: number
+      bevels?: [VertexId, number][]
+      amplitudes?: [VertexId, number][]
+      /** What a 22 first called the bevels, when they were radii. */
+      radius?: number
+      radii?: [VertexId, number][]
     };
 
 export function saved(state: EditorState): Saved {
@@ -151,21 +179,38 @@ export function saved(state: EditorState): Saved {
       keyframes: state.world.keyframes,
       rigs: [...state.world.rigs].map(([id, rig]) => [id, savedRig(rig)]),
       flags: [...state.world.flags],
+      effects: [...state.world.effects],
+      cornerEffects: [...state.world.cornerEffects],
     },
   };
 }
 
 function savedRig(rig: Rig): SavedRig {
+  const corners = (m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry>>): [VertexId, [KeyframeId, SavedEntry][]][] =>
+    [...m].map(([c, map]) => [c, [...map].map(([k, e]) => [k, savedEntry(e)])]);
+
   return {
     keys: [...rig.keys].map(([k, list]) => [k, list.map(savedEntry)]),
-    nudges: [...rig.nudges].map(([c, map]) => [c, [...map].map(([k, e]) => [k, savedEntry(e)])]),
-    depths: [...rig.depths].map(([c, map]) => [c, [...map].map(([k, e]) => [k, savedEntry(e)])]),
+    nudges: corners(rig.nudges),
+    depths: corners(rig.depths),
+    rounds: corners(rig.rounds),
+    deforms: corners(rig.deforms),
   };
 }
 
 function savedEntry(e: Entry): SavedEntry {
   const op: SavedOp = e.op.kind === 'stand'
-    ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
+    ? {
+        kind: 'stand',
+        frame: e.op.frame,
+        erosion: e.op.erosion,
+        corners: [...e.op.corners],
+        depths: [...e.op.depths],
+        bevel: e.op.bevel,
+        amplitude: e.op.amplitude,
+        bevels: [...e.op.bevels],
+        amplitudes: [...e.op.amplitudes],
+      }
     : e.op;
 
   const out: SavedEntry = e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
@@ -177,10 +222,15 @@ function restoredEntry(e: SavedEntry): Entry {
   // A 20 has no skews: absent is nought.
   const op: Op = e.op.kind === 'stand'
     ? {
-        ...e.op,
+        kind: 'stand',
         frame: { ...e.op.frame, skew: e.op.frame.skew ?? 0 },
+        erosion: e.op.erosion,
         corners: new Map(e.op.corners),
         depths: new Map(e.op.depths),
+        bevel: e.op.bevel ?? e.op.radius ?? 0,
+        amplitude: e.op.amplitude ?? 0,
+        bevels: new Map(e.op.bevels ?? e.op.radii ?? []),
+        amplitudes: new Map(e.op.amplitudes ?? []),
       }
     : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
 
@@ -190,16 +240,15 @@ function restoredEntry(e: SavedEntry): Entry {
 }
 
 function restoredRig(rig: SavedRig): Rig {
+  const corners = <O extends Op>(m: [VertexId, [KeyframeId, SavedEntry][]][] = []): Map<VertexId, Map<KeyframeId, Entry<O>>> =>
+    new Map(m.map(([c, map]) => [c, new Map(map.map(([k, e]) => [k, restoredEntry(e) as Entry<O>]))]));
+
   return {
     keys: new Map(rig.keys.map(([k, list]) => [k, list.map(restoredEntry)])),
-    nudges: new Map(rig.nudges.map(([c, map]) => [
-      c,
-      new Map(map.map(([k, e]) => [k, restoredEntry(e) as Entry<Move>])),
-    ])),
-    depths: new Map(rig.depths.map(([c, map]) => [
-      c,
-      new Map(map.map(([k, e]) => [k, restoredEntry(e) as Entry<Erode>])),
-    ])),
+    nudges: corners<Move>(rig.nudges),
+    depths: corners<Erode>(rig.depths),
+    rounds: corners<Round>(rig.rounds),
+    deforms: corners<Deform>(rig.deforms),
   };
 }
 
@@ -218,6 +267,8 @@ export function restored(file: Saved): EditorState {
     keyframes: file.world.keyframes,
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredRig(rig)])),
     flags: new Map(file.world.flags ?? []),
+    effects: new Map((file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)])),
+    cornerEffects: new Map((file.world.cornerEffects ?? []).map(([c, fx]) => [c, optioned(fx)])),
   };
 
   return {
@@ -228,6 +279,7 @@ export function restored(file: Saved): EditorState {
     selection: {
       polygons: file.selection,
       vertices: [],
+      edges: [],
       artefacts: file.artefacts,
       paths: file.paths,
       start: false,
@@ -256,6 +308,7 @@ export function restored(file: Saved): EditorState {
     history: EMPTY_HISTORY,
     clipboard: [],
     beneath: null,
+    remembered: REMEMBERED,
   };
 }
 
@@ -343,4 +396,28 @@ export function upload(then: (state: EditorState) => void): void {
   });
 
   input.click();
+}
+
+/** Effects as this reads them, from whenever in 22 they were saved: a
+ * deform's `jitter` came after the format did, and a file without one has
+ * none; a round's `verticals` and `ends` came and went, and its `segments`
+ * became a precision. */
+function optioned<E extends Partial<Effects>>(fx: E): E {
+  return {
+    ...fx,
+    ...(fx.round === undefined ? {} : { round: rounding(fx.round) }),
+    ...(fx.deform === undefined ? {} : { deform: { ...REMEMBERED.deform, ...fx.deform } }),
+  };
+}
+
+/** A round as saved, from whenever in 22: see `FORMAT`. */
+function rounding(round: Effects['round'] & object): Options['round'] {
+  const was = round as Partial<Options['round']> & { segments?: number };
+
+  return {
+    precision: was.precision ?? REMEMBERED.round.precision,
+    tension: was.tension ?? REMEMBERED.round.tension,
+    chamfer: was.chamfer ?? was.segments === 1,
+    ...(was.off === undefined ? {} : { off: was.off }),
+  };
 }

@@ -64,7 +64,7 @@ import {
   ungrouped,
 } from './scene';
 import { ArtefactId, FLOOR, Id, SOLID, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
-import { Writing, erode, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -1249,7 +1249,9 @@ function slotted(span: Span): Map<Id, number> {
  * neither polygon could answer for the join out of its own runs.
  */
 describe('the standing walls and the bake agree about every vertical', () => {
-  function same(world: World): void {
+  /** The walls standing, having held them to the bake's: how many of their
+   * points stand no vertical, a run's closing point counted once. */
+  function same(world: World): number {
     const items = contributing(world, 0, resolveAt(world, 0));
     const standing = sourced(live(EMPTY_LIVE, items));
 
@@ -1258,8 +1260,15 @@ describe('the standing walls and the bake agree about every vertical', () => {
     // The A end of the first stretch of every track, which is the span's
     // start: the same boundary `still` was handed. The still side reads world
     // units and the bake each polygon's own frame; nothing here is transformed,
-    // so the two coincide and a run is found by the points it is made of.
+    // so the two coincide and a run is found by the points it is made of —
+    // to a hundredth, since the bake keeps them in single precision.
+    const key = (x: number, y: number) => `${x.toFixed(2)},${y.toFixed(2)}`;
     const baked = new Map<string, number[]>();
+
+    // A point the bake draws dark that the still has nowhere is one a round
+    // lays on its facets for the span — see `Facets` — and a wall with no
+    // vertical on a straight stretch of it is the wall the still draws.
+    const still = new Set(standing.flatMap(r => r.points.map(p => key(p.x, p.y))));
 
     for (const track of flat.tracks) {
       for (const r of track.stretches[0].runs) {
@@ -1267,8 +1276,11 @@ describe('the standing walls and the bake agree about every vertical', () => {
 
         for (let i = 0; i < r.count; i++) {
           const at = r.first + i;
+          const here = key(flat.pointsA[at * 2], flat.pointsA[at * 2 + 1]);
 
-          where.push(`${flat.pointsA[at * 2]},${flat.pointsA[at * 2 + 1]}`);
+          if (flat.opacityA[at] === 0 && !still.has(here)) continue;
+
+          where.push(here);
           flags.push(flat.opacityA[at]);
         }
 
@@ -1277,11 +1289,13 @@ describe('the standing walls and the bake agree about every vertical', () => {
     }
 
     standing.forEach(r => {
-      const where = r.points.map(p => `${p.x},${p.y}`).join(' ');
+      const where = r.points.map(p => key(p.x, p.y)).join(' ');
 
       expect([where, baked.get(where)])
         .toEqual([where, r.corner.map(t => (t ? 1 : 0))]);
     });
+
+    return new Set(standing.flatMap(r => r.points.filter((_p, i) => !r.corner[i]).map(p => key(p.x, p.y)))).size;
   }
 
   test('two rooms abutting on a flat wall', () => {
@@ -1303,6 +1317,46 @@ describe('the standing walls and the bake agree about every vertical', () => {
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(60, 20, 100, 60)],
     ).world);
+  });
+
+  /** A round of four segments, thirty deep, on the one thing `made` names. */
+  function rounded(made: { world: World, id: Id }): World {
+    const world = { ...made.world, effects: new Map([[made.id, { round: inSegments(4, 30) }]]) };
+
+    return wrote(world, 0, made.id, { kind: 'round', by: 30 });
+  }
+
+  const room = () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
+
+    return { world, id: ids[0] as Id };
+  };
+
+  test('a rounded room', () => {
+    expect(same(rounded(room()))).toEqual(0);
+  });
+
+  test('and the game\'s still is handed the very walls the editor stands', () => {
+    const w = rounded(room());
+
+    expect(versionOf(w, 0).walls).toEqual(sourced(live(EMPTY_LIVE, contributing(w, 0, resolveAt(w, 0)))));
+  });
+
+  test('a rounded room whose bevel grows finer over the span', () => {
+    const made = room();
+    const w = wrote(rounded(made), 1, made.id, { kind: 'round', by: 30 });
+
+    // Thirty deep, then sixty: the near end draws its own arcs, and the
+    // span's points over them lie on their facets, standing no vertical.
+    expect(same(w)).toEqual(0);
+    expect(run(bakeSpan(w, 0)).tracks[0].stretches[0].a[0].points.length).toBeGreaterThan(21);
+  });
+
+  test('a sealed group\'s union, rounded', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 300, 300)], ['level', rect(300, 100, 100, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+
+    expect(same(rounded({ world: g.world, id: g.id }))).toEqual(0);
   });
 });
 

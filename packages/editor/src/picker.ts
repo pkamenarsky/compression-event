@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { Value } from '@incpt/kontinuum';
-import { VNode, dynamic, effect, fragment, show, text } from '@incpt/kontinuum-dom';
+import { VNode, effect, fragment, ordered, show, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
@@ -18,17 +18,12 @@ import { Input, keyOwned, pressedAway } from './input';
 import { reachable } from './scene';
 import { theme } from './theme';
 import { labelOf } from './track';
-import { EMPTY_SELECTION, EditorState, Flags, Id, Update, World, clickable, flagged, flagsOf, marked } from './types';
+import { EMPTY_SELECTION, EditorState, Flags, Update, World, clickable, flagged, flagsOf, marked } from './types';
 
 type Beneath = NonNullable<EditorState['beneath']>;
 
-interface Line {
-  id: Id
-  depth: number
-  label: string
-  flags: Flags
-  pickable: boolean
-}
+/** One thing under the cursor, and how deep in its groups. */
+type Item = Beneath['items'][number];
 
 export function picker(beneath: Value<EditorState['beneath']>, world: Value<World>, input: Input, update: Update): VNode {
   const close = () => update(s => (s.beneath === null ? s : { ...s, beneath: null }));
@@ -36,29 +31,6 @@ export function picker(beneath: Value<EditorState['beneath']>, world: Value<Worl
   // Whose Escape it is while the list is up.
   const me = {};
   let root: (() => void) | null = null;
-
-  // Rebuilt only when what it says changes, not on every edit to the world.
-  let last: { key: string, lines: { at: Beneath, lines: Line[] } } | null = null;
-
-  const model = () => {
-    const at = beneath();
-
-    if (at === null) return null;
-
-    const w = world();
-    const lines = at.items.map(({ id, depth }) => ({
-      id,
-      depth,
-      label: labelOf(w, id),
-      flags: flagsOf(w, id),
-      pickable: clickable(w, id),
-    }));
-    const key = JSON.stringify([at, lines]);
-
-    if (last === null || last.key !== key) last = { key, lines: { at, lines } };
-
-    return last.lines;
-  };
 
   return fragment([
     effect(() => beneath() !== null, on => (on ? input.claim(me, 'Escape') : undefined)),
@@ -110,19 +82,26 @@ export function picker(beneath: Value<EditorState['beneath']>, world: Value<Worl
             userSelect: 'none',
           },
         },
-        [dynamic(model, m => div({}, (m?.lines ?? []).map(l => line(l, update))))],
+        // One line per thing under the cursor, kept by id: a switch flipped
+        // changes its own line and nothing else.
+        [ordered(() => beneath()?.items ?? [], it => it.id, (_index, it) => line(it, world, update))],
       ),
     ),
   ]);
 }
 
-function line(l: Line, update: Update): VNode {
-  const pick = () => update(s => {
-    if (!clickable(s.world, l.id)) return s;
+function line(it: Value<Item>, world: Value<World>, update: Update): VNode {
+  // Kept by id, so the id is the line's for as long as it is shown.
+  const id = it().id;
+  const flags = () => flagsOf(world(), id);
+  const pickable = () => clickable(world(), id);
 
-    const selection = s.world.artefacts.has(l.id)
-      ? { ...EMPTY_SELECTION, artefacts: [l.id] }
-      : s.world.paths.has(l.id) ? { ...EMPTY_SELECTION, paths: [l.id] } : { ...EMPTY_SELECTION, polygons: [l.id] };
+  const pick = () => update(s => {
+    if (!clickable(s.world, id)) return s;
+
+    const selection = s.world.artefacts.has(id)
+      ? { ...EMPTY_SELECTION, artefacts: [id] }
+      : s.world.paths.has(id) ? { ...EMPTY_SELECTION, paths: [id] } : { ...EMPTY_SELECTION, polygons: [id] };
 
     return {
       ...s,
@@ -130,7 +109,7 @@ function line(l: Line, update: Update): VNode {
       selection,
       // Standing in a group it is not in, it could not be reached: out to the
       // top, where it can.
-      inside: reachable(s.world, l.id, s.inside) ? s.inside : null,
+      inside: reachable(s.world, id, s.inside) ? s.inside : null,
     };
   });
 
@@ -143,24 +122,24 @@ function line(l: Line, update: Update): VNode {
       borderRadius: '4px',
       cursor: 'pointer',
       fontSize: '10px',
-      background: l.flags[f] ? theme.accent : 'transparent',
-      color: l.flags[f] ? theme.onAccent : theme.faded,
+      background: () => (flags()[f] ? theme.accent : 'transparent'),
+      color: () => (flags()[f] ? theme.onAccent : theme.faded),
     },
-    onclick: () => update(s => marked({ ...s, world: flagged(s.world, l.id, f, !flagsOf(s.world, l.id)[f]) }, s.world)),
+    onclick: () => update(s => marked({ ...s, world: flagged(s.world, id, f, !flagsOf(s.world, id)[f]) }, s.world)),
   }, [text(glyph)]);
 
   return div({ style: { display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px' } }, [
     div({
-      title: l.pickable ? 'Pick it' : 'Cannot be picked while it is locked or hidden',
+      title: () => (pickable() ? 'Pick it' : 'Cannot be picked while it is locked or hidden'),
       style: {
         flex: '1',
-        paddingLeft: `${l.depth * 12}px`,
+        paddingLeft: () => `${it().depth * 12}px`,
         whiteSpace: 'nowrap',
-        cursor: l.pickable ? 'pointer' : 'default',
-        color: l.pickable ? theme.text : theme.faded,
+        cursor: () => (pickable() ? 'pointer' : 'default'),
+        color: () => (pickable() ? theme.text : theme.faded),
       },
       onclick: pick,
-    }, [text(l.label)]),
+    }, [text(() => labelOf(world(), id))]),
     flag('hidden', 'H', 'Hidden: not drawn and not picked; still in the level'),
     flag('locked', 'L', 'Locked: drawn, not picked'),
     flag('solo', 'S', 'Solo: only what is soloed is drawn and picked'),

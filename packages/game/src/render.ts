@@ -495,6 +495,9 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
  * vertical line.
  */
 function runs(version: World['versions'][number]): Run[] {
+  if (version.walls !== undefined) return version.walls;
+
+  // Shipped before a version said where its verticals stand.
   return version.polygons
     .filter(p => p.points.length >= 3)
     .map(p => {

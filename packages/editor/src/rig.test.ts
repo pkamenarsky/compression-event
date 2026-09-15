@@ -11,10 +11,13 @@ import {
   Op,
   REST,
   Rig,
+  Stand,
   Timeline,
   affineOf,
   appending,
+  cornerRounded,
   deepened,
+  edgeDeformed,
   framed,
   nudged,
   once,
@@ -489,6 +492,86 @@ describe('corners', () => {
   });
 });
 
+const round = (by: number): Op => ({ kind: 'round', by });
+const deform = (by: number): Op => ({ kind: 'deform', by });
+
+describe('effect amounts', () => {
+  test('rounds and deforms add up, and a repeat grows the amount', () => {
+    let tl = keyed(room, 0, P, [round(2), deform(1), round(3)]);
+
+    tl = keyed(tl, 2, P, [repeating(round(1), null), repeating(deform(0.5), 2)]);
+
+    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).bevel)).toEqual([5, 5, 6, 7, 8]);
+    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).amplitude)).toEqual([1, 1, 1.5, 2, 2]);
+  });
+
+  test('they commute with the frame: where they sit in a list moves nothing', () => {
+    const a = keyed(room, 1, P, [round(2), turn(30, MIDDLE), deform(1), move(3, 4)]);
+    const b = keyed(room, 1, P, [turn(30, MIDDLE), move(3, 4), deform(1), round(2)]);
+
+    expect(stateAt(a, P, 1)).toEqual(stateAt(b, P, 1));
+  });
+
+  test('two in a row merge, and one that comes back to nothing goes', () => {
+    expect(appending([once(round(2))], once(round(3)))).toEqual([once(round(5))]);
+    expect(appending([once(deform(2))], once(deform(-2)))).toEqual([]);
+    expect(appending([once(round(2))], once(deform(2)))).toHaveLength(2);
+    expect(appending([once(erode(2))], once(round(0)))).toEqual([once(erode(2))]);
+  });
+
+  test('a corner\'s bevel and an edge\'s amplitude are over the thing\'s own, and repeat', () => {
+    let rig = cornerRounded(EMPTY_RIG, 102, 0, 3);
+
+    rig = edgeDeformed(rig, 101, 1, 2);
+    rig = { ...rig, deforms: new Map([[101, new Map([[1, { ...rig.deforms.get(101)!.get(1)!, times: null }]])]]) };
+
+    const tl = rigged(room, P, rig);
+
+    expect(stateAt(tl, P, 0).bevels.get(102)).toBe(3);
+    expect(stateAt(tl, P, 3).bevels.get(102)).toBe(3);
+    expect(stateAt(tl, P, 0).amplitudes.has(101)).toBe(false);
+    expect(stateAt(tl, P, 3).amplitudes.get(101)).toBe(6);
+    expect(cornerRounded(rig, 102, 0, -3).rounds.size).toBe(0);
+  });
+
+  test('a stand holds them, and a repeat begun before it goes on growing them', () => {
+    let tl = keyed(room, 0, P, [round(9), repeating(deform(1), null)]);
+
+    tl = rigged(tl, P, cornerRounded(rigOf(tl, P), 101, 0, 4));
+    tl = keyed(tl, 3, P, [{
+      ...NOTHING_STANDS,
+      corners: stateAt(tl, P, 2).corners,
+      bevel: 2,
+      amplitude: 1,
+      bevels: new Map([[102, 1]]),
+    }]);
+
+    expect(stateAt(tl, P, 3).bevel).toBe(2);
+    expect(stateAt(tl, P, 3).amplitude).toBe(1);
+    expect([...stateAt(tl, P, 3).bevels]).toEqual([[102, 1]]);
+    expect(stateAt(tl, P, 5).amplitude).toBe(3);
+  });
+
+  test('none of them moves the frame', () => {
+    const f: Frame = { t: { x: 3, y: -2 }, angle: 0.4, skew: 0.1, scale: { x: 1.5, y: 0.5 } };
+
+    expect(played(f, round(4), 0.5)).toEqual(f);
+    expect(played(f, deform(4))).toEqual(f);
+  });
+});
+
+const NOTHING_STANDS: Stand = {
+  kind: 'stand',
+  frame: REST,
+  erosion: 0,
+  corners: new Map(),
+  depths: new Map(),
+  bevel: 0,
+  amplitude: 0,
+  bevels: new Map(),
+  amplitudes: new Map(),
+};
+
 describe('stands', () => {
   const r = MIDDLE;
   const held: Frame = { t: { x: 7, y: 8 }, angle: 0.5, skew: 0, scale: { x: 1, y: 2 } };
@@ -499,6 +582,10 @@ describe('stands', () => {
     erosion: 4,
     corners: new Map([[100, { x: 0, y: 0 }], [101, { x: 20, y: 0 }], [102, { x: 20, y: 20 }]]),
     depths: new Map([[101, 1]]),
+    bevel: 0,
+    amplitude: 0,
+    bevels: new Map(),
+    amplitudes: new Map(),
   };
 
   test('a stand is what it says, and upstream stops being heard', () => {
@@ -568,7 +655,7 @@ describe('playing part of an operation', () => {
     move(4, 5),
     turnAbout(170, r, p, c),
     scaleAbout({ x: 3, y: 0.25 }, r, p, c, f.angle),
-    { kind: 'stand', frame: REST, erosion: 0, corners: new Map(), depths: new Map() },
+    { ...NOTHING_STANDS, frame: REST },
   ];
 
   test('none of it is where it started, and all of it is exactly the whole', () => {

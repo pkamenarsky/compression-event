@@ -39,7 +39,7 @@ import {
 import { Bake, Flight, Origin, Ref, Rider, Span, Stretch, loadedFor, spanAt } from './bake';
 import { Op } from './rig';
 import { Shape, simplify, subtract, union } from './geometry';
-import { Contributed, contributing, placeAt, resolveAt, settled } from './scene';
+import { Contributed, EMPTY_LIVE, contributing, live, placeAt, resolveAt, settled, sourced } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
 
 // -----------------------------------------------------------------------------
@@ -119,7 +119,9 @@ function record(op: Op): number[] {
       return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0];
     }
     case 'erode':
-      throw new Error('an erosion is in the depths, not in the frame table');
+    case 'round':
+    case 'deform':
+      throw new Error('an amount is in the geometry, not in the frame table');
   }
 }
 
@@ -397,6 +399,7 @@ export function unionAt(world: World, v: KeyframeId): Shape {
 /**
  * The version as collision and the out-of-bounds check get it: the union's
  * rings, wound and normalled, and the floor polygons that take no part in it.
+ * And as a still draws it: the walls standing, as the editor's view has them.
  *
  * The union rather than the polygons it was made of, which is the whole of the
  * fix recorded as *3b* in `docs/game.md`. Source rings carry walls the set does
@@ -419,7 +422,12 @@ export function versionOf(world: World, v: KeyframeId): GameVersion {
     if (points.length >= 3) polygons.push({ points });
   }
 
-  return { polygons, floors: floorsAt(world, v) };
+  // The walls as the editor's own view stands them — `sourced`, which is
+  // where a still's verticals are decided — rather than anything worked out
+  // again here off the rings.
+  const walls = sourced(live(EMPTY_LIVE, contributing(world, v, resolveAt(world, v))));
+
+  return { polygons, floors: floorsAt(world, v), walls };
 }
 
 /**

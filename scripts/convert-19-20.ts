@@ -472,6 +472,10 @@ export function converted(old: Old): Converted {
           // whatever the footing said.
           corners: new Map([...footing.local].filter(([v]) => !bornAt(id, v, k))),
           depths: new Map(footing.depths),
+          bevel: 0,
+          amplitude: 0,
+          bevels: new Map(),
+          amplitudes: new Map(),
         });
       }
 
@@ -562,7 +566,7 @@ export function converted(old: Old): Converted {
       }
     }
 
-    if (keys.size > 0 || nudges.size > 0 || depths.size > 0) rigs.set(id, { keys, nudges, depths });
+    if (keys.size > 0 || nudges.size > 0 || depths.size > 0) rigs.set(id, { keys, nudges, depths, rounds: new Map(), deforms: new Map() });
   }
 
   // --- Checking it -----------------------------------------------------------
@@ -667,7 +671,7 @@ function savedRig(rig: Rig): SavedRig {
 
 function savedEntry(e: Entry): SavedEntry {
   const op = e.op.kind === 'stand'
-    ? { ...e.op, corners: [...e.op.corners], depths: [...e.op.depths] }
+    ? { kind: 'stand' as const, frame: e.op.frame, erosion: e.op.erosion, corners: [...e.op.corners], depths: [...e.op.depths] }
     : e.op;
 
   return { op, times: e.times };

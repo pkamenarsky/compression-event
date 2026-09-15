@@ -99,6 +99,7 @@ import {
   chain,
   contributed,
   depths,
+  groupEffects,
   groupFrame,
   joined,
   keyAt,
@@ -111,7 +112,7 @@ import {
   ungrouping,
   unplace,
 } from './scene';
-import { Entry, Rig, once } from './rig';
+import { CORNER_MAPS, EMPTY_RIG, Entry, Rig, once, stateAt } from './rig';
 import {
   GroupId,
   Id,
@@ -406,7 +407,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
     g => {
       if (g === id || !inside.has(g)) return null;
 
-      return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0 } : null;
+      return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0, effects: groupEffects(world, v, g) } : null;
     },
   );
 
@@ -507,7 +508,15 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  const readings = readingAt(world, v, id);
+  // Read without its own deform: the rings it makes take the deform on,
+  // with its timeline, and would otherwise have it done to them twice. What
+  // is inside it — its members' own deforms, and those of groups within —
+  // comes into the rings as the shape they make.
+  const own = world.effects.get(id);
+  const bare = own?.deform === undefined
+    ? world
+    : { ...world, effects: new Map(world.effects).set(id, { ...own, deform: undefined }) };
+  const readings = readingAt(bare, v, id);
 
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.
@@ -602,21 +611,37 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // d) - erode(B, -d) — and that flip has already happened here: every ring out
   // of `readingAt` is added, holes included, so every one of them erodes
   // inward.
+  //
+  // Its rounds and deforms go the same way, and its effects with them: the
+  // ring is the union they rounded and deformed.
   const eroding = new Map<KeyframeId, readonly Entry[]>();
-  let was = 0;
+  const fx = world.effects.get(id);
+  let was = { erosion: 0, bevel: 0, amplitude: 0 };
 
   for (const k of standing) {
-    const d = depths(world, k).get(id) ?? 0;
+    const state = stateAt(world, id, k);
+    const now = {
+      erosion: depths(world, k).get(id) ?? 0,
+      bevel: fx === undefined ? 0 : state.bevel,
+      amplitude: fx === undefined ? 0 : state.amplitude,
+    };
+    const list: Entry[] = [];
 
-    if (d !== was) eroding.set(k, [once({ kind: 'erode', by: d - was })]);
+    if (now.erosion !== was.erosion) list.push(once({ kind: 'erode', by: now.erosion - was.erosion }));
+    if (now.bevel !== was.bevel) list.push(once({ kind: 'round', by: now.bevel - was.bevel }));
+    if (now.amplitude !== was.amplitude) list.push(once({ kind: 'deform', by: now.amplitude - was.amplitude }));
+    if (list.length > 0) eroding.set(k, list);
 
-    was = d;
+    was = now;
   }
 
+  const effects = new Map(world.effects);
+
   for (const m of made) {
-    const rig: Rig = { keys: eroding, nudges: new Map(), depths: new Map() };
+    const rig: Rig = { ...EMPTY_RIG, keys: eroding };
 
     if (eroding.size > 0) rigs.set(m, rig);
+    if (fx !== undefined) effects.set(m, fx);
   }
 
   // The rings go in where the members were, and the group comes apart round
@@ -625,7 +650,7 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // reason the group is used as scaffolding rather than dismantled by hand.
   groups.set(id, { ...group, members: [...made, ...kept] });
 
-  const held = { ...world, polygons, groups, rigs, nextId: next };
+  const held = { ...world, polygons, groups, rigs, effects, nextId: next };
 
   // Taken apart, so that what came out is pickable one ring at a time. It is
   // the whole reason to resolve: a union you cannot get at is the group you
@@ -651,8 +676,8 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 function written(rig: Rig, k: KeyframeId): boolean {
   if (rig.keys.has(k)) return true;
 
-  for (const maps of [rig.nudges, rig.depths]) {
-    for (const map of maps.values()) {
+  for (const m of CORNER_MAPS) {
+    for (const map of rig[m].values()) {
       if (map.has(k)) return true;
     }
   }

@@ -31,6 +31,7 @@ import { shipped } from './export';
 import { download, upload } from './save';
 import { resolveInto } from './resolve';
 import { picker } from './picker';
+import { effectsPane } from './pane';
 import { timeline } from './timeline';
 import { theme } from './theme';
 import {
@@ -49,6 +50,8 @@ import {
   FIGURES,
   FLOOR,
   GroupId,
+  PICKINGS,
+  Picking,
   PolygonKind,
   SOLID,
   coarser,
@@ -61,6 +64,7 @@ import {
   redone,
   undone,
   within,
+  picks,
 } from './types';
 import { reborn } from './keys';
 
@@ -107,6 +111,7 @@ export function editor(initial: World): VNode {
             s.view,
             s.tool,
             s.figure,
+            s.remembered,
             s.selection,
             s.inside,
             s.keyframe,
@@ -132,10 +137,10 @@ export function editor(initial: World): VNode {
           picker(s.beneath, s.world, input, update),
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
+          pickBar(s.tool, update),
+          effectsPane(s.world, s.selection, s.tool, s.remembered, 12 + TOOLBAR + 8, update),
           typeBar(s.world, s.selection, s.tool, update),
-          // Ticked by the spans, so made again when there are more or fewer of
-          // them.
-          dynamic(() => s.world().keyframes.length, count => bakeButton(count, state, s.world, s.bake, update)),
+          bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),
 
           // Along the whole bottom, the status line sitting on the keyframes:
@@ -858,18 +863,19 @@ const BUTTON = 36;
 const GAP = 2;
 const PADDING = 4;
 
-/** Each icon is drawn in its own 24×24 box, stroked in the button's colour. */
+/** Each icon is drawn in its own 24×24 box, stroked in the button's colour.
+ * `select` is the one button the three pickings share. */
 interface ToolSpec {
-  id: Tool
+  id: Exclude<Tool, Picking> | 'select'
   icon: VNode[]
 }
 
 const TOOLS: ToolSpec[] = [
+  // An arrow, which is what selecting is everywhere.
   {
-    id: 'point',
+    id: 'select',
     icon: [
-      path({ d: 'M12 2.5 V8 M12 16 V21.5 M2.5 12 H8 M16 12 H21.5' }),
-      circle({ cx: 12, cy: 12, r: 3 }),
+      path({ d: 'M6 3 V19 L10.2 15 L13 21 L15.6 19.8 L12.8 13.9 H18.5 Z' }),
     ],
   },
 
@@ -887,13 +893,6 @@ const TOOLS: ToolSpec[] = [
     icon: [
       path({ d: 'M12 2.5 L20.5 9.5 L12 21.5 L3.5 9.5 Z' }),
       path({ d: 'M3.5 9.5 H20.5 M8.5 9.5 L12 21.5 L15.5 9.5 L12 2.5 Z' }),
-    ],
-  },
-
-  {
-    id: 'polygon',
-    icon: [
-      path({ d: 'M12 3 L20.6 9.2 L17.3 19.3 H6.7 L3.4 9.2 Z' }),
     ],
   },
 
@@ -1014,11 +1013,81 @@ function toolButton(
   tool: Value<Tool>,
   update: Update,
 ): VNode {
+  const on = () => (spec.id === 'select' ? picks(tool()) : tool() === spec.id);
+
+  // Back to selecting picks whole things, whatever was being picked before:
+  // it is where a hand coming from another tool nearly always wants to be.
+  const to = (t: Tool): Tool => (spec.id !== 'select' ? spec.id : picks(t) ? t : 'polygon');
+
   return button(
     spec.icon,
     { x: PADDING, y: PADDING + index * (BUTTON + GAP) },
-    () => tool() === spec.id,
-    () => update(s => ({ ...s, tool: spec.id })),
+    on,
+    () => update(s => ({ ...s, tool: to(s.tool) })),
+  );
+}
+
+/** How tall the toolbar is, for what goes under it. */
+const TOOLBAR = TOOLS.length * BUTTON + (TOOLS.length - 1) * GAP + 2 * PADDING;
+
+/** What the select tool picks, each its own icon: a whole outline, one edge
+ * of it, one corner. */
+const PICK_ICONS: Record<Picking, VNode[]> = {
+  polygon: [path({ d: 'M12 3 L20.6 9.2 L17.3 19.3 H6.7 L3.4 9.2 Z' })],
+
+  edge: [
+    path({ d: 'M12 3 L20.6 9.2 L17.3 19.3 M6.7 19.3 L3.4 9.2 L12 3', 'stroke-dasharray': '1.5 2.5' }),
+    path({ d: 'M6.7 19.3 H17.3', 'stroke-width': 3 }),
+  ],
+
+  point: [
+    path({ d: 'M12 2.5 V8 M12 16 V21.5 M2.5 12 H8 M16 12 H21.5' }),
+    circle({ cx: 12, cy: 12, r: 3 }),
+  ],
+};
+
+/**
+ * What the select tool picks, in a row beside it while it is up: whole
+ * things, edges or corners. The figure bar's twin, for the same reason.
+ */
+function pickBar(tool: Value<Tool>, update: Update): VNode {
+  const width = PICKINGS.length * BUTTON + (PICKINGS.length - 1) * GAP + 2 * PADDING;
+  const height = BUTTON + 2 * PADDING;
+  const row = TOOLS.findIndex(spec => spec.id === 'select');
+
+  return show(
+    () => picks(tool()),
+    svg(
+      {
+        width,
+        height,
+        viewBox: `0 0 ${width} ${height}`,
+        style: {
+          position: 'absolute',
+          left: `${12 + BUTTON + 2 * PADDING + 8}px`,
+          top: `${12 + row * (BUTTON + GAP)}px`,
+          filter: `drop-shadow(0 6px 18px ${theme.panelShadow})`,
+        },
+      },
+      [
+        rect({
+          x: 0.5,
+          y: 0.5,
+          width: width - 1,
+          height: height - 1,
+          rx: 8,
+          fill: theme.panel,
+          stroke: theme.border,
+        }),
+
+        ...PICKINGS.map((id, index) => button(
+          PICK_ICONS[id],
+          { x: PADDING + index * (BUTTON + GAP), y: PADDING },
+          () => tool() === id,
+          () => update(s => ({ ...s, tool: id })),
+        )),
+      ],
+    ),
   );
 }
 
@@ -1277,20 +1346,19 @@ const PANEL_WIDTH = 132;
 const BAKE_HEIGHT = 52;
 
 function bakeButton(
-  count: number,
   state: Value<EditorState>,
   world: Value<World>,
   bake: Value<Bake>,
   update: Update,
 ): VNode {
-  const spans = Math.max(1, count - 1);
+  const spans = () => Math.max(1, world().keyframes.length - 1);
   const running = () => bake().progress !== null;
 
   const done = () => {
     const b = bake(), w = world();
     let n = 0;
 
-    for (let k = 0; k < spans; k++) {
+    for (let k = 0; k < spans(); k++) {
       if (spanAt(b, w, k) !== null) n++;
     }
 
@@ -1299,7 +1367,7 @@ function bakeButton(
 
   const label = () => (running()
     ? `baking ${Math.round((bake().progress ?? 0) * 100)}%`
-    : `bake  ${done()} / ${spans}`);
+    : `bake  ${done()} / ${spans()}`);
 
   return svg(
     {
@@ -1370,20 +1438,22 @@ function bakeButton(
         x: PADDING,
         y: BAKE_HEIGHT - PADDING - 10,
         width: () => (PANEL_WIDTH - 2 * PADDING)
-          * (running() ? bake().progress ?? 0 : done() / spans),
+          * (running() ? bake().progress ?? 0 : done() / spans()),
         height: 6,
         rx: 3,
         fill: () => (running() ? theme.accent : theme.csg),
       }),
 
-      ...Array.from({ length: spans - 1 }, (_unused, i) => line({
-        x1: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+      // One tick per gap between spans: their number is the structure, so
+      // they alone are made again when it changes.
+      dynamic(spans, n => g({}, Array.from({ length: n - 1 }, (_unused, i) => line({
+        x1: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / n),
         y1: BAKE_HEIGHT - PADDING - 10,
-        x2: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / spans),
+        x2: PADDING + (PANEL_WIDTH - 2 * PADDING) * ((i + 1) / n),
         y2: BAKE_HEIGHT - PADDING - 4,
         stroke: theme.panel,
         'stroke-width': 1,
-      })),
+      })))),
     ],
   );
 }
@@ -1488,7 +1558,7 @@ function statusbar(status: Value<string | null>): VNode {
           pointerEvents: 'none',
         },
       },
-      [dynamic(() => status() ?? '', at => textNode(at))],
+      [textNode(() => status() ?? '')],
     ),
   );
 }
@@ -1532,9 +1602,10 @@ function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: 
         style: {
           position: 'absolute',
 
-          // Clear of the toolbar rather than over it. Along the top edge is
-          // where a path belongs and where every program that has one puts it.
-          left: `${12 + BUTTON + 2 * PADDING + 8}px`,
+          // Clear of the toolbar and the pick bar beside it rather than over
+          // them. Along the top edge is where a path belongs and where every
+          // program that has one puts it.
+          left: `${12 + BUTTON + 2 * PADDING + 8 + PICKINGS.length * (BUTTON + GAP) + 2 * PADDING + 8}px`,
           top: '12px',
           display: 'flex',
           alignItems: 'center',

@@ -20,7 +20,9 @@ import {
   slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
-import type { Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
+import type { Pattern, Sides } from './geometry';
+import type { Deform, Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig, Round } from './rig';
+import { CORNER_MAPS, eachCornerMap } from './rig';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
 export type { Keyframe, KeyframeId };
@@ -82,7 +84,24 @@ export function toStep(n: number, step: number): number {
 // Tools
 // -----------------------------------------------------------------------------
 
-export type Tool = 'point' | 'create' | 'artefact' | 'polygon' | 'path';
+export type Tool = Picking | 'create' | 'artefact' | 'path';
+
+/**
+ * The selection tool, by what it picks: whole things, edges, or corners.
+ *
+ * One tool with three answers rather than three tools, because they share
+ * everything but the question — a click picks, a drag moves what is picked,
+ * and the effect keys act on it — and a toolbar with a row for each would be
+ * a toolbar about selecting. They are chosen beside it once it is up, the way
+ * the create tool picks its figure.
+ */
+export type Picking = 'polygon' | 'edge' | 'point';
+
+export const PICKINGS: Picking[] = ['polygon', 'edge', 'point'];
+
+export function picks(tool: Tool): tool is Picking {
+  return tool === 'polygon' || tool === 'edge' || tool === 'point';
+}
 
 /**
  * What the create tool draws.
@@ -281,6 +300,12 @@ export interface Vertex {
   birth: KeyframeId
   /** The keyframe that took it out, or nothing while it still stands. */
   death: KeyframeId | null
+  /**
+   * For a tooth a deform made, the corner of the polygon's own whose edge it
+   * is on: what puts it in its place among the corners. Absent for a corner
+   * of the polygon's own. See `deformedAt` in `scene.ts`.
+   */
+  root?: VertexId
 }
 
 /**
@@ -526,7 +551,55 @@ export interface World {
   /** What the timeline's row headers say about each thing: hidden, locked,
    * soloed. Absent is none of them. See `Flags`. */
   flags: ReadonlyMap<Id, Flags>
+  /** Which effects each polygon or group has, and how: one fact over every
+   * keyframe. How much is in its timeline. Absent is none. See `Effects`. */
+  effects: ReadonlyMap<Id, Effects>
+  /** A corner's own options, over its polygon's: its round, and the deform of
+   * the edge it starts. Absent is its polygon's. */
+  cornerEffects: ReadonlyMap<VertexId, Partial<Effects>>
 }
+
+/**
+ * The effects on a thing, around its erosion and always in this order: its
+ * edges deformed, then eroded, then its corners rounded.
+ *
+ * An effect switched `off` is kept, options and amounts and all, and does
+ * nothing: unticking one in the pane is a question of whether it applies, and
+ * its timeline is still there when it is ticked again. A corner's own round
+ * switched off leaves that corner square; its thing's switched off leaves
+ * every corner square, its own options or not.
+ *
+ * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
+ * effects a thing has, and how, is one fact about it over every keyframe, as
+ * its shape is, and how much — the bevel, the amplitude — is an operation,
+ * like erosion. A count, a pattern or a seed does not change over time.
+ *
+ * - `round`: each corner an arc starting as deep along each edge as its
+ *   bevel, along a curve that leaves the edges with no curvature, in as many
+ *   segments as keep it within `precision` of that curve — closer where it
+ *   bends more (see `segmentsFor`, `spread`) — or one for a `chamfer`.
+ *   `tension` is how hard it turns in its middle and how straight it runs
+ *   off its edges, from about a circle at nought to tight in the corner at
+ *   one (see `curveOf`).
+ * - `deform`: points put into each edge every `spacing` of its length, each
+ *   strayed along it by up to `jitter` of the spacing, and pushed off it by
+ *   the pattern. `seed` is the noise's and the jitter's.
+ */
+export interface Effects {
+  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean }
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
+  /** Erosion has no options, so it is here only to be switched off. */
+  erode?: { off: boolean }
+}
+
+/** The options of the effects that have them. */
+export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
+
+/** The options an effect starts with before any has been chosen. */
+export const REMEMBERED: Options = {
+  round: { precision: 0.5, tension: 0.5, chamfer: false },
+  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
+};
 
 /**
  * How the editor treats a thing, rather than what it is: the switches on a
@@ -640,6 +713,8 @@ export function emptyWorld(): World {
     })),
     rigs: new Map(),
     flags: new Map(),
+    effects: new Map(),
+    cornerEffects: new Map(),
   };
 }
 
@@ -746,6 +821,9 @@ export function opened(world: World, inside: GroupId | null): GroupId[] {
 export interface Selection {
   polygons: PolygonId[]
   vertices: VertexId[]
+  /** Picked edges, each by the drawn corner it starts at — the corner its
+   * amplitude is kept by. */
+  edges: VertexId[]
   artefacts: ArtefactId[]
   /**
    * The picked paths, whole.
@@ -773,6 +851,7 @@ export interface Selection {
 export const EMPTY_SELECTION: Selection = {
   polygons: [],
   vertices: [],
+  edges: [],
   artefacts: [],
   paths: [],
   start: false,
@@ -821,11 +900,16 @@ export interface Timed {
   /** Where it starts: where the keyframe before the copy left it. */
   start: Frame
   erosion: number
+  /** Its bevel and amplitude there, as `erosion`. Absent is nought. */
+  bevel?: number
+  amplitude?: number
   /** Where it stood at the copy keyframe, everything there in: what a stamp
    * starts at. */
-  stood: { frame: Frame, erosion: number }
+  stood: { frame: Frame, erosion: number, bevel?: number, amplitude?: number }
   /** Each keyframe's list from the copy on, by offset. */
   keys: [number, Entry[]][]
+  /** Its effects. Absent is none. */
+  effects?: Effects
   /** The repeats that came across as single entries. */
   unrolled: Unrolled[]
 }
@@ -857,9 +941,18 @@ export type Clipping =
       points: Vertex[]
       /** The extra depth on single corners at the copy keyframe. */
       depths: [VertexId, number][]
-      /** Nudges and depths on single corners after it, by offset. */
+      /** The extra bevel on single corners there, and amplitude on single
+       * edges. Absent is none. */
+      bevels?: [VertexId, number][]
+      amplitudes?: [VertexId, number][]
+      /** Nudges, depths, rounds and deforms on single corners after it, by
+       * offset. */
       nudges: [VertexId, [number, Entry<Move>][]][]
       deep: [VertexId, [number, Entry<Erode>][]][]
+      rounds?: [VertexId, [number, Entry<Round>][]][]
+      deforms?: [VertexId, [number, Entry<Deform>][]][]
+      /** Its corners' own options. Absent is none. */
+      cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)
   | ({
       kind: 'group'
@@ -940,7 +1033,7 @@ export function gestured(world: World, was: World): World {
 
     if (old !== undefined) {
       for (const list of old.keys.values()) for (const e of list) ops.add(e.op);
-      for (const map of [...old.nudges.values(), ...old.depths.values()]) for (const e of map.values()) ops.add(e.op);
+      for (const m of CORNER_MAPS) for (const map of old[m].values()) for (const e of map.values()) ops.add(e.op);
     }
 
     let stamped = false;
@@ -955,11 +1048,7 @@ export function gestured(world: World, was: World): World {
     const corners = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
       new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, mark(e)]))]));
 
-    const now: Rig = {
-      keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])),
-      nudges: corners(rig.nudges),
-      depths: corners(rig.depths),
-    };
+    const now: Rig = eachCornerMap({ ...rig, keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])) }, corners);
 
     if (stamped) {
       rigs.set(id, now);
@@ -1022,6 +1111,7 @@ function settled(s: EditorState, was: World): EditorState {
         id => s.world.polygons.has(id) || s.world.groups.has(id),
       ),
       vertices: s.selection.vertices.filter(id => corners.has(id)),
+      edges: s.selection.edges.filter(id => corners.has(id)),
       // Always there, so nothing can have taken it away.
       start: s.selection.start,
       artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
@@ -1107,6 +1197,12 @@ export interface EditorState {
   tool: Tool
   /** What the create tool draws, which is only about that tool. */
   figure: Figure
+  /**
+   * The effect options last used: what `b` and `d` give a thing that has
+   * none, and what the effects pane shows for an effect nothing picked has.
+   * About this sitting, so not in the file.
+   */
+  remembered: Options
 
   /** A version switch being watched go by, rather than jumped. Null between
    * them, which is nearly always. */
@@ -1186,6 +1282,7 @@ export function initialState(world: World): EditorState {
     view: defaultView,
     tool: 'point',
     figure: 'rect',
+    remembered: REMEMBERED,
     replay: null,
     preview: false,
     roaming: false,

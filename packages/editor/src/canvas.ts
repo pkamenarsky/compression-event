@@ -50,7 +50,6 @@ import {
   turnOf,
   scaleOf,
   Painted,
-  deepen,
   owning,
   under,
   unplace,
@@ -116,6 +115,19 @@ import { theme } from './theme';
 import { beneath } from './track';
 import { Op as Operation } from './rig';
 import {
+  AmountKind,
+  amountWritten,
+  cornersAmounted,
+  edgeOf,
+  edgeRun,
+  edgesBetween,
+  edgesWithinBox,
+  endsOf,
+  cornersSwitched,
+  switchedOn,
+  withEffect,
+} from './effects';
+import {
   ARTEFACTS,
   ArtefactId,
   FIGURES,
@@ -129,6 +141,7 @@ import {
   ArtefactType,
   EditorState,
   Id,
+  Options as EffectOptions,
   PathId,
   Point,
   Polygon,
@@ -210,6 +223,8 @@ export function worldCanvas(
   view: Value<View>,
   tool: Value<Tool>,
   figure: Value<Figure>,
+  /** The effect options `b` and `d` give a thing that has none. */
+  remembered: Value<EffectOptions>,
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
   keyframe: Value<KeyframeId>,
@@ -382,6 +397,16 @@ export function worldCanvas(
         if (tool() === 'artefact') return;
       }
 
+      // Edges wholly inside it, and nothing else: a box drawn under the edge
+      // tool is a question about lines.
+      if (tool() === 'edge') {
+        const caught = edgesWithinBox(edgeable(), box.a, box.b);
+
+        update(s => ({ ...s, selection: { ...s.selection, edges: alsoPicked(adding ? s.selection.edges : [], caught) } }));
+
+        return;
+      }
+
       const points = tool() === 'point';
 
       // A box over the corners is a selection of corners, so nothing is picked
@@ -443,8 +468,13 @@ export function worldCanvas(
      * offsets from it. Snapping each of them on its own would pull a dragged
      * group out of shape one corner at a time, and the shape is what was picked.
      */
-    function* draggingVertices(grabbed: VertexId, ids: readonly VertexId[]): Op<void> {
+    function* draggingVertices(grabbed: VertexId, ids: readonly VertexId[], from?: PointerEvent): Op<void> {
       const v = keyframe();
+
+      // Where an edge was taken hold of, somewhere along it: then the step is
+      // what snaps, as a whole thing's does, since neither end is under the
+      // cursor to be put on the grid.
+      const grip = from === undefined ? null : at(from);
       const was = world();
       const items = resolveAt(was, v);
 
@@ -469,9 +499,14 @@ export function worldCanvas(
 
       const end = yield* select({
         dragging: pointerMoved(e => {
-          const to = at(e, true);
-          const step = locked(e, { x: to.x - anchor.from.x, y: to.y - anchor.from.y });
-          const dx = step.x, dy = step.y;
+          const to = at(e, grip === null);
+          const g = settings().gridSize;
+          const step = grip === null
+            ? locked(e, { x: to.x - anchor.from.x, y: to.y - anchor.from.y })
+            : locked(e, { x: to.x - grip.x, y: to.y - grip.y });
+          const snapped = grip !== null && !free(e);
+          const dx = snapped ? toStep(step.x, g) : step.x;
+          const dy = snapped ? toStep(step.y, g) : step.y;
 
           update(s => {
             let world = was;
@@ -543,6 +578,15 @@ export function worldCanvas(
           const deep = from.x - to.x;
 
           return { x: to.x, y: from.y + (free(e) ? deep : toStep(deep, g)) };
+        }
+
+        // A bevel and an amplitude the same way, with right as more:
+        // a corner rounded further and an edge thrown further out both add to
+        // the shape rather than eat into it. The vertical is the spacing's.
+        if (code === 'KeyB' || code === 'KeyD') {
+          const more = to.x - from.x;
+
+          return { x: to.x, y: from.y + (free(e) ? more : toStep(more, g)) };
         }
 
         if (free(e)) return to;
@@ -693,29 +737,38 @@ export function worldCanvas(
 
       if (e === null) return;
 
-      // Erosion is a depth, and a point has no thickness to take one out of.
-      // So an artefact sits out that one gesture rather than being handed a
-      // key that means nothing to it — every other transform means what it
-      // means to anything else.
-      const standing = code === 'KeyE' ? [] : selection().artefacts;
+      // An erosion, a round or a deform: how much of something rather than
+      // where it is.
+      const kind = AMOUNTS[code];
 
-      // Erosion is the one transform a corner can be under by itself: picked
-      // corners eroded go deeper than the polygon they are in rather than
-      // instead of it, which is what a depth per corner is for. Their polygons
-      // stand in for them here — a depth is written into the layer of the
-      // thing that has a ring, and a corner has none — and every other gesture
-      // ignores the corners entirely, being about where a whole thing is.
-      // Under the point tool alone, which is the only one that picks them:
-      // a corner selection left standing while the hand is on the polygon tool
-      // is not what an erosion there is asking about.
-      const corners = new Set(
-        code === 'KeyE' && tool() === 'point' ? selection().vertices : [],
-      );
+      // A depth, a bevel and an amplitude are all about an outline, and a
+      // point has none. So an artefact sits them out rather than being handed
+      // a key that means nothing to it — every other transform means what it
+      // means to anything else.
+      const standing = kind !== undefined ? [] : selection().artefacts;
+
+      // The amounts are the transforms a corner or an edge can be under by
+      // itself: picked ones go further than the thing they are on rather
+      // than instead of it, which is what an amount per corner is for. Their
+      // polygons stand in for them here — an amount is written into the
+      // timeline of the thing that has a ring, and a corner has none — and
+      // every other gesture ignores them, being about where a whole thing is.
+      // Only under the tools that pick them: corners left picked while the
+      // hand is on whole things are not what the gesture there is asking about.
+      const corners = new Set(kind === undefined ? [] : cornersFor(kind));
+
+      if (kind !== undefined && tool() !== 'polygon' && corners.size === 0) {
+        if (kind === 'deform') {
+          update(s => saying(s, 'A deform is along edges: pick both ends of one, or pick edges with the edge tool.'));
+        }
+
+        return;
+      }
+
       const owners = corners.size === 0 ? [] : owning(world(), corners);
 
-      // Paths sit out the erosion for the reason artefacts do: a walk has no
-      // thickness to take a depth out of.
-      const walks = code === 'KeyE' ? [] : selection().paths;
+      // Paths sit them out for the reason artefacts do: a walk has no outline.
+      const walks = kind !== undefined ? [] : selection().paths;
 
       const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing, ...walks];
 
@@ -723,12 +776,24 @@ export function worldCanvas(
       // members are in the set one by one, and there is no single boundary for
       // a depth to move. Refused, rather than granted by sealing the group
       // underneath the hand — sealing changes what the level looks like, and it
-      // is a thing an author asks for. See `Group.sealed`.
-      if (code === 'KeyE' && ids.some(id => world().groups.get(id)?.sealed === false)) {
-        update(s => saying(s, 'A loose group has no outline to erode \u2014 Cmd+L seals it.'));
+      // is a thing an author asks for. See `Group.sealed`. A round is of the
+      // same union. A deform is not: a group's is its members'.
+      if ((kind === 'erode' || kind === 'round') && ids.some(id => world().groups.get(id)?.sealed === false)) {
+        update(s => saying(s, `A loose group has no outline to ${kind} — Cmd+L seals it.`));
 
         return;
       }
+
+      // What the effect is on: the things picked, or the polygons of the
+      // corners picked. The gesture switches it on where it is off — an
+      // amount of something that does not apply is invisible — and gives one
+      // that has never had it the options last used. From there it works
+      // over that.
+      const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
+      const on = kind === undefined ? was : switchedOn(was, targets, kind, remembered());
+
+      // Corners left square on their own are rounded again by a round on them.
+      const base = kind === 'round' && corners.size > 0 ? cornersSwitched(on, [...corners], true, remembered()) : on;
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
@@ -798,13 +863,32 @@ export function worldCanvas(
 
       const { aim, scaling } = readers(code, pivot, from, down);
 
+      // The first target's deform as the vertical has left its spacing, which
+      // is what the label says and what is remembered at the end. A round's
+      // vertical is drift: its bevel is the amount, and its segments are the
+      // pane's.
+      let options: Spacing | null = null;
+
       const end = yield* select({
         moving: pointerMoved(e => {
           const to = aim(e);
           const factor = scaling(e);
+          const by = to.y - from.y;
+
+          // Each thing's own spacing, moved by the same reading of the
+          // vertical, at every keyframe: an option is not in the timeline.
+          const each = kind !== 'deform'
+            ? []
+            : targets.map(id => [id, spaced(base.effects.get(id)!.deform!, down.y - e.clientY, free(e))] as const);
+
+          options = each[0]?.[1] ?? null;
+
+          if (kind !== undefined) setLocal({ ...local(), reading: { at: at(e), label: amountLabel(kind, by, options) } });
 
           update(s => {
-            let world = was;
+            let world = base;
+
+            for (const [id, now] of each) world = withEffect(world, id, 'deform', now);
 
             // Its own point and its own facing, off the same reading of the
             // drag the operations get: a move is where the cursor has gone, and
@@ -820,12 +904,14 @@ export function worldCanvas(
             }
 
             for (const [id, p] of paints) {
-              if (corners.size > 0 && world.polygons.has(id)) {
-                world = deepen(world, v, id, corners, to.y - from.y);
+              if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
+                world = cornersAmounted(world, v, id, kind, corners, by);
                 continue;
               }
 
-              world = appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
+              world = kind !== undefined
+                ? amountWritten(world, v, id, kind, by)
+                : appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
             }
 
             return { ...s, world };
@@ -837,9 +923,31 @@ export function worldCanvas(
         lost: blurred(),
       });
 
-      setLocal({ ...local(), previewing: false });
+      setLocal({ ...local(), previewing: false, reading: null });
       cursor('');
-      update(s => settled(s, was, end.tag === 'cancel'));
+
+      // What was used is what the next thing deformed starts with.
+      const used = end.tag === 'cancel' ? null : options;
+
+      update(s => {
+        const out = settled(s, was, end.tag === 'cancel');
+
+        return used === null ? out : { ...out, remembered: { ...out.remembered, deform: used } };
+      });
+    }
+
+    /**
+     * The corners an amount acts on under the tools that pick them, or — for
+     * a deform — the edges, by the corner each starts at. Corners picked
+     * stand for the edges between them; edges picked, for their ends.
+     */
+    function cornersFor(kind: AmountKind): VertexId[] {
+      const sel = selection();
+
+      if (tool() === 'point') return kind === 'deform' ? edgesBetween(edgeable(), sel.vertices) : sel.vertices;
+      if (tool() === 'edge') return kind === 'deform' ? sel.edges : endsOf(edgeable(), sel.edges);
+
+      return [];
     }
 
     function retype(kind: PolygonKind): void {
@@ -1816,6 +1924,43 @@ export function worldCanvas(
     }
 
     /**
+     * The polygons whose edges may be picked: those whose corners are on
+     * screen to be picked, so the two tools reach the same rings.
+     */
+    function edgeable(): Resolved[] {
+      const ids = new Set(grabs().map(h => h.id));
+
+      return resolveAt(world(), keyframe()).filter(it => ids.has(it.id));
+    }
+
+    /** The edge under the cursor, by the drawn corner it starts at, and the
+     * ring it is on. */
+    function edgeAt(e: PointerEvent): { edge: VertexId, it: Resolved } | null {
+      const items = edgeable();
+      const hit = hitEdge(items, at(e), HANDLE / view().zoom);
+      const it = hit === null ? undefined : items.find(r => r.id === hit.id);
+
+      return hit === null || it === undefined ? null : { edge: edgeOf(it, hit.index), it };
+    }
+
+    /** A click with the edge tool up: the edge under it picked, or, over
+     * nothing, the edges let go. Shift adds and takes away. */
+    function edgeClicked(e: PointerEvent): void {
+      const on = edgeAt(e);
+
+      if (on === null) {
+        if (!e.shiftKey) update(s => ({ ...s, selection: { ...s.selection, edges: [] } }));
+
+        return;
+      }
+
+      update(s => ({
+        ...s,
+        selection: { ...s.selection, edges: e.shiftKey ? togglePicked(s.selection.edges, on.edge) : [on.edge] },
+      }));
+    }
+
+    /**
      * What a click at `p` would pick, topmost first.
      *
      * Command reaches straight through to the polygon for one click, and a
@@ -1969,6 +2114,10 @@ export function worldCanvas(
 
       if (tool() === 'path') return;
 
+      // An edge goes as both its corners do: the corner tool's delete, on the
+      // ends of every edge picked.
+      const ends = tool() === 'edge' ? endsOf(edgeable(), selection().edges) : [];
+
       update(s => {
         if (tool() === 'artefact') {
           if (s.selection.artefacts.length === 0) return s;
@@ -1978,6 +2127,19 @@ export function worldCanvas(
               ...s,
               world: removeAt(s.world, s.keyframe, s.selection.artefacts),
               selection: { ...s.selection, artefacts: [] },
+            },
+            s.world,
+          );
+        }
+
+        if (tool() === 'edge') {
+          if (ends.length === 0) return s;
+
+          return marked(
+            {
+              ...s,
+              world: removeVertices(s.world, s.keyframe, ends),
+              selection: { ...s.selection, edges: [], vertices: [] },
             },
             s.world,
           );
@@ -2170,12 +2332,16 @@ export function worldCanvas(
             else if (REMOVE.includes(e.code)) {
               removing();
             }
-            // Erosion is the one transform the point tool has a use for: a
-            // depth on picked corners is a corner's gesture, and the corners
-            // are only pickable under this tool. Every other transform is
-            // about where a whole thing is and stays where it was.
-            else if (tool() === 'point' && e.code === 'KeyE'
+            // The amounts are the transforms the corner and edge tools have a
+            // use for: a depth, a bevel or an amplitude on what is picked is
+            // a corner's gesture or an edge's. Every other transform is about
+            // where a whole thing is and stays where it was.
+            else if (tool() === 'point' && AMOUNTS[e.code] !== undefined
               && selection().vertices.length > 0) {
+              yield* transforming(e.code, TRANSFORMS[e.code]);
+            }
+            else if (tool() === 'edge' && AMOUNTS[e.code] !== undefined
+              && selection().edges.length > 0) {
               yield* transforming(e.code, TRANSFORMS[e.code]);
             }
             else if (tool() === 'polygon') {
@@ -2252,7 +2418,20 @@ export function worldCanvas(
                 }
               }
 
-              if (tool() === 'point') {
+              if (tool() === 'edge') {
+                const on = edgeAt(e);
+
+                if (on !== null) {
+                  // Grabbing one already picked drags them all; one that is
+                  // not, alone. An edge moves as its two ends.
+                  const picked = selection().edges.includes(on.edge) ? selection().edges : [on.edge];
+
+                  update(s => ({ ...s, selection: { ...s.selection, edges: picked } }));
+                  yield* draggingVertices(on.edge, endsOf(edgeable(), picked), e);
+                  continue;
+                }
+              }
+              else if (tool() === 'point') {
                 const grab = hitVertex(grabs(), at(e), HANDLE / view().zoom);
 
                 if (grab !== null) {
@@ -2347,6 +2526,10 @@ export function worldCanvas(
 
               yield* marqueeing(e, e.shiftKey);
             }
+            else if (tool() === 'edge') {
+              if (twice(e)) entering(e);
+              else edgeClicked(e);
+            }
             else if (tool() === 'point') {
               // Going in and out of a group is about where you are, not about
               // what you are editing. Corners belong to polygons, and reaching
@@ -2438,6 +2621,9 @@ interface Local {
    * in the document's selection: a path is not part of the level, and nothing
    * else in the editor has anything to say about one. */
   onPath: OnPath | null
+  /** What an amount gesture has come to, said by the cursor: the reading of
+   * an axis with nothing on it to read against. */
+  reading: { at: Point, label: string } | null
   /**
    * A gesture is running, so the versions downstream of this one are drawn
    * whatever their eyes say.
@@ -2455,6 +2641,7 @@ const EMPTY_LOCAL: Local = {
   laying: null,
   forming: null,
   onPath: null,
+  reading: null,
   previewing: false,
 };
 
@@ -2533,6 +2720,44 @@ const EDITED: Partial<Record<Operation['kind'], string>> = {
   turn: 'KeyR',
   scale: 'KeyS',
   erode: 'KeyE',
+  round: 'KeyB',
+  deform: 'KeyD',
+};
+
+/** A deform's options, whose spacing the vertical moves. */
+type Spacing = EffectOptions['deform'];
+
+/** Screen pixels of vertical drift an effect gesture ignores, so that a hand
+ * dragging sideways for the amount leaves the option alone. */
+const DRIFT = 12;
+
+/**
+ * A deform's spacing moved by how far the hand has gone up, past the drift:
+ * doubled every `DOUBLING`, as a scale is — a spacing is a length, and wants
+ * a factor rather than a step.
+ */
+function spaced(o: Spacing, up: number, free: boolean): Spacing {
+  const past = Math.sign(up) * Math.max(0, Math.abs(up) - DRIFT);
+  const spacing = o.spacing * Math.pow(2, past / DOUBLING);
+
+  return { ...o, spacing: free ? spacing : Math.max(1, Math.round(spacing)) };
+}
+
+/** What an amount gesture has come to, for the label by the cursor. */
+function amountLabel(kind: AmountKind, by: number, o: Spacing | null): string {
+  const n = `${by > 0 ? '+' : ''}${Math.round(by * 10) / 10}`;
+
+  if (o !== null) return `amplitude ${n} · every ${Math.round(o.spacing * 10) / 10}`;
+
+  return kind === 'erode' ? `depth ${n}` : kind === 'round' ? `bevel ${n}` : `${kind} ${n}`;
+}
+
+/** The gestures that write an amount rather than move anything, and the kind
+ * each writes. `b` is for bevel, since `r` turns. */
+const AMOUNTS: Partial<Record<string, AmountKind>> = {
+  KeyE: 'erode',
+  KeyB: 'round',
+  KeyD: 'deform',
 };
 
 const TRANSFORMS: Record<string, Mode> = {
@@ -2555,6 +2780,11 @@ const TRANSFORMS: Record<string, Mode> = {
   // A depth is not in any frame, and a drag that erodes has to mean the same
   // thing whichever way a group has been turned.
   KeyE: (_p, { from, to }) => ({ kind: 'erode', by: to.y - from.y }),
+
+  // The same for a bevel and an amplitude, which are lengths in no frame
+  // either.
+  KeyB: (_p, { from, to }) => ({ kind: 'round', by: to.y - from.y }),
+  KeyD: (_p, { from, to }) => ({ kind: 'deform', by: to.y - from.y }),
 };
 
 // -----------------------------------------------------------------------------
@@ -2797,7 +3027,7 @@ function layers(
 
   const carrying = new Set([...reached].filter(id => !inherited.has(id)));
 
-  out.push(ctx => polygons(ctx, view, loose, carrying, tool === 'point', reach));
+  out.push(ctx => polygons(ctx, view, loose, carrying, tool === 'point' || tool === 'edge', reach));
   out.push(ctx =>
     groups(ctx, view, shut, picking, reach, moved(world, current, items, path, shut, picking)),
   );
@@ -2825,6 +3055,16 @@ function layers(
     const on = handles(world, current, items, path, inside, reached);
 
     out.push(ctx => corners(ctx, view, on, selection));
+  }
+
+  // The edges the edge tool may pick, the picked ones heavy, and the corners
+  // only as where they meet.
+  if (tool === 'edge') {
+    const on = handles(world, current, items, path, inside, reached);
+    const ids = new Set(on.map(h => h.id));
+
+    out.push(ctx => edges(ctx, view, items.filter(it => ids.has(it.id)), selection.edges));
+    out.push(ctx => corners(ctx, view, on, { ...selection, vertices: [] }));
   }
 
   // The floor first and the level over it, which is the order the two stand
@@ -2889,6 +3129,7 @@ function layers(
   if (local.forming !== null) out.push(ctx => formed(ctx, view, local.forming!));
   if (local.draft !== null) out.push(ctx => draft(ctx, view, local.draft!));
   if (local.marquee !== null) out.push(ctx => marquee(ctx, view, local.marquee!));
+  if (local.reading !== null) out.push(ctx => said(ctx, view, local.reading!));
 
   return out;
 }
@@ -3080,6 +3321,32 @@ function corners(
     ctx.fillStyle = picked ? theme.picked : theme.vertex;
     ctx.fill();
   }
+}
+
+/** The picked edges, along their teeth where they have them. */
+function edges(ctx: CanvasRenderingContext2D, view: View, items: readonly Resolved[], picked: readonly VertexId[]): void {
+  const chosen = new Set(picked);
+
+  ctx.beginPath();
+
+  for (const it of items) {
+    for (const c of it.corners) {
+      if (!chosen.has(c.id)) continue;
+
+      edgeRun(it, c.id).forEach((i, j) => {
+        const p = toScreen(view, it.source[i]);
+
+        if (j === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+    }
+  }
+
+  ctx.strokeStyle = theme.picked;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
 }
 
 /**
@@ -3913,6 +4180,18 @@ function formed(ctx: CanvasRenderingContext2D, view: View, it: Forming): void {
   ctx.textBaseline = 'bottom';
   ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
   ctx.fillText(it.label, points[0].x + 8, points[0].y - 6);
+}
+
+/** A label beside the cursor, below and to the right of it, where the hand
+ * is not covering it. */
+function said(ctx: CanvasRenderingContext2D, view: View, it: { at: Point, label: string }): void {
+  const p = toScreen(view, it.at);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+  ctx.fillStyle = theme.draft;
+  ctx.fillText(it.label, p.x + 14, p.y + 14);
 }
 
 function marquee(ctx: CanvasRenderingContext2D, view: View, m: Marquee): void {

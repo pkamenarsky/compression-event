@@ -31,6 +31,7 @@
 // -----------------------------------------------------------------------------
 
 import { BakedLevel, EMPTY_BAKED } from './baked';
+import type { Run } from './walls';
 
 // -----------------------------------------------------------------------------
 // The two numbers both halves are measured in
@@ -353,6 +354,15 @@ export interface Version {
   polygons: Polygon[]
   /** What is drawn flat underfoot, taking no part in any of that. */
   floors: Floor[]
+  /**
+   * The walls standing at this version: the boundary as runs, each point with
+   * whether a vertical stands on it. What a still draws, and the very runs
+   * the editor's own view draws, so that a still here and there cannot
+   * differ — and the morph is handed the same answer through the bake. See
+   * `Run`. Absent from a level shipped before it was; then every point of
+   * `polygons` stands one.
+   */
+  walls?: Run[]
 }
 
 export interface Path {
