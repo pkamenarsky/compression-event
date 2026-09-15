@@ -1,3 +1,8 @@
+* adaptive subdivision in round
+* verticals should always be on i think
+* polygon masks
+** level + void{solid} etc etc
+
 * ask yes/no if level unsaved
 * no need to rebake on artifact change
 * fog when dying in order to not see "behind the walls"
