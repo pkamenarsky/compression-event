@@ -2,37 +2,50 @@
 // The effects pane
 //
 // On the left, under the tools, while something is picked: which of the three
-// effects the picked things have, and each one's options. A box ticked is an
-// effect a thing has, one fact over every keyframe; how much is in its
-// timeline, written by `d`, `e` and `b` on the canvas. Unticking takes the
-// effect off and drops every amount of it with it — see `withoutEffect`.
+// effects apply to the picked things, and each one's options. A box ticked is
+// an effect switched on, one fact over every keyframe; how much is in its
+// timeline, written by `d`, `e` and `b` on the canvas. Unticking switches it
+// off and takes nothing away: its options and amounts apply again when it is
+// ticked. Erosion has no options, so its box is only the switch.
 //
-// Erosion has no options, so there is nothing to tick on: its box says whether
-// anything picked is eroded, and unticked drops every erosion written. It is in
-// the pane anyway, in its place between the other two, because that is the
-// order they happen in.
-//
-// With corners or edges picked, the pane is about the polygons they are on.
-// An option changed is changed on every picked thing that has the effect, and
-// is what the next thing given it starts with.
+// With corners or edges picked, the pane is about the polygons they are on —
+// except the round under the corner tool, which is about the corners' own:
+// ticked, unticked and optioned apart from their polygon's, and put back to
+// it by the link under it. An option changed is changed on every picked thing
+// that has the effect, and is what the next thing given it starts with.
 // -----------------------------------------------------------------------------
 
 import { Value } from '@incpt/kontinuum';
 import { VNode, dynamic, show, text } from '@incpt/kontinuum-dom';
 import { div, input, label, option, select, span } from '@incpt/kontinuum-dom/html';
 
-import { EffectName, eroded, givenEffect, hasEffect, unEroded, withEffect, withoutEffect } from './effects';
+import {
+  EffectName,
+  Switch,
+  applies,
+  cornerRound,
+  cornerRounding,
+  cornersInheriting,
+  cornersOptioned,
+  cornersSwitched,
+  ownRound,
+  switchedOff,
+  switchedOn,
+  withEffect,
+} from './effects';
 import { Pattern, Sides } from './geometry';
 import { owning } from './scene';
 import { theme } from './theme';
-import { Effects, Id, Selection, Tool, Update, World, marked, picks } from './types';
+import { Id, Options, Selection, Tool, Update, VertexId, World, marked, picks } from './types';
 
 type Some = 'all' | 'some' | 'none';
 
 interface Model {
-  deform: { on: Some, options: Required<Effects>['deform'] }
+  deform: { on: Some, options: Options['deform'] }
   erode: Some
-  round: { on: Some, options: Required<Effects>['round'] }
+  /** With `corners`, about the picked corners' own rounds, and `own` is how
+   * many of them have options of their own. */
+  round: { on: Some, options: Options['round'], corners: boolean, own: Some }
 }
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
@@ -51,14 +64,17 @@ export function effectsPane(
   world: Value<World>,
   selection: Value<Selection>,
   tool: Value<Tool>,
-  remembered: Value<Required<Effects>>,
+  remembered: Value<Options>,
   top: number,
   update: Update,
 ): VNode {
   const targets = () => (picks(tool()) ? effectTargets(world(), selection(), tool()) : []);
 
+  // A round under the corner tool is about the corners picked.
+  const corners = () => (tool() === 'point' ? selection().vertices : []);
+
   // Rebuilt only when what it says changes, not on every edit to the world.
-  const model = (): string => JSON.stringify(modelOf(world(), targets(), remembered()));
+  const model = (): string => JSON.stringify(modelOf(world(), targets(), corners(), remembered()));
 
   return show(
     () => targets().length > 0,
@@ -82,57 +98,83 @@ export function effectsPane(
           gap: '6px',
         },
       },
-      [dynamic(model, m => body(JSON.parse(m) as Model, targets, update))],
+      [dynamic(model, m => body(JSON.parse(m) as Model, targets, corners, update))],
     ),
   );
 }
 
-function modelOf(world: World, ids: readonly Id[], remembered: Required<Effects>): Model {
-  const some = (has: (id: Id) => boolean): Some => {
-    const n = ids.filter(has).length;
+/** How many of `all` something holds for. */
+function some<T>(all: readonly T[], has: (t: T) => boolean): Some {
+  const n = all.filter(has).length;
 
-    return n === 0 ? 'none' : n === ids.length ? 'all' : 'some';
+  return n === 0 ? 'none' : n === all.length ? 'all' : 'some';
+}
+
+/** Options as shown and remembered: without whether they are switched off. */
+function bare<O extends { off?: boolean }>(o: O): O {
+  const { off: _off, ...rest } = o;
+
+  return rest as O;
+}
+
+function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[], remembered: Options): Model {
+  // The first picked thing's that has one, switched on or not, and otherwise
+  // what is remembered.
+  const shown = <N extends EffectName>(name: N): Options[N] => {
+    const id = ids.find(i => world.effects.get(i)?.[name] !== undefined);
+
+    return bare(id === undefined ? remembered[name] : world.effects.get(id)![name]! as Options[N]);
   };
 
-  // The first picked thing's that has one, and otherwise what is remembered.
-  const shown = <N extends EffectName>(name: N): Required<Effects>[N] => {
-    const id = ids.find(i => hasEffect(world, i, name));
-
-    return id === undefined ? remembered[name] : world.effects.get(id)![name]! as Required<Effects>[N];
-  };
+  const mine = corners.length > 0;
+  const first = mine ? cornerRound(world, corners[0]) : undefined;
 
   return {
-    deform: { on: some(id => hasEffect(world, id, 'deform')), options: shown('deform') },
-    erode: some(id => eroded(world, id)),
-    round: { on: some(id => hasEffect(world, id, 'round')), options: shown('round') },
+    deform: { on: some(ids, id => applies(world, id, 'deform')), options: shown('deform') },
+    erode: some(ids, id => applies(world, id, 'erode')),
+    round: mine
+      ? {
+          on: some(corners, c => cornerRounding(world, c)),
+          options: first === undefined ? remembered.round : bare(first),
+          corners: true,
+          own: some(corners, c => ownRound(world, c)),
+        }
+      : { on: some(ids, id => applies(world, id, 'round')), options: shown('round'), corners: false, own: 'none' },
   };
 }
 
-function body(m: Model, targets: () => Id[], update: Update): VNode {
-  /** The effect on every one of them, or off every one where all had it. */
-  const toggled = (name: EffectName, on: Some) => update(s => {
+function body(m: Model, targets: () => Id[], corners: () => VertexId[], update: Update): VNode {
+  /** Switched on for every one of them, or off where every one had it on. */
+  const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
-    const world = on === 'all'
-      ? ids.reduce((w, id) => withoutEffect(w, id, name), s.world)
-      : givenEffect(s.world, ids, name, s.remembered[name]);
+    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, s.remembered);
 
     return marked({ ...s, world }, s.world);
   });
 
-  /** One option changed on every one that has the effect, and remembered. */
-  const changed = <N extends EffectName>(name: N, patch: Partial<Required<Effects>[N]>) => update(s => {
+  /** One option changed on every one that has the effect, on or off, and
+   * remembered. */
+  const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>) => update(s => {
     let world = s.world;
 
-    for (const id of targets()) {
-      const was = world.effects.get(id)?.[name];
+    if (name === 'round' && m.round.corners) {
+      world = cornersOptioned(world, corners(), patch, s.remembered);
+    }
+    else {
+      for (const id of targets()) {
+        const was = world.effects.get(id)?.[name];
 
-      if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as Required<Effects>[N]);
+        if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as Options[N]);
+      }
     }
 
     const remembered = { ...s.remembered, [name]: { ...m[name].options, ...patch } };
 
     return marked({ ...s, world, remembered }, s.world);
   });
+
+  const cornered = (on: boolean) => update(s => marked({ ...s, world: cornersSwitched(s.world, corners(), on, s.remembered) }, s.world));
+  const inherited = () => update(s => marked({ ...s, world: cornersInheriting(s.world, corners()) }, s.world));
 
   const d = m.deform.options, r = m.round.options;
 
@@ -145,26 +187,26 @@ function body(m: Model, targets: () => Id[], update: Update): VNode {
       ...(d.pattern === 'noise' ? [field('seed', number(d.seed, 0, v => changed('deform', { seed: Math.round(v) })))] : []),
     ]),
 
-    // Nothing to give: the box goes off, and never on. See the head of the file.
-    heading('Erode', 'e', m.erode, () => {
-      if (m.erode !== 'none') update(s => marked({ ...s, world: targets().reduce(unEroded, s.world) }, s.world));
-    }, m.erode === 'none'),
+    heading('Erode', 'e', m.erode, () => toggled('erode', m.erode)),
 
-    heading('Round', 'b', m.round.on, () => toggled('round', m.round.on)),
+    heading(m.round.corners ? 'Round corners' : 'Round', 'b', m.round.on, () => {
+      if (m.round.corners) cornered(m.round.on !== 'all');
+      else toggled('round', m.round.on);
+    }),
     options(m.round.on, [
       field('segments', number(r.segments, 1, v => changed('round', { segments: Math.max(1, Math.round(v)) }))),
       field('verticals', tick(r.verticals, v => changed('round', { verticals: v }))),
+      ...(m.round.own === 'none' ? [] : [field('', link('as the polygon', inherited))]),
     ]),
   ]);
 }
 
 /** An effect's box, its name and its key. */
-function heading(name: string, key: string, on: Some, onchange: () => void, disabled = false): VNode {
-  return label({ style: { display: 'flex', alignItems: 'center', gap: '6px', cursor: disabled ? 'default' : 'pointer' } }, [
+function heading(name: string, key: string, on: Some, onchange: () => void): VNode {
+  return label({ style: { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, [
     input({
       type: 'checkbox',
       checked: on === 'all',
-      disabled,
       ref: (el: HTMLInputElement) => {
         el.indeterminate = on === 'some';
       },
@@ -173,13 +215,13 @@ function heading(name: string, key: string, on: Some, onchange: () => void, disa
         onchange();
       },
     }),
-    span({ style: { flex: '1', color: disabled ? theme.muted : theme.text } }, [text(name)]),
+    span({ style: { flex: '1' } }, [text(name)]),
     span({ style: { color: theme.faded, fontSize: '11px' } }, [text(key)]),
   ]);
 }
 
-/** An effect's options, under its box, faded while nothing picked has it:
- * changed then, they are only what the next one given it starts with. */
+/** An effect's options, under its box, faded while it applies to nothing
+ * picked: changed then, they are what it will be when it does. */
 function options(on: Some, fields: VNode[][]): VNode {
   return div({
     style: {
@@ -249,4 +291,9 @@ function tick(value: boolean, onchange: (v: boolean) => void): VNode {
       onchange(el.checked);
     },
   });
+}
+
+/** A button that reads as text: taking something back rather than setting it. */
+function link(name: string, onclick: () => void): VNode {
+  return span({ style: { color: theme.accent, cursor: 'pointer', fontSize: '11px' }, onclick }, [text(name)]);
 }

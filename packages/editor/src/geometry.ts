@@ -2858,6 +2858,17 @@ export function deformed(ring: Ring, amplitude: (i: number) => number, e: Effect
 }
 
 /**
+ * The points of a whole shape's arcs, rounded alike everywhere, bar each arc's
+ * tangent points: where a round that stands no verticals along its arcs has
+ * none. The same construction as `effected`, before the arrangement.
+ */
+export function arcInteriors(shape: Shape, segments: number, radius: number): Point[] {
+  if (radius <= 0 || segments <= 1) return [];
+
+  return shape.flatMap(ring => arcs(ring, () => segments, () => radius).flatMap(run => run.slice(1, -1)));
+}
+
+/**
  * A whole shape rounded alike everywhere, and taken through the arrangement:
  * what a group does to its union, which has no corners of its own to name.
  */

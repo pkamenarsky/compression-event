@@ -175,6 +175,7 @@ import {
   under,
   unplace,
   resolveAt,
+  roundOf,
 } from './scene';
 import {
   ArtefactId,
@@ -540,6 +541,10 @@ export interface Stamp {
   polygons: unknown
   groups: unknown
   artefacts: unknown
+  /** Which effects things have, and how: one fact over every keyframe, so
+   * every span hears of a change to it. */
+  effects: unknown
+  cornerEffects: unknown
 }
 
 export interface Bake {
@@ -597,6 +602,8 @@ export function stamp(world: World, from: number): Stamp {
     polygons: world.polygons,
     groups: world.groups,
     artefacts: world.artefacts,
+    effects: world.effects,
+    cornerEffects: world.cornerEffects,
   };
 }
 
@@ -618,6 +625,7 @@ function stamped(a: Stamp, b: Stamp): boolean {
   if (a.polygons !== b.polygons) return false;
   if (a.groups !== b.groups) return false;
   if (a.artefacts !== b.artefacts) return false;
+  if (a.effects !== b.effects || a.cornerEffects !== b.cornerEffects) return false;
   if (a.order !== b.order) return false;
   if (a.written.length !== b.written.length) return false;
 
@@ -1218,7 +1226,7 @@ function effectsOver(
   return {
     effected: [seeded(a, b), seeded(b, a)],
     smooth: corners.map(c => {
-      const round = world.cornerEffects.get(c.id)?.round ?? fx?.round;
+      const round = roundOf(fx, world.cornerEffects.get(c.id));
 
       return round !== undefined && !round.verticals && round.segments > 1;
     }),
@@ -1476,7 +1484,9 @@ function groupFading(
   if (!world.groups.has(group)) return null;
 
   const set = setOf(side.kind);
-  const points: { p: Point, v: number }[] = [];
+
+  // A smooth round's arcs stand nothing but at their tangent points.
+  const points: { p: Point, v: number }[] = (side.smooth ?? []).map(p => ({ p, v: 0 }));
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
@@ -1583,7 +1593,7 @@ export interface Cast {
   scopes: Map<GroupId, [number, number]>
   /** Each scope's effects: its options, and its radius and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, { segments: number, radius: [number, number] }>
+  shapes: Map<GroupId, { segments: number, radius: [number, number], smooth: boolean }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1635,13 +1645,17 @@ function casting(world: World, from: number): Cast {
   const seed = (x: number, y: number): number => (x === 0 && y !== 0 ? y * SEEDING : x);
 
   for (const id of scopes.keys()) {
-    const round = world.effects.get(id)?.round;
+    const round = roundOf(world.effects.get(id));
 
     if (round === undefined) continue;
 
     const was = stateAt(world, id, near), now = stateAt(world, id, far);
 
-    shapes.set(id, { segments: round.segments, radius: [seed(was.radius, now.radius), seed(now.radius, was.radius)] });
+    shapes.set(id, {
+      segments: round.segments,
+      radius: [seed(was.radius, now.radius), seed(now.radius, was.radius)],
+      smooth: !round.verticals,
+    });
   }
 
   const there = new Set(chain(world, far));
@@ -1695,7 +1709,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: { segments: fx.segments, radius: mix(fx.radius[0], fx.radius[1], t) },
+          effects: { segments: fx.segments, radius: mix(fx.radius[0], fx.radius[1], t), smooth: fx.smooth },
         }),
       };
     },

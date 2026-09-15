@@ -1,23 +1,27 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { shapeArea } from './geometry';
-import { TOP, addPolygon, copied, csg, grouped, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { TOP, addPolygon, contributing, copied, csg, grouped, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
   amountWritten,
+  applies,
+  cornerRounding,
   cornersAmounted,
+  cornersInheriting,
+  cornersOptioned,
+  cornersSwitched,
   edgeRun,
   edgesBetween,
   edgesWithinBox,
   endsOf,
-  eroded,
-  givenEffect,
-  unEroded,
-  withoutEffect,
+  switchedOff,
+  switchedOn,
 } from './effects';
 import { erode, move, scaled, turned, wrote } from './testing';
-import { Effects, Id, PolygonId, World, emptyWorld } from './types';
+import { Effects, Id, PolygonId, REMEMBERED, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -140,6 +144,17 @@ describe('a group\'s effects', () => {
     return { world, id: g.id };
   }
 
+  test('a smooth round lays its union\'s arcs flat but at their tangent points', () => {
+    const { world, id } = corridor();
+    const smooth = { ...world, effects: new Map(world.effects).set(id, { round: { segments: 8, verticals: false } }) };
+    const side = (w: World) => contributing(w, 0, resolveAt(w, 0)).find(c => !w.polygons.has(c.id))!;
+
+    expect(side(world).smooth).toBeUndefined();
+
+    // The corridor is a rectangle: four corners, seven points inside each arc.
+    expect(side(smooth).smooth).toHaveLength(4 * 7);
+  });
+
   test('they apply to the union, so the join between rooms is not rounded', () => {
     const { world } = corridor();
     const set = csg(world, 0);
@@ -197,50 +212,69 @@ describe('a group\'s effects', () => {
 describe('editing effects', () => {
   const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out' } };
 
-  test('given, an effect keeps the options a thing already had', () => {
+  test('switched on, an effect keeps the options a thing already had', () => {
     const { world, id } = room();
     const other = room(world, rect(200, 0, 50, 50));
-    const w = givenEffect(withEffects(other.world, id, { round: { segments: 2, verticals: false } }), [id, other.id], 'round', ROUND.round!);
+    const w = switchedOn(withEffects(other.world, id, { round: { segments: 2, verticals: false } }), [id, other.id], 'round', REMEMBERED);
 
     expect(w.effects.get(id)).toEqual({ round: { segments: 2, verticals: false } });
-    expect(w.effects.get(other.id)).toEqual(ROUND);
+    expect(w.effects.get(other.id)).toEqual({ round: REMEMBERED.round });
   });
 
-  test('taken off, an effect takes its amounts, its corners\' and its corners\' options with it', () => {
+  test('switched off, an effect does nothing and keeps everything, and switched on is as it was', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[0].id;
     let w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2));
 
-    w = cornersAmounted(w, 1, id, 'round', new Set([corner]), 4);
-    w = { ...w, cornerEffects: new Map([[corner, { round: { segments: 2, verticals: true } }]]) };
+    w = cornersAmounted(w, 0, id, 'round', new Set([corner]), 4);
 
-    const off = withoutEffect(w, id, 'round');
+    const off = switchedOff(w, [id], 'round');
 
-    expect(off.effects.get(id)).toEqual(DEFORM);
-    expect(off.cornerEffects.has(corner)).toBe(false);
-    expect(rigOf(off, id).rounds.size).toBe(0);
-    expect(rigOf(off, id).keys.get(0)!.map(e => e.op.kind)).toEqual(['erode', 'deform']);
+    expect(applies(off, id, 'round')).toBe(false);
+    expect(rigOf(off, id)).toBe(rigOf(w, id));
     expect(shapeOf(off, id)).toEqual(shapeOf(wrote(withEffects(world, id, DEFORM), 0, id, erode(3), deform(2)), id));
-
-    const bare = withoutEffect(off, id, 'deform');
-
-    expect(bare.effects.has(id)).toBe(false);
+    expect(shapeOf(switchedOn(off, [id], 'round', REMEMBERED), id)).toEqual(shapeOf(w, id));
   });
 
-  test('erosion has nothing to give, and taken off goes from the thing and its corners', () => {
+  test('erosion switched off stands the thing at its outline, its timeline kept', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[0].id;
+    const w = cornersAmounted(amountWritten(world, 0, id, 'erode', 5), 0, id, 'erode', new Set([corner]), 2);
 
-    expect(eroded(world, id)).toBe(false);
+    expect(applies(w, id, 'erode')).toBe(true);
 
-    const w = cornersAmounted(amountWritten(world, 0, id, 'erode', 5), 1, id, 'erode', new Set([corner]), 2);
+    const off = switchedOff(w, [id], 'erode');
 
-    expect(eroded(w, id)).toBe(true);
+    expect(shapeOf(off, id)).toEqual(shapeOf(world, id));
+    expect(stateAt(off, id, 0).erosion).toBe(5);
+    expect(shapeOf(switchedOn(off, [id], 'erode', REMEMBERED), id)).toEqual(shapeOf(w, id));
+    expect(switchedOn(off, [id], 'erode', REMEMBERED).effects.has(id)).toBe(false);
+  });
 
-    const out = unEroded(w, id);
+  test('a corner left square on a rounded room, and rounded its own way', () => {
+    const { world, id } = room();
+    const [a, b] = world.polygons.get(id)!.points;
+    const w = wrote(withEffects(world, id, ROUND), 0, id, round(10));
+    const ring = () => shapeOf(w, id)[0].length;
 
-    expect(eroded(out, id)).toBe(false);
-    expect(stateAt(out, id, 1).erosion).toBe(0);
+    const square = cornersSwitched(w, [a.id], false, REMEMBERED);
+
+    expect(cornerRounding(square, a.id)).toBe(false);
+    expect(cornerRounding(square, b.id)).toBe(true);
+    expect(shapeOf(square, id)[0]).toHaveLength(ring() - 8);
+
+    const back = cornersSwitched(square, [a.id], true, REMEMBERED);
+
+    expect(shapeOf(back, id)).toEqual(shapeOf(w, id));
+
+    const finer = cornersOptioned(w, [a.id], { segments: 12 }, REMEMBERED);
+
+    expect(finer.cornerEffects.get(a.id)!.round).toEqual({ segments: 12, verticals: true });
+    expect(shapeOf(finer, id)[0]).toHaveLength(ring() + 4);
+    expect(shapeOf(cornersInheriting(finer, [a.id]), id)).toEqual(shapeOf(w, id));
+
+    // The room's round switched off leaves every corner square, its own too.
+    expect(shapeOf(switchedOff(finer, [id], 'round'), id)[0]).toHaveLength(4);
   });
 
   test('an edge\'s amplitude is its own, over its polygon\'s', () => {
@@ -269,5 +303,17 @@ describe('editing effects', () => {
 
     // The top edge alone lies wholly inside a box round it, teeth and all.
     expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
+  });
+});
+
+describe('the bake hears of effects', () => {
+  test('an effect changed, or switched off, is a span gone stale', () => {
+    const { world, id } = room();
+    const w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
+    const bake = { spans: new Map([[0, { stamp: stamp(w, 0) } as Span]]), progress: null };
+
+    expect(spanAt(bake, w, 0)).not.toBeNull();
+    expect(spanAt(bake, withEffects(w, id, { round: { segments: 8, verticals: false } }), 0)).toBeNull();
+    expect(spanAt(bake, switchedOff(w, [id], 'round'), 0)).toBeNull();
   });
 });

@@ -3,14 +3,13 @@
 //
 // Which effects a thing has is one fact about it over every keyframe, and how
 // much is its timeline — see `Effects`. So there are two kinds of edit here:
-// an effect given or taken away, which is the fact, and an amount written at a
-// keyframe, which is an entry like any erosion. Taking an effect away drops
-// every entry of its kind with it, since an amount of an effect a thing does
-// not have is a number waiting to surprise whoever gives it back.
+// an effect switched on or off, which is the fact, and an amount written at a
+// keyframe, which is an entry like any erosion. Switching one off takes
+// nothing away: its options and its amounts stay, and apply again when it is
+// switched back on.
 //
-// Erosion is the odd one: it has no options, so there is nothing to give, and
-// a thing is eroded exactly when something in its timeline says so. Taking it
-// away is the same drop.
+// Erosion is the odd one: it has no options, so it applies unless switched
+// off, and there is nothing to give it.
 //
 // Edges are named by the drawn corner they start at, which is the corner an
 // edge's own amplitude is kept by. A deform's teeth are not drawn corners, so
@@ -19,21 +18,30 @@
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { Amount, Entry, Rig, Stand, cornerMapOf, cornerRounded, deepened, edgeDeformed } from './rig';
-import { Resolved, appended, rigOf, withRig } from './scene';
-import { Effects, Id, KeyframeId, Point, VertexId, World } from './types';
+import { Amount, cornerRounded, deepened, edgeDeformed } from './rig';
+import { Resolved, appended, rigOf, roundOf, withRig } from './scene';
+import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type AmountKind = Amount['kind'];
 
-export type EffectName = keyof Effects;
+/** The effects with options. */
+export type EffectName = keyof Options;
 
-/** Whether a thing has an effect. */
-export function hasEffect(world: World, id: Id, name: EffectName): boolean {
-  return world.effects.get(id)?.[name] !== undefined;
+/** What a box in the pane switches: an effect, or the erosion. */
+export type Switch = EffectName | 'erode';
+
+/** Whether a switch applies to a thing: an effect it has, not switched off,
+ * or its erosion, unless that is. */
+export function applies(world: World, id: Id, name: Switch): boolean {
+  const fx = world.effects.get(id);
+
+  if (name === 'erode') return fx?.erode?.off !== true;
+
+  return fx?.[name] !== undefined && fx[name].off !== true;
 }
 
 /** An effect's options on a thing, given or changed. */
-export function withEffect<N extends EffectName>(world: World, id: Id, name: N, options: Required<Effects>[N]): World {
+export function withEffect<N extends EffectName>(world: World, id: Id, name: N, options: Options[N]): World {
   const effects = new Map(world.effects);
 
   effects.set(id, { ...world.effects.get(id), [name]: options });
@@ -41,120 +49,155 @@ export function withEffect<N extends EffectName>(world: World, id: Id, name: N, 
   return { ...world, effects };
 }
 
-/** An effect given to every one of `ids` that does not have it yet, with
- * `options`. Those that have it keep theirs. */
-export function givenEffect<N extends EffectName>(world: World, ids: readonly Id[], name: N, options: Required<Effects>[N]): World {
-  return ids.reduce((w, id) => (hasEffect(w, id, name) ? w : withEffect(w, id, name, options)), world);
-}
-
 /**
- * An effect taken off a thing: its options, its corners' own, and every
- * amount of it written anywhere in its timeline.
+ * A switch on for every one of `ids`: an effect it has switched back on with
+ * its options as they were, one it has never had given `options`, and its
+ * erosion let apply.
  */
-export function withoutEffect(world: World, id: Id, name: EffectName): World {
-  let w = dropped(world, id, name);
+export function switchedOn(world: World, ids: readonly Id[], name: Switch, options: Options): World {
+  let w = world;
 
-  const fx = w.effects.get(id);
+  for (const id of ids) {
+    if (applies(w, id, name)) continue;
 
-  if (fx?.[name] !== undefined) {
-    const effects = new Map(w.effects);
-    const rest = lacking(fx, name);
+    const fx = w.effects.get(id);
 
-    if (rest === null) effects.delete(id);
-    else effects.set(id, rest);
-
-    w = { ...w, effects };
-  }
-
-  const corners = w.polygons.get(id)?.points ?? [];
-
-  if (corners.some(c => w.cornerEffects.get(c.id)?.[name] !== undefined)) {
-    const cornerEffects = new Map(w.cornerEffects);
-
-    for (const c of corners) {
-      const own = cornerEffects.get(c.id);
-
-      if (own?.[name] === undefined) continue;
-
-      const rest = lacking(own, name);
-
-      if (rest === null) cornerEffects.delete(c.id);
-      else cornerEffects.set(c.id, rest);
+    if (name === 'erode') {
+      w = withEffects(w, id, { ...fx, erode: undefined });
     }
+    else {
+      const { off: _off, ...was } = fx?.[name] ?? options[name];
 
-    w = { ...w, cornerEffects };
+      w = withEffect(w, id, name, was as Options[typeof name]);
+    }
   }
 
   return w;
 }
 
-/** Options without one effect's, or nothing where that was all there was. */
-function lacking(fx: Partial<Effects>, name: EffectName): Effects | null {
-  const rest: Effects = { ...fx };
+/**
+ * A switch off for every one of `ids`. Nothing is taken away: its options and
+ * every amount in its timeline stay, to apply again when it is switched on.
+ */
+export function switchedOff(world: World, ids: readonly Id[], name: Switch): World {
+  let w = world;
 
-  delete rest[name];
+  for (const id of ids) {
+    if (!applies(w, id, name)) continue;
 
-  return rest.round === undefined && rest.deform === undefined ? null : rest;
+    const fx = w.effects.get(id);
+
+    w = name === 'erode'
+      ? withEffects(w, id, { ...fx, erode: { off: true } })
+      : withEffect(w, id, name, { ...fx![name]!, off: true } as Options[typeof name]);
+  }
+
+  return w;
 }
 
-/** Whether anything in a thing's timeline erodes it, itself or a corner. */
-export function eroded(world: World, id: Id): boolean {
-  return amounts(rigOf(world, id), 'erode');
+/** A thing's effects replaced, and taken out of the map where none is left. */
+function withEffects(world: World, id: Id, fx: Effects): World {
+  const effects = new Map(world.effects);
+  const kept = Object.fromEntries(Object.entries(fx).filter(([, v]) => v !== undefined)) as Effects;
+
+  if (Object.keys(kept).length === 0) effects.delete(id);
+  else effects.set(id, kept);
+
+  return { ...world, effects };
 }
 
-/** Every erosion a thing has written about it taken out. */
-export function unEroded(world: World, id: Id): World {
-  return dropped(world, id, 'erode');
-}
+// -----------------------------------------------------------------------------
+// A corner's own round
+//
+// Over its polygon's, and switched on and off on its own: a corner can be
+// left square on a rounded room, or rounded with more segments than the rest.
+// Its polygon's round switched off leaves it square whatever it says itself.
+// -----------------------------------------------------------------------------
 
-/** Whether a rig has an amount of a kind anywhere: an entry, a corner's, or
- * a stand's. */
-function amounts(rig: Rig, kind: AmountKind): boolean {
-  const map = cornerMapOf(kind);
+/** The polygon each corner is on. */
+function ownersOf(world: World, corners: readonly VertexId[]): Map<VertexId, Id> {
+  const wanted = new Set(corners);
+  const out = new Map<VertexId, Id>();
 
-  for (const list of rig.keys.values()) {
-    for (const e of list) {
-      if (e.op.kind === kind) return true;
-      if (e.op.kind === 'stand' && standing(e.op, kind)) return true;
+  for (const [id, polygon] of world.polygons) {
+    for (const c of polygon.points) {
+      if (wanted.has(c.id)) out.set(c.id, id);
     }
   }
 
-  return rig[map].size > 0;
+  return out;
 }
 
-/** Whether a stand holds any of an amount. */
-function standing(op: Stand, kind: AmountKind): boolean {
-  if (kind === 'erode') return op.erosion !== 0 || op.depths.size > 0;
-  if (kind === 'round') return op.radius !== 0 || op.radii.size > 0;
+/** The round a corner would have were everything switched on: its own
+ * options, or its polygon's. Nothing where neither has one. */
+export function cornerRound(world: World, corner: VertexId): Options['round'] | undefined {
+  const owner = ownersOf(world, [corner]).get(corner);
+  const own = world.cornerEffects.get(corner)?.round;
 
-  return op.amplitude !== 0 || op.amplitudes.size > 0;
+  return own ?? (owner === undefined ? undefined : world.effects.get(owner)?.round);
 }
 
-/** Every amount of a kind out of a thing's timeline: its entries, its
- * corners', and what its stands hold of it. */
-function dropped(world: World, id: Id, kind: AmountKind): World {
-  const rig = rigOf(world, id);
+/** Whether a corner is rounded: its round applies, switched off neither on
+ * it nor on its polygon. */
+export function cornerRounding(world: World, corner: VertexId): boolean {
+  const owner = ownersOf(world, [corner]).get(corner);
 
-  if (!amounts(rig, kind)) return world;
+  return owner !== undefined && roundOf(world.effects.get(owner), world.cornerEffects.get(corner)) !== undefined;
+}
 
-  const keys = new Map<KeyframeId, readonly Entry[]>();
+/** Whether a corner has options of its own. */
+export function ownRound(world: World, corner: VertexId): boolean {
+  return world.cornerEffects.get(corner)?.round !== undefined;
+}
 
-  for (const [k, list] of rig.keys) {
-    const kept = list
-      .filter(e => e.op.kind !== kind)
-      .map(e => (e.op.kind === 'stand' && standing(e.op, kind) ? { ...e, op: unstood(e.op, kind) } : e));
+function withCornerRound(world: World, corner: VertexId, round: Options['round'] | undefined): World {
+  const cornerEffects = new Map(world.cornerEffects);
+  const { round: _was, ...rest } = cornerEffects.get(corner) ?? {};
+  const now: Partial<Effects> = round === undefined ? rest : { ...rest, round };
 
-    if (kept.length > 0) keys.set(k, kept);
+  if (Object.keys(now).length === 0) cornerEffects.delete(corner);
+  else cornerEffects.set(corner, now);
+
+  return { ...world, cornerEffects };
+}
+
+/**
+ * Corners rounded, or left square. On switches their polygons' round on —
+ * given `options` where they have none — and their own back on where it was
+ * off; off switches their own off, taking their polygon's options as their
+ * own to keep, so that switched on again they are as they were.
+ */
+export function cornersSwitched(world: World, corners: readonly VertexId[], on: boolean, options: Options): World {
+  const owners = ownersOf(world, corners);
+  let w = on ? switchedOn(world, [...new Set(owners.values())], 'round', options) : world;
+
+  for (const c of owners.keys()) {
+    const round = cornerRound(w, c) ?? options.round;
+
+    if (on) {
+      if (ownRound(w, c) && round.off === true) w = withCornerRound(w, c, { ...round, off: false });
+    }
+    else {
+      w = withCornerRound(w, c, { ...round, off: true });
+    }
   }
 
-  return withRig(world, id, { ...rig, keys, [cornerMapOf(kind)]: new Map() });
+  return w;
 }
 
-function unstood(op: Stand, kind: AmountKind): Stand {
-  if (kind === 'erode') return { ...op, erosion: 0, depths: new Map() };
-  if (kind === 'round') return { ...op, radius: 0, radii: new Map() };
+/** An option of corners' own rounds changed, starting from what each has
+ * now: its own, its polygon's, or `options`. */
+export function cornersOptioned(world: World, corners: readonly VertexId[], patch: Partial<Options['round']>, options: Options): World {
+  let w = world;
 
-  return { ...op, amplitude: 0, amplitudes: new Map() };
+  for (const c of ownersOf(world, corners).keys()) w = withCornerRound(w, c, { ...(cornerRound(w, c) ?? options.round), ...patch });
+
+  return w;
+}
+
+/** Corners back to their polygon's round, their own options dropped. */
+export function cornersInheriting(world: World, corners: readonly VertexId[]): World {
+  return corners.reduce((w, c) => (ownRound(w, c) ? withCornerRound(w, c, undefined) : w), world);
 }
 
 /** An amount written at `v` about a whole thing, folded into the entry

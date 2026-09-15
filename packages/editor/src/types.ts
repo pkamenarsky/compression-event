@@ -560,8 +560,14 @@ export interface World {
 }
 
 /**
- * The effects on a thing, after its erosion and always in this order: its
- * corners rounded, then its edges deformed.
+ * The effects on a thing, around its erosion and always in this order: its
+ * edges deformed, then eroded, then its corners rounded.
+ *
+ * An effect switched `off` is kept, options and amounts and all, and does
+ * nothing: unticking one in the pane is a question of whether it applies, and
+ * its timeline is still there when it is ticked again. A corner's own round
+ * switched off leaves that corner square; its thing's switched off leaves
+ * every corner square, its own options or not.
  *
  * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
  * effects a thing has, and how, is one fact about it over every keyframe, as
@@ -575,12 +581,17 @@ export interface World {
  *   off it by the pattern. `seed` is the noise's.
  */
 export interface Effects {
-  round?: { segments: number, verticals: boolean }
-  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides }
+  round?: { segments: number, verticals: boolean, off?: boolean }
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, off?: boolean }
+  /** Erosion has no options, so it is here only to be switched off. */
+  erode?: { off: boolean }
 }
 
+/** The options of the effects that have them. */
+export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
+
 /** The options an effect starts with before any has been chosen. */
-export const REMEMBERED: Required<Effects> = {
+export const REMEMBERED: Options = {
   round: { segments: 4, verticals: true },
   deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both' },
 };
@@ -1186,7 +1197,7 @@ export interface EditorState {
    * none, and what the effects pane shows for an effect nothing picked has.
    * About this sitting, so not in the file.
    */
-  remembered: Required<Effects>
+  remembered: Options
 
   /** A version switch being watched go by, rather than jumped. Null between
    * them, which is nearly always. */

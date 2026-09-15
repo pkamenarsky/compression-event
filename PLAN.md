@@ -597,15 +597,26 @@ Done (`effects.ts`, `pane.ts`), differently in these places:
   corner's, and a deform on the edges picked — or, with corners picked, the
   edges between two of them. The first on a thing without the effect gives
   it the options last used (`EditorState.remembered`, not in the file), and
-  a round, like an erosion, refuses a loose group.
+  a round, like an erosion, refuses a loose group. A gesture switches on what
+  it writes the amount of, where it was off.
 - **The pane** is on whenever something is picked under the select tool, and
   is about the things picked or the polygons of the corners and edges picked.
-  Its boxes give and take effects; an option changed is changed on every one
-  that has the effect. Erosion's box only goes off (`unEroded`), since there
-  is nothing to give. It does not follow a pick in the keyframes, and it does
-  not edit a corner's own options yet.
-- Taking an effect off drops its entries, its corners', its corners' own
-  options, and what stands hold of it (`withoutEffect`).
+  Its boxes are switches: an effect switched off (`off` on its options) is
+  kept, options and amounts and all, and does nothing until switched on
+  (`switchedOn`, `switchedOff`). Erosion is switchable too (`Effects.erode`),
+  and applies unless switched off; only `resolveAt` and `depths` read the
+  switch, so a stand, a copy and a resolve still carry its amounts. An option
+  changed is changed on every one that has the effect. It does not follow a
+  pick in the keyframes.
+- **A corner's own round** is the pane's round under the corner tool: ticked,
+  unticked and optioned per corner (`cornersSwitched`, `cornersOptioned`),
+  and put back to its polygon's (`cornersInheriting`). A corner's own switched
+  off is square; its polygon's switched off squares every corner (`roundOf`).
+- **Verticals** off now reach a group's union too: it hands the bake its arc
+  points (`Contributed.smooth`, `arcInteriors`), and `groupFading` lays them
+  flat. The bake's stamp holds `effects` and `cornerEffects`, so a change to
+  either is a span gone stale; before, an option changed kept the old bake.
+- Delete under the edge tool takes out both ends of every edge picked.
 - Keys typed into a field are the field's (`typing` in `input.ts`).
 
 #### Order

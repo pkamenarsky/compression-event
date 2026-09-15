@@ -123,7 +123,8 @@ import {
   edgesBetween,
   edgesWithinBox,
   endsOf,
-  givenEffect,
+  cornersSwitched,
+  switchedOn,
   withEffect,
 } from './effects';
 import {
@@ -141,6 +142,7 @@ import {
   EditorState,
   Effects,
   Id,
+  Options as EffectOptions,
   PathId,
   Point,
   Polygon,
@@ -223,7 +225,7 @@ export function worldCanvas(
   tool: Value<Tool>,
   figure: Value<Figure>,
   /** The effect options `b` and `d` give a thing that has none. */
-  remembered: Value<Required<Effects>>,
+  remembered: Value<EffectOptions>,
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
   keyframe: Value<KeyframeId>,
@@ -784,11 +786,16 @@ export function worldCanvas(
       }
 
       // What the effect is on: the things picked, or the polygons of the
-      // corners picked. The first gesture on one without it gives it the
-      // options last used, and from there the gesture works over that.
+      // corners picked. The gesture switches it on where it is off — an
+      // amount of something that does not apply is invisible — and gives one
+      // that has never had it the options last used. From there it works
+      // over that.
       const effect = kind === 'round' || kind === 'deform' ? kind : null;
-      const targets = effect === null ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
-      const base = effect === null ? was : givenEffect(was, targets, effect, remembered()[effect]);
+      const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
+      const on = kind === undefined ? was : switchedOn(was, targets, kind, remembered());
+
+      // Corners left square on their own are rounded again by a round on them.
+      const base = kind === 'round' && corners.size > 0 ? cornersSwitched(on, [...corners], true, remembered()) : on;
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
@@ -2107,6 +2114,10 @@ export function worldCanvas(
 
       if (tool() === 'path') return;
 
+      // An edge goes as both its corners do: the corner tool's delete, on the
+      // ends of every edge picked.
+      const ends = tool() === 'edge' ? endsOf(edgeable(), selection().edges) : [];
+
       update(s => {
         if (tool() === 'artefact') {
           if (s.selection.artefacts.length === 0) return s;
@@ -2121,9 +2132,18 @@ export function worldCanvas(
           );
         }
 
-        // An edge is two corners' business, and taking it out is taking out
-        // one of them, which the corner tool does.
-        if (tool() === 'edge') return s;
+        if (tool() === 'edge') {
+          if (ends.length === 0) return s;
+
+          return marked(
+            {
+              ...s,
+              world: removeVertices(s.world, s.keyframe, ends),
+              selection: { ...s.selection, edges: [], vertices: [] },
+            },
+            s.world,
+          );
+        }
 
         if (tool() === 'point') {
           return marked(
@@ -2705,7 +2725,7 @@ const EDITED: Partial<Record<Operation['kind'], string>> = {
 };
 
 /** A round's options or a deform's. */
-type Options = Required<Effects>[keyof Effects];
+type Options = Required<Effects>['round' | 'deform'];
 
 /** Screen pixels of vertical drift an effect gesture ignores, so that a hand
  * dragging sideways for the amount leaves the option alone. */

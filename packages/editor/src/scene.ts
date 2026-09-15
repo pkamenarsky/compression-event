@@ -56,6 +56,7 @@ import {
   intersect,
   subtract,
   unionAll,
+  arcInteriors,
 } from './geometry';
 import {
   ArtefactId,
@@ -258,10 +259,37 @@ export interface Effected {
   radius: number
 }
 
+/**
+ * The round a corner is under: its own options over its thing's, and nothing
+ * where the one that applies is switched off — or its thing's is, which
+ * switches off its corners' with it.
+ */
+export function roundOf(fx: Effects | undefined, own?: Partial<Effects>): Effects['round'] {
+  if (fx?.round?.off === true) return undefined;
+
+  const round = own?.round ?? fx?.round;
+
+  return round?.off === true ? undefined : round;
+}
+
+/** The same for a deform. */
+export function deformOf(fx: Effects | undefined, own?: Partial<Effects>): Effects['deform'] {
+  if (fx?.deform?.off === true) return undefined;
+
+  const deform = own?.deform ?? fx?.deform;
+
+  return deform?.off === true ? undefined : deform;
+}
+
+/** Whether a thing's erosion applies: it does unless switched off. */
+export function eroding(world: World, id: Id): boolean {
+  return world.effects.get(id)?.erode?.off !== true;
+}
+
 /** A thing's options, with a corner's own over them where it has them. */
 export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effecting {
-  const round = own?.round ?? fx?.round;
-  const deform = own?.deform ?? fx?.deform;
+  const round = roundOf(fx, own);
+  const deform = deformOf(fx, own);
 
   return {
     segments: round?.segments ?? 0,
@@ -1056,7 +1084,7 @@ export function deforms(world: World, v: KeyframeId, id: Id): { owner: Id, e: Ef
   for (const owner of [id, ...enclosing(world, id)]) {
     const fx = world.effects.get(owner);
 
-    if (fx?.deform === undefined || !(fx.deform.spacing > 0)) continue;
+    if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
 
     const state = stateAt(world, owner, v);
 
@@ -1242,7 +1270,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     .sort(([, p], [, q]) => born(p) - born(q));
 
   for (const [id, polygon] of here) {
-    const state = stateAt(world, id, v);
+    const state = erodingOnly(world, id, stateAt(world, id, v));
     const corners = surviving(polygon.points, c => state.corners.has(c.id));
 
     // A polygon whose outline has gone is not geometry any more. It cannot
@@ -1284,6 +1312,11 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
 // long it went on. See `appending` in `rig.ts` for when it folds into the
 // entry before it instead.
 // -----------------------------------------------------------------------------
+
+/** A state with its erosion taken out where the thing's is switched off. */
+function erodingOnly(world: World, id: Id, state: State): State {
+  return eroding(world, id) ? state : { ...state, erosion: 0, depths: new Map() };
+}
 
 /** Everything written about a thing, or nothing. */
 export function rigOf(world: World, id: Id): Rig {
@@ -2664,6 +2697,9 @@ export interface Contributed {
   /** The bake's invented corners, carried through the arrangement. A group's
    * union has none: nothing invents a corner on it. See `Resolved.keep`. */
   keep?: readonly Point[]
+  /** A group's arc points that stand no verticals: its round's, where the
+   * round is smooth. See `Effects.round`. */
+  smooth?: readonly Point[]
 }
 
 /**
@@ -2681,7 +2717,7 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   for (const id of world.groups.keys()) {
     if (!standingIn(world, id, from)) continue;
 
-    const d = stateAt(world, id, v).erosion;
+    const d = eroding(world, id) ? stateAt(world, id, v).erosion : 0;
 
     if (d !== 0) out.set(id, d);
   }
@@ -2691,11 +2727,11 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
 
 /** A group's round as keyframe `v` leaves it. Nothing where it has none. */
 export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
-  const round = world.effects.get(id)?.round;
+  const round = roundOf(world.effects.get(id));
 
   if (round === undefined) return undefined;
 
-  return { segments: round.segments, radius: stateAt(world, id, v).radius };
+  return { segments: round.segments, radius: stateAt(world, id, v).radius, smooth: !round.verticals };
 }
 
 /**
@@ -2846,8 +2882,9 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its round, on its union after the depth. Absent is none. */
-  effects?: { segments: number, radius: number }
+  /** Its round, on its union after the depth, and whether its arcs stand
+   * verticals only at their tangent points. Absent is none. */
+  effects?: { segments: number, radius: number, smooth?: boolean }
   /**
    * The frame to keep the union's points in.
    *
@@ -3046,10 +3083,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], smooth: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [] };
+    if (group === undefined) return { shape: [], keep: [], smooth: [] };
 
     const here = standing(id);
     const d = here?.depth ?? 0;
@@ -3068,14 +3105,22 @@ export function contributed(
     // its voids grow against it.
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
-    const union = offsetUnion(group.members.flatMap(m => from(m, set, k)), depth, unionKey(here));
+    const shapes = group.members.flatMap(m => from(m, set, k));
+    const round = unionKey(here);
+    const union = offsetUnion(shapes, depth, round);
+
+    // Where a round standing no verticals along its arcs has its arcs, for the
+    // bake to lay flat. Off the union before the round, as `effected` takes it.
+    const smooth = round !== null && here?.effects?.smooth === true
+      ? arcInteriors(offsetUnion(shapes, depth, null), round[0], round[1])
+      : [];
 
     // What its members keep for the bake, moved in with their edges: a union
     // is an arrangement, and would drop them — see `Resolved.keep`.
     const keep = group.members.flatMap(m => keptFrom(m, set, k))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep };
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, smooth };
   };
 
   /**
@@ -3102,6 +3147,7 @@ export function contributed(
   };
 
   const kept = new Map<string, Point[]>();
+  const smoothed = new Map<string, Point[]>();
 
   /**
    * What one scope puts into `set`: its slots folded by the rule, and, for the
@@ -3128,12 +3174,13 @@ export function contributed(
 
     if (known !== undefined) {
       kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
+      smoothed.set(key, held?.get(`${key}:smooth`)?.[0] ?? []);
 
       return known;
     }
 
     const from = top(id, set);
-    const slots: { shape: Shape, keep: Point[] }[] = [];
+    const slots: { shape: Shape, keep: Point[], smooth: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
 
@@ -3146,9 +3193,13 @@ export function contributed(
     const keep = slots.flatMap(u => u.keep);
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
+    const smooth = slots.flatMap(u => u.smooth);
+
     kept.set(key, keep);
+    smoothed.set(key, smooth);
     held?.set(key, out);
     held?.set(`${key}:keep`, [keep]);
+    held?.set(`${key}:smooth`, [smooth]);
 
     return out;
   };
@@ -3198,6 +3249,7 @@ export function contributed(
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
+      const smooth = smoothed.get(`${id}:${set}`) ?? [];
 
       out.push({
         id: sideOf(id, kind),
@@ -3205,6 +3257,7 @@ export function contributed(
         shape,
         frame: how.frame ?? IDENTITY,
         simple: true,
+        ...(smooth.length === 0 ? {} : { smooth }),
       });
     }
   };
