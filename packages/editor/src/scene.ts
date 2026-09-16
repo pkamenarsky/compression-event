@@ -121,7 +121,6 @@ import {
   EMPTY_RIG,
   Amount,
   Entry,
-  Erode,
   Frame,
   Move,
   Op,
@@ -277,25 +276,25 @@ export function segmentsOf(round: Options['round'], bevel: number): number {
 }
 
 /**
- * The round a corner is under: its own options over its thing's, and nothing
- * where the one that applies is switched off — or its thing's is, which
- * switches off its corners' with it.
+ * The options of one effect on a thing, with a corner's own over its
+ * thing's, and nothing where the one that applies is switched off — or its
+ * thing's is, which switches off its corners' with it.
+ *
+ * One function for both effects with options: they differ in nothing but
+ * which key they read. See `Effects` in `types.ts`.
  */
-export function roundOf(fx: Effects | undefined, own?: Partial<Effects>): Effects['round'] {
-  if (fx?.round?.off === true) return undefined;
+export function optionOf<N extends keyof Options>(
+  fx: Effects | undefined,
+  name: N,
+  own?: Partial<Effects>,
+): Options[N] | undefined {
+  const mine = fx?.[name] as Options[N] | undefined;
 
-  const round = own?.round ?? fx?.round;
+  if (mine?.off === true) return undefined;
 
-  return round?.off === true ? undefined : round;
-}
+  const option = (own?.[name] as Options[N] | undefined) ?? mine;
 
-/** The same for a deform. */
-export function deformOf(fx: Effects | undefined, own?: Partial<Effects>): Effects['deform'] {
-  if (fx?.deform?.off === true) return undefined;
-
-  const deform = own?.deform ?? fx?.deform;
-
-  return deform?.off === true ? undefined : deform;
+  return option?.off === true ? undefined : option;
 }
 
 /** Whether a thing's erosion applies: it does unless switched off. */
@@ -305,8 +304,7 @@ export function eroding(world: World, id: Id): boolean {
 
 /** A thing's options, with a corner's own over them where it has them. */
 export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effecting {
-  const round = roundOf(fx, own);
-  const deform = deformOf(fx, own);
+  const deform = optionOf(fx, 'deform', own);
 
   return {
     spacing: deform?.spacing ?? 0,
@@ -336,12 +334,12 @@ export function effectedOf(
   const bevels = corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
     (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel), round.tension));
-  const flat = unrounded(corners, deformOf(fx)?.clear === true);
+  const flat = unrounded(corners, optionOf(fx, 'deform')?.clear === true);
 
   return shaping({
-    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(roundOf(fx, world.cornerEffects.get(c.id)), bevels[i]))),
+    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i]))),
     bevels,
-    own: faceted(roundOf(fx), amounts.bevel),
+    own: faceted(optionOf(fx, 'round'), amounts.bevel),
     bevel: amounts.bevel,
     flat,
   });
@@ -1384,7 +1382,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
 
     const frame = worldFrame(world, id, v);
     const fx = world.effects.get(id);
-    const bevel = (c: Vertex) => (roundOf(fx, world.cornerEffects.get(c.id)) === undefined ? 0 : state.bevel + (state.bevels.get(c.id) ?? 0));
+    const bevel = (c: Vertex) => (optionOf(fx, 'round', world.cornerEffects.get(c.id)) === undefined ? 0 : state.bevel + (state.bevels.get(c.id) ?? 0));
     const drawn = deformedAt(world, v, id, corners, corners.map(c => state.corners.get(c.id)!), frame, state.depths, bevel);
 
     out.push(resolved({
@@ -2833,7 +2831,7 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
 
 /** A group's round as keyframe `v` leaves it. Nothing where it has none. */
 export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
-  const round = roundOf(world.effects.get(id));
+  const round = optionOf(world.effects.get(id), 'round');
 
   if (round === undefined) return undefined;
 

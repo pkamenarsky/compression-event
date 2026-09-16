@@ -21,7 +21,7 @@ import {
 } from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Pattern, Sides } from './geometry';
-import type { Deform, Entry, Erode, Frame, Keyframe, KeyframeId, Move, Rig, Round } from './rig';
+import type { Amount, Entry, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
 import { CORNER_MAPS, eachCornerMap } from './rig';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
@@ -950,9 +950,9 @@ export type Clipping =
       /** Nudges, depths, rounds and deforms on single corners after it, by
        * offset. */
       nudges: [VertexId, [number, Entry<Move>][]][]
-      deep: [VertexId, [number, Entry<Erode>][]][]
-      rounds?: [VertexId, [number, Entry<Round>][]][]
-      deforms?: [VertexId, [number, Entry<Deform>][]][]
+      deep: [VertexId, [number, Entry<Amount>][]][]
+      rounds?: [VertexId, [number, Entry<Amount>][]][]
+      deforms?: [VertexId, [number, Entry<Amount>][]][]
       /** Its corners' own options. Absent is none. */
       cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)

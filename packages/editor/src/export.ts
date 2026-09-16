@@ -37,7 +37,7 @@ import {
   withNormals,
 } from '@ce/game';
 import { Bake, Flight, Origin, Ref, Rider, Span, Stretch, loadedFor, spanAt } from './bake';
-import { Op } from './rig';
+import { Op, amount } from './rig';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, EMPTY_LIVE, contributing, live, placeAt, resolveAt, settled, sourced } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
@@ -104,6 +104,8 @@ function most(riders: Map<Id, Rider>): number {
 
 /** One operation as the table holds it. See `OP_STRIDE`. */
 function record(op: Op): number[] {
+  if (amount(op)) throw new Error('an amount is in the geometry, not in the frame table');
+
   switch (op.kind) {
     case 'move':
       return [OP_MOVE, op.by.x, op.by.y, 0, 0, 0, 0, 0];
@@ -118,10 +120,6 @@ function record(op: Op): number[] {
 
       return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0];
     }
-    case 'erode':
-    case 'round':
-    case 'deform':
-      throw new Error('an amount is in the geometry, not in the frame table');
   }
 }
 

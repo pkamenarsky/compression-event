@@ -9,7 +9,7 @@
 
 import { Point } from '@ce/game/world';
 import { appended, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
-import { Erode, Move, Op, repeating, withKeys } from './rig';
+import { Amount, Move, Op, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
 import { Id, KeyframeId, Options, World } from './types';
 
@@ -46,7 +46,7 @@ export function move(x: number, y: number): Move {
   return { kind: 'move', by: { x, y } };
 }
 
-export function erode(by: number): Erode {
+export function erode(by: number): Amount {
   return { kind: 'erode', by };
 }
 

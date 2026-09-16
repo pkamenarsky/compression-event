@@ -42,7 +42,7 @@ import {
 import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
 import { bakedLevel } from './export';
-import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
+import { Amount, Entry, Frame, Move, Op, Rig } from './rig';
 
 /**
  * 23: the view is where the editor was looking and nothing else — see `Look`.
@@ -261,9 +261,9 @@ function restoredRig(rig: SavedRig): Rig {
   return {
     keys: new Map(rig.keys.map(([k, list]) => [k, list.map(restoredEntry)])),
     nudges: corners<Move>(rig.nudges),
-    depths: corners<Erode>(rig.depths),
-    rounds: corners<Round>(rig.rounds),
-    deforms: corners<Deform>(rig.deforms),
+    depths: corners<Amount>(rig.depths),
+    rounds: corners<Amount>(rig.rounds),
+    deforms: corners<Amount>(rig.deforms),
   };
 }
 

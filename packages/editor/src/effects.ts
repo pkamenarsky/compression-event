@@ -18,11 +18,11 @@
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { Amount, cornerRounded, deepened, edgeDeformed } from './rig';
-import { Resolved, appended, rigOf, roundOf, withRig } from './scene';
+import { Amount, AmountKind, amounted } from './rig';
+import { Resolved, appended, optionOf, rigOf, withRig } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
-export type AmountKind = Amount['kind'];
+export type { AmountKind };
 
 /** The effects with options. */
 export type EffectName = keyof Options;
@@ -142,7 +142,7 @@ export function cornerRound(world: World, corner: VertexId): Options['round'] | 
 export function cornerRounding(world: World, corner: VertexId): boolean {
   const owner = ownersOf(world, [corner]).get(corner);
 
-  return owner !== undefined && roundOf(world.effects.get(owner), world.cornerEffects.get(corner)) !== undefined;
+  return owner !== undefined && optionOf(world.effects.get(owner), 'round', world.cornerEffects.get(corner)) !== undefined;
 }
 
 /** Whether a corner has options of its own. */
@@ -203,13 +203,13 @@ export function cornersInheriting(world: World, corners: readonly VertexId[]): W
 /** An amount written at `v` about a whole thing, folded into the entry
  * before where the two are one. */
 export function amountWritten(world: World, v: KeyframeId, id: Id, kind: AmountKind, by: number): World {
-  return appended(world, v, id, { kind, by } as Amount);
+  return appended(world, v, id, { kind, by } satisfies Amount);
 }
 
 /**
  * An amount written at `v` about single corners of a polygon — or, for a
  * deform, the edges starting at them. Added to what `v` already said about
- * each. See `deepened`.
+ * each. See `amounted`.
  */
 export function cornersAmounted(
   world: World,
@@ -223,11 +223,10 @@ export function cornersAmounted(
 
   if (polygon === undefined || by === 0) return world;
 
-  const write = kind === 'erode' ? deepened : kind === 'round' ? cornerRounded : edgeDeformed;
   let rig = rigOf(world, id);
 
   for (const c of polygon.points) {
-    if (corners.has(c.id)) rig = write(rig, c.id, v, by);
+    if (corners.has(c.id)) rig = amounted(rig, kind, c.id, v, by);
   }
 
   return withRig(world, id, rig);

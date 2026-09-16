@@ -180,7 +180,7 @@ import {
   under,
   unplace,
   resolveAt,
-  roundOf,
+  optionOf,
   segmentsOf,
 } from './scene';
 import {
@@ -206,7 +206,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, played, playedAt, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, amount, played, playedAt, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -343,7 +343,7 @@ export interface Rider extends Flight {
 
 /** Only what moves a frame: the operations a flight plays. */
 function moves(ops: readonly Op[]): Op[] {
-  return ops.filter(op => op.kind !== 'erode' && op.kind !== 'round' && op.kind !== 'deform');
+  return ops.filter(op => !amount(op));
 }
 
 /** A flight `t` of the way through: every operation that far, one after
@@ -1697,7 +1697,7 @@ function casting(world: World, from: number): Cast {
   const seed = (x: number, y: number): number => (x === 0 && y !== 0 ? y * SEEDING : x);
 
   for (const id of scopes.keys()) {
-    const round = roundOf(world.effects.get(id));
+    const round = optionOf(world.effects.get(id), 'round');
 
     if (round === undefined) continue;
 
