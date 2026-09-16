@@ -196,6 +196,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     lineColor: 0,
     fillColor: 0,
     fillHeight: SHAPE_Y,
+    cull: true,
     shared,
   };
 
@@ -213,9 +214,8 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     tiles.ground.set(p.ground);
     tiles.grid.set(p.grid);
     renderer.setClearColor(p.clear);
+    sided(config.walls.cull);
   }
-
-  configure(current());
 
   /** Whatever walls are up while nothing is walking: the last `show`, or one
    * of `stills`. */
@@ -230,6 +230,28 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   let morphs: Morph[] = [];
   let ground: THREE.Object3D[] = [];
   let box: Bounds | null = null;
+
+  /**
+   * Which side of a wall is drawn, across whatever is built and into `walls`
+   * for whatever is built next.
+   *
+   * Unlike the colours and the height this is a material flag rather than a
+   * uniform, so there is nothing held for it to be written through: every
+   * source standing has to be walked.
+   */
+  function sided(on: boolean): void {
+    walls.cull = on;
+
+    const side = on ? THREE.FrontSide : THREE.DoubleSide;
+
+    for (const it of [shown, ...stills, ...morphs]) {
+      if (it === null) continue;
+
+      (it.walls.material as THREE.ShaderMaterial).side = side;
+    }
+  }
+
+  configure(current());
 
   /** Which morph is in the scene, and whether it rather than `standing` is
    * what the viewer is looking at. */

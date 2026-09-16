@@ -155,6 +155,10 @@ export interface RenderConfig {
   walls: {
     /** In world units. The eye is at 1.6. */
     height: number
+    /** Whether a wall's back face is thrown away rather than drawn. The walls
+     * of a closed level face outwards and are never seen from behind, so this
+     * is a saving; off, a wall the level has folded inside out still shows. */
+    cull: boolean
   }
 
   /** How an artefact moves. See `artefacts.ts`. */
@@ -207,7 +211,7 @@ export const DEFAULT: RenderConfig = {
     space: '#000000',
   },
   light: { ambient: 0.4, key: 0.7, foot: 0.7 },
-  walls: { height: 7 },
+  walls: { height: 7, cull: true },
   artefacts: { spin: 0.25, bob: 0.15, rate: 1 },
   camera: { fov: 70 },
 };
@@ -284,7 +288,8 @@ const BLACK: RenderConfig = {
     foot: 0.7
   },
   walls: {
-    height: 6
+    height: 6,
+    cull: true
   },
   artefacts: {
     spin: 0.25,

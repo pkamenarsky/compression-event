@@ -590,6 +590,8 @@ export interface WallOptions {
   /** Where a filled floor lies, in world units: over the ground and under the
    * walls standing on it. */
   fillHeight: number
+  /** Whether the walls are drawn front side only. See `RenderConfig.walls`. */
+  cull?: boolean
   /** Uniforms laid over every material's own, held rather than copied: how
    * the renderer changes a colour, the light or the height across every source
    * it has built with one write. */
@@ -724,7 +726,7 @@ export function materials(
       uLight: { value: new THREE.Vector3(...LIGHT) },
       ...options.shared,
     },
-    side: THREE.DoubleSide,
+    side: (options.cull ?? true) ? THREE.FrontSide : THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
