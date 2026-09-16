@@ -1,3 +1,4 @@
+* maybe we don't need the fade
 * polygon masks
 ** level + void{solid} etc etc
 * ops should be append-only? e.g. how to repeat the last small translate otherwise?
