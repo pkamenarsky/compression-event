@@ -11,7 +11,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Hulls, PLAYER_RADIUS } from './coldet';
-import { BISECTOR_LIMIT, Point, Polygon, signedArea, withNormals } from './world';
+import { Point, Polygon, signedArea, withNormals } from './world';
 
 /** Counter-clockwise, which is a room: every ring that reaches here is one, or
  * a hole in one. */
@@ -119,10 +119,14 @@ describe('somewhere to stand', () => {
 /**
  * A ring that runs out along a slit and comes straight back down it.
  *
- * `withNormals` has no bisector to give at the tip — the two edges are
- * antiparallel and their normals cancel — so it hands back the edge's own
- * normal, which points straight through the wall on the way back. The quad
- * that made folded over, and the triangle salvaged out of it had all three
+ * The tip is the one corner a turn cannot place: the two edges are exactly
+ * antiparallel, so the sweep round it is half a turn either way and only the
+ * edge that arrived says which. Getting that wrong caps the wrong side of the
+ * tip — the half disc back down the slit, which the two rectangles already
+ * cover — and leaves the tip itself bare.
+ *
+ * Under the mitre this was worse: the corner had no bisector at all, the quad
+ * built from it folded over, and the triangle salvaged out of it had all three
  * corners on one line. A hull with no area catches nothing, and the slit's
  * walls stopped stopping anyone.
  */
@@ -154,13 +158,13 @@ describe('a hairpin', () => {
 
 describe('a spur that is very nearly a hairpin', () => {
   // The one above is exact — out and back along the same line — and is caught
-  // by the guard for two normals that cancel. This is the same spur a
+  // by the test for two normals that cancel. This is the same spur a
   // thousandth of a unit off it, which is what an offset deep enough to split a
   // room actually leaves behind, and which reads as an ordinary corner all the
-  // way down. Its bisector is a thousand units long, and the wall it belongs to
+  // way down. Its mitre was a thousand units long, and the wall it belongs to
   // used to be expanded into a quad whose far corner had slid down the wall
   // rather than across it, leaving the strip beside that wall covered by
-  // nothing at all. See `BISECTOR_LIMIT`.
+  // nothing at all.
   //
   // What that let the player do is held end to end rather than here — `export`
   // has the room it was found in, offset until it splits, walked in at the
@@ -168,9 +172,9 @@ describe('a spur that is very nearly a hairpin', () => {
   //
   // The proportions are the ones it was found at: a spur a couple of radii long
   // and a ten-thousandth of one wide, hanging off the end of a wall forty
-  // radii long. The length of that wall is the point — the bisector at the tip
-  // is what its far corner is built from, so what slides is the whole of the
-  // strip beside it.
+  // radii long. The length of that wall is the point — under the mitre the
+  // tip's bisector was what its far corner was built from, so what slid was the
+  // whole of the strip beside it.
   const spur = ring([
     { x: 0, y: 0 },
     { x: 60, y: 0 },
@@ -178,22 +182,70 @@ describe('a spur that is very nearly a hairpin', () => {
     { x: 60.00005, y: 39.3 },
   ]);
 
-  test('the corner at its tip does not send the bisector off down the wall', () => {
-    const worst = Math.max(...withNormals(spur.points).map(p => {
-      const tx = -p.eny, ty = p.enx;
+  test('the wall it hangs off is a radius thick all the way along', () => {
+    const hulls = room(spur);
 
-      return Math.abs(p.bnx * tx + p.bny * ty);
-    }));
-
-    expect(worst).toBeLessThan(BISECTOR_LIMIT + 1e-9);
+    // Just inside the wall is not somewhere to stand, at every point of it.
+    // This is the half a runaway mitre lost: the strip was covered by a quad
+    // whose far corner had gone down the wall instead of across it.
+    for (let y = 1; y < 39; y += 0.5) {
+      expect(hulls.standable({ x: 60 - PLAYER_RADIUS / 2, y })).toBe(false);
+    }
   });
 
-  test('and the wall it belongs to is still a radius thick all the way along', () => {
-    // Held along the wall and not in length, so the crossways component is
-    // untouched and the moved edge is still a translate at exactly a radius.
-    for (const p of withNormals(spur.points)) {
-      expect(p.bnx * p.enx + p.bny * p.eny).toBeCloseTo(1, 9);
+  test('and nothing of it reaches out into the open floor', () => {
+    const hulls = room(spur);
+
+    // The other half, which is what the mitre could not have: a bevel is the
+    // offset and not a superset of it, so a radius and a half from every wall
+    // is somewhere to stand however sharp the corner behind it is.
+    for (let y = 1; y < 39; y += 0.5) {
+      expect(hulls.standable({ x: 60 - PLAYER_RADIUS * 1.5, y })).toBe(true);
     }
+  });
+});
+
+/**
+ * Two sharp spikes facing each other across a gap wide enough to walk through.
+ *
+ * The one that was found in a level: a room's outline running out to a tip and
+ * doubling back, and the corner of a hole a little way off it, both about
+ * sixteen degrees and fifty-nine units apart. A mitre at sixteen degrees
+ * reaches some fifty units along its wall, so between them the two of them
+ * sealed the doorway — ground twenty-nine units from any wall read as inside a
+ * wall, and the level was two rooms with no way between them.
+ *
+ * Sixteen degrees is nowhere near a hairpin, which is why no bound on the
+ * mitre was ever going to be the answer.
+ */
+describe('a doorway between two spikes', () => {
+  // A room with a spike reaching in from either side wall, seventeen degrees
+  // apiece, their tips facing each other 59.4 apart across the way through.
+  const spiked = ring([
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 40 },
+    { x: 129.4, y: 50 },
+    { x: 200, y: 60 },
+    { x: 200, y: 100 },
+    { x: 0, y: 100 },
+    { x: 0, y: 60 },
+    { x: 70, y: 50 },
+    { x: 0, y: 40 },
+  ]);
+
+  test('the middle of it is somewhere to stand', () => {
+    // 29.7 from either tip, which is ninety-nine radii of room.
+    expect(room(spiked).standable({ x: 99.7, y: 50 })).toBe(true);
+  });
+
+  test('and a player walks through it', () => {
+    const hulls = room(spiked);
+    let at: Point = { x: 99.7, y: 5 };
+
+    for (let i = 0; i < 400; i++) at = hulls.trace(at, { x: 0, y: 0.5 });
+
+    expect(at.y).toBeGreaterThan(99);
   });
 });
 
@@ -306,3 +358,189 @@ function hullAreas(hulls: Hulls): number[] {
 
   return inside.hulls.map(h => Math.abs(signedArea(h.verts)));
 }
+
+// -----------------------------------------------------------------------------
+// Against the thing itself
+//
+// Two questions the cases above cannot ask, because both are about every point
+// of a great many rings rather than about one place someone thought of.
+//
+// The first is what the hulls are *for*: a point is inside one exactly when it
+// is within a radius of the ring, and the only reason it is a set of convex
+// pieces rather than that distance is that a trace needs planes. So the
+// distance is the yardstick, and what is allowed between them is what `wedgeOf`
+// says it allows — nothing on the inside, and a corner's own cap on the
+// outside, which is a mitre and stands up to a radius proud of the arc.
+//
+// The second is that the tree is a broad phase and nothing else. It is allowed
+// to hand back hulls that are not hit; it is not allowed to miss one that is.
+// So every answer has to be the answer the whole list gives, and that is asked
+// by taking both.
+// -----------------------------------------------------------------------------
+
+/** Deterministic, so a failure is a failure again next time. */
+function rolls(seed: number): () => number {
+  let s = seed >>> 0;
+
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+
+    return s / 0x100000000;
+  };
+}
+
+/**
+ * A ring of `n` corners at wandering radii about a middle, which is a room with
+ * spikes and bays in it at every angle a ring can have — the sharp ones
+ * included, which is the point.
+ */
+function wobbly(next: () => number, n: number): Point[] {
+  return Array.from({ length: n }, (_unused, i) => {
+    const a = (i / n) * 2 * Math.PI;
+    const r = 8 + next() * 22;
+
+    return { x: 50 + Math.cos(a) * r, y: 50 + Math.sin(a) * r };
+  });
+}
+
+/** Whether `p` is in the room the ring encloses, which is the only side the
+ * walls are expanded towards: a point a hair outside one is not in a hull and
+ * has no business being. */
+function within(ring: Point[], p: Point): boolean {
+  let turns = 0;
+
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const side = (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y);
+
+    if (a.y <= p.y) {
+      if (b.y > p.y && side > 0) turns++;
+    }
+    else if (b.y <= p.y && side < 0) {
+      turns--;
+    }
+  }
+
+  return turns !== 0;
+}
+
+/** How far `p` is from the nearest edge of `ring`. */
+function away(ring: Point[], p: Point): number {
+  let best = Infinity;
+
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = dx * dx + dy * dy;
+    const t = len < 1e-18 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+
+  return best;
+}
+
+describe('the hulls against the distance they stand for', () => {
+  test('nothing a radius clear of every wall is inside one', () => {
+    const next = rolls(20260919);
+    const inside: string[] = [];
+
+    for (let r = 0; r < 40; r++) {
+      const points = wobbly(next, 5 + r % 20);
+      const hulls = room(ring(points));
+
+      for (let k = 0; k < 400; k++) {
+        const p = { x: next() * 100, y: next() * 100 };
+
+        // A radius and a bit: the cap at a corner is a mitre and may stand a
+        // radius proud of the arc, so a radius clear of the *wall* is not yet
+        // a promise. Two is, and two is what the doorway needed.
+        if (away(points, p) < 2 * PLAYER_RADIUS || !hulls.insideAny(p)) continue;
+
+        inside.push(`ring ${r} at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}): ${away(points, p).toFixed(3)} from any wall`);
+      }
+    }
+
+    expect(inside).toEqual([]);
+  });
+
+  test('and nothing within one is outside them all', () => {
+    const next = rolls(19260920);
+    const out: string[] = [];
+
+    for (let r = 0; r < 40; r++) {
+      const points = wobbly(next, 5 + r % 20);
+      const hulls = room(ring(points));
+
+      for (let k = 0; k < 400; k++) {
+        const p = { x: next() * 100, y: next() * 100 };
+
+        if (!within(points, p) || away(points, p) > PLAYER_RADIUS) continue;
+        if (hulls.insideAny(p)) continue;
+
+        out.push(`ring ${r} at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}): ${away(points, p).toFixed(3)} from a wall`);
+      }
+    }
+
+    expect(out).toEqual([]);
+  });
+});
+
+describe('the tree against the whole list', () => {
+  /** The same `Hulls`, asked to look at everything. */
+  function scanned(hulls: Hulls): Hulls {
+    const inside = hulls as unknown as { tree: unknown, edges: unknown };
+    const all = { nodes: new Float64Array(0), skip: new Int32Array(0), start: new Int32Array(0), count: new Int32Array(0), ids: new Int32Array(0), boxes: new Float64Array(0) };
+
+    return Object.assign(Object.create(Object.getPrototypeOf(hulls)), hulls, {
+      tree: everything(inside.tree, all),
+      edges: everything(inside.edges, all),
+    });
+  }
+
+  /** One leaf over every item, which is a tree that skips nothing. */
+  function everything(tree: unknown, empty: object): unknown {
+    const t = tree as { boxes: Float64Array, ids: Int32Array };
+    const n = t.ids.length;
+
+    if (n === 0) return tree;
+
+    return {
+      ...empty,
+      nodes: new Float64Array([-Infinity, -Infinity, Infinity, Infinity]),
+      skip: new Int32Array([1]),
+      start: new Int32Array([0]),
+      count: new Int32Array([n]),
+      ids: t.ids,
+      boxes: new Float64Array(n * 4).map((_unused, i) => (i % 4 < 2 ? -Infinity : Infinity)),
+    };
+  }
+
+  test('answers what a full scan answers, point for point and move for move', () => {
+    const next = rolls(20260921);
+    const differed: string[] = [];
+
+    for (let r = 0; r < 30; r++) {
+      const points = wobbly(next, 5 + r % 20);
+      const hulls = room(ring(points));
+      const all = scanned(hulls);
+
+      for (let k = 0; k < 200; k++) {
+        const at = { x: next() * 100, y: next() * 100 };
+        const move = { x: (next() - 0.5) * 30, y: (next() - 0.5) * 30 };
+
+        if (hulls.standable(at) !== all.standable(at)) {
+          differed.push(`ring ${r}: standable at (${at.x.toFixed(2)}, ${at.y.toFixed(2)})`);
+        }
+
+        const one = hulls.trace(at, move), two = all.trace(at, move);
+
+        if (one.x !== two.x || one.y !== two.y) {
+          differed.push(`ring ${r}: trace from (${at.x.toFixed(2)}, ${at.y.toFixed(2)})`);
+        }
+      }
+    }
+
+    expect(differed).toEqual([]);
+  });
+});

@@ -258,8 +258,6 @@ export interface Point {
 export interface PolygonPoint {
   x: number
   y: number
-  bnx: number  // bisector normal x (scaled so parallel offset works)
-  bny: number  // bisector normal y (scaled so parallel offset works)
   enx: number  // edge normal x (unit) between current point and (next one | first one (if current point is last))
   eny: number  // edge normal y (unit) between current point and (next one | first one (if current point is last))
 }
@@ -395,15 +393,29 @@ export function emptyWorld(): World {
 // -----------------------------------------------------------------------------
 // Normals
 //
-// Both of the collision hull's inputs, worked out once when the world is
-// written rather than on every level load, which is what the jam build did.
+// The collision hull's one input, worked out once when the world is written
+// rather than on every level load, which is what the jam build did: the unit
+// outward normal of the edge starting at each point.
 //
-// The edge normal is the unit outward normal of the edge starting at the point.
-// The bisector is the outward direction a corner has to move for both of its
-// edges to shift outward by the same distance — which is not the unit bisector,
-// but that divided by the cosine of the half angle. Offsetting along it is what
-// makes the Minkowski expansion by the player's radius come out right at
-// corners instead of pinching them.
+// One, where there used to be two. A corner also carried a bisector — the unit
+// bisector over the cosine of the half angle — and `hullOf` moved both ends of
+// an edge along the bisectors of its corners, so that the two walls meeting at
+// one landed on their shared mitre rather than pinching short of it. The
+// crossways component of that is exactly one by construction, which is what
+// made the moved edge a true translate at a radius; the component *along* the
+// wall is the cotangent of the half angle, and that is what went wrong. It runs
+// away as a corner closes, and a mitre is a superset of the offset it stands
+// for — the true offset caps a spike, the mitre runs out to its apex. Two
+// sixteen-degree spikes facing each other across a fifty-nine unit doorway each
+// reached fifty-odd units, and between them they sealed it: ground twenty-nine
+// units from any wall read as inside one.
+//
+// A bound on how far the bisector could run held off the worst of it and could
+// not fix it, because there is no bound that is both loose enough for ordinary
+// corners and tight enough for that. So the mitre is gone, and `hullOf` bevels
+// instead: a rectangle per edge along the edge's own normal, and the wedge a
+// corner leaves between two of them as a hull of its own. Nothing is then a
+// superset of anything, and the corner costs a hull rather than a constant.
 // -----------------------------------------------------------------------------
 
 /** Positive is counter-clockwise. */
@@ -426,103 +438,22 @@ export function signedArea(points: readonly Point[]): number {
  * wound the other way from its outer ring and both arrive here as rings. What
  * "outward" means follows from it: away from the material either way.
  */
-/**
- * How far along a wall a corner's bisector may run, in player radii, before it
- * is held there.
- *
- * The bisector is the unit bisector over the cosine of the half angle, so its
- * component *across* the wall is exactly one and its component *along* the wall
- * is the cotangent of the half angle — which runs away to infinity as a corner
- * closes on a hairpin. There is a guard below for the hairpin itself, at 1e-8,
- * and between the two lies every corner that is not quite one: a spur eighteen
- * units long and a thousandth of a unit wide reads as an ordinary corner, comes
- * back with a bisector nineteen hundred long, and `hullOf` builds the wall's
- * expansion out of it — a quad whose far corner has slid two hundred units down
- * the wall rather than a radius across it. The strip beside that wall is then
- * not covered by anything and the player walks out through it.
- *
- * Rings like that are not authored, they are arrived at: an offset deep enough
- * to split a room leaves the two pieces meeting almost exactly, and almost is
- * what does it. So the bound is here rather than in whatever produced the ring.
- *
- * Held *along* rather than in length, which is the whole of why this works. The
- * component across the wall is what makes the moved edge a translate of the
- * original at exactly a radius, and scaling the whole bisector down loses it —
- * the wall then stops the player short of where it should and the strip beside
- * it is still uncovered, which is a fix that fixes nothing. Holding the
- * tangential part keeps the crossways part exact and only stops the corner
- * sliding; what it costs is that the two walls at a corner sharper than
- * `2 * atan(1 / 16)` — about seven degrees — no longer meet exactly at their
- * mitre, and the tip of that spike is a little thinner than a radius.
- *
- * Sixteen because nothing that has to be exact needs more. A level's worth of
- * uniformly eroded rooms wants at most fourteen; the one corner in a hundred
- * and twenty rooms that wanted forty was two point eight degrees wide, and
- * holding it changes nothing anyone can walk through.
- */
-export const BISECTOR_LIMIT = 16;
-
 export function withNormals(points: readonly Point[]): PolygonPoint[] {
   const n = points.length;
   if (n < 3) return [];
 
   const sign = signedArea(points) > 0 ? 1 : -1;
 
-  const edges = points.map((a, i) => {
+  return points.map((p, i) => {
     const b = points[(i + 1) % n];
-    const dx = b.x - a.x, dy = b.y - a.y;
+    const dx = b.x - p.x, dy = b.y - p.y;
     const len = Math.hypot(dx, dy);
 
+    // A repeated point has no edge and so no normal. It is left at zero rather
+    // than guessed at: `hullOf` drops the edge, and the corner there is between
+    // the two edges that do exist.
     return len < 1e-12
-      ? { nx: 0, ny: 0 }
-      : { nx: sign * dy / len, ny: sign * -dx / len };
-  });
-
-  return points.map((p, i) => {
-    const prev = edges[(i - 1 + n) % n], here = edges[i];
-
-    let bx = prev.nx + here.nx, by = prev.ny + here.ny;
-    const len = Math.hypot(bx, by);
-
-    // A hairpin — the two edges antiparallel — has no bisector worth the name,
-    // and neither has a corner whose halves cancel. The edge's own normal is
-    // the least wrong thing to offset along.
-    if (len < 1e-8) {
-      return { x: p.x, y: p.y, bnx: here.nx, bny: here.ny, enx: here.nx, eny: here.ny };
-    }
-
-    bx /= len;
-    by /= len;
-
-    const cosHalf = bx * here.nx + by * here.ny;
-
-    if (Math.abs(cosHalf) < 1e-8) {
-      return { x: p.x, y: p.y, bnx: here.nx, bny: here.ny, enx: here.nx, eny: here.ny };
-    }
-
-    const bnx = bx / cosHalf, bny = by / cosHalf;
-
-    // Along the wall rather than across it. The component across is exactly one
-    // by construction and is the whole of what the bisector is for; what runs
-    // away at a near-hairpin is the component along, and holding that is what
-    // keeps the moved edge a translate of the original while stopping the far
-    // corner sliding off down it.
-    const tx = -here.ny, ty = here.nx;
-    const along = bnx * tx + bny * ty;
-
-    if (Math.abs(along) <= BISECTOR_LIMIT) {
-      return { x: p.x, y: p.y, bnx, bny, enx: here.nx, eny: here.ny };
-    }
-
-    const held = Math.sign(along) * BISECTOR_LIMIT;
-
-    return {
-      x: p.x,
-      y: p.y,
-      bnx: here.nx + tx * held,
-      bny: here.ny + ty * held,
-      enx: here.nx,
-      eny: here.ny,
-    };
+      ? { x: p.x, y: p.y, enx: 0, eny: 0 }
+      : { x: p.x, y: p.y, enx: sign * dy / len, eny: sign * -dx / len };
   });
 }

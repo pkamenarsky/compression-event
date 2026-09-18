@@ -3,9 +3,9 @@
 //
 // The jam build's collision, carried over with three changes.
 //
-// **The normals arrive precomputed.** `PolygonPoint` carries the edge normal
-// and the scaled bisector, worked out once where the world is written rather
-// than on every level load. Nothing here recomputes them.
+// **The normals arrive precomputed.** `PolygonPoint` carries the edge normal,
+// worked out once where the world is written rather than on every level load.
+// Nothing here recomputes it.
 //
 // **A polygon is a ring, and a version has more of them than it was authored
 // with.** Erosion is a projection: a room whose walls close until they meet is
@@ -33,6 +33,11 @@
 // player is a point, trace the point against the convex hulls that produces,
 // stop at the first, turn along it, and trace again with what is left.
 //
+// The expansion is a rectangle per wall and a cap per corner — `wallOf` and
+// `wedgeOf` — and the hulls are in a tree rather than a list, since every one
+// of those traces is a query and a level is meant to carry ten thousand
+// polygons.
+//
 // There are two traces in here and only one of them is wired up. `traceQ2` is
 // the above; `traceOld` is what the jam build did, which slid once and then cut
 // the slide short at the next wall rather than turning it again. The second is
@@ -40,6 +45,7 @@
 // `trace`, which is one line and names which.
 // -----------------------------------------------------------------------------
 
+import { Packed, eachPacked, pack, somePacked } from './bvh';
 import { Point, Polygon, PolygonPoint, signedArea } from './world';
 
 /** World units. The player is a point and the walls are this much closer. */
@@ -88,24 +94,29 @@ function planesOf(verts: Point[]): { nx: number, ny: number, d: number }[] {
   return planes;
 }
 
-/** Where two segments meet along the first, or nothing. */
-function meeting(
-  p1: Point, p2: Point,
-  p3: Point, p4: Point,
-): number | null {
-  const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
-  const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+/**
+ * How deep a corner may be left uncovered before it is given a hull of its own,
+ * as a fraction of the player's radius.
+ *
+ * Two rectangles meeting at a corner cover it between them to within `radius *
+ * (1 - cos(half the turn))`, which is nothing at all until the turn is real: a
+ * hundredth of a radius is reached at sixteen degrees. Below that the corner
+ * costs nothing, which is most corners of most rings.
+ */
+const BEVEL = 0.01;
 
-  const det = d1x * d2y - d1y * d2x;
-  if (Math.abs(det) < 1e-12) return null;
+/** The turn at which that depth is reached. */
+const SHALLOW = 2 * Math.acos(1 - BEVEL);
 
-  const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / det;
-  const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / det;
-
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
-}
-
-function hullOf(
+/**
+ * The expansion of one wall: the edge, and the edge moved a radius off it.
+ *
+ * Along the edge's own normal, both ends alike, so the moved edge is a
+ * translate of the original at exactly a radius and the rectangle is exactly
+ * the part of the offset that belongs to this edge. What it does not cover is
+ * the corner at either end, which is `wedgeOf`.
+ */
+function wallOf(
   a: PolygonPoint,
   b: PolygonPoint,
   scale: number,
@@ -117,37 +128,137 @@ function hullOf(
 
   if (Math.hypot(wb.x - wa.x, wb.y - wa.y) < 1e-12) return null;
 
-  // Along the bisector rather than the edge normal, so that both walls meeting
-  // at a corner end up exactly `radius` away from it rather than pinching. The
-  // scaling is what makes that exact: `withNormals` divides the unit bisector
-  // by the cosine of the half angle, so the bisector's component along either
-  // of the two edge normals is exactly one, and the moved edge is a translate
-  // of the original by `radius` however sharp the corner is.
-  const ea = { x: wa.x + a.bnx * radius * side, y: wa.y + a.bny * radius * side };
-  const eb = { x: wb.x + b.bnx * radius * side, y: wb.y + b.bny * radius * side };
+  const mx = a.enx * radius * side, my = a.eny * radius * side;
 
-  // Except where there was no bisector to divide. A hairpin's two edges are
-  // antiparallel and their normals cancel, so `withNormals` falls back to the
-  // edge's own normal — which is right for one of the two walls meeting there
-  // and points straight through the other. That quad crosses itself, and every
-  // way of salvaging a triangle out of it puts all three corners on one line:
-  // the crossing sits on the original edge by construction. A zero-area hull
-  // catches nothing, so the wall silently stopped stopping anyone.
-  //
-  // The rectangle the bisector would have given anywhere else is what it gets
-  // instead: both ends moved along the wall's own normal. It is short of the
-  // radius at the far corner, which is the corner a hairpin does not have.
-  const folded = meeting(wa, wb, ea, eb) !== null;
-  const out = (p: Point) => ({ x: p.x + a.enx * radius * side, y: p.y + a.eny * radius * side });
+  return hullOf(
+    [wa, wb, { x: wb.x + mx, y: wb.y + my }, { x: wa.x + mx, y: wa.y + my }],
+    a.enx,
+    a.eny,
+  );
+}
 
-  const verts: Point[] = folded ? [wa, wb, out(wb), out(wa)] : [wa, wb, eb, ea];
+/**
+ * What is left over at a corner, where the two walls meeting there have turned
+ * away from each other and their rectangles have parted.
+ *
+ * Nothing where they have not. A corner that turns the other way has its two
+ * rectangles overlapping — the inside of a room's corner is covered twice —
+ * and anything added there would be a piece of wall standing in open floor.
+ *
+ * Which way is which is read off the winding, as everything here is: the turn
+ * and `side` agreeing is the corner that has parted, whether the ring is a room
+ * or a hole wound against one.
+ *
+ * `prev` is where the edge arriving here started, so it carries that edge's
+ * normal. Its position is read only to settle the one case the turn cannot:
+ * two edges exactly antiparallel, where the tip of a spur needs a half disc
+ * and the sweep to it is a half turn either way. The one that is wanted goes
+ * *round* the tip, which is the one whose middle points on along the edge that
+ * arrived.
+ *
+ * What is built is the mitre, cut off where it has run a radius along either
+ * of its walls. Not the arc it stands for, which would be the exact thing and
+ * is the wrong thing: the arcs round the two sides of a gap narrower than the
+ * player cross, and where they cross the free space comes to a cusp — a notch
+ * the player can walk into and be wedged in, at a slot they should simply have
+ * slid past. A mitre contains its arc and fills that, which is what the slot in
+ * `coldet.test.ts` is about.
+ *
+ * What a mitre must not do is run away. Its apex stands `radius * tan(half the
+ * sweep)` along the wall, which is a radius at a right angle and seven of them
+ * at the sixteen-degree spike this was found at — and a corner reaching seven
+ * radii into open floor is a wall that is not there. Two of those facing each
+ * other closed a doorway fifty-nine units wide.
+ *
+ * A radius is where those two meet, and is not a dial. A gap the player cannot
+ * fit through is narrower than two radii, so a radius from either side bridges
+ * it; a gap they can is wider, so a radius from either side leaves the middle
+ * of it alone. Everything sharper than a right angle is cut, and everything
+ * blunter never reaches that far to begin with.
+ *
+ * The bound sits on the corner rather than on the bisector, which is what
+ * `wallOf` is separate for: the walls either side are translates at exactly a
+ * radius whatever happens here, so cutting this costs nothing crossways. That
+ * was the objection to bounding the old bisector, and it is answered by the
+ * corner being its own hull.
+ */
+function wedgeOf(
+  prev: PolygonPoint,
+  at: PolygonPoint,
+  scale: number,
+  side: number,
+  radius: number,
+): Hull | null {
+  const m0x = prev.enx * side, m0y = prev.eny * side;
+  const m1x = at.enx * side, m1y = at.eny * side;
 
+  const cross = m0x * m1y - m0y * m1x;
+  const dot = m0x * m1x + m0y * m1y;
+
+  let sweep: number;
+
+  if (dot < -1 + 1e-12) {
+    const dx = at.x - prev.x, dy = at.y - prev.y;
+
+    sweep = Math.PI * (-m0y * dx + m0x * dy >= 0 ? 1 : -1);
+  }
+  else if (cross * side > 0) {
+    sweep = Math.atan2(cross, dot);
+  }
+  else {
+    return null;
+  }
+
+  // Shallower than this and the two rectangles have it covered.
+  if (Math.abs(sweep) < SHALLOW) return null;
+
+  const turn = Math.sign(sweep);
+
+  // Out along each offset edge, as far as the apex or as far as a radius,
+  // whichever comes first. Both sides reach the same distance, so the two
+  // points are the apex itself while the mitre is short enough to keep, and
+  // the cut across it once it is not.
+  const reach = Math.min(radius * Math.tan(Math.abs(sweep) / 2), radius);
+
+  const p = { x: at.x * scale, y: at.y * scale };
+  const e0 = { x: p.x + m0x * radius, y: p.y + m0y * radius };
+  const e1 = { x: p.x + m1x * radius, y: p.y + m1y * radius };
+
+  const verts: Point[] = [
+    p,
+    e0,
+    { x: e0.x - m0y * turn * reach, y: e0.y + m0x * turn * reach },
+    { x: e1.x + m1y * turn * reach, y: e1.y - m1x * turn * reach },
+    e1,
+  ];
+
+  // The wall it is named after is the one leaving the corner. A corner is not a
+  // wall of its own, and `traceOld` tells a corner from two walls by exactly
+  // this — see `SAME_WALL`.
+  return hullOf(verts, at.enx, at.eny);
+}
+
+function hullOf(verts: Point[], wallNx: number, wallNy: number): Hull | null {
   if (signedArea(verts) < 0) verts.reverse();
 
   const planes = planesOf(verts);
   if (planes.length < 3) return null;
 
-  return { verts, planes, wallNx: a.enx, wallNy: a.eny };
+  return { verts, planes, wallNx, wallNy };
+}
+
+/** The box a hull sits in, four numbers, as `pack` wants them. */
+function boxOf(hull: Hull, into: number[]): void {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  for (const v of hull.verts) {
+    if (v.x < minX) minX = v.x;
+    if (v.y < minY) minY = v.y;
+    if (v.x > maxX) maxX = v.x;
+    if (v.y > maxY) maxY = v.y;
+  }
+
+  into.push(minX, minY, maxX, maxY);
 }
 
 /** What a trace against one hull found: where it went in, where it would come
@@ -270,29 +381,78 @@ function along(move: Point, planes: readonly { nx: number, ny: number }[]): Poin
 export class Hulls {
   private hulls: Hull[] = [];
 
+  /**
+   * The hulls by their boxes, and the rings' own edges by theirs.
+   *
+   * Two, because the two questions are not the same shape. Whether a point is
+   * inside a wall is a question about hulls, in world units; how many times the
+   * rooms wind round it is a ray cast at the rings themselves, in the units
+   * they were written in. Sharing one tree would mean scaling one of them on
+   * every query to save building a tree once at load.
+   *
+   * Without them every query was every hull, four times over per move — fine at
+   * the hundred and twenty a room or two comes to, and eighty thousand at the
+   * ten thousand polygons the set is built to carry.
+   */
+  private tree: Packed;
+  private edges: Packed;
+  /** Per edge of `edges`, `ax, ay, bx, by`, in the rings' own units. */
+  private ends: Float64Array;
+
   constructor(
-    private polygons: Polygon[],
+    polygons: Polygon[],
     private scale: number,
     radius = PLAYER_RADIUS,
   ) {
-    for (const polygon of polygons) {
-      if (polygon.points.length < 3) continue;
+    const boxes: number[] = [];
+    const edges: number[] = [];
+    const ends: number[] = [];
 
-      const side = sideOf(polygon);
-      const n = polygon.points.length;
+    for (const polygon of polygons) {
+      // Repeated points have no edge and no normal, and a corner at one is
+      // between the two edges either side of it rather than against nothing.
+      // Taking them out here is what lets everything below read `i - 1` and
+      // `i + 1` and mean it.
+      const points = polygon.points.filter(p => p.enx !== 0 || p.eny !== 0);
+
+      if (points.length < 3) continue;
+
+      const side = sideOf({ points });
+      const n = points.length;
 
       for (let i = 0; i < n; i++) {
-        const made = hullOf(polygon.points[i], polygon.points[(i + 1) % n], this.scale, side, radius);
+        const a = points[i], b = points[(i + 1) % n];
 
-        if (made !== null) this.hulls.push(made);
+        const wall = wallOf(a, b, this.scale, side, radius);
+        const wedge = wedgeOf(points[(i - 1 + n) % n], a, this.scale, side, radius);
+
+        for (const made of [wall, wedge]) {
+          if (made === null) continue;
+
+          this.hulls.push(made);
+          boxOf(made, boxes);
+        }
+
+        edges.push(
+          Math.min(a.x, b.x), Math.min(a.y, b.y),
+          Math.max(a.x, b.x), Math.max(a.y, b.y),
+        );
+        ends.push(a.x, a.y, b.x, b.y);
       }
     }
+
+    this.tree = pack(Float64Array.from(boxes));
+    this.edges = pack(Float64Array.from(edges));
+    this.ends = Float64Array.from(ends);
   }
 
   /** Inside a wall, which is not somewhere the player is allowed to be. */
   insideAny(at: Point): boolean {
-    return this.hulls.some(hull =>
-      hull.planes.every(p => p.nx * at.x + p.ny * at.y - p.d <= 0));
+    return somePacked(this.tree, at.x, at.y, at.x, at.y, id => {
+      const hull = this.hulls[id];
+
+      return hull.planes.every(p => p.nx * at.x + p.ny * at.y - p.d <= 0);
+    });
   }
 
   /**
@@ -309,27 +469,52 @@ export class Hulls {
     return this.winding(at) !== 0;
   }
 
-  /** How many times the rooms wind round the point. */
+  /**
+   * How many times the rooms wind round the point.
+   *
+   * The ray runs out along positive x, so the query is the point stretched to
+   * infinity that way: an edge whose box ends short of the point cannot be
+   * crossed by it, and one that does not straddle the point's own `y` cannot
+   * either. Every edge the tree does hand back is put through exactly the test
+   * it was put through when they all were.
+   */
   private winding(at: Point): number {
     const x = at.x / this.scale, y = at.y / this.scale;
+    const ends = this.ends;
     let turns = 0;
 
-    for (const polygon of this.polygons) {
-      const points = polygon.points;
+    eachPacked(this.edges, x, y, Infinity, y, id => {
+      const i = id * 4;
+      const ax = ends[i], ay = ends[i + 1], bx = ends[i + 2], by = ends[i + 3];
 
-      for (let i = 0; i < points.length; i++) {
-        const a = points[i], b = points[(i + 1) % points.length];
-
-        if (a.y <= y) {
-          if (b.y > y && (b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y) > 0) turns++;
-        }
-        else if (b.y <= y && (b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y) < 0) {
-          turns--;
-        }
+      if (ay <= y) {
+        if (by > y && (bx - ax) * (y - ay) - (x - ax) * (by - ay) > 0) turns++;
       }
-    }
+      else if (by <= y && (bx - ax) * (y - ay) - (x - ax) * (by - ay) < 0) {
+        turns--;
+      }
+    });
 
     return turns;
+  }
+
+  /**
+   * Every hull a move from `at` to `to` could possibly meet.
+   *
+   * The move's own box, which is all the broad phase can say: a hull whose box
+   * misses it cannot be crossed, and one whose box meets it usually is not
+   * crossed either, which is what `traced` is for. Nothing that would have been
+   * hit is missed, so the answer is the answer the whole list gave.
+   */
+  private near(at: Point, to: Point, fn: (hull: Hull) => void): void {
+    eachPacked(
+      this.tree,
+      Math.min(at.x, to.x),
+      Math.min(at.y, to.y),
+      Math.max(at.x, to.x),
+      Math.max(at.y, to.y),
+      id => fn(this.hulls[id]),
+    );
   }
 
   /** The one in force. Swap for `traceOld` to feel the difference. */
@@ -362,13 +547,13 @@ export class Hulls {
       if (length < 1e-8) break;
 
       const end = { x: at.x + left.x, y: at.y + left.y };
-      let first: Crossed | null = null;
+      let first = null as Crossed | null;
 
-      for (const hull of this.hulls) {
+      this.near(at, end, hull => {
         const crossed = traced(at, end, hull);
 
         if (hit(crossed) && (first === null || crossed.enter < first.enter)) first = crossed;
-      }
+      });
 
       if (first === null) return end;
 
@@ -412,15 +597,15 @@ export class Hulls {
     if (length < 1e-8) return { ...start };
 
     const end = { x: start.x + move.x, y: start.y + move.y };
-    const hits = [];
+    const hits: (Crossed & { frac: number, wall: Hull })[] = [];
 
-    for (const hull of this.hulls) {
+    this.near(start, end, hull => {
       const crossed = traced(start, end, hull);
 
       if (hit(crossed)) {
         hits.push({ frac: crossed.enter, ...crossed, wall: hull });
       }
-    }
+    });
 
     if (hits.length === 0) return end;
 
@@ -457,11 +642,11 @@ export class Hulls {
     const to = { x: stopped.x + slide.x, y: stopped.y + slide.y };
     let frac = 1;
 
-    for (const hull of this.hulls) {
+    this.near(stopped, to, hull => {
       const crossed = traced(stopped, to, hull);
 
       if (hit(crossed) && crossed.enter < frac) frac = crossed.enter;
-    }
+    });
 
     const safely = Math.max(0, frac - GAP / along);
 

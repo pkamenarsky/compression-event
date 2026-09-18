@@ -557,7 +557,8 @@ describe('a span begins and ends on what the editor draws', () => {
  * of the split room meet almost exactly, and what "almost" leaves behind is a
  * spur eighteen units long and a thousandth of a unit wide hanging off an
  * otherwise straight wall. Every reader downstream has to survive it, and the
- * one that did not was collision — see `BISECTOR_LIMIT`.
+ * one that did not was collision — see `wedgeOf`, which is what a corner that
+ * sharp is built by now.
  *
  * End to end rather than on a ring made up for the purpose, because the point
  * is that the editor hands the game shapes like this without either of them
@@ -911,11 +912,10 @@ describe('the source rings a version resolves to', () => {
     expect(Math.min(...ys)).toBeCloseTo(30, 6);
     expect(Math.max(...ys)).toBeCloseTo(130, 6);
 
-    // Every edge normal is a unit vector, and every bisector reaches at least
-    // as far as one — it is the unit bisector over the cosine of the half angle.
+    // Every edge normal is a unit vector. It is the only thing a point carries
+    // for collision, and `hullOf` moves the whole edge along it.
     for (const p of points) {
       expect(Math.hypot(p.enx, p.eny)).toBeCloseTo(1, 6);
-      expect(Math.hypot(p.bnx, p.bny)).toBeGreaterThanOrEqual(1 - 1e-9);
     }
   });
 

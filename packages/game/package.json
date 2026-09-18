@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./world": "./src/world.ts",
+    "./bvh": "./src/bvh.ts",
     "./replay": "./src/replay.ts"
   },
   "dependencies": {

@@ -20,7 +20,8 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { Packed, containsBox, eachPacked, ofRings, pack } from './aabb';
+import { containsBox, ofRings } from './aabb';
+import { Packed, eachPacked, pack } from '@ce/game/bvh';
 
 export type { Point };
 

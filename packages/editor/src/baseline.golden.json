@@ -11,7 +11,7 @@
     "span 0": "beb054cc861dc55d",
     "span 1": "8c4a3938bc653735",
     "span 2": "53cabedd0eda72ca",
-    "shipped": "d20c8df64b8cee6d"
+    "shipped": "72a852df624b1f3a"
   },
   "group": {
     "csg 0": "14c50f56f4f72ea3",
@@ -25,7 +25,7 @@
     "span 0": "72b27a2230697380",
     "span 1": "d7bb8387e2329175",
     "span 2": "c779e79dffe61c48",
-    "shipped": "814d946f47c98d54"
+    "shipped": "856c79898004d317"
   },
   "corners": {
     "csg 0": "a40f5aa449f9b86f",
@@ -39,7 +39,7 @@
     "span 0": "658ad0bcd16ae35d",
     "span 1": "4f533e8f7180cbd0",
     "span 2": "c7d3f6cd4e72f35b",
-    "shipped": "47cd1f37ce03e5df"
+    "shipped": "280f808e34f87aa8"
   },
   "births": {
     "csg 0": "b0fed460204d8751",
@@ -53,7 +53,7 @@
     "span 0": "a6815dab3093ed32",
     "span 1": "60135312ae56a41e",
     "span 2": "3c4251c0ee3dfd39",
-    "shipped": "81dc7400091e1552"
+    "shipped": "2cb9ba8af140531c"
   },
   "floors": {
     "csg 0": "bc0e09231a61e59f",
@@ -67,7 +67,7 @@
     "span 0": "658f5e44482fd0c5",
     "span 1": "08b556ef921719ab",
     "span 2": "d349e99a16dc1bdb",
-    "shipped": "523fad28739403a7"
+    "shipped": "284723f31d303355"
   },
   "squash": {
     "csg 0": "8b7b78d8b0250e2d",
@@ -81,7 +81,7 @@
     "span 0": "80ab0c201fb74d73",
     "span 1": "fead865acbf117b7",
     "span 2": "71b88e0206d49173",
-    "shipped": "847d3a5846f095fb"
+    "shipped": "734a0967a9f4bf39"
   },
   "repeats": {
     "csg 0": "2a2293a6eb0cb71e",
@@ -95,6 +95,6 @@
     "span 0": "54cf731e74b936c8",
     "span 1": "afe648e172095979",
     "span 2": "8e91fc5eb8b487e9",
-    "shipped": "dac4d0cae4518d71"
+    "shipped": "b070967153c8b491"
   }
 }
