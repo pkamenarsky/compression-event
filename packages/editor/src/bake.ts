@@ -3578,9 +3578,23 @@ export interface Slice {
  */
 export function ridersOf(world: World, from: number): Map<Id, Rider> {
   const cast = casting(world, from);
-  const out = ridden(cast, subjects(cast));
 
-  for (const [id, rider] of carried(world, from)) out.set(id, rider);
+  return ridersFrom({ riders: ridden(cast, subjects(cast)), from }, world);
+}
+
+/**
+ * The same, off something that has already resolved the span.
+ *
+ * `ready` works the polygons' riders out on its way to the neighbourhoods, so a
+ * span that has one has already paid for all of this but the artefacts. Asking
+ * `ridersOf` afterwards resolved the world a second time for an answer sitting
+ * in front of it — which cost nothing worth naming while a bake cut every
+ * track, and is a fifth of what an incremental one does.
+ */
+function ridersFrom(at: { riders: Map<Id, Rider>, from: number }, world: World): Map<Id, Rider> {
+  const out = new Map(at.riders);
+
+  for (const [id, rider] of carried(world, at.from)) out.set(id, rider);
 
   return out;
 }
@@ -4187,7 +4201,7 @@ export function* bakeSpan(
 
   const slice = yield* cutSome(at, which, tol, gap);
 
-  return joined(world, from, ridersOf(world, from), [{ ...slice, setup: at.setup }], tol, kept);
+  return joined(world, from, ridersFrom(at, world), [{ ...slice, setup: at.setup }], tol, kept);
 }
 
 /** Every span in the chain, one after the other. */
