@@ -235,12 +235,12 @@ function hashed(value: unknown): string {
     // them is what it made.
     if (key === 'setup' || key === 'cut' || key === 'stamp' || key === 'evaluations') return undefined;
 
-    // A track's own measurement of itself, which master added up over the span
-    // and did not keep per track. The span's `worst` and `strained` are still
+    // A track's own measurement of itself and the hash of what it was cut
+    // from, neither of which master kept per track. The span's `worst` and `strained` are still
     // hashed and are these read over the tracks, so nothing is given up by
     // leaving them out here: what changed is where the number is written down,
     // not what it is.
-    if ((key === 'worst' || key === 'gap') && track(this)) return undefined;
+    if ((key === 'worst' || key === 'gap' || key === 'sig') && track(this)) return undefined;
 
     // A stand's amounts, which a world without effects has at nought and
     // master did not write at all.

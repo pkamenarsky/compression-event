@@ -486,6 +486,15 @@ export interface Track {
    */
   worst: number
   gap: number
+  /**
+   * Everything this track was cut from, as a hash: see `signed`.
+   *
+   * What makes a track reusable. A bake after an edit works out the same hash
+   * from the world in front of it, and a track whose hash comes back the same
+   * is cut from the same geometry against the same neighbours and would come
+   * out identical, so it is kept rather than cut again.
+   */
+  sig: string
 }
 
 /** Everything between two adjacent keyframes. */
@@ -616,7 +625,7 @@ export function stamp(world: World, from: number): Stamp {
 
   return {
     written,
-    order: world.keyframes.map(k => k.id).join(','),
+    order: ordered(world),
     polygons: world.polygons,
     groups: world.groups,
     artefacts: world.artefacts,
@@ -625,12 +634,35 @@ export function stamp(world: World, from: number): Stamp {
   };
 }
 
+function ordered(world: World): string {
+  return world.keyframes.map(k => k.id).join(',');
+}
+
 /** The span, if what it was baked against is still standing. */
 export function spanAt(bake: Bake, world: World, from: number): Span | null {
   const span = bake.spans.get(from);
   if (span === undefined) return null;
 
   return stamped(span.stamp, stamp(world, from)) ? span : null;
+}
+
+/**
+ * The span as it was last baked, whether or not it still stands, for a bake to
+ * take the tracks an edit did not reach from.
+ *
+ * A different question from `spanAt`, which asks whether a span may be *used* —
+ * and must go on asking it, since a stale span is stale whatever its tracks
+ * are. This asks only whether the two spans are about the same pair of
+ * keyframes, because a track carries its own answer to everything else. Where
+ * the order has changed, `from` no longer names the same span at all and there
+ * is nothing here to take.
+ */
+export function reusable(bake: Bake, world: World, from: number): Span | null {
+  const span = bake.spans.get(from);
+
+  if (span === undefined) return null;
+
+  return span.stamp.order === ordered(world) ? span : null;
 }
 
 /** A stamp over every span of the level, which is everything written down to
@@ -3865,6 +3897,167 @@ function* recut(at: Ready, i: number, tol: number, gap: number): Generator<numbe
   }
 }
 
+// -----------------------------------------------------------------------------
+// What a track was cut from
+//
+// A track is cut against its own neighbourhood and reads nothing else — that is
+// what makes the bake a dealing-out problem, and it is also what makes a bake
+// after an edit mostly a re-run of work already done. An edit reaches a handful
+// of polygons; every other track on the level would be cut from exactly the
+// geometry it was cut from last time and would come out exactly as it did.
+//
+// So each track carries a hash of everything it was cut from, and a bake keeps
+// the tracks whose hash has not moved. What has to be in that hash is what the
+// cut reads, and the cut reads three things:
+//
+// - its own polygon over the span — which is `at1` and `invented`, and so is
+//   the named fields below rather than the `Moving` whole. Never `at.shape`:
+//   spreading a `Resolved` works its projection out, which is the one thing a
+//   signature must not pay for.
+// - its neighbours' the same way, and *which* neighbours they are. Membership
+//   is worked out afresh every bake from the reach boxes, so a polygon that
+//   moves into range shows up here as a member that was not there before. By
+//   id rather than in the order the sweep handed them over: the arrangement
+//   does not depend on that order and a signature must not either.
+// - the scopes they ride. A sealed group's depth is a fact about the whole
+//   group rather than about any member, so a change to it reaches a polygon
+//   that nothing was written about. This is the one dependency that is not
+//   local, and leaving it out would keep a track that should have been cut
+//   again.
+//
+// The risk this carries is not a slow bake, it is a wrong one: a track wrongly
+// kept is geometry that silently disagrees with the world. `bake.test.ts` holds
+// it to the only standard that matters — an incremental bake and a full one of
+// the same world come out identical, over every shape of edit there is.
+// -----------------------------------------------------------------------------
+
+/**
+ * Every primitive in a value, in an order that depends on the value alone:
+ * arrays in their own order, objects and maps by sorted key.
+ *
+ * Brackets as well, so that two different shapes cannot flatten to the same
+ * list — `[[1], [2]]` and `[[1, 2], []]` hold the same numbers in the same
+ * order and are not the same value.
+ */
+function into(out: unknown[], v: unknown): void {
+  if (v === null || typeof v !== 'object') {
+    out.push(v);
+    return;
+  }
+
+  if (Array.isArray(v)) {
+    out.push('[');
+    for (const e of v) into(out, e);
+    out.push(']');
+    return;
+  }
+
+  if (v instanceof Map) {
+    out.push('{');
+
+    for (const k of [...v.keys()].sort()) {
+      into(out, k);
+      into(out, v.get(k));
+    }
+
+    out.push('}');
+    return;
+  }
+
+  out.push('{');
+
+  for (const k of Object.keys(v).sort()) {
+    out.push(k);
+    into(out, (v as Record<string, unknown>)[k]);
+  }
+
+  out.push('}');
+}
+
+/** One polygon over the span, as the cut sees it: the fields `at1` builds an
+ * instant out of, what it rides, and the scopes that ride over that. */
+function movement(out: unknown[], m: Moving, cast: Cast): void {
+  into(out, m.at.id);
+  into(out, m.at.polygon);
+  into(out, m.corners);
+  into(out, m.local);
+  into(out, m.dead);
+  into(out, m.depth);
+  into(out, m.varying ? m.depths : null);
+  into(out, m.effected);
+  into(out, m.frame);
+  into(out, m.ops);
+
+  for (const h of m.holders) {
+    into(out, h.id);
+    into(out, h.frame);
+    into(out, h.ops);
+
+    // The group itself as well as its flight: whether it is sealed decides
+    // whether it stands for its members at all, and who its members are decides
+    // what its boundary is. Neither is written on the polygon.
+    into(out, cast.world.groups.get(h.id) ?? null);
+    into(out, cast.scopes.get(h.id) ?? null);
+    into(out, cast.shapes.get(h.id) ?? null);
+
+    const rider = cast.riders.get(h.id);
+
+    if (rider !== undefined) {
+      into(out, rider.frame);
+      into(out, rider.ops);
+      into(out, rider.holders.map(o => o.id));
+    }
+  }
+}
+
+/**
+ * What the track at `i` would be cut from, hashed.
+ *
+ * Sixty-four bits, as two passes over the same text: a track wrongly kept is a
+ * silently wrong bake, so the collision this must not have is worth the second
+ * multiply. Over a thousand tracks the odds of one are about one in
+ * thirty-seven million million.
+ */
+export function signed(at: Ready, i: number, tol: number, gap: number): string {
+  const s = at.items[i];
+  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, gap];
+  const near = at.near[i];
+
+  // Its own first, in the order the cut is handed them, and the rest by id:
+  // `neighbourhoods` takes the others off a sweep whose order an unrelated
+  // polygon can change, and a track is not cut differently for it.
+  const mine = new Set(s.mine.map(m => m.at.id));
+
+  for (const m of near.filter(m => mine.has(m.at.id))) movement(out, m, at.cast);
+
+  for (const m of near.filter(m => !mine.has(m.at.id)).sort((p, q) => p.at.id - q.at.id)) {
+    movement(out, m, at.cast);
+  }
+
+  return hashed(out);
+}
+
+/** FNV-1a twice over, from two offsets, as sixteen hex digits. */
+function hashed(parts: readonly unknown[]): string {
+  const text = parts.join('\u0001');
+
+  let a = 0x811c9dc5, b = 0x01000193;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x85ebca6b);
+  }
+
+  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Every track of a span, hashed, in the order `ready` put its items in. */
+export function signatures(at: Ready, tol: number = TOLERANCE, gap: number = GAP): string[] {
+  return at.items.map((_unused, i) => signed(at, i, tol, gap));
+}
+
 export function* cutSome(
   at: Ready,
   which: readonly number[],
@@ -3897,6 +4090,7 @@ export function* cutSome(
       jumps: cut.jumps,
       worst: cut.worst,
       gap: cut.limits.gap,
+      sig: signed(at, i, tol, gap),
     });
 
     evaluations += cut.evaluations;
@@ -3936,8 +4130,9 @@ export function joined(
   riders: Map<Id, Rider>,
   slices: readonly Slice[],
   tol: number = TOLERANCE,
+  kept: readonly Track[] = [],
 ): Span {
-  const tracks = slices.flatMap(s => s.tracks).sort((p, q) => p.id - q.id);
+  const tracks = [...slices.flatMap(s => s.tracks), ...kept].sort((p, q) => p.id - q.id);
 
   return {
     from,
@@ -3961,16 +4156,38 @@ export function joined(
  * keep drawing. It yields how far along it is, between 0 and 1.
  *
  * The whole thing on one thread: the slice that is all of it.
+ *
+ * `was` is the span as it was baked before whatever the author has just done,
+ * and every track of it whose signature still stands is kept rather than cut
+ * again. Nothing about the result says which: a kept track is the track the
+ * cut would have produced, which is what `signed` is for and what the tests
+ * hold it to. Left out, the span is cut from nothing, which is what a first
+ * bake is.
  */
 export function* bakeSpan(
   world: World,
   from: number,
   tol: number = TOLERANCE,
   gap: number = GAP,
+  was: Span | null = null,
 ): Generator<number, Span, void> {
-  const slice = yield* bakeSlice(world, from, 0, 1, tol, gap);
+  const at = ready(world, from);
+  const held = new Map((was?.tracks ?? []).map(t => [t.sig, t]));
+  const which: number[] = [];
+  const kept: Track[] = [];
 
-  return joined(world, from, ridersOf(world, from), [slice], tol);
+  at.items.forEach((_unused, i) => {
+    // By signature alone, which names the polygon it is about: two tracks
+    // cannot share one without being the same track of the same span.
+    const track = held.get(signed(at, i, tol, gap));
+
+    if (track === undefined) which.push(i);
+    else kept.push(track);
+  });
+
+  const slice = yield* cutSome(at, which, tol, gap);
+
+  return joined(world, from, ridersOf(world, from), [{ ...slice, setup: at.setup }], tol, kept);
 }
 
 /** Every span in the chain, one after the other. */
@@ -3978,12 +4195,17 @@ export function* bakeAll(
   world: World,
   tol: number = TOLERANCE,
   gap: number = GAP,
+  was: Bake = EMPTY_BAKE,
 ): Generator<number, Map<number, Span>, void> {
   const out = new Map<number, Span>();
   const count = world.keyframes.length - 1;
 
   for (let k = 0; k < count; k++) {
-    const span = yield* weighted(bakeSpan(world, k, tol, gap), k / count, 1 / count);
+    const span = yield* weighted(
+      bakeSpan(world, k, tol, gap, reusable(was, world, k)),
+      k / count,
+      1 / count,
+    );
 
     out.set(k, span);
   }

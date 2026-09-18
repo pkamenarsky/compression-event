@@ -2542,3 +2542,129 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 });
+
+// -----------------------------------------------------------------------------
+// Keeping the tracks an edit did not reach
+//
+// The whole of the incremental bake's correctness is one claim: a span baked
+// from an earlier one is the span a full bake would have made. So that is what
+// is tested, over every shape of edit there is — and by comparing the tracks
+// themselves rather than a sample of them, because what a kept track has to be
+// is the track the cut would have produced, stretch for stretch and point for
+// point.
+//
+// The edits are chosen for what they reach rather than for what they look
+// like. Writing an operation on a polygon reaches the polygon; sealing a group
+// reaches every member of it and every track any member falls near, through
+// `scopes`, without a word being written about any of them. Adding a polygon
+// reaches whoever it lands on, and nobody else. A test that only ever nudged
+// something would pass with a signature that held nothing but the polygon's own
+// operations.
+// -----------------------------------------------------------------------------
+
+describe('a bake that keeps the tracks an edit did not reach', () => {
+  /** A few rooms in a row with a pillar in one, which is enough for a
+   * neighbourhood to mean something and small enough to bake often. */
+  function row(): { world: World, ids: PolygonId[] } {
+    const made = drawn(
+      ['level', rect(0, 0, 150, 150)],
+      ['level', rect(140, 40, 120, 60)],
+      ['level', rect(250, 0, 150, 150)],
+      ['solid', rect(40, 40, 50, 50)],
+      ['level', rect(0, 200, 150, 150)],
+    );
+
+    return { world: transformed(made.world, 1, made.ids[0], { erosion: 12 }), ids: made.ids };
+  }
+
+  /** Bake from nothing, edit, and bake again from what the first one made. */
+  function again(world: World, edit: (w: World) => World): [Span, Span] {
+    const before = run(bakeSpan(world, 0));
+    const after = edit(world);
+
+    return [run(bakeSpan(after, 0, TOLERANCE, undefined, before)), run(bakeSpan(after, 0))];
+  }
+
+  const edits: [string, (w: World, ids: PolygonId[]) => World][] = [
+    ['nothing at all', w => w],
+    ['an erosion on one of them', (w, ids) => transformed(w, 1, ids[2], { erosion: 10 })],
+    ['a move on one of them', (w, ids) => transformed(w, 1, ids[1], { translation: { x: 0, y: 12 } })],
+    ['a turn on one of them', (w, ids) => transformed(w, 1, ids[0], { rotation: 0.3 })],
+    ['a corner nudged', (w, ids) => nudging(w, 1, ids[2], w.polygons.get(ids[2])!.points[0].id, { x: -20, y: 10 })],
+    ['a corner taken out', (w, ids) => removeVertices(w, 1, [w.polygons.get(ids[0])!.points[2].id])],
+    ['a polygon born into the far end', w => addPolygon(w, kind('solid'), rect(60, 250, 40, 40), 1, TOP).world],
+    ['a polygon taken out at the far end', (w, ids) => removeAt(w, 1, [ids[3]])],
+    ['a polygon far from everything', w => addPolygon(w, kind('level'), rect(900, 900, 80, 80), 0, TOP).world],
+    ['a group sealed over two of them', (w, ids) => sealed(w, 0, [ids[0], ids[3]], TOP)!.world],
+    [
+      'a sealed group eroding',
+      (w, ids) => {
+        const made = sealed(w, 0, [ids[0], ids[3]], TOP)!;
+
+        return wrote(made.world, 1, made.id, erode(9));
+      },
+    ],
+    [
+      'a polygon slid into somebody else\'s neighbourhood',
+      (w, ids) => transformed(w, 1, ids[4], { translation: { x: 260, y: -140 } }),
+    ],
+  ];
+
+  for (const [what, edit] of edits) {
+    test(what, () => {
+      const { world, ids } = row();
+      const [kept, whole] = again(world, w => edit(w, ids));
+
+      expect(kept.tracks).toEqual(whole.tracks);
+      expect(kept.worst).toBe(whole.worst);
+      expect(kept.strained).toEqual(whole.strained);
+    });
+  }
+
+  test('an edit that reaches nothing cuts nothing', () => {
+    const { world, ids } = row();
+    const before = run(bakeSpan(world, 0));
+
+    // A polygon the other side of the level: it lands in nobody's
+    // neighbourhood, so every track that was cut stands and only its own is
+    // new.
+    const after = addPolygon(world, kind('level'), rect(900, 900, 80, 80), 0, TOP).world;
+    const span = run(bakeSpan(after, 0, TOLERANCE, undefined, before));
+
+    // The same objects, not merely equal ones: a kept track is the track that
+    // was already cut, and identity is the only way to say that the cut did not
+    // quietly run again and agree.
+    expect(span.tracks.filter(t => before.tracks.includes(t)).length).toBe(before.tracks.length);
+    expect(span.tracks.length).toBe(before.tracks.length + 1);
+    expect(ids.length).toBeGreaterThan(0);
+  });
+
+  test('an edit reaches its own polygon and its neighbours, and stops', () => {
+    const { world, ids } = row();
+    const before = run(bakeSpan(world, 0));
+    const after = transformed(world, 1, ids[2], { erosion: 10 });
+    const span = run(bakeSpan(after, 0, TOLERANCE, undefined, before));
+    const cut = span.tracks.filter(t => !before.tracks.includes(t));
+
+    expect(cut.map(t => t.id)).toContain(ids[2]);
+    expect(cut.length).toBeLessThan(before.tracks.length);
+  });
+
+  test('a first bake keeps nothing', () => {
+    const { world } = row();
+
+    expect(run(bakeSpan(world, 0)).tracks.every(t => t.sig.length === 16)).toBe(true);
+  });
+
+  test('every span of a chain, baked again', () => {
+    const { world, ids } = row();
+    const w = transformed(world, 2, ids[1], { erosion: 8 });
+    const first = run(bakeAll(w));
+    const after = transformed(w, 1, ids[2], { translation: { x: 4, y: 0 } });
+
+    const again = run(bakeAll(after, TOLERANCE, undefined, { spans: first, progress: null }));
+    const whole = run(bakeAll(after));
+
+    for (const [from, span] of whole) expect(again.get(from)!.tracks).toEqual(span.tracks);
+  });
+});
