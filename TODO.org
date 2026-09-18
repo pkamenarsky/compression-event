@@ -1,3 +1,4 @@
+* mirror something; one-time op?
 * maybe we don't need the fade
 * polygon masks
 ** level + void{solid} etc etc
@@ -40,6 +41,8 @@
 ** polyline
 ** also artifacts? would make sense
 
+* styling
+** right click dialog
 * better UI for unchained poly/groups
 * version view horizontal, like keyframes
 ** version management
