@@ -1652,12 +1652,18 @@ function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: 
  * it, because nothing has to: what comes out is stamped, and a span stamped
  * against a world that has moved is simply not a span any more.
  *
+ * The bake standing when it starts is handed to the new one, which keeps every
+ * track of it the edit did not reach. Stale spans and all — that is the point
+ * of them. A span nobody may use any more still holds the tracks of the
+ * polygons the author did not touch, which is nearly all of them, and each one
+ * says for itself whether it still stands. See `signed`.
+ *
  * The turn is a timeout rather than an animation frame. A frame is the better
  * pacing and the worse promise: a hidden tab stops being given them, and a bake
  * left half done because the author looked at something else is not a bake.
  */
 function start(state: Value<EditorState>, update: Update): void {
-  const job = bakeAll(state().world);
+  const job = bakeAll(state().world, undefined, undefined, state().bake);
 
   const pump = () => {
     const until = performance.now() + 12;

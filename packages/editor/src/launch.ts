@@ -51,7 +51,7 @@ async function fetched(): Promise<Saved | null> {
 
 /** The whole level baked, in slices with the browser given its turn between. */
 function baked(state: Awaited<ReturnType<typeof reopened>>): Promise<Bake> {
-  const job = bakeAll(state.world);
+  const job = bakeAll(state.world, undefined, undefined, state.bake);
 
   return new Promise(resolve => {
     const pump = (): void => {
