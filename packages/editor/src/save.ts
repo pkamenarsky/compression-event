@@ -261,9 +261,9 @@ function restoredRig(rig: SavedRig): Rig {
   return {
     keys: new Map(rig.keys.map(([k, list]) => [k, list.map(restoredEntry)])),
     nudges: corners<Move>(rig.nudges),
-    depths: corners<Amount>(rig.depths),
-    rounds: corners<Amount>(rig.rounds),
-    deforms: corners<Amount>(rig.deforms),
+    depths: corners<Amount<'erode'>>(rig.depths),
+    rounds: corners<Amount<'round'>>(rig.rounds),
+    deforms: corners<Amount<'deform'>>(rig.deforms),
   };
 }
 

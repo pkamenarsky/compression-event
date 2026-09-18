@@ -166,8 +166,8 @@ export interface Skew {
  * genuinely differ by kind now say so by looking a name up in `AMOUNTS`
  * rather than by branching.
  */
-export interface Amount {
-  kind: AmountKind
+export interface Amount<K extends AmountKind = AmountKind> {
+  kind: K
   by: number
 }
 
@@ -178,7 +178,7 @@ export type AmountKind = typeof AMOUNT_KINDS[number];
 
 /** Whether an operation is an amount. */
 export function amount(op: Op): op is Amount {
-  return op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform';
+  return (AMOUNT_KINDS as readonly string[]).includes(op.kind);
 }
 
 /**
@@ -193,7 +193,13 @@ export const AMOUNTS = {
   erode: { total: 'erosion', each: 'depths', map: 'depths' },
   round: { total: 'bevel', each: 'bevels', map: 'rounds' },
   deform: { total: 'amplitude', each: 'amplitudes', map: 'deforms' },
-} as const satisfies Record<AmountKind, { total: keyof State & keyof Stand, each: keyof State & keyof Stand, map: CornerMap }>;
+} as const satisfies { [K in AmountKind]: {
+  total: keyof State & keyof Stand,
+  each: keyof State & keyof Stand,
+  /** The map whose `CORNER_KINDS` entry is this kind, so the two tables
+   * cannot disagree about which map holds what. */
+  map: { [M in CornerMap]: typeof CORNER_KINDS[M] extends K ? M : never }[CornerMap],
+} };
 
 /**
  * A thing's state, outright: what unchaining writes.
@@ -254,12 +260,12 @@ export interface Rig {
   /** Moves of single corners, in the rest frame. */
   nudges: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Move>>>
   /** Extra depth on single corners, over the thing's own. */
-  depths: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>
+  depths: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'erode'>>>>
   /** Extra bevel on single corners, over the thing's own. */
-  rounds: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>
+  rounds: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'round'>>>>
   /** Extra amplitude on single edges, over the thing's own, each by the
    * corner it starts at. */
-  deforms: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>
+  deforms: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'deform'>>>>
 }
 
 export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map(), rounds: new Map(), deforms: new Map() };
@@ -1120,12 +1126,15 @@ export function edgeDeformed(rig: Rig, vertex: VertexId, k: KeyframeId, by: numb
  * at it: a depth goes deeper, a bevel wider, an amplitude further off the
  * line. One that comes back to nothing is taken out, and its repeat is kept.
  */
-export function amounted(rig: Rig, kind: AmountKind, vertex: VertexId, k: KeyframeId, by: number): Rig {
+export function amounted<K extends AmountKind>(rig: Rig, kind: K, vertex: VertexId, k: KeyframeId, by: number): Rig {
+  // The one cast is this lookup, which `AMOUNTS` is what makes true; tying
+  // `op` to `K` is what stops the wrong kind being written into a map, since
+  // the computed key below puts the result past the compiler's reach.
   const map = AMOUNTS[kind].map;
-  const maps = rig[map];
+  const maps = rig[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<K>>>>;
   const was = maps.get(vertex)?.get(k);
   const sum = (was?.op.by ?? 0) + by;
-  const op: Amount = { kind, by: sum };
+  const op: Amount<K> = { kind, by: sum };
   const entry = sum === 0 ? null : { ...(was ?? once(op)), op };
 
   return { ...rig, [map]: cornered(maps, vertex, k, entry) };

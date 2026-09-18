@@ -429,7 +429,7 @@ export function converted(old: Old): Converted {
 
     const keys = new Map<number, Entry[]>();
     const nudges = new Map<VertexId, Map<number, Entry<Move>>>();
-    const depths = new Map<VertexId, Map<number, Entry<Amount>>>();
+    const depths = new Map<VertexId, Map<number, Entry<Amount<'erode'>>>>();
     const mine: (Frame | undefined)[] = [];
 
     frames.set(id, mine);
@@ -560,7 +560,7 @@ export function converted(old: Old): Converted {
         const was = bornAt(id, v, k) ? 0 : deep.get(v) ?? 0;
         const now = r19.depths[k].get(v) ?? 0;
 
-        if (now !== was) depths.set(v, (depths.get(v) ?? new Map()).set(k, once<Amount>({ kind: 'erode', by: now - was })));
+        if (now !== was) depths.set(v, (depths.get(v) ?? new Map()).set(k, once<Amount<'erode'>>({ kind: 'erode', by: now - was })));
 
         deep.set(v, now);
       }

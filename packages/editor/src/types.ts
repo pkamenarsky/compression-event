@@ -950,9 +950,9 @@ export type Clipping =
       /** Nudges, depths, rounds and deforms on single corners after it, by
        * offset. */
       nudges: [VertexId, [number, Entry<Move>][]][]
-      deep: [VertexId, [number, Entry<Amount>][]][]
-      rounds?: [VertexId, [number, Entry<Amount>][]][]
-      deforms?: [VertexId, [number, Entry<Amount>][]][]
+      deep: [VertexId, [number, Entry<Amount<'erode'>>][]][]
+      rounds?: [VertexId, [number, Entry<Amount<'round'>>][]][]
+      deforms?: [VertexId, [number, Entry<Amount<'deform'>>][]][]
       /** Its corners' own options. Absent is none. */
       cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)
