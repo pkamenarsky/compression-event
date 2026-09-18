@@ -37,6 +37,7 @@ import {
   REMEMBERED,
   World,
   Start,
+  defaultView,
 } from './types';
 import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
@@ -44,6 +45,10 @@ import { bakedLevel } from './export';
 import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
 
 /**
+ * 23: the view is where the editor was looking and nothing else — see `Look`.
+ * A 20, 21 or 22 also says how big the canvas was and on what screen, which is
+ * this window's business rather than the file's, and is dropped on the way in.
+ *
  * 22: effects — which a thing has and how (`World.effects`, a corner's own in
  * `cornerEffects`), and the rounds and deforms in its timeline, a stand's
  * included. A 21 is the same with none, and is read as that; its bake stands,
@@ -71,10 +76,20 @@ import { Deform, Entry, Erode, Frame, Move, Op, Rig, Round } from './rig';
  *
  * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
  */
-export const FORMAT = 22;
+export const FORMAT = 23;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 20;
+
+/**
+ * Where the editor was looking.
+ *
+ * Not the whole `View`: how wide the canvas is, how tall, and how many device
+ * pixels a CSS one is are the window's to measure and change under you, and a
+ * file that carried them would size the backing store to a window that is not
+ * there — see `restored`.
+ */
+type Look = Pick<View, 'x' | 'y' | 'zoom'>
 
 export interface Saved {
   format: number
@@ -87,7 +102,7 @@ export interface Saved {
   artefacts: ArtefactId[]
   paths: PathId[]
   settings: Settings
-  view: View
+  view: Look
   world: {
     nextId: number
     /** Entries rather than a map, which is all `JSON` will take. */
@@ -168,7 +183,7 @@ export function saved(state: EditorState): Saved {
     artefacts: state.selection.artefacts,
     paths: state.selection.paths,
     settings: state.settings,
-    view: state.view,
+    view: { x: state.view.x, y: state.view.y, zoom: state.view.zoom },
     world: {
       nextId: state.world.nextId,
       polygons: [...state.world.polygons],
@@ -285,7 +300,12 @@ export function restored(file: Saved): EditorState {
       start: false,
     },
     settings: { gridSize: file.settings.gridSize, showGrid: file.settings.showGrid },
-    view: file.view,
+    // Taken field by field rather than spread: a 22 and older still carries
+    // the measurements, and they are the ones to be rid of. Whoever puts this
+    // on screen has the canvas in front of it and says how big it is — the
+    // editor's load does — and until something does, the size is the one a
+    // view starts with.
+    view: { ...defaultView, x: file.view.x, y: file.view.y, zoom: file.view.zoom },
     tool: file.tool,
     figure: file.figure,
 

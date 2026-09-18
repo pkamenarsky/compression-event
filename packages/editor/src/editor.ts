@@ -344,7 +344,16 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
         // this. Everything the editor keeps is in the file, the bake as the
         // game gets it rather than as the editor works it out — so a level
         // opened that way plays at once, and is baked again for the replay.
-        upload(loaded => update(() => loaded));
+        //
+        // The file says where it was looking and not how big the canvas was,
+        // so the measurements are this window's to keep. Nothing resizes on a
+        // load, so no observation comes along to make them again: taking the
+        // ones a view starts with would size the backing store to no window at
+        // all, and leave every click landing beside what it aimed at.
+        upload(loaded => update(s => ({
+          ...loaded,
+          view: { ...loaded.view, width: s.view.width, height: s.view.height, dpr: s.view.dpr },
+        })));
       }
     }
   });
