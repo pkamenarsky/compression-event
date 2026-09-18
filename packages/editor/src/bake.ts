@@ -121,6 +121,19 @@
 // found nothing to skip and paid its bookkeeping for the privilege. Each
 // evaluation now builds a set from nothing. `worldset` is still the engine; the
 // bake simply does not carry one across instants.
+//
+// Which is not the same as baking from nothing
+// --------------------------------------------
+// Nothing is carried from one *instant* to the next, for the reason above. A
+// *bake* is the other case, and it is the one a diff was always right about: an
+// edit reaches a few polygons, and every track cut from geometry it did not
+// reach would come out exactly as it did last time. So a track carries a hash
+// of what it was cut from and a bake keeps the ones whose hash still stands.
+// See `signed`.
+//
+// The two are not in tension, they are about different spans of time. Within a
+// span everything is moving and there is nothing to skip; between one bake and
+// the next almost nothing has moved and there is almost nothing to do.
 // -----------------------------------------------------------------------------
 
 import type { BakedLevel } from '@ce/game';

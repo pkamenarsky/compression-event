@@ -1,25 +1,24 @@
 // -----------------------------------------------------------------------------
-// What an incremental bake would be worth
+// What the incremental bake is worth
 //
-// The bake is already cut per polygon, into tracks that are independent by
-// construction, and `cutSome` already takes an arbitrary handful of them by
-// index because the thread pool needed that. So a bake that reused the tracks
-// an edit did not reach would be a matter of working out which handful is
-// dirty — and what that is worth is two numbers, both measured here.
+// A bake handed the span it made last time keeps the tracks whose signature
+// still stands, so what an edit costs is what it reached rather than what the
+// level holds. Two numbers say whether that is working.
 //
-// The first is what cannot be reused whatever else is: `ready` resolves the
-// world twice and sweeps for who can reach whom, and no diff avoids it. That is
-// the floor an incremental bake could approach and not go under.
+// The first is the floor: `ready` resolves the span and sweeps for who can
+// reach whom, and the signatures are taken off what it resolved. Neither is
+// avoidable, and together they are what a bake costs when an edit reaches
+// nothing at all.
 //
-// The second is what one edit actually dirties. A polygon is in its own track
-// and in the tracks of whoever has it in their neighbourhood, so the dirty set
-// is small — but it is not cheap in proportion to its size, because a polygon
+// The second is what an edit does reach. A polygon is in its own track and in
+// the tracks of whoever has it in their neighbourhood, so the dirty set is
+// small — but it is not cheap in proportion to its size, because a polygon
 // somebody edited is by definition one where events happen, and those are the
 // tracks that cost. Both columns are here for that reason.
 // -----------------------------------------------------------------------------
 
 import { test } from 'vitest';
-import { Span, TOLERANCE, bakeSpan, cutSome, ready } from '../packages/editor/src/bake';
+import { Span, bakeSpan } from '../packages/editor/src/bake';
 import { keyed } from '../packages/editor/src/scene';
 import { PolygonId, World } from '../packages/editor/src/types';
 import { SIZES, level, version } from './level';
@@ -80,42 +79,41 @@ function eroded(world: World, ids: readonly PolygonId[]): World {
 }
 
 /**
- * What a further edit over a baked span would cost to take up again.
+ * A span baked, edited, and baked again from what the first bake made.
  *
- * The dirty set is worked out here the way an incremental bake would have to:
- * every track whose neighbourhood holds a polygon the edit touched, which is
- * what `ready` already knows by the time it has swept. What is *not* here is
- * the signature that would decide it without being told — this measures the
- * ceiling that machinery would be reaching for.
+ * The whole clock, not the cutting: resolving the span, signing every track of
+ * it, diffing, cutting what is left and putting the span back together. That is
+ * what an author waits for.
+ *
+ * The first row is the floor — an edit somewhere else in the chain, which
+ * reaches nothing here and keeps every track. The rest are edits spread across
+ * the level rather than gathered in one corner of it, which is the worse case
+ * for a neighbourhood and the likelier one for a person working on a level.
  */
-test('what one edit dirties', () => {
+test('what one edit costs to take up again', () => {
   for (const rooms of [120, 430]) {
     const { world, ids } = level(rooms);
     const w = version(world, ids, 0.6);
-    const full: Span = run(bakeSpan(w, 0));
-    const whole = full.setup + full.cut;
+    const was: Span = run(bakeSpan(w, 0));
+    const whole = was.setup + was.cut;
 
     console.log(`${String(w.polygons.size).padStart(4)} polys  full ${whole.toFixed(0)}ms`);
 
-    for (const n of [1, 3, 10]) {
-      const touched = spread(ids, n);
-      const at = ready(eroded(w, touched), 0);
-      const dirty: number[] = [];
-
-      at.near.forEach((near, i) => {
-        if (near.some(m => touched.includes(m.at.id))) dirty.push(i);
-      });
+    for (const n of [0, 1, 3, 10]) {
+      const edited = eroded(w, spread(ids, n));
 
       const began = performance.now();
-      run(cutSome(at, dirty, TOLERANCE));
-      const cut = performance.now() - began;
+      const span = run(bakeSpan(edited, 0, undefined, undefined, was));
+      const ms = performance.now() - began;
+
+      const cut = span.tracks.filter(t => !was.tracks.includes(t));
 
       console.log(
         `  ${String(n).padStart(2)} edited  ` +
-        `dirty ${String(dirty.length).padStart(4)}/${String(at.items.length).padEnd(4)} ` +
-        `${share(dirty.length, at.items.length)}  ` +
-        `setup ${at.setup.toFixed(0).padStart(3)}ms + cut ${cut.toFixed(0).padStart(4)}ms  ` +
-        `${share(at.setup + cut, whole)} of the bake`,
+        `cut ${String(cut.length).padStart(4)}/${String(span.tracks.length).padEnd(4)} ` +
+        `${share(cut.length, span.tracks.length)}  ` +
+        `again ${ms.toFixed(0).padStart(4)}ms  ` +
+        `${share(ms, whole)} of the bake`,
       );
     }
   }
