@@ -63,6 +63,8 @@
 
 import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
+import { CORNER_KINDS, CORNER_MAPS } from './cornermaps';
+import type { CornerMap } from './cornermaps';
 import { GroupId, Id, PolygonId, Structure, Vertex, VertexId, enclosing } from './types';
 
 export type KeyframeId = number;
@@ -268,34 +270,14 @@ export interface Rig {
   deforms: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'deform'>>>>
 }
 
+export type { CornerKind, CornerMap } from './cornermaps';
+export { CORNER_KINDS, CORNER_MAPS, cornerMapOf, eachCornerMap } from './cornermaps';
+
 export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map(), rounds: new Map(), deforms: new Map() };
-
-/** The maps a rig keeps by corner, by name: the one place that lists them. */
-export const CORNER_MAPS = ['nudges', 'depths', 'rounds', 'deforms'] as const;
-
-export type CornerMap = typeof CORNER_MAPS[number];
-
-/** The kind of operation each corner map holds. */
-export const CORNER_KINDS = { nudges: 'move', depths: 'erode', rounds: 'round', deforms: 'deform' } as const;
-
-export type CornerKind = typeof CORNER_KINDS[CornerMap];
-
-/** The corner map holding entries of one kind. */
-export function cornerMapOf(kind: CornerKind): CornerMap {
-  return CORNER_MAPS.find(m => CORNER_KINDS[m] === kind)!;
-}
 
 /** Whether nothing at all is written in a rig. */
 export function blank(rig: Rig): boolean {
   return rig.keys.size === 0 && CORNER_MAPS.every(m => rig[m].size === 0);
-}
-
-/** Every corner map of a rig through `f`, keys left as they are. */
-export function eachCornerMap(
-  rig: Rig,
-  f: <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) => ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
-): Rig {
-  return { ...rig, nudges: f(rig.nudges), depths: f(rig.depths), rounds: f(rig.rounds), deforms: f(rig.deforms) };
 }
 
 /** An entry that contributes once, at its own keyframe. */

@@ -22,7 +22,10 @@ import {
 import type { Bake } from './bake';
 import type { Pattern, Sides } from './geometry';
 import type { Amount, Entry, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
-import { CORNER_MAPS, eachCornerMap } from './rig';
+// From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
+// so importing a value back out of it would be a runtime cycle. See
+// `cornermaps.ts`.
+import { CORNER_MAPS, eachCornerMap } from './cornermaps';
 
 export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
 export type { Keyframe, KeyframeId };

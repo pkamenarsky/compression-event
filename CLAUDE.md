@@ -71,6 +71,39 @@ text(() => status() ?? '')                        // not dynamic(status, s => te
 object(model, m => number(m.spacing, ...))        // not dynamic(() => JSON.stringify(model()), ...)
 ```
 
+## Modules
+
+**A member never imports its own barrel.** Where a directory has an
+`index.ts` that puts the pieces back together — `scene/`, and any other — that
+file is a door: the outside reads `./scene`, and nothing inside `scene/` ever
+does. A piece reads its siblings by name, `./core` and `./reading`, and the
+core reads none of them.
+
+The reason is not tidiness. A member that imports the barrel while the barrel
+re-exports the member is a cycle, and a cycle survives being one file only
+until the bundler decides the two sides belong in different chunks — which it
+decides from which entry points reach them, not from anything visible in the
+source. Then the emitted chunks import each other, whichever is evaluated
+second reads the other's bindings while they are still in the dead zone, and
+the page is blank at load. `tsc` and the tests bundle nothing and so can see
+none of it.
+
+So put the door in its own file and leave the bulk in `core.ts` beside it.
+Where two pieces both need something and neither should read the other, the
+answer is a third file that reads neither — `canvas/metrics.ts` and
+`cornermaps.ts` are that, and each says so at the top.
+
+**`import type` is not the same edge.** A type-only import is erased, so it
+cannot make a runtime cycle; most of this repo's apparent cycles are these and
+are harmless. When a file needs only the type, say `import type` — it is worth
+the four characters, because it is the difference between an edge that can
+break the build and one that cannot.
+
+**`pnpm build` is the only thing that checks this**, and it fails rather than
+warns — see `onwarn` in `vite.config.ts`. If it reports `CIRCULAR_DEPENDENCY`,
+do not silence it: break the cycle, usually by moving the shared thing into a
+leaf or by making one side's import type-only.
+
 ## Testing
 
 Don't test in the browser when implementing features in order to conserve tokens.

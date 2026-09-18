@@ -33,7 +33,10 @@
 // of four and the padding is deliberate rather than left over.
 // -----------------------------------------------------------------------------
 
-import { Point } from './world';
+// A type, and imported as one on purpose: `world.ts` reads `EMPTY_BAKED` out
+// of this file, so a value import back would be a runtime cycle between the
+// two. `import type` is erased, and the cycle with it. See CLAUDE.md.
+import type { Point } from './world';
 
 /**
  * Eight floats per slot: where the thing's own frame stands at the near end of
