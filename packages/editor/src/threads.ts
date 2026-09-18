@@ -43,7 +43,7 @@
 // above, which is a list of dead ends rather than an explanation.
 // -----------------------------------------------------------------------------
 
-import { Slice, Span, TOLERANCE, joined, ridersOf } from './bake';
+import { Bake, EMPTY_BAKE, Slice, Span, TOLERANCE, Track, joined, reusable, ridersOf } from './bake';
 import { KeyframeId, World } from './types';
 import type { FromWorker, ToWorker } from './bake.worker';
 
@@ -66,8 +66,15 @@ export function available(): boolean {
 const HANDFUL = 6;
 
 export interface Pool {
-  /** Every span in the chain, with `tick` called as they come along. */
-  bake: (world: World, tick: (at: number) => void) => Promise<Map<number, Span>>
+  /**
+   * Every span in the chain, with `tick` called as they come along.
+   *
+   * `was` is the bake standing before whatever set this one off, and every
+   * track of it the edit did not reach is kept rather than cut again. The
+   * diffing costs one round trip per span: a thread has the resolved span the
+   * signatures are taken from, and the queue does not.
+   */
+  bake: (world: World, tick: (at: number) => void, was?: Bake) => Promise<Map<number, Span>>
   close: () => void
 }
 
@@ -78,7 +85,7 @@ export function pool(count = cores(), handful = HANDFUL): Pool {
   return {
     close: () => threads.forEach(w => w.terminate()),
 
-    bake: async (world, tick) => {
+    bake: async (world, tick, was = EMPTY_BAKE) => {
       const out = new Map<number, Span>();
       const spans = world.keyframes.length - 1;
 
@@ -86,13 +93,28 @@ export function pool(count = cores(), handful = HANDFUL): Pool {
 
       for (let from = 0; from < spans; from++) {
         const riders = ridersOf(world, from);
+        const held = new Map((reusable(was, world, from)?.tracks ?? []).map(t => [t.sig, t]));
+        const dirty: number[] = [];
+        const kept: Track[] = [];
+
+        // Asked of the first thread, which then holds the resolved span every
+        // job for it is about to want. Always, not only where there is
+        // something to keep: this is also how many tracks the span has, which
+        // is a question about the subjects and not about `riders` — an artefact
+        // has a rider and no track of its own.
+        const sigs = await sign(threads[0], { kind: 'sign', from, tol: TOLERANCE });
+
+        sigs.forEach((sig, i) => {
+          const track = held.get(sig);
+
+          if (track === undefined) dirty.push(i);
+          else kept.push(track);
+        });
+
         const queue: number[][] = [];
 
-        for (let i = 0; i < riders.size; i += handful) {
-          queue.push(Array.from(
-            { length: Math.min(handful, riders.size - i) },
-            (_unused, k) => i + k,
-          ));
+        for (let i = 0; i < dirty.length; i += handful) {
+          queue.push(dirty.slice(i, i + handful));
         }
 
         const total = queue.length;
@@ -112,7 +134,7 @@ export function pool(count = cores(), handful = HANDFUL): Pool {
           }
         }));
 
-        out.set(from, joined(world, from, riders, slices));
+        out.set(from, joined(world, from, riders, slices, TOLERANCE, kept));
       }
 
       return out;
@@ -124,12 +146,29 @@ function send(w: Worker, m: ToWorker): void {
   w.postMessage(m);
 }
 
+/** What every track of a span would be cut from, from a thread that has to
+ * resolve it anyway. */
+function sign(w: Worker, job: ToWorker): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    w.onmessage = (e: MessageEvent<FromWorker>) => {
+      if (e.data.kind !== 'sign') return;
+
+      w.onmessage = null;
+      resolve(e.data.sigs);
+    };
+
+    w.onerror = e => reject(new Error(e.message));
+
+    send(w, job);
+  });
+}
+
 /** One handful, resolved when its tracks come back. One outstanding job per
  * thread, so there is nothing to correlate. */
 function cut(w: Worker, job: ToWorker): Promise<Slice> {
   return new Promise((resolve, reject) => {
     w.onmessage = (e: MessageEvent<FromWorker>) => {
-      if (e.data.kind === 'progress') return;
+      if (e.data.kind !== 'cut') return;
 
       w.onmessage = null;
       resolve(e.data.slice);

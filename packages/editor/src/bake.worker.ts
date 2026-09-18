@@ -18,15 +18,17 @@
 // cutting it saves.
 // -----------------------------------------------------------------------------
 
-import { Ready, Slice, TOLERANCE, cutSome, ready } from './bake';
+import { Ready, Slice, TOLERANCE, cutSome, ready, signatures } from './bake';
 import { KeyframeId, World } from './types';
 
 export type ToWorker =
   | { kind: 'open', world: World }
+  | { kind: 'sign', from: number, tol: number }
   | { kind: 'cut', from: number, which: number[], tol: number };
 
 export type FromWorker =
   | { kind: 'progress', at: number }
+  | { kind: 'sign', sigs: string[] }
   | { kind: 'cut', slice: Slice };
 
 let world: World | null = null;
@@ -52,6 +54,15 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   if (at === null || at.from !== message.from) {
     at = ready(world, message.from);
     setup = at.setup;
+  }
+
+  // What the span's tracks would be cut from, so the caller can work out which
+  // of them it already has. Asked of a thread rather than worked out where the
+  // queue is, because it wants the resolved span and a thread is about to have
+  // one anyway — and the one asked is the one that keeps it. See `signed`.
+  if (message.kind === 'sign') {
+    post({ kind: 'sign', sigs: signatures(at, message.tol ?? TOLERANCE) });
+    return;
   }
 
   const job = cutSome(at, message.which, message.tol ?? TOLERANCE);
