@@ -225,12 +225,22 @@ export function digest(world: World): Record<string, string> {
 }
 
 function hashed(value: unknown): string {
-  const text = JSON.stringify(value, (key, v: unknown) => {
+  // Not an arrow, because the replacer's `this` is the object the key was found
+  // on, and one of the exclusions below is about where a key sits rather than
+  // what it is called.
+  const text = JSON.stringify(value, function (this: unknown, key, v: unknown) {
     // How long the bake took over it, which is the clock's, how many instants
     // it had to work out to get there, which is its cost, and what it was baked
     // from, which is the world's bookkeeping for when to bake again: none of
     // them is what it made.
     if (key === 'setup' || key === 'cut' || key === 'stamp' || key === 'evaluations') return undefined;
+
+    // A track's own measurement of itself, which master added up over the span
+    // and did not keep per track. The span's `worst` and `strained` are still
+    // hashed and are these read over the tracks, so nothing is given up by
+    // leaving them out here: what changed is where the number is written down,
+    // not what it is.
+    if ((key === 'worst' || key === 'gap') && track(this)) return undefined;
 
     // A stand's amounts, which a world without effects has at nought and
     // master did not write at all.
@@ -245,4 +255,9 @@ function hashed(value: unknown): string {
   });
 
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/** Whether a replacer's holder is one of the bake's tracks. */
+function track(holder: unknown): boolean {
+  return typeof holder === 'object' && holder !== null && 'stretches' in holder;
 }

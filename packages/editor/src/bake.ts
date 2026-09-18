@@ -474,6 +474,18 @@ export interface Track {
   stretches: Stretch[]
   /** By `t`, ascending. Never an interval — see above. */
   jumps: Stretch[]
+  /**
+   * The furthest this track's replay was measured from `csg(t)`, and the widths
+   * the attempt that managed it was cut at. `Span.worst` and `Span.strained`
+   * are these, read over the tracks.
+   *
+   * On the track rather than only added up over the span because a track
+   * outlives the bake that cut it: a span that keeps the tracks an edit did not
+   * reach has to say what its error is, and a maximum taken over the handful it
+   * re-cut would be a smaller number than the truth. See `joined`.
+   */
+  worst: number
+  gap: number
 }
 
 /** Everything between two adjacent keyframes. */
@@ -3507,11 +3519,8 @@ export interface Strain {
 }
 
 export interface Slice {
+  /** Each with its own error on it, which is where a span's comes from. */
   tracks: Track[]
-  worst: number
-  /** The tracks that would not come inside the tolerance. Empty on a level
-   * that behaves. */
-  strained: Strain[]
   evaluations: number
   /** Milliseconds spent resolving the world before any of it could be cut. Not
    * used for anything; it is here because it is the part a thread cannot share
@@ -3864,9 +3873,7 @@ export function* cutSome(
 ): Generator<number, Slice, void> {
   const began = now();
   const tracks: Track[] = [];
-  const strained: Strain[] = [];
 
-  let worst = 0;
   let evaluations = 0;
 
   for (let k = 0; k < which.length; k++) {
@@ -3882,17 +3889,20 @@ export function* cutSome(
       1 / which.length,
     );
 
-    tracks.push({ id, fill, hole: fill && slot !== 0, stretches: cut.stretches, jumps: cut.jumps });
+    tracks.push({
+      id,
+      fill,
+      hole: fill && slot !== 0,
+      stretches: cut.stretches,
+      jumps: cut.jumps,
+      worst: cut.worst,
+      gap: cut.limits.gap,
+    });
 
-    // Cut as deep as it is worth cutting and still outside the tolerance. The
-    // bake has nothing further to offer here and says so by name.
-    if (cut.worst > tol) strained.push({ id, worst: cut.worst, gap: cut.limits.gap });
-
-    worst = Math.max(worst, cut.worst);
     evaluations += cut.evaluations;
   }
 
-  return { tracks, worst, strained, evaluations, setup: 0, cut: now() - began };
+  return { tracks, evaluations, setup: 0, cut: now() - began };
 }
 
 function now(): number {
@@ -3925,6 +3935,7 @@ export function joined(
   from: number,
   riders: Map<Id, Rider>,
   slices: readonly Slice[],
+  tol: number = TOLERANCE,
 ): Span {
   const tracks = slices.flatMap(s => s.tracks).sort((p, q) => p.id - q.id);
 
@@ -3932,8 +3943,12 @@ export function joined(
     from,
     tracks,
     riders,
-    worst: Math.max(0, ...slices.map(s => s.worst)),
-    strained: slices.flatMap(s => s.strained).sort((p, q) => p.id - q.id),
+    // Read off the tracks rather than added up as the slices came in, so that
+    // it says the same thing however the span was put together.
+    worst: Math.max(0, ...tracks.map(t => t.worst)),
+    strained: tracks
+      .filter(t => t.worst > tol)
+      .map(t => ({ id: t.id, worst: t.worst, gap: t.gap })),
     evaluations: slices.reduce((n, s) => n + s.evaluations, 0),
     setup: slices.reduce((n, s) => n + s.setup, 0),
     cut: slices.reduce((n, s) => n + s.cut, 0),
@@ -3955,7 +3970,7 @@ export function* bakeSpan(
 ): Generator<number, Span, void> {
   const slice = yield* bakeSlice(world, from, 0, 1, tol, gap);
 
-  return joined(world, from, ridersOf(world, from), [slice]);
+  return joined(world, from, ridersOf(world, from), [slice], tol);
 }
 
 /** Every span in the chain, one after the other. */
