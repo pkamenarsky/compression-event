@@ -3439,3 +3439,24 @@ export function ngon(centre: Point, radius: number, sides: number): Ring {
     return { x: centre.x + radius * Math.cos(a), y: centre.y + radius * Math.sin(a) };
   });
 }
+
+// -----------------------------------------------------------------------------
+// Points against a segment
+// -----------------------------------------------------------------------------
+
+/** How far along `a`–`b` the foot of `p` falls, clamped to the segment. */
+export function fraction(a: Point, b: Point, p: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = dx * dx + dy * dy;
+
+  if (len === 0) return 0;
+
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+}
+
+/** The point of `a`–`b` closest to `p`. */
+export function along(a: Point, b: Point, p: Point): Point {
+  const t = fraction(a, b, p);
+
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
