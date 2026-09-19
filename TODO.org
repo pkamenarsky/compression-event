@@ -45,6 +45,7 @@
 ** also artifacts? would make sense
 
 * spacing in deform a slider; everything in the deform panel -> sliders
+* show RenderConfig in the editor, not with \ + ~
 * styling
 ** right click dialog
 * better UI for unchained poly/groups
