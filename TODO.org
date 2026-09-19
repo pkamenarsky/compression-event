@@ -1,3 +1,5 @@
+* saving levels is cumbersome currently
+** when saving levels, don't overwrite; append
 * mirror something; one-time op?
 * maybe we don't need the fade
 * polygon masks
@@ -41,6 +43,7 @@
 ** polyline
 ** also artifacts? would make sense
 
+* spacing in deform a slider; everything in the deform panel -> sliders
 * styling
 ** right click dialog
 * better UI for unchained poly/groups
