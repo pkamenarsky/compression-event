@@ -312,7 +312,10 @@ function panel(
      * left every time after.
      */
     const rose = (): void => {
-      if (!stands) stood(orbit, walker);
+      // Untracked, and it matters: read plainly, the roaming effect would take
+      // a dependency on the world and run its whole way in and out again on
+      // every edit.
+      if (!stands) stood(untracked(world), walker);
 
       stands = true;
     };
@@ -998,15 +1001,17 @@ function same(a: Eye | null, b: Eye | null): boolean {
 }
 
 /**
- * Somewhere to stand, taken from wherever the orbit camera was looking.
+ * Somewhere to stand: the level's own start, which is where the game puts
+ * whoever plays it.
  *
- * That is the middle of the level, which is as good a spot as any and much
- * better than the origin, which may be nowhere near it.
+ * Anywhere else would be a second answer to a question the level has already
+ * answered — and the start is the one place an author has said something about
+ * on purpose, facing included.
  */
-function stood(orbit: Orbit, walker: Walker): void {
-  walker.x = orbit.x;
-  walker.z = orbit.z;
-  walker.angle = 0;
+function stood(world: World, walker: Walker): void {
+  walker.x = world.start.at.x * SCALE;
+  walker.z = world.start.at.y * SCALE;
+  walker.angle = world.start.facing;
   walker.vx = 0;
   walker.vz = 0;
 }
