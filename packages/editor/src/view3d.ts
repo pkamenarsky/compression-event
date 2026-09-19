@@ -408,8 +408,8 @@ function panel(
       const sin = Math.sin(orbit.angle), cos = Math.cos(orbit.angle);
       const rate = orbit.distance * PAN * dt / l;
 
-      orbit.x += (-cos * ahead - sin * across) * rate;
-      orbit.z += (-sin * ahead + cos * across) * rate;
+      orbit.x += (-cos * ahead + sin * across) * rate;
+      orbit.z += (-sin * ahead - cos * across) * rate;
 
       placed();
     };
