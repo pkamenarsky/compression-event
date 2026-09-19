@@ -125,10 +125,6 @@ const MARGIN = 1.25;
  * which is the one thing about it that differs.
  */
 
-/** World units per pixel dragged, walking in the panel. A drag from the top of
- * it to the bottom crosses a couple of rooms. */
-const STEP = 0.04;
-
 /** Radians per pixel of mouse movement, turning. */
 const LOOK = 0.0022;
 
@@ -434,80 +430,70 @@ function panel(
           host = node;
         },
 
-        // Standing up and lying back down. Two views of the same level and one
-        // gesture between them, so that a wall can be moved on the canvas and
-        // looked at from the floor without leaving the drawing.
-        ondblclick: (e: MouseEvent) => {
-          e.stopPropagation();
-          if (roaming()) return;
-
-          const next = !untracked(inside);
-
-          setInside(next);
-
-          if (next) stood(orbit, walker);
-
-          placed();
-        },
-
-        // The canvas underneath is listening for drags of its own, and a turn of
-        // the camera is not a pan of the world.
+        // Standing in it, for as long as the press lasts.
+        //
+        // A click inside the panel is the way in and letting go is the way
+        // out: while it is held the mouse turns and WASD walks, and the moment
+        // it is released the view lies back down and the cursor is the
+        // editor's again. No pointer lock — the panel is a corner of a page
+        // someone is drawing on, and a gesture that swallowed the cursor for
+        // good would be a trap.
         onpointerdown: (e: PointerEvent) => {
           e.stopPropagation();
           if (host === undefined || roaming()) return;
 
           host.setPointerCapture(e.pointerId);
 
-          let x = e.clientX, y = e.clientY;
+          let x = e.clientX;
+
+          // The first press is what makes the camera theirs: until then an
+          // edit reframes the level, and after it the view stays where it was
+          // left. Somewhere to stand is taken from that framing, once.
+          if (!orbit.held) stood(orbit, walker);
 
           orbit.held = true;
 
+          setInside(true);
+          placed();
+
           const moved = (m: PointerEvent) => {
-            const dx = m.clientX - x, dy = m.clientY - y;
-
+            walker.angle += (m.clientX - x) * TURN;
             x = m.clientX;
-            y = m.clientY;
-
-            // Inside, the same drag is walking rather than orbiting: up and
-            // down goes forward and back, and across turns — or strafes, with
-            // the command key down, for keeping a wall in view while moving
-            // past it. No pointer lock, because the whole point of the panel
-            // is that the cursor is still the editor's: let go and it is a
-            // mouse again.
-            //
-            // The key is read off each move rather than off the press, so it
-            // can be taken and let go in the middle of one drag.
-            if (inside()) {
-              if (m.metaKey || m.ctrlKey) {
-                walker.x += Math.cos(walker.angle) * dx * STEP;
-                walker.z += Math.sin(walker.angle) * dx * STEP;
-              }
-              else {
-                walker.angle += dx * TURN;
-              }
-
-              walker.x -= Math.sin(walker.angle) * dy * STEP;
-              walker.z += Math.cos(walker.angle) * dy * STEP;
-
-              placed();
-              return;
-            }
-
-            orbit.angle += dx * TURN;
-            orbit.pitch = Math.min(PITCH[1], Math.max(PITCH[0], orbit.pitch + dy * TURN));
-
             placed();
           };
 
+          // Held rather than pressed, which is the whole of walking, so the
+          // keyboard is read directly rather than off the editor's bus — and
+          // taken off it, so that W does not also do whatever W does out here.
+          const down = (k: KeyboardEvent) => {
+            if (!MOVES.includes(k.code)) return;
+
+            k.preventDefault();
+            k.stopPropagation();
+            held.add(k.code);
+          };
+
+          const up = (k: KeyboardEvent) => held.delete(k.code);
+
           const done = () => {
+            held.clear();
+            setInside(false);
+            placed();
+
             host?.removeEventListener('pointermove', moved);
             host?.removeEventListener('pointerup', done);
             host?.removeEventListener('pointercancel', done);
+            window.removeEventListener('keydown', down, true);
+            window.removeEventListener('keyup', up, true);
+            window.removeEventListener('blur', done);
           };
 
           host.addEventListener('pointermove', moved);
           host.addEventListener('pointerup', done);
           host.addEventListener('pointercancel', done);
+          window.addEventListener('keydown', down, true);
+          window.addEventListener('keyup', up, true);
+          window.addEventListener('blur', done);
         },
 
         onwheel: (e: WheelEvent) => {
@@ -572,7 +558,7 @@ function panel(
 
             elapsed += dt;
 
-            if (roaming()) stepped(dt);
+            if (afoot()) stepped(dt);
 
             if (view !== null) {
               const amount = bent(untracked(replay));
@@ -830,9 +816,9 @@ function stood(orbit: Orbit, walker: Walker): void {
 /**
  * Where the camera looks, and from how far.
  *
- * Only until someone takes hold of it: an edit that moved a wall should not
- * also fly the camera somewhere, so once the view has been turned or zoomed it
- * is theirs and this stops writing to it.
+ * Every edit reframes the level, right up until someone clicks inside the
+ * view: that press is where the camera becomes theirs, and from then on an
+ * edit that moved a wall no longer also flies the camera somewhere.
  */
 function framed(outline: readonly { points: readonly Point[] }[], orbit: Orbit): void {
   if (orbit.held) return;
@@ -879,8 +865,8 @@ function label(
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     const how = inside()
-      ? 'drag walks · cmd strafes · dbl-click rises · enter fills'
-      : 'drag turns · wheel zooms · dbl-click stands up';
+      ? 'wasd walks · mouse turns · let go to rise'
+      : 'hold to stand in it · wheel zooms';
 
     return spanAt(b, w, 0) === null ? `${how} · unbaked` : how;
   };

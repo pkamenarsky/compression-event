@@ -6,7 +6,6 @@
 ** or should repeatable transforms be "effects" as well? and only effects can repeat?
 
 * ask yes/no if level unsaved
-* no need to rebake on artifact change
 * fog when dying in order to not see "behind the walls"
 
 * artefact idea - shrink walls for 5sec
