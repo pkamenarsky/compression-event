@@ -55,6 +55,7 @@ import {
   urged,
 } from '@ce/game';
 import { Bake, artefactsDuring, spanAt } from './bake';
+import type { Input } from './input';
 import { bakedLevel, floorsAt } from './export';
 import {
   EMPTY_LIVE,
@@ -147,9 +148,10 @@ export function preview(
   roaming: Value<boolean>,
   eye: Value<Eye | null>,
   setEye: (eye: Eye | null) => void,
+  input: Input,
   update: Update,
 ): VNode {
-  return show(showing, panel(world, bake, current, replay, roaming, eye, setEye, update));
+  return show(showing, panel(world, bake, current, replay, roaming, eye, setEye, input, update));
 }
 
 function panel(
@@ -160,6 +162,7 @@ function panel(
   roaming: Value<boolean>,
   eye: Value<Eye | null>,
   setEye: (eye: Eye | null) => void,
+  input: Input,
   update: Update,
 ): VNode {
   let host: HTMLDivElement | undefined;
@@ -538,7 +541,7 @@ function panel(
         // looked at from the floor without leaving the drawing.
         ondblclick: (e: MouseEvent) => {
           e.stopPropagation();
-          if (roaming()) return;
+          if (roaming() || input.grabbed()) return;
 
           const next = !inside();
 
@@ -563,7 +566,12 @@ function panel(
         // it around.
         onpointerdown: (e: PointerEvent) => {
           e.stopPropagation();
-          if (host === undefined || roaming()) return;
+
+          // A gesture already has the pointer — a scale held by its key over
+          // on the canvas, say. The click that ends it is that gesture's, and
+          // taking it here would leave somebody walking about in here while
+          // their room was still being scaled out there.
+          if (host === undefined || roaming() || input.grabbed()) return;
 
           host.setPointerCapture(e.pointerId);
 

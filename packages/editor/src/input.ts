@@ -67,6 +67,24 @@ export interface Input {
    */
   claim: (by: object, ...codes: string[]) => () => void
   /**
+   * Take the pointer for `by`, for as long as the returned function has not
+   * been called.
+   *
+   * For the gestures that own it without ever having pressed anything: one
+   * started by a key holds the pointer until the key is let go, and a press
+   * that lands somewhere else meanwhile is a stray click during that gesture
+   * rather than something else beginning. Whoever would otherwise take such a
+   * press asks `grabbed` first — see the 3D view, which would otherwise start
+   * walking under a scale in progress.
+   *
+   * Nothing here stops the press being dispatched: the gestures that want to
+   * hear about one landing away from them still do. This is only about who may
+   * start something new with it.
+   */
+  grab: (by: object) => () => void
+  /** Whether any gesture has the pointer. */
+  grabbed: () => boolean
+  /**
    * `el` and everything in it is the surface `name`, for as long as the
    * returned function has not been called: what a press there is stamped
    * with. See `Press`.
@@ -98,6 +116,7 @@ export function createInput(): Input {
   let pointer: PointerEvent | null = null;
   const down = new Set<string>();
   const claims: { by: object, codes: readonly string[] }[] = [];
+  const grabs: object[] = [];
   const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
@@ -164,6 +183,19 @@ export function createInput(): Input {
         if (i >= 0) claims.splice(i, 1);
       };
     },
+
+    grab: by => {
+      grabs.push(by);
+
+      // Safe to call twice, for the reason a claim's release is.
+      return () => {
+        const i = grabs.indexOf(by);
+
+        if (i >= 0) grabs.splice(i, 1);
+      };
+    },
+
+    grabbed: () => grabs.length > 0,
 
     surface: (name, el) => {
       surfaces.set(el, name);

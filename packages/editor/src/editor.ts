@@ -145,6 +145,7 @@ export function editor(initial: World): VNode {
               s.roaming,
               eye,
               setEye,
+              input,
               update,
             ),
           ])),

@@ -650,6 +650,11 @@ export function worldCanvas(
       const me = {};
       const release = input.claim(me, 'Escape');
 
+      // The pointer is this one's too: it is waiting for a click to keep what
+      // it is showing, and a click is not the 3D view being clicked into. See
+      // `grab`.
+      const ungrabbed = input.grab(me);
+
       update(s => saying(s, `Editing a ${entry.op.kind}: move over the canvas, click to keep it, Escape to put it back.`));
       setLocal({ ...local(), previewing: true });
 
@@ -686,6 +691,7 @@ export function worldCanvas(
       }
       finally {
         release();
+        ungrabbed();
         cursor('');
         setLocal({ ...local(), previewing: false });
         update(s => (s.status?.startsWith('Editing a ') ? { ...s, status: null } : s));
@@ -839,95 +845,106 @@ export function worldCanvas(
       ]);
 
       cursor('crosshair');
-      setLocal({ ...local(), previewing: true });
 
-      const { aim, scaling } = readers(code, pivot, from, down);
+      // The pointer is this gesture's for as long as the key is held, though
+      // it never pressed anything: a press landing elsewhere meanwhile is a
+      // stray click during this, not something else starting. See `grab`.
+      const ungrabbed = input.grab({});
 
-      // The first target's deform as the vertical has left its spacing, which
-      // is what the label says and what is remembered at the end. A round's
-      // vertical is drift: its bevel is the amount, and its segments are the
-      // pane's.
-      let options: Spacing | null = null;
+      try {
+        setLocal({ ...local(), previewing: true });
 
-      const end = yield* select({
-        moving: pointerMoved(e => {
-          const to = aim(e);
-          const factor = scaling(e);
-          const by = to.y - from.y;
+        const { aim, scaling } = readers(code, pivot, from, down);
 
-          // Each thing's own spacing, moved by the same reading of the
-          // vertical, at every keyframe: an option is not in the timeline.
-          const each = kind !== 'deform'
-            ? []
-            : targets.map(id => [id, spaced(base.effects.get(id)!.deform!, down.y - e.clientY, free(e))] as const);
+        // The first target's deform as the vertical has left its spacing, which
+        // is what the label says and what is remembered at the end. A round's
+        // vertical is drift: its bevel is the amount, and its segments are the
+        // pane's.
+        let options: Spacing | null = null;
 
-          options = each[0]?.[1] ?? null;
+        const end = yield* select({
+          moving: pointerMoved(e => {
+            const to = aim(e);
+            const factor = scaling(e);
+            const by = to.y - from.y;
 
-          if (kind !== undefined) setLocal({ ...local(), reading: { at: at(e), label: amountLabel(kind, by, options) } });
+            // Each thing's own spacing, moved by the same reading of the
+            // vertical, at every keyframe: an option is not in the timeline.
+            const each = kind !== 'deform'
+              ? []
+              : targets.map(id => [id, spaced(base.effects.get(id)!.deform!, down.y - e.clientY, free(e))] as const);
 
-          // Its own point and its own facing, off the same reading of the
-          // drag: a turn about itself is a turn of the direction alone, which
-          // is what a place with a direction has to turn.
-          if (looking !== null) {
-            setEye(code === 'KeyT'
-              ? {
-                at: { x: looking.at.x + to.x - from.x, y: looking.at.y + to.y - from.y },
-                facing: looking.facing,
-              }
-              : { at: looking.at, facing: looking.facing + about(pivot, from, to) });
-          }
+            options = each[0]?.[1] ?? null;
 
-          update(s => {
-            let world = base;
-
-            for (const [id, now] of each) world = withEffect(world, id, 'deform', now);
+            if (kind !== undefined) setLocal({ ...local(), reading: { at: at(e), label: amountLabel(kind, by, options) } });
 
             // Its own point and its own facing, off the same reading of the
-            // drag the operations get: a move is where the cursor has gone, and
-            // a turn about its own point is a turn of the direction alone.
-            if (beginning && code === 'KeyT') {
-              world = movedStart(world, {
-                x: was.start.at.x + to.x - from.x,
-                y: was.start.at.y + to.y - from.y,
-              });
-            }
-            else if (beginning) {
-              world = turnedStart(world, was.start.facing + about(pivot, from, to));
+            // drag: a turn about itself is a turn of the direction alone, which
+            // is what a place with a direction has to turn.
+            if (looking !== null) {
+              setEye(code === 'KeyT'
+                ? {
+                  at: { x: looking.at.x + to.x - from.x, y: looking.at.y + to.y - from.y },
+                  facing: looking.facing,
+                }
+                : { at: looking.at, facing: looking.facing + about(pivot, from, to) });
             }
 
-            for (const [id, p] of paints) {
-              if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
-                world = cornersAmounted(world, v, id, kind, corners, by);
-                continue;
+            update(s => {
+              let world = base;
+
+              for (const [id, now] of each) world = withEffect(world, id, 'deform', now);
+
+              // Its own point and its own facing, off the same reading of the
+              // drag the operations get: a move is where the cursor has gone, and
+              // a turn about its own point is a turn of the direction alone.
+              if (beginning && code === 'KeyT') {
+                world = movedStart(world, {
+                  x: was.start.at.x + to.x - from.x,
+                  y: was.start.at.y + to.y - from.y,
+                });
+              }
+              else if (beginning) {
+                world = turnedStart(world, was.start.facing + about(pivot, from, to));
               }
 
-              world = kind !== undefined
-                ? amountWritten(world, v, id, kind, by)
-                : appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
-            }
+              for (const [id, p] of paints) {
+                if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
+                  world = cornersAmounted(world, v, id, kind, corners, by);
+                  continue;
+                }
 
-            return { ...s, world };
-          });
-        }),
-        panning: alongside(),
-        done: keyReleased(input, code),
-        cancel: keyPressed(input, 'Escape'),
-        lost: blurred(),
-      });
+                world = kind !== undefined
+                  ? amountWritten(world, v, id, kind, by)
+                  : appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
+              }
 
-      setLocal({ ...local(), previewing: false, reading: null });
-      cursor('');
+              return { ...s, world };
+            });
+          }),
+          panning: alongside(),
+          done: keyReleased(input, code),
+          cancel: keyPressed(input, 'Escape'),
+          lost: blurred(),
+        });
 
-      if (looking !== null && end.tag === 'cancel') setEye(looking);
+        setLocal({ ...local(), previewing: false, reading: null });
+        cursor('');
 
-      // What was used is what the next thing deformed starts with.
-      const used = end.tag === 'cancel' ? null : options;
+        if (looking !== null && end.tag === 'cancel') setEye(looking);
 
-      update(s => {
-        const out = settled(s, was, end.tag === 'cancel');
+        // What was used is what the next thing deformed starts with.
+        const used = end.tag === 'cancel' ? null : options;
 
-        return used === null ? out : { ...out, remembered: { ...out.remembered, deform: used } };
-      });
+        update(s => {
+          const out = settled(s, was, end.tag === 'cancel');
+
+          return used === null ? out : { ...out, remembered: { ...out.remembered, deform: used } };
+        });
+      }
+      finally {
+        ungrabbed();
+      }
     }
 
     /**
