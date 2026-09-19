@@ -221,6 +221,7 @@ function panel(
    * the effect and the write would otherwise chase each other round the cell.
    */
   let mine: Eye | null = null;
+  let last: Eye | null = null;
   let adopting = false;
 
   /**
@@ -278,7 +279,30 @@ function panel(
       if (now === null && mine === null) return;
 
       mine = now;
-      setEye(now);
+      wrote();
+    };
+
+    /**
+     * The write itself, put off to a microtask.
+     *
+     * Where this is called from is the reason: a step taken on a tick is
+     * nobody's pass, but the same call comes from inside one — an effect
+     * registering the level, and the panel being torn down when the 3D view is
+     * switched off — and writing a cell in the middle of a pass reacts a tree
+     * that is half built or half gone. One pass later it is nothing unusual,
+     * and a microtask is the same frame either way.
+     *
+     * Whatever `mine` has become by then is what is written, so the several
+     * writes a single frame can make collapse into the one that is true — and
+     * a frame that moved nobody writes nothing, which is what keeps standing
+     * still from redrawing the canvas sixty times a second.
+     */
+    const wrote = (): void => {
+      queueMicrotask(() => {
+        if (same(mine, last)) return;
+
+        setEye((last = mine));
+      });
     };
 
     const placed = (): void => {
@@ -716,7 +740,7 @@ function panel(
             // The panel going takes the ghost with it: there is nobody
             // standing in the level once there is no level on screen.
             mine = null;
-            setEye(null);
+            wrote();
           };
         }),
 
@@ -760,6 +784,7 @@ function panel(
 
           adopting = true;
           mine = e;
+          last = e;
 
           walker.x = e.at.x * SCALE;
           walker.z = e.at.y * SCALE;
@@ -948,6 +973,14 @@ function entered(host: HTMLElement, on: boolean): void {
   style.borderRadius = on ? '0' : '8px';
   style.boxShadow = on ? 'none' : `0 6px 18px ${theme.panelShadow}`;
   style.cursor = on ? 'none' : '';
+}
+
+/** Whether two of them say the same thing, which is what decides that there is
+ * nothing to tell the canvas. */
+function same(a: Eye | null, b: Eye | null): boolean {
+  if (a === null || b === null) return a === b;
+
+  return a.at.x === b.at.x && a.at.y === b.at.y && a.facing === b.facing;
 }
 
 /**
