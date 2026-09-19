@@ -126,6 +126,7 @@ import {
   Replay,
   Eye,
   Selection,
+  dropped,
   Settings,
   Figure,
   zoomedAt,
@@ -356,8 +357,7 @@ export function worldCanvas(
         update(s => ({
           ...s,
           selection: {
-            ...s.selection,
-            start: false,
+            ...dropped(s.selection),
             artefacts: alsoPicked(adding ? s.selection.artefacts : [], caught),
           },
         }));
@@ -981,7 +981,7 @@ export function worldCanvas(
         );
 
         return marked(
-          { ...s, world, selection: { ...s.selection, artefacts: [id], start: false } },
+          { ...s, world, selection: { ...dropped(s.selection), artefacts: [id] } },
           s.world,
         );
       });
@@ -1006,8 +1006,8 @@ export function worldCanvas(
       update(s => ({
         ...s,
         selection: e.shiftKey
-          ? { ...s.selection, start: false, artefacts: togglePicked(s.selection.artefacts, id) }
-          : { ...s.selection, start: false, polygons: [], artefacts: [id] },
+          ? { ...dropped(s.selection), artefacts: togglePicked(s.selection.artefacts, id) }
+          : { ...dropped(s.selection), polygons: [], artefacts: [id] },
       }));
     }
 
@@ -1697,7 +1697,7 @@ export function worldCanvas(
         if (!e.shiftKey) {
           update(s => ({
             ...s,
-            selection: { ...s.selection, polygons: [], artefacts: [], paths: [], start: false },
+            selection: { ...dropped(s.selection), polygons: [], artefacts: [], paths: [] },
           }));
         }
 
@@ -1708,8 +1708,7 @@ export function worldCanvas(
         update(s => ({
           ...s,
           selection: {
-            ...s.selection,
-            start: false,
+            ...dropped(s.selection),
             polygons: togglePicked(s.selection.polygons, stack[0]),
           },
         }));
@@ -1729,11 +1728,10 @@ export function worldCanvas(
         return {
           ...s,
           selection: {
-            ...s.selection,
+            ...dropped(s.selection),
             polygons: [stack[next]],
             artefacts: [],
             paths: [],
-            start: false,
           },
         };
       });
@@ -1763,14 +1761,12 @@ export function worldCanvas(
         ...s,
         selection: e.shiftKey
           ? {
-              ...s.selection,
-              start: false,
+              ...dropped(s.selection),
               polygons: mine ? s.selection.polygons : togglePicked(s.selection.polygons, id),
               paths: mine ? togglePicked(s.selection.paths, id) : s.selection.paths,
             }
           : {
-              ...s.selection,
-              start: false,
+              ...dropped(s.selection),
               artefacts: [],
               polygons: mine ? [] : [id],
               paths: mine ? [id] : [],
@@ -2491,11 +2487,10 @@ export function worldCanvas(
                     update(s => ({
                       ...s,
                       selection: {
-                        ...s.selection,
+                        ...dropped(s.selection),
                         polygons: [],
                         artefacts: [grab],
                         paths: [],
-                        start: false,
                       },
                     }));
                   }
@@ -2536,11 +2531,10 @@ export function worldCanvas(
                     update(s => ({
                       ...s,
                       selection: {
-                        ...s.selection,
+                        ...dropped(s.selection),
                         polygons: [under[0]],
                         artefacts: [],
                         paths: [],
-                        start: false,
                       },
                     }));
                   }

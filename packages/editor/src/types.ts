@@ -887,6 +887,22 @@ export interface Eye {
   facing: number
 }
 
+/**
+ * The two that are picked alone, let go.
+ *
+ * Both the start and the eye are picked on their own and dropped by anything
+ * else being picked — they are in no version, so a gesture holding one of them
+ * together with a room would be writing into two places and meaning one thing
+ * by it. That is one rule, and this is the one place it is written: a pick
+ * that is about something in the level says `dropped(s.selection)` and cannot
+ * forget half of it.
+ */
+export function dropped(selection: Selection): Selection {
+  if (!selection.start && !selection.eye) return selection;
+
+  return { ...selection, start: false, eye: false };
+}
+
 /** `more` added to `some`, keeping what was already there and its order. */
 export function alsoPicked(some: readonly number[], more: readonly number[]): number[] {
   const has = new Set(some);
