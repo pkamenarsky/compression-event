@@ -217,6 +217,10 @@ describe('a spur that is very nearly a hairpin', () => {
  *
  * Sixteen degrees is nowhere near a hairpin, which is why no bound on the
  * mitre was ever going to be the answer.
+ *
+ * The room it was found in is `scratch/world-2026-09-18T16-23-07Z.json` at
+ * keyframe 4, where the doorway stands between a room's outline and the hole
+ * left where a third room moved away.
  */
 describe('a doorway between two spikes', () => {
   // A room with a spike reaching in from either side wall, seventeen degrees
