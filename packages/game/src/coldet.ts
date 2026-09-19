@@ -95,18 +95,21 @@ function planesOf(verts: Point[]): { nx: number, ny: number, d: number }[] {
 }
 
 /**
- * How deep a corner may be left uncovered before it is given a hull of its own,
- * as a fraction of the player's radius.
+ * A turn too small for the cap it would want to have any area.
  *
- * Two rectangles meeting at a corner cover it between them to within `radius *
- * (1 - cos(half the turn))`, which is nothing at all until the turn is real: a
- * hundredth of a radius is reached at sixteen degrees. Below that the corner
- * costs nothing, which is most corners of most rings.
+ * Not a tolerance, and there was one here that had to go. A corner that fans
+ * out leaves the wedge between its two rectangles uncovered, and the tempting
+ * measure of that wedge is how deep it is — `radius * (1 - cos(half the
+ * turn))`, which at seven and a half degrees is six ten-thousandths of a
+ * radius and sounds like nothing. It is not nothing, because the wedge is not
+ * a dent in the surface: it is a crack, it runs the whole way in to the corner
+ * itself, and the player is a point. Hugging a rounded pillar of forty-eight
+ * sides, they are driven into one within half a turn and wedged at its apex —
+ * standing, by then, on the pillar's own outline. Every fan-out corner is
+ * capped, however slight, and this is only the width at which the cap stops
+ * having an inside.
  */
-const BEVEL = 0.01;
-
-/** The turn at which that depth is reached. */
-const SHALLOW = 2 * Math.acos(1 - BEVEL);
+const FLAT = 1e-9;
 
 /**
  * The expansion of one wall: the edge, and the edge moved a radius off it.
@@ -145,9 +148,15 @@ function wallOf(
  * rectangles overlapping — the inside of a room's corner is covered twice —
  * and anything added there would be a piece of wall standing in open floor.
  *
- * Which way is which is read off the winding, as everything here is: the turn
- * and `side` agreeing is the corner that has parted, whether the ring is a room
- * or a hole wound against one.
+ * Which way is which is one sign, and it needs no help from the winding. A
+ * ring's normals point away from what it encloses and `side` turns them
+ * towards what can be walked on, and between them they leave the expansion
+ * pointing to the left of the way the ring is walked — on a room and on a hole
+ * wound against one alike, which is the whole of what `sideOf` is for. So the
+ * rectangles part at a right turn and overlap at a left one, and the turn is
+ * the sign of the cross product. Reading `side` again here is reading it
+ * twice: it capped a room's spikes and left a round pillar's corners bare,
+ * which is every corner of it.
  *
  * `prev` is where the edge arriving here started, so it carries that edge's
  * normal. Its position is read only to settle the one case the turn cannot:
@@ -202,15 +211,14 @@ function wedgeOf(
 
     sweep = Math.PI * (-m0y * dx + m0x * dy >= 0 ? 1 : -1);
   }
-  else if (cross * side > 0) {
+  else if (cross < 0) {
     sweep = Math.atan2(cross, dot);
   }
   else {
     return null;
   }
 
-  // Shallower than this and the two rectangles have it covered.
-  if (Math.abs(sweep) < SHALLOW) return null;
+  if (Math.abs(sweep) < FLAT) return null;
 
   const turn = Math.sign(sweep);
 
@@ -305,8 +313,17 @@ function hit(c: Crossed): boolean {
   return c.enter < c.exit && c.enter >= 0 && c.enter <= 1;
 }
 
-/** How far behind the wall the trace stops, so that the next frame does not
- * start inside it. */
+/**
+ * How far off the wall the trace stops, so that the next frame does not start
+ * inside it.
+ *
+ * Off it along the wall's own normal, which is the only direction that says
+ * anything. Backing up along the move instead — which is what this did — puts
+ * the player `GAP * sin(the angle they met it at)` clear of the wall, and a
+ * slide meets the next wall at no angle worth speaking of, so it put them a
+ * millionth of that clear and sometimes nothing at all. See `traceQ2`, where
+ * that turned a gently curved wall into a grind.
+ */
 const GAP = 1e-4;
 
 /** `traceOld` only: two hulls whose walls point the same way are one wall,
@@ -557,16 +574,48 @@ export class Hulls {
 
       if (first === null) return end;
 
-      const safe = Math.max(0, first.enter - GAP / length);
       const plane = { nx: first.nx, ny: first.ny };
 
-      at = { x: at.x + left.x * safe, y: at.y + left.y * safe };
+      // Up to the wall and then a hair off it, along its normal. Not short of
+      // it along the move: see `GAP`.
+      const off = {
+        x: at.x + left.x * first.enter + plane.nx * GAP,
+        y: at.y + left.y * first.enter + plane.ny * GAP,
+      };
+
+      // Unless a hair is thicker than what is being stood off. A room split by
+      // an erosion leaves the two halves a thousandth of a unit apart, which at
+      // the game's scale is thinner than `GAP` — so the step off one side of it
+      // lands on the other, and the player is through a wall. Where that
+      // happens there is nothing to be gained by standing off at all, and the
+      // old way of it, short along the move, is what is left.
+      at = this.insideAny(off)
+        ? {
+          x: at.x + left.x * Math.max(0, first.enter - GAP / length),
+          y: at.y + left.y * Math.max(0, first.enter - GAP / length),
+        }
+        : off;
       left = { x: left.x * (1 - first.enter), y: left.y * (1 - first.enter) };
 
       // A long wall is one hull per edge and they share a face, so the same
       // plane arrives under two names. Kept once, or the list fills with
       // copies of a wall the player is simply walking along.
-      if (!planes.some(p => p.nx * plane.nx + p.ny * plane.ny > SAME_PLANE)) planes.push(plane);
+      //
+      // Kept once, and kept *current*. A wall that curves is one hull per
+      // facet and the facets differ by a degree or less, which is the same
+      // wall by this test and not the same plane to slide along: sliding along
+      // the facet behind them drove the player into the facet they were on, a
+      // `GAP` at a time, and four of those is as far as a move goes. Which of
+      // the two is the wall they are against is not in doubt — it is the one
+      // that just stopped them.
+      const same = planes.findIndex(p => p.nx * plane.nx + p.ny * plane.ny > SAME_PLANE);
+
+      if (same < 0) {
+        planes.push(plane);
+      }
+      else {
+        planes[same] = plane;
+      }
 
       const turned = along(left, planes);
 

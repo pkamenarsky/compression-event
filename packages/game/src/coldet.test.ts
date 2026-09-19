@@ -287,6 +287,68 @@ describe('a wall at an awkward angle', () => {
   });
 });
 
+/**
+ * A wall that curves, which is a great many short walls each turning a little.
+ *
+ * The turn per facet is under a degree, which `SAME_PLANE` calls the same wall
+ * — rightly, since it is one, and a player walking along it should not meet a
+ * corner. What that left behind was worse than a corner: the slide ran along
+ * the facet *behind* the player while the facet they were on leaned into them,
+ * so every bump gained the width of a `GAP` and four of those is all a move
+ * gets. A step kept a quarter of itself at best, which is what walking into
+ * treacle feels like.
+ *
+ * At the game's own scale, because that is the whole of it: `GAP` is in world
+ * units and the wall is in editor ones, and how far a bump gains is one over
+ * the other.
+ */
+describe('a wall that curves', () => {
+  const RADIUS = 1200, FACET = 17, GAME = 1 / 25;
+  const facets = Math.round(2 * Math.PI * RADIUS / FACET);
+
+  const arc = ring(Array.from({ length: facets }, (_unused, i) => {
+    const a = (i / facets) * 2 * Math.PI;
+
+    return { x: Math.cos(a) * RADIUS, y: Math.sin(a) * RADIUS };
+  }));
+
+  /** Holding one direction against the wall, as a player holds a key. */
+  function held(deg: number): { worst: number, total: number } {
+    const hulls = new Hulls([arc], GAME);
+    const step = 4 * GAME;
+    const r = deg * Math.PI / 180;
+    const move = { x: Math.cos(r) * step, y: Math.sin(r) * step };
+
+    let at: Point = { x: (RADIUS - 7.6) * GAME, y: 0 };
+    let worst = 1, total = 0;
+
+    for (let i = 0; i < 40; i++) {
+      const was = at;
+
+      at = hulls.trace(at, move);
+
+      const went = Math.hypot(at.x - was.x, at.y - was.y) / step;
+
+      worst = Math.min(worst, went);
+      total += went;
+    }
+
+    return { worst, total };
+  }
+
+  test('a step along it keeps nearly the whole of itself', () => {
+    for (const deg of [80, 85, 88]) {
+      expect(held(deg).worst).toBeGreaterThan(0.8);
+    }
+  });
+
+  test('and forty of them go forty steps of the way', () => {
+    for (const deg of [80, 85, 88]) {
+      expect(held(deg).total).toBeGreaterThan(38);
+    }
+  });
+});
+
 describe('a slot too narrow to walk into', () => {
   /** A room with a notch cut into the middle of its top wall. */
   function notched(width: number): Polygon {
@@ -457,6 +519,7 @@ describe('the hulls against the distance they stand for', () => {
         // a promise. Two is, and two is what the doorway needed.
         if (away(points, p) < 2 * PLAYER_RADIUS || !hulls.insideAny(p)) continue;
 
+
         inside.push(`ring ${r} at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}): ${away(points, p).toFixed(3)} from any wall`);
       }
     }
@@ -479,6 +542,38 @@ describe('the hulls against the distance they stand for', () => {
         if (hulls.insideAny(p)) continue;
 
         out.push(`ring ${r} at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}): ${away(points, p).toFixed(3)} from a wall`);
+      }
+    }
+
+    expect(out).toEqual([]);
+  });
+
+  /**
+   * The same, on the other kind of ring, and it is not the same question.
+   *
+   * A hole is wound against the room it is in, so every corner of it turns the
+   * way a room's corners do not: the ones that part are the ones that overlap
+   * on a room. Reading the winding twice — once in the normals and once again
+   * to decide which corners have parted — caps a room correctly and leaves
+   * every corner of a pillar bare, and only a hole can say so.
+   */
+  test('and the same of a hole, whose corners are the other way round', () => {
+    const next = rolls(18260921);
+    const out: string[] = [];
+    const walls = rect(-60, -60, 220, 220);
+
+    for (let r = 0; r < 40; r++) {
+      const points = wobbly(next, 5 + r % 20);
+      const hulls = room(ring(walls), hole(points));
+
+      for (let k = 0; k < 400; k++) {
+        const p = { x: next() * 100, y: next() * 100 };
+
+        // Outside the pillar, which is the side that can be walked on.
+        if (within(points, p) || away(points, p) > PLAYER_RADIUS) continue;
+        if (hulls.insideAny(p)) continue;
+
+        out.push(`pillar ${r} at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}): ${away(points, p).toFixed(3)} from it`);
       }
     }
 
