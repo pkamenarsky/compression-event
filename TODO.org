@@ -44,6 +44,7 @@
 ** polyline
 ** also artifacts? would make sense
 
+* remove pkamenarsky itch.io from 3d view in editor
 * spacing in deform a slider; everything in the deform panel -> sliders
 * show RenderConfig in the editor, not with \ + ~
 * styling
