@@ -207,6 +207,20 @@ function panel(
   const held = new Set<string>();
 
   /**
+   * Whether the panel has the keyboard, and which keys it owes the page a
+   * release for.
+   *
+   * A key taken while the mouse was down is still down when the mouse comes
+   * up, and the browser goes on repeating it. Stopping at the release would
+   * hand those repeats — and the release itself — to the editor, where W is a
+   * command; so a key swallowed once stays swallowed until it is let go, which
+   * is what `sunk` is. It moves nothing: `held`, which does, is emptied the
+   * moment the press ends.
+   */
+  let pressing = false;
+  const sunk = new Set<string>();
+
+  /**
    * Which of the two the little panel is showing, and everything under it.
    *
    * Not in the store: it is how someone happens to be looking at their level
@@ -512,35 +526,21 @@ function panel(
             placed();
           };
 
-          // Held rather than pressed, which is the whole of walking, so the
-          // keyboard is read directly rather than off the editor's bus — and
-          // taken off it, so that W does not also do whatever W does out here.
-          const down = (k: KeyboardEvent) => {
-            if (!MOVES.includes(k.code)) return;
-
-            k.preventDefault();
-            k.stopPropagation();
-            held.add(k.code);
-          };
-
-          const up = (k: KeyboardEvent) => held.delete(k.code);
-
           const done = () => {
+            pressing = false;
             held.clear();
 
             host?.removeEventListener('pointermove', moved);
             host?.removeEventListener('pointerup', done);
             host?.removeEventListener('pointercancel', done);
-            window.removeEventListener('keydown', down, true);
-            window.removeEventListener('keyup', up, true);
             window.removeEventListener('blur', done);
           };
+
+          pressing = true;
 
           host.addEventListener('pointermove', moved);
           host.addEventListener('pointerup', done);
           host.addEventListener('pointercancel', done);
-          window.addEventListener('keydown', down, true);
-          window.addEventListener('keyup', up, true);
           window.addEventListener('blur', done);
         },
 
@@ -555,6 +555,40 @@ function panel(
         },
       },
       [
+        // The keys the panel takes while it is being held, read directly rather
+        // than off the editor's bus — nothing else is listening for a key being
+        // *held*, which is the whole of moving — and taken off it in the
+        // capture phase, so that W does not also do whatever W does out here.
+        effect(() => {
+          const down = (k: KeyboardEvent) => {
+            if (!MOVES.includes(k.code)) return;
+            if (!pressing && !sunk.has(k.code)) return;
+
+            k.preventDefault();
+            k.stopPropagation();
+
+            sunk.add(k.code);
+            if (pressing) held.add(k.code);
+          };
+
+          const up = (k: KeyboardEvent) => {
+            held.delete(k.code);
+
+            if (!sunk.delete(k.code)) return;
+
+            k.preventDefault();
+            k.stopPropagation();
+          };
+
+          window.addEventListener('keydown', down, true);
+          window.addEventListener('keyup', up, true);
+
+          return () => {
+            window.removeEventListener('keydown', down, true);
+            window.removeEventListener('keyup', up, true);
+          };
+        }),
+
         // The renderer owns everything inside this: it appends its own canvas and
         // watches the box for resizes.
         effect(() => {
@@ -680,6 +714,7 @@ function panel(
           if (host === undefined) return;
 
           held.clear();
+          sunk.clear();
           entered(host, on);
 
           // Standing up in the panel and then filling the window keeps the spot;
