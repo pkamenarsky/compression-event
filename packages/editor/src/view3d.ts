@@ -224,6 +224,11 @@ function panel(
   let last: Eye | null = null;
   let adopting = false;
 
+  /** Whether anybody has stood in the level yet, which is what says the walker
+   * is somewhere rather than at nothing in particular. Until then there is no
+   * ghost; after it there is one until the panel goes. */
+  let stands = false;
+
   /**
    * Whether the panel has the keyboard, and which keys it owes the page a
    * release for.
@@ -265,20 +270,17 @@ function panel(
     /**
      * Where the canvas draws the ghost, off wherever the walker has got to.
      *
-     * Only while somebody is in the level: from above there is no eye standing
-     * anywhere, and a ghost left behind at the last place one was would be a
-     * dart on the drawing that means nothing.
+     * From the moment somebody first stands in the level until the panel goes,
+     * whether they are standing in it this minute or looking at it from above:
+     * going up for a look at the room and coming back down is one person
+     * moving about, and a spot that emptied itself every time they did would
+     * be no spot at all. So the ghost stays where they left it, drawn from
+     * above as where they are standing and ready to be dragged somewhere else.
      */
     const seen = (): void => {
-      if (adopting) return;
+      if (adopting || !stands) return;
 
-      const now = afoot()
-        ? { at: { x: walker.x / SCALE, y: walker.z / SCALE }, facing: walker.angle }
-        : null;
-
-      if (now === null && mine === null) return;
-
-      mine = now;
+      mine = { at: { x: walker.x / SCALE, y: walker.z / SCALE }, facing: walker.angle };
       wrote();
     };
 
@@ -303,6 +305,16 @@ function panel(
 
         setEye((last = mine));
       });
+    };
+
+    /**
+     * Standing up: somewhere to stand the first time, and wherever they were
+     * left every time after.
+     */
+    const rose = (): void => {
+      if (!stands) stood(orbit, walker);
+
+      stands = true;
     };
 
     const placed = (): void => {
@@ -548,7 +560,7 @@ function panel(
 
           setInside(next);
 
-          if (next) stood(orbit, walker);
+          if (next) rose();
 
           placed();
         },
@@ -739,6 +751,7 @@ function panel(
 
             // The panel going takes the ghost with it: there is nobody
             // standing in the level once there is no level on screen.
+            stands = false;
             mine = null;
             wrote();
           };
@@ -780,9 +793,10 @@ function panel(
         // skipped by identity — the cell holds the very object written from
         // here — so only somebody else's move is adopted.
         effect(eye, e => {
-          if (e === null || e === mine || !afoot()) return;
+          if (e === null || e === mine) return;
 
           adopting = true;
+          stands = true;
           mine = e;
           last = e;
 
@@ -812,7 +826,7 @@ function panel(
 
           // Standing up in the panel and then filling the window keeps the spot;
           // going straight there from above has to be given one.
-          if (on && !untracked(inside)) stood(orbit, walker);
+          if (on && !untracked(inside)) rose();
 
           if (!on) {
             if (document.pointerLockElement === host) document.exitPointerLock();
