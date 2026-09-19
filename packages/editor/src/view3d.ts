@@ -31,7 +31,7 @@
 // hundred polygons will not notice.
 // -----------------------------------------------------------------------------
 
-import { Value, untracked } from '@incpt/kontinuum';
+import { Value } from '@incpt/kontinuum';
 import { VNode, effect, show, stateful, text } from '@incpt/kontinuum-dom';
 import { div } from '@incpt/kontinuum-dom/html';
 
@@ -258,13 +258,11 @@ function panel(
      * Standing in it either way: the full window with the pointer captured, or
      * the panel in the corner with a drag doing the walking.
      *
-     * Both read `untracked`, and it matters. An effect is invalidated by
-     * whatever its *body* reads, not only by what its dependency function
-     * names, and `shown` — which rebuilds the wall buffers — calls this on the
-     * way past. Read plainly, standing up would cost a full rebuild of the
-     * level, for a camera move.
+     * Read plainly, and it costs nothing to: everything that calls this is an
+     * effect's body, a tick or an event handler, and none of those is a place
+     * where a read becomes a dependency. See `effect` in kontinuum-dom.
      */
-    const afoot = (): boolean => untracked(roaming) || untracked(inside);
+    const afoot = (): boolean => roaming() || inside();
 
     /**
      * Where the canvas draws the ghost, off wherever the walker has got to.
@@ -298,10 +296,7 @@ function panel(
      * left every time after.
      */
     const rose = (): void => {
-      // Untracked, and it matters: read plainly, the roaming effect would take
-      // a dependency on the world and run its whole way in and out again on
-      // every edit.
-      if (!stands) stood(untracked(world), walker);
+      if (!stands) stood(world(), walker);
 
       stands = true;
     };
@@ -364,7 +359,7 @@ function panel(
     /** Where a walk's two ends are in the order, which is what the spans are
      * counted in. */
     const ends = (r: Replay): [number, number] => {
-      const w = untracked(world);
+      const w = world();
 
       return [order(w, r.from), order(w, r.to)];
     };
@@ -381,7 +376,7 @@ function panel(
      * bend.
      */
     const bent = (r: Replay | null): number => {
-      if (!untracked(roaming) || !playing(r)) return 0;
+      if (!roaming() || !playing(r)) return 0;
 
       const [a, b] = ends(r);
       const since = r.before > 0 ? -r.before : r.through * REPLAY_MS * Math.abs(b - a) / 1000;
@@ -392,7 +387,7 @@ function panel(
     const walked = (r: Replay | null): void => {
       if (view === null) return;
 
-      peopled(untracked(world), untracked(current), r);
+      peopled(world(), current(), r);
 
       if (!playing(r)) {
         view.walk(null);
@@ -511,7 +506,7 @@ function panel(
       // Rings rather than the runs `set` already holds, because a fill is a
       // triangulation and a triangulation wants the loop. See `filled`.
       view.show(outline, floorsAt(w, v));
-      peopled(w, v, untracked(replay));
+      peopled(w, v, replay());
 
       if (!afoot()) framed(outline, orbit);
 
@@ -545,7 +540,7 @@ function panel(
           e.stopPropagation();
           if (roaming()) return;
 
-          const next = !untracked(inside);
+          const next = !inside();
 
           setInside(next);
 
@@ -580,7 +575,7 @@ function panel(
             x = m.clientX;
             y = m.clientY;
 
-            if (untracked(inside)) {
+            if (inside()) {
               walker.angle += dx * TURN;
             }
             else {
@@ -691,7 +686,7 @@ function panel(
             }],
           );
 
-          peopled(untracked(world), untracked(current), untracked(replay));
+          peopled(world(), current(), replay());
 
           let last = performance.now();
 
@@ -708,7 +703,7 @@ function panel(
             else panned(dt);
 
             if (view !== null) {
-              const amount = bent(untracked(replay));
+              const amount = bent(replay());
               const fov = narrowed(afoot() ? look.camera.fov : FOV_DEGREES, amount, look.warp);
 
               view.drive(amount, elapsed);
@@ -766,12 +761,13 @@ function panel(
             spans = baked.spans.length;
 
             view.load({ paths: [], versions: [], artefacts: [], start: w.start, baked });
-            // Untracked, and that is the whole of why a transition is cheap.
-            // The walk writes where it has got to into the store on every tick,
-            // so an effect whose body read it there was invalidated on every
-            // tick — and this one rebuilds every span's buffers and reloads
-            // every morph. It ran the length of the transition it was drawing.
-            walked(untracked(replay));
+
+            // The walk writes where it has got to into the store on every
+            // tick, and this rebuilds every span's buffers and reloads every
+            // morph. It is read here rather than watched: what this effect
+            // watches is the world and the bake, and a body's reads are not
+            // dependencies.
+            walked(replay());
           },
         ),
 
@@ -814,7 +810,7 @@ function panel(
 
           // Standing up in the panel and then filling the window keeps the spot;
           // going straight there from above has to be given one.
-          if (on && !untracked(inside)) rose();
+          if (on && !inside()) rose();
 
           if (!on) {
             if (document.pointerLockElement === host) document.exitPointerLock();
