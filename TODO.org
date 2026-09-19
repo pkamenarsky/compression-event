@@ -1,3 +1,4 @@
+* a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
 * dragging transforms left/right only drags one version
 * saving levels is cumbersome currently
 ** when saving levels, don't overwrite; append
