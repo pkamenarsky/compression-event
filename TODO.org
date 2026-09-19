@@ -11,6 +11,7 @@
 * artefact idea - shrink walls for 5sec
 * each level has different wall heights/RenderConfigs
 ** even better - different RenderConfig for each version/keyframe
+** sky shader configurable (directly pasting GLSL code into the editor is fine)
 
 * a shape in both create and select mode has handles to scale, rotate and erode
 ** TODO exact shape and form

@@ -130,6 +130,10 @@ const LOOK = 0.0022;
 
 /** Radians per pixel dragged. */
 const TURN = 0.008;
+
+/** How fast the keys push the camera over the level from above, as a share of
+ * how far back it sits, per second. */
+const PAN = 0.9;
 /** How far the elevation may be pushed before it is looking through the floor
  * or straight down the y axis, both of which are useless. */
 const PITCH = [0.08, 1.45];
@@ -194,7 +198,7 @@ function panel(
   let elapsed = 0;
 
   /** Where the camera is looking and from how far, in world units. `held` once
-   * someone has moved it themselves. */
+   * it has been framed, which happens once. */
   const orbit: Orbit = { angle: 0.9, pitch: 0.75, distance: 20, x: 0, z: 0, held: false };
 
   /** Where whoever is inside it is standing, and what they are holding down.
@@ -385,6 +389,31 @@ function panel(
       placed();
     };
 
+    /**
+     * One frame of the same keys from above, where they push the camera over
+     * the level rather than walk anyone through it.
+     *
+     * Along the screen's own axes, which is what the keys mean when the level
+     * is a map: W goes up the picture whatever way the camera is turned. The
+     * step is a share of how far back it sits, so that crossing the view takes
+     * the same time zoomed in as zoomed out.
+     */
+    const panned = (dt: number): void => {
+      const ahead = (held.has('KeyW') ? 1 : 0) - (held.has('KeyS') ? 1 : 0);
+      const across = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
+
+      if (ahead === 0 && across === 0) return;
+
+      const l = Math.hypot(ahead, across);
+      const sin = Math.sin(orbit.angle), cos = Math.cos(orbit.angle);
+      const rate = orbit.distance * PAN * dt / l;
+
+      orbit.x += (-cos * ahead - sin * across) * rate;
+      orbit.z += (-sin * ahead + cos * across) * rate;
+
+      placed();
+    };
+
     /** The boundary at the version on screen, and the floors under it: what is
      * drawn whenever nothing is in flight. The span's own buffers have both for
      * the length of a walk. */
@@ -430,35 +459,56 @@ function panel(
           host = node;
         },
 
-        // Standing in it, for as long as the press lasts.
+        // Standing up and lying back down. Two views of the same level and one
+        // gesture between them, so that a wall can be moved on the canvas and
+        // looked at from the floor without leaving the drawing.
+        ondblclick: (e: MouseEvent) => {
+          e.stopPropagation();
+          if (roaming()) return;
+
+          const next = !untracked(inside);
+
+          setInside(next);
+
+          if (next) stood(orbit, walker);
+
+          placed();
+        },
+
+        // Moving about, for as long as the press lasts.
         //
-        // A click inside the panel is the way in and letting go is the way
-        // out: while it is held the mouse turns and WASD walks, and the moment
-        // it is released the view lies back down and the cursor is the
-        // editor's again. No pointer lock — the panel is a corner of a page
-        // someone is drawing on, and a gesture that swallowed the cursor for
-        // good would be a trap.
+        // A press inside the panel is the hand on the controls: WASD moves and
+        // the mouse turns, from the floor or from above, and letting go gives
+        // the cursor straight back to the editor. No pointer lock — the panel
+        // is a corner of a page someone is drawing on, and a gesture that
+        // swallowed the cursor for good would be a trap.
+        //
+        // Which view it is moving is the double-click's business, not this
+        // one's: from the floor the keys walk and the mouse turns the head,
+        // from above they push the camera over the level and the mouse swings
+        // it around.
         onpointerdown: (e: PointerEvent) => {
           e.stopPropagation();
           if (host === undefined || roaming()) return;
 
           host.setPointerCapture(e.pointerId);
 
-          let x = e.clientX;
-
-          // The first press is what makes the camera theirs: until then an
-          // edit reframes the level, and after it the view stays where it was
-          // left. Somewhere to stand is taken from that framing, once.
-          if (!orbit.held) stood(orbit, walker);
-
-          orbit.held = true;
-
-          setInside(true);
-          placed();
+          let x = e.clientX, y = e.clientY;
 
           const moved = (m: PointerEvent) => {
-            walker.angle += (m.clientX - x) * TURN;
+            const dx = m.clientX - x, dy = m.clientY - y;
+
             x = m.clientX;
+            y = m.clientY;
+
+            if (untracked(inside)) {
+              walker.angle += dx * TURN;
+            }
+            else {
+              orbit.angle += dx * TURN;
+              orbit.pitch = Math.min(PITCH[1], Math.max(PITCH[0], orbit.pitch + dy * TURN));
+            }
+
             placed();
           };
 
@@ -477,8 +527,6 @@ function panel(
 
           const done = () => {
             held.clear();
-            setInside(false);
-            placed();
 
             host?.removeEventListener('pointermove', moved);
             host?.removeEventListener('pointerup', done);
@@ -502,7 +550,6 @@ function panel(
 
           if (afoot()) return;
 
-          orbit.held = true;
           orbit.distance = Math.max(2, orbit.distance * Math.exp(e.deltaY * 0.001));
           placed();
         },
@@ -559,6 +606,7 @@ function panel(
             elapsed += dt;
 
             if (afoot()) stepped(dt);
+            else panned(dt);
 
             if (view !== null) {
               const amount = bent(untracked(replay));
@@ -816,12 +864,14 @@ function stood(orbit: Orbit, walker: Walker): void {
 /**
  * Where the camera looks, and from how far.
  *
- * Every edit reframes the level, right up until someone clicks inside the
- * view: that press is where the camera becomes theirs, and from then on an
- * edit that moved a wall no longer also flies the camera somewhere.
+ * Once, on the first level there is anything to fit, and never again. An edit
+ * that moved a wall should not also fly the camera somewhere: where the view
+ * is pointed is whoever is looking through it's, from the moment they have
+ * one.
  */
 function framed(outline: readonly { points: readonly Point[] }[], orbit: Orbit): void {
   if (orbit.held) return;
+
 
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
 
@@ -841,6 +891,8 @@ function framed(outline: readonly { points: readonly Point[] }[], orbit: Orbit):
   const across = Math.hypot(maxX - minX, maxZ - minZ);
 
   orbit.distance = Math.max(4, across / (2 * Math.tan(FOV / 2)) * MARGIN);
+
+  orbit.held = true;
 }
 
 /**
@@ -865,8 +917,8 @@ function label(
     if (b.progress !== null) return `baking ${Math.round(b.progress * 100)}%`;
 
     const how = inside()
-      ? 'wasd walks · mouse turns · let go to rise'
-      : 'hold to stand in it · wheel zooms';
+      ? 'hold: wasd walks, mouse turns · dbl-click rises · enter fills'
+      : 'hold: wasd pans, mouse turns · wheel zooms · dbl-click stands up';
 
     return spanAt(b, w, 0) === null ? `${how} · unbaked` : how;
   };
