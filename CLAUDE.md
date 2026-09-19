@@ -107,3 +107,7 @@ leaf or by making one side's import type-only.
 ## Testing
 
 Don't test in the browser when implementing features in order to conserve tokens.
+
+## Committing
+
+Commit after each self-contained change.
