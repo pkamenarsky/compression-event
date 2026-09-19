@@ -41,6 +41,7 @@ import {
   EASINGS,
   REPLAY_EASE,
   REPLAY_MS,
+  Eye,
   Selection,
   Tool,
   Update,
@@ -105,33 +106,46 @@ export function editor(initial: World): VNode {
           roaming(input, state, update),
           versions(input, update),
 
-          worldCanvas(
-            s.world,
-            s.settings,
-            s.view,
-            s.tool,
-            s.figure,
-            s.remembered,
-            s.selection,
-            s.inside,
-            s.keyframe,
-            s.replay,
-            s.bake,
-            s.roaming,
-            input,
-            update,
-            edits,
-          ),
+          // The canvas and the panel, and one cell between them: where whoever
+          // is standing in the 3D view is standing. The panel writes it every
+          // frame it walks and the canvas draws it as a ghost of the start;
+          // the canvas writes it when that ghost is dragged and the panel goes
+          // there. Held here rather than in the store because it is nobody's
+          // document — see `Eye` — and held by a `stateful` of its own so that
+          // a step taken in the level wakes these two and nothing else.
+          stateful<Eye | null>(null, (eye, setEye) => fragment([
+            worldCanvas(
+              s.world,
+              s.settings,
+              s.view,
+              s.tool,
+              s.figure,
+              s.remembered,
+              s.selection,
+              s.inside,
+              s.keyframe,
+              s.replay,
+              s.bake,
+              s.roaming,
+              eye,
+              setEye,
+              input,
+              update,
+              edits,
+            ),
 
-          preview(
-            () => s.preview() || s.roaming(),
-            s.world,
-            s.bake,
-            s.keyframe,
-            s.replay,
-            s.roaming,
-            update,
-          ),
+            preview(
+              () => s.preview() || s.roaming(),
+              s.world,
+              s.bake,
+              s.keyframe,
+              s.replay,
+              s.roaming,
+              eye,
+              setEye,
+              update,
+            ),
+          ])),
 
           breadcrumb(s.world, s.inside, update),
           picker(s.beneath, s.world, input, update),

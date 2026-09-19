@@ -22,6 +22,8 @@ import {
   Placed,
   place,
   START_ID,
+  GHOST_ID,
+  eyePlaced,
   artefactsAt,
   Laid,
   pathsAt,
@@ -47,6 +49,7 @@ import { theme } from '../theme';
 import { edgeRun } from '../effects';
 import {
   ArtefactId,
+  Eye,
   FLOOR,
   SOLID,
   KINDS,
@@ -149,6 +152,9 @@ export function layers(
    * from the bake. Null when nothing is playing, and null too when the walk
    * has no bake to play, so that nothing animates alone. */
   walk: Replay | null,
+  /** Where whoever is standing in the 3D view is standing, or nothing when
+   * nobody is. Drawn among the artefacts as a ghost of the start. */
+  eye: Eye | null,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -260,15 +266,28 @@ export function layers(
   // put a still diamond at the destination of every flying one.
   // The start goes in with them, and stands still through a walk: it is in no
   // version's layer, so there is nothing for a walk to carry it along.
-  out.push(ctx => artefacts(
-    ctx,
-    view,
-    (walk === null
+  // The eye last of them, over the start it is a ghost of: the two stand on
+  // top of each other at the moment someone rises into the level, and the one
+  // that moves is the one to be able to see and grab.
+  const standing = [
+    ...(walk === null
       ? shownAt(world, current)
       : [startPlaced(world), ...artefactsDuring(world, walk.from, walk.to, walk.at)])
       .filter(it => it.id === START_ID || visible(world, it.id)),
-    new Set(selection.start ? [START_ID, ...selection.artefacts] : selection.artefacts),
-    id => id === START_ID || reachable(world, id, inside),
+    ...(eye === null ? [] : [eyePlaced(eye)]),
+  ];
+
+  const picked = new Set(selection.artefacts);
+
+  if (selection.start) picked.add(START_ID);
+  if (selection.eye) picked.add(GHOST_ID);
+
+  out.push(ctx => artefacts(
+    ctx,
+    view,
+    standing,
+    picked,
+    id => id === START_ID || id === GHOST_ID || reachable(world, id, inside),
   ));
 
   // The measuring paths, over everything and under every tool: a tape is laid
@@ -1011,6 +1030,11 @@ function artefacts(
 
   for (const it of shown) {
     const q = toScreen(view, it.at);
+
+    // The one thing drawn here that is not in the level: faint, because it is
+    // where somebody is looking from rather than something the level holds,
+    // and it would otherwise read as a second start.
+    ctx.globalAlpha = it.id === GHOST_ID ? 0.5 : 1;
     const here = picked.has(it.id);
     const near = reach(it.id);
     const colour = !near ? theme.outside : here ? theme.picked : theme.artefact;
@@ -1044,8 +1068,14 @@ function artefacts(
     ctx.stroke();
 
     ctx.fillStyle = !near ? theme.outside : here ? theme.picked : theme.muted;
-    ctx.fillText(it.type, q.x, q.y + (it.type === 'start' ? NOSE : BOTTOM) + 3);
+    ctx.fillText(
+      it.id === GHOST_ID ? 'eye' : it.type,
+      q.x,
+      q.y + (it.type === 'start' ? NOSE : BOTTOM) + 3,
+    );
   }
+
+  ctx.globalAlpha = 1;
 }
 
 /**

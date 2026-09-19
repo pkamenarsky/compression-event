@@ -57,7 +57,9 @@ function world(): EditorState {
 
   return {
     ...initialState(w),
-    selection: { polygons: [b.id], vertices: [], edges: [], artefacts: [], paths: [], start: false },
+    selection: {
+      polygons: [b.id], vertices: [], edges: [], artefacts: [], paths: [], start: false, eye: false,
+    },
     tool: 'polygon',
     keyframe: 2,
   };

@@ -111,6 +111,7 @@ describe('undo', () => {
         artefacts: [],
         paths: [],
         start: false,
+        eye: false,
       },
     };
 

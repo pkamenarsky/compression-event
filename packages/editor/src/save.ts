@@ -298,6 +298,7 @@ export function restored(file: Saved): EditorState {
       artefacts: file.artefacts,
       paths: file.paths,
       start: false,
+      eye: false,
     },
     settings: { gridSize: file.settings.gridSize, showGrid: file.settings.showGrid },
     // Taken field by field rather than spread: a 22 and older still carries

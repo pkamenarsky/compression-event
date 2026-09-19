@@ -68,7 +68,7 @@ import {
   startPlaced,
 } from './scene';
 import { theme } from './theme';
-import { Replay, Update, KeyframeId, World } from './types';
+import { Eye, Replay, Update, KeyframeId, World } from './types';
 
 /**
  * Standing in it: where the walker is and which way they are facing.
@@ -145,9 +145,11 @@ export function preview(
   current: Value<KeyframeId>,
   replay: Value<Replay | null>,
   roaming: Value<boolean>,
+  eye: Value<Eye | null>,
+  setEye: (eye: Eye | null) => void,
   update: Update,
 ): VNode {
-  return show(showing, panel(world, bake, current, replay, roaming, update));
+  return show(showing, panel(world, bake, current, replay, roaming, eye, setEye, update));
 }
 
 function panel(
@@ -156,6 +158,8 @@ function panel(
   current: Value<KeyframeId>,
   replay: Value<Replay | null>,
   roaming: Value<boolean>,
+  eye: Value<Eye | null>,
+  setEye: (eye: Eye | null) => void,
   update: Update,
 ): VNode {
   let host: HTMLDivElement | undefined;
@@ -207,6 +211,19 @@ function panel(
   const held = new Set<string>();
 
   /**
+   * The ghost on the canvas, and the two-way binding it is half of.
+   *
+   * The walker is a plain object read every frame — a reactive cell would wake
+   * the whole tree sixty times a second — so the shared value is written from
+   * it rather than being it. `mine` is the last thing written here, and an
+   * arrival that is not it is the canvas having dragged the ghost, which the
+   * walker then goes to. While that is being adopted nothing is written back:
+   * the effect and the write would otherwise chase each other round the cell.
+   */
+  let mine: Eye | null = null;
+  let adopting = false;
+
+  /**
    * Whether the panel has the keyboard, and which keys it owes the page a
    * release for.
    *
@@ -244,6 +261,26 @@ function panel(
      */
     const afoot = (): boolean => untracked(roaming) || untracked(inside);
 
+    /**
+     * Where the canvas draws the ghost, off wherever the walker has got to.
+     *
+     * Only while somebody is in the level: from above there is no eye standing
+     * anywhere, and a ghost left behind at the last place one was would be a
+     * dart on the drawing that means nothing.
+     */
+    const seen = (): void => {
+      if (adopting) return;
+
+      const now = afoot()
+        ? { at: { x: walker.x / SCALE, y: walker.z / SCALE }, facing: walker.angle }
+        : null;
+
+      if (now === null && mine === null) return;
+
+      mine = now;
+      setEye(now);
+    };
+
     const placed = (): void => {
       if (view === null) return;
 
@@ -264,8 +301,11 @@ function panel(
           walker.z - Math.cos(walker.angle),
         );
 
+        seen();
         return;
       }
+
+      seen();
 
       const flat = Math.cos(orbit.pitch) * orbit.distance;
 
@@ -672,6 +712,11 @@ function panel(
             view = null;
             set = EMPTY_LIVE;
             spans = 0;
+
+            // The panel going takes the ghost with it: there is nobody
+            // standing in the level once there is no level on screen.
+            mine = null;
+            setEye(null);
           };
         }),
 
@@ -705,6 +750,29 @@ function panel(
         ),
 
         effect(replay, r => walked(r)),
+
+        // The other half of the binding: the ghost dragged on the canvas puts
+        // whoever is standing in the level somewhere else. Its own arrivals are
+        // skipped by identity — the cell holds the very object written from
+        // here — so only somebody else's move is adopted.
+        effect(eye, e => {
+          if (e === null || e === mine || !afoot()) return;
+
+          adopting = true;
+          mine = e;
+
+          walker.x = e.at.x * SCALE;
+          walker.z = e.at.y * SCALE;
+          walker.angle = e.facing;
+
+          // Whatever they were carrying is not carried to somewhere they were
+          // put: the drag is a hand moving them, not a step they took.
+          walker.vx = 0;
+          walker.vz = 0;
+
+          placed();
+          adopting = false;
+        }),
 
         // Standing in it. Everything about that is here: the panel over the whole
         // window, the pointer taken by the page, and the keyboard read directly

@@ -50,6 +50,8 @@ import {
   under,
   place,
   START_ID,
+  GHOST_ID,
+  eyePlaced,
   addArtefact,
   artefactsAt,
   artefactsIn,
@@ -122,6 +124,7 @@ import {
   Point,
   PolygonKind,
   Replay,
+  Eye,
   Selection,
   Settings,
   Figure,
@@ -178,6 +181,10 @@ export function worldCanvas(
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
+  /** Where whoever is standing in the 3D view is standing, and how to put them
+   * somewhere else: the ghost is dragged here and the panel follows. */
+  eye: Value<Eye | null>,
+  setEye: (eye: Eye | null) => void,
   input: Input,
   update: Update,
   /** Entries asked to be edited, from the keyframes. See `editing`. */
@@ -763,7 +770,18 @@ export function worldCanvas(
       // version reads the one it wrote.
       const beginning = code === 'KeyT' || code === 'KeyR' ? selection().start : false;
 
-      if (items.length === 0 && places.length === 0 && walked.length === 0 && !beginning) return;
+      // The eye takes the same two, and takes them alone. Where it stood when
+      // the key went down: the gesture is worked out from there, like
+      // everything else this one moves.
+      const looking = code === 'KeyT' || code === 'KeyR' ? (selection().eye ? eye() : null) : null;
+
+      if (
+        items.length === 0
+        && places.length === 0
+        && walked.length === 0
+        && !beginning
+        && looking === null
+      ) return;
 
       const from = at(e);
 
@@ -803,6 +821,7 @@ export function worldCanvas(
         ...places,
         ...walked,
         ...(beginning ? [was.start.at] : []),
+        ...(looking === null ? [] : [looking.at]),
       ]);
 
       cursor('crosshair');
@@ -831,6 +850,18 @@ export function worldCanvas(
           options = each[0]?.[1] ?? null;
 
           if (kind !== undefined) setLocal({ ...local(), reading: { at: at(e), label: amountLabel(kind, by, options) } });
+
+          // Its own point and its own facing, off the same reading of the
+          // drag: a turn about itself is a turn of the direction alone, which
+          // is what a place with a direction has to turn.
+          if (looking !== null) {
+            setEye(code === 'KeyT'
+              ? {
+                at: { x: looking.at.x + to.x - from.x, y: looking.at.y + to.y - from.y },
+                facing: looking.facing,
+              }
+              : { at: looking.at, facing: looking.facing + about(pivot, from, to) });
+          }
 
           update(s => {
             let world = base;
@@ -872,6 +903,8 @@ export function worldCanvas(
 
       setLocal({ ...local(), previewing: false, reading: null });
       cursor('');
+
+      if (looking !== null && end.tag === 'cancel') setEye(looking);
 
       // What was used is what the next thing deformed starts with.
       const used = end.tag === 'cancel' ? null : options;
@@ -946,6 +979,11 @@ export function worldCanvas(
      * room have two different places to write and one thing to mean by it.
      */
     function pickingArtefact(e: PointerEvent, id: ArtefactId): void {
+      if (id === GHOST_ID) {
+        update(s => ({ ...s, selection: { ...EMPTY_SELECTION, eye: true } }));
+        return;
+      }
+
       if (id === START_ID) {
         update(s => ({ ...s, selection: { ...EMPTY_SELECTION, start: true } }));
         return;
@@ -1960,6 +1998,13 @@ export function worldCanvas(
       // into. Alone, because it is picked alone.
       const beginning = selection().start;
 
+      // The eye where it stood when the drag began, for the same reason the
+      // world is kept: every move is worked out from there rather than composed
+      // onto the last one, so it cannot drift, and letting go of it puts it
+      // back. It is not in the world, so nothing about it is undoable — and
+      // nothing about it should be: it is where somebody is looking from.
+      const looking = selection().eye ? eye() : null;
+
       const resolved = resolveAt(was, v);
       const paints = new Map(
         [...new Set(ids)]
@@ -1967,7 +2012,7 @@ export function worldCanvas(
           .map(id => [id, painted(was, v, id, resolved)]),
       );
 
-      if (paints.size === 0 && !beginning) return;
+      if (paints.size === 0 && !beginning && looking === null) return;
 
       cursor('move');
       setLocal({ ...local(), previewing: true });
@@ -1982,6 +2027,10 @@ export function worldCanvas(
           const raw = locked(e, { x: to.x - grabbed.x, y: to.y - grabbed.y });
           const dx = step === 0 ? raw.x : toStep(raw.x, step);
           const dy = step === 0 ? raw.y : toStep(raw.y, step);
+
+          if (looking !== null) {
+            setEye({ at: { x: looking.at.x + dx, y: looking.at.y + dy }, facing: looking.facing });
+          }
 
           update(st => {
             let world = was;
@@ -2010,6 +2059,9 @@ export function worldCanvas(
 
       setLocal({ ...local(), previewing: false });
       cursor('');
+
+      if (looking !== null && end.tag === 'cancel') setEye(looking);
+
       update(s => settled(s, was, end.tag === 'cancel'));
     }
 
@@ -2046,8 +2098,14 @@ export function worldCanvas(
      */
     function grabbing(e: PointerEvent, all = false): ArtefactId | null {
       const path = opened(world(), inside());
-      const shown = shownAt(world(), keyframe())
-        .filter(it => it.id === START_ID || (clickable(world(), it.id) && (all || !swallowed(world(), it.id, path))));
+      const here = eye();
+      const shown = [
+        ...shownAt(world(), keyframe())
+          .filter(it => it.id === START_ID || (clickable(world(), it.id) && (all || !swallowed(world(), it.id, path)))),
+        // Last, so that a click where the two stand on top of each other — the
+        // moment someone rises into the level — takes the one that moves.
+        ...(here === null ? [] : [eyePlaced(here)]),
+      ];
 
       return hitArtefact(shown, at(e), HANDLE / view().zoom);
     }
@@ -2161,8 +2219,9 @@ export function worldCanvas(
               replay(),
               bake(),
               local(),
+              eye(),
             ] as const,
-            ([w, s, v, t, sel, ins, at, r, b, l]) => {
+            ([w, s, v, t, sel, ins, at, r, b, l, g]) => {
               if (el && ctx) {
                 const items = resolveAt(w, at);
 
@@ -2183,6 +2242,7 @@ export function worldCanvas(
                     // to standing still because their span has not been baked
                     // yet, reads as a glitch rather than as a walk.
                     played === null ? null : r,
+                    g,
                   ),
                 );
               }
@@ -2403,7 +2463,12 @@ export function worldCanvas(
                   // the way grabbing an unpicked polygon does.
                   // The start alone, since it is picked alone — see
                   // `pickingArtefact`.
-                  if (grab === START_ID) {
+                  if (grab === GHOST_ID) {
+                    if (!selection().eye) {
+                      update(s => ({ ...s, selection: { ...EMPTY_SELECTION, eye: true } }));
+                    }
+                  }
+                  else if (grab === START_ID) {
                     if (!selection().start) {
                       update(s => ({ ...s, selection: { ...EMPTY_SELECTION, start: true } }));
                     }

@@ -851,6 +851,13 @@ export interface Selection {
    * else drops it.
    */
   start: boolean
+  /**
+   * Whether the eye — where whoever is standing in the 3D view is standing —
+   * is picked. A flag for the reason the start's is one, and picked alone for
+   * the same reason: it is in no version either, and nothing else moves when
+   * it moves.
+   */
+  eye: boolean
 }
 
 export const EMPTY_SELECTION: Selection = {
@@ -860,7 +867,25 @@ export const EMPTY_SELECTION: Selection = {
   artefacts: [],
   paths: [],
   start: false,
+  eye: false,
 };
+
+/**
+ * Where whoever is looking through the 3D view is standing, in the canvas'
+ * own units — the same point and the same yaw the start is written in, so the
+ * two are drawn by one routine and dragged by one gesture.
+ *
+ * Not in the world and not in the editor's store: it is where somebody's eye
+ * happens to be this minute, it survives nothing, and the only two things that
+ * care are the panel that moves it and the canvas that draws it. It is shared
+ * between them by a `stateful` holding both — which is the whole of the
+ * two-way binding: the panel writes it every frame it walks, the canvas writes
+ * it when the ghost is dragged, and each reads what the other wrote.
+ */
+export interface Eye {
+  at: Point
+  facing: number
+}
 
 /** `more` added to `some`, keeping what was already there and its order. */
 export function alsoPicked(some: readonly number[], more: readonly number[]): number[] {
@@ -1119,6 +1144,7 @@ function settled(s: EditorState, was: World): EditorState {
       edges: s.selection.edges.filter(id => corners.has(id)),
       // Always there, so nothing can have taken it away.
       start: s.selection.start,
+      eye: s.selection.eye,
       artefacts: s.selection.artefacts.filter(id => s.world.artefacts.has(id)),
       paths: s.selection.paths.filter(id => s.world.paths.has(id)),
     },

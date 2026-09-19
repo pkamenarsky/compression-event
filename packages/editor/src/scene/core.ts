@@ -61,6 +61,7 @@ import {
   ArtefactType,
   Clipping,
   Effects,
+  Eye,
   GroupId,
   Options,
   IconType,
@@ -548,10 +549,23 @@ export function facingAt(world: World, id: ArtefactId, v: KeyframeId): number | 
  */
 export const START_ID: ArtefactId = -1;
 
+/**
+ * The eye's id in the same list: the ghost of whoever is standing in the 3D
+ * view, drawn and picked among the artefacts and belonging to no version.
+ * Negative, for the reason the start's is.
+ */
+export const GHOST_ID: ArtefactId = -2;
+
 /** The start as one of the things standing in the level. Every version gets
  * the same one. */
 export function startPlaced(world: World): Placed {
   return { id: START_ID, type: 'start', at: world.start.at, facing: world.start.facing };
+}
+
+/** The eye as one of the things standing in the level: a start, drawn where
+ * whoever is in the 3D view is standing and pointing the way they are facing. */
+export function eyePlaced(eye: Eye): Placed {
+  return { id: GHOST_ID, type: 'start', at: eye.at, facing: eye.facing };
 }
 
 /** The start moved to a point of its own, which is where it is at every
