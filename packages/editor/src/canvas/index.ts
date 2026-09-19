@@ -181,8 +181,18 @@ export function worldCanvas(
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
-  /** Where whoever is standing in the 3D view is standing, and how to put them
-   * somewhere else: the ghost is dragged here and the panel follows. */
+  /** Whether the 3D view is up at all, which is what says the eye means
+   * anything. */
+  viewing: Value<boolean>,
+  /**
+   * Where whoever is standing in the 3D view is standing, and how to put them
+   * somewhere else: the ghost is dragged here and the panel follows.
+   *
+   * Read through `afoot` rather than plainly. The cell keeps its last
+   * answer when the 3D view is switched off — the panel does not clear it on
+   * its way out, so a spot survives being looked away from — and there is
+   * nobody standing in a level nobody is looking into.
+   */
   eye: Value<Eye | null>,
   setEye: (eye: Eye | null) => void,
   input: Input,
@@ -190,6 +200,10 @@ export function worldCanvas(
   /** Entries asked to be edited, from the keyframes. See `editing`. */
   edits: Signal<Editing>,
 ): VNode {
+  /** The eye, or nothing at all while the 3D view is down. Everything on this
+   * side asks this rather than the cell. */
+  const afoot = (): Eye | null => (viewing() ? eye() : null);
+
   let el: HTMLCanvasElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
 
@@ -773,7 +787,7 @@ export function worldCanvas(
       // The eye takes the same two, and takes them alone. Where it stood when
       // the key went down: the gesture is worked out from there, like
       // everything else this one moves.
-      const looking = code === 'KeyT' || code === 'KeyR' ? (selection().eye ? eye() : null) : null;
+      const looking = code === 'KeyT' || code === 'KeyR' ? (selection().eye ? afoot() : null) : null;
 
       if (
         items.length === 0
@@ -2003,7 +2017,7 @@ export function worldCanvas(
       // onto the last one, so it cannot drift, and letting go of it puts it
       // back. It is not in the world, so nothing about it is undoable — and
       // nothing about it should be: it is where somebody is looking from.
-      const looking = selection().eye ? eye() : null;
+      const looking = selection().eye ? afoot() : null;
 
       const resolved = resolveAt(was, v);
       const paints = new Map(
@@ -2098,7 +2112,7 @@ export function worldCanvas(
      */
     function grabbing(e: PointerEvent, all = false): ArtefactId | null {
       const path = opened(world(), inside());
-      const here = eye();
+      const here = afoot();
       const shown = [
         ...shownAt(world(), keyframe())
           .filter(it => it.id === START_ID || (clickable(world(), it.id) && (all || !swallowed(world(), it.id, path)))),
@@ -2219,7 +2233,7 @@ export function worldCanvas(
               replay(),
               bake(),
               local(),
-              eye(),
+              afoot(),
             ] as const,
             ([w, s, v, t, sel, ins, at, r, b, l, g]) => {
               if (el && ctx) {

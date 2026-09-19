@@ -127,6 +127,7 @@ export function editor(initial: World): VNode {
               s.replay,
               s.bake,
               s.roaming,
+              () => s.preview() || s.roaming(),
               eye,
               setEye,
               input,

@@ -221,7 +221,6 @@ function panel(
    * the effect and the write would otherwise chase each other round the cell.
    */
   let mine: Eye | null = null;
-  let last: Eye | null = null;
   let adopting = false;
 
   /** Whether anybody has stood in the level yet, which is what says the walker
@@ -280,32 +279,19 @@ function panel(
     const seen = (): void => {
       if (adopting || !stands) return;
 
-      mine = { at: { x: walker.x / SCALE, y: walker.z / SCALE }, facing: walker.angle };
-      wrote();
+      const now = { at: { x: walker.x / SCALE, y: walker.z / SCALE }, facing: walker.angle };
+
+      // A frame that moved nobody writes nothing, which is what keeps standing
+      // still from redrawing the canvas sixty times a second. Where this is
+      // called from needs no care of its own: a step taken on a tick is
+      // nobody's pass, and the same call made from inside one — the effect
+      // that registers the level — is queued by the core and run once that
+      // pass is done. See `pass` in kontinuum.
+      if (same(now, mine)) return;
+
+      setEye((mine = now));
     };
 
-    /**
-     * The write itself, put off to a microtask.
-     *
-     * Where this is called from is the reason: a step taken on a tick is
-     * nobody's pass, but the same call comes from inside one — an effect
-     * registering the level, and the panel being torn down when the 3D view is
-     * switched off — and writing a cell in the middle of a pass reacts a tree
-     * that is half built or half gone. One pass later it is nothing unusual,
-     * and a microtask is the same frame either way.
-     *
-     * Whatever `mine` has become by then is what is written, so the several
-     * writes a single frame can make collapse into the one that is true — and
-     * a frame that moved nobody writes nothing, which is what keeps standing
-     * still from redrawing the canvas sixty times a second.
-     */
-    const wrote = (): void => {
-      queueMicrotask(() => {
-        if (same(mine, last)) return;
-
-        setEye((last = mine));
-      });
-    };
 
     /**
      * Standing up: somewhere to stand the first time, and wherever they were
@@ -752,11 +738,11 @@ function panel(
             set = EMPTY_LIVE;
             spans = 0;
 
-            // The panel going takes the ghost with it: there is nobody
-            // standing in the level once there is no level on screen.
-            stands = false;
-            mine = null;
-            wrote();
+            // The ghost is left where it stands. Whether to draw it is the
+            // canvas' question — it knows whether the 3D view is up — and
+            // clearing it here would be this panel writing a cell on its way
+            // out, as well as losing the spot somebody was standing in
+            // between one look at the level and the next.
           };
         }),
 
@@ -801,7 +787,6 @@ function panel(
           adopting = true;
           stands = true;
           mine = e;
-          last = e;
 
           walker.x = e.at.x * SCALE;
           walker.z = e.at.y * SCALE;
