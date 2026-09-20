@@ -1,3 +1,9 @@
+* keyframes
+** edit, then click on add keyframe, delta to previous one is stored
+** keyframe can be repeated
+** if you want to edit a keyframe component, just click on keyframe and change stuff
+** but then we have keyframes in keyframes... can we simplify?
+
 * WHAT IS NECESSARY TO START MAKING LEVELS vs WHAT CAN WE DO WHILE MAKING LEVELS
 
 * a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
