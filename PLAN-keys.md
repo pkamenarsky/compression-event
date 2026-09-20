@@ -45,7 +45,9 @@ interface Key {
   /** The painted point, in the thing's rest frame: the point the delta is
    * written about. */
   ref: Point
-  by: Delta
+  /** What it does to the thing as a whole. Absent is nothing, which is what a
+   * key about single corners alone holds. */
+  by?: Delta
   /** Moves of single corners, in the rest frame, and the extra amounts on
    * single corners and edges. Absent is none. */
   corners?: ReadonlyMap<VertexId, Point>
@@ -72,7 +74,15 @@ interface Rig {
 
 `Rig` loses `nudges`, `depths`, `rounds` and `deforms`: a corner's move is in
 the key beside the thing's own move, so a gesture that nudges four corners
-writes one key, and repeating it repeats all four.
+writes one key, and repeating it repeats all four. A corner never holds a
+timeline of its own again.
+
+A key with corners and no `by` is how a corner repeats on its own — what the
+migration writes where one corner's repeat differs from its thing's, and what
+dragging a corner out of a key makes. Nothing in the type is special about it.
+Order among such keys never matters either: a corner's move is in the rest
+frame and the thing's delta acts over the rest geometry, so the two commute,
+as the amounts do.
 
 ### Playing one
 
@@ -184,9 +194,19 @@ a compose rather than a splice.
 
 ### 4 — the view
 
-One diamond per key in its column, with a glyph per channel it holds and a
-count where a gesture is repeated. Lanes as now. The inspector reads the state
-at the key stood on. The ops row's per-kind icons go.
+The columns stay as they are: keyframes across, things down, a handful of
+icons side by side in a column in play order, widening for more, with a lane
+under the row for each repeat. What changes is what an icon is — one diamond
+per key rather than one per operation — with a glyph for each channel it holds
+and a count where a gesture repeated itself into it. The inspector reads the
+state at the key stood on. The ops row's per-kind icons go.
+
+A corner's row in the point tool stops being a timeline and becomes a
+projection: a key that names corners puts a dot in the row of each, in its own
+column, and clicking one picks the key. Hovering a key lights the corners it
+touches on the canvas. Dragging one corner's dot down to a lane of its own
+takes that corner out into a key of its own — the same split as taking the
+last gesture out, by corner instead of by time.
 
 ### 5 — the rest
 
@@ -214,7 +234,3 @@ with a tail, so the pane stops having a second idea of what a repeat is.
 - Does a key ever move between things, or only between columns?
 - Corner births and deaths: they are the thing's, not a key's, and stay where
   they are — worth checking against pull and push.
-- Whether the keyframe columns themselves should become keys marked as
-  versions. Nothing here needs it: a version is a level-wide fact and a key is
-  one thing's, so the column list stays, and this can be revisited once keys
-  are in.
