@@ -188,9 +188,15 @@ and diffed to nothing.
 
 ### 3 — editing
 
-The open key, break, split, stand-on-a-key, pull and push as composition,
-delete, and the repeat drag. `keys.ts` shrinks: moving a key between columns is
-a compose rather than a splice.
+The open key, break, split, stand-on-a-key, pull and push, delete, and the
+repeat drag.
+
+Pull and push are a splice, not a fold: the key leaves its column's list and
+goes on the end of the column before, or the front of the column after. The
+keys either side are untouched, the order they play in is the order they were
+already in, and there is nothing to solve. Folding happens in one place only —
+a gesture absorbed into the open key — and there it has the frame to hand, which
+it needs where the two painted points differ.
 
 ### 4 — the view
 

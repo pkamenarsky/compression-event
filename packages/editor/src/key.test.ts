@@ -117,3 +117,77 @@ describe('several deltas in a row say what several operations say', () => {
     }
   });
 });
+
+/**
+ * The same operations, written against the frame they are played over: a
+ * stretch and a shear record the axes the thing had when the hand wrote them,
+ * and part way through, those are the axes the easing follows. They are the
+ * frame's own at every keyframe the walk reaches, which is what this is.
+ */
+function wroteAt(f: Frame): Op[] {
+  return [
+    { kind: 'move', by: { x: 15, y: -3 } },
+    { kind: 'turn', angle: 0.5, ref: { x: 0, y: 0 }, about: { x: 0, y: 0 } },
+    { kind: 'turn', angle: -1.1, ref: { x: 13, y: -7 }, about: { x: 60, y: 20 } },
+    { kind: 'scale', by: { x: 1.4, y: 0.8 }, ref: { x: 13, y: -7 }, shift: { x: 0, y: 0 }, along: f.angle, lean: f.skew },
+    { kind: 'scale', by: { x: 0.6, y: 1.9 }, ref: { x: -40, y: 25 }, shift: { x: 11, y: -4 }, along: f.angle, lean: f.skew },
+    // Stretched along one axis only: eased along that one and a line along the
+    // other, which is the case a matrix inverse cannot see.
+    { kind: 'scale', by: { x: 2.2, y: 1 }, ref: { x: 13, y: -7 }, shift: { x: 9, y: 5 }, along: f.angle, lean: f.skew },
+    { kind: 'skew', by: 0.35, ref: { x: 13, y: -7 }, shift: { x: -6, y: 2 }, along: f.angle },
+    { kind: 'erode', by: 3 },
+  ];
+}
+
+const WAYS = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1];
+
+describe('part way through, a delta goes where the operation goes', () => {
+  test('every kind, every way through', () => {
+    for (const f of FRAMES) {
+      for (const op of wroteAt(f)) {
+        const d = deltaOf(op)!;
+
+        for (const u of WAYS) {
+          for (const ref of refsFor(op)) {
+            near(playedBy(f, ref, d, u), played(f, op, u), `${op.kind} ${u} of the way`);
+          }
+        }
+      }
+    }
+  });
+
+  test('and so does a step of a repeat', () => {
+    for (const f of FRAMES) {
+      for (const op of wroteAt(f)) {
+        const d = deltaOf(op)!;
+
+        for (let n = 1; n <= 3; n++) {
+          for (const u of WAYS) {
+            for (const ref of refsFor(op)) {
+              near(
+                playedBy(f, ref, steppedBy(d, n), u),
+                played(f, stepped(op, n), u),
+                `${op.kind} step ${n}, ${u} of the way`,
+              );
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test('a whole turn keeps its centre, which its move cannot say', () => {
+    const op: Op = { kind: 'turn', angle: 2 * Math.PI, ref: { x: 13, y: -7 }, about: { x: 60, y: 20 } };
+    const d = deltaOf(op)!;
+
+    expect(d.move.x).toBeCloseTo(0, 9);
+    expect(d.move.y).toBeCloseTo(0, 9);
+    expect(d.about).toEqual(op.about);
+
+    for (const f of FRAMES) {
+      for (const u of WAYS) {
+        near(playedBy(f, op.ref, d, u), played(f, op, u), `a whole turn ${u} of the way`);
+      }
+    }
+  });
+});

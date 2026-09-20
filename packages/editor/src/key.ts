@@ -36,20 +36,51 @@
 // about` for a turn and `shiftₙ = Mⁿ · shift` for a stretch and a shear, in
 // one rule.
 //
-// Not here yet: playing a key part way, which the bake needs. At `u = 1` there
-// is nothing to decide; part way there is, and the rule is
-// `moveᵤ = (I − Lᵤ) · w` where `(I − L) w = move` — the painted point going
-// round the delta's fixed point, which comes out as an arc for a turn and as
-// `(1 − dᵘ)/(1 − d)` for a stretch, both of them exactly what `played` does
-// today. Where `L` has no unique fixed point the point goes in a line, which
-// is what a move and a shear do today; where it has none but the gesture had a
-// centre — a turn by a whole number of turns — the centre is unrecoverable
-// from the delta and `about` carries it.
+// Part way
+// --------
+// The bake draws the keyframes between the keyframes, and asks for a delta `u`
+// of the way through — see `flown` in `bake.ts`. The parameters are easy: `u`
+// of the angle and the skew, and the scale to the power `u`. Where the painted
+// point is part way is the question, because the same two ends are reached by
+// a great many paths, and the one to take is the one the hand that wrote it
+// took.
+//
+// The painted point goes round the delta's **fixed point** — the point the
+// delta leaves where it is:
+//
+//   moveᵤ = (I − Lᵤ) · w,  where (I − L) w = move
+//
+// For a turn that is the arc about the anchor; for a stretch it comes out as
+// `(1 − dᵘ)/(1 − d)` along each axis, which is what keeps the gesture's own
+// centre still the whole way through. Both are exactly what `played` does with
+// a turn and a stretch today.
+//
+// Where the delta has no fixed point the painted point goes in a line, which
+// is what a move and a shear do today. There are three of these and they are
+// told apart rather than solved for, because a matrix inverse cannot see the
+// difference between a stretch that is 1 on one axis — eased on the other, and
+// a line along the first — and a delta that has no fixed point at all:
+//
+// - **nothing turns.** The easing is per axis in the axes the delta was
+//   written along: `slid(scale.x, u)` and `slid(scale.y, u)`. A stretch, a
+//   shear, a move and any mixture of them land here, and each is today's.
+// - **something turns, and there is a fixed point.** The solve above.
+// - **something turns by a whole number of turns.** `L` is then the identity
+//   and `move` is nought, so the delta cannot say where the centre was:
+//   `about` carries it, and is written by nothing else.
+//
+// One difference from `played`, in the way and not at the ends: a stretch
+// eases along the axes it was written along, where `played` eases along the
+// axes the thing has as it plays. They are the same axes wherever the delta is
+// played over the frame it was written against, which is every keyframe the
+// walk reaches; they differ for a step of a repeat that has turned the thing
+// since, where this is the more faithful of the two — `stepped` already reads
+// the written axes.
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
-import { Frame, KeyframeId, Op, Stand, affineOf, linear, placed, spun } from './rig';
+import { Frame, KeyframeId, Op, Stand, affineOf, linear, placed, sheared, slid, spun, unsheared } from './rig';
 import { VertexId } from './types';
 
 /** Everything a delta changes, in one. */
@@ -119,25 +150,93 @@ export interface Key {
 }
 
 /**
- * A delta played over the frame it starts from.
+ * A delta played over the frame it starts from, all of it or `u` of the way
+ * through.
  *
  * The parameters add and multiply, and the frame is placed so that the painted
  * point lands where `move` says. Everything a turn's anchor and a stretch's
  * slide do falls out of that: see the equivalences in `key.test.ts`.
  */
-export function playedBy(f: Frame, ref: Point, d: Delta): Frame {
+export function playedBy(f: Frame, ref: Point, d: Delta, u = 1): Frame {
   const p = placed(f, ref);
+  const go = u === 1 ? d.move : movedBy(d, u);
 
   const frame = {
     ...f,
-    angle: f.angle + d.angle,
-    skew: f.skew + d.skew,
-    scale: { x: f.scale.x * d.scale.x, y: f.scale.y * d.scale.y },
+    angle: f.angle + d.angle * u,
+    skew: f.skew + d.skew * u,
+    scale: {
+      x: f.scale.x * (u === 1 ? d.scale.x : Math.pow(d.scale.x, u)),
+      y: f.scale.y * (u === 1 ? d.scale.y : Math.pow(d.scale.y, u)),
+    },
   };
 
   const v = linear(frame, ref);
 
-  return { ...frame, t: { x: p.x + d.move.x - v.x, y: p.y + d.move.y - v.y } };
+  return { ...frame, t: { x: p.x + go.x - v.x, y: p.y + go.y - v.y } };
+}
+
+/** The delta itself, `u` of the way through: its parameters that far, and the
+ * axes it was written along, which do not move. */
+function upTo(d: Delta, u: number): Delta {
+  return {
+    ...d,
+    angle: d.angle * u,
+    skew: d.skew * u,
+    scale: { x: Math.pow(d.scale.x, u), y: Math.pow(d.scale.y, u) },
+  };
+}
+
+/** Whether a turn is by a whole number of turns, so that its linear part is
+ * the identity and says nothing about where it turned. */
+function whole(angle: number): boolean {
+  return angle !== 0 && Math.abs(Math.sin(angle / 2)) < 1e-12;
+}
+
+/**
+ * Where the painted point is `u` of the way through: round the delta's fixed
+ * point, or in a line where it has none. See *Part way*.
+ */
+export function movedBy(d: Delta, u: number): Point {
+  if (d.angle === 0) {
+    // Nothing turns: each axis eases with its own stretch, in the axes the
+    // delta was written along. `slid(1, u)` is `u`, so a shear and a move go
+    // in a line and an axis that is not stretched does too.
+    const w = unsheared(d.move, d.along, d.lean);
+    const along = { x: w.x * slid(d.scale.x, u), y: w.y * slid(d.scale.y, u) };
+
+    return sheared(along, d.along, d.lean);
+  }
+
+  const fixed = fixedOf(d);
+
+  if (fixed === null) return { x: d.move.x * u, y: d.move.y * u };
+
+  // `(I − Lᵤ) · w`: where the point has swung to, about the point that stays.
+  const lu = linearOf(upTo(d, u));
+  const go = through(lu, fixed);
+
+  return { x: fixed.x - go.x, y: fixed.y - go.y };
+}
+
+/**
+ * Where the delta turns about, as an offset from the painted point, or nothing
+ * where it has no one such point: `w` with `(I − L) w = move`.
+ */
+function fixedOf(d: Delta): Point | null {
+  if (whole(d.angle)) return d.about ?? null;
+
+  const l = linearOf(d);
+  const a = 1 - l.a, b = -l.b, c = -l.c, e = 1 - l.d;
+  const det = a * e - b * c;
+  const size = Math.max(1, Math.abs(a), Math.abs(b), Math.abs(c), Math.abs(e));
+
+  if (Math.abs(det) < 1e-12 * size * size) return null;
+
+  return {
+    x: (e * d.move.x - c * d.move.y) / det,
+    y: (a * d.move.y - b * d.move.x) / det,
+  };
 }
 
 /** `R(angle) · K(skew) · S(scale)` as a matrix, with nothing translated. */
@@ -201,12 +300,13 @@ export function deltaOf(op: Op): Delta | null {
 
     case 'turn': {
       // Where the painted point goes, turning about the anchor: `(I − R) ·
-      // about`, since the anchor is `about` away from it.
-      const d = spun(op.about, op.angle);
-      const move = { x: op.about.x - d.x, y: op.about.y - d.y };
-      const whole = move.x === 0 && move.y === 0 && op.angle !== 0;
+      // about`, since the anchor is `about` away from it. By a whole number of
+      // turns it goes nowhere and the anchor is lost, so the anchor comes too.
+      if (whole(op.angle)) return { ...NOTHING, angle: op.angle, about: op.about };
 
-      return { ...NOTHING, angle: op.angle, move, ...(whole ? { about: op.about } : {}) };
+      const d = spun(op.about, op.angle);
+
+      return { ...NOTHING, angle: op.angle, move: { x: op.about.x - d.x, y: op.about.y - d.y } };
     }
 
     case 'scale':
