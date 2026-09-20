@@ -228,7 +228,18 @@ export interface Stand {
 
 export type Op = Move | Turn | Scale | Skew | Amount | Stand;
 
-export interface Entry<O extends Op = Op> {
+/** How long something written at a keyframe goes on contributing: what the
+ * counting below needs of an entry, and all of it. A key in `key.ts` is one of
+ * these too. */
+export interface Repeat {
+  /** How many keyframes it contributes to, one after another from its own: 1
+   * is once, `null` is to the end. */
+  times: number | null
+  /** Keyframes after its own where it waits. See `Entry`. */
+  skip?: ReadonlySet<KeyframeId>
+}
+
+export interface Entry<O extends Op = Op> extends Repeat {
   op: O
   /** How many keyframes it contributes to, one after another from its own: 1
    * is once, `null` is to the end. */
@@ -348,12 +359,12 @@ export interface State {
   amplitudes: ReadonlyMap<VertexId, number>
 }
 
-const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
-const NO_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
+export const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
+export const NO_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
 
 /** What a thing is before it is born, and what anything the world does not
  * know is: at rest, with nothing on it. */
-const UNBORN: State = {
+export const UNBORN: State = {
   frame: REST,
   erosion: 0,
   corners: NO_CORNERS,
@@ -768,11 +779,11 @@ function walk(
 }
 
 /** A keyframe index where the keyframe may be missing, which is never. */
-function orNever(i: number): number {
+export function orNever(i: number): number {
   return i < 0 ? Infinity : i;
 }
 
-interface Placing {
+export interface Placing {
   corner: Vertex
   birth: number
   death: number
@@ -785,7 +796,7 @@ interface Placing {
  * Under a stand, the corners are the ones it froze and the ones born since,
  * and only a death since takes one away — upstream has stopped being asked.
  */
-function counted(c: Placing, stood: { at: number, op: Stand } | null, i: number): number | null {
+export function counted(c: Placing, stood: { at: number, op: Stand } | null, i: number): number | null {
   if (stood === null) return c.birth >= 0 && c.birth <= i && c.death > i ? c.birth : null;
 
   const gone = c.death >= stood.at && c.death <= i;
@@ -870,9 +881,9 @@ function amountsAt(
  * came before it, the steps it was written over included, and what a repeat
  * does afterwards is all that is left of it.
  */
-function applications(
+export function applications(
   keyframes: readonly Keyframe[],
-  e: Entry,
+  e: Repeat,
   k: KeyframeId,
   from: number,
   i: number,
@@ -885,7 +896,7 @@ function applications(
 }
 
 /** How many times an entry written at index `j` has contributed by `i`. */
-export function counted1(keyframes: readonly Keyframe[], e: Entry, j: number, i: number): number {
+export function counted1(keyframes: readonly Keyframe[], e: Repeat, j: number, i: number): number {
   let steps = i - j;
 
   if (e.skip !== undefined) {

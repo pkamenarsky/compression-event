@@ -1,7 +1,25 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Frame, Op, played, stepped } from './rig';
-import { deltaOf, playedBy, steppedBy } from './key';
+import {
+  EMPTY_RIG,
+  Entry,
+  Frame,
+  Keyframe,
+  KeyframeId,
+  Move,
+  Op,
+  Rig,
+  Stand,
+  Timeline,
+  once,
+  played,
+  repeating,
+  stateAt,
+  stepped,
+  withKeys,
+} from './rig';
+import { Vertex, VertexId } from './types';
+import { deltaOf, keysOf, playedBy, steppedBy, walkedBy } from './key';
 
 // A handful of frames a key might be played over: at rest, moved, turned,
 // stretched, sheared, and all of it at once. What a delta does must not depend
@@ -190,4 +208,191 @@ describe('part way through, a delta goes where the operation goes', () => {
       }
     }
   });
+});
+
+// -----------------------------------------------------------------------------
+// The walk
+//
+// Random rigs of entries, played both ways: `rig.ts`'s walk over the entries,
+// and `key.ts`'s over the same rig converted to keys. Every state at every
+// keyframe has to agree — the frame, the amounts, which corners stand, where
+// they stand, and what each of them holds of its own.
+// -----------------------------------------------------------------------------
+
+/** A run of numbers that is the same every time, so a failure can be looked
+ * at twice. */
+function rolling(seed: number): () => number {
+  let s = seed >>> 0;
+
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+
+    return s / 4294967296;
+  };
+}
+
+const WALK_KEYFRAMES: Keyframe[] = Array.from({ length: 7 }, (_unused, i) => ({
+  id: i,
+  name: `v${i}`,
+  visible: true,
+}));
+
+function corner(id: number, at: Point, birth: KeyframeId, death: KeyframeId | null): Vertex {
+  return { id, at, ring: 0, birth, death };
+}
+
+const CORNERS: Vertex[] = [
+  corner(1, { x: 0, y: 0 }, 0, null),
+  corner(2, { x: 20, y: 0 }, 0, null),
+  corner(3, { x: 20, y: 20 }, 0, 5),
+  corner(4, { x: 0, y: 20 }, 2, null),
+];
+
+/** A rig of entries of every kind, with repeats, waits, corner writing and the
+ * odd stand: what the walk has to carry. */
+function someRig(seed: number): Rig {
+  const roll = rolling(seed);
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(roll() * xs.length)];
+  const span = (): number => (roll() - 0.5) * 40;
+
+  let rig = EMPTY_RIG;
+
+  for (const f of WALK_KEYFRAMES) {
+    const list: Entry[] = [];
+
+    for (let n = Math.floor(roll() * 3); n > 0; n--) {
+      const ref = { x: span(), y: span() };
+      const op: Op = pick<() => Op>([
+        () => ({ kind: 'move', by: { x: span(), y: span() } }),
+        () => ({ kind: 'turn', angle: (roll() - 0.5) * 3, ref, about: { x: span(), y: span() } }),
+        () => ({
+          kind: 'scale',
+          by: { x: 0.5 + roll(), y: 0.5 + roll() },
+          ref,
+          shift: { x: span(), y: span() },
+          along: (roll() - 0.5) * 2,
+          lean: (roll() - 0.5) * 0.5,
+        }),
+        () => ({ kind: 'skew', by: (roll() - 0.5), ref, shift: { x: span(), y: span() }, along: (roll() - 0.5) * 2 }),
+        () => ({ kind: 'erode', by: roll() * 4 }),
+        () => ({ kind: 'round', by: roll() * 2 }),
+        () => ({ kind: 'deform', by: roll() }),
+      ])();
+
+      const times = pick([1, 1, 2, 3, null]);
+      const skip = roll() < 0.2 ? new Set([f.id + 2]) : undefined;
+
+      list.push(times === 1 && skip === undefined ? once(op) : repeating(op, times, skip));
+    }
+
+    // Now and then a stand: the state outright, which nothing before it
+    // reaches past. Its numbers are made up — what is under test is that both
+    // walks stop hearing from upstream in the same way.
+    if (roll() < 0.15) {
+      const held = CORNERS.filter(() => roll() < 0.75);
+
+      list.push(once<Stand>({
+        kind: 'stand',
+        frame: { t: { x: span(), y: span() }, angle: roll() * 2, skew: roll() * 0.4, scale: { x: 0.8, y: 1.3 } },
+        erosion: roll() * 3,
+        corners: new Map(held.map(c => [c.id, { x: span(), y: span() }])),
+        depths: new Map(held.map(c => [c.id, roll() * 2])),
+        bevel: roll(),
+        amplitude: roll(),
+        bevels: new Map(held.map(c => [c.id, roll()])),
+        amplitudes: new Map(held.map(c => [c.id, roll()])),
+      }));
+    }
+
+    if (list.length > 0) rig = withKeys(rig, f.id, list);
+
+    // A corner's own: nudges, depths, bevels and amplitudes, each repeating as
+    // it pleases.
+    for (const c of CORNERS) {
+      if (roll() < 0.7) continue;
+
+      const times = pick([1, 2, null]);
+
+      if (roll() < 0.5) {
+        const was = rig.nudges.get(c.id) ?? new Map();
+        const nudges = new Map(rig.nudges);
+
+        nudges.set(c.id, new Map(was).set(f.id, repeating<Move>({ kind: 'move', by: { x: span(), y: span() } }, times)));
+        rig = { ...rig, nudges };
+      }
+      else if (roll() < 0.34) {
+        rig = { ...rig, depths: written(rig.depths, c.id, f.id, repeating({ kind: 'erode', by: roll() * 3 }, times)) };
+      }
+      else if (roll() < 0.5) {
+        rig = { ...rig, rounds: written(rig.rounds, c.id, f.id, repeating({ kind: 'round', by: roll() * 3 }, times)) };
+      }
+      else {
+        rig = { ...rig, deforms: written(rig.deforms, c.id, f.id, repeating({ kind: 'deform', by: roll() }, times)) };
+      }
+    }
+  }
+
+  return rig;
+}
+
+/** One corner's entry at one keyframe, into the map its kind is kept in. */
+function written<E>(
+  was: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
+  vertex: VertexId,
+  at: KeyframeId,
+  e: E,
+): Map<VertexId, ReadonlyMap<KeyframeId, E>> {
+  return new Map(was).set(vertex, new Map(was.get(vertex) ?? []).set(at, e));
+}
+
+function timelineOf(rig: Rig): Timeline {
+  return {
+    keyframes: WALK_KEYFRAMES,
+    rigs: new Map([[1, rig]]),
+    polygons: new Map([[1, { birth: 0, points: CORNERS }]]),
+    groups: new Map(),
+    artefacts: new Map(),
+    paths: new Map(),
+  };
+}
+
+function sameNumbers(mine: ReadonlyMap<VertexId, number>, theirs: ReadonlyMap<VertexId, number>, what: string): void {
+  expect([...mine.keys()].sort(), `${what}: which corners`).toEqual([...theirs.keys()].sort());
+
+  for (const [id, n] of theirs) expect(mine.get(id), `${what}: corner ${id}`).toBeCloseTo(n, 9);
+}
+
+describe('the walk over keys is the walk over entries', () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    test(`rig ${seed}`, () => {
+      const rig = someRig(seed);
+      const tl = timelineOf(rig);
+      const mine = walkedBy(WALK_KEYFRAMES, keysOf(rig), CORNERS, 0);
+
+      for (let i = 0; i < WALK_KEYFRAMES.length; i++) {
+        const at = WALK_KEYFRAMES[i].id;
+        const theirs = stateAt(tl, 1, at);
+        const ours = mine[i];
+
+        expect(ours, `v${at}: a state`).toBeDefined();
+        near(ours!.frame, theirs.frame, `v${at}`);
+
+        expect(ours!.erosion, `v${at}: erosion`).toBeCloseTo(theirs.erosion, 9);
+        expect(ours!.bevel, `v${at}: bevel`).toBeCloseTo(theirs.bevel, 9);
+        expect(ours!.amplitude, `v${at}: amplitude`).toBeCloseTo(theirs.amplitude, 9);
+
+        expect([...ours!.corners.keys()].sort(), `v${at}: which corners stand`)
+          .toEqual([...theirs.corners.keys()].sort());
+
+        for (const [id, p] of theirs.corners) {
+          expect(ours!.corners.get(id)!.x, `v${at}: corner ${id} x`).toBeCloseTo(p.x, 9);
+          expect(ours!.corners.get(id)!.y, `v${at}: corner ${id} y`).toBeCloseTo(p.y, 9);
+        }
+
+        sameNumbers(ours!.depths, theirs.depths, `v${at}: depths`);
+        sameNumbers(ours!.bevels, theirs.bevels, `v${at}: bevels`);
+        sameNumbers(ours!.amplitudes, theirs.amplitudes, `v${at}: amplitudes`);
+      }
+    });
+  }
 });

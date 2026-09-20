@@ -80,8 +80,37 @@
 
 import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
-import { Frame, KeyframeId, Op, Stand, affineOf, linear, placed, sheared, slid, spun, unsheared } from './rig';
-import { VertexId } from './types';
+import {
+  AMOUNTS,
+  AMOUNT_KINDS,
+  AmountKind,
+  CORNER_MAPS,
+  CornerMap,
+  Frame,
+  Keyframe,
+  KeyframeId,
+  NO_CORNERS,
+  NO_DEPTHS,
+  Op,
+  Placing,
+  REST,
+  Repeat,
+  Rig,
+  Stand,
+  State,
+  affineOf,
+  applications,
+  counted,
+  indexIn,
+  linear,
+  orNever,
+  placed,
+  sheared,
+  slid,
+  spun,
+  unsheared,
+} from './rig';
+import { Vertex, VertexId } from './types';
 
 /** Everything a delta changes, in one. */
 export interface Delta {
@@ -323,4 +352,312 @@ export function deltaOf(op: Op): Delta | null {
     case 'stand':
       return null;
   }
+}
+
+// -----------------------------------------------------------------------------
+// The walk
+//
+// The same walk `rig.ts` takes, over keys: from the thing's birth, each
+// keyframe playing the steps of repeats begun earlier, oldest first, and then
+// its own keys in order, each from the state the one before it left.
+//
+// What a key holds about single corners is not played here. A corner's move is
+// in the rest frame and its amounts are numbers, so they commute with
+// everything and with each other, and the walk counts them where it needs them
+// rather than keeping them — as the entry walk does, and for the same reason.
+// -----------------------------------------------------------------------------
+
+/** Everything written about one thing, as keys. */
+export interface KeyRig {
+  keys: ReadonlyMap<KeyframeId, readonly Key[]>
+}
+
+export const EMPTY_KEYS: KeyRig = { keys: new Map() };
+
+/** A repeat under way: the key, where it was written, and how many steps it
+ * has taken. */
+interface Running {
+  key: Key
+  steps: number
+}
+
+/**
+ * A thing's state at every keyframe, from its birth on, and nothing before it.
+ *
+ * `corners` is every corner the thing has ever had, in the rest frame, with
+ * its life; a thing without a ring has none.
+ */
+export function walkedBy(
+  keyframes: readonly Keyframe[],
+  rig: KeyRig,
+  corners: readonly Vertex[],
+  birth: KeyframeId,
+): (State | undefined)[] {
+  const n = keyframes.length;
+  const out: (State | undefined)[] = new Array(n).fill(undefined);
+  const born = indexIn(keyframes, birth);
+
+  if (born < 0) return out;
+
+  const placing: Placing[] = corners.map(c => ({
+    corner: c,
+    birth: indexIn(keyframes, c.birth),
+    death: c.death === null ? Infinity : orNever(indexIn(keyframes, c.death)),
+  }));
+
+  let frame = REST;
+  const totals: Record<AmountKind, number> = { erode: 0, round: 0, deform: 0 };
+  let running: Running[] = [];
+  let stood: { at: number, op: Stand } | null = null;
+
+  for (let i = born; i < n; i++) {
+    const at = keyframes[i].id;
+
+    const apply = (key: Key, step: number): void => {
+      if (key.stand !== undefined) {
+        frame = key.stand.frame;
+        for (const kind of AMOUNT_KINDS) totals[kind] = key.stand[AMOUNTS[kind].total];
+
+        return;
+      }
+
+      if (key.by === undefined) return;
+
+      const d = steppedBy(key.by, step);
+
+      frame = playedBy(frame, key.ref, d);
+      for (const kind of AMOUNT_KINDS) totals[kind] += d[kind];
+    };
+
+    // The steps of repeats begun earlier, oldest first. A skipped keyframe is
+    // not a step: the repeat waits over it and carries its count on.
+    const going: Running[] = [];
+
+    for (const r of running) {
+      if (r.key.skip?.has(at)) {
+        going.push(r);
+        continue;
+      }
+
+      if (r.key.times !== null && r.steps + 1 >= r.key.times) continue;
+
+      r.steps += 1;
+      apply(r.key, r.steps);
+      going.push(r);
+    }
+
+    running = going;
+
+    for (const key of rig.keys.get(at) ?? []) {
+      apply(key, 0);
+
+      if (key.stand !== undefined) {
+        stood = { at: i, op: key.stand };
+      }
+      else if (key.times === null || key.times > 1) {
+        running.push({ key, steps: 0 });
+      }
+    }
+
+    const none = placing.length === 0;
+
+    out[i] = {
+      frame,
+      erosion: totals.erode,
+      corners: none ? NO_CORNERS : standingBy(keyframes, rig, placing, stood, i),
+      depths: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'depths', stood?.op.depths, placing, stood, i),
+      bevel: totals.round,
+      amplitude: totals.deform,
+      bevels: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'rounds', stood?.op.bevels, placing, stood, i),
+      amplitudes: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'deforms', stood?.op.amplitudes, placing, stood, i),
+    };
+  }
+
+  return out;
+}
+
+/** Where every corner standing at `i` stands, in the rest frame: what a stand
+ * froze or where it was drawn, and every nudge since, however many times each
+ * has played. */
+function standingBy(
+  keyframes: readonly Keyframe[],
+  rig: KeyRig,
+  corners: readonly Placing[],
+  stood: { at: number, op: Stand } | null,
+  i: number,
+): Map<VertexId, Point> {
+  const out = new Map<VertexId, Point>();
+
+  for (const c of corners) {
+    const from = counted(c, stood, i);
+
+    if (from === null) continue;
+
+    const base = stood?.op.corners.get(c.corner.id) ?? c.corner.at;
+    let x = base.x, y = base.y;
+
+    for (const [at, list] of rig.keys) {
+      for (const key of list) {
+        const by = key.corners?.get(c.corner.id);
+
+        if (by === undefined) continue;
+
+        const times = applications(keyframes, key, at, from, i);
+
+        x += by.x * times;
+        y += by.y * times;
+      }
+    }
+
+    out.set(c.corner.id, { x, y });
+  }
+
+  return out;
+}
+
+/** One of the amounts kept by corner, for every corner standing at `i`. */
+function amountsBy(
+  keyframes: readonly Keyframe[],
+  rig: KeyRig,
+  held: 'depths' | 'rounds' | 'deforms',
+  frozen: ReadonlyMap<VertexId, number> | undefined,
+  corners: readonly Placing[],
+  stood: { at: number, op: Stand } | null,
+  i: number,
+): ReadonlyMap<VertexId, number> {
+  const out = new Map<VertexId, number>();
+
+  for (const c of corners) {
+    const from = counted(c, stood, i);
+
+    if (from === null) continue;
+
+    let d = frozen?.get(c.corner.id) ?? 0;
+
+    for (const [at, list] of rig.keys) {
+      for (const key of list) {
+        const by = key[held]?.get(c.corner.id);
+
+        if (by !== undefined) d += by * applications(keyframes, key, at, from, i);
+      }
+    }
+
+    if (d !== 0) out.set(c.corner.id, d);
+  }
+
+  return out.size === 0 ? NO_DEPTHS : out;
+}
+
+// -----------------------------------------------------------------------------
+// From entries
+//
+// What reads a file written before keys, and what the tests play both ways to
+// hold this to what `rig.ts` does.
+// -----------------------------------------------------------------------------
+
+/**
+ * A rig of entries as keys.
+ *
+ * An entry is a key that holds one channel, so the list converts one for one
+ * and keeps its order. What a corner has written about it becomes keys of its
+ * own, one per repeat at a keyframe — a nudge and a depth written by the same
+ * gesture, repeating the same way, are one key. They hold no `by`, so where
+ * they sit among the others does not matter: a corner's move is in the rest
+ * frame and commutes with everything the list does.
+ */
+export function keysOf(rig: Rig): KeyRig {
+  const keys = new Map<KeyframeId, Writing[]>();
+  let id = 0;
+
+  const list = (at: KeyframeId): Writing[] => {
+    let out = keys.get(at);
+
+    if (out === undefined) {
+      out = [];
+      keys.set(at, out);
+    }
+
+    return out;
+  };
+
+  for (const [at, entries] of rig.keys) {
+    for (const e of entries) {
+      const by = deltaOf(e.op);
+      const ref = 'ref' in e.op ? e.op.ref : ORIGIN;
+
+      list(at).push({
+        id: id++,
+        ref,
+        ...(by === null ? { stand: e.op as Stand } : { by }),
+        times: e.times,
+        ...(e.skip === undefined ? {} : { skip: e.skip }),
+      });
+    }
+  }
+
+  // A corner's own writing, gathered by keyframe and by how it repeats.
+  const mine = (at: KeyframeId, e: Repeat): Writing => {
+    const held = list(at).find(k => k.by === undefined && k.stand === undefined && sameRepeat(k, e));
+
+    if (held !== undefined) return held as Writing;
+
+    const key: Writing = { id: id++, ref: ORIGIN, times: e.times, ...(e.skip === undefined ? {} : { skip: e.skip }) };
+
+    list(at).push(key);
+
+    return key;
+  };
+
+  for (const [vertex, written] of rig.nudges) {
+    for (const [at, e] of written) {
+      const key = mine(at, e);
+
+      key.corners = new Map(key.corners ?? []).set(vertex, e.op.by);
+    }
+  }
+
+  for (const map of CORNER_MAPS) {
+    if (map === 'nudges') continue;
+
+    const held = HELD[map];
+
+    for (const [vertex, written] of rig[map]) {
+      for (const [at, e] of written) {
+        const key = mine(at, e);
+
+        key[held] = new Map(key[held] ?? []).set(vertex, e.op.by);
+      }
+    }
+  }
+
+  return { keys };
+}
+
+const ORIGIN: Point = { x: 0, y: 0 };
+
+/** A key while it is being written into: the maps a corner's writing goes in,
+ * which are read-only on a `Key` and are filled here before it is one. */
+interface Writing extends Key {
+  corners?: Map<VertexId, Point>
+  depths?: Map<VertexId, number>
+  rounds?: Map<VertexId, number>
+  deforms?: Map<VertexId, number>
+}
+
+/** Which of a key's corner maps each of a rig's is. */
+const HELD = {
+  nudges: 'corners',
+  depths: 'depths',
+  rounds: 'rounds',
+  deforms: 'deforms',
+} as const satisfies { [M in CornerMap]: keyof Key };
+
+function sameRepeat(a: Repeat, b: Repeat): boolean {
+  if (a.times !== b.times) return false;
+
+  const x = a.skip, y = b.skip;
+
+  if (x === undefined || y === undefined) return x === y || (x ?? y)!.size === 0;
+
+  return x.size === y.size && [...x].every(k => y.has(k));
 }
