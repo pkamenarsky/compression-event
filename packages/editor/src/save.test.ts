@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
-import { FORMAT, restored, saved } from './save';
+import { FORMAT, SavedRig, keysOfSaved, restored, restoredKeyRig, saved, savedKeyRig, savedRig } from './save';
 import {
   TOP,
   addArtefact,
@@ -14,8 +14,23 @@ import {
   rigOf,
   withRig,
 } from './scene';
-import { Op, Rig, cornerRounded, deepened, edgeDeformed, nudged, once, repeating } from './rig';
-import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind } from './types';
+import {
+  EMPTY_RIG,
+  Keyframe,
+  Op,
+  Rig,
+  Timeline,
+  cornerRounded,
+  deepened,
+  edgeDeformed,
+  nudged,
+  once,
+  repeating,
+  stateAt,
+  withKeys,
+} from './rig';
+import { NOTHING, keysOf, walkedBy } from './key';
+import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
 /**
@@ -362,5 +377,133 @@ describe('save', () => {
     const after = trip({ ...before, world: { ...before.world, keyframes } });
 
     expect(after.world.keyframes).toEqual(keyframes);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Keys
+//
+// What a 24 keeps, and what everything older is read into. Nothing writes one
+// yet — see `PLAN-keys.md` — so what is held to here is that a rig of keys
+// survives the trip whole, and that a rig of entries read as keys plays the
+// same as the entries did.
+// -----------------------------------------------------------------------------
+
+describe('keys in a file', () => {
+  const KEYFRAMES: Keyframe[] = Array.from({ length: 6 }, (_unused, i) => ({ id: i, name: `v${i}`, visible: true }));
+
+  const CORNERS: Vertex[] = [
+    { id: 10, at: { x: 0, y: 0 }, ring: 0, birth: 0, death: null },
+    { id: 11, at: { x: 20, y: 0 }, ring: 0, birth: 0, death: null },
+    { id: 12, at: { x: 20, y: 20 }, ring: 0, birth: 1, death: 4 },
+  ];
+
+  /** A rig of entries with something of every kind in it, including a stand
+   * and a corner's own writing. */
+  function entries(): Rig {
+    let rig = withKeys(EMPTY_RIG, 0, [
+      once(move(10, 5)),
+      repeating<Op>({ kind: 'turn', angle: 0.4, ref: { x: 3, y: 1 }, about: { x: 20, y: 0 } }, 3),
+    ]);
+
+    rig = withKeys(rig, 1, [
+      repeating<Op>({ kind: 'scale', by: { x: 1.3, y: 0.7 }, ref: { x: 3, y: 1 }, shift: { x: 2, y: -1 }, along: 0.2, lean: 0.1 }, null, new Set([3])),
+      once(erode(2)),
+    ]);
+
+    rig = withKeys(rig, 2, [
+      once<Op>({
+        kind: 'stand',
+        frame: { t: { x: 5, y: 6 }, angle: 0.3, skew: 0.1, scale: { x: 1.2, y: 0.9 } },
+        erosion: 1,
+        corners: new Map([[10, { x: 1, y: 1 }]]),
+        depths: new Map([[10, 0.5]]),
+        bevel: 0.25,
+        amplitude: 0.75,
+        bevels: new Map([[10, 0.1]]),
+        amplitudes: new Map([[10, 0.2]]),
+      }),
+    ]);
+
+    rig = nudged(rig, 11, 1, { x: 4, y: -2 });
+    rig = deepened(rig, 11, 3, 1.5);
+    rig = cornerRounded(rig, 12, 2, 0.5);
+    rig = edgeDeformed(rig, 12, 2, 0.25);
+
+    return rig;
+  }
+
+  test('a rig of keys survives the trip whole', () => {
+    const was = keysOf(entries());
+    const now = restoredKeyRig(JSON.parse(JSON.stringify(savedKeyRig(was))) as ReturnType<typeof savedKeyRig>);
+
+    expect([...now.keys.keys()]).toEqual([...was.keys.keys()]);
+
+    for (const [at, list] of was.keys) {
+      const mine = now.keys.get(at)!;
+
+      expect(mine.length, `v${at}: how many keys`).toBe(list.length);
+
+      for (let i = 0; i < list.length; i++) {
+        expect(mine[i], `v${at}: key ${i}`).toEqual(list[i]);
+      }
+    }
+  });
+
+  test('its sets and maps come back as sets and maps', () => {
+    const now = restoredKeyRig(savedKeyRig(keysOf(entries())));
+    const all = [...now.keys.values()].flat();
+
+    expect(all.some(k => k.skip instanceof Set)).toBe(true);
+    expect(all.some(k => k.corners instanceof Map)).toBe(true);
+    expect(all.some(k => k.stand?.corners instanceof Map)).toBe(true);
+  });
+
+  test('a delta saved without a field reads as one that does not do it', () => {
+    const key = restoredKeyRig({ keys: [[0, [{ id: 0, ref: { x: 0, y: 0 }, by: { erode: 3 }, times: 1 }]]] })
+      .keys.get(0)![0];
+
+    expect(key.by).toEqual({ ...NOTHING, erode: 3 });
+  });
+
+  test('a timeline of entries read as keys plays what the entries play', () => {
+    const rig = entries();
+    const tl: Timeline = {
+      keyframes: KEYFRAMES,
+      rigs: new Map([[1, rig]]),
+      polygons: new Map([[1, { birth: 0, points: CORNERS }]]),
+      groups: new Map(),
+      artefacts: new Map(),
+      paths: new Map(),
+    };
+
+    // Through a file, as opening one goes: entries out, keys in.
+    const file = JSON.parse(JSON.stringify(savedRig(rig))) as SavedRig;
+    const mine = walkedBy(KEYFRAMES, keysOfSaved(file), CORNERS, 0);
+
+    for (let i = 0; i < KEYFRAMES.length; i++) {
+      const theirs = stateAt(tl, 1, KEYFRAMES[i].id);
+      const ours = mine[i]!;
+
+      expect(ours.frame.t.x, `v${i}: t.x`).toBeCloseTo(theirs.frame.t.x, 9);
+      expect(ours.frame.t.y, `v${i}: t.y`).toBeCloseTo(theirs.frame.t.y, 9);
+      expect(ours.frame.angle, `v${i}: angle`).toBeCloseTo(theirs.frame.angle, 12);
+      expect(ours.frame.skew, `v${i}: skew`).toBeCloseTo(theirs.frame.skew, 12);
+      expect(ours.frame.scale.x, `v${i}: scale.x`).toBeCloseTo(theirs.frame.scale.x, 12);
+      expect(ours.frame.scale.y, `v${i}: scale.y`).toBeCloseTo(theirs.frame.scale.y, 12);
+      expect(ours.erosion, `v${i}: erosion`).toBeCloseTo(theirs.erosion, 9);
+      expect(ours.bevel, `v${i}: bevel`).toBeCloseTo(theirs.bevel, 9);
+      expect(ours.amplitude, `v${i}: amplitude`).toBeCloseTo(theirs.amplitude, 9);
+      expect([...ours.corners.keys()].sort(), `v${i}: which corners`).toEqual([...theirs.corners.keys()].sort());
+
+      for (const [id, p] of theirs.corners) {
+        expect(ours.corners.get(id)!.x, `v${i}: corner ${id} x`).toBeCloseTo(p.x, 9);
+        expect(ours.corners.get(id)!.y, `v${i}: corner ${id} y`).toBeCloseTo(p.y, 9);
+      }
+
+      for (const [id, d] of theirs.depths) expect(ours.depths.get(id), `v${i}: depth ${id}`).toBeCloseTo(d, 9);
+      for (const [id, d] of theirs.bevels) expect(ours.bevels.get(id), `v${i}: bevel ${id}`).toBeCloseTo(d, 9);
+      for (const [id, d] of theirs.amplitudes) expect(ours.amplitudes.get(id), `v${i}: amplitude ${id}`).toBeCloseTo(d, 9);
+    }
   });
 });

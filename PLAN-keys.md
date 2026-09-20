@@ -181,10 +181,22 @@ because every entry is a key that holds one channel.
 
 ### 2 — the file
 
-Format 24. Entries become keys one for one; the corner maps fold into keys at
-their keyframe — one key per corner where its repeat differs from the thing's,
-which is exact and rare. Round-trip tests, and the golden baseline re-baked
-and diffed to nothing.
+The shape a 24 keeps, and the way in from everything older. A key is nearly
+JSON as it stands — its delta is numbers and points — so only its maps, its
+set and its stand are written out, and a delta is read field by field over the
+one that does nothing, so a file saved before a field existed reads as not
+doing it. Entries become keys one for one; a corner's own writing is gathered
+into keys of its own, one per repeat at a keyframe.
+
+Held to by: a rig of keys through `JSON.parse(JSON.stringify(…))` and back
+whole; a rig of entries read through a file as keys playing what the entries
+play; and every world in `scratch/` a current format can open, read both ways
+and compared thing by thing, keyframe by keyframe. Eight corner entries across
+those files gather into two keys.
+
+`FORMAT` stays 23 until the world itself holds keys, since nothing can write a
+24 before then; the golden baseline is re-baked with the wiring, for the same
+reason.
 
 ### 3 — editing
 
