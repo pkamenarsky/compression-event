@@ -1,10 +1,10 @@
 // -----------------------------------------------------------------------------
-// Real files, read as keys
+// Real files, converted
 //
-// Every world in `scratch/` that this can open, restored twice: once as
-// entries, the way the editor reads it today, and once through `keysOfSaved`.
-// Every thing in it has to stand in the same place at every keyframe, with the
-// same amounts and the same corners.
+// Every world in `scratch/` that the converter takes, taken: read as
+// operations, written as keys, and opened. What is checked is that nothing
+// refuses, and that everything the file holds stands somewhere real at every
+// keyframe with the corners its life says it has.
 //
 // What the random rigs in `key.test.ts` cannot say: these are worlds somebody
 // made by hand, with groups, deaths, and whatever repeats a hand actually
@@ -13,96 +13,66 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
+import { NEWEST, OLDEST, Old, converted } from './convert';
 import { Saved, restored } from './save';
-import { Keyframe, State, stateAt } from './rig';
-import { walkedBy } from './rig';
-import { Id, Vertex, World } from './types';
+import { stateAt } from './rig';
+import { Id, World, standing } from './types';
 
 const here = new URL('../../../scratch/', import.meta.url);
 
-/** The worlds this reads: a file the current format can open, and nothing
- * older — the converter (`pnpm convert`) is what takes those. */
-function worlds(): [string, Saved][] {
+/** The worlds the converter takes: a 20 through to a 23. Older than that is
+ * `convert-19-20.ts`, and this is not its test. */
+function worlds(): [string, Old][] {
   return readdirSync(here)
     .filter(name => name.endsWith('.json'))
-    .map(name => [name, JSON.parse(readFileSync(new URL(name, here), 'utf8')) as Saved] as [string, Saved])
-    .filter(([, file]) => file.format >= 20);
+    .map(name => [name, JSON.parse(readFileSync(new URL(name, here), 'utf8')) as Old] as [string, Old])
+    .filter(([, file]) => file.format >= OLDEST && file.format <= NEWEST);
 }
 
-/** Every thing with a timeline, and the corners it has ever had. */
-function things(world: World): [Id, readonly Vertex[]][] {
-  return [...world.rigs.keys()].map(id => [id, world.polygons.get(id)?.points ?? []]);
+/** Every thing with a timeline, and when it begins. */
+function things(world: World): Id[] {
+  return [...world.rigs.keys()];
 }
 
-/** When a thing begins: a group's is the first keyframe, having none of its
- * own. */
-function birthOf(world: World, id: Id): number | null {
-  const first = world.keyframes[0];
-
-  if (world.groups.has(id)) return first === undefined ? null : first.id;
-
-  const it = world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
-
-  return it?.birth ?? null;
-}
-
-function same(mine: State, theirs: State, what: string): void {
-  expect(mine.frame.t.x, `${what}: t.x`).toBeCloseTo(theirs.frame.t.x, 6);
-  expect(mine.frame.t.y, `${what}: t.y`).toBeCloseTo(theirs.frame.t.y, 6);
-  expect(mine.frame.angle, `${what}: angle`).toBeCloseTo(theirs.frame.angle, 9);
-  expect(mine.frame.skew, `${what}: skew`).toBeCloseTo(theirs.frame.skew, 9);
-  expect(mine.frame.scale.x, `${what}: scale.x`).toBeCloseTo(theirs.frame.scale.x, 9);
-  expect(mine.frame.scale.y, `${what}: scale.y`).toBeCloseTo(theirs.frame.scale.y, 9);
-  expect(mine.erosion, `${what}: erosion`).toBeCloseTo(theirs.erosion, 6);
-  expect(mine.bevel, `${what}: bevel`).toBeCloseTo(theirs.bevel, 6);
-  expect(mine.amplitude, `${what}: amplitude`).toBeCloseTo(theirs.amplitude, 6);
-
-  expect([...mine.corners.keys()].sort(), `${what}: which corners`).toEqual([...theirs.corners.keys()].sort());
-
-  for (const [id, p] of theirs.corners) {
-    expect(mine.corners.get(id)!.x, `${what}: corner ${id} x`).toBeCloseTo(p.x, 6);
-    expect(mine.corners.get(id)!.y, `${what}: corner ${id} y`).toBeCloseTo(p.y, 6);
-  }
-
-  for (const held of ['depths', 'bevels', 'amplitudes'] as const) {
-    expect([...mine[held].keys()].sort(), `${what}: which ${held}`).toEqual([...theirs[held].keys()].sort());
-
-    for (const [id, n] of theirs[held]) expect(mine[held].get(id), `${what}: ${held} ${id}`).toBeCloseTo(n, 6);
-  }
-}
-
-describe('a world read as keys stands where it stood', () => {
+describe('a world converts and opens', () => {
   const all = worlds();
 
-  test('there are worlds to read', () => {
+  test('there are worlds to convert', () => {
     expect(all.length).toBeGreaterThan(0);
   });
 
   for (const [name, file] of all) {
     test(name, () => {
-      const world = restored(file).world;
-      const keyframes: readonly Keyframe[] = world.keyframes;
-      const tl = { ...world, rigs: world.rigs };
+      const out = converted(file);
 
-      for (const [id, corners] of things(world)) {
-        const birth = birthOf(world, id);
+      expect(out, name).not.toHaveProperty('refused');
 
-        if (birth === null) continue;
+      const world = restored(JSON.parse(JSON.stringify(out)) as Saved).world;
 
-        const rig = world.rigs.get(id)!;
+      expect(world.keyframes).toEqual(file.world.keyframes);
+      expect([...world.rigs.keys()].sort()).toEqual(file.world.rigs.map(([id]) => id).sort());
 
-        // What the world holds, which is what reading the file made of it.
-        for (const keys of [rig]) {
-          const mine = walkedBy(keyframes, keys, corners, birth).states;
+      for (const id of things(world)) {
+        for (const k of world.keyframes) {
+          const state = stateAt(world, id, k.id);
 
-          for (let i = 0; i < keyframes.length; i++) {
-            const at = keyframes[i].id;
-            const theirs = stateAt(tl, id, at);
+          expect(Number.isFinite(state.frame.t.x), `${name}: thing ${id} at v${k.id}`).toBe(true);
+          expect(Number.isFinite(state.frame.angle)).toBe(true);
+          expect(state.frame.scale.x).not.toBe(0);
 
-            if (mine[i] === undefined) continue;
+          const polygon = world.polygons.get(id);
 
-            same(mine[i]!, theirs, `${name}: thing ${id} at v${at}`);
-          }
+          if (polygon === undefined) continue;
+
+          // The corners standing there are the ones whose lives say so. Past
+          // the polygon's own death the walk goes on — a death is about what
+          // is drawn — so there is nothing to say about it here.
+          const upto = new Set(world.keyframes.slice(0, world.keyframes.findIndex(f => f.id === k.id) + 1).map(f => f.id));
+
+          if (!standing(polygon, upto)) continue;
+
+          expect([...state.corners.keys()].sort(), `${name}: thing ${id} at v${k.id}`)
+            .toEqual(polygon.points.filter(c => standing(c, upto)).map(c => c.id).sort());
         }
       }
     });

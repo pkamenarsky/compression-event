@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "bench": "vitest run --config bench/vitest.config.ts",
-    "convert": "vite-node scripts/convert-19-20.ts --"
+    "convert": "vite-node scripts/convert-23-24.ts --",
+    "convert-19": "vite-node scripts/convert-19-20.ts --"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

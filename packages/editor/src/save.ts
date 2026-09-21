@@ -42,45 +42,30 @@ import {
 import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
 import { bakedLevel } from './export';
-import { Amount, Entry, Frame, Move, Op, Rig, Stand } from './rig';
-import { Delta, Key, KeyRig, NOTHING, keysOf } from './rig';
+import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
 
 /**
- * 23: the view is where the editor was looking and nothing else — see `Look`.
- * A 20, 21 or 22 also says how big the canvas was and on what screen, which is
- * this window's business rather than the file's, and is dropped on the way in.
+ * The format this reads and writes, and the only one it does.
  *
- * 22: effects — which a thing has and how (`World.effects`, a corner's own in
- * `cornerEffects`), and the rounds and deforms in its timeline, a stand's
- * included. A 21 is the same with none, and is read as that; its bake stands,
- * since a world without effects bakes as it did. A deform's `jitter` and
- * `clear` came later in 22, and are nought and off where a file has none; a round's `verticals` and
- * `ends` came and went, and are dropped; a round was first a number of
- * `segments`, and reads as a chamfer where that was one and at the precision
- * a round starts with otherwise, and one without a `tension` at the tension
- * one starts with; and a stand's bevels were first called its
- * radius and radii, which are read as them.
+ * 24: what happens to a thing is keys — one delta per key, corners and all;
+ * see *Keys* in `rig.ts`. Everything before it is a converter's business:
+ * `convert.ts` takes a 20 through to a 23, whose timelines are lists of
+ * operations, and `scripts/convert-19-20.ts` takes a 19 to a 21. What each of
+ * those said is written down there rather than here, where a reading of it
+ * would have to be carried for ever.
  *
- * 21: a frame has a skew, and a scale the skew its axes had — see `Frame`. A
- * 20 is the same with every skew nought, and is read as that; its bake, which
- * is in a layout the game no longer reads, is left behind to be baked again.
- *
- * 20: what happens to a thing is a list of operations per keyframe — see
- * `rig.ts` — rather than a layer per version holding one transform for it.
- *
- * Nothing older is read. A layer is a transform about the world origin
- * composed onto everything before it, and an operation is a turn about a point
- * painted onto the thing, or a move that no later turn reaches: there is no
- * list of operations that *is* a stack of layers without inventing where every
- * one of them was aimed. So a file from before is refused rather than opened
- * looking almost like it did.
- *
- * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
+ * A file is one shape, and this is the shape.
  */
 export const FORMAT = 24;
 
-/** The oldest that still says something this can read without inventing it. */
-const OLDEST = 20;
+/**
+ * The oldest this reads, which is the one it writes.
+ *
+ * Anything older is a converter's business — `pnpm convert`, and `convert.ts`
+ * beside this — rather than a shape carried here for ever. What that leaves is
+ * one reading of one format, which is the whole of what a file means.
+ */
+const OLDEST = FORMAT;
 
 /**
  * Where the editor was looking.
@@ -113,13 +98,10 @@ export interface Saved {
     paths: [PathId, Path][]
     start: Start
     keyframes: Keyframe[]
-    /** Entries in a 23 and older, keys in a 24. See `SavedKeyRig`. */
-    rigs: [Id, SavedRig | SavedKeyRig][]
-    /** Absent is none, which is every file from before there were any. */
-    flags?: [Id, Flags][]
-    /** Absent is none: a 21. */
-    effects?: [Id, Effects][]
-    cornerEffects?: [VertexId, Partial<Effects>][]
+    rigs: [Id, SavedKeyRig][]
+    flags: [Id, Flags][]
+    effects: [Id, Effects][]
+    cornerEffects: [VertexId, Partial<Effects>][]
   }
   /**
    * The bake, where there was one: every span of it that still stood when the
@@ -135,55 +117,6 @@ export interface Saved {
    * one in the middle of everything anyone would read.
    */
   baked?: string
-}
-
-/** A timeline with its maps written out as entries. */
-export interface SavedRig {
-  keys: [KeyframeId, SavedEntry[]][]
-  nudges: [VertexId, [KeyframeId, SavedEntry][]][]
-  depths: [VertexId, [KeyframeId, SavedEntry][]][]
-  /** Absent in a 21, which had none. */
-  rounds?: [VertexId, [KeyframeId, SavedEntry][]][]
-  deforms?: [VertexId, [KeyframeId, SavedEntry][]][]
-}
-
-export interface SavedEntry {
-  op: SavedOp
-  times: number | null
-  /** Absent is none. */
-  skip?: KeyframeId[]
-  /** Absent is none. */
-  gesture?: number
-}
-
-/** A stand with its maps written out as entries. */
-export interface SavedStand {
-  kind: 'stand'
-  frame: Frame
-  erosion: number
-  corners: [VertexId, Point][]
-  depths: [VertexId, number][]
-  /** Absent in a 21, where they are nought. */
-  bevel?: number
-  amplitude?: number
-  bevels?: [VertexId, number][]
-  amplitudes?: [VertexId, number][]
-  /** What a 22 first called the bevels, when they were radii. */
-  radius?: number
-  radii?: [VertexId, number][]
-}
-
-/** An operation, with a stand's two maps written out as entries. */
-export type SavedOp = Exclude<Op, { kind: 'stand' }> | SavedStand;
-
-/**
- * A timeline of keys: what a 24 keeps, and what everything older is read into.
- *
- * A key is nearly JSON as it stands — its delta is numbers and points — so
- * only its maps and its set are written out. See `Key` in `key.ts`.
- */
-export interface SavedKeyRig {
-  keys: [KeyframeId, SavedKey[]][]
 }
 
 export interface SavedKey {
@@ -230,81 +163,6 @@ export function saved(state: EditorState): Saved {
   };
 }
 
-export function savedRig(rig: Rig): SavedRig {
-  const corners = (m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry>>): [VertexId, [KeyframeId, SavedEntry][]][] =>
-    [...m].map(([c, map]) => [c, [...map].map(([k, e]) => [k, savedEntry(e)])]);
-
-  return {
-    keys: [...rig.keys].map(([k, list]) => [k, list.map(savedEntry)]),
-    nudges: corners(rig.nudges),
-    depths: corners(rig.depths),
-    rounds: corners(rig.rounds),
-    deforms: corners(rig.deforms),
-  };
-}
-
-/** A stand's maps written out, which is all that stops one from being JSON. */
-function savedStand(op: Stand): SavedStand {
-  return {
-    kind: 'stand',
-    frame: op.frame,
-    erosion: op.erosion,
-    corners: [...op.corners],
-    depths: [...op.depths],
-    bevel: op.bevel,
-    amplitude: op.amplitude,
-    bevels: [...op.bevels],
-    amplitudes: [...op.amplitudes],
-  };
-}
-
-/** A stand read back, filling in what the formats before it did not keep. */
-function restoredStand(op: SavedStand): Stand {
-  return {
-    kind: 'stand',
-    // A 20 has no skews: absent is nought.
-    frame: { ...op.frame, skew: op.frame.skew ?? 0 },
-    erosion: op.erosion,
-    corners: new Map(op.corners),
-    depths: new Map(op.depths),
-    bevel: op.bevel ?? op.radius ?? 0,
-    amplitude: op.amplitude ?? 0,
-    bevels: new Map(op.bevels ?? op.radii ?? []),
-    amplitudes: new Map(op.amplitudes ?? []),
-  };
-}
-
-function savedEntry(e: Entry): SavedEntry {
-  const op: SavedOp = e.op.kind === 'stand' ? savedStand(e.op) : e.op;
-
-  const out: SavedEntry = e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
-
-  return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
-}
-
-function restoredEntry(e: SavedEntry): Entry {
-  const op: Op = e.op.kind === 'stand'
-    ? restoredStand(e.op)
-    : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
-
-  const out: Entry = e.skip === undefined || e.skip.length === 0 ? { op, times: e.times } : { op, times: e.times, skip: new Set(e.skip) };
-
-  return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
-}
-
-function restoredRig(rig: SavedRig): Rig {
-  const corners = <O extends Op>(m: [VertexId, [KeyframeId, SavedEntry][]][] = []): Map<VertexId, Map<KeyframeId, Entry<O>>> =>
-    new Map(m.map(([c, map]) => [c, new Map(map.map(([k, e]) => [k, restoredEntry(e) as Entry<O>]))]));
-
-  return {
-    keys: new Map(rig.keys.map(([k, list]) => [k, list.map(restoredEntry)])),
-    nudges: corners<Move>(rig.nudges),
-    depths: corners<Amount<'erode'>>(rig.depths),
-    rounds: corners<Amount<'round'>>(rig.rounds),
-    deforms: corners<Amount<'deform'>>(rig.deforms),
-  };
-}
-
 export function restored(file: Saved): EditorState {
   if (file.format > FORMAT || file.format < OLDEST) {
     throw new Error(`state file is format ${file.format}, and this reads ${OLDEST} to ${FORMAT}`);
@@ -318,15 +176,10 @@ export function restored(file: Saved): EditorState {
     paths: new Map(file.world.paths),
     nextId: file.world.nextId,
     keyframes: file.world.keyframes,
-    // A 23 and older holds entries, which are read as the keys they convert
-    // into; a 24 holds keys. See `keysOfSaved`.
-    rigs: new Map(file.world.rigs.map(([id, rig]) => [
-      id,
-      file.format >= 24 ? restoredKeyRig(rig as SavedKeyRig) : keysOfSaved(rig as SavedRig),
-    ])),
-    flags: new Map(file.world.flags ?? []),
-    effects: new Map((file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)])),
-    cornerEffects: new Map((file.world.cornerEffects ?? []).map(([c, fx]) => [c, optioned(fx)])),
+    rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredKeyRig(rig)])),
+    flags: new Map(file.world.flags),
+    effects: new Map(file.world.effects),
+    cornerEffects: new Map(file.world.cornerEffects),
   };
 
   return {
@@ -462,30 +315,6 @@ export function upload(then: (state: EditorState) => void): void {
   input.click();
 }
 
-/** Effects as this reads them, from whenever in 22 they were saved: a
- * deform's `jitter` and `clear` came after the format did, and a file
- * without them has neither; a round's `verticals` and `ends` came and went, and its `segments`
- * became a precision. */
-function optioned<E extends Partial<Effects>>(fx: E): E {
-  return {
-    ...fx,
-    ...(fx.round === undefined ? {} : { round: rounding(fx.round) }),
-    ...(fx.deform === undefined ? {} : { deform: { ...REMEMBERED.deform, ...fx.deform } }),
-  };
-}
-
-/** A round as saved, from whenever in 22: see `FORMAT`. */
-function rounding(round: Effects['round'] & object): Options['round'] {
-  const was = round as Partial<Options['round']> & { segments?: number };
-
-  return {
-    precision: was.precision ?? REMEMBERED.round.precision,
-    tension: was.tension ?? REMEMBERED.round.tension,
-    chamfer: was.chamfer ?? was.segments === 1,
-    ...(was.off === undefined ? {} : { off: was.off }),
-  };
-}
-
 
 // -----------------------------------------------------------------------------
 // Keys
@@ -501,6 +330,55 @@ function pairs<T>(m: ReadonlyMap<VertexId, T> | undefined): [VertexId, T][] | un
 
 function only<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+}
+
+/** A stand's maps written out, which is all that stops one from being JSON. */
+function savedStand(op: Stand): SavedStand {
+  return {
+    kind: 'stand',
+    frame: op.frame,
+    erosion: op.erosion,
+    corners: [...op.corners],
+    depths: [...op.depths],
+    bevel: op.bevel,
+    amplitude: op.amplitude,
+    bevels: [...op.bevels],
+    amplitudes: [...op.amplitudes],
+  };
+}
+
+/** A stand read back, maps and all. */
+function restoredStand(op: SavedStand): Stand {
+  return {
+    kind: 'stand',
+    frame: op.frame,
+    erosion: op.erosion,
+    corners: new Map(op.corners),
+    depths: new Map(op.depths),
+    bevel: op.bevel,
+    amplitude: op.amplitude,
+    bevels: new Map(op.bevels),
+    amplitudes: new Map(op.amplitudes),
+  };
+}
+
+/** A stand with its maps written out as entries. */
+export interface SavedStand {
+  kind: 'stand'
+  frame: Frame
+  erosion: number
+  corners: [VertexId, Point][]
+  depths: [VertexId, number][]
+  bevel: number
+  amplitude: number
+  bevels: [VertexId, number][]
+  amplitudes: [VertexId, number][]
+}
+
+/** The timelines as a 24 keeps them: a key is nearly JSON as it stands, so
+ * only its maps, its set and its stand are written out. */
+export interface SavedKeyRig {
+  keys: [KeyframeId, SavedKey[]][]
 }
 
 export function savedKeyRig(rig: KeyRig): SavedKeyRig {
@@ -543,11 +421,4 @@ function restoredKey(key: SavedKey): Key {
     stand: key.stand === undefined ? undefined : restoredStand(key.stand),
     group: key.group,
   });
-}
-
-/** A timeline saved as entries, read as keys: what opening anything older than
- * a 24 goes through. One key per entry, and a corner's own writing gathered
- * into keys of its own — see `keysOf` in `key.ts`. */
-export function keysOfSaved(rig: SavedRig): KeyRig {
-  return keysOf(restoredRig(rig));
 }

@@ -198,6 +198,11 @@ those files gather into two keys.
 24 before then; the golden baseline is re-baked with the wiring, for the same
 reason.
 
+Everything older than a 24 ends up in `convert.ts` rather than in `save.ts`: a
+format is a thing a file *is*, not a reading the editor carries for ever.
+`save.ts` reads one shape and writes the same one, and `pnpm convert` takes a
+20 through to a 23 and writes a 24.
+
 ### 3 — the editor onto the keys
 
 The switch, in four commits, each of them green. What makes it possible to

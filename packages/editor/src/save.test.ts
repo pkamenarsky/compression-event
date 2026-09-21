@@ -1,17 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
-import {
-  FORMAT,
-  Saved,
-  SavedKeyRig,
-  SavedRig,
-  keysOfSaved,
-  restored,
-  restoredKeyRig,
-  saved,
-  savedKeyRig,
-  savedRig,
-} from './save';
+import { FORMAT, SavedKeyRig, restored, restoredKeyRig, saved, savedKeyRig } from './save';
 import {
   TOP,
   addArtefact,
@@ -96,23 +85,6 @@ function trip(state: EditorState): EditorState {
   return restored(JSON.parse(JSON.stringify(saved(state))));
 }
 
-/**
- * A file with its timelines written as entries, the way everything before a 24
- * wrote them: what the tests of older formats start from. See `FORMAT`.
- */
-function asOld(file: Saved): Saved {
-  const out = JSON.parse(JSON.stringify(file)) as Saved;
-
-  // A 23: the last format that wrote entries. See `FORMAT`.
-  out.format = 23;
-  out.world.rigs = out.world.rigs.map(([id, rig]) => [
-    id,
-    savedRig(entriesOf(restoredKeyRig(rig as SavedKeyRig))),
-  ]);
-
-  return JSON.parse(JSON.stringify(out)) as Saved;
-}
-
 describe('save', () => {
   test('a state survives the trip through a file', () => {
     const before = world();
@@ -188,70 +160,6 @@ describe('save', () => {
     expect(after.world).toEqual(w);
   });
 
-  test('a 21, which had no effects, reads as one with none', () => {
-    const before = world();
-    const file = asOld(saved(before));
-
-    file.format = 21;
-    delete file.world.effects;
-    delete file.world.cornerEffects;
-
-    for (const [, rig] of file.world.rigs as [Id, SavedRig][]) {
-      delete rig.rounds;
-      delete rig.deforms;
-    }
-
-    expect(restored(file).world).toEqual(before.world);
-  });
-
-  test('a stand saved when its bevels were radii keeps them', () => {
-    const before = world();
-    const [id] = [...before.world.polygons.keys()];
-    const corner = before.world.polygons.get(id)!.points[0].id;
-    let w = wrote(before.world, 1, id, { kind: 'round', by: 4 });
-
-    w = withRig(w, id, cornerRounded(rigOf(w, id), corner, 1, 3));
-    w = keyed(w, 2, id, [once(handed(w, 2, id))]);
-
-    const file = asOld(saved({ ...before, world: w }));
-    let stands = 0;
-
-    for (const [, rig] of file.world.rigs as [Id, SavedRig][]) {
-      for (const [, entries] of rig.keys) {
-        for (const e of entries) {
-          if (e.op.kind !== 'stand') continue;
-
-          stands++;
-          e.op.radius = e.op.bevel;
-          e.op.radii = e.op.bevels;
-          delete e.op.bevel;
-          delete e.op.bevels;
-        }
-      }
-    }
-
-    expect(stands).toBeGreaterThan(0);
-    expect(restored(file).world).toEqual(w);
-  });
-
-  test('effects saved with segments, verticals and no jitter read with a precision, without verticals and with none', () => {
-    const before = world();
-    const [id] = [...before.world.polygons.keys()];
-    const corner = before.world.polygons.get(id)!.points[0].id;
-    const file = JSON.parse(JSON.stringify(saved(before)));
-
-    file.world.effects = [[id, { round: { segments: 3, verticals: false }, deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out' } }]];
-    file.world.cornerEffects = [[corner, { round: { segments: 1, verticals: true, off: true } }]];
-
-    const w = restored(file).world;
-
-    expect(w.effects.get(id)).toEqual({
-      round: { precision: 0.5, tension: 0.5, chamfer: false },
-      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
-    });
-    expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
-  });
-
   test('the polygons keep their ids, not their positions in a list', () => {
     const before = world();
     const ids = [...before.world.polygons.keys()];
@@ -259,60 +167,6 @@ describe('save', () => {
 
     expect(file.world.polygons.map(([id]) => id)).toEqual(ids);
     expect([...restored(file).world.polygons.keys()]).toEqual(ids);
-  });
-
-  test('a file from a format this does not read is refused', () => {
-    expect(() => restored({ ...saved(world()), format: FORMAT + 1 })).toThrow(/format/);
-  });
-
-  test('and so is one from before timelines, rather than being half-read', () => {
-    // A layer cannot be read as operations without inventing where every one
-    // of them was aimed. See `FORMAT`.
-    expect(() => restored({ ...saved(world()), format: 19 })).toThrow(/format/);
-  });
-
-  test('a 20, which had no skews, reads as one with every skew nought', () => {
-    const before = world();
-    const id = [...before.world.polygons.keys()][0];
-    const rig: Rig = {
-      keys: new Map([[0, [
-        once<Op>({ kind: 'scale', by: { x: 2, y: 1 }, ref: { x: 0, y: 0 }, shift: { x: 0, y: 0 }, along: 0.3, lean: 0 }),
-        once<Op>({
-          kind: 'stand',
-          frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
-          erosion: 0,
-          corners: new Map(),
-          depths: new Map(),
-          bevel: 0,
-          amplitude: 0,
-          bevels: new Map(),
-          amplitudes: new Map(),
-        }),
-      ]]]),
-      nudges: new Map(),
-      depths: new Map(),
-      rounds: new Map(),
-      deforms: new Map(),
-    };
-
-    const file = asOld(saved({
-      ...before,
-      world: { ...before.world, rigs: new Map([[id, keysOf(rig)]]) },
-    }));
-
-    // As 20 wrote them: no `lean`, and no `skew` in a stand's frame.
-    file.format = 20;
-
-    for (const [, mine] of file.world.rigs as [Id, SavedRig][]) {
-      for (const [, list] of mine.keys) {
-        for (const e of list) {
-          delete (e.op as { lean?: number }).lean;
-          if (e.op.kind === 'stand') delete (e.op.frame as { skew?: number }).skew;
-        }
-      }
-    }
-
-    expect(restored(file).world.rigs.get(id)).toEqual(keysOf(rig));
   });
 
   test('groups survive the trip', () => {
@@ -411,10 +265,8 @@ describe('save', () => {
 // -----------------------------------------------------------------------------
 // Keys
 //
-// What a 24 keeps, and what everything older is read into. Nothing writes one
-// yet — see `PLAN-keys.md` — so what is held to here is that a rig of keys
-// survives the trip whole, and that a rig of entries read as keys plays the
-// same as the entries did.
+// What a 24 keeps: a rig of keys survives the trip whole, and a timeline read
+// back out of a file plays what it played.
 // -----------------------------------------------------------------------------
 
 describe('keys in a file', () => {
@@ -494,7 +346,7 @@ describe('keys in a file', () => {
     expect(key.by).toEqual({ ...NOTHING, erode: 3 });
   });
 
-  test('a timeline of entries read as keys plays what the entries play', () => {
+  test('a timeline read back out of a file plays what it played', () => {
     const rig = entries();
     const tl: Timeline = {
       keyframes: KEYFRAMES,
@@ -505,9 +357,9 @@ describe('keys in a file', () => {
       paths: new Map(),
     };
 
-    // Through a file, as opening one goes: entries out, keys in.
-    const file = JSON.parse(JSON.stringify(savedRig(rig))) as SavedRig;
-    const mine = walkedBy(KEYFRAMES, keysOfSaved(file), CORNERS, 0).states;
+    // Through a file, as opening one goes.
+    const file = JSON.parse(JSON.stringify(savedKeyRig(keysOf(rig)))) as SavedKeyRig;
+    const mine = walkedBy(KEYFRAMES, restoredKeyRig(file), CORNERS, 0).states;
 
     for (let i = 0; i < KEYFRAMES.length; i++) {
       const theirs = stateAt(tl, 1, KEYFRAMES[i].id);
