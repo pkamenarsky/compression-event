@@ -1154,6 +1154,7 @@ export function undone(s: EditorState): EditorState {
     ...s,
     world: past[past.length - 1],
     history: { past: past.slice(0, -1), future: [...future, s.world] },
+    standing: still(s.standing, past[past.length - 1]),
   }, s.world);
 }
 
@@ -1166,6 +1167,7 @@ export function redone(s: EditorState): EditorState {
     ...s,
     world: future[future.length - 1],
     history: { past: [...past, s.world], future: future.slice(0, -1) },
+    standing: still(s.standing, future[future.length - 1]),
   }, s.world);
 }
 

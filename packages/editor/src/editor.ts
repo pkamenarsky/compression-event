@@ -638,7 +638,11 @@ function ended(s: EditorState): EditorState {
   const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
   const world = broken(s.world, s.keyframe, ids);
 
-  return world === s.world ? s : { ...s, world, status: null, history: { past: [...s.history.past, s.world], future: [] } };
+  // Off whatever key was stood on: the next thing done fills the key just
+  // made, not that one.
+  return world === s.world
+    ? s
+    : { ...s, world, standing: null, status: null, history: { past: [...s.history.past, s.world], future: [] } };
 }
 
 /**
