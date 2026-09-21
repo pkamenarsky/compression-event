@@ -1792,6 +1792,25 @@ export function opsOf(p: Motion): Op[] {
   return out;
 }
 
+/**
+ * Everything a contribution does, as operations: what moves the frame, and
+ * then its amounts, which commute with it and with each other.
+ *
+ * What carries a timeline through a frame — see `carried` in `scene/core.ts`.
+ * The shipped table wants only the first of those, which is `opsOf`.
+ */
+export function everyOp(p: Motion): Op[] {
+  const out = opsOf(p);
+
+  if (p.by !== undefined) {
+    for (const kind of AMOUNT_KINDS) {
+      if (p.by[kind] !== 0) out.push({ kind, by: p.by[kind] });
+    }
+  }
+
+  return out;
+}
+
 /** The anchor of a turn whose delta has lost it, which nothing written by
  * `deltaOf` has. */
 function fixed(d: Delta): Point {
@@ -2405,14 +2424,8 @@ export function entriesOf(rig: KeyRig): Rig {
         ...(key.group === undefined ? {} : { gesture: key.group }),
       };
 
-      for (const op of opsOf({ ref: key.ref, by: key.by, stand: key.stand })) {
+      for (const op of everyOp({ ref: key.ref, by: key.by, stand: key.stand })) {
         entries.push({ ...repeat, op });
-      }
-
-      if (key.by !== undefined) {
-        for (const kind of AMOUNT_KINDS) {
-          if (key.by[kind] !== 0) entries.push({ ...repeat, op: { kind, by: key.by[kind] } });
-        }
       }
 
       if (key.corners !== undefined) {

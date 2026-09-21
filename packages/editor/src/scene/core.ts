@@ -140,6 +140,9 @@ import {
   deltaOf,
   nextKey,
   nudgedBy,
+  Playing,
+  everyOp,
+  playingAt,
 } from '../rig';
 
 export type { Affine };
@@ -1895,8 +1898,8 @@ function apart1(world: World, id: GroupId, keep: boolean): { world: World, unrol
 
       unrolled.push(...fold.unrolled);
 
-      if (blank(rig)) rigs.delete(member);
-      else rigs.set(member, keysOf(rig));
+      if (blankKeys(rig)) rigs.delete(member);
+      else rigs.set(member, rig);
     }
   }
 
@@ -2123,8 +2126,8 @@ function folded(
   g: GroupId,
   m: Id,
   keep: boolean,
-): { rig: Rig, unrolled: Unrolled[] } | null {
-  const rig = rigOf(world, m);
+): { rig: KeyRig, unrolled: Unrolled[] } | null {
+  const rig = keyRigOf(world, m);
   // From its birth, or from the first keyframe for a group, whose timeline
   // plays from there.
   const born = lived(world, m);
@@ -2140,7 +2143,7 @@ function folded(
 
   const out = carried(world, m, first, across, g, keep);
 
-  return out === null ? null : { rig: { ...rig, keys: out.keys }, unrolled: out.unrolled };
+  return out === null ? null : { rig: { keys: out.keys }, unrolled: out.unrolled };
 }
 
 /** What takes a thing from rest to `f`: a stretch, a skew and a turn about
@@ -2159,7 +2162,7 @@ function arrival(f: Frame): Op[] {
 /** One operation a keyframe played, where it came from, and what it came to
  * on the other side. */
 interface Crossed {
-  source: Source
+  source: Playing
   /** Whose it was: the thing's own, or the group's aimed at it. */
   group: boolean
   ops: Op[]
@@ -2195,7 +2198,7 @@ function carried(
   across: (i: number) => Frame | null,
   g: GroupId | null,
   keep: boolean,
-): { keys: Map<KeyframeId, Entry[]>, unrolled: Unrolled[] } | null {
+): { keys: Map<KeyframeId, RigKey[]>, unrolled: Unrolled[] } | null {
   const rows: Crossed[][] = [];
 
   for (let i = first; i < world.keyframes.length; i++) {
@@ -2208,24 +2211,30 @@ function carried(
     if (outer === null) return null;
 
     const row: Crossed[] = [];
-    const mine = playedAt(world, m, k), from = sourcesAt(world, m, k);
+
+    // A key at a time, as the operations it is made of: what carries out of a
+    // group is an operation, and a key that holds more than one carries as the
+    // ones it holds. See `opsOf` in `rig.ts`.
+    const mine = playingAt(world, m, k).flatMap(p => everyOp(p).map(op => ({ op, source: p })));
 
     // Born after the first keyframe, it begins at rest in whatever holds it
     // — which, on the other side of the frame, is the frame itself. Unless it
     // begins with a stand, which says where it is outright.
-    if (i === first && before !== null && mine[0]?.kind !== 'stand') {
+    if (i === first && before !== null && mine[0]?.op.kind !== 'stand') {
       for (const op of arrival(outer)) {
-        row.push({ source: { entry: once(op), at: k, step: 0 }, group: false, ops: [op] });
+        const source: Playing = { ref: ORIGIN, by: deltaOf(op) ?? undefined, key: MADE, at: k, step: 0 };
+
+        row.push({ source, group: false, ops: [op] });
       }
     }
 
-    for (let j = 0; j < mine.length; j++) {
-      const out = outward(mine[j], outer, inner);
+    for (const { op, source } of mine) {
+      const out = outward(op, outer, inner);
 
       if (out === null) return null;
 
-      row.push({ source: from[j], group: false, ops: out });
-      inner = played(inner, mine[j]);
+      row.push({ source, group: false, ops: out });
+      inner = played(inner, op);
     }
 
     if (g !== null) {
@@ -2233,18 +2242,18 @@ function carried(
 
       if (both === null) return null;
 
-      const theirs = playedAt(world, g, k), whence = sourcesAt(world, g, k);
+      const theirs = playingAt(world, g, k).flatMap(p => everyOp(p).map(op => ({ op, source: p })));
 
-      for (let j = 0; j < theirs.length; j++) {
-        const out = inward1(world, k, m, theirs[j], outer, both);
+      for (const { op, source } of theirs) {
+        const out = inward1(world, k, m, op, outer, both);
 
         if (out === null) return null;
 
-        outer = played(outer, theirs[j]);
+        outer = played(outer, op);
 
         for (const o of out) both = played(both, o);
 
-        row.push({ source: whence[j], group: true, ops: out });
+        row.push({ source, group: true, ops: out });
       }
     }
 
@@ -2252,35 +2261,35 @@ function carried(
   }
 
   // Every repeat that played, with its steps in the order they were taken.
-  const steps = new Map<Entry, Crossed[]>();
+  const steps = new Map<RigKey, Crossed[]>();
 
   for (const row of rows) {
     for (const c of row) {
-      if (c.source.entry.times === 1 || c.source.entry.op.kind === 'stand') continue;
+      if (c.source.key.times === 1 || c.source.stand !== undefined) continue;
 
-      const all = steps.get(c.source.entry) ?? [];
+      const all = steps.get(c.source.key) ?? [];
 
       all.push(c);
-      steps.set(c.source.entry, all);
+      steps.set(c.source.key, all);
     }
   }
 
-  const kept = new Set<Entry>();
+  const kept = new Set<RigKey>();
   const unrolled: Unrolled[] = [];
 
-  /** Written where, and which of that keyframe's entries. */
+  /** Written where, and which of that keyframe's keys. */
   const whose = (c: Crossed): Unrolled => {
     const id = c.group ? g! : m;
-    const list = rigOf(world, id).keys.get(c.source.at) ?? [];
+    const list = keysOfAt(world, c.source.at, id);
 
-    return { id, at: c.source.at, nth: list.indexOf(c.source.entry), why: 'order' };
+    return { id, at: c.source.at, nth: list.indexOf(c.source.key), why: 'order' };
   };
 
   // Each repeat is compared from the first step it takes here, which is its
   // own entry unless it was already running where `m` begins. A repeat's
   // steps from its n-th on are the n-th step repeated — a step of a step is a
   // step — so one already running is kept by writing that.
-  for (const [entry, all] of steps) {
+  for (const [key, all] of steps) {
     const head = all[0];
     const h = head.source.step;
     let why: Unrolled['why'] | null = null;
@@ -2290,17 +2299,17 @@ function carried(
       why = head.group ? 'moving' : 'reshaped';
     }
 
-    if (why === null && keep) kept.add(entry);
+    if (why === null && keep) kept.add(key);
     else unrolled.push({ ...whose(head), why: why ?? 'order' });
   }
 
   // Where each kept repeat is in the order the walk will play kept steps in:
   // the keyframe it is written at, and its place in what that keyframe
   // played.
-  const rank = new Map<Entry, number>();
+  const rank = new Map<RigKey, number>();
 
   rows.forEach((row, i) => row.forEach((c, j) => {
-    if (!rank.has(c.source.entry)) rank.set(c.source.entry, i * 1e6 + j);
+    if (!rank.has(c.source.key)) rank.set(c.source.key, i * 1e6 + j);
   }));
 
   const heads = new Set([...steps.values()].map(all => all[0]));
@@ -2315,18 +2324,18 @@ function carried(
       let last = -Infinity;
 
       for (const c of row) {
-        const step = kept.has(c.source.entry) && !heads.has(c);
+        const step = kept.has(c.source.key) && !heads.has(c);
 
         if (!step) {
           prefix = false;
           continue;
         }
 
-        const r = rank.get(c.source.entry)!;
+        const r = rank.get(c.source.key)!;
 
         if (!prefix || r < last) {
-          kept.delete(c.source.entry);
-          unrolled.push({ ...whose(steps.get(c.source.entry)![0]), why: 'order' });
+          kept.delete(c.source.key);
+          unrolled.push({ ...whose(steps.get(c.source.key)![0]), why: 'order' });
           settled = false;
           break;
         }
@@ -2338,26 +2347,67 @@ function carried(
     }
   }
 
-  const keys = new Map<KeyframeId, Entry[]>();
+  const keys = new Map<KeyframeId, RigKey[]>();
+  let made = nextKey(keyRigOf(world, m));
 
   rows.forEach((row, i) => {
-    const list: Entry[] = [];
+    const at = world.keyframes[first + i].id;
+    const list: RigKey[] = [];
 
     for (const c of row) {
-      const e = c.source.entry;
+      const e = c.source.key;
 
-      if (!kept.has(e)) list.push(...c.ops.map(o => once(o)));
+      if (!kept.has(e)) list.push(...c.ops.map(o => carriedKey(made++, c.source.ref, o)));
       else if (heads.has(c)) {
-        const k = world.keyframes[first + i].id;
+        const times = e.times === null ? null : e.times - c.source.step;
 
-        list.push(skipping(world.keyframes, { ...e, op: c.ops[0], times: e.times === null ? null : e.times - c.source.step }, k));
+        list.push(skipping(world.keyframes, { ...carriedKey(e.id, c.source.ref, c.ops[0]), times, skip: e.skip }, at));
       }
     }
 
-    if (list.length > 0) keys.set(world.keyframes[first + i].id, list);
+    // What a key says about single corners is in the thing's own rest frame,
+    // which the group never reached: it comes across untouched, in a key of
+    // its own, whatever became of the delta beside it.
+    for (const key of keysOfAt(world, at, m)) {
+      const corners = onlyCorners(key);
+
+      if (corners !== null) list.push(corners);
+    }
+
+    if (list.length > 0) keys.set(at, list);
   });
 
   return { keys, unrolled };
+}
+
+/** What a key stood for before the fold, which is what `carried` writes about
+ * a thing that is not one of the world's: only its repeat is read. */
+const MADE: RigKey = { id: -1, ref: ORIGIN, times: 1 };
+
+/** One operation as a key, about the point the key it came from painted. */
+function carriedKey(id: number, ref: Point, op: Op): RigKey {
+  if (op.kind === 'stand') return { id, ref, stand: op, times: 1 };
+
+  return { id, ref: 'ref' in op ? op.ref : ref, by: deltaOf(op)!, times: 1 };
+}
+
+/** A key's writing about single corners, alone, or nothing where it has
+ * none. */
+function onlyCorners(key: RigKey): RigKey | null {
+  if (key.corners === undefined && key.depths === undefined
+    && key.rounds === undefined && key.deforms === undefined) return null;
+
+  return {
+    id: key.id,
+    ref: key.ref,
+    times: key.times,
+    ...(key.skip === undefined ? {} : { skip: key.skip }),
+    ...(key.group === undefined ? {} : { group: key.group }),
+    ...(key.corners === undefined ? {} : { corners: key.corners }),
+    ...(key.depths === undefined ? {} : { depths: key.depths }),
+    ...(key.rounds === undefined ? {} : { rounds: key.rounds }),
+    ...(key.deforms === undefined ? {} : { deforms: key.deforms }),
+  };
 }
 
 /** Two operations the same to within the arithmetic that produced them. */
@@ -3176,7 +3226,7 @@ function lift1(world: World, g: GroupId, id: Id, keep: boolean): { world: World,
     groups.set(up, { ...holder, members: holder.members.flatMap(m => (m === g ? [g, id] : [m])) });
   }
 
-  const out = withRig({ ...world, groups }, id, fold.rig);
+  const out = withKeyRig({ ...world, groups }, id, fold.rig);
 
   return within(world, id).every(m => placedAlike(world, out, m)) ? { world: out, unrolled: fold.unrolled } : null;
 }
@@ -3213,7 +3263,7 @@ function entering(world: World, v: KeyframeId, id: Id, into: GroupId): { world: 
 
     return out === null
       ? null
-      : { world: withRig(world, id, { ...rigOf(world, id), keys: out.keys }), unrolled: out.unrolled };
+      : { world: withKeyRig(world, id, { keys: out.keys }), unrolled: out.unrolled };
   };
 
   const kept = attempt(true);
