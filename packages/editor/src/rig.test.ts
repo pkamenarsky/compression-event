@@ -14,7 +14,6 @@ import {
   Stand,
   Timeline,
   affineOf,
-  appending,
   cornerRounded,
   deepened,
   edgeDeformed,
@@ -23,7 +22,9 @@ import {
   once,
   placed,
   played,
-  playedAt,
+  kindOf,
+  playingAt,
+  playingOn,
   repeating,
   sheared,
   spun,
@@ -33,6 +34,11 @@ import {
   worldFrame,
   entriesOf,
   keysOf,
+  EMPTY_KEYS,
+  Key,
+  appendedBy,
+  deltaOf,
+  keysAt,
 } from './rig';
 import { Id, Vertex } from './types';
 
@@ -294,60 +300,62 @@ describe('frames', () => {
   });
 });
 
-describe('a keyframe\'s list', () => {
+describe('a keyframe\'s keys', () => {
   const r = MIDDLE;
-  const first = once(turnAbout(30, r, r, ORIGIN));
+  const first = turnAbout(30, r, r, ORIGIN);
+
+  /** What a gesture writing `ops` one after another at v0 leaves. */
+  const writing = (...ops: Op[]): readonly Key[] => {
+    let rig = EMPTY_KEYS;
+
+    for (const op of ops) rig = appendedBy(rig, 0, 'ref' in op ? op.ref : ORIGIN, deltaOf(op)!);
+
+    return keysAt(rig, 0);
+  };
 
   test('turns about different centres are kept apart', () => {
-    const second = once(turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 }));
-
-    expect(appending([first], second)).toHaveLength(2);
+    expect(writing(first, turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 }))).toHaveLength(2);
   });
 
-  test('turns about the same centre are one entry, and it is exact', () => {
+  test('turns about the same centre are one key, and it is exact', () => {
     // The second is written where the first left the room: its painted point
     // has gone round with it, so its offset from the centre has too.
-    const after = rotated(r, 30);
-    const second = once(turnAbout(45, r, after, ORIGIN));
-    const list = appending([first], second);
+    const second = turnAbout(45, r, rotated(r, 30), ORIGIN);
+    const list = writing(first, second);
 
     expect(list).toHaveLength(1);
-    expect(list[0].op).toEqual({ ...first.op, angle: expect.closeTo(75 * Math.PI / 180, 12) });
+    expect(list[0].by!.angle).toBeCloseTo(75 * Math.PI / 180, 12);
 
     const apart = keyed(room, 0, P, [first, second]);
-    const together = keyed(room, 0, P, [...list]);
+    const together = keyed(room, 0, P, [first]);
 
-    near(refAt(together, P, 0, r), refAt(apart, P, 0, r));
-    near(refAt(together, P, 0, r), rotated(r, 75));
+    near(refAt(keyed(together, 0, P, [first, second]), P, 0, r), refAt(apart, P, 0, r));
+    near(refAt(apart, P, 0, r), rotated(r, 75));
   });
 
   test('a turn that comes back to nothing goes', () => {
-    const back = once(turnAbout(-30, r, rotated(r, 30), ORIGIN));
-
-    expect(appending([first], back)).toEqual([]);
+    expect(writing(first, turnAbout(-30, r, rotated(r, 30), ORIGIN))).toEqual([]);
   });
 
   test('two moves add, and two scales about one point are one scale', () => {
-    expect(appending([once(move(1, 2))], once(move(3, 4)))).toEqual([once(move(4, 6))]);
+    const moves = writing(move(1, 2), move(3, 4));
 
-    const one = once(scaleAbout({ x: 2, y: 3 }, r, r, ORIGIN));
+    expect(moves).toHaveLength(1);
+    expect(moves[0].by!.move).toEqual({ x: 4, y: 6 });
+
+    const one = scaleAbout({ x: 2, y: 3 }, r, r, ORIGIN);
     const p = refAt(keyed(room, 0, P, [one]), P, 0, r);
-    const two = once(scaleAbout({ x: 0.5, y: 2 }, r, p, ORIGIN));
-    const list = appending([one], two);
+    const two = scaleAbout({ x: 0.5, y: 2 }, r, p, ORIGIN);
 
-    expect(list).toHaveLength(1);
+    expect(writing(one, two)).toHaveLength(1);
 
     const apart = keyed(room, 0, P, [one, two]);
-    const together = keyed(room, 0, P, [...list]);
 
-    near(refAt(together, P, 0, r), refAt(apart, P, 0, r));
-    near(refAt(together, P, 0, r), { x: 105, y: 30 });
+    near(refAt(apart, P, 0, r), { x: 105, y: 30 });
   });
 
   test('a gesture that does nothing writes nothing', () => {
-    const list = [first];
-
-    expect(appending(list, once(move(0, 0)))).toBe(list);
+    expect(writing(move(0, 0))).toEqual([]);
   });
 
   test('dropping one entry leaves the rest as it would have been alone', () => {
@@ -446,14 +454,10 @@ describe('repeats', () => {
     tl = keyed(tl, 2, P, [scaleAbout({ x: 2, y: 1 }, r, refAt(tl, P, 1, r), { x: 7, y: 7 }), turn(10, r)]);
 
     for (let k = 1; k < KEYFRAMES.length; k++) {
-      const f = playedAt(tl, P, k).reduce((f, op) => played(f, op), stateAt(tl, P, k - 1).frame);
+      const f = playingAt(tl, P, k).reduce((f, p) => playingOn(f, p), stateAt(tl, P, k - 1).frame);
       const state = stateAt(tl, P, k).frame;
 
-      // Close rather than equal: `playedAt` plays the operations and `stateAt`
-      // walks the keys they convert into, and the two arithmetics differ in
-      // the last bits. See *Keys* in `rig.ts`.
-      expect(f.t.x).toBeCloseTo(state.t.x, 9);
-      expect(f.t.y).toBeCloseTo(state.t.y, 9);
+      near(f.t, state.t);
       expect(f.angle).toBeCloseTo(state.angle, 12);
       expect(f.skew).toBeCloseTo(state.skew, 12);
       expect(f.scale.x).toBeCloseTo(state.scale.x, 12);
@@ -461,7 +465,7 @@ describe('repeats', () => {
     }
 
     // The repeat's steps come first, then the keyframe's own.
-    expect(playedAt(tl, P, 2).map(op => op.kind)).toEqual(['turn', 'scale', 'turn']);
+    expect(playingAt(tl, P, 2).map(p => kindOf(p.key))).toEqual(['turn', 'scale', 'turn']);
   });
 });
 
@@ -527,11 +531,23 @@ describe('effect amounts', () => {
     expect(stateAt(a, P, 1)).toEqual(stateAt(b, P, 1));
   });
 
-  test('two in a row merge, and one that comes back to nothing goes', () => {
-    expect(appending([once(round(2))], once(round(3)))).toEqual([once(round(5))]);
-    expect(appending([once(deform(2))], once(deform(-2)))).toEqual([]);
-    expect(appending([once(round(2))], once(deform(2)))).toHaveLength(2);
-    expect(appending([once(erode(2))], once(round(0)))).toEqual([once(erode(2))]);
+  test('two in a row fold into one key, and one that comes back to nothing goes', () => {
+    const writing = (...ops: Op[]): readonly Key[] => {
+      let rig = EMPTY_KEYS;
+
+      for (const op of ops) rig = appendedBy(rig, 0, ORIGIN, deltaOf(op)!);
+
+      return keysAt(rig, 0);
+    };
+
+    expect(writing(round(2), round(3))[0].by!.round).toBe(5);
+    expect(writing(deform(2), deform(-2))).toEqual([]);
+
+    // Two kinds at once is a key an entry cannot be made of, and nothing
+    // writes one yet: they stay two. See `appendedBy` in `rig.ts`.
+    expect(writing(round(2), deform(2))).toHaveLength(2);
+    expect(writing(erode(2), round(0))[0].by!.erode).toBe(2);
+    expect(writing(erode(2), round(0))).toHaveLength(1);
   });
 
   test('a corner\'s bevel and an edge\'s amplitude are over the thing\'s own, and repeat', () => {

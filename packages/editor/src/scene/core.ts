@@ -100,12 +100,10 @@ import {
   REST,
   Rig,
   Scale,
-  Source,
   Stand,
   State,
   Turn,
   affineOf,
-  appending,
   blank,
   deepened,
   framed,
@@ -115,11 +113,9 @@ import {
   nudged,
   once,
   placed,
-  playedAt,
   played,
   sheared,
   skipping,
-  sourcesAt,
   spun,
   stepped,
   stateAt,
@@ -143,6 +139,7 @@ import {
   Playing,
   everyOp,
   playingAt,
+  playingOn,
 } from '../rig';
 
 export type { Affine };
@@ -3300,7 +3297,7 @@ function landsAsCopied(was: World, now: World, at: number, id: Id, into: GroupId
 
       expect = from;
 
-      for (const op of playedAt(was, id, k)) expect = played(expect, op);
+      for (const p of playingAt(was, id, k)) expect = playingOn(expect, p);
     }
 
     if (!alike(compose(h, affineOf(stateAt(now, id, k).frame)), affineOf(expect))) return false;

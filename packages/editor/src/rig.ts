@@ -1,10 +1,12 @@
 // -----------------------------------------------------------------------------
-// Timelines of operations
+// Timelines
 //
-// What happens to a thing is a list of operations per keyframe, and where it
-// is at a keyframe is those lists played from its birth onward. Nothing else:
-// no layer to inherit, nothing composed into anything, nothing solved for
-// after an edit.
+// What happens to a thing is keys, keyframe by keyframe, and where it is at a
+// keyframe is those played from its birth onward. Nothing else: no layer to
+// inherit, nothing composed into anything, nothing solved for after an edit.
+// *Keys*, below, is what one is; this half is the operations a key is made of,
+// which is what the group fold carries through a frame and what a test says a
+// timeline in.
 //
 // A thing's state is its frame — `F(x) = t + R(angle) · K(skew) · S · x` over
 // its rest geometry, in the frame of whatever holds it — together with how deep it is
@@ -35,13 +37,13 @@
 // Order
 // -----
 // At a keyframe, the contributions are the steps of repeats begun at earlier
-// keyframes, oldest first, and then that keyframe's own entries in list order.
+// keyframes, oldest first, and then that keyframe's own keys in list order.
 // Each is applied in turn, to the state the one before left.
 //
 // Repeats
 // -------
-// An entry may go on contributing after its own keyframe — `times` of them
-// in all, or to the end — each time adjusted so that it acts about the same
+// A key may go on contributing after its own keyframe — `times` of them in
+// all, or to the end — each time adjusted so that it acts about the same
 // centre as the first:
 //
 //   turn   aboutₙ = R(angle)ⁿ · about
@@ -253,21 +255,22 @@ export interface Entry<O extends Op = Op> extends Repeat {
    */
   skip?: ReadonlySet<KeyframeId>
   /**
-   * The gesture that last wrote what it does, by an id of its own: entries
-   * with one, at one keyframe, are picked together in the keyframe view. A
-   * hint rather than a structure — nothing holds a gesture's entries to each
-   * other, and one lost costs a pick one entry at a time. Absent is none. See
-   * `gestured` in `types.ts`.
+   * The gesture that wrote it, as a key's `group` is. Absent is none.
    */
   gesture?: number
 }
 
 /**
- * Everything written about one thing.
+ * Everything written about one thing, as operations.
+ *
+ * What a test says a timeline in, and what a file older than a 24 held — see
+ * `entriesOf` and `keysOf` below, and `convert.ts`. The editor's own is
+ * `KeyRig`.
  *
  * The corners have maps of their own rather than a place in the list: a nudge
  * or a depth is about one corner, and there is only ever one per corner per
- * keyframe, so there is no order among them to keep.
+ * keyframe, so there is no order among them to keep. A key has no such limit,
+ * which is the one thing this cannot say back.
  */
 export interface Rig {
   keys: ReadonlyMap<KeyframeId, readonly Entry[]>
@@ -569,7 +572,7 @@ export function stepped(op: Op, n: number): Op {
 }
 
 // -----------------------------------------------------------------------------
-// The walk
+// The keyframes
 // -----------------------------------------------------------------------------
 
 const indices = new WeakMap<readonly Keyframe[], ReadonlyMap<KeyframeId, number>>();
@@ -598,187 +601,6 @@ function lived(tl: Timeline, id: Id): (Lived & { points?: readonly Vertex[] }) |
   }
 
   return tl.polygons.get(id) ?? tl.artefacts.get(id) ?? tl.paths.get(id);
-}
-
-interface Walked {
-  rig: Rig
-  thing: object
-  /** The ids the walk was taken over, in order. Not the array: a keyframe
-   * that changes its name or its eye changes nothing here. */
-  order: KeyframeId[]
-  states: (State | undefined)[]
-  played: Op[][]
-  /** Where each of `played` came from, one for one. */
-  sources: Source[][]
-}
-
-/**
- * Where an operation a keyframe plays came from: the entry, written at `at`,
- * and which of its steps this is — nought for the entry itself.
- */
-export interface Source {
-  entry: Entry
-  at: KeyframeId
-  step: number
-}
-
-/**
- * Every walk taken, by the rig it was taken over — or by the thing, for the
- * ones nobody has written anything about.
- *
- * A rig is persistent, so an edit to one thing leaves every other thing's walk
- * where it is. What it is checked against on the way out is the rest of what
- * the walk read: the thing itself, whose corners it placed, and the order of
- * the keyframes.
- */
-const walks = new WeakMap<object, Walked>();
-
-function walked(tl: Timeline, id: Id): Walked | null {
-  const thing = lived(tl, id);
-
-  if (thing === undefined) return null;
-
-  // Keyed by the rig, or by the thing where nothing is written about it. A
-  // group's life is made up here rather than kept, so it is the group itself
-  // that stands for it: what the walk read of it is its first keyframe, which
-  // the order already answers for.
-  // TEMPORARY: the entry walk, over the entries the keys come back as. What
-  // still asks for it is `playedAt` and `sourcesAt` — see `entriesOf`.
-  const rig = entriesFor(tl.rigs.get(id) ?? EMPTY_KEYS);
-  const record: object = tl.groups.get(id) ?? thing;
-  const key = rig === EMPTY_RIG ? record : rig;
-  const held = walks.get(key);
-
-  if (held !== undefined && held.rig === rig && held.thing === record && same(held.order, tl.keyframes)) {
-    return held;
-  }
-
-  const out = { ...walk(tl, rig, thing, thing.birth), thing: record };
-
-  walks.set(key, out);
-
-  return out;
-}
-
-function same(order: readonly KeyframeId[], keyframes: readonly Keyframe[]): boolean {
-  return order.length === keyframes.length && order.every((k, i) => keyframes[i].id === k);
-}
-
-/** A repeat under way: its entry, and how many steps it has taken. */
-interface Running {
-  entry: Entry
-  at: KeyframeId
-  steps: number
-}
-
-function walk(
-  tl: Timeline,
-  rig: Rig,
-  thing: Lived & { points?: readonly Vertex[] },
-  from: KeyframeId,
-): Walked {
-  const keyframes = tl.keyframes;
-  const n = keyframes.length;
-  const born = indexIn(keyframes, from);
-
-  const out: Walked = {
-    rig,
-    thing,
-    order: keyframes.map(f => f.id),
-    states: new Array(n).fill(undefined),
-    played: Array.from({ length: n }, () => []),
-    sources: Array.from({ length: n }, () => []),
-  };
-
-  if (born < 0) return out;
-
-  const corners = (thing.points ?? []).map(c => ({
-    corner: c,
-    birth: indexIn(keyframes, c.birth),
-    death: c.death === null ? Infinity : orNever(indexIn(keyframes, c.death)),
-  }));
-
-  let frame = REST;
-  const totals: Record<AmountKind, number> = { erode: 0, round: 0, deform: 0 };
-  let running: Running[] = [];
-
-  // The last stand played, and where. Corners and their depths are read from
-  // it rather than from the rest geometry, and nothing written before it
-  // reaches past it but the steps of what repeats.
-  let stood: { at: number, op: Stand } | null = null;
-
-  for (let i = born; i < n; i++) {
-    const key = keyframes[i].id;
-    const ops = out.played[i];
-    const from = out.sources[i];
-
-    const apply = (op: Op, source: Source): void => {
-      ops.push(op);
-      from.push(source);
-
-      if (amount(op)) {
-        totals[op.kind] += op.by;
-      }
-      else if (op.kind === 'stand') {
-        frame = op.frame;
-        for (const kind of AMOUNT_KINDS) totals[kind] = op[AMOUNTS[kind].total];
-      }
-      else {
-        frame = played(frame, op);
-      }
-    };
-
-    // The steps of repeats begun earlier, oldest first. A skipped keyframe
-    // is not a step: the repeat waits over it and carries its count on.
-    const going: Running[] = [];
-
-    for (const r of running) {
-      if (r.entry.skip?.has(key)) {
-        going.push(r);
-        continue;
-      }
-
-      if (r.entry.times !== null && r.steps + 1 >= r.entry.times) continue;
-
-      r.steps += 1;
-      apply(stepped(r.entry.op, r.steps), { entry: r.entry, at: r.at, step: r.steps });
-      going.push(r);
-    }
-
-    running = going;
-
-    for (const e of rig.keys.get(key) ?? []) {
-      apply(e.op, { entry: e, at: key, step: 0 });
-
-      if (e.op.kind === 'stand') {
-        stood = { at: i, op: e.op };
-      }
-      else if (e.times === null || e.times > 1) {
-        running.push({ entry: e, at: key, steps: 0 });
-      }
-    }
-
-    const none = corners.length === 0;
-
-    const each = (kind: AmountKind): ReadonlyMap<VertexId, number> => {
-      const { map, each: name } = AMOUNTS[kind];
-
-      return none ? NO_DEPTHS : amountsAt(keyframes, rig[map], stood?.op[name], corners, stood, i);
-    };
-
-    out.states[i] = {
-      frame,
-      erosion: totals.erode,
-      corners: none ? NO_CORNERS : standingAt(keyframes, rig, corners, stood, i),
-      depths: each('erode'),
-      bevel: totals.round,
-      amplitude: totals.deform,
-      bevels: each('round'),
-      amplitudes: each('deform'),
-    };
-  }
-
-  return out;
 }
 
 /** A keyframe index where the keyframe may be missing, which is never. */
@@ -911,38 +733,12 @@ export function counted1(keyframes: readonly Keyframe[], e: Repeat, j: number, i
   return 1 + (e.times === null ? steps : Math.min(steps, e.times - 1));
 }
 
-/**
- * A thing's state at a keyframe: at rest before it is born, and wherever the
- * world has no such thing.
- *
- * Walked over keys, made from the entries the world still holds — see *Keys*.
- * The entry walk above goes on answering `playedAt` and `sourcesAt` until
- * their callers move over, and the two are held to each other by the tests.
- */
+/** A thing's state at a keyframe: at rest before it is born, and wherever the
+ * world has no such thing. See *The states, over keys*. */
 export function stateAt(tl: Timeline, id: Id, k: KeyframeId): State {
   const i = indexIn(tl.keyframes, k);
 
   return (i < 0 ? undefined : stood(tl, id)?.states[i]) ?? UNBORN;
-}
-
-/**
- * What a keyframe does to a thing, in the order it does it: the steps of
- * repeats begun earlier, each adjusted, and then its own entries.
- *
- * Played one after another from the state the keyframe before left, these are
- * that state carried to this one. What the bake puts in flight over a span.
- */
-export function playedAt(tl: Timeline, id: Id, k: KeyframeId): readonly Op[] {
-  const i = indexIn(tl.keyframes, k);
-
-  return (i < 0 ? undefined : walked(tl, id)?.played[i]) ?? [];
-}
-
-/** Where each of `playedAt`'s operations came from, one for one. */
-export function sourcesAt(tl: Timeline, id: Id, k: KeyframeId): readonly Source[] {
-  const i = indexIn(tl.keyframes, k);
-
-  return (i < 0 ? undefined : walked(tl, id)?.sources[i]) ?? [];
 }
 
 /**
@@ -1008,90 +804,6 @@ export function near(p: Point, q: Point): boolean {
   const scale = Math.max(1, Math.abs(p.x), Math.abs(p.y), Math.abs(q.x), Math.abs(q.y));
 
   return Math.abs(p.x - q.x) <= 1e-9 * scale && Math.abs(p.y - q.y) <= 1e-9 * scale;
-}
-
-/**
- * `b` folded into `a`, where that is exact: the entry that does both, or
- * `'gone'` where together they do nothing, or nothing where they cannot be one.
- *
- * Only ever what a hand repeating itself writes. Two moves add, and so do two
- * erosions, two rounds and two deforms. Two scales about the same painted point multiply, and their slides
- * add, and two skews about one add in both — the second's is taken from where the first left the painted point, and
- * that is where the combined one's is taken from too. Two turns about the same
- * centre add; the second's offset from the painted point is the first's turned
- * with it, since that is where the painted point went, and the one they make
- * keeps the first's.
- */
-function sameSkip(a: ReadonlySet<KeyframeId> | undefined, b: ReadonlySet<KeyframeId> | undefined): boolean {
-  const x = a ?? NONE, y = b ?? NONE;
-
-  return x.size === y.size && [...x].every(k => y.has(k));
-}
-
-const NONE: ReadonlySet<KeyframeId> = new Set();
-
-export function merged(a: Entry, b: Entry): Entry | 'gone' | null {
-  if (a.times !== b.times || !sameSkip(a.skip, b.skip)) return null;
-
-  const x = a.op, y = b.op;
-  let op: Op | null = null;
-
-  if (x.kind === 'move' && y.kind === 'move') {
-    op = { kind: 'move', by: { x: x.by.x + y.by.x, y: x.by.y + y.by.y } };
-  }
-  else if (amount(x) && amount(y) && x.kind === y.kind) {
-    op = { kind: x.kind, by: x.by + y.by };
-  }
-  else if (x.kind === 'turn' && y.kind === 'turn') {
-    if (!near(x.ref, y.ref) || !near(spun(x.about, x.angle), y.about)) return null;
-
-    op = { ...x, angle: x.angle + y.angle };
-  }
-  else if (x.kind === 'scale' && y.kind === 'scale') {
-    if (!near(x.ref, y.ref) || x.along !== y.along || x.lean !== y.lean) return null;
-
-    op = {
-      ...x,
-      by: { x: x.by.x * y.by.x, y: x.by.y * y.by.y },
-      shift: { x: x.shift.x + y.shift.x, y: x.shift.y + y.shift.y },
-    };
-  }
-
-  else if (x.kind === 'skew' && y.kind === 'skew') {
-    if (!near(x.ref, y.ref) || x.along !== y.along) return null;
-
-    op = { ...x, by: x.by + y.by, shift: { x: x.shift.x + y.shift.x, y: x.shift.y + y.shift.y } };
-  }
-
-  if (op === null) return null;
-
-  return trivial(op) || (op.kind === 'scale' && nearlyNothing(op)) ? 'gone' : { ...a, op };
-}
-
-/** A scale that has come back to nothing, up to the arithmetic. */
-function nearlyNothing(op: Scale): boolean {
-  return Math.abs(op.by.x - 1) < 1e-12 && Math.abs(op.by.y - 1) < 1e-12
-    && near(op.shift, { x: 0, y: 0 });
-}
-
-/**
- * `entry` added to the end of a keyframe's list, folded into the last entry
- * where the two are exactly one, and left off where it does nothing.
- *
- * A gesture recomputes from the list it started with every time the hand
- * moves, so what it leaves is one entry however long it went on.
- */
-export function appending(list: readonly Entry[], entry: Entry): readonly Entry[] {
-  if (trivial(entry.op)) return list;
-
-  const last = list[list.length - 1];
-  const both = last === undefined ? null : merged(last, entry);
-
-  if (both === null) return [...list, entry];
-
-  const head = list.slice(0, -1);
-
-  return both === 'gone' ? head : [...head, both];
 }
 
 /** A keyframe's list replaced. An empty one is taken out of the map. */
@@ -2113,6 +1825,12 @@ interface Stood extends Walking {
 }
 
 const standings = new WeakMap<object, Stood>();
+
+/** Whether a walk was taken over these keyframes, in this order. Not the
+ * array: a keyframe that changes its name or its eye changes nothing. */
+function same(order: readonly KeyframeId[], keyframes: readonly Keyframe[]): boolean {
+  return order.length === keyframes.length && order.every((k, i) => keyframes[i].id === k);
+}
 
 /** The walk over a thing's keys, kept the way the walk over its entries is:
  * by the rig, or by the thing where nothing is written about it. */
