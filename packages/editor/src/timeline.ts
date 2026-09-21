@@ -374,14 +374,35 @@ function placed(m: Model, r: Row, col: number, i: number): number {
   return slot(m, col, p >= 0 && i > p ? i + 1 : i);
 }
 
-/** The column under a point on the page, clamped to the ones there are. */
-function colAt(ctx: Ctx, clientX: number): number {
-  const m = ctx.model!;
-  const x = clientX - (ctx.inner?.getBoundingClientRect().left ?? 0);
+/** The column under a point along the timeline, clamped to the ones there
+ * are. */
+function colIn(m: Model, x: number): number {
   const col = m.xs.findIndex((at, i) => x < at + m.widths[i]);
 
   return col < 0 ? m.xs.length - 1 : Math.max(0, col);
 }
+
+/**
+ * The columns a handle in column `from` can be let go in: out from its own
+ * either way, as far as `ok` takes each one, and no further than the first it
+ * refuses — a drag is held to where a drop does something.
+ */
+function reachable(m: Model, from: number, ok: (col: number) => boolean): { a: number, b: number } {
+  let a = from, b = from;
+
+  while (a > 0 && ok(a - 1)) a--;
+  while (b < m.xs.length - 1 && ok(b + 1)) b++;
+
+  return { a, b };
+}
+
+/** How far a handle at `x` can go and stay over columns `a` to `b`. */
+function over(m: Model, { a, b }: { a: number, b: number }, x: number): { lo: number, hi: number } {
+  return { lo: m.xs[a] + 1 - x, hi: m.xs[b] + m.widths[b] - 1 - x };
+}
+
+/** Whether a write would be taken. */
+const takes = (out: World | Refused): boolean => !('refused' in out);
 
 function body(ctx: Ctx, m: Model): VNode {
   ctx.model = m;
@@ -568,10 +589,13 @@ function death(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   if (r.corner !== null || from < 0 || ctx.state().world.groups.has(r.id)) return [];
 
-  const done = (up: PointerEvent) => {
-    const to = colAt(ctx, up.clientX);
+  const x = m.xs[from] + m.widths[from] - 3;
+  const dying = (w: World, to: number) => redied(w, r.id, m.keyframes[to + 1]?.id ?? null);
 
-    if (to !== from) ctx.acted(redied(ctx.state().world, r.id, m.keyframes[to + 1]?.id ?? null));
+  const done = (_up: PointerEvent, dx: number) => {
+    const to = colIn(m, x + dx);
+
+    if (to !== from) ctx.acted(dying(ctx.state().world, to));
   };
 
   return [box({
@@ -583,7 +607,14 @@ function death(ctx: Ctx, m: Model, r: Row): VNode[] {
     background: theme.faded,
     cursor: 'ew-resize',
     zIndex: 1,
-  }, [], { title: 'Drag to the last keyframe it is there in', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
+  }, [], {
+    title: 'Drag to the last keyframe it is there in',
+    onpointerdown: (e: PointerEvent) => {
+      const w = ctx.state().world;
+
+      dragged(e, () => {}, done, over(m, reachable(m, from, c => takes(dying(w, c))), x));
+    },
+  })];
 }
 
 /**
@@ -597,8 +628,10 @@ function birth(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   if (r.corner !== null || from < 0 || ctx.state().world.groups.has(r.id)) return [];
 
-  const done = (up: PointerEvent) => {
-    const to = colAt(ctx, up.clientX);
+  const x = m.xs[from] + 3;
+
+  const done = (_up: PointerEvent, dx: number) => {
+    const to = colIn(m, x + dx);
 
     if (to !== from) ctx.acted(reborn(ctx.state().world, r.id, m.keyframes[to].id));
   };
@@ -612,7 +645,14 @@ function birth(ctx: Ctx, m: Model, r: Row): VNode[] {
     background: theme.faded,
     cursor: 'ew-resize',
     zIndex: 1,
-  }, [], { title: 'Drag to where it is born', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
+  }, [], {
+    title: 'Drag to where it is born',
+    onpointerdown: (e: PointerEvent) => {
+      const w = ctx.state().world;
+
+      dragged(e, () => {}, done, over(m, reachable(m, from, c => takes(reborn(w, r.id, m.keyframes[c].id))), x));
+    },
+  })];
 }
 
 /** Hide, lock and solo, at the end of a thing's header. */
@@ -744,7 +784,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       const x = placed(m, r, col, i);
       const moved = (_up: PointerEvent, dx: number) => {
         const w = ctx.state().world;
-        const to = colAt(ctx, (ctx.inner?.getBoundingClientRect().left ?? 0) + x + dx);
+        const to = colIn(m, x + dx);
         const going = picked && m.picked !== null ? m.picked.all : [place];
 
         if (to > col) {
@@ -771,7 +811,13 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         onpointerenter: (e: PointerEvent) => {
           (e.currentTarget as HTMLElement).title = entryTitle(ctx, place);
         },
-        onpointerdown: (e: PointerEvent) => dragged(e, click, moved, reach(m, r, col, x)),
+        onpointerdown: (e: PointerEvent) => {
+          const w = ctx.state().world;
+          const going = picked && m.picked !== null ? m.picked.all : [place];
+          const ok = (c: number) => takes(c > col ? pushedAt(w, going) : pulledAt(w, going));
+
+          dragged(e, click, moved, reach(m, r, col, x, reachable(m, col, c => Math.abs(c - col) === 1 && ok(c))));
+        },
       });
     }),
   ]);
@@ -789,14 +835,14 @@ function entryTitle(ctx: Ctx, place: Place): string {
  * How far a key at `x` in `col` can be dragged and still land somewhere: back
  * to after the last key of the keyframe before, on to before the first of the
  * one after — a drop is a pull or a push by one keyframe, and nothing further.
- * Where there is no keyframe that way, no further than its own.
+ * Where `can` does not reach that way, no further than its own.
  */
-function reach(m: Model, r: Row, col: number, x: number): { lo: number, hi: number } {
+function reach(m: Model, r: Row, col: number, x: number, can: { a: number, b: number }): { lo: number, hi: number } {
   const n = r.cells[col - 1]?.places.length ?? 0;
-  const lo = col === 0
-    ? m.xs[col]
+  const lo = can.a === col
+    ? m.xs[col] + 1
     : Math.min(m.xs[col - 1] + m.widths[col - 1] - 1, n === 0 ? slot(m, col - 1, 0) : placed(m, r, col - 1, n - 1) + SLOT / 2);
-  const hi = col === m.xs.length - 1
+  const hi = can.b === col
     ? m.xs[col] + m.widths[col] - 1
     : Math.max(m.xs[col + 1] + 1, slot(m, col + 1, 0) - SLOT / 2);
 
@@ -941,8 +987,8 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
 
   const x = slot(m, col, i + 1);
 
-  const done = (up: PointerEvent) => {
-    acting(ctx, m, p.lead, up.altKey, (w, all) => repeatedTo(w, all, col, colAt(ctx, up.clientX)));
+  const done = (up: PointerEvent, dx: number) => {
+    acting(ctx, m, p.lead, up.altKey, (w, all) => repeatedTo(w, all, col, colIn(m, x + dx)));
   };
 
   return [box({
@@ -965,14 +1011,17 @@ function arrow(ctx: Ctx, m: Model, r: Row): VNode[] {
         'stroke-linejoin': 'round',
       }),
     ]),
-  ], { title: 'Drag to the keyframe it repeats to', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) })];
+  ], {
+    title: 'Drag to the keyframe it repeats to',
+    onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done, repeatable(ctx, m, p.lead, e.altKey, col, x)),
+  })];
 }
 
 /** Where a repeat stops, dragged along the columns: to its own column is
  * once, and to the last is to the end. */
 function end(ctx: Ctx, m: Model, place: Place, from: number, x: number, y: number): VNode {
-  const done = (up: PointerEvent) => {
-    acting(ctx, m, place, up.altKey, (w, all) => repeatedTo(w, all, from, colAt(ctx, up.clientX)));
+  const done = (up: PointerEvent, dx: number) => {
+    acting(ctx, m, place, up.altKey, (w, all) => repeatedTo(w, all, from, colIn(m, x + 7 + dx)));
   };
 
   return box({
@@ -984,7 +1033,10 @@ function end(ctx: Ctx, m: Model, place: Place, from: number, x: number, y: numbe
     background: theme.faded,
     cursor: 'ew-resize',
     zIndex: 1,
-  }, [], { title: 'Drag to where it stops', onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done) });
+  }, [], {
+    title: 'Drag to where it stops',
+    onpointerdown: (e: PointerEvent) => dragged(e, () => {}, done, repeatable(ctx, m, place, e.altKey, from, x + 7)),
+  });
 }
 
 /**
@@ -1000,12 +1052,26 @@ function acting(
   f: (world: World, places: readonly Place[]) => World | Refused,
 ): void {
   const w = ctx.state().world;
-  const all = alone ? [place] : isPicked(m, place) ? m.picked!.all : gestureOf(w, m.rows, order(w, place.at), place);
+  const all = aboutWhich(w, m, place, alone);
 
   ctx.acted(f(w, all));
 
   // Told how often to repeat or where to wait, every entry is where it was.
   ctx.change(l => ({ ...l, picked: { lead: place, all } }));
+}
+
+/** What a hand on the entry at `place` is about. See `acting`. */
+function aboutWhich(w: World, m: Model, place: Place, alone: boolean): Place[] {
+  return alone ? [place] : isPicked(m, place) ? m.picked!.all : gestureOf(w, m.rows, order(w, place.at), place);
+}
+
+/** How far a repeat's handle at `x` can be dragged: over the columns it can
+ * be told to repeat to. */
+function repeatable(ctx: Ctx, m: Model, place: Place, alone: boolean, from: number, x: number): { lo: number, hi: number } {
+  const w = ctx.state().world;
+  const all = aboutWhich(w, m, place, alone);
+
+  return over(m, reachable(m, from, c => takes(repeatedTo(w, all, from, c))), x);
 }
 
 /** Every entry at `places`, written at column `from`, told to repeat to
