@@ -43,17 +43,21 @@ import { Id, VertexId, World } from './types';
 export type Which = number | readonly number[] | string | 'all';
 
 /**
- * Where one key is written: the `index`-th of what keyframe `at` does to a
- * thing, or one corner's nudge, depth, round or deform there, which is in a
- * key with whatever else that gesture wrote about corners. What the keyframe
- * view picks.
+ * Where one key is written: the key with id `key` among what keyframe `at`
+ * does to a thing, or one corner's nudge, depth, round or deform there, which
+ * is in a key with whatever else that gesture wrote about corners. What the
+ * keyframe view picks.
+ *
+ * By the key's id and never by where it is in the list: a place is kept
+ * across edits, and every edit that adds, takes out or moves a key moves the
+ * ones after it along.
  */
 export type Place = Listed | Cornered;
 
 export interface Listed {
   id: Id
   at: KeyframeId
-  index: number
+  key: number
 }
 
 export interface Cornered {
@@ -63,9 +67,15 @@ export interface Cornered {
   kind: CornerKind
 }
 
+/** The place of the `index`-th key of what `k` does to `id`, as it is now. A
+ * place that names nothing where there is none. */
+export function listedAt(world: World, id: Id, k: KeyframeId, index: number): Listed {
+  return { id, at: k, key: listOf(world, id, k)[index]?.id ?? -1 };
+}
+
 export function samePlace(a: Place, b: Place): boolean {
   if (a.id !== b.id || a.at !== b.at) return false;
-  if ('index' in a) return 'index' in b && a.index === b.index;
+  if ('key' in a) return 'key' in b && a.key === b.key;
 
   return 'corner' in b && a.corner === b.corner && a.kind === b.kind;
 }
@@ -184,7 +194,7 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
  * on. How far it runs is changed by saying so — see `timed`.
  */
 export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, at: KeyframeId): World | Refused {
-  return skipToggledAt(world, { id, at: k, index }, at);
+  return skipToggledAt(world, listedAt(world, id, k, index), at);
 }
 
 export function skipToggledAt(world: World, p: Place, at: KeyframeId): World | Refused {
@@ -226,7 +236,7 @@ function stands(list: readonly Key[]): number {
 
 /** How many keyframes an entry contributes to: `null` to the end. */
 export function timed(world: World, id: Id, k: KeyframeId, index: number, times: number | null): World | Refused {
-  return timedAt(world, { id, at: k, index }, times);
+  return timedAt(world, listedAt(world, id, k, index), times);
 }
 
 export function timedAt(world: World, p: Place, times: number | null): World | Refused {
@@ -261,7 +271,7 @@ export function timedAt(world: World, p: Place, times: number | null): World | R
 export function entryAt(world: World, p: Place): Key | undefined {
   const list = listOf(world, p.id, p.at);
 
-  if ('index' in p) return list[p.index];
+  if ('key' in p) return list.find(key => key.id === p.key);
 
   return list.find(key => key[heldOf(p.kind)]?.has(p.corner));
 }
@@ -270,7 +280,7 @@ export function entryAt(world: World, p: Place): Key | undefined {
 function placed(world: World, p: Place): number {
   const list = listOf(world, p.id, p.at);
 
-  if ('index' in p) return p.index < list.length ? p.index : -1;
+  if ('key' in p) return list.findIndex(key => key.id === p.key);
 
   return list.findIndex(key => key[heldOf(p.kind)]?.has(p.corner));
 }
@@ -356,12 +366,18 @@ function split(places: readonly Place[]): { lists: Map<string, Listed[]>, corner
   return { lists, corners };
 }
 
+/** Where in their list the keys `places` name are, now — the ones still
+ * there. */
+function indices(world: World, places: readonly Listed[]): number[] {
+  return places.map(p => placed(world, p)).filter(i => i >= 0);
+}
+
 /** The entries at `places` taken out. */
 export function droppedAt(world: World, places: readonly Place[]): World {
   const { lists, corners } = split(places);
   let out = world;
 
-  for (const ps of lists.values()) out = dropped(out, ps[0].id, ps[0].at, ps.map(p => p.index));
+  for (const ps of lists.values()) out = dropped(out, ps[0].id, ps[0].at, indices(out, ps));
   for (const p of corners) out = unwritten(out, p);
 
   return out;
@@ -381,7 +397,7 @@ export function pushedAt(world: World, places: readonly Place[]): World | Refuse
 
     const now: World | Refused = 'corner' in p
       ? cornerMoved(out, p, next)
-      : pushed(out, p.id, p.at, (ps as Listed[]).map(q => q.index));
+      : pushed(out, p.id, p.at, indices(out, ps as Listed[]));
 
     if ('refused' in now) return now;
 
@@ -405,7 +421,7 @@ export function pulledAt(world: World, places: readonly Place[]): World | Refuse
 
     const next: World | Refused = 'corner' in p
       ? bornAt(out, p.id) > i - 1 ? { refused: 'not there yet to pull into' } : cornerMoved(out, p, before)
-      : pulled(out, p.id, before, (ps as Listed[]).map(q => q.index));
+      : pulled(out, p.id, before, indices(out, ps as Listed[]));
 
     if ('refused' in next) return next;
 

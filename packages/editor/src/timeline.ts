@@ -136,8 +136,7 @@ export function timeline(
       if (state().standing !== null) stand(null);
     };
 
-    // Acted on, a pick may name an entry that is not there any more, and a
-    // stale index is a different entry.
+    // Acted on, a pick may name an entry that is not there any more.
     const acted = (out: World | Refused) => {
       letGo();
 
@@ -772,9 +771,9 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         // where the keyframe ends up a ghost over it, and a gesture there
         // adjusts it. A key about single corners is a place in a corner's row
         // rather than a moment of the thing, and stands on nothing.
-        const key = 'index' in place ? keysOfAt(w, at, place.id)[place.index] : undefined;
+        const index = 'key' in place ? keysOfAt(w, at, place.id).findIndex(k => k.id === place.key) : -1;
 
-        ctx.stand(key === undefined ? null : { id: place.id, at, index: (place as Listed).index, key: key.id });
+        ctx.stand(index < 0 ? null : { id: place.id, at, index, key: (place as Listed).key });
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the

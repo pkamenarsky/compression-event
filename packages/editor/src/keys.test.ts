@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, cornerRounded, deepened, edgeDeformed, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -323,7 +323,7 @@ describe('places', () => {
 
     // The corner's own key is first in the list, and the three the gesture
     // wrote follow it: a corner's writing is a key like any other.
-    const out = droppedAt(w, [{ id, at: 1, index: 1 }, { id, at: 1, index: 3 }, { id, at: 1, corner: corners[0], kind: 'erode' }]);
+    const out = droppedAt(w, [listedAt(w, id, 1, 1), listedAt(w, id, 1, 3), { id, at: 1, corner: corners[0], kind: 'erode' }]);
 
     expect(listAt(out, 1, id).map(e => e.op)).toEqual([erode(1)]);
 

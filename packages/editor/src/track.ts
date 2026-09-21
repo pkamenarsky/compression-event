@@ -161,7 +161,7 @@ function cellsOf(world: World, id: Id): Cell[] {
     const shown = list.flatMap((key, n) => (key.stand === undefined && key.by !== undefined ? [n] : []));
 
     return {
-      places: shown.map(index => ({ id, at: f.id, index })),
+      places: shown.map(n => ({ id, at: f.id, key: list[n].id })),
       kinds: shown.map(n => channelsOf(list[n]) as Kind[]),
       alive: i >= life.birth && i < life.death,
     };

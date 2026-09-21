@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, deepened, nudged, repeating, stateAt } from './rig';
-import { Refused, dropped, pushed, skipToggled } from './keys';
+import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
 import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { erode, move, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
 import { restored, saved } from './save';
@@ -99,12 +99,12 @@ describe('gestures', () => {
     );
     // `a`'s move is the second key of its keyframe, behind the key the depths
     // were written in; `b` has only the move.
-    expect(gestureOf(turned, rows, 1, { id: b.id, at: 1, index: 0 })).toEqual([{ id: a.id, at: 1, index: 1 }, { id: b.id, at: 1, index: 0 }]);
+    expect(gestureOf(turned, rows, 1, listedAt(turned, b.id, 1, 0))).toEqual([listedAt(turned, a.id, 1, 1), listedAt(turned, b.id, 1, 0)]);
 
     // Written by no gesture, it is picked alone.
     const bare = wrote(turned, 2, a.id, erode(1));
 
-    expect(gestureOf(bare, rowsOf(bare, [a.id]), 2, { id: a.id, at: 2, index: 0 })).toEqual([{ id: a.id, at: 2, index: 0 }]);
+    expect(gestureOf(bare, rowsOf(bare, [a.id]), 2, listedAt(bare, a.id, 2, 0))).toEqual([listedAt(bare, a.id, 2, 0)]);
   });
 });
 
@@ -114,11 +114,11 @@ describe('bars', () => {
     const w = repeated(world, 1, id, move(1, 0), 4);
     const e = keysOfAt(w, 1, id)[0];
 
-    expect(barOf(w, e, 1, { id, at: 1, index: 0 })).toMatchObject({ end: 4, forever: false });
+    expect(barOf(w, e, 1, listedAt(w, id, 1, 0))).toMatchObject({ end: 4, forever: false });
 
     // Waiting over a step leaves where it stops alone.
     const skipped = ok(skipToggled(w, id, 1, 0, 2));
-    const bar = barOf(skipped, keysOfAt(skipped, 1, id)[0], 1, { id, at: 1, index: 0 })!;
+    const bar = barOf(skipped, keysOfAt(skipped, 1, id)[0], 1, listedAt(skipped, id, 1, 0))!;
 
     expect(bar.steps).toEqual([{ col: 2, skip: true }, { col: 3, skip: false }, { col: 4, skip: false }]);
     expect(bar.end).toBe(4);
@@ -129,22 +129,22 @@ describe('bars', () => {
     expect(keysOfAt(ok(skipToggled(skipped, id, 1, 0, 2)), 1, id)[0]).toEqual(e);
 
     // The last step taken out ends it at the one before.
-    expect(barOf(w, keysOfAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, { id, at: 1, index: 0 })!.end).toBe(3);
+    expect(barOf(w, keysOfAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, listedAt(w, id, 1, 0))!.end).toBe(3);
   });
 
   test('once has no bar, and to the end runs to the last column', () => {
     const { world, id } = room();
     const w = repeated(world, 6, id, move(1, 0), null);
 
-    expect(barOf(w, { id: 0, ref: { x: 0, y: 0 }, by: deltaOf(move(1, 0))!, times: 1 }, 6, { id, at: 6, index: 0 })).toBeNull();
-    expect(barOf(w, keysOfAt(w, 6, id)[0], 6, { id, at: 6, index: 0 })).toMatchObject({ end: 8, forever: true });
+    expect(barOf(w, { id: 0, ref: { x: 0, y: 0 }, by: deltaOf(move(1, 0))!, times: 1 }, 6, listedAt(w, id, 6, 0))).toBeNull();
+    expect(barOf(w, keysOfAt(w, 6, id)[0], 6, listedAt(w, id, 6, 0))).toMatchObject({ end: 8, forever: true });
   });
 
   test('a repeating scale says where it is heading', () => {
     const { world, id } = room();
     const w = repeated(world, 0, id, scaled(2, 2), 4);
 
-    expect(barOf(w, keysOfAt(w, 0, id)[0], 0, { id, at: 0, index: 0 })!.heading).toBe('×16');
+    expect(barOf(w, keysOfAt(w, 0, id)[0], 0, listedAt(w, id, 0, 0))!.heading).toBe('×16');
   });
 
   test('dragging the end counts the columns it steps at', () => {
