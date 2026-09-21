@@ -484,7 +484,14 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
       cursor: 'pointer',
       color: () => (current() ? theme.accent : theme.text),
       fontWeight: () => (current() ? '600' : '400'),
-    }, { onclick: () => ctx.go(f.id) }),
+    }, {
+      // The keyframe itself, as it ends: whatever key was picked or stood on
+      // is let go, the one on screen included.
+      onclick: () => {
+        ctx.letGo();
+        ctx.go(f.id);
+      },
+    }),
 
     // Whether it draws as a ghost while another is on screen. Through the
     // history like every other write to the world: left out, an undo of the

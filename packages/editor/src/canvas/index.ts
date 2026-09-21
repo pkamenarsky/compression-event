@@ -738,9 +738,9 @@ export function worldCanvas(
       );
 
       // Standing on a key, the gesture is about that key: read against the
-      // thing as the key leaves it and about its middle as it stands then, and folded
-      // back into it rather than written after it. The thing stood on is the
-      // only one it is about — a key belongs to one thing. See `editedAt`,
+      // thing as the key leaves it and about its middle there, and folded back
+      // into it rather than written after it. The thing stood on is the only
+      // one it is about — a key belongs to one thing. See `editedAt`,
       // `refolded` and `EditorState.standing`.
       const key = stood();
       const editing = key === null || key.at !== v || !paints.has(key.id)

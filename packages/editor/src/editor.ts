@@ -324,13 +324,13 @@ function clamped(world: World, i: number): KeyframeId {
  * moves the version.
  *
  * Clicking the version already on screen is not a switch and does not start
- * one.
+ * one, but it does step off whatever key was stood on: the version is the
+ * keyframe as it ends, which is its last key.
  */
 function switched(s: EditorState, to: KeyframeId): EditorState {
-  if (s.keyframe === to) return s;
+  s = s.standing === null ? s : { ...s, standing: null };
 
-  // Whatever key was being stood on was a key of that keyframe.
-  s = { ...s, standing: null };
+  if (s.keyframe === to) return s;
 
   // Nothing to play is not a walk. An edit invalidates every span after it, and
   // a transition declared over one that no longer stands leaves both views
