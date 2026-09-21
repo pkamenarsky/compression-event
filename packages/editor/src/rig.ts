@@ -1907,32 +1907,6 @@ export function addedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): KeyR
 }
 
 /**
- * `by` added to the end of a keyframe's list, folded into the last key where
- * the two are exactly one, and left off where it does nothing.
- *
- * A gesture recomputes from the list it started with every time the hand
- * moves, so what it leaves is one key however long it went on.
- *
- * Folded only where the two are the same channel about the same painted point,
- * for now: a key that holds a turn and a move at once is a key no entry can be
- * made of, and the group fold and the copy still read entries. Lifting that is
- * what break and split are for — see `PLAN-keys.md`, phase 3d.
- */
-export function appendedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): KeyRig {
-  if (idle(by)) return rig;
-
-  const list = keysAt(rig, k);
-  const last = list[list.length - 1];
-  const both = last === undefined ? null : foldedBy(last, ref, by);
-
-  if (both === null) return withKeysAt(rig, k, [...list, keyOnce(nextKey(rig), ref, by)]);
-
-  const head = list.slice(0, -1);
-
-  return withKeysAt(rig, k, both === 'gone' ? head : [...head, both]);
-}
-
-/**
  * `by` folded into `key`, where that leaves one channel: the key that does
  * both, `'gone'` where together they do nothing, or nothing where they cannot
  * be one.

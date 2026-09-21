@@ -3185,7 +3185,7 @@ describe('moving something at one keyframe moves it at the keyframes after it', 
   test('a drag in steps lands where the same drag in one go lands, as one key', () => {
     // Moves one after another are one move, and a hand that went there in four
     // goes has written the same thing as one that went there in one — which is
-    // what a gesture folding into the key before it means. See `appendedBy`.
+    // what a hand kept on one key means. See `EditorState.target`.
     const { world, ids } = box();
     const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
 

@@ -221,6 +221,23 @@ describe('break and split', () => {
     expect(half(together, id).t.x).not.toBeCloseTo(half(apart, id).t.x, 6);
   });
 
+  test('split takes the last gesture out of the key the hand is on, and puts it after that one', () => {
+    const { world, id } = room();
+    const w = wrote(world, 1, id, move(10, 0), move(0, 20));
+    const first = keysOfAt(w, 1, id)[0];
+    const { paint, pivot } = editedAt(w, 1, id, first)!;
+    const now = refolded(w, 1, id, 0, editedWith({ turn: 0.4 }, paint, pivot));
+    const apart = split(now, w, 1, [id], new Map([[id, first.id]]));
+    const keys = keysOfAt(apart, 1, id);
+
+    expect(keys).toHaveLength(3);
+    expect(keys[0].by).toEqual(first.by);
+    expect(keys[1].by!.angle).toBeCloseTo(0.4, 12);
+    expect(keys[2].by).toEqual(keysOfAt(w, 1, id)[1].by);
+
+    for (const v of [1, 2] as const) expectFrame(at(apart, id, v), at(now, id, v));
+  });
+
   test('a gesture that wrote a key of its own is already split', () => {
     const { world, id } = room();
     const one = wroteOne(world, 1, id, move(10, 0));

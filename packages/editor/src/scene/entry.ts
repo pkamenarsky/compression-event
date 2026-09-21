@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { GroupId, Id, KeyframeId, World, standing } from '../types';
+import { GroupId, Id, KeyframeId, Target, World, standing } from '../types';
 import { place } from '../affine';
 import {
   Frame,
@@ -23,10 +23,13 @@ import {
   NOTHING,
   Op,
   REST,
+  addedBy,
   anywhere,
   deltaOf,
   foldedBy,
+  idle,
   keysAt,
+  nextKey,
   placed,
   playingAt,
   playingOn,
@@ -40,6 +43,7 @@ import {
   keyRigOf,
   order,
   under,
+  upto,
   withKeyRig,
 } from './core';
 import {
@@ -121,6 +125,59 @@ export function refolded(world: World, k: KeyframeId, id: Id, index: number, op:
   const now = list.map((x, i) => (i === index ? { ...done, ...kept } : x));
 
   return withKeyRig(world, id, withKeysAt(rig, k, now));
+}
+
+/**
+ * The world as the keys the hand is on leave their things — `upto` each of
+ * them, at keyframe `k` — and which things that holds back. Where every one
+ * is its keyframe's last, `world` itself and nothing held.
+ */
+export function standingOn(world: World, k: KeyframeId, target: Target | null): { here: World, stood: Set<Id> } {
+  let here = world;
+  const stood = new Set<Id>();
+
+  for (const p of target?.all ?? []) {
+    if (!('key' in p) || p.at !== k) continue;
+
+    const list = keysAt(keyRigOf(here, p.id), k);
+    const i = list.findIndex(x => x.id === p.key);
+
+    if (i < 0 || i === list.length - 1) continue;
+
+    here = upto(here, k, p.id, i);
+    stood.add(p.id);
+  }
+
+  return { here, stood };
+}
+
+/**
+ * `op` written into the key of `id` at `k` whose id is `key`, or into a new
+ * key at the end where `key` is nothing or names no key there — with the key
+ * it went into, or nothing where it wrote nothing.
+ *
+ * The one way a gesture writes. Where it goes is `EditorState.target`'s to
+ * say, and never decided here from what the two would fold to: a key the op
+ * cannot be folded into — which an op read by `editedAt` always can — gets a
+ * new key after it rather than being lost.
+ */
+export function writtenInto(world: World, k: KeyframeId, id: Id, key: number | null, op: Op): { world: World, key: number | null } {
+  const index = key === null ? -1 : keysAt(keyRigOf(world, id), k).findIndex(x => x.id === key);
+
+  if (index >= 0) {
+    const out = refolded(world, k, id, index, op);
+
+    if (out !== world) return { world: out, key };
+  }
+
+  const by = deltaOf(op);
+
+  if (by === null || idle(by)) return { world, key: index >= 0 ? key : null };
+
+  const rig = keyRigOf(world, id);
+  const fresh = nextKey(rig);
+
+  return { world: withKeyRig(world, id, addedBy(rig, k, 'ref' in op ? op.ref : REST.t, by)), key: fresh };
 }
 
 /**

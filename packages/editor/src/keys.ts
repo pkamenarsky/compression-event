@@ -36,7 +36,7 @@ import {
   withKeysAt,
 } from './rig';
 import { keyRigOf, withKeyRig, without } from './scene';
-import { Id, VertexId, World } from './types';
+import { EditorState, Id, Target, VertexId, World, within } from './types';
 
 /** A key by its place in the list, several by theirs, every key of one kind,
  * or the whole list. */
@@ -792,3 +792,63 @@ export function redied(world: World, id: Id, at: KeyframeId | null): World | Ref
   return { ...world, paths: new Map(world.paths).set(id, { ...world.paths.get(id)!, death: at }) };
 }
 
+
+// -----------------------------------------------------------------------------
+// Where the hand is
+// -----------------------------------------------------------------------------
+
+/**
+ * `s` with the keys the hand is on kept true: every one still there, at the
+ * keyframe on screen, and on something picked or inside something picked —
+ * the only things whose keys the keyframe view shows. Where the lead goes, the
+ * hand is on nothing.
+ *
+ * The one place this is decided. Run over every change to the store, so that
+ * nothing which moves a key, takes one out, steps to another keyframe, undoes
+ * or picks something else has to remember to let go. `s` itself where nothing
+ * changed.
+ */
+export function aimed(s: EditorState): EditorState {
+  const t = s.target;
+
+  if (t === null) return s;
+  if (t.lead.at !== s.keyframe) return { ...s, target: null };
+
+  const w = s.world;
+  const sel = s.selection;
+  const shown = new Set([...sel.polygons, ...sel.artefacts, ...sel.paths].flatMap(id => within(w, id)));
+  const there = (p: Place) => shown.has(p.id) && entryAt(w, p) !== undefined;
+
+  if (!there(t.lead)) return { ...s, target: null };
+
+  const all = t.all.filter(there);
+
+  return all.length === t.all.length ? s : { ...s, target: { lead: t.lead, all } };
+}
+
+/** The hand on `places`, led by the first of them, or on nothing where there
+ * are none. */
+export function aiming(places: readonly Place[]): Target | null {
+  return places.length === 0 ? null : { lead: places[0], all: [...places] };
+}
+
+/** Each of `ids`' last key at `k`, where it has one. What a break leaves the
+ * hand on. */
+export function lastKeys(world: World, k: KeyframeId, ids: readonly Id[]): Listed[] {
+  return ids.flatMap(id => {
+    const list = listOf(world, id, k);
+    const last = list[list.length - 1];
+
+    return last === undefined ? [] : [{ id, at: k, key: last.id }];
+  });
+}
+
+/** The keys each of `ids` has at `k` in `now` that it did not have in `was`.
+ * What a split leaves the hand on. */
+export function newKeys(was: World, now: World, k: KeyframeId, ids: readonly Id[]): Listed[] {
+  return ids.flatMap(id => {
+    const before = new Set(listOf(was, id, k).map(key => key.id));
+
+    return listOf(now, id, k).filter(key => !before.has(key.id)).map(key => ({ id, at: k, key: key.id }));
+  });
+}

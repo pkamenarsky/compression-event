@@ -309,13 +309,28 @@ being taught what a moment is. Where the keyframe ends up is a ghost over it.
 Anything that moves drops it: another keyframe, an edit, a click on nothing.
 
 A gesture while standing adjusts that key: read against the thing as the key
-leaves it, about the key's own centre, and folded back in — `editedAt` and
+leaves it, about its middle there, and folded back in — `editedAt` and
 `refolded`, which the double-click edit already used. It is about the thing
 stood on alone, a key belonging to one thing.
 
 The double-click edit is gone with it: standing on a key is what it was for,
 and it could only ever edit a key that did one thing — it picked its gesture
 from the key's kind, which a folded key has none of.
+
+**The hand on a key.** Standing, the timeline's pick and the fold into the
+last key were three answers to one question — where does the next gesture go —
+each kept in step by hand, and each ordering bug was one that wasn't. They are
+one now, `EditorState.target`: the keys the hand is on, by id. Every gesture
+writes into its thing's key there (`writtenInto`), and where it has none makes
+one and puts the hand on it. Picking in the timeline puts the hand there;
+break puts it on the empty key; split on what it split off. Which of them is
+stood on is only whether it is its keyframe's last. `aimed` keeps it true over
+every change to the store — gone keys, another keyframe, things no longer
+picked — and nothing else lets go.
+
+Nothing splits on its own any more: a turn after a move, an erosion after a
+turn, go into the same key until the author breaks. `appendedBy`, which folded
+where the two were one and started a key where they were not, is gone.
 
 Not yet: an inspector.
 

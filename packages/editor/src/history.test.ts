@@ -10,11 +10,12 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon, deepen, editedAt, keyRigOf, keysOfAt, moveOf, refolded, rigOf, withKeyRig } from './scene';
-import { timed } from './keys';
+import { TOP, addPolygon, deepen, editedAt, keyRigOf, keysOfAt, moveOf, rigOf, withKeyRig, writtenInto } from './scene';
+import { aimed, aiming, timed } from './keys';
 import { NOTHING, withKeysAt } from './rig';
-import { erode, move, wrote } from './testing';
+import { erode, move, turned, wrote } from './testing';
 import {
+  EMPTY_SELECTION,
   EditorState,
   FLOOR,
   PolygonKind,
@@ -186,43 +187,95 @@ describe('gestures', () => {
   });
 });
 
-describe('standing across an edit', () => {
-  /** A room with two keys at v1, stood on the first of them. */
-  const stood = () => {
+describe('the keys the hand is on', () => {
+  /** A room with two keys at v1, picked, and the hand on the first of them. */
+  const on = () => {
     const { world, id } = square(emptyWorld(), 0);
     const w = wrote(world, 1, id, move(10, 0), move(0, 20));
     const key = keysOfAt(w, 1, id)[0];
-    const s = { ...initialState(w), keyframe: 1, standing: { id, at: 1, index: 0, key: key.id } };
+    const place = { id, at: 1, key: key.id };
+    const s: EditorState = {
+      ...initialState(w),
+      keyframe: 1,
+      selection: { ...EMPTY_SELECTION, polygons: [id] },
+      target: { lead: place, all: [place] },
+    };
 
     return { s, id, key };
   };
 
-  test('goes on standing on the same key, so the next gesture lands there too', () => {
-    const { s, id, key } = stood();
+  test('stay on the same key across an edit of it, so the next gesture lands there too', () => {
+    const { s, id, key } = on();
     const read = editedAt(s.world, 1, id, key)!;
-    const after = step(s, refolded(s.world, 1, id, 0, moveOf(read.paint, { x: 5, y: 0 })));
+    const out = writtenInto(s.world, 1, id, key.id, moveOf(read.paint, { x: 5, y: 0 }));
+    const after = aimed(step(s, out.world));
 
-    expect(after.standing).toEqual({ id, at: 1, index: 0, key: key.id });
+    expect(out.key).toBe(key.id);
+    expect(after.target).toBe(s.target);
     expect(keysOfAt(after.world, 1, id)[0].by!.move).toEqual({ x: 15, y: 0 });
   });
 
-  test('at wherever the edit left it', () => {
-    const { s, id, key } = stood();
-
-    // Something written in front of it: the key is the same key, one along.
+  test('and wherever an edit moved it along', () => {
+    const { s, id } = on();
     const now = withKeyRig(s.world, id, withKeysAt(
       keyRigOf(s.world, id),
       1,
       [{ id: 99, ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 1 }, times: 1 }, ...keysOfAt(s.world, 1, id)],
     ));
 
-    expect(step(s, now).standing).toEqual({ id, at: 1, index: 1, key: key.id });
+    expect(aimed(step(s, now)).target).toBe(s.target);
   });
 
-  test('and stops where the key is taken out', () => {
-    const { s, id } = stood();
-    const now = withKeyRig(s.world, id, withKeysAt(keyRigOf(s.world, id), 1, keysOfAt(s.world, 1, id).slice(1)));
+  test('let go where the key is taken out, the keyframe changes, or its thing is not picked', () => {
+    const { s, id } = on();
+    const gone = withKeyRig(s.world, id, withKeysAt(keyRigOf(s.world, id), 1, keysOfAt(s.world, 1, id).slice(1)));
 
-    expect(step(s, now).standing).toBeNull();
+    expect(aimed(step(s, gone)).target).toBeNull();
+    expect(aimed({ ...s, keyframe: 2 }).target).toBeNull();
+    expect(aimed({ ...s, selection: EMPTY_SELECTION }).target).toBeNull();
+  });
+
+  test('and an undo that takes the key back lets go of it', () => {
+    const { s, id } = on();
+    const out = writtenInto(s.world, 1, id, null, move(1, 1));
+    const t = step({ ...s, target: aiming([{ id, at: 1, key: out.key! }]) }, out.world);
+
+    expect(aimed(undone(t)).target).toBeNull();
+  });
+});
+
+describe('a gesture', () => {
+  test('with the hand on no key writes a new one, and the next goes into it whatever it is', () => {
+    const { world, id } = square(emptyWorld(), 0);
+    const w = wrote(world, 1, id, erode(2));
+    const first = writtenInto(w, 1, id, null, move(10, 0));
+
+    expect(keysOfAt(first.world, 1, id)).toHaveLength(2);
+
+    // A turn after a move, and an erosion after both: no rule of its own
+    // splits them off.
+    const turn = turned(0.3, { x: 50, y: 0 });
+    const second = writtenInto(first.world, 1, id, first.key, typeof turn === 'function' ? turn(first.world, 1, id) : turn);
+    const third = writtenInto(second.world, 1, id, first.key, erode(1));
+    const keys = keysOfAt(third.world, 1, id);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[1].by!.angle).toBeCloseTo(0.3, 12);
+    expect(keys[1].by!.erode).toBe(1);
+  });
+
+  test('into a key that repeats adjusts every step of it, and a new key does not repeat', () => {
+    const { world, id } = square(emptyWorld(), 0);
+    const timedOut = timed(wrote(world, 1, id, move(10, 0)), id, 1, 0, 3);
+
+    if ('refused' in timedOut) throw new Error(timedOut.refused);
+
+    const w = timedOut;
+    const key = keysOfAt(w, 1, id)[0];
+    const into = writtenInto(w, 1, id, key.id, erode(1));
+    const fresh = writtenInto(w, 1, id, null, erode(1));
+
+    expect(keysOfAt(into.world, 1, id)[0].times).toBe(3);
+    expect(keysOfAt(fresh.world, 1, id)[1].times).toBe(1);
   });
 });

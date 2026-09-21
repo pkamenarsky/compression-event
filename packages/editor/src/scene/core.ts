@@ -131,7 +131,6 @@ import {
   keysAt,
   withKeysAt,
   Key as RigKey,
-  appendedBy,
   amountedBy,
   deltaOf,
   nextKey,
@@ -1481,24 +1480,6 @@ export function keyed(world: World, k: KeyframeId, id: Id, list: readonly (Op | 
 }
 
 /**
- * One operation more at the end of what `v` does to `id`, folded into the key
- * before where the two are exactly one.
- *
- * What every gesture writes. The operation is the delta it makes, about the
- * point it painted — see `appendedBy` in `rig.ts`.
- */
-export function appended(world: World, v: KeyframeId, id: Id, op: Op): World {
-  const by = deltaOf(op);
-
-  if (by === null) return world;
-
-  const rig = keyRigOf(world, id);
-  const now = appendedBy(rig, v, 'ref' in op ? op.ref : REST.t, by);
-
-  return now === rig ? world : withKeyRig(world, id, now);
-}
-
-/**
  * The world as a thing's keyframe leaves it after `index` keys of it, rather
  * than after all of them: what standing on a key shows.
  *
@@ -1553,17 +1534,28 @@ export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
  * delta about one painted point compose by adding their numbers, so they come
  * apart by taking them away again.
  *
+ * The key is the one `on` names for each thing — the one the hand is on, which
+ * is where its last gesture went — and the keyframe's last where it names
+ * none. What is split off goes straight after it.
+ *
  * Nothing where the key is not there in both, where the gesture wrote a key of
  * its own, or where it wrote about single corners, which is a key of its own
  * already.
  */
-export function split(world: World, was: World, v: KeyframeId, ids: readonly Id[]): World {
+export function split(
+  world: World,
+  was: World,
+  v: KeyframeId,
+  ids: readonly Id[],
+  on: ReadonlyMap<Id, number> = new Map(),
+): World {
   let out = world;
 
   for (const id of ids) {
     const rig = keyRigOf(out, id);
     const list = keysAt(rig, v);
-    const at = list.length - 1;
+    const named = on.get(id);
+    const at = named === undefined ? list.length - 1 : list.findIndex(k => k.id === named);
     const now = list[at];
     const before = keysAt(keyRigOf(was, id), v).find(k => k.id === now?.id);
 
@@ -1578,7 +1570,7 @@ export function split(world: World, was: World, v: KeyframeId, ids: readonly Id[
 
     const key: RigKey = { id: nextKey(rig), ref: now.ref, by, times: 1 };
 
-    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, at), before, key]));
+    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, at), before, key, ...list.slice(at + 1)]));
   }
 
   return out;

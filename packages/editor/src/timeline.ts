@@ -26,10 +26,11 @@
 //
 // A click picks a key and everything else in its column the same gesture
 // wrote, shown here: a turn of several things at once. ⌥-click picks the one
-// key alone. It also stands on it: the canvas draws the thing as that key
-// leaves it, and a gesture there adjusts that key rather than writing another
-// after it. See `EditorState.standing`. The arrow beside the clicked key repeats all of them, each told
-// to run to the same keyframe, and dragging the end of a key's lane or
+// key alone. What is picked is what the hand is on: the next gesture on the
+// canvas goes into it, and a key that is not its keyframe's last is drawn as
+// it leaves its thing. A gesture on the canvas puts the hand on what it wrote,
+// which is picked here in turn. See `EditorState.target`. The arrow beside
+// the clicked key repeats all of them, each told to run to the same keyframe, and dragging the end of a key's lane or
 // clicking a dot on it picks the same and does the same to all of them. With
 // ⌥ held, each is about its own key only.
 //
@@ -54,7 +55,6 @@ import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input, keyOwned, pressedAway } from './input';
 import {
-  Listed,
   Place,
   Refused,
   deleted,
@@ -70,10 +70,10 @@ import {
   timedAt,
 } from './keys';
 import { KeyframeId } from './rig';
-import { keysOfAt, order, unchainedAt } from './scene';
+import { order, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
-import { EditorState, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
+import { EditorState, Flags, Selection, Target, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
 const ROW = 24;
@@ -95,14 +95,9 @@ const KEYS = ['Backspace', 'Delete', 'Escape'];
 
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
-  picked: Picked | null
-}
-
-/** The entry clicked, which the arrow is beside, and everything picked with
- * it: all in one column, the clicked one among them. */
-interface Picked {
-  lead: Place
-  all: Place[]
+  /** Whether the keys are the view's: picked here, and nothing pressed
+   * anywhere else since. Delete is the picked keys' for as long as it is. */
+  held: boolean
 }
 
 interface Model {
@@ -111,7 +106,8 @@ interface Model {
   xs: number[]
   widths: number[]
   rows: Row[]
-  picked: Picked | null
+  /** The keys the hand is on. See `EditorState.target`. */
+  picked: Target | null
 }
 
 export function timeline(
@@ -122,19 +118,17 @@ export function timeline(
   input: Input,
   update: Update,
   go: (k: KeyframeId) => void,
-  /** Stand on a key, or on nothing. See `EditorState.standing`. */
-  stand: (on: EditorState['standing']) => void,
 ): VNode {
-  const initial: Local = { picked: null };
+  const initial: Local = { held: false };
 
   return stateful(initial, (local, setLocal) => {
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
-    const letGo = () => {
-      if (local().picked !== null) change(l => ({ ...l, picked: null }));
+    const aim = (target: Target | null) => {
+      update(s => ({ ...s, target }));
 
-      // Letting go of the key stood on as well: the two are the same click.
-      if (state().standing !== null) stand(null);
+      if (local().held !== (target !== null)) change(l => ({ ...l, held: target !== null }));
     };
+    const letGo = () => aim(null);
 
     // Acted on, a pick may name an entry that is not there any more.
     const acted = (out: World | Refused) => {
@@ -146,7 +140,7 @@ export function timeline(
     let last: { key: string, model: Model } | null = null;
 
     const model = (): Model => {
-      const m = modelOf(world(), selection(), local(), state().tool === 'point' || state().tool === 'edge');
+      const m = modelOf(world(), selection(), state().target, state().tool === 'point' || state().tool === 'edge');
       const key = JSON.stringify(m);
 
       if (last !== null && last.key === key) return last.model;
@@ -165,7 +159,7 @@ export function timeline(
       state,
       update,
       go,
-      stand,
+      aim,
       local,
       change,
       acted,
@@ -198,26 +192,20 @@ export function timeline(
         },
       },
       [
-        // Delete is the pick's for as long as there is one.
-        effect(() => local().picked !== null, on => (on ? input.claim(ctx, ...KEYS) : undefined)),
-
-        // Stepped to another keyframe — by the arrows, say — a pick at the one
-        // left behind goes: the keyframe on screen is as it ends.
-        effect(keyframe, k => {
-          const p = local().picked;
-
-          if (p !== null && p.lead.at !== k) change(l => ({ ...l, picked: null }));
-
-          return undefined;
-        }),
+        // Delete is the picked keys' for as long as they are the view's.
+        effect(
+          () => local().held && state().target !== null,
+          on => (on ? input.claim(ctx, ...KEYS) : undefined),
+        ),
         keys(ctx, input),
 
-        // A press anywhere else lets the pick go, so that Delete is the
-        // canvas' again the moment the hand is back on it.
+        // A press anywhere else hands Delete back to the canvas the moment the
+        // hand is back on it. The keys stay picked: a gesture on the canvas
+        // is what they are picked for.
         interaction(function* () {
           while (true) {
             yield* pressedAway(input, 'keyframes');
-            letGo();
+            if (local().held) change(l => ({ ...l, held: false }));
           }
         }),
         dynamic(model, m => body(ctx, m)),
@@ -232,8 +220,8 @@ interface Ctx {
   state: Value<EditorState>
   update: Update
   go: (k: KeyframeId) => void
-  /** Stand on a key, or on nothing. See `EditorState.standing`. */
-  stand: (on: EditorState['standing']) => void
+  /** Put the hand on keys, or on none. See `EditorState.target`. */
+  aim: (target: Target | null) => void
   local: Value<Local>
   change: (f: (l: Local) => Local) => void
   acted: (out: World | Refused) => void
@@ -251,7 +239,7 @@ function keys(ctx: Ctx, input: Input): VNode {
       // pick let go of as this one is acted on hands the next Delete back to
       // the canvas, and not this one.
       const e = yield* keyOwned(input, ctx);
-      const picked = ctx.local().picked;
+      const picked = ctx.state().target;
 
       if (picked === null || ctx.state().roaming) continue;
 
@@ -275,9 +263,8 @@ function keys(ctx: Ctx, input: Input): VNode {
 
 /** With `corners`, the rows of the corners written about come under their
  * polygons': what the corner and edge tools are about. */
-function modelOf(world: World, selection: Selection, local: Local, corners: boolean): Model {
+function modelOf(world: World, selection: Selection, picked: Target | null, corners: boolean): Model {
   const rows = rowsOf(world, rootsOf(world, selection), corners);
-  const picked = valid(world, local.picked);
 
   // As wide as the fullest cell in it, the picked entry's arrow counted, and
   // never narrower than a handful.
@@ -304,11 +291,6 @@ function modelOf(world: World, selection: Selection, local: Local, corners: bool
     rows,
     picked,
   };
-}
-
-/** A pick that still names something. */
-function valid(world: World, picked: Picked | null): Picked | null {
-  return picked !== null && entryAt(world, picked.lead) !== undefined ? picked : null;
 }
 
 /**
@@ -515,8 +497,8 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
       color: () => (current() ? theme.accent : theme.text),
       fontWeight: () => (current() ? '600' : '400'),
     }, {
-      // The keyframe itself, as it ends: whatever key was picked or stood on
-      // is let go, the one on screen included.
+      // The keyframe itself, as it ends: whatever key was picked is let go,
+      // the one on screen included.
       onclick: () => {
         ctx.letGo();
         ctx.go(f.id);
@@ -764,16 +746,12 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       const click = (e: PointerEvent) => {
         const w = ctx.state().world;
 
+        // The hand on it, and on what its gesture wrote beside it: a gesture
+        // on the canvas adjusts them, and where one is not its keyframe's
+        // last the canvas draws the thing as that key leaves it. See
+        // `EditorState.target`.
         ctx.go(at);
-        ctx.change(l => ({ ...l, picked: { lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) } }));
-
-        // Stood on: the canvas draws the thing as this key leaves it, with
-        // where the keyframe ends up a ghost over it, and a gesture there
-        // adjusts it. A key about single corners is a place in a corner's row
-        // rather than a moment of the thing, and stands on nothing.
-        const index = 'key' in place ? keysOfAt(w, at, place.id).findIndex(k => k.id === place.key) : -1;
-
-        ctx.stand(index < 0 ? null : { id: place.id, at, index, key: (place as Listed).key });
+        ctx.aim({ lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) });
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the
@@ -1056,7 +1034,7 @@ function acting(
   ctx.acted(f(w, all));
 
   // Told how often to repeat or where to wait, every entry is where it was.
-  ctx.change(l => ({ ...l, picked: { lead: place, all } }));
+  ctx.aim({ lead: place, all });
 }
 
 /** What a hand on the entry at `place` is about. See `acting`. */

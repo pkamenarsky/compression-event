@@ -19,7 +19,7 @@
 
 import { nextOf } from './geometry';
 import { Amount, AmountKind, amountedBy, nextKey } from './rig';
-import { Resolved, appended, keyRigOf, optionOf, withKeyRig } from './scene';
+import { Resolved, keyRigOf, optionOf, withKeyRig } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
@@ -198,12 +198,6 @@ export function cornersOptioned(world: World, corners: readonly VertexId[], patc
 /** Corners back to their polygon's round, their own options dropped. */
 export function cornersInheriting(world: World, corners: readonly VertexId[]): World {
   return corners.reduce((w, c) => (ownRound(w, c) ? withCornerRound(w, c, undefined) : w), world);
-}
-
-/** An amount written at `v` about a whole thing, folded into the entry
- * before where the two are one. */
-export function amountWritten(world: World, v: KeyframeId, id: Id, kind: AmountKind, by: number): World {
-  return appended(world, v, id, { kind, by } satisfies Amount);
 }
 
 /**

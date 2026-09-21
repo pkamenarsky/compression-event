@@ -40,7 +40,6 @@ import {
   hitting,
   hitVertex,
   contributing,
-  appended,
   painted,
   moveOf,
   turnOf,
@@ -81,9 +80,9 @@ import {
   runs,
   verticesWithinBox,
   editedAt,
-  refolded,
   keysOfAt,
-  upto,
+  standingOn,
+  writtenInto,
 } from '../scene';
 import {
   OnPath,
@@ -96,10 +95,10 @@ import {
   setPath,
 } from '../paths';
 import { beneath } from '../track';
+import { Listed, aiming } from '../keys';
 import { Amount, Op as Operation } from '../rig';
 import {
   AmountKind,
-  amountWritten,
   cornersAmounted,
   edgeOf,
   edgesBetween,
@@ -179,9 +178,9 @@ export function worldCanvas(
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
   keyframe: Value<KeyframeId>,
-  /** The key being stood on, or nothing for the keyframe as it ends. See
-   * `EditorState.standing`. */
-  stood: Value<EditorState['standing']>,
+  /** The keys the hand is on, which every gesture writes into. See
+   * `EditorState.target`. */
+  target: Value<EditorState['target']>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
@@ -737,20 +736,10 @@ export function worldCanvas(
           .map(id => [id, painted(was, v, id, resolved)]),
       );
 
-      // Standing on a key, the gesture is about that key: read against the
-      // thing as the key leaves it and about its middle there, and folded back
-      // into it rather than written after it. The thing stood on is the only
-      // one it is about — a key belongs to one thing. See `editedAt`,
-      // `refolded` and `EditorState.standing`.
-      const key = stood();
-      const editing = key === null || key.at !== v || !paints.has(key.id)
-        ? null
-        : editedAt(was, v, key.id, keysOfAt(was, v, key.id)[key.index]);
-
-      if (editing !== null) {
-        paints.clear();
-        paints.set(key!.id, editing.paint);
-      }
+      // Into the keys the hand is on, read as each leaves its thing. See
+      // `onKeys`.
+      const hand = onKeys(was, v, paints);
+      const held = target();
 
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself. Artefacts are in it: a room turning
@@ -768,7 +757,7 @@ export function worldCanvas(
       // Round what is drawn rather than round what it was drawn from, which is
       // `outlining`'s business: a group's pillar is a hole in its room and not
       // a place the group reaches to.
-      const pivot = editing !== null ? editing.pivot : middle([
+      const pivot = hand.stood !== null ? middle(hand.stood) : middle([
         ...outlining(world(), v, items, opened(world(), inside())),
         ...places,
         ...walked,
@@ -840,6 +829,8 @@ export function worldCanvas(
                 world = turnedStart(world, was.start.facing + about(pivot, from, to));
               }
 
+              const wrote: Listed[] = [];
+
               for (const [id, p] of paints) {
                 if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
                   world = cornersAmounted(world, v, id, kind, corners, by);
@@ -850,12 +841,13 @@ export function worldCanvas(
                   ? { kind, by } satisfies Amount
                   : mode(p, { pivot, from, to, alt: e.altKey, factor });
 
-                world = editing !== null
-                  ? refolded(world, v, id, key!.index, op)
-                  : appended(world, v, id, op);
+                const out = writtenInto(world, v, id, hand.keys.get(id) ?? null, op);
+
+                world = out.world;
+                if (out.key !== null) wrote.push({ id, at: v, key: out.key });
               }
 
-              return { ...s, world };
+              return { ...s, world, target: aiming(wrote) ?? held };
             });
           }),
           panning: alongside(),
@@ -873,7 +865,7 @@ export function worldCanvas(
         const used = end.tag === 'cancel' ? null : options;
 
         update(s => {
-          const out = settled(s, was, end.tag === 'cancel');
+          const out = settled(s, was, end.tag === 'cancel', held);
 
           return used === null ? out : { ...out, remembered: { ...out.remembered, deform: used } };
         });
@@ -1975,18 +1967,9 @@ export function worldCanvas(
           .map(id => [id, painted(was, v, id, resolved)]),
       );
 
-      // Standing on a key, the drag moves that key rather than writing one
-      // after it, and moves the thing it belongs to alone. See the same in
-      // the transform gesture above.
-      const key = stood();
-      const editing = key === null || key.at !== v || !paints.has(key.id)
-        ? null
-        : editedAt(was, v, key.id, keysOfAt(was, v, key.id)[key.index]);
-
-      if (editing !== null) {
-        paints.clear();
-        paints.set(key!.id, editing.paint);
-      }
+      // Into the keys the hand is on, as the transform gesture does.
+      const hand = onKeys(was, v, paints);
+      const held = target();
 
       if (paints.size === 0 && !beginning && looking === null) return;
 
@@ -2022,13 +2005,16 @@ export function worldCanvas(
             // because the grid is on screen and that is where the hand is
             // aiming — then taken back, so a group turned a quarter turn does
             // not send its contents sideways.
-            for (const [id, p] of paints) {
-              const op = moveOf(p, { x: dx, y: dy });
+            const wrote: Listed[] = [];
 
-              world = editing !== null ? refolded(world, v, id, key!.index, op) : appended(world, v, id, op);
+            for (const [id, p] of paints) {
+              const out = writtenInto(world, v, id, hand.keys.get(id) ?? null, moveOf(p, { x: dx, y: dy }));
+
+              world = out.world;
+              if (out.key !== null) wrote.push({ id, at: v, key: out.key });
             }
 
-            return { ...st, world };
+            return { ...st, world, target: aiming(wrote) ?? held };
           });
         }),
         panning: alongside(),
@@ -2042,7 +2028,46 @@ export function worldCanvas(
 
       if (looking !== null && end.tag === 'cancel') setEye(looking);
 
-      update(s => settled(s, was, end.tag === 'cancel'));
+      update(s => settled(s, was, end.tag === 'cancel', held));
+    }
+
+    /**
+     * The keys the hand is on at `v` among the things in `paints`, by thing,
+     * and each of those things read as its key leaves it rather than as the
+     * keyframe does — `editedAt` — so that what the gesture writes folds into
+     * that key. See `EditorState.target`.
+     *
+     * Where any of them is not the last of its keyframe, the hand is standing
+     * on it: the gesture is about the things it stands on alone, and `stood`
+     * is where each of them is as its key leaves it, for the pivot. Otherwise
+     * `stood` is nothing, and the pivot is the one every gesture has.
+     */
+    function onKeys(was: World, v: KeyframeId, paints: Map<Id, Painted>): { keys: Map<Id, number>, stood: Point[] | null } {
+      const keys = new Map<Id, number>();
+      const centres: Point[] = [];
+      let earlier = false;
+
+      for (const p of target()?.all ?? []) {
+        if (!('key' in p) || p.at !== v || !paints.has(p.id) || keys.has(p.id)) continue;
+
+        const list = keysOfAt(was, v, p.id);
+        const i = list.findIndex(k => k.id === p.key);
+        const read = i < 0 ? null : editedAt(was, v, p.id, list[i]);
+
+        if (read === null) continue;
+
+        keys.set(p.id, p.key);
+        paints.set(p.id, read.paint);
+        centres.push(read.pivot);
+
+        if (i < list.length - 1) earlier = true;
+      }
+
+      if (earlier) {
+        for (const id of [...paints.keys()]) if (!keys.has(id)) paints.delete(id);
+      }
+
+      return { keys, stood: earlier ? centres : null };
     }
 
     /**
@@ -2058,9 +2083,11 @@ export function worldCanvas(
      * Blurring is not cancelling. What is on screen when the window goes is
      * what the hand last asked for, and throwing it away because a
      * notification stole the focus loses work that was never in doubt.
+     *
+     * Put back, the hand is back on the keys it was on, `aimed`.
      */
-    function settled(s: EditorState, was: World, cancelled: boolean): EditorState {
-      return cancelled ? { ...s, world: was } : marked(s, was);
+    function settled(s: EditorState, was: World, cancelled: boolean, aimed = s.target): EditorState {
+      return cancelled ? { ...s, world: was, target: aimed } : marked(s, was);
     }
 
     /** The picked corners taken out, or the picked polygons under the other
@@ -2200,17 +2227,17 @@ export function worldCanvas(
               bake(),
               local(),
               afoot(),
-              stood(),
+              target(),
             ] as const,
-            ([w, s, v, t, sel, ins, at, r, b, l, g, stood]) => {
+            ([w, s, v, t, sel, ins, at, r, b, l, g, aim]) => {
               if (el && ctx) {
                 // Standing on a key, the world drawn is the one that keyframe
                 // leaves after that key — see `upto`. Where the keyframe ends
                 // up is drawn over it as a ghost, so that what is being
                 // adjusted and what it comes to are both on screen.
-                const here = stood === null || stood.at !== at ? w : upto(w, at, stood.id, stood.index);
+                const { here, stood } = standingOn(w, at, aim);
                 const items = resolveAt(here, at);
-                const ends = here === w ? null : resolveAt(w, at).filter(it => it.id === stood!.id);
+                const ends = here === w ? null : resolveAt(w, at).filter(it => stood.has(it.id));
 
                 set = live(set, contributing(here, at, items));
 

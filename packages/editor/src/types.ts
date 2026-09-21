@@ -20,6 +20,7 @@ import {
   slotOf,
 } from '@ce/game/world';
 import type { Bake } from './bake';
+import type { Place } from './keys';
 import type { Pattern, Sides } from './geometry';
 import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
 // From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
@@ -1048,21 +1049,8 @@ export function marked(s: EditorState, was: World): EditorState {
     ...s,
     world,
     status: null,
-    // Still standing on the same key, wherever the edit left it: a gesture
-    // while standing adjusts that key, and the next one has to adjust it too
-    // or the first would be the only one that landed there.
-    standing: still(s.standing, world),
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
-}
-
-/** Where the key stood on is now, or nothing where the edit took it out. */
-function still(on: EditorState['standing'], world: World): EditorState['standing'] {
-  if (on === null) return null;
-
-  const at = (world.rigs.get(on.id)?.keys.get(on.at) ?? []).findIndex(k => k.id === on.key);
-
-  return at < 0 ? null : { ...on, index: at };
 }
 
 /**
@@ -1154,7 +1142,6 @@ export function undone(s: EditorState): EditorState {
     ...s,
     world: past[past.length - 1],
     history: { past: past.slice(0, -1), future: [...future, s.world] },
-    standing: still(s.standing, past[past.length - 1]),
   }, s.world);
 }
 
@@ -1167,7 +1154,6 @@ export function redone(s: EditorState): EditorState {
     ...s,
     world: future[future.length - 1],
     history: { past: [...past, s.world], future: future.slice(0, -1) },
-    standing: still(s.standing, future[future.length - 1]),
   }, s.world);
 }
 
@@ -1260,23 +1246,26 @@ export interface EditorState {
   inside: GroupId | null
 
   /**
-   * The key being stood on, or nothing for the keyframe as it ends.
+   * The keys the hand is on, or nothing: what the next gesture writes into.
    *
-   * A keyframe is several keys played one after another, and standing on one
-   * of them is asking to see the thing as that key leaves it: the canvas draws
-   * the world `upto` that key, and where the keyframe ends up is a ghost over
-   * it. Nothing else moves — every other thing is where the keyframe leaves
-   * it, and a gesture adjusts the key stood on rather than writing another.
+   * Every gesture writes into the key its thing has here, and where it has
+   * none it makes one and the hand is on that one after. So a hand that moves
+   * a thing and then turns it leaves one key, because it never left it; a
+   * break puts the hand on a new empty key; and picking a key in the keyframe
+   * view puts it there, whichever key it is. There is no other rule for where
+   * a gesture goes.
    *
-   * `key` is the key's own id and `index` is where it sits in the keyframe's
-   * list. Both, because the gesture wants the place and an edit may move it:
-   * standing goes on standing across one, at wherever the key it named is now
-   * — see `marked`. It is gone where that key is.
+   * A key that is not the last of its keyframe is being stood on: the canvas
+   * draws the world `upto` it, with where the keyframe ends up a ghost over
+   * it, and a gesture adjusts it where it is.
    *
-   * Not in the file. Where the cursor is standing is about this moment rather
-   * than about the world.
+   * By the keys' ids, and all at the keyframe on screen. Kept true in one
+   * place, whatever changed — see `aimed` in `keys.ts`.
+   *
+   * Not in the file. Where the hand is is about this moment rather than about
+   * the world.
    */
-  standing: { id: Id, at: KeyframeId, index: number, key: number } | null
+  target: Target | null
 
   /**
    * What the editor last had to say for itself, or nothing.
@@ -1363,6 +1352,15 @@ export interface EditorState {
   } | null
 }
 
+/** The keys the hand is on. See `EditorState.target`. */
+export interface Target {
+  /** The one clicked, or first written: the one the keyframe view's arrow is
+   * beside. */
+  lead: Place
+  /** Every one, the lead among them. */
+  all: Place[]
+}
+
 /** Everything that writes to the store goes through one of these. */
 export type Update = (fn: (s: EditorState) => EditorState) => void;
 
@@ -1372,7 +1370,7 @@ export function initialState(world: World): EditorState {
     keyframe: 0,
     selection: EMPTY_SELECTION,
     inside: null,
-    standing: null,
+    target: null,
     status: null,
     settings: defaultSettings,
     view: defaultView,

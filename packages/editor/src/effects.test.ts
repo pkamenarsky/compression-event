@@ -6,7 +6,6 @@ import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
-  amountWritten,
   applies,
   cornerRounding,
   cornersAmounted,
@@ -280,7 +279,7 @@ describe('editing effects', () => {
   test('erosion switched off stands the thing at its outline, its timeline kept', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[0].id;
-    const w = cornersAmounted(amountWritten(world, 0, id, 'erode', 5), 0, id, 'erode', new Set([corner]), 2);
+    const w = cornersAmounted(wrote(world, 0, id, erode(5)), 0, id, 'erode', new Set([corner]), 2);
 
     expect(applies(w, id, 'erode')).toBe(true);
 

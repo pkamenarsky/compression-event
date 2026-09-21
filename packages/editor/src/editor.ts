@@ -69,7 +69,7 @@ import {
   within,
   picks,
 } from './types';
-import { reborn } from './keys';
+import { aimed, aiming, lastKeys, newKeys, reborn } from './keys';
 
 /**
  * The editor: a canvas that draws the world, and the chrome floating above it.
@@ -82,10 +82,10 @@ import { reborn } from './keys';
 export function editor(initial: World): VNode {
   const input = createInput();
 
-  // A double click on an entry in the keyframes, for the canvas to edit it by
-  // the gesture it was written by.
+  // Every change to the store, and the keys the hand is on kept true over it:
+  // see `aimed`.
   return stateful(initialState(initial), (state, set) => {
-    const update: Update = fn => set(fn(state()));
+    const update: Update = fn => set(aimed(fn(state())));
 
     return object(state, s =>
       div(
@@ -124,7 +124,7 @@ export function editor(initial: World): VNode {
               s.selection,
               s.inside,
               s.keyframe,
-              s.standing,
+              s.target,
               s.replay,
               s.bake,
               s.roaming,
@@ -185,7 +185,6 @@ export function editor(initial: World): VNode {
                 input,
                 update,
                 k => update(t => switched(t, k)),
-                stood => update(t => ({ ...t, standing: stood })),
               ),
             ],
           ),
@@ -324,12 +323,9 @@ function clamped(world: World, i: number): KeyframeId {
  * moves the version.
  *
  * Clicking the version already on screen is not a switch and does not start
- * one, but it does step off whatever key was stood on: the version is the
- * keyframe as it ends, which is its last key.
+ * one.
  */
 function switched(s: EditorState, to: KeyframeId): EditorState {
-  s = s.standing === null ? s : { ...s, standing: null };
-
   if (s.keyframe === to) return s;
 
   // Nothing to play is not a walk. An edit invalidates every span after it, and
@@ -638,11 +634,16 @@ function ended(s: EditorState): EditorState {
   const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
   const world = broken(s.world, s.keyframe, ids);
 
-  // Off whatever key was stood on: the next thing done fills the key just
-  // made, not that one.
+  // On the empty keys: the next thing done fills them.
   return world === s.world
     ? s
-    : { ...s, world, standing: null, status: null, history: { past: [...s.history.past, s.world], future: [] } };
+    : {
+      ...s,
+      world,
+      target: aiming(lastKeys(world, s.keyframe, ids)),
+      status: null,
+      history: { past: [...s.history.past, s.world], future: [] },
+    };
 }
 
 /**
@@ -659,11 +660,19 @@ function cut(s: EditorState): EditorState {
   if (was === undefined) return saying(s, 'nothing has been done here to take out');
 
   const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
-  const world = split(s.world, was, s.keyframe, ids);
+  const on = new Map((s.target?.all ?? []).flatMap(p => ('key' in p ? [[p.id, p.key] as const] : [])));
+  const world = split(s.world, was, s.keyframe, ids, on);
 
+  // On what was split off, which is what the hand was doing.
   return world === s.world
     ? saying(s, 'the last thing done here is a key of its own already')
-    : { ...s, world, status: null, history: { past: [...s.history.past, s.world], future: [] } };
+    : {
+      ...s,
+      world,
+      target: aiming(newKeys(s.world, world, s.keyframe, ids)),
+      status: null,
+      history: { past: [...s.history.past, s.world], future: [] },
+    };
 }
 
 /**

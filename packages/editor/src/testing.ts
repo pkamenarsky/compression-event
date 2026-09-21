@@ -8,8 +8,8 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { appended, keyRigOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig } from './scene';
-import { Amount, Move, Op, REST, addedBy, deltaOf, idle, repeating, withKeys } from './rig';
+import { keyRigOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig, writtenInto } from './scene';
+import { Amount, Move, Op, REST, addedBy, deltaOf, idle, keysAt, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
 import { Id, KeyframeId, Options, World } from './types';
 
@@ -41,12 +41,19 @@ export function wrote(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): W
   return out;
 }
 
-/** The same, as one gesture after another with nothing between: what the
- * canvas writes, which folds into one key. */
+/** The same, as one gesture after another with the hand kept on the key the
+ * first wrote, or on the keyframe's last where there is one already: what the
+ * canvas writes, which goes into one key. See `EditorState.target`. */
 export function wroteOne(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): World {
   let out = world;
+  let key = keysAt(keyRigOf(world, id), v).at(-1)?.id ?? null;
 
-  for (const op of ops) out = appended(out, v, id, typeof op === 'function' ? op(out, v, id) : op);
+  for (const op of ops) {
+    const written = writtenInto(out, v, id, key, typeof op === 'function' ? op(out, v, id) : op);
+
+    out = written.world;
+    key = written.key ?? key;
+  }
 
   return out;
 }

@@ -38,10 +38,14 @@ import {
   Key,
   NOTHING,
   addedBy,
-  appendedBy,
+  foldedBy,
   deltaOf,
   keysAt,
   playedBy,
+  Delta,
+  KeyRig,
+  idle,
+  withKeysAt,
 } from './rig';
 import { Id, Vertex } from './types';
 
@@ -302,6 +306,23 @@ describe('frames', () => {
     expect(framed({ a: 1, b: 0, c: 0, d: -1, tx: 0, ty: 0 })).toBeNull();
   });
 });
+
+/**
+ * `by` folded into the last key of `k`'s list where `foldedBy` makes them one,
+ * taken out where that comes to nothing, and a key of its own otherwise: the
+ * fold, seen from the list.
+ */
+function appendedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): KeyRig {
+  if (idle(by)) return rig;
+
+  const list = keysAt(rig, k);
+  const last = list[list.length - 1];
+  const both = last === undefined ? null : foldedBy(last, ref, by);
+
+  if (both === null) return addedBy(rig, k, ref, by);
+
+  return withKeysAt(rig, k, both === 'gone' ? list.slice(0, -1) : [...list.slice(0, -1), both]);
+}
 
 describe('a keyframe\'s keys', () => {
   const r = MIDDLE;
