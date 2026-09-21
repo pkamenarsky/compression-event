@@ -17,6 +17,10 @@
 //     convert into. Two arithmetics for one answer, so every hash moved; every
 //     scene's rings came out with the same structure, the worst number
 //     anywhere 7.1e-14 out.
+//   - when a flight stopped carrying the key a motion came from. The span
+//     digests hash what a flight holds, so dropping the editor's own
+//     bookkeeping out of it moved them; every scene's geometry came out
+//     identical, to the bit.
 //   - when the shipped table moved from a kind of operation to a key. The
 //     `csg` digests did not move at all, which is the keyframes saying nothing
 //     changed; `shipped` moved because the table is a new format, and the

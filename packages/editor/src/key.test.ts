@@ -21,7 +21,6 @@ import {
 import { Vertex, VertexId } from './types';
 import {
   Delta,
-  Key,
   NOTHING,
   deltaOf,
   entriesOf,
@@ -433,7 +432,7 @@ describe('a key as the operations it is made of', () => {
       for (const op of wroteAt(f)) {
         const d = deltaOf(op)!;
         const ref = refsFor(op)[0];
-        const back = opsOf({ ref, by: d, key: KEY, at: 0, step: 0 });
+        const back = opsOf({ ref, by: d });
 
         if (op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform') {
           expect(back, 'an amount does not move the frame').toEqual([]);
@@ -454,7 +453,7 @@ describe('a key as the operations it is made of', () => {
         const ref = refsFor(op)[0];
 
         for (let n = 1; n <= 3; n++) {
-          const back = opsOf({ ref, by: steppedBy(d, n), key: KEY, at: 0, step: n });
+          const back = opsOf({ ref, by: steppedBy(d, n) });
 
           expect(back, `${op.kind} step ${n}`).toEqual([stepped(op, n)]);
         }
@@ -477,7 +476,7 @@ describe('a key as the operations it is made of', () => {
 
     for (const f of FRAMES) {
       for (const ref of REFS) {
-        const p = { ref, by: both, key: KEY, at: 0, step: 0 };
+        const p = { ref, by: both };
 
         near(playingOn(f, p), playedBy(f, ref, both), 'two channels at once');
         near(playingOn(f, p, 0), f, 'nought of the way through');
@@ -497,13 +496,12 @@ describe('a key as the operations it is made of', () => {
       bevels: new Map(),
       amplitudes: new Map(),
     };
-    const p = { ref: { x: 0, y: 0 }, stand, key: KEY, at: 0, step: 0 };
+    const p = { ref: { x: 0, y: 0 }, stand };
 
     expect(opsOf(p)).toEqual([stand]);
     expect(flying(p)).toBe(true);
-    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 3 }, key: KEY, at: 0, step: 0 })).toBe(false);
-    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, move: { x: 1, y: 0 } }, key: KEY, at: 0, step: 0 })).toBe(true);
+    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 3 } })).toBe(false);
+    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, move: { x: 1, y: 0 } } })).toBe(true);
   });
 });
 
-const KEY: Key = { id: 0, ref: { x: 0, y: 0 }, times: 1 };

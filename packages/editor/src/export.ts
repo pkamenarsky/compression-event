@@ -35,7 +35,7 @@ import {
   withNormals,
 } from '@ce/game';
 import { Bake, Flight, Origin, Ref, Rider, Span, Stretch, loadedFor, spanAt } from './bake';
-import { Playing, aboutOf, flying } from './rig';
+import { Motion, aboutOf, flying } from './rig';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, EMPTY_LIVE, contributing, live, placeAt, resolveAt, settled, sourced } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
@@ -108,7 +108,7 @@ function most(riders: Map<Id, Rider>): number {
  * has none. `aboutOf` is the one that answers that, and the reader tells the
  * two apart by the kind alone — it has no solve of its own.
  */
-export function record(p: Playing): number[] {
+export function record(p: Motion): number[] {
   if (!flying(p)) throw new Error('an amount is in the geometry, not in the frame table');
 
   if (p.stand !== undefined) {

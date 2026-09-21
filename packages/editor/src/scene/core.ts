@@ -135,6 +135,11 @@ import {
   keysAt,
   withKeysAt,
   Key as RigKey,
+  appendedBy,
+  amountedBy,
+  deltaOf,
+  nextKey,
+  nudgedBy,
 } from '../rig';
 
 export type { Affine };
@@ -1467,13 +1472,22 @@ export function keyed(world: World, k: KeyframeId, id: Id, list: readonly (Op | 
   return withRig(world, id, withKeys(rigOf(world, id), k, entries));
 }
 
-/** One operation more at the end of what `v` does to `id`, folded into the one
- * before where the two are exactly one. */
-export function appended(world: World, v: KeyframeId, id: Id, op: Op | Entry): World {
-  const list = listAt(world, v, id);
-  const now = appending(list, 'op' in op ? op : once(op));
+/**
+ * One operation more at the end of what `v` does to `id`, folded into the key
+ * before where the two are exactly one.
+ *
+ * What every gesture writes. The operation is the delta it makes, about the
+ * point it painted — see `appendedBy` in `rig.ts`.
+ */
+export function appended(world: World, v: KeyframeId, id: Id, op: Op): World {
+  const by = deltaOf(op);
 
-  return now === list ? world : withRig(world, id, withKeys(rigOf(world, id), v, now));
+  if (by === null) return world;
+
+  const rig = keyRigOf(world, id);
+  const now = appendedBy(rig, v, 'ref' in op ? op.ref : REST.t, by);
+
+  return now === rig ? world : withKeyRig(world, id, now);
 }
 
 /**
@@ -1586,7 +1600,7 @@ export function unchainedAt(world: World, v: KeyframeId, id: Id): boolean {
 
   return base !== null
     && standingIn(world, id, new Set(chain(world, base)))
-    && listAt(world, v, id).some(e => e.op.kind === 'stand');
+    && keysOfAt(world, v, id).some(key => key.stand !== undefined);
 }
 
 /**
@@ -1712,7 +1726,12 @@ export function unchained(world: World, v: KeyframeId, ids: readonly Id[]): Worl
   const going = reaches(world, v, ids).filter(id => !unchainedAt(world, v, id));
   let out = world;
 
-  for (const id of going) out = keyed(out, v, id, [once(handed(world, v, id)), ...listAt(out, v, id)]);
+  for (const id of going) {
+    const rig = keyRigOf(out, id);
+    const stand: RigKey = { id: nextKey(rig), ref: REST.t, stand: handed(world, v, id), times: 1 };
+
+    out = withKeyRig(out, id, withKeysAt(rig, v, [stand, ...keysAt(rig, v)]));
+  }
 
   return out;
 }
@@ -1733,7 +1752,11 @@ export function rechained(world: World, v: KeyframeId, ids: readonly Id[]): Worl
   const going = reaches(world, v, ids).filter(id => unchainedAt(world, v, id));
   let out = world;
 
-  for (const id of going) out = keyed(out, v, id, listAt(out, v, id).filter(e => e.op.kind !== 'stand'));
+  for (const id of going) {
+    const rig = keyRigOf(out, id);
+
+    out = withKeyRig(out, id, withKeysAt(rig, v, keysAt(rig, v).filter(key => key.stand === undefined)));
+  }
 
   return out;
 }
@@ -2605,7 +2628,9 @@ export function placeVertex(world: World, v: KeyframeId, it: Resolved, index: nu
   const local = it.local[index];
   const by = { x: target.x - local.x, y: target.y - local.y };
 
-  return withRig(world, it.id, nudged(rigOf(world, it.id), it.corners[index].id, v, by));
+  const rig = keyRigOf(world, it.id);
+
+  return withKeyRig(world, it.id, nudgedBy(rig, nextKey(rig), it.corners[index].id, v, by));
 }
 
 /**
@@ -2628,13 +2653,14 @@ export function deepen(
 
   if (polygon === undefined || by === 0) return world;
 
-  let rig = rigOf(world, id);
+  let rig = keyRigOf(world, id);
+  const id0 = nextKey(rig);
 
   for (const corner of polygon.points) {
-    if (corners.has(corner.id)) rig = deepened(rig, corner.id, v, by);
+    if (corners.has(corner.id)) rig = amountedBy(rig, id0, 'erode', corner.id, v, by);
   }
 
-  return withRig(world, id, rig);
+  return withKeyRig(world, id, rig);
 }
 
 /** Which polygons the picked corners belong to. A depth is written into the

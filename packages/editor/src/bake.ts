@@ -219,7 +219,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { CORNER_MAPS, Frame as Pose, Playing, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -322,15 +322,16 @@ export type Origin =
  * the first of which it gets wrong only when the keyframe holds anything else.
  * See `playingOn` in `rig.ts` for how each one goes part way.
  *
- * The keys the keyframe plays, each stepped for its repeat: what the shipped
- * table holds, one for one. See `OP_STRIDE` in `baked.ts`.
+ * What the keyframe's keys do, each stepped for its repeat: what the shipped
+ * table holds, one for one, and nothing about which key it was. See
+ * `OP_STRIDE` in `baked.ts` and `Motion` in `rig.ts`.
  *
  * Only what moves the frame. An erosion, a round or a deform is an amount,
  * which is lerped.
  */
 export interface Flight {
   frame: Pose
-  ops: readonly Playing[]
+  ops: readonly Motion[]
 }
 
 /**
@@ -1136,7 +1137,10 @@ function flightOf(world: World, from: number, id: Id, here: boolean, there: bool
   const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
 
   if (here && there) {
-    return { frame: stateAt(world, id, near).frame, ops: playingAt(world, id, far).filter(flying) };
+    return {
+      frame: stateAt(world, id, near).frame,
+      ops: playingAt(world, id, far).filter(flying).map(p => ({ ref: p.ref, by: p.by, stand: p.stand })),
+    };
   }
 
   return { frame: stateAt(world, id, here ? near : far).frame, ops: [] };

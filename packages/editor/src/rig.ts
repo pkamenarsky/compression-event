@@ -1689,14 +1689,26 @@ export function walkedBy(
  * written at, and nought for the key itself. What the view picks by and what
  * the fold compares.
  */
-export interface Playing {
+export interface Playing extends Motion {
+  key: Key
+  at: KeyframeId
+  step: number
+}
+
+/**
+ * What one contribution *does*, and nothing about where it came from: the
+ * delta about its painted point, or a state outright.
+ *
+ * What the bake puts in flight and the table is written from. A flight that
+ * carried the key as well would be carrying the editor's bookkeeping into the
+ * game's — and into the hash a span is dropped by, which would then move
+ * whenever a key was written beside it.
+ */
+export interface Motion {
   ref: Point
   /** What it does, or nothing where it stands outright. */
   by?: Delta
   stand?: Stand
-  key: Key
-  at: KeyframeId
-  step: number
 }
 
 /** A walk's answer: where the thing stands at each keyframe, and what each
@@ -1714,7 +1726,7 @@ export interface Walking {
  * straight to its numbers. The same arithmetic the shipped table is played by
  * — see `OP_STRIDE` in `baked.ts`, which is this on the other side.
  */
-export function playingOn(f: Frame, p: Playing, u = 1): Frame {
+export function playingOn(f: Frame, p: Motion, u = 1): Frame {
   if (p.stand !== undefined) return played(f, p.stand, u);
 
   return p.by === undefined ? f : playedBy(f, p.ref, p.by, u);
@@ -1722,7 +1734,7 @@ export function playingOn(f: Frame, p: Playing, u = 1): Frame {
 
 /** Whether a contribution moves the frame at all, as against only deepening,
  * rounding or deforming. */
-export function flying(p: Playing): boolean {
+export function flying(p: Motion): boolean {
   if (p.stand !== undefined) return true;
 
   const d = p.by;
@@ -1746,7 +1758,7 @@ export function flying(p: Playing): boolean {
  * still — and it is what a table of single operations can say. See
  * `PLAN-keys.md`.
  */
-export function opsOf(p: Playing): Op[] {
+export function opsOf(p: Motion): Op[] {
   if (p.stand !== undefined) return [p.stand];
 
   const d = p.by;
@@ -2134,6 +2146,122 @@ export function withKeysAt(rig: KeyRig, k: KeyframeId, list: readonly Key[]): Ke
   return { ...rig, keys };
 }
 
+/** The next id free in a rig: one more than the highest written. */
+export function nextKey(rig: KeyRig): number {
+  let out = 0;
+
+  for (const list of rig.keys.values()) {
+    for (const key of list) out = Math.max(out, key.id + 1);
+  }
+
+  return out;
+}
+
+/**
+ * `by` added to the end of a keyframe's list, folded into the last key where
+ * the two are exactly one, and left off where it does nothing.
+ *
+ * A gesture recomputes from the list it started with every time the hand
+ * moves, so what it leaves is one key however long it went on.
+ *
+ * Folded only where the two are the same channel about the same painted point,
+ * for now: a key that holds a turn and a move at once is a key no entry can be
+ * made of, and the group fold and the copy still read entries. Lifting that is
+ * what break and split are for — see `PLAN-keys.md`, phase 3d.
+ */
+export function appendedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): KeyRig {
+  if (idle(by)) return rig;
+
+  const list = keysAt(rig, k);
+  const last = list[list.length - 1];
+  const both = last === undefined ? null : foldedBy(last, ref, by);
+
+  if (both === null) return withKeysAt(rig, k, [...list, keyOnce(nextKey(rig), ref, by)]);
+
+  const head = list.slice(0, -1);
+
+  return withKeysAt(rig, k, both === 'gone' ? head : [...head, both]);
+}
+
+/**
+ * `by` folded into `key`, where that leaves one channel: the key that does
+ * both, `'gone'` where together they do nothing, or nothing where they cannot
+ * be one.
+ */
+export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
+  const was = key.by;
+
+  if (was === undefined || key.times !== 1 || key.skip !== undefined) return null;
+  if (!near(key.ref, ref) || !oneChannel(was, by)) return null;
+
+  const now: Delta = {
+    ...was,
+    move: { x: was.move.x + by.move.x, y: was.move.y + by.move.y },
+    angle: was.angle + by.angle,
+    skew: was.skew + by.skew,
+    scale: { x: was.scale.x * by.scale.x, y: was.scale.y * by.scale.y },
+    erode: was.erode + by.erode,
+    round: was.round + by.round,
+    deform: was.deform + by.deform,
+  };
+
+  // A turn keeps the anchor it was written about, which is where the painted
+  // point went round; the move the pair make is worked out from it again.
+  if (now.angle !== 0 && was.about !== undefined) {
+    const to = spun(was.about, now.angle);
+
+    now.about = was.about;
+    now.move = whole(now.angle) ? { x: 0, y: 0 } : { x: was.about.x - to.x, y: was.about.y - to.y };
+  }
+
+  return idle(now) ? 'gone' : { ...key, by: now };
+}
+
+/** Whether two deltas are the same one channel, about the same axes: what can
+ * be folded while a key has to be an entry. */
+function oneChannel(a: Delta, b: Delta): boolean {
+  const mine = channelOf(a), theirs = channelOf(b);
+
+  if (mine === null || mine !== theirs) return false;
+  if (a.along !== b.along || a.lean !== b.lean) return false;
+
+  // Two turns fold only about the same centre, as two entries do: the second's
+  // anchor is where the first left the painted point.
+  if (mine === 'turn') {
+    const to = a.about === undefined ? null : spun(a.about, a.angle);
+
+    return to !== null && b.about !== undefined && near(to, b.about);
+  }
+
+  return true;
+}
+
+/**
+ * The one thing a delta does, or nothing where it does more than one.
+ *
+ * A turn, a stretch and a shear each take the painted point somewhere as well,
+ * which is the one operation they are: what more than one means is a turn and
+ * an erosion, or a turn and a stretch.
+ */
+function channelOf(d: Delta): string | null {
+  const held = [
+    d.angle !== 0 ? 'turn' : '',
+    d.scale.x !== 1 || d.scale.y !== 1 ? 'scale' : '',
+    d.skew !== 0 ? 'skew' : '',
+    d.erode !== 0 ? 'erode' : '',
+    d.round !== 0 ? 'round' : '',
+    d.deform !== 0 ? 'deform' : '',
+  ].filter(k => k !== '');
+  const moved = d.move.x !== 0 || d.move.y !== 0;
+
+  if (held.length > 1) return null;
+  if (held.length === 0) return moved ? 'move' : null;
+
+  // An amount does not take the painted point anywhere; a turn, a stretch and
+  // a shear do, and that is theirs.
+  return moved && (held[0] === 'erode' || held[0] === 'round' || held[0] === 'deform') ? null : held[0];
+}
+
 /** A key that happens once, at its own keyframe. */
 export function keyOnce(id: number, ref: Point, by: Delta): Key {
   return { id, ref, by, times: 1 };
@@ -2259,7 +2387,7 @@ export function entriesOf(rig: KeyRig): Rig {
         ...(key.group === undefined ? {} : { gesture: key.group }),
       };
 
-      for (const op of opsOf({ ref: key.ref, by: key.by, stand: key.stand, key, at, step: 0 })) {
+      for (const op of opsOf({ ref: key.ref, by: key.by, stand: key.stand })) {
         entries.push({ ...repeat, op });
       }
 
