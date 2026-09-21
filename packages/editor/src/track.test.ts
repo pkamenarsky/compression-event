@@ -3,8 +3,8 @@ import { Point } from '@ce/game/world';
 import { TOP, addPolygon, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, deepened, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, pushed, skipToggled } from './keys';
-import { barOf, beneath, gestureOf, rootsOf, rowsOf, timesTo } from './track';
-import { erode, move, repeated, scaled, wrote } from './testing';
+import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
+import { erode, move, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
 import { restored, saved } from './save';
 import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, gestured, initialState, visible } from './types';
 
@@ -33,7 +33,8 @@ describe('rows', () => {
 
     expect(rows.map(r => [r.label, r.depth])).toEqual([[`group ${made.id}`, 0], [`level ${a.id}`, 1], [`level ${b.id}`, 1]]);
     expect(rows[0].cells.map(c => c.places.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
-    expect(rows[0].cells[1].kinds).toEqual(['move', 'erode']);
+    // Two keys, each doing one thing, since `wrote` breaks between them.
+    expect(rows[0].cells[1].kinds).toEqual([['move'], ['erode']]);
     expect(listAt(w, 2, made.id).map(e => e.op.kind)).toEqual(['stand']);
   });
 
@@ -79,7 +80,7 @@ describe('corner rows', () => {
 
     expect(rows.map(r => [r.label, r.depth, r.corner])).toEqual([[`level ${id}`, 0, null], ['corner 0', 1, corners[0]], ['corner 2', 1, corners[2]]]);
     expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }, { id, at: 1, corner: corners[2], kind: 'erode' }]);
-    expect(rows[2].cells[1].kinds).toEqual(['move', 'erode']);
+    expect(rows[2].cells[1].kinds).toEqual([['move'], ['erode']]);
     expect(rows[1].bars.map(b => [b.from, b.end])).toEqual([[3, 4]]);
   });
 });
@@ -239,5 +240,28 @@ describe('flags', () => {
     const back = restored(JSON.parse(JSON.stringify(saved(initialState(w))))).world;
 
     expect(back.flags.get(id)).toEqual({ hidden: true, locked: false, solo: true });
+  });
+});
+
+describe('what a key is drawn as', () => {
+  test('one key doing several things says all of them, in the order it does them', () => {
+    const { world, id } = room();
+    const w = wroteOne(world, 1, id, turning(0.4, { x: 200, y: 0 }), move(10, 0), erode(2));
+    const cell = rowsOf(w, [id])[0].cells[1];
+
+    expect(cell.places).toHaveLength(1);
+    expect(cell.kinds).toEqual([['turn', 'move', 'erode']]);
+    // The move is where the turn and the drag together take the painted
+    // point, which is not the drag alone: one key, one motion.
+    expect(entryLabel(keysOfAt(w, 1, id)[0])).toMatch(/^turn 22.9°, move [-\d., ]+, erode 2$/);
+  });
+
+  test('and a key about corners alone is not in the thing\'s own row', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[0].id;
+    const w = withRig(world, id, nudged(rigOf(world, id), corner, 1, { x: 1, y: 0 }));
+
+    expect(rowsOf(w, [id])[0].cells[1].places).toEqual([]);
+    expect(rowsOf(w, [id], true)[1].cells[1].kinds).toEqual([['move']]);
   });
 });

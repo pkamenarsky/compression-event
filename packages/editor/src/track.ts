@@ -10,7 +10,19 @@
 import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
 import { Cornered, Place, entryAt, samePlace } from './keys';
-import { CORNER_KINDS, CORNER_MAPS, Key, KeyframeId, Op, counted1, heldOf, indexIn, keysAt, kindOf } from './rig';
+import {
+  CORNER_KINDS,
+  CORNER_MAPS,
+  Key,
+  KeyframeId,
+  Op,
+  channelsOf,
+  counted1,
+  heldOf,
+  indexIn,
+  keysAt,
+  kindOf,
+} from './rig';
 import { artefactsAt, hitPolygons, keyRigOf, pathsAt, resolveAt } from './scene';
 import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
 
@@ -42,10 +54,14 @@ export interface Row {
 }
 
 export interface Cell {
-  /** Where each entry the row shows is written. */
+  /** Where each key the row shows is written. */
   places: Place[]
-  /** Their kinds, one for one. */
-  kinds: Kind[]
+  /**
+   * What each of them does, one list for one key: a gesture's kind, or
+   * several where a hand did several things into one key. In the order the
+   * key does them.
+   */
+  kinds: Kind[][]
   /** Whether the thing is there at that keyframe. */
   alive: boolean
 }
@@ -146,7 +162,7 @@ function cellsOf(world: World, id: Id): Cell[] {
 
     return {
       places: shown.map(index => ({ id, at: f.id, index })),
-      kinds: shown.map(n => (kindOf(list[n]) ?? 'move') as Kind),
+      kinds: shown.map(n => channelsOf(list[n]) as Kind[]),
       alive: i >= life.birth && i < life.death,
     };
   });
@@ -175,7 +191,7 @@ function cornerCellsOf(world: World, id: Id, corner: VertexId): Cell[] {
       }
     }
 
-    return { places, kinds: places.map(p => (p as Cornered).kind), alive: i >= birth && i < death };
+    return { places, kinds: places.map(p => [(p as Cornered).kind]), alive: i >= birth && i < death };
   });
 }
 
@@ -285,7 +301,7 @@ export function short(n: number): string {
   return String(parseFloat(n.toPrecision(3)));
 }
 
-/** A key, said in a line: what it does, and how often. */
+/** A key, said in a line: everything it does, and how often. */
 export function entryLabel(e: Key): string {
   const what = ((): string => {
     if (e.stand !== undefined) return 'unchained';
@@ -294,22 +310,26 @@ export function entryLabel(e: Key): string {
 
     if (d === undefined) return 'corners';
 
-    switch (kindOf(e)) {
-      case 'turn':
-        return `turn ${short(d.angle * 180 / Math.PI)}°`;
-      case 'scale':
-        return `scale ${factor(d.scale.x, d.scale.y)}`;
-      case 'skew':
-        return `skew ${short(d.skew)}`;
-      case 'erode':
-        return `erode ${short(d.erode)}`;
-      case 'round':
-        return `round ${short(d.round)}`;
-      case 'deform':
-        return `deform ${short(d.deform)}`;
-      default:
-        return `move ${short(d.move.x)}, ${short(d.move.y)}`;
-    }
+    const said = (kind: string): string => {
+      switch (kind) {
+        case 'turn':
+          return `turn ${short(d.angle * 180 / Math.PI)}°`;
+        case 'scale':
+          return `scale ${factor(d.scale.x, d.scale.y)}`;
+        case 'skew':
+          return `skew ${short(d.skew)}`;
+        case 'erode':
+          return `erode ${short(d.erode)}`;
+        case 'round':
+          return `round ${short(d.round)}`;
+        case 'deform':
+          return `deform ${short(d.deform)}`;
+        default:
+          return `move ${short(d.move.x)}, ${short(d.move.y)}`;
+      }
+    };
+
+    return channelsOf(e).map(said).join(', ');
   })();
 
   if (e.times === 1) return what;

@@ -2,11 +2,20 @@
 // The keyframe view
 //
 // Along the whole bottom: keyframes across, things down, a group's members
-// under it, and in the point tool a polygon's corners that have nudges or
-// depths written about them under it too. A thing's row holds an icon for every entry written about it, side
-// by side in its keyframe's column in the order they play. A column is wide
+// under it, and in the point tool a polygon's corners a key names under it
+// too. A thing's row holds an icon for every key written about it, side by
+// side in its keyframe's column in the order they play. A column is wide
 // enough for a handful and widens for more; past the width of the page the
 // view scrolls, its headings staying where they are.
+//
+// A key is what a hand did at a keyframe without saying it was finished, so
+// one icon may be several things: they are drawn side by side inside it, in
+// the order the key does them, and what it does in full is on hovering it.
+// See `drawn`, and `Key` in `rig.ts`.
+//
+// A key about single corners alone is not in the thing's row at all: it is in
+// the rows of the corners it names, which are a projection of the keys rather
+// than timelines of their own.
 //
 // Each repeat hangs under its row, a tree on its side: a line down from its
 // icon to a lane of its own, and along the lane to where it stops, with a dot
@@ -15,12 +24,12 @@
 // goes. The rightmost icon's lane is the nearest, so no line down crosses
 // another's lane.
 //
-// A click picks an entry and everything else in its column the same gesture
-// wrote, shown here: a multi-corner erosion, or a turn of several things at
-// once. ⌥-click picks the one entry alone. The arrow beside the clicked entry
-// repeats all of them, each told to run to the same keyframe, and dragging the
-// end of an entry's lane or clicking a dot on it picks the same and does the
-// same to all of them. With ⌥ held, each is about its own entry only.
+// A click picks a key and everything else in its column the same gesture
+// wrote, shown here: a turn of several things at once. ⌥-click picks the one
+// key alone. The arrow beside the clicked key repeats all of them, each told
+// to run to the same keyframe, and dragging the end of a key's lane or
+// clicking a dot on it picks the same and does the same to all of them. With
+// ⌥ held, each is about its own key only.
 //
 // Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
 // dragging an icon a keyframe along pushes or pulls it, and what is picked
@@ -614,7 +623,46 @@ const ICONS: Record<Kind, string> = {
   stand: 'M3 2 V12 M11 2 V12',
 };
 
-/** A keyframe's entries in one row, an icon each, side by side in the order
+/**
+ * What a key is drawn as: what it does, at the size that many fits.
+ *
+ * One thing is its own icon, at the size every icon has always been. Several
+ * — a hand that turned a thing and then moved it, into one key — are those
+ * icons side by side in the same box, smaller, in the order the key does
+ * them, which is the order they would have played in. Past three, the three
+ * and a dot for the rest: what a key does in full is on hovering it, and the
+ * row has to stay a row.
+ */
+function drawn(kinds: readonly Kind[], colour: string): VNode[] {
+  const shown = kinds.slice(0, 3);
+  const size = shown.length <= 1 ? ICON : (ICON - (shown.length - 1)) / shown.length;
+  const step = shown.length <= 1 ? 0 : (ICON - size) / (shown.length - 1);
+
+  const mark = (d: string, at: number, scale: number): VNode => path({
+    d,
+    transform: `translate(${at}, ${(ICON - size) / 2}) scale(${scale})`,
+    fill: 'none',
+    stroke: colour,
+    'stroke-width': 1.4 / scale,
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+  });
+
+  const out = shown.map((kind, i) => mark(ICONS[kind], i * step, size / ICON));
+
+  // A dot under them, where the key holds more than the three drawn.
+  if (kinds.length > shown.length) {
+    out.push(path({
+      d: `M${ICON - 1.5} ${ICON} h1 v1 h-1 Z`,
+      fill: colour,
+      stroke: 'none',
+    }));
+  }
+
+  return out;
+}
+
+/** A keyframe's keys in one row, an icon each, side by side in the order
  * they play. */
 function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
   const shade = c.alive
@@ -671,16 +719,8 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         cursor: 'grab',
         zIndex: 1,
       }, [
-        svg({ width: ICON + 4, height: ICON + 4, viewBox: `-2 -2 ${ICON + 4} ${ICON + 4}`, style: { display: 'block' } }, [
-          path({
-            d: ICONS[c.kinds[i]],
-            fill: 'none',
-            stroke: colour,
-            'stroke-width': 1.4,
-            'stroke-linecap': 'round',
-            'stroke-linejoin': 'round',
-          }),
-        ]),
+        svg({ width: ICON + 4, height: ICON + 4, viewBox: `-2 -2 ${ICON + 4} ${ICON + 4}`, style: { display: 'block' } },
+          drawn(c.kinds[i], colour)),
       ], {
         onpointerenter: (e: PointerEvent) => {
           (e.currentTarget as HTMLElement).title = entryTitle(ctx, place);

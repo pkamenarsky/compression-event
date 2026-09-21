@@ -2074,9 +2074,35 @@ export function heldOf(kind: CornerKind): 'corners' | 'depths' | 'rounds' | 'def
 }
 
 /**
- * The one thing a key does, by name: what the view draws it as and what a
- * gesture folds into. Nothing where it does more than one — which is what a
- * key is allowed to do and nothing writes yet.
+ * Everything a key does, by name, in the order a key does it: what the view
+ * draws it as.
+ *
+ * One name for most keys, since most are one gesture; several where a hand did
+ * several things at a keyframe without saying it was finished with the first.
+ * Empty for a key about single corners alone, which the thing's own row does
+ * not draw — see `Cell` in `track.ts`.
+ */
+export function channelsOf(key: Key): string[] {
+  if (key.stand !== undefined) return ['stand'];
+
+  const d = key.by;
+
+  if (d === undefined) return [];
+
+  return [
+    d.skew !== 0 ? 'skew' : '',
+    d.scale.x !== 1 || d.scale.y !== 1 ? 'scale' : '',
+    d.angle !== 0 ? 'turn' : '',
+    d.move.x !== 0 || d.move.y !== 0 ? 'move' : '',
+    d.erode !== 0 ? 'erode' : '',
+    d.round !== 0 ? 'round' : '',
+    d.deform !== 0 ? 'deform' : '',
+  ].filter(k => k !== '');
+}
+
+/**
+ * The one thing a key does, by name: what a gesture folds into. Nothing where
+ * it does more than one.
  */
 export function kindOf(key: Key): string | null {
   if (key.stand !== undefined) return 'stand';
