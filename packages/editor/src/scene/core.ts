@@ -1497,6 +1497,24 @@ export function appended(world: World, v: KeyframeId, id: Id, op: Op): World {
 }
 
 /**
+ * The world as a thing's keyframe leaves it after `index` keys of it, rather
+ * than after all of them: what standing on a key shows.
+ *
+ * A world of its own rather than a state read out of the walk, so that
+ * everything that draws a keyframe — the resolve, the CSG, the outlines —
+ * answers about that moment without being taught what a moment is. Nothing
+ * else about it changes: every other thing is where that keyframe leaves it.
+ */
+export function upto(world: World, v: KeyframeId, id: Id, index: number): World {
+  const rig = keyRigOf(world, id);
+  const list = keysAt(rig, v);
+
+  if (index >= list.length - 1) return world;
+
+  return withKeyRig(world, id, withKeysAt(rig, v, list.slice(0, index + 1)));
+}
+
+/**
  * The keyframe's last key for each of `ids` closed: the next thing written
  * there is a key of its own.
  *

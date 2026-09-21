@@ -1046,6 +1046,10 @@ export function marked(s: EditorState, was: World): EditorState {
     ...s,
     world: gestured(s.world, was),
     status: null,
+    // An edit is a moment of its own: what was being stood on was a key of a
+    // world that has moved on, and its place in the list may be somebody
+    // else's now.
+    standing: null,
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
 }
@@ -1243,6 +1247,21 @@ export interface EditorState {
   inside: GroupId | null
 
   /**
+   * The key being stood on, or nothing for the keyframe as it ends.
+   *
+   * A keyframe is several keys played one after another, and standing on one
+   * of them is asking to see the thing as that key leaves it: the canvas draws
+   * the world `upto` that key, and where the keyframe ends up is a ghost over
+   * it. Nothing else moves — every other thing is where the keyframe leaves
+   * it.
+   *
+   * Not in the file, and dropped by anything that moves: another keyframe,
+   * another selection, an edit. Where the cursor is standing is about this
+   * moment rather than about the world.
+   */
+  standing: { id: Id, at: KeyframeId, index: number } | null
+
+  /**
    * What the editor last had to say for itself, or nothing.
    *
    * A gesture that will not happen has to say why, or it reads as the editor
@@ -1344,6 +1363,7 @@ export function initialState(world: World): EditorState {
     keyframe: 0,
     selection: EMPTY_SELECTION,
     inside: null,
+    standing: null,
     status: null,
     settings: defaultSettings,
     view: defaultView,

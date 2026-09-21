@@ -188,6 +188,7 @@ export function restored(file: Saved): EditorState {
     world,
     keyframe: file.keyframe,
     inside: null,
+    standing: null,
     status: null,
     selection: {
       polygons: file.selection,

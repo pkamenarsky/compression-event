@@ -155,6 +155,10 @@ export function layers(
   /** Where whoever is standing in the 3D view is standing, or nothing when
    * nobody is. Drawn among the artefacts as a ghost of the start. */
   eye: Eye | null,
+  /** Where the keyframe leaves the thing whose key is being stood on, or
+   * nothing where none is: a ghost over the moment on screen. See
+   * `EditorState.standing`. */
+  ends: Resolved[] | null,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -170,6 +174,12 @@ export function layers(
     const stroke = ghostColour(order(world, k) - order(world, current));
 
     out.push(ctx => ghosts(ctx, view, world, k, shown, stroke));
+  }
+
+  // Where the keyframe ends up, over the moment being stood on: the same
+  // outline a ghost of another keyframe is, in the colour of the one after.
+  if (ends !== null && ends.length > 0) {
+    out.push(ctx => ghosts(ctx, view, world, current, ends, ghostColour(1)));
   }
 
   // A shut group is one shape, and its members are not on screen at all: the

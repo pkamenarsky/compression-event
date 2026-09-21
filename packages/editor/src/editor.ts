@@ -127,6 +127,7 @@ export function editor(initial: World): VNode {
               s.selection,
               s.inside,
               s.keyframe,
+              s.standing,
               s.replay,
               s.bake,
               s.roaming,
@@ -180,7 +181,17 @@ export function editor(initial: World): VNode {
             },
             [
               statusbar(s.status),
-              timeline(state, s.world, s.selection, s.keyframe, input, update, k => update(t => switched(t, k)), edits),
+              timeline(
+                state,
+                s.world,
+                s.selection,
+                s.keyframe,
+                input,
+                update,
+                k => update(t => switched(t, k)),
+                stood => update(t => ({ ...t, standing: stood })),
+                edits,
+              ),
             ],
           ),
         ],
@@ -322,6 +333,9 @@ function clamped(world: World, i: number): KeyframeId {
  */
 function switched(s: EditorState, to: KeyframeId): EditorState {
   if (s.keyframe === to) return s;
+
+  // Whatever key was being stood on was a key of that keyframe.
+  s = { ...s, standing: null };
 
   // Nothing to play is not a walk. An edit invalidates every span after it, and
   // a transition declared over one that no longer stands leaves both views

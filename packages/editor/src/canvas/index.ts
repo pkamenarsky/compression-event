@@ -83,6 +83,7 @@ import {
   editedAt,
   refolded,
   keysOfAt,
+  upto,
 } from '../scene';
 import {
   OnPath,
@@ -179,6 +180,9 @@ export function worldCanvas(
   selection: Value<Selection>,
   inside: Value<GroupId | null>,
   keyframe: Value<KeyframeId>,
+  /** The key being stood on, or nothing for the keyframe as it ends. See
+   * `EditorState.standing`. */
+  standing: Value<EditorState['standing']>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
@@ -2247,12 +2251,19 @@ export function worldCanvas(
               bake(),
               local(),
               afoot(),
+              standing(),
             ] as const,
-            ([w, s, v, t, sel, ins, at, r, b, l, g]) => {
+            ([w, s, v, t, sel, ins, at, r, b, l, g, stood]) => {
               if (el && ctx) {
-                const items = resolveAt(w, at);
+                // Standing on a key, the world drawn is the one that keyframe
+                // leaves after that key — see `upto`. Where the keyframe ends
+                // up is drawn over it as a ghost, so that what is being
+                // adjusted and what it comes to are both on screen.
+                const here = stood === null || stood.at !== at ? w : upto(w, at, stood.id, stood.index);
+                const items = resolveAt(here, at);
+                const ends = here === w ? null : resolveAt(w, at).filter(it => it.id === stood!.id);
 
-                set = live(set, contributing(w, at, items));
+                set = live(set, contributing(here, at, items));
 
                 const played = r === null
                   ? null
@@ -2263,13 +2274,14 @@ export function worldCanvas(
                   ctx,
                   v,
                   layers(
-                    w, s, v, t, sel, ins, at, l, items, runs(set), floorRuns(set),
+                    here, s, v, t, sel, ins, at, l, items, runs(set), floorRuns(set),
                     played,
                     // An artefact flying on its own, with the walls it belongs
                     // to standing still because their span has not been baked
                     // yet, reads as a glitch rather than as a walk.
                     played === null ? null : r,
                     g,
+                    ends,
                   ),
                 );
               }

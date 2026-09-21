@@ -13,6 +13,7 @@ import {
   scaleOf,
   split,
   turnOf,
+  upto,
 } from './scene';
 import { Frame, framed, playingAt, playingOn, stateAt, worldFrame } from './rig';
 import { erode, move, moved, repeated, scaled, turned, wrote, wroteOne } from './testing';
@@ -206,5 +207,53 @@ describe('break and split', () => {
 
     // The two of them still land where the one did.
     for (const v of [1, 2] as const) expectFrame(at(apart, id, v), at(now, id, v));
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Standing on a key
+//
+// What the canvas draws when one is stood on: the world that keyframe leaves
+// after that key, and nothing else moved. See `upto`.
+// -----------------------------------------------------------------------------
+
+describe('standing on a key', () => {
+  const two = () => {
+    const { world, id } = room();
+    const other = addPolygon(world, { type: 'level' }, rect(300, 0, 40, 40), 0, TOP);
+    const w = wrote(other.world, 1, id, move(10, 0), move(0, 20));
+
+    return { world: wrote(w, 1, other.id, move(-5, 0)), id, other: other.id };
+  };
+
+  test('the world upto a key is that keyframe less what it does after it', () => {
+    const { world, id } = two();
+    const first = upto(world, 1, id, 0);
+
+    expect(keysOfAt(first, 1, id)).toHaveLength(1);
+    expectFrame(at(first, id, 1), at(wrote(room(emptyWorld()).world, 1, room(emptyWorld()).id, move(10, 0)), id, 1));
+  });
+
+  test('and every other thing is where the keyframe leaves it', () => {
+    const { world, id, other } = two();
+    const first = upto(world, 1, id, 0);
+
+    expect(keysOfAt(first, 1, other)).toEqual(keysOfAt(world, 1, other));
+    expectFrame(at(first, other, 1), at(world, other, 1));
+  });
+
+  test('the keyframes after it are where they were, since a key carries', () => {
+    const { world, id } = two();
+    const first = upto(world, 1, id, 0);
+
+    // What is dropped is dropped for good in the world that is drawn, so the
+    // keyframes after it move too: it is a view of a moment, not an edit.
+    expect(at(first, id, 2).t.y).not.toBeCloseTo(at(world, id, 2).t.y, 6);
+  });
+
+  test('standing on the last key of a keyframe is the keyframe itself', () => {
+    const { world, id } = two();
+
+    expect(upto(world, 1, id, keysOfAt(world, 1, id).length - 1)).toBe(world);
   });
 });

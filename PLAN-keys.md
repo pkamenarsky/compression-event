@@ -299,10 +299,17 @@ state at the key stood on. The ops row's per-kind icons go.
 
 A corner's row in the point tool stops being a timeline and becomes a
 projection: a key that names corners puts a dot in the row of each, in its own
-column, and clicking one picks the key. Hovering a key lights the corners it
-touches on the canvas. Dragging one corner's dot down to a lane of its own
-takes that corner out into a key of its own — the same split as taking the
-last gesture out, by corner instead of by time.
+column, and clicking one picks the key.
+
+**Standing on a key.** Clicking one draws the world that keyframe leaves after
+it — `upto`, which is the world with that keyframe's later keys dropped, so
+the resolve, the CSG and the outlines all answer about that moment without
+being taught what a moment is. Where the keyframe ends up is a ghost over it.
+Anything that moves drops it: another keyframe, an edit, a click on nothing.
+
+Not yet: a gesture while standing still writes at the end of the keyframe
+rather than into the key stood on, and the modal edit gesture is still what
+adjusts one. An inspector is still nothing at all.
 
 ### 5 — the rest — done with 3c
 

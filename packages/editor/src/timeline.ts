@@ -108,6 +108,8 @@ export function timeline(
   input: Input,
   update: Update,
   go: (k: KeyframeId) => void,
+  /** Stand on a key, or on nothing. See `EditorState.standing`. */
+  stand: (on: EditorState['standing']) => void,
   edits: Signal<Editing>,
 ): VNode {
   const initial: Local = { picked: null };
@@ -116,6 +118,9 @@ export function timeline(
     const change = (f: (l: Local) => Local) => setLocal(f(local()));
     const letGo = () => {
       if (local().picked !== null) change(l => ({ ...l, picked: null }));
+
+      // Letting go of the key stood on as well: the two are the same click.
+      if (state().standing !== null) stand(null);
     };
 
     // Acted on, a pick may name an entry that is not there any more, and a
@@ -144,7 +149,21 @@ export function timeline(
     // model: stepping through the keyframes rebuilds nothing.
     const current = () => order(world(), keyframe());
 
-    const ctx: Ctx = { state, update, go, edits, local, change, acted, letGo, current, inner: null, model: null, clicked: null };
+    const ctx: Ctx = {
+      state,
+      update,
+      go,
+      stand,
+      edits,
+      local,
+      change,
+      acted,
+      letGo,
+      current,
+      inner: null,
+      model: null,
+      clicked: null,
+    };
 
     let root: (() => void) | null = null;
 
@@ -193,6 +212,8 @@ interface Ctx {
   state: Value<EditorState>
   update: Update
   go: (k: KeyframeId) => void
+  /** Stand on a key, or on nothing. See `EditorState.standing`. */
+  stand: (on: EditorState['standing']) => void
   edits: Signal<Editing>
   local: Value<Local>
   change: (f: (l: Local) => Local) => void
@@ -688,6 +709,12 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         ctx.clicked = twice ? null : { place, when: now };
         ctx.go(at);
         ctx.change(l => ({ ...l, picked: { lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) } }));
+
+        // Stood on: the canvas draws the thing as this key leaves it, with
+        // where the keyframe ends up a ghost over it. A key about single
+        // corners is a place in a corner's row rather than a moment of the
+        // thing, and stands on nothing.
+        ctx.stand('index' in place ? { id: place.id, at, index: place.index } : null);
 
         if (twice && 'index' in place) ctx.edits.emit(place);
       };
