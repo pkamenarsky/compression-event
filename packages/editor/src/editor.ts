@@ -70,6 +70,7 @@ import {
   picks,
 } from './types';
 import { aimed, aiming, lastKeys, newKeys, reborn } from './keys';
+import { steppedKey } from './track';
 
 /**
  * The editor: a canvas that draws the world, and the chrome floating above it.
@@ -307,6 +308,18 @@ function versions(input: Input, update: Update): VNode {
 
       // Right is forward, the way the keyframes run along the bottom.
       const by = e.code === 'ArrowRight' ? 1 : -1;
+
+      // With ⌥, a key at a time rather than a keyframe: across into the next
+      // one where this one has no more, switched the way a click switches.
+      if (e.altKey) {
+        update(s => {
+          const t = steppedKey(s, by);
+
+          return t === s ? s : { ...switched(s, t.keyframe), target: t.target };
+        });
+
+        continue;
+      }
 
       update(s => switched(s, clamped(s.world, order(s.world, s.keyframe) + by)));
     }

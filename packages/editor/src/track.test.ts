@@ -3,7 +3,7 @@ import { Point } from '@ce/game/world';
 import { TOP, addPolygon, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, deepened, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
-import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
+import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, steppedKey, timesTo } from './track';
 import { erode, move, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
 import { restored, saved } from './save';
 import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, gestured, initialState, visible } from './types';
@@ -263,5 +263,45 @@ describe('what a key is drawn as', () => {
 
     expect(rowsOf(w, [id])[0].cells[1].places).toEqual([]);
     expect(rowsOf(w, [id], true)[1].cells[1].kinds).toEqual([['move']]);
+  });
+});
+
+describe('stepping from key to key', () => {
+  /** A room with two keys at v1 and one at v2, picked, at v1. */
+  const at1 = () => {
+    const { world, id } = room();
+    const w = wrote(wrote(world, 1, id, move(1, 0), move(2, 0)), 2, id, move(3, 0));
+    const s = { ...initialState(w), keyframe: 1, selection: { ...EMPTY_SELECTION, polygons: [id] } };
+    const key = (k: KeyframeId, i: number) => keysOfAt(w, k, id)[i].id;
+
+    return { s, id, key };
+  };
+
+  test('back from the keyframe as it ends is the key before its last', () => {
+    const { s, id, key } = at1();
+    const t = steppedKey(s, -1);
+
+    expect(t.keyframe).toBe(1);
+    expect(t.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
+    expect(steppedKey(t, -1)).toBe(t);
+  });
+
+  test('on is along the keyframe and then into the next one\'s first', () => {
+    const { s, id, key } = at1();
+    const first = steppedKey(s, -1);
+    const second = steppedKey(first, 1);
+    const third = steppedKey(second, 1);
+
+    expect(second.target!.lead).toEqual({ id, at: 1, key: key(1, 1) });
+    expect(third.keyframe).toBe(2);
+    expect(third.target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
+    expect(steppedKey(s, 1).target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
+  });
+
+  test('with nothing picked there is nowhere to go', () => {
+    const { s } = at1();
+    const bare = { ...s, selection: EMPTY_SELECTION };
+
+    expect(steppedKey(bare, 1)).toBe(bare);
   });
 });

@@ -24,7 +24,7 @@ import {
   kindOf,
 } from './rig';
 import { artefactsAt, hitPolygons, keyRigOf, pathsAt, resolveAt } from './scene';
-import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
+import { EditorState, Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
 
 export type Kind = Op['kind'] | 'corners';
 
@@ -379,4 +379,38 @@ export function beneath(world: World, k: KeyframeId, p: Point, reach: number): B
   for (const r of roots) add(r, 0);
 
   return out;
+}
+
+/**
+ * The hand moved to the key before or after the one it is on, `by` −1 or 1,
+ * in the order the keys play: along its keyframe, and on into the one beside
+ * where that has no more. Its thing's row alone — the lead's, or the first
+ * thing picked where the hand is on nothing — and with it whatever its gesture
+ * wrote beside it, as a click picks.
+ *
+ * On nothing is the keyframe as it ends, which is its last key: back goes to
+ * the one before that, and on to the next keyframe's first. `s` itself where
+ * there is nowhere to go. The keyframe it lands in is the result's, for the
+ * caller to switch to.
+ */
+export function steppedKey(s: EditorState, by: 1 | -1): EditorState {
+  const w = s.world;
+  const rows = rowsOf(w, rootsOf(w, s.selection), false);
+  const lead = s.target?.lead;
+  const row = rows.find(r => r.corner === null && (lead === undefined || r.id === lead.id));
+
+  if (row === undefined) return s;
+
+  const keys = row.cells.flatMap((c, col) => c.places.map(p => ({ col, p })));
+  const on = lead === undefined || !('key' in lead) ? -1 : keys.findIndex(q => samePlace(q.p, lead));
+  const here = indexIn(w.keyframes, s.keyframe);
+  const last = keys.findLastIndex(q => q.col <= here);
+  const i = on >= 0
+    ? on + by
+    : by > 0 ? last + 1 : last >= 0 && keys[last].col === here ? last - 1 : last;
+  const to = keys[i];
+
+  if (to === undefined) return s;
+
+  return { ...s, keyframe: w.keyframes[to.col].id, target: { lead: to.p, all: gestureOf(w, rows, to.col, to.p) } };
 }
