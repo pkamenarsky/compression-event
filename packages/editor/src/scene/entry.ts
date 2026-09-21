@@ -18,28 +18,30 @@ import { Point } from '@ce/game/world';
 import { GroupId, Id, KeyframeId, World, standing } from '../types';
 import { place } from '../affine';
 import {
-  Entry,
   Frame,
+  Key as RigKey,
   Op,
   REST,
-  merged,
+  aboutOf,
+  deltaOf,
+  foldedBy,
+  keysAt,
+  kindOf,
   placed,
-  playedAt,
-  played,
+  playingAt,
+  playingOn,
   sheared,
-  sourcesAt,
   stateAt,
   unsheared,
-  withKeys,
+  withKeysAt,
 } from '../rig';
 
 import {
   Painted,
-  listAt,
+  keyRigOf,
   order,
-  rigOf,
   under,
-  withRig,
+  withKeyRig,
 } from './core';
 import {
   painted,
@@ -53,16 +55,14 @@ import {
 
 /** Where a thing is at keyframe `k` just before `entry` plays there, and just
  * after. Nothing where it is not one of `k`'s. */
-export function around(world: World, k: KeyframeId, id: Id, entry: Entry): { before: Frame, after: Frame } | null {
+export function around(world: World, k: KeyframeId, id: Id, key: RigKey): { before: Frame, after: Frame } | null {
   const i = order(world, k);
   let frame = i > 0 ? stateAt(world, id, world.keyframes[i - 1].id).frame : REST;
-  const sources = sourcesAt(world, id, k);
-  const ops = playedAt(world, id, k);
 
-  for (let j = 0; j < ops.length; j++) {
-    if (sources[j].entry === entry && sources[j].step === 0) return { before: frame, after: played(frame, ops[j]) };
+  for (const p of playingAt(world, id, k)) {
+    if (p.key === key && p.step === 0) return { before: frame, after: playingOn(frame, p) };
 
-    frame = played(frame, ops[j]);
+    frame = playingOn(frame, p);
   }
 
   return null;
@@ -74,28 +74,31 @@ export function around(world: World, k: KeyframeId, id: Id, entry: Entry): { bef
  * world units — a turn's anchor, the one point a scale leaves where it was, or
  * where the thing is for a move or an erosion, which have none.
  */
-export function editedAt(world: World, k: KeyframeId, id: Id, entry: Entry): { paint: Painted, pivot: Point } | null {
-  const frames = around(world, k, id, entry);
+export function editedAt(world: World, k: KeyframeId, id: Id, key: RigKey): { paint: Painted, pivot: Point } | null {
+  const frames = around(world, k, id, key);
+  const d = key.by;
 
-  if (frames === null) return null;
+  if (frames === null || d === undefined) return null;
 
-  const op = entry.op;
+  const kind = kindOf(key);
   const held = under(world, k, id);
-  const ref = op.kind === 'turn' || op.kind === 'scale' ? op.ref : painted(world, k, id).ref;
+  const ref = kind === 'turn' || kind === 'scale' ? key.ref : painted(world, k, id).ref;
   const was = placed(frames.before, ref);
   const paint = { ref, at: placed(frames.after, ref), frame: frames.after, held };
 
   let centre = paint.at;
 
-  if (op.kind === 'turn') {
-    centre = { x: was.x + op.about.x, y: was.y + op.about.y };
+  if (kind === 'turn') {
+    const about = aboutOf(d) ?? ORIGIN;
+
+    centre = { x: was.x + about.x, y: was.y + about.y };
   }
-  else if (op.kind === 'scale') {
+  else if (kind === 'scale') {
     // The slide is `(I − M)(c − p)` along its axes: undone axis by axis, and
     // the painted point on an axis it does not stretch.
-    const w = unsheared(op.shift, op.along, op.lean);
-    const along = (d: number, by: number) => (Math.abs(1 - by) < 1e-9 ? 0 : d / (1 - by));
-    const c = sheared({ x: along(w.x, op.by.x), y: along(w.y, op.by.y) }, op.along, op.lean);
+    const w = unsheared(d.move, d.along, d.lean);
+    const along = (x: number, by: number) => (Math.abs(1 - by) < 1e-9 ? 0 : x / (1 - by));
+    const c = sheared({ x: along(w.x, d.scale.x), y: along(w.y, d.scale.y) }, d.along, d.lean);
 
     centre = { x: was.x + c.x, y: was.y + c.y };
   }
@@ -103,27 +106,35 @@ export function editedAt(world: World, k: KeyframeId, id: Id, entry: Entry): { p
   return { paint, pivot: place(held, [centre])[0] };
 }
 
+const ORIGIN: Point = { x: 0, y: 0 };
+
 /**
- * The entry at `index` of `k`'s list with `op` folded into it: what it did,
- * and then `op`, as one entry repeating as it did. Taken out where the two
- * come to nothing, and left alone where they are not one — which an edit read
- * by `editedAt` never is.
+ * The key at `index` of `k`'s list with `op` folded into it: what it did, and
+ * then `op`, as one key repeating as it did. Taken out where the two come to
+ * nothing, and left alone where they are not one — which an edit read by
+ * `editedAt` never is.
  */
 export function refolded(world: World, k: KeyframeId, id: Id, index: number, op: Op): World {
-  const list = listAt(world, k, id);
-  const e = list[index];
+  const rig = keyRigOf(world, id);
+  const list = keysAt(rig, k);
+  const key = list[index];
+  const by = deltaOf(op);
 
-  if (e === undefined) return world;
+  if (key === undefined || by === null || key.by === undefined) return world;
 
-  // Along the axes the entry was written along, which only its repeats read.
-  const also = e.op.kind === 'scale' && op.kind === 'scale' ? { ...op, along: e.op.along, lean: e.op.lean } : op;
-  const both = merged(e, { ...e, op: also });
+  // Along the axes the key was written along, which only its repeats read.
+  const also = kindOf(key) === 'scale' && by.scale !== undefined
+    ? { ...by, along: key.by.along, lean: key.by.lean }
+    : by;
+  const both = foldedBy({ ...key, times: 1, skip: undefined }, key.ref, also);
 
   if (both === null) return world;
 
-  const now = both === 'gone' ? list.filter((_x, i) => i !== index) : list.map((x, i) => (i === index ? both : x));
+  const now = both === 'gone'
+    ? list.filter((_x, i) => i !== index)
+    : list.map((x, i) => (i === index ? { ...both, times: key.times, ...(key.skip === undefined ? {} : { skip: key.skip }) } : x));
 
-  return withRig(world, id, withKeys(rigOf(world, id), k, now));
+  return withKeyRig(world, id, withKeysAt(rig, k, now));
 }
 
 /**

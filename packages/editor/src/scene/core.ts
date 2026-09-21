@@ -1139,7 +1139,7 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
     if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
 
     const state = stateAt(world, owner, v);
-    const ever = everDeformed(rigOf(world, owner));
+    const ever = everDeformed(keyRigOf(world, owner));
     const own = owner === id;
 
     out.push({
@@ -1174,18 +1174,20 @@ interface Deforming {
  * Over every keyframe rather than at one, so an edge has its teeth at each —
  * flat where its amplitude is nought — and they never come or go with it.
  */
-function everDeformed(rig: Rig): { all: boolean, edges: ReadonlySet<VertexId> } {
-  const edges = new Set(rig.deforms.keys());
+function everDeformed(rig: KeyRig): { all: boolean, edges: ReadonlySet<VertexId> } {
+  const edges = new Set<VertexId>();
   let all = false;
 
   for (const list of rig.keys.values()) {
-    for (const { op } of list) {
-      if (op.kind === 'deform' && op.by !== 0) all = true;
+    for (const key of list) {
+      if ((key.by?.deform ?? 0) !== 0) all = true;
 
-      if (op.kind === 'stand') {
-        if (op.amplitude !== 0) all = true;
+      key.deforms?.forEach((a, from) => a !== 0 && edges.add(from));
 
-        op.amplitudes.forEach((a, from) => a !== 0 && edges.add(from));
+      if (key.stand !== undefined) {
+        if (key.stand.amplitude !== 0) all = true;
+
+        key.stand.amplitudes.forEach((a, from) => a !== 0 && edges.add(from));
       }
     }
   }
@@ -1439,26 +1441,25 @@ export function withKeyRig(world: World, id: Id, rig: KeyRig): World {
 }
 
 /**
- * Everything written about a thing, as entries.
+ * Everything written about a thing, as entries, and a thing's timeline
+ * replaced from entries.
  *
- * TEMPORARY, with `entriesOf` in `rig.ts` and for its reason: what the group
- * fold, the copy and the unroll still read. See `PLAN-keys.md`, phase 5.
+ * For the tests, which say what a timeline does as operations because that is
+ * what an operation is for — one thing, plainly. Nothing the editor does goes
+ * through here: a key is what it writes and what it reads. Reading a file
+ * older than a 24 goes through `keysOf` too, in `save.ts`.
  */
 export function rigOf(world: World, id: Id): Rig {
   return entriesFor(keyRigOf(world, id));
 }
 
-/**
- * A thing's timeline replaced, written as entries. TEMPORARY, as `rigOf`.
- *
- * The keys it had are handed over with it, so that everything the write did
- * not touch comes back the same objects — see `kept` in `rig.ts`.
- */
+/** The keys it had are handed over with it, so that everything the write did
+ * not touch comes back the same objects — see `kept` in `rig.ts`. */
 export function withRig(world: World, id: Id, rig: Rig): World {
   return withKeyRig(world, id, keysOf(rig, world.rigs.get(id)));
 }
 
-/** What keyframe `v` does to a thing, in order. */
+/** What keyframe `v` does to a thing, as entries. For the tests, as `rigOf`. */
 export function listAt(world: World, v: KeyframeId, id: Id): readonly Entry[] {
   return rigOf(world, id).keys.get(v) ?? [];
 }
@@ -1468,7 +1469,8 @@ export function keysOfAt(world: World, v: KeyframeId, id: Id): readonly RigKey[]
   return keysAt(keyRigOf(world, id), v);
 }
 
-/** `k`'s list for `id`, written outright. A bare operation happens once. */
+/** `k`'s list for `id`, written outright as operations. For the tests, as
+ * `rigOf`. */
 export function keyed(world: World, k: KeyframeId, id: Id, list: readonly (Op | Entry)[]): World {
   const entries = list.map(e => ('op' in e ? e : once(e)));
 
@@ -1660,8 +1662,10 @@ function reaches(world: World, v: KeyframeId, ids: readonly Id[]): Id[] {
 export function handed(world: World, v: KeyframeId, id: Id): Stand {
   const base = keyAt(world, order(world, v) - 1);
   const before = base === null ? stateAt(world, id, v) : stateAt(world, id, base);
-  const all = playedAt(world, id, v);
-  const steps = base === null ? [] : all.slice(0, all.length - listAt(world, v, id).length);
+
+  // The steps of repeats begun earlier, which come before the keyframe's own
+  // keys and are what a stand here has to have in it.
+  const steps = base === null ? [] : playingAt(world, id, v).filter(p => p.at !== v).flatMap(everyOp);
 
   let frame = base === null ? REST : before.frame;
   let erosion = base === null ? 0 : before.erosion;
@@ -1676,23 +1680,37 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
   }
 
   const here = stateAt(world, id, v);
-  const rig = rigOf(world, id);
+
+  /** What `v`'s own keys say about one corner, of one kind, added up. */
+  const ours = (held: 'corners' | 'depths' | 'rounds' | 'deforms', c: VertexId): number | Point => {
+    let out: number | Point = held === 'corners' ? { x: 0, y: 0 } : 0;
+
+    for (const key of keysOfAt(world, v, id)) {
+      const by = key[held]?.get(c);
+
+      if (by === undefined) continue;
+
+      out = typeof out === 'number' ? out + (by as number) : { x: out.x + (by as Point).x, y: out.y + (by as Point).y };
+    }
+
+    return out;
+  };
 
   const corners = new Map([...here.corners].map(([c, p]) => {
-    const own = rig.nudges.get(c)?.get(v)?.op.by;
+    const own = ours('corners', c) as Point;
 
-    return [c, own === undefined ? p : { x: p.x - own.x, y: p.y - own.y }];
+    return [c, { x: p.x - own.x, y: p.y - own.y }];
   }));
 
   // Each corner's amounts less what `v` adds to them.
   const less = (
     amounts: ReadonlyMap<VertexId, number>,
-    own: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>,
+    held: 'depths' | 'rounds' | 'deforms',
   ): Map<VertexId, number> => {
     const out = new Map<VertexId, number>();
 
     for (const [c, d] of amounts) {
-      const left = d - (own.get(c)?.get(v)?.op.by ?? 0);
+      const left = d - (ours(held, c) as number);
 
       if (left !== 0) out.set(c, left);
     }
@@ -1705,11 +1723,11 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
     frame,
     erosion,
     corners,
-    depths: less(here.depths, rig.depths),
+    depths: less(here.depths, 'depths'),
     bevel,
     amplitude,
-    bevels: less(here.bevels, rig.rounds),
-    amplitudes: less(here.amplitudes, rig.deforms),
+    bevels: less(here.bevels, 'rounds'),
+    amplitudes: less(here.amplitudes, 'deforms'),
   };
 }
 

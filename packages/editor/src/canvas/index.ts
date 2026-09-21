@@ -82,7 +82,7 @@ import {
   verticesWithinBox,
   editedAt,
   refolded,
-  rigOf,
+  keysOfAt,
 } from '../scene';
 import {
   OnPath,
@@ -95,7 +95,7 @@ import {
   setPath,
 } from '../paths';
 import { beneath } from '../track';
-import { Op as Operation } from '../rig';
+import { Op as Operation, kindOf } from '../rig';
 import {
   AmountKind,
   amountWritten,
@@ -633,8 +633,8 @@ export function worldCanvas(
     function* editing(target: Editing): Op<void> {
       const was = world();
       const { id, at: k, index } = target;
-      const entry = rigOf(was, id).keys.get(k)?.[index];
-      const code = entry === undefined ? undefined : EDITED[entry.op.kind];
+      const entry = keysOfAt(was, k, id)[index];
+      const code = entry === undefined ? undefined : EDITED[kindOf(entry) ?? ''];
 
       if (entry === undefined || code === undefined || el === undefined) return;
 
@@ -655,7 +655,7 @@ export function worldCanvas(
       // `grab`.
       const ungrabbed = input.grab(me);
 
-      update(s => saying(s, `Editing a ${entry.op.kind}: move over the canvas, click to keep it, Escape to put it back.`));
+      update(s => saying(s, `Editing a ${kindOf(entry)}: move over the canvas, click to keep it, Escape to put it back.`));
       setLocal({ ...local(), previewing: true });
 
       try {
@@ -2672,9 +2672,9 @@ const TURN = Math.PI / 36;
  * only angle most of a level is ever turned by. */
 const EIGHTH = Math.PI / 4;
 
-/** The gesture each kind of entry is written by, which is the one it is
- * edited by. A skew has none: only a fold writes one. */
-const EDITED: Partial<Record<Operation['kind'], string>> = {
+/** The gesture each kind of key is written by, which is the one it is edited
+ * by. A skew has none: only a fold writes one. */
+const EDITED: Record<string, string | undefined> = {
   move: 'KeyT',
   turn: 'KeyR',
   scale: 'KeyS',

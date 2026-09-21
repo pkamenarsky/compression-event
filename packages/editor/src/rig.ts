@@ -2391,14 +2391,14 @@ export function amountedBy(
 }
 
 /**
- * A rig of keys as entries — the way back, while every key holds one channel.
+ * A rig of keys as entries: one entry per operation a key is made of.
  *
- * TEMPORARY. The group fold, the copy and the unroll in `scene/core.ts` still
- * read and write timelines as operations, and this is what lets them: a key
- * that holds one channel is an entry, and until a gesture folds two into one
- * there is no other kind. It throws rather than guessing where it meets one
- * that does, so the day that changes is the day it is gone. See
- * `PLAN-keys.md`, phase 5.
+ * What the tests read a timeline by, and nothing else — the editor reads keys
+ * everywhere. A key that holds one channel is an entry; one that holds two is
+ * the two entries it is made of, which play the same at every keyframe and
+ * differ in the way between them. What a corner has written about it in two
+ * keys of one keyframe is the one thing this cannot say, an entry map having
+ * room for one per keyframe.
  */
 const asEntries = new WeakMap<KeyRig, Rig>();
 

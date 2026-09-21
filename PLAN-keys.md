@@ -287,11 +287,18 @@ touches on the canvas. Dragging one corner's dot down to a lane of its own
 takes that corner out into a key of its own — the same split as taking the
 last gesture out, by corner instead of by time.
 
-### 5 — the rest
+### 5 — the rest — done with 3c
 
-Group fold and ungroup, copy and paste, resolve, and the effects pane: an
-amount-only key is what the pane writes, and a repeatable transform is a key
-with a tail, so the pane stops having a second idea of what a repeat is.
+Group fold and ungroup, copy and paste, and the effects pane, all on keys. The
+fold reads a contribution as the operations it is made of — `everyOp` — carries
+each out through the frame as it always did, and writes one key per operation
+back; a key's writing about single corners crosses untouched, in a key of its
+own, the group never having reached the rest frame it is in. A clipping is
+keys, so copying the keys copies the corners, and pasting renames them inside.
+
+What is left of entries: `rigOf`, `withRig`, `listAt` and `keyed` in
+`scene/core.ts`, which the tests write timelines by, and `keysOf` in
+`save.ts`, which reads a 23. The editor neither reads nor writes one.
 
 ## Known and accepted
 

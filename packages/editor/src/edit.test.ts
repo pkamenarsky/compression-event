@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, editedAt, grouped, listAt, moveOf, refolded, scaleOf, turnOf } from './scene';
+import { TOP, addPolygon, editedAt, grouped, keysOfAt, listAt, moveOf, refolded, scaleOf, turnOf } from './scene';
 import { Frame, framed, worldFrame } from './rig';
 import { erode, moved, repeated, scaled, turned, wrote } from './testing';
 import { Id, KeyframeId, World, emptyWorld } from './types';
@@ -28,7 +28,7 @@ function at(world: World, id: Id, k: KeyframeId): Frame {
 /** The entry at `index` edited the way the canvas edits it, by the gesture
  * `op` writes against what `editedAt` reads. */
 function edit(world: World, k: KeyframeId, id: Id, index: number, gesture: Parameters<typeof editedWith>[0]): World {
-  const e = listAt(world, k, id)[index];
+  const e = keysOfAt(world, k, id)[index];
   const { paint, pivot } = editedAt(world, k, id, e)!;
 
   return refolded(world, k, id, index, editedWith(gesture, paint, pivot));

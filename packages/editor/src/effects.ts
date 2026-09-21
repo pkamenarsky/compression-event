@@ -18,8 +18,8 @@
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { Amount, AmountKind, amounted } from './rig';
-import { Resolved, appended, optionOf, rigOf, withRig } from './scene';
+import { Amount, AmountKind, amountedBy, nextKey } from './rig';
+import { Resolved, appended, keyRigOf, optionOf, withKeyRig } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
@@ -223,13 +223,14 @@ export function cornersAmounted(
 
   if (polygon === undefined || by === 0) return world;
 
-  let rig = rigOf(world, id);
+  let rig = keyRigOf(world, id);
+  const made = nextKey(rig);
 
   for (const c of polygon.points) {
-    if (corners.has(c.id)) rig = amounted(rig, kind, c.id, v, by);
+    if (corners.has(c.id)) rig = amountedBy(rig, made, kind, c.id, v, by);
   }
 
-  return withRig(world, id, rig);
+  return withKeyRig(world, id, rig);
 }
 
 // -----------------------------------------------------------------------------

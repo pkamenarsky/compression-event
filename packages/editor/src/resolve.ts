@@ -111,8 +111,9 @@ import {
   underfoot,
   ungrouping,
   unplace,
+  keyRigOf,
 } from './scene';
-import { CORNER_MAPS, EMPTY_RIG, Entry, Rig, keysOf, once, stateAt } from './rig';
+import { EMPTY_RIG, Entry, KeyRig, Rig, keysOf, once, stateAt } from './rig';
 import {
   GroupId,
   Id,
@@ -668,21 +669,13 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     unrolled: apart?.unrolled ?? [],
     losing: world.keyframes
       .map(k => k.id)
-      .filter(k => k !== v && [...gone].some(m => written(rigOf(world, m), k))),
+      .filter(k => k !== v && [...gone].some(m => written(keyRigOf(world, m), k))),
   };
 }
 
 /** Whether anything is written about a thing at a keyframe. */
-function written(rig: Rig, k: KeyframeId): boolean {
-  if (rig.keys.has(k)) return true;
-
-  for (const m of CORNER_MAPS) {
-    for (const map of rig[m].values()) {
-      if (map.has(k)) return true;
-    }
-  }
-
-  return false;
+function written(rig: KeyRig, k: KeyframeId): boolean {
+  return rig.keys.has(k);
 }
 
 /**
