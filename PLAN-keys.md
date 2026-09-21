@@ -267,8 +267,9 @@ already in, and there is nothing to solve. Folding happens in one place only —
 a gesture absorbed into the open key — and there it has the frame to hand,
 which it needs where the two painted points differ.
 
-**3d — break and split.** The two that are new: closing the open key (⌘K),
-and taking the last gesture out of it into one of its own (⇧⌘K). With them,
+**3d — break and split.** The two that are new: an empty key on the end (⌘K),
+which the next gesture fills, and taking the last gesture out of the key it
+was folded into (⇧⌘K). With them,
 the fold stops asking what kind a gesture is: a hand that moves a thing and
 then turns it leaves one key, which is one motion, until the author says
 otherwise.
@@ -307,9 +308,12 @@ the resolve, the CSG and the outlines all answer about that moment without
 being taught what a moment is. Where the keyframe ends up is a ghost over it.
 Anything that moves drops it: another keyframe, an edit, a click on nothing.
 
-Not yet: a gesture while standing still writes at the end of the keyframe
-rather than into the key stood on, and the modal edit gesture is still what
-adjusts one. An inspector is still nothing at all.
+A gesture while standing adjusts that key: read against the thing as the key
+leaves it, about the key's own centre, and folded back in — `editedAt` and
+`refolded`, which the double-click edit already used. It is about the thing
+stood on alone, a key belonging to one thing.
+
+Not yet: an inspector, and the double-click edit is still there beside it.
 
 ### 5 — the rest — done with 3c
 

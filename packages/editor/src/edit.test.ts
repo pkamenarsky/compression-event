@@ -289,3 +289,41 @@ describe('an empty key', () => {
     expect(keysOfAt(broken(world, 1, [id]), 1, id)).toHaveLength(1);
   });
 });
+
+describe('a gesture while standing on a key', () => {
+  test('folds into that key rather than writing one after it', () => {
+    const { world, id } = room();
+    const w = wrote(world, 1, id, move(10, 0), move(0, 20));
+
+    // What the canvas does while standing on the first of the two: the same
+    // operation the gesture would write, read against the thing as that key
+    // leaves it and folded back into it. See `editedAt` and `refolded`.
+    const key = keysOfAt(w, 1, id)[0];
+    const { paint, pivot } = editedAt(w, 1, id, key)!;
+    const after = refolded(w, 1, id, 0, editedWith({ move: { x: 5, y: 0 } }, paint, pivot));
+    const keys = keysOfAt(after, 1, id);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0].by!.move).toEqual({ x: 15, y: 0 });
+    expect(keys[1].by).toEqual(keysOfAt(w, 1, id)[1].by);
+
+    // And the keyframe ends up five further along, the second key carrying.
+    expect(at(after, id, 1).t.x - at(w, id, 1).t.x).toBeCloseTo(5, 9);
+  });
+
+  test('and a turn about the key\'s own centre, not the selection\'s', () => {
+    const { world, id } = room();
+    const w = wrote(world, 1, id, turned(0.5, { x: 200, y: 0 }), move(0, 40));
+    const key = keysOfAt(w, 1, id)[0];
+    const read = editedAt(w, 1, id, key)!;
+
+    // The centre the key turned about, which is where the hand aimed it and
+    // not where the thing is now.
+    expect(read.pivot.x).toBeCloseTo(200, 6);
+    expect(read.pivot.y).toBeCloseTo(0, 6);
+
+    const after = refolded(w, 1, id, 0, editedWith({ turn: 0.25 }, read.paint, read.pivot));
+
+    expect(keysOfAt(after, 1, id)[0].by!.angle).toBeCloseTo(0.75, 9);
+  });
+});

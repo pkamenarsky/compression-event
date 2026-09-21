@@ -96,7 +96,7 @@ import {
   setPath,
 } from '../paths';
 import { beneath } from '../track';
-import { Op as Operation, kindOf } from '../rig';
+import { Amount, Op as Operation, kindOf } from '../rig';
 import {
   AmountKind,
   amountWritten,
@@ -182,7 +182,7 @@ export function worldCanvas(
   keyframe: Value<KeyframeId>,
   /** The key being stood on, or nothing for the keyframe as it ends. See
    * `EditorState.standing`. */
-  standing: Value<EditorState['standing']>,
+  stood: Value<EditorState['standing']>,
   replay: Value<Replay | null>,
   bake: Value<Bake>,
   roaming: Value<boolean>,
@@ -824,6 +824,21 @@ export function worldCanvas(
           .map(id => [id, painted(was, v, id, resolved)]),
       );
 
+      // Standing on a key, the gesture is about that key: read against the
+      // thing as the key leaves it and about the key's own centre, and folded
+      // back into it rather than written after it. The thing stood on is the
+      // only one it is about — a key belongs to one thing. See `editedAt`,
+      // `refolded` and `EditorState.standing`.
+      const key = stood();
+      const editing = key === null || key.at !== v || !paints.has(key.id)
+        ? null
+        : editedAt(was, v, key.id, keysOfAt(was, v, key.id)[key.index]);
+
+      if (editing !== null) {
+        paints.clear();
+        paints.set(key!.id, editing.paint);
+      }
+
       // One pivot for the whole selection, so several polygons turn together
       // rather than each about itself. Artefacts are in it: a room turning
       // about a centre its own key was left out of would leave the key behind.
@@ -840,7 +855,7 @@ export function worldCanvas(
       // Round what is drawn rather than round what it was drawn from, which is
       // `outlining`'s business: a group's pillar is a hole in its room and not
       // a place the group reaches to.
-      const pivot = middle([
+      const pivot = editing !== null ? editing.pivot : middle([
         ...outlining(world(), v, items, opened(world(), inside())),
         ...places,
         ...walked,
@@ -918,9 +933,13 @@ export function worldCanvas(
                   continue;
                 }
 
-                world = kind !== undefined
-                  ? amountWritten(world, v, id, kind, by)
-                  : appended(world, v, id, mode(p, { pivot, from, to, alt: e.altKey, factor }));
+                const op = kind !== undefined
+                  ? { kind, by } satisfies Amount
+                  : mode(p, { pivot, from, to, alt: e.altKey, factor });
+
+                world = editing !== null
+                  ? refolded(world, v, id, key!.index, op)
+                  : appended(world, v, id, op);
               }
 
               return { ...s, world };
@@ -2043,6 +2062,19 @@ export function worldCanvas(
           .map(id => [id, painted(was, v, id, resolved)]),
       );
 
+      // Standing on a key, the drag moves that key rather than writing one
+      // after it, and moves the thing it belongs to alone. See the same in
+      // the transform gesture above.
+      const key = stood();
+      const editing = key === null || key.at !== v || !paints.has(key.id)
+        ? null
+        : editedAt(was, v, key.id, keysOfAt(was, v, key.id)[key.index]);
+
+      if (editing !== null) {
+        paints.clear();
+        paints.set(key!.id, editing.paint);
+      }
+
       if (paints.size === 0 && !beginning && looking === null) return;
 
       cursor('move');
@@ -2077,7 +2109,11 @@ export function worldCanvas(
             // because the grid is on screen and that is where the hand is
             // aiming — then taken back, so a group turned a quarter turn does
             // not send its contents sideways.
-            for (const [id, p] of paints) world = appended(world, v, id, moveOf(p, { x: dx, y: dy }));
+            for (const [id, p] of paints) {
+              const op = moveOf(p, { x: dx, y: dy });
+
+              world = editing !== null ? refolded(world, v, id, key!.index, op) : appended(world, v, id, op);
+            }
 
             return { ...st, world };
           });
@@ -2251,7 +2287,7 @@ export function worldCanvas(
               bake(),
               local(),
               afoot(),
-              standing(),
+              stood(),
             ] as const,
             ([w, s, v, t, sel, ins, at, r, b, l, g, stood]) => {
               if (el && ctx) {
