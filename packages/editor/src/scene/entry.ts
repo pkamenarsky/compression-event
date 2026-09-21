@@ -22,7 +22,6 @@ import {
   Key as RigKey,
   Op,
   REST,
-  aboutOf,
   deltaOf,
   foldedBy,
   keysAt,
@@ -30,9 +29,7 @@ import {
   placed,
   playingAt,
   playingOn,
-  sheared,
   stateAt,
-  unsheared,
   withKeysAt,
 } from '../rig';
 
@@ -69,44 +66,24 @@ export function around(world: World, k: KeyframeId, id: Id, key: RigKey): { befo
 }
 
 /**
- * What an edit of `entry` is read against: the thing painted as the entry
- * leaves it, at the entry's own painted point, and the centre it acts about in
- * world units — a turn's anchor, the one point a scale leaves where it was, or
- * where the thing is for a move or an erosion, which have none.
+ * What an edit of `key` is read against: the thing painted as the key leaves
+ * it, at the key's own painted point, and the centre it acts about in world
+ * units — the middle of the thing as it stands then, which is where the hand
+ * sees it, and not wherever the key itself once turned or scaled about.
  */
 export function editedAt(world: World, k: KeyframeId, id: Id, key: RigKey): { paint: Painted, pivot: Point } | null {
   const frames = around(world, k, id, key);
-  const d = key.by;
 
-  if (frames === null || d === undefined) return null;
+  if (frames === null || key.by === undefined) return null;
 
   const kind = kindOf(key);
   const held = under(world, k, id);
-  const ref = kind === 'turn' || kind === 'scale' ? key.ref : painted(world, k, id).ref;
-  const was = placed(frames.before, ref);
+  const middle = painted(world, k, id).ref;
+  const ref = kind === 'turn' || kind === 'scale' ? key.ref : middle;
   const paint = { ref, at: placed(frames.after, ref), frame: frames.after, held };
 
-  let centre = paint.at;
-
-  if (kind === 'turn') {
-    const about = aboutOf(d) ?? ORIGIN;
-
-    centre = { x: was.x + about.x, y: was.y + about.y };
-  }
-  else if (kind === 'scale') {
-    // The slide is `(I − M)(c − p)` along its axes: undone axis by axis, and
-    // the painted point on an axis it does not stretch.
-    const w = unsheared(d.move, d.along, d.lean);
-    const along = (x: number, by: number) => (Math.abs(1 - by) < 1e-9 ? 0 : x / (1 - by));
-    const c = sheared({ x: along(w.x, d.scale.x), y: along(w.y, d.scale.y) }, d.along, d.lean);
-
-    centre = { x: was.x + c.x, y: was.y + c.y };
-  }
-
-  return { paint, pivot: place(held, [centre])[0] };
+  return { paint, pivot: place(held, [placed(frames.after, middle)])[0] };
 }
-
-const ORIGIN: Point = { x: 0, y: 0 };
 
 /**
  * The key at `index` of `k`'s list with `op` folded into it: what it did, and

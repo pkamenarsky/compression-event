@@ -8,6 +8,7 @@ import {
   grouped,
   keysOfAt,
   listAt,
+  middleOf,
   moveOf,
   refolded,
   scaleOf,
@@ -61,11 +62,17 @@ function editedWith(
 }
 
 describe('editing one entry', () => {
-  test('a turn edited goes further about its own centre, one entry, whatever comes after it', () => {
+  /** Where an edit of the key at `index` acts about: the middle of the thing
+   * as that key leaves it. See `editedAt`. */
+  const about = (world: World, k: KeyframeId, id: Id, index: number): Point =>
+    editedAt(world, k, id, keysOfAt(world, k, id)[index])!.pivot;
+
+  test('a turn edited goes further about the thing as it stands, one entry, whatever comes after it', () => {
     const { world, id } = room();
     const c = { x: 300, y: -40 };
     const w = wrote(world, 1, id, turned(0.3, c), moved(20, 5));
-    const once = wrote(world, 1, id, turned(0.8, c), moved(20, 5));
+    const p = about(w, 1, id, 0);
+    const once = wrote(world, 1, id, turned(0.3, c), turned(0.5, p), moved(20, 5));
 
     const out = edit(w, 1, id, 0, { turn: 0.5 });
 
@@ -73,21 +80,22 @@ describe('editing one entry', () => {
     expectFrame(at(out, id, 1), at(once, id, 1));
   });
 
-  test('a turn in a group edits about the same centre', () => {
+  test('a turn in a group edits about the thing as it stands', () => {
     const a = room();
     const b = addPolygon(a.world, { type: 'level' }, rect(200, 0, 50, 50), 0, TOP);
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
-    const w = wrote(wrote(g.world, 0, g.id, turned(0.4, { x: 10, y: 10 })), 1, a.id, turned(0.2, { x: 50, y: 50 }));
-    const once = wrote(wrote(g.world, 0, g.id, turned(0.4, { x: 10, y: 10 })), 1, a.id, turned(-0.1, { x: 50, y: 50 }));
+    const base = wrote(g.world, 0, g.id, turned(0.4, { x: 10, y: 10 }));
+    const w = wrote(base, 1, a.id, turned(0.2, { x: 50, y: 50 }));
+    const once = wrote(base, 1, a.id, turned(0.2, { x: 50, y: 50 }), turned(-0.3, about(w, 1, a.id, 0)));
 
     expectFrame(at(edit(w, 1, a.id, 0, { turn: -0.3 }), a.id, 1), at(once, a.id, 1));
   });
 
-  test('a scale edited stretches further about the point it was about', () => {
+  test('a scale edited stretches further about the thing as it stands', () => {
     const { world, id } = room();
     const c = { x: -50, y: 80 };
     const w = wrote(wrote(world, 0, id, turned(0.7)), 1, id, scaled(2, 0.5, c));
-    const once = wrote(wrote(world, 0, id, turned(0.7)), 1, id, scaled(3, 0.25, c));
+    const once = wrote(wrote(world, 0, id, turned(0.7)), 1, id, scaled(2, 0.5, c), scaled(1.5, 0.5, about(w, 1, id, 0)));
 
     const out = edit(w, 1, id, 0, { scale: { x: 1.5, y: 0.5 } });
 
@@ -95,16 +103,15 @@ describe('editing one entry', () => {
     expectFrame(at(out, id, 1), at(once, id, 1));
   });
 
-  test('a repeat edited keeps repeating, every step the further', () => {
+  test('a repeat edited keeps repeating, its first step the further', () => {
     const { world, id } = room();
     const c = { x: 200, y: 0 };
     const w = repeated(world, 1, id, turned(0.1, c), 4);
-    const once = repeated(world, 1, id, turned(0.25, c), 4);
+    const once = wrote(world, 1, id, turned(0.1, c), turned(0.15, about(w, 1, id, 0)));
     const out = edit(w, 1, id, 0, { turn: 0.15 });
 
     expect(listAt(out, 1, id)[0].times).toBe(4);
-
-    for (const k of [1, 2, 3, 4]) expectFrame(at(out, id, k), at(once, id, k));
+    expectFrame(at(out, id, 1), at(once, id, 1));
   });
 
   test('a move and an erosion add, and one edited back to nothing goes', () => {
@@ -311,16 +318,19 @@ describe('a gesture while standing on a key', () => {
     expect(at(after, id, 1).t.x - at(w, id, 1).t.x).toBeCloseTo(5, 9);
   });
 
-  test('and a turn about the key\'s own centre, not the selection\'s', () => {
+  test('and a turn about the thing\'s middle as it stands, not the key\'s old centre', () => {
     const { world, id } = room();
     const w = wrote(world, 1, id, turned(0.5, { x: 200, y: 0 }), move(0, 40));
     const key = keysOfAt(w, 1, id)[0];
     const read = editedAt(w, 1, id, key)!;
 
-    // The centre the key turned about, which is where the hand aimed it and
-    // not where the thing is now.
-    expect(read.pivot.x).toBeCloseTo(200, 6);
-    expect(read.pivot.y).toBeCloseTo(0, 6);
+    // The middle of the thing as the key leaves it, which is where the hand
+    // sees it — not the centre the key once turned about.
+    // The keyframe's middle, less the move that comes after the key.
+    const end = middleOf(w, 1, id);
+
+    expect(read.pivot.x).toBeCloseTo(end.x, 6);
+    expect(read.pivot.y).toBeCloseTo(end.y - 40, 6);
 
     const after = refolded(w, 1, id, 0, editedWith({ turn: 0.25 }, read.paint, read.pivot));
 
