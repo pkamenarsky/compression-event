@@ -8,10 +8,10 @@
 // enough for a handful and widens for more; past the width of the page the
 // view scrolls, its headings staying where they are.
 //
-// A key is what a hand did at a keyframe without saying it was finished, so
-// one icon may be several things: they are drawn side by side inside it, in
-// the order the key does them, and what it does in full is on hovering it.
-// See `drawn`, and `Key` in `rig.ts`.
+// A key is what a hand did at a keyframe without saying it was finished, and
+// it draws as one diamond however much that is — filled where it is more than
+// one thing. What it does in words is on hovering it. See `drawn`, and `Key`
+// in `rig.ts`.
 //
 // A key about single corners alone is not in the thing's row at all: it is in
 // the rows of the corners it names, which are a projection of the keys rather
@@ -624,42 +624,40 @@ const ICONS: Record<Kind, string> = {
 };
 
 /**
- * What a key is drawn as: what it does, at the size that many fits.
+ * What a key is drawn as: a diamond.
  *
- * One thing is its own icon, at the size every icon has always been. Several
- * — a hand that turned a thing and then moved it, into one key — are those
- * icons side by side in the same box, smaller, in the order the key does
- * them, which is the order they would have played in. Past three, the three
- * and a dot for the rest: what a key does in full is on hovering it, and the
- * row has to stay a row.
+ * One shape for one key, whatever it holds — a hand that turned a thing and
+ * then moved it wrote one key, and the row says so by drawing one thing.
+ * Which of them it is is on hovering it, in words, and the canvas shows it
+ * outright; a row of little pictures inside the diamond would be a list where
+ * the point is that there is no list.
+ *
+ * An unchaining is not one: it is where the thing stops hearing from upstream
+ * rather than something done to it, and it keeps the two bars it has always
+ * been drawn as.
  */
 function drawn(kinds: readonly Kind[], colour: string): VNode[] {
-  const shown = kinds.slice(0, 3);
-  const size = shown.length <= 1 ? ICON : (ICON - (shown.length - 1)) / shown.length;
-  const step = shown.length <= 1 ? 0 : (ICON - size) / (shown.length - 1);
-
-  const mark = (d: string, at: number, scale: number): VNode => path({
-    d,
-    transform: `translate(${at}, ${(ICON - size) / 2}) scale(${scale})`,
-    fill: 'none',
-    stroke: colour,
-    'stroke-width': 1.4 / scale,
-    'stroke-linecap': 'round',
-    'stroke-linejoin': 'round',
-  });
-
-  const out = shown.map((kind, i) => mark(ICONS[kind], i * step, size / ICON));
-
-  // A dot under them, where the key holds more than the three drawn.
-  if (kinds.length > shown.length) {
-    out.push(path({
-      d: `M${ICON - 1.5} ${ICON} h1 v1 h-1 Z`,
-      fill: colour,
-      stroke: 'none',
-    }));
+  if (kinds.length === 1 && kinds[0] === 'stand') {
+    return [path({
+      d: ICONS.stand,
+      fill: 'none',
+      stroke: colour,
+      'stroke-width': 1.4,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    })];
   }
 
-  return out;
+  const half = ICON / 2;
+
+  return [path({
+    d: `M${half} 1.5 L${ICON - 1.5} ${half} L${half} ${ICON - 1.5} L1.5 ${half} Z`,
+    // Filled where it holds more than one thing: the fold, seen from here.
+    fill: kinds.length > 1 ? colour : 'none',
+    stroke: colour,
+    'stroke-width': 1.4,
+    'stroke-linejoin': 'round',
+  })];
 }
 
 /** A keyframe's keys in one row, an icon each, side by side in the order
