@@ -64,6 +64,16 @@ describe('entries', () => {
     expect(listAt(back, 3, id)).toEqual(listAt(w, 3, id));
   });
 
+  test('only the last keys are pushed, and only the first pulled: the order holds', () => {
+    const { world, id } = room();
+    const w = wrote(wrote(world, 2, id, move(1, 0), turned(0.5)), 3, id, move(0, 7), turned(0.2));
+
+    expect('refused' in pushed(w, id, 2, 0)).toBe(true);
+    expect('refused' in pulled(w, id, 2, 1)).toBe(true);
+    expect(listAt(ok(pushed(w, id, 2, [0, 1])), 3, id)).toHaveLength(4);
+    expect(listAt(ok(pulled(w, id, 2, [0, 1])), 2, id)).toHaveLength(4);
+  });
+
   test('nothing is pushed off the end, or pulled to before a birth', () => {
     const { world, id } = room(emptyWorld(), 3);
     const last = world.keyframes[world.keyframes.length - 1].id;

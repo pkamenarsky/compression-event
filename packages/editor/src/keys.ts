@@ -119,6 +119,9 @@ export function dropped(world: World, id: Id, k: KeyframeId, which: Which): Worl
  * The chosen entries at `k` moved, whole and in order, to the front of the
  * next keyframe's list — behind a stand there, which is its head.
  *
+ * Only the last of the list: a key pushed past the ones after it would play
+ * after them, and keys are not put in another order by being moved along.
+ *
  * A stand does not move: it is where the thing stops hearing from upstream,
  * and anywhere else it says something else.
  */
@@ -132,6 +135,9 @@ export function pushed(world: World, id: Id, k: KeyframeId, which: Which): World
 
   if (going.length === 0) return world;
   if (going.some(e => e.stand !== undefined)) return { refused: 'an unchaining stays where it is' };
+  if (!list.every((e, i) => chosen(e, i, which) || i < list.length - going.length)) {
+    return { refused: 'only the last keys go on to the next keyframe' };
+  }
 
   const there = listOf(world, id, next);
   const head = stands(there);
@@ -143,7 +149,8 @@ export function pushed(world: World, id: Id, k: KeyframeId, which: Which): World
 }
 
 /** The chosen entries of the keyframe after `k` moved, whole and in order, to
- * the end of `k`'s list. */
+ * the end of `k`'s list. Only the first of it, for the same reason as
+ * `pushed`. */
 export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World | Refused {
   const next = after(world, k);
 
@@ -158,6 +165,9 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
 
   if (going.length === 0) return world;
   if (going.some(e => e.stand !== undefined)) return { refused: 'an unchaining stays where it is' };
+  if (!there.every((e, i) => chosen(e, i, which) || i >= going.length)) {
+    return { refused: 'only the first keys go back to the keyframe before' };
+  }
 
   const rig = withKeysAt(keyRigOf(world, id), next, there.filter((e, i) => !chosen(e, i, which)));
 
