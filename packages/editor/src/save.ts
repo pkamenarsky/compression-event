@@ -43,7 +43,7 @@ import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
 import { bakedLevel } from './export';
 import { Amount, Entry, Frame, Move, Op, Rig, Stand } from './rig';
-import { Delta, Key, KeyRig, NOTHING, keysOf } from './key';
+import { Delta, Key, KeyRig, NOTHING, keysOf } from './rig';
 
 /**
  * 23: the view is where the editor was looking and nothing else — see `Look`.

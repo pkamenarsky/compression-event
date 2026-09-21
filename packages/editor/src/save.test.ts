@@ -29,7 +29,7 @@ import {
   stateAt,
   withKeys,
 } from './rig';
-import { NOTHING, keysOf, walkedBy } from './key';
+import { NOTHING, keysOf, walkedBy } from './rig';
 import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 

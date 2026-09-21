@@ -10,9 +10,16 @@
 // test holds this branch to the same, bit for bit, so that nothing built for
 // effects moves anything that does not have one.
 //
+// The digests were re-made once, on `keys`, when `stateAt` moved from walking
+// entries to walking the keys they convert into: the arithmetic differs in the
+// last bits, so every hash here moved. What was checked before re-making them
+// is that nothing else did — every scene's rings came out with the same
+// structure, the worst number anywhere 7.1e-14 out — and master's digests are
+// in the history at the commit before. Nothing else has re-made them.
+//
 // Written against master's API and nothing newer, so the same file runs on
-// both. The golden file is only ever made on master: in a worktree of it, with
-// this file and `baseline.test.ts` copied in,
+// both. The golden file is otherwise only ever made on master: in a worktree
+// of it, with this file and `baseline.test.ts` copied in,
 //
 //   GOLDEN=1 pnpm vitest run baseline
 //

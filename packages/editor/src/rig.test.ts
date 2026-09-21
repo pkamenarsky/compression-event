@@ -441,8 +441,17 @@ describe('repeats', () => {
 
     for (let k = 1; k < KEYFRAMES.length; k++) {
       const f = playedAt(tl, P, k).reduce((f, op) => played(f, op), stateAt(tl, P, k - 1).frame);
+      const state = stateAt(tl, P, k).frame;
 
-      expect(f).toEqual(stateAt(tl, P, k).frame);
+      // Close rather than equal: `playedAt` plays the operations and `stateAt`
+      // walks the keys they convert into, and the two arithmetics differ in
+      // the last bits. See *Keys* in `rig.ts`.
+      expect(f.t.x).toBeCloseTo(state.t.x, 9);
+      expect(f.t.y).toBeCloseTo(state.t.y, 9);
+      expect(f.angle).toBeCloseTo(state.angle, 12);
+      expect(f.skew).toBeCloseTo(state.skew, 12);
+      expect(f.scale.x).toBeCloseTo(state.scale.x, 12);
+      expect(f.scale.y).toBeCloseTo(state.scale.y, 12);
     }
 
     // The repeat's steps come first, then the keyframe's own.

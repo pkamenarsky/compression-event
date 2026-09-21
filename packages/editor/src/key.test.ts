@@ -19,7 +19,7 @@ import {
   withKeys,
 } from './rig';
 import { Vertex, VertexId } from './types';
-import { deltaOf, keysOf, playedBy, steppedBy, walkedBy } from './key';
+import { deltaOf, keysOf, playedBy, steppedBy, walkedBy } from './rig';
 
 // A handful of frames a key might be played over: at rest, moved, turned,
 // stretched, sheared, and all of it at once. What a delta does must not depend

@@ -18,14 +18,14 @@
     "floor 0": "4f53cda18c2baa0c",
     "csg 1": "cb1ef36da421faf3",
     "floor 1": "4f53cda18c2baa0c",
-    "csg 2": "005b3b050ee781cc",
+    "csg 2": "1a80071978ba646f",
     "floor 2": "4f53cda18c2baa0c",
-    "csg 3": "005b3b050ee781cc",
+    "csg 3": "1a80071978ba646f",
     "floor 3": "4f53cda18c2baa0c",
     "span 0": "72b27a2230697380",
     "span 1": "d7bb8387e2329175",
-    "span 2": "c779e79dffe61c48",
-    "shipped": "856c79898004d317"
+    "span 2": "18af8ca77f831182",
+    "shipped": "432a5d6ccf43c993"
   },
   "corners": {
     "csg 0": "a40f5aa449f9b86f",
@@ -72,29 +72,29 @@
   "squash": {
     "csg 0": "8b7b78d8b0250e2d",
     "floor 0": "4f53cda18c2baa0c",
-    "csg 1": "1c7c68d48eaf08a2",
+    "csg 1": "7b59cd61b8c7e59c",
     "floor 1": "4f53cda18c2baa0c",
-    "csg 2": "90926aaaa84ee0b0",
+    "csg 2": "7ae0cd4acb06633b",
     "floor 2": "4f53cda18c2baa0c",
-    "csg 3": "90926aaaa84ee0b0",
+    "csg 3": "7ae0cd4acb06633b",
     "floor 3": "4f53cda18c2baa0c",
     "span 0": "80ab0c201fb74d73",
-    "span 1": "fead865acbf117b7",
-    "span 2": "71b88e0206d49173",
-    "shipped": "734a0967a9f4bf39"
+    "span 1": "132df03031ecfa7f",
+    "span 2": "db225f1c792f4aa7",
+    "shipped": "ca64a268f97b8bc8"
   },
   "repeats": {
     "csg 0": "2a2293a6eb0cb71e",
     "floor 0": "4f53cda18c2baa0c",
     "csg 1": "91db82ae5d7321a3",
     "floor 1": "4f53cda18c2baa0c",
-    "csg 2": "edb76b4b71ad55aa",
+    "csg 2": "9f442fd644f0c51f",
     "floor 2": "4f53cda18c2baa0c",
-    "csg 3": "a5220864bd545611",
+    "csg 3": "1d83bf773b7e3dea",
     "floor 3": "4f53cda18c2baa0c",
     "span 0": "54cf731e74b936c8",
     "span 1": "afe648e172095979",
-    "span 2": "8e91fc5eb8b487e9",
-    "shipped": "b070967153c8b491"
+    "span 2": "98a6b19a310a2a9b",
+    "shipped": "cab6c1f864ee7d83"
   }
 }

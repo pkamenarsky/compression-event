@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { Saved, keysOfSaved, restored } from './save';
 import { Keyframe, State, stateAt } from './rig';
-import { keysOf, walkedBy } from './key';
+import { keysOf, walkedBy } from './rig';
 import { Id, Vertex, World } from './types';
 
 const here = new URL('../../../scratch/', import.meta.url);
