@@ -603,6 +603,8 @@ const ICONS: Record<Kind, string> = {
   // Out along the diagonal, both ways.
   scale: 'M2 12 L12 2 M2 12 V8.2 M2 12 H5.8 M12 2 V5.8 M12 2 H8.2',
   skew: 'M4.5 3 H12.5 L9.5 11 H1.5 Z',
+  // Corners alone: the three dots a key about them is drawn as.
+  corners: 'M3.5 3.5 h1 v1 h-1 Z M10 3.5 h1 v1 h-1 Z M3.5 10 h1 v1 h-1 Z',
   // A corner cut round.
   round: 'M2 12.5 V7 A5.5 5.5 0 0 1 7.5 1.5 H12.5',
   // An edge thrown into teeth.

@@ -10,11 +10,11 @@
 import { Point } from '@ce/game/world';
 import { hitPath } from './paths';
 import { Cornered, Place, entryAt, samePlace } from './keys';
-import { CORNER_KINDS, CORNER_MAPS, Entry, KeyframeId, Op, counted1, indexIn } from './rig';
-import { artefactsAt, hitPolygons, pathsAt, resolveAt, rigOf } from './scene';
+import { CORNER_KINDS, CORNER_MAPS, Key, KeyframeId, Op, counted1, heldOf, indexIn, keysAt, kindOf } from './rig';
+import { artefactsAt, hitPolygons, keyRigOf, pathsAt, resolveAt } from './scene';
 import { Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
 
-export type Kind = Op['kind'];
+export type Kind = Op['kind'] | 'corners';
 
 /**
  * A thing's row: an icon for every entry written about it, side by side in
@@ -94,10 +94,19 @@ export function rowsOf(world: World, roots: readonly Id[], corners = false): Row
     out.push({ id, corner: null, depth, label: labelOf(world, id), flags, cells, bars: barsOf(world, cells) });
 
     if (corners) {
-      const rig = rigOf(world, id);
+      const rig = keyRigOf(world, id);
+      const written = new Set<VertexId>();
+
+      for (const list of rig.keys.values()) {
+        for (const key of list) {
+          for (const m of CORNER_MAPS) {
+            for (const v of key[heldOf(CORNER_KINDS[m])]?.keys() ?? []) written.add(v);
+          }
+        }
+      }
 
       world.polygons.get(id)?.points.forEach((c, i) => {
-        if (CORNER_MAPS.every(m => !rig[m].has(c.id))) return;
+        if (!written.has(c.id)) return;
 
         const cells = cornerCellsOf(world, id, c.id);
 
@@ -128,16 +137,16 @@ export function labelOf(world: World, id: Id): string {
 }
 
 function cellsOf(world: World, id: Id): Cell[] {
-  const rig = rigOf(world, id);
+  const rig = keyRigOf(world, id);
   const life = lifeOf(world, id);
 
   return world.keyframes.map((f, i) => {
-    const list = rig.keys.get(f.id) ?? [];
-    const entries = list.flatMap((e, n) => (e.op.kind === 'stand' ? [] : [n]));
+    const list = keysAt(rig, f.id);
+    const shown = list.flatMap((key, n) => (key.stand === undefined && key.by !== undefined ? [n] : []));
 
     return {
-      places: entries.map(index => ({ id, at: f.id, index })),
-      kinds: entries.map(n => list[n].op.kind),
+      places: shown.map(index => ({ id, at: f.id, index })),
+      kinds: shown.map(n => (kindOf(list[n]) ?? 'move') as Kind),
       alive: i >= life.birth && i < life.death,
     };
   });
@@ -146,7 +155,7 @@ function cellsOf(world: World, id: Id): Cell[] {
 /** A corner's nudge and depth at each keyframe, in that order, where it has
  * them. */
 function cornerCellsOf(world: World, id: Id, corner: VertexId): Cell[] {
-  const rig = rigOf(world, id);
+  const rig = keyRigOf(world, id);
   const life = lifeOf(world, id);
   const c = world.polygons.get(id)?.points.find(v => v.id === corner);
   const birth = c === undefined ? life.birth : Math.max(life.birth, indexIn(world.keyframes, c.birth));
@@ -156,8 +165,14 @@ function cornerCellsOf(world: World, id: Id, corner: VertexId): Cell[] {
   return world.keyframes.map((f, i) => {
     const places: Place[] = [];
 
+    // A corner's writing is in a key, so what the corner's row shows is the
+    // keys of its keyframe that name it — see `Place` in `keys.ts`.
     for (const m of CORNER_MAPS) {
-      if (rig[m].get(corner)?.has(f.id)) places.push({ id, at: f.id, corner, kind: CORNER_KINDS[m] });
+      const kind = CORNER_KINDS[m];
+
+      if (keysAt(rig, f.id).some(key => key[heldOf(kind)]?.has(corner))) {
+        places.push({ id, at: f.id, corner, kind });
+      }
     }
 
     return { places, kinds: places.map(p => (p as Cornered).kind), alive: i >= birth && i < death };
@@ -192,8 +207,8 @@ function barsOf(world: World, cells: readonly Cell[]): Bar[] {
 }
 
 /** An entry's bar, or nothing where it happens once. */
-export function barOf(world: World, e: Entry, from: number, place: Place, slot = 0): Bar | null {
-  if (e.times === 1 || e.op.kind === 'stand') return null;
+export function barOf(world: World, e: Key, from: number, place: Place, slot = 0): Bar | null {
+  if (e.times === 1 || e.stand !== undefined) return null;
 
   const keyframes = world.keyframes;
   const steps: Bar['steps'] = [];
@@ -219,10 +234,10 @@ export function barOf(world: World, e: Entry, from: number, place: Place, slot =
 
   let heading: string | null = null;
 
-  if (e.op.kind === 'scale') {
+  if (e.by !== undefined && kindOf(e) === 'scale') {
     const n = counted1(keyframes, e, from, end);
 
-    heading = factor(Math.pow(e.op.by.x, n), Math.pow(e.op.by.y, n));
+    heading = factor(Math.pow(e.by.scale.x, n), Math.pow(e.by.scale.y, n));
   }
 
   return { from, place, slot, steps, end, forever, heading };
@@ -235,11 +250,11 @@ export function barOf(world: World, e: Entry, from: number, place: Place, slot =
  * where it has no gesture.
  */
 export function gestureOf(world: World, rows: readonly Row[], col: number, place: Place): Place[] {
-  const gesture = entryAt(world, place)?.gesture;
+  const gesture = entryAt(world, place)?.group;
 
   if (gesture === undefined) return [place];
 
-  const all = rows.flatMap(r => r.cells[col].places).filter(p => entryAt(world, p)?.gesture === gesture);
+  const all = rows.flatMap(r => r.cells[col].places).filter(p => entryAt(world, p)?.group === gesture);
 
   return all.filter((p, i) => all.findIndex(q => samePlace(p, q)) === i);
 }
@@ -248,7 +263,7 @@ export function gestureOf(world: World, rows: readonly Row[], col: number, place
  * The `times` that puts an entry's last step at column `col`: once where that
  * is its own column or before, and to the end at the last column.
  */
-export function timesTo(world: World, e: Entry, from: number, col: number): number | null {
+export function timesTo(world: World, e: Key, from: number, col: number): number | null {
   if (col <= from) return 1;
   if (col >= world.keyframes.length - 1) return null;
 
@@ -270,28 +285,30 @@ export function short(n: number): string {
   return String(parseFloat(n.toPrecision(3)));
 }
 
-/** An entry, said in a line: what it does, and how often. */
-export function entryLabel(e: Entry): string {
+/** A key, said in a line: what it does, and how often. */
+export function entryLabel(e: Key): string {
   const what = ((): string => {
-    const op = e.op;
+    if (e.stand !== undefined) return 'unchained';
 
-    switch (op.kind) {
-      case 'move':
-        return `move ${short(op.by.x)}, ${short(op.by.y)}`;
+    const d = e.by;
+
+    if (d === undefined) return 'corners';
+
+    switch (kindOf(e)) {
       case 'turn':
-        return `turn ${short(op.angle * 180 / Math.PI)}°`;
+        return `turn ${short(d.angle * 180 / Math.PI)}°`;
       case 'scale':
-        return `scale ${factor(op.by.x, op.by.y)}`;
+        return `scale ${factor(d.scale.x, d.scale.y)}`;
       case 'skew':
-        return `skew ${short(op.by)}`;
+        return `skew ${short(d.skew)}`;
       case 'erode':
-        return `erode ${short(op.by)}`;
+        return `erode ${short(d.erode)}`;
       case 'round':
-        return `round ${short(op.by)}`;
+        return `round ${short(d.round)}`;
       case 'deform':
-        return `deform ${short(op.by)}`;
-      case 'stand':
-        return 'unchained';
+        return `deform ${short(d.deform)}`;
+      default:
+        return `move ${short(d.move.x)}, ${short(d.move.y)}`;
     }
   })();
 

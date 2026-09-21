@@ -64,6 +64,7 @@
 import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
 import { CORNER_KINDS, CORNER_MAPS } from './cornermaps';
+import type { CornerKind } from './cornermaps';
 import type { CornerMap } from './cornermaps';
 import { GroupId, Id, PolygonId, Structure, Vertex, VertexId, enclosing } from './types';
 
@@ -306,7 +307,7 @@ export function repeating<O extends Op>(op: O, times: number | null, skip?: Read
  * there: keyframes that exist and come after it. What an entry keeps when it
  * is moved, copied or carried to a keyframe of its own.
  */
-export function skipping<E extends Entry>(keyframes: readonly Keyframe[], e: E, k: KeyframeId): E {
+export function skipping<E extends Repeat>(keyframes: readonly Keyframe[], e: E, k: KeyframeId): E {
   if (e.skip === undefined) return e;
 
   const at = indexIn(keyframes, k);
@@ -2243,7 +2244,7 @@ function oneChannel(a: Delta, b: Delta): boolean {
  * which is the one operation they are: what more than one means is a turn and
  * an erosion, or a turn and a stretch.
  */
-function channelOf(d: Delta): string | null {
+export function channelOf(d: Delta): string | null {
   const held = [
     d.angle !== 0 ? 'turn' : '',
     d.scale.x !== 1 || d.scale.y !== 1 ? 'scale' : '',
@@ -2260,6 +2261,23 @@ function channelOf(d: Delta): string | null {
   // An amount does not take the painted point anywhere; a turn, a stretch and
   // a shear do, and that is theirs.
   return moved && (held[0] === 'erode' || held[0] === 'round' || held[0] === 'deform') ? null : held[0];
+}
+
+/** Which of a key's corner maps a kind of corner writing is in. */
+export function heldOf(kind: CornerKind): 'corners' | 'depths' | 'rounds' | 'deforms' {
+  return kind === 'move' ? 'corners' : ({ erode: 'depths', round: 'rounds', deform: 'deforms' } as const)[kind];
+}
+
+/**
+ * The one thing a key does, by name: what the view draws it as and what a
+ * gesture folds into. Nothing where it does more than one — which is what a
+ * key is allowed to do and nothing writes yet.
+ */
+export function kindOf(key: Key): string | null {
+  if (key.stand !== undefined) return 'stand';
+  if (key.by === undefined) return 'corners';
+
+  return channelOf(key.by);
 }
 
 /** A key that happens once, at its own keyframe. */
