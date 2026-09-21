@@ -330,7 +330,7 @@ interface Lived {
 
 export interface Timeline extends Structure {
   keyframes: readonly Keyframe[]
-  rigs: ReadonlyMap<Id, Rig>
+  rigs: ReadonlyMap<Id, KeyRig>
   polygons: ReadonlyMap<PolygonId, Lived & { points: readonly Vertex[] }>
   /** No birth: a group is one fact about the world at every keyframe, and its
    * timeline plays from the first. */
@@ -641,7 +641,9 @@ function walked(tl: Timeline, id: Id): Walked | null {
   // group's life is made up here rather than kept, so it is the group itself
   // that stands for it: what the walk read of it is its first keyframe, which
   // the order already answers for.
-  const rig = tl.rigs.get(id) ?? EMPTY_RIG;
+  // TEMPORARY: the entry walk, over the entries the keys come back as. What
+  // still asks for it is `playedAt` and `sourcesAt` — see `entriesOf`.
+  const rig = entriesFor(tl.rigs.get(id) ?? EMPTY_KEYS);
   const record: object = tl.groups.get(id) ?? thing;
   const key = rig === EMPTY_RIG ? record : rig;
   const held = walks.get(key);
@@ -1877,7 +1879,7 @@ function amountsBy(
  * they sit among the others does not matter: a corner's move is in the rest
  * frame and commutes with everything the list does.
  */
-export function keysOf(rig: Rig): KeyRig {
+export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
   const keys = new Map<KeyframeId, Writing[]>();
   let id = 0;
 
@@ -1903,17 +1905,25 @@ export function keysOf(rig: Rig): KeyRig {
         ...(by === null ? { stand: e.op as Stand } : { by }),
         times: e.times,
         ...(e.skip === undefined ? {} : { skip: e.skip }),
+        ...(e.gesture === undefined ? {} : { group: e.gesture }),
       });
     }
   }
 
   // A corner's own writing, gathered by keyframe and by how it repeats.
-  const mine = (at: KeyframeId, e: Repeat): Writing => {
-    const held = list(at).find(k => k.by === undefined && k.stand === undefined && sameRepeat(k, e));
+  const mine = (at: KeyframeId, e: Entry): Writing => {
+    const held = list(at).find(k =>
+      k.by === undefined && k.stand === undefined && k.group === e.gesture && sameRepeat(k, e));
 
     if (held !== undefined) return held as Writing;
 
-    const key: Writing = { id: id++, ref: ORIGIN, times: e.times, ...(e.skip === undefined ? {} : { skip: e.skip }) };
+    const key: Writing = {
+      id: id++,
+      ref: ORIGIN,
+      times: e.times,
+      ...(e.skip === undefined ? {} : { skip: e.skip }),
+      ...(e.gesture === undefined ? {} : { group: e.gesture }),
+    };
 
     list(at).push(key);
 
@@ -1942,7 +1952,86 @@ export function keysOf(rig: Rig): KeyRig {
     }
   }
 
-  return { keys };
+  const out: KeyRig = { keys: kept(keys, was) };
+
+  made.set(out, entriesBy(out, rig));
+
+  return out;
+}
+
+/**
+ * The keys of every keyframe whose entries are the very ones a key made,
+ * unchanged: those keys themselves, and not copies of them.
+ *
+ * TEMPORARY, with `entriesOf`. What the editor writes through the way back is
+ * one keyframe of one thing, and everything else has to come out of it the
+ * same objects it went in as — the bake drops a span when what it was baked
+ * from changed, and `gestured` stamps a key it has not seen before. Rebuilding
+ * every key would say everything changed, every time.
+ */
+function kept(now: Map<KeyframeId, Writing[]>, was: KeyRig | undefined): Map<KeyframeId, readonly Key[]> {
+  const out = new Map<KeyframeId, readonly Key[]>(now);
+
+  if (was === undefined) return out;
+
+  const before = made.get(was);
+
+  if (before === undefined) return out;
+
+  for (const [at, list] of out) {
+    const held = before.get(at);
+
+    if (held !== undefined && sameKeys(held.keys, list)) out.set(at, held.keys);
+  }
+
+  return out;
+}
+
+/** Which entries each keyframe's keys were taken apart into, for `kept`. */
+const made = new WeakMap<KeyRig, Map<KeyframeId, { keys: readonly Key[], entries: Rig }>>();
+
+function entriesBy(rig: KeyRig, entries: Rig): Map<KeyframeId, { keys: readonly Key[], entries: Rig }> {
+  return new Map([...rig.keys].map(([at, keys]) => [at, { keys, entries }]));
+}
+
+/** Whether two lists of keys say the same thing, field by field. */
+function sameKeys(a: readonly Key[], b: readonly Key[]): boolean {
+  return a.length === b.length && a.every((x, i) => sameKey(x, b[i]));
+}
+
+function sameKey(a: Key, b: Key): boolean {
+  if (a === b) return true;
+  if (a.id !== b.id || a.times !== b.times || a.group !== b.group) return false;
+  if (!sameRepeat(a, b) || a.stand !== b.stand) return false;
+  if (a.ref.x !== b.ref.x || a.ref.y !== b.ref.y) return false;
+  if ((a.by === undefined) !== (b.by === undefined)) return false;
+  if (a.by !== undefined && b.by !== undefined && !sameDelta(a.by, b.by)) return false;
+
+  return CORNER_HELD.every(m => sameHeld(a[m], b[m]));
+}
+
+function sameDelta(a: Delta, b: Delta): boolean {
+  return a.move.x === b.move.x && a.move.y === b.move.y && a.angle === b.angle && a.skew === b.skew
+    && a.scale.x === b.scale.x && a.scale.y === b.scale.y && a.along === b.along && a.lean === b.lean
+    && a.erode === b.erode && a.round === b.round && a.deform === b.deform
+    && (a.about?.x ?? null) === (b.about?.x ?? null) && (a.about?.y ?? null) === (b.about?.y ?? null);
+}
+
+function sameHeld(a: ReadonlyMap<VertexId, unknown> | undefined, b: ReadonlyMap<VertexId, unknown> | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.size !== b.size) return false;
+
+  for (const [k, v] of a) {
+    const mine = b.get(k);
+
+    if (v === mine) continue;
+
+    const p = v as Point, q = mine as Point | undefined;
+
+    if (q === undefined || typeof v === 'number' || p.x !== q.x || p.y !== q.y) return false;
+  }
+
+  return true;
 }
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -1982,22 +2071,8 @@ function sameRepeat(a: Repeat, b: Repeat): boolean {
 // so an edit to one thing leaves every other thing's alone.
 // -----------------------------------------------------------------------------
 
-const converted = new WeakMap<Rig, KeyRig>();
-
-/** A rig as keys, made once. */
-export function keysFor(rig: Rig): KeyRig {
-  let held = converted.get(rig);
-
-  if (held === undefined) {
-    held = keysOf(rig);
-    converted.set(rig, held);
-  }
-
-  return held;
-}
-
 interface Stood extends Walking {
-  rig: Rig
+  rig: KeyRig
   thing: object
   order: KeyframeId[]
 }
@@ -2011,9 +2086,9 @@ function stood(tl: Timeline, id: Id): Stood | null {
 
   if (thing === undefined) return null;
 
-  const rig = tl.rigs.get(id) ?? EMPTY_RIG;
+  const rig = tl.rigs.get(id) ?? EMPTY_KEYS;
   const record: object = tl.groups.get(id) ?? thing;
-  const held = standings.get(rig === EMPTY_RIG ? record : rig);
+  const held = standings.get(rig === EMPTY_KEYS ? record : rig);
 
   if (held !== undefined && held.rig === rig && held.thing === record && same(held.order, tl.keyframes)) {
     return held;
@@ -2023,10 +2098,201 @@ function stood(tl: Timeline, id: Id): Stood | null {
     rig,
     thing: record,
     order: tl.keyframes.map(f => f.id),
-    ...walkedBy(tl.keyframes, keysFor(rig), thing.points ?? [], thing.birth),
+    ...walkedBy(tl.keyframes, rig, thing.points ?? [], thing.birth),
   };
 
-  standings.set(rig === EMPTY_RIG ? record : rig, out);
+  standings.set(rig === EMPTY_KEYS ? record : rig, out);
+
+  return out;
+}
+
+// -----------------------------------------------------------------------------
+// Writing keys
+//
+// What the editor edits. A keyframe's list is the keys written at it, in the
+// order they play, and a gesture writes into the last one it opened rather
+// than adding another — see `PLAN-keys.md`.
+// -----------------------------------------------------------------------------
+
+/** Whether nothing at all is written in a rig of keys. */
+export function blankKeys(rig: KeyRig): boolean {
+  return rig.keys.size === 0;
+}
+
+/** What a keyframe does to a thing, in order. */
+export function keysAt(rig: KeyRig, k: KeyframeId): readonly Key[] {
+  return rig.keys.get(k) ?? [];
+}
+
+/** A keyframe's list replaced. An empty one is taken out of the map. */
+export function withKeysAt(rig: KeyRig, k: KeyframeId, list: readonly Key[]): KeyRig {
+  const keys = new Map(rig.keys);
+
+  if (list.length === 0) keys.delete(k);
+  else keys.set(k, list);
+
+  return { ...rig, keys };
+}
+
+/** A key that happens once, at its own keyframe. */
+export function keyOnce(id: number, ref: Point, by: Delta): Key {
+  return { id, ref, by, times: 1 };
+}
+
+/** Whether a delta does nothing at all: no shape, no place, no amount. */
+export function idle(d: Delta): boolean {
+  return d.move.x === 0 && d.move.y === 0 && d.angle === 0 && d.skew === 0
+    && d.scale.x === 1 && d.scale.y === 1
+    && d.erode === 0 && d.round === 0 && d.deform === 0;
+}
+
+/**
+ * One corner's move at a keyframe added to, the way a hand adds to it: a nudge
+ * moves it further, a depth goes deeper, an amplitude further off the line.
+ * One that comes back to nothing is taken out.
+ *
+ * It goes in the keyframe's last key about corners alone, or a new one where
+ * there is none. Which key a corner's writing sits in never changes what plays
+ * — a corner's move is in the rest frame and its amounts are numbers, so they
+ * commute with everything — and keeping them together is what makes one
+ * gesture over four corners one key.
+ */
+export function cornerWrite<T>(
+  rig: KeyRig,
+  k: KeyframeId,
+  id: number,
+  held: 'corners' | 'depths' | 'rounds' | 'deforms',
+  vertex: VertexId,
+  add: (was: T | undefined) => T | null,
+): KeyRig {
+  const list = keysAt(rig, k);
+  const at = lastCornerKey(list);
+  const key: Key = at < 0 ? { id, ref: REST.t, times: 1 } : list[at];
+  const mine = key[held] as ReadonlyMap<VertexId, T> | undefined;
+  const now = add(mine?.get(vertex));
+  const into = new Map(mine ?? []);
+
+  if (now === null) into.delete(vertex);
+  else into.set(vertex, now);
+
+  const written = { ...key, [held]: into.size === 0 ? undefined : into } as Key;
+  const empty = CORNER_HELD.every(m => written[m] === undefined);
+
+  if (at < 0) return empty ? rig : withKeysAt(rig, k, [...list, written]);
+
+  return withKeysAt(rig, k, empty ? list.filter((_x, i) => i !== at) : list.map((x, i) => (i === at ? written : x)));
+}
+
+/** The four maps a key keeps about single corners. */
+const CORNER_HELD = ['corners', 'depths', 'rounds', 'deforms'] as const;
+
+/** Where a keyframe's last key about corners alone is, or -1. */
+function lastCornerKey(list: readonly Key[]): number {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].by === undefined && list[i].stand === undefined) return i;
+  }
+
+  return -1;
+}
+
+/** One corner's nudge at a keyframe, added to. */
+export function nudgedBy(rig: KeyRig, id: number, vertex: VertexId, k: KeyframeId, by: Point): KeyRig {
+  return cornerWrite<Point>(rig, k, id, 'corners', vertex, was => {
+    const sum = { x: (was?.x ?? 0) + by.x, y: (was?.y ?? 0) + by.y };
+
+    return sum.x === 0 && sum.y === 0 ? null : sum;
+  });
+}
+
+/** One corner's own depth, bevel or amplitude at a keyframe, added to. */
+export function amountedBy(
+  rig: KeyRig,
+  id: number,
+  kind: AmountKind,
+  vertex: VertexId,
+  k: KeyframeId,
+  by: number,
+): KeyRig {
+  const held = ({ erode: 'depths', round: 'rounds', deform: 'deforms' } as const)[kind];
+
+  return cornerWrite<number>(rig, k, id, held, vertex, was => {
+    const sum = (was ?? 0) + by;
+
+    return sum === 0 ? null : sum;
+  });
+}
+
+/**
+ * A rig of keys as entries — the way back, while every key holds one channel.
+ *
+ * TEMPORARY. The group fold, the copy and the unroll in `scene/core.ts` still
+ * read and write timelines as operations, and this is what lets them: a key
+ * that holds one channel is an entry, and until a gesture folds two into one
+ * there is no other kind. It throws rather than guessing where it meets one
+ * that does, so the day that changes is the day it is gone. See
+ * `PLAN-keys.md`, phase 5.
+ */
+const asEntries = new WeakMap<KeyRig, Rig>();
+
+/** `entriesOf`, made once per rig. */
+export function entriesFor(rig: KeyRig): Rig {
+  let held = asEntries.get(rig);
+
+  if (held === undefined) {
+    held = entriesOf(rig);
+    asEntries.set(rig, held);
+  }
+
+  return held;
+}
+
+export function entriesOf(rig: KeyRig): Rig {
+  let out = EMPTY_RIG;
+
+  for (const [at, list] of rig.keys) {
+    const entries: Entry[] = [];
+
+    for (const key of list) {
+      const repeat = {
+        times: key.times,
+        ...(key.skip === undefined ? {} : { skip: key.skip }),
+        ...(key.group === undefined ? {} : { gesture: key.group }),
+      };
+
+      for (const op of opsOf({ ref: key.ref, by: key.by, stand: key.stand, key, at, step: 0 })) {
+        entries.push({ ...repeat, op });
+      }
+
+      if (key.by !== undefined) {
+        for (const kind of AMOUNT_KINDS) {
+          if (key.by[kind] !== 0) entries.push({ ...repeat, op: { kind, by: key.by[kind] } });
+        }
+      }
+
+      if (key.corners !== undefined) {
+        for (const [vertex, by] of key.corners) {
+          out = { ...out, nudges: cornered(out.nudges, vertex, at, { ...repeat, op: { kind: 'move', by } }) };
+        }
+      }
+
+      for (const map of ['depths', 'rounds', 'deforms'] as const) {
+        const mine = key[map];
+
+        if (mine === undefined) continue;
+
+        for (const [vertex, by] of mine) {
+          // One map at a time, so that each keeps the kind it holds: the cast
+          // is the lookup `AMOUNTS` makes true, as `amounted` says.
+          const op = { kind: CORNER_KINDS[map], by } as Amount<AmountKind>;
+          const held = cornered(out[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>, vertex, at, { ...repeat, op });
+
+          out = { ...out, [map]: held };
+        }
+      }
+    }
+
+    if (entries.length > 0) out = withKeys(out, at, entries);
+  }
 
   return out;
 }

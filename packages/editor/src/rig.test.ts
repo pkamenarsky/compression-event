@@ -31,6 +31,8 @@ import {
   unsheared,
   withKeys,
   worldFrame,
+  entriesOf,
+  keysOf,
 } from './rig';
 import { Id, Vertex } from './types';
 
@@ -77,14 +79,18 @@ function withGroup(tl: Timeline, id: Id, members: Id[]): Timeline {
   return { ...tl, groups };
 }
 
+// The timeline holds keys; these tests write entries, which convert. See
+// `entriesOf` in `rig.ts`.
 function rigOf(tl: Timeline, id: Id): Rig {
-  return tl.rigs.get(id) ?? EMPTY_RIG;
+  const keys = tl.rigs.get(id);
+
+  return keys === undefined ? EMPTY_RIG : entriesOf(keys);
 }
 
 function rigged(tl: Timeline, id: Id, rig: Rig): Timeline {
   const rigs = new Map(tl.rigs);
 
-  rigs.set(id, rig);
+  rigs.set(id, keysOf(rig));
 
   return { ...tl, rigs };
 }
@@ -353,7 +359,7 @@ describe('a keyframe\'s list', () => {
     // point it was aimed at, less the move.
     near(refAt(both, P, 0, r), rotated({ x: 105, y: 55 }, 90));
 
-    const dropped = keyed(both, 0, P, [both.rigs.get(P)!.keys.get(0)![1]]);
+    const dropped = keyed(both, 0, P, [rigOf(both, P).keys.get(0)![1]]);
 
     near(refAt(dropped, P, 0, r), rotated(r, 90, { x: 0, y: -50 }));
     expect(refAt(alone, P, 0, r)).not.toEqual(refAt(dropped, P, 0, r));

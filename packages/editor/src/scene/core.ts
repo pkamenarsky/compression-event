@@ -88,7 +88,7 @@ import {
   within,
 } from '../types';
 import { outline } from '../worldset';
-import { Key, remembered } from '../memo';
+import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
   EMPTY_RIG,
@@ -127,6 +127,14 @@ import {
   unsheared,
   withKeys,
   worldFrame,
+  EMPTY_KEYS,
+  KeyRig,
+  blankKeys,
+  entriesFor,
+  keysOf,
+  keysAt,
+  withKeysAt,
+  Key as RigKey,
 } from '../rig';
 
 export type { Affine };
@@ -341,7 +349,7 @@ export function shaping(e: Effected): Effected | null {
 }
 
 /** A round as numbers, lengths divided by `s`, for `project`. */
-function effectKey(e: Effected, s = 1): Key[] {
+function effectKey(e: Effected, s = 1): Memo[] {
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), facetKey(e.own), e.bevel / s, e.flat.map(Number)];
 }
 
@@ -349,7 +357,7 @@ export function facetKey(f: Facets): number[] {
   return [f.n, f.from, f.to, f.at, f.tension];
 }
 
-function facetsFrom(k: Key): Facets {
+function facetsFrom(k: Memo): Facets {
   const [n, from, to, at, tension] = k as number[];
 
   return { n, from, to, at, tension };
@@ -842,7 +850,7 @@ export const project = remembered((
   rings: readonly number[],
   erosion: number,
   depths: readonly number[] | null,
-  effects: readonly Key[] | null,
+  effects: readonly Memo[] | null,
 ): Shape => {
   if (effects === null) return offsetOf(source, rings, erosion, depths);
 
@@ -858,9 +866,9 @@ const imagedBy = remembered((
   rings: readonly number[],
   erosion: number,
   depths: readonly number[] | null,
-  effects: readonly Key[],
+  effects: readonly Memo[],
 ): Imaged => {
-  const [facets, bevels, own, bevel, flat] = effects as [Key[], number[], Key, number, number[]];
+  const [facets, bevels, own, bevel, flat] = effects as [Memo[], number[], Memo, number, number[]];
   const each = facets.map(facetsFrom);
 
   return imaged(
@@ -1407,24 +1415,49 @@ function erodingOnly(world: World, id: Id, state: State): State {
   return eroding(world, id) ? state : { ...state, erosion: 0, depths: new Map() };
 }
 
-/** Everything written about a thing, or nothing. */
-export function rigOf(world: World, id: Id): Rig {
-  return world.rigs.get(id) ?? EMPTY_RIG;
+/** Everything written about a thing, as keys: what the world holds. */
+export function keyRigOf(world: World, id: Id): KeyRig {
+  return world.rigs.get(id) ?? EMPTY_KEYS;
 }
 
 /** A thing's timeline replaced. One with nothing in it is taken out. */
-export function withRig(world: World, id: Id, rig: Rig): World {
+export function withKeyRig(world: World, id: Id, rig: KeyRig): World {
   const rigs = new Map(world.rigs);
 
-  if (blank(rig)) rigs.delete(id);
+  if (blankKeys(rig)) rigs.delete(id);
   else rigs.set(id, rig);
 
   return { ...world, rigs };
 }
 
+/**
+ * Everything written about a thing, as entries.
+ *
+ * TEMPORARY, with `entriesOf` in `rig.ts` and for its reason: what the group
+ * fold, the copy and the unroll still read. See `PLAN-keys.md`, phase 5.
+ */
+export function rigOf(world: World, id: Id): Rig {
+  return entriesFor(keyRigOf(world, id));
+}
+
+/**
+ * A thing's timeline replaced, written as entries. TEMPORARY, as `rigOf`.
+ *
+ * The keys it had are handed over with it, so that everything the write did
+ * not touch comes back the same objects — see `kept` in `rig.ts`.
+ */
+export function withRig(world: World, id: Id, rig: Rig): World {
+  return withKeyRig(world, id, keysOf(rig, world.rigs.get(id)));
+}
+
 /** What keyframe `v` does to a thing, in order. */
 export function listAt(world: World, v: KeyframeId, id: Id): readonly Entry[] {
   return rigOf(world, id).keys.get(v) ?? [];
+}
+
+/** The keys keyframe `v` writes about a thing, in the order they play. */
+export function keysOfAt(world: World, v: KeyframeId, id: Id): readonly RigKey[] {
+  return keysAt(keyRigOf(world, id), v);
 }
 
 /** `k`'s list for `id`, written outright. A bare operation happens once. */
@@ -1840,7 +1873,7 @@ function apart1(world: World, id: GroupId, keep: boolean): { world: World, unrol
       unrolled.push(...fold.unrolled);
 
       if (blank(rig)) rigs.delete(member);
-      else rigs.set(member, rig);
+      else rigs.set(member, keysOf(rig));
     }
   }
 

@@ -151,17 +151,23 @@ describe('gestures', () => {
     expect(s.world.nextId).toEqual(world.nextId + 1);
   });
 
-  test('a corner depth is a gesture too, and one written again is the later one', () => {
+  test('a corner depth is a gesture too, and the key it is written in carries it', () => {
     const { world, ids } = two();
     const corners = world.polygons.get(ids[0])!.points.map(c => c.id);
     const first = step(initialState(world), deepen(world, 0, ids[0], new Set(corners.slice(0, 2)), 1));
     const second = step(first, deepen(first.world, 0, ids[0], new Set(corners.slice(1, 3)), 1));
-    const depths = rigOf(second.world, ids[0]).depths;
-    const of = (i: number) => depths.get(corners[i])!.get(0)!.gesture;
+    const of = (w: World, i: number) => rigOf(w, ids[0]).depths.get(corners[i])!.get(0)!.gesture;
 
-    expect(of(0)).toEqual(world.nextId);
-    expect(of(1)).toEqual(world.nextId + 1);
-    expect(of(2)).toEqual(of(1));
+    expect(of(first.world, 0), 'the first gesture').toEqual(world.nextId);
+    expect(of(first.world, 1)).toEqual(of(first.world, 0));
+
+    // A keyframe's corner writing is one key — see `cornerWrite` in `rig.ts` —
+    // so deepening two of them again is that key written again, and the
+    // gesture is the key's rather than each corner's. Three corners are deep
+    // here and all three are picked together.
+    expect(of(second.world, 2), 'the second').toEqual(world.nextId + 1);
+    expect(of(second.world, 0)).toEqual(of(second.world, 2));
+    expect(of(second.world, 1)).toEqual(of(second.world, 2));
   });
 
   test('told how often to repeat, an entry keeps its gesture', () => {

@@ -13,9 +13,9 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import { Saved, keysOfSaved, restored } from './save';
+import { Saved, restored } from './save';
 import { Keyframe, State, stateAt } from './rig';
-import { keysOf, walkedBy } from './rig';
+import { walkedBy } from './rig';
 import { Id, Vertex, World } from './types';
 
 const here = new URL('../../../scratch/', import.meta.url);
@@ -90,10 +90,9 @@ describe('a world read as keys stands where it stood', () => {
         if (birth === null) continue;
 
         const rig = world.rigs.get(id)!;
-        const saved = file.world.rigs.find(([who]) => who === id)![1];
 
-        // Both ways in: converted in memory, and read back out of the file.
-        for (const keys of [keysOf(rig), keysOfSaved(saved)]) {
+        // What the world holds, which is what reading the file made of it.
+        for (const keys of [rig]) {
           const mine = walkedBy(keyframes, keys, corners, birth).states;
 
           for (let i = 0; i < keyframes.length; i++) {

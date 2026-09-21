@@ -19,7 +19,20 @@ import {
   withKeys,
 } from './rig';
 import { Vertex, VertexId } from './types';
-import { Delta, Key, NOTHING, deltaOf, flying, keysOf, opsOf, playedBy, playingOn, steppedBy, walkedBy } from './rig';
+import {
+  Delta,
+  Key,
+  NOTHING,
+  deltaOf,
+  entriesOf,
+  flying,
+  keysOf,
+  opsOf,
+  playedBy,
+  playingOn,
+  steppedBy,
+  walkedBy,
+} from './rig';
 
 // A handful of frames a key might be played over: at rest, moved, turned,
 // stretched, sheared, and all of it at once. What a delta does must not depend
@@ -348,7 +361,7 @@ function written<E>(
 function timelineOf(rig: Rig): Timeline {
   return {
     keyframes: WALK_KEYFRAMES,
-    rigs: new Map([[1, rig]]),
+    rigs: new Map([[1, keysOf(rig)]]),
     polygons: new Map([[1, { birth: 0, points: CORNERS }]]),
     groups: new Map(),
     artefacts: new Map(),
@@ -367,7 +380,16 @@ describe('the walk over keys is the walk over entries', () => {
     test(`rig ${seed}`, () => {
       const rig = someRig(seed);
       const tl = timelineOf(rig);
-      const mine = walkedBy(WALK_KEYFRAMES, keysOf(rig), CORNERS, 0).states;
+      const keys = keysOf(rig);
+
+      // And the way back, while there is one: entries out of the keys, keys
+      // out of those again, and the walk over the result. See `entriesOf`.
+      expect(
+        walkedBy(WALK_KEYFRAMES, keysOf(entriesOf(keys)), CORNERS, 0).states,
+        'there and back',
+      ).toEqual(walkedBy(WALK_KEYFRAMES, keys, CORNERS, 0).states);
+
+      const mine = walkedBy(WALK_KEYFRAMES, keys, CORNERS, 0).states;
 
       for (let i = 0; i < WALK_KEYFRAMES.length; i++) {
         const at = WALK_KEYFRAMES[i].id;

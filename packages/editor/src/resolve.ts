@@ -112,7 +112,7 @@ import {
   ungrouping,
   unplace,
 } from './scene';
-import { CORNER_MAPS, EMPTY_RIG, Entry, Rig, once, stateAt } from './rig';
+import { CORNER_MAPS, EMPTY_RIG, Entry, Rig, keysOf, once, stateAt } from './rig';
 import {
   GroupId,
   Id,
@@ -640,7 +640,7 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   for (const m of made) {
     const rig: Rig = { ...EMPTY_RIG, keys: eroding };
 
-    if (eroding.size > 0) rigs.set(m, rig);
+    if (eroding.size > 0) rigs.set(m, keysOf(rig));
     if (fx !== undefined) effects.set(m, fx);
   }
 

@@ -77,7 +77,7 @@ import { Delta, Key, KeyRig, NOTHING, keysOf } from './rig';
  *
  * 19: the file may carry the bake, as the game gets it — see `Saved.baked`.
  */
-export const FORMAT = 23;
+export const FORMAT = 24;
 
 /** The oldest that still says something this can read without inventing it. */
 const OLDEST = 20;
@@ -113,7 +113,8 @@ export interface Saved {
     paths: [PathId, Path][]
     start: Start
     keyframes: Keyframe[]
-    rigs: [Id, SavedRig][]
+    /** Entries in a 23 and older, keys in a 24. See `SavedKeyRig`. */
+    rigs: [Id, SavedRig | SavedKeyRig][]
     /** Absent is none, which is every file from before there were any. */
     flags?: [Id, Flags][]
     /** Absent is none: a 21. */
@@ -221,7 +222,7 @@ export function saved(state: EditorState): Saved {
       paths: [...state.world.paths],
       start: state.world.start,
       keyframes: state.world.keyframes,
-      rigs: [...state.world.rigs].map(([id, rig]) => [id, savedRig(rig)]),
+      rigs: [...state.world.rigs].map(([id, rig]) => [id, savedKeyRig(rig)]),
       flags: [...state.world.flags],
       effects: [...state.world.effects],
       cornerEffects: [...state.world.cornerEffects],
@@ -317,7 +318,12 @@ export function restored(file: Saved): EditorState {
     paths: new Map(file.world.paths),
     nextId: file.world.nextId,
     keyframes: file.world.keyframes,
-    rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredRig(rig)])),
+    // A 23 and older holds entries, which are read as the keys they convert
+    // into; a 24 holds keys. See `keysOfSaved`.
+    rigs: new Map(file.world.rigs.map(([id, rig]) => [
+      id,
+      file.format >= 24 ? restoredKeyRig(rig as SavedKeyRig) : keysOfSaved(rig as SavedRig),
+    ])),
     flags: new Map(file.world.flags ?? []),
     effects: new Map((file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)])),
     cornerEffects: new Map((file.world.cornerEffects ?? []).map(([c, fx]) => [c, optioned(fx)])),

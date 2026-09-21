@@ -244,11 +244,16 @@ shader — with a fourth, the transcription in `export.test.ts`, which exists to
 check the table says what the shader will read.
 
 **3c — the world holds keys.** `World.rigs` becomes `Map<Id, KeyRig>`, the
-converter runs at load, and `FORMAT` becomes 24. Every writer moves in this
-commit, because there is no way back from a key to an entry once one holds two
-channels: the gestures (`appended` becomes the open key absorbing the
-gesture), the corner writes (`nudged`, `deepened`, `cornerRounded`,
-`edgeDeformed`), unchaining (`handed`), and `keys.ts`.
+converter runs at load, and `FORMAT` becomes 24.
+
+In two, because the writers are many and the storage is one thing. *3c-1* is
+the storage: the world holds keys, the file writes them, and what still writes
+entries — the gestures, the corner writes, unchaining, `keys.ts`, the fold, the
+copy — goes through `rigOf` and `withRig`, which convert at the boundary. The
+way back is exact while every key holds one channel, and keys the write did
+not touch come back the same objects, which is what the bake's stamp and
+`gestured` read. *3c-2* moves the writers over one at a time, and the way back
+goes with the last of them.
 
 Pull and push are a splice, not a fold: the key leaves its column's list and
 goes on the end of the column before, or the front of the column after. The
@@ -293,6 +298,11 @@ with a tail, so the pane stops having a second idea of what a repeat is.
 - **Grain is the author's, and permanent.** Two drags that would fold today
   stay two keys unless a break is missing between them. Files get longer; the
   view folds them for display, the data does not.
+- **A gesture is a key, and a keyframe's corner writing is one key.** So the
+  gesture a corner's depth carries is the key's, not the corner's: deepening
+  two of four corners again is that key written again, and all four are picked
+  together. What a corner had before is still there — the amounts add — and it
+  is one thing that was written rather than four.
 - **A fold changes the way, not the ends.** Two gestures folded into one key
   land where the two landed, and go there as one motion rather than as one
   after the other. Nothing a keyframe shows moves; what the game draws between

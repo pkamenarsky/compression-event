@@ -21,7 +21,7 @@ import {
 } from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Pattern, Sides } from './geometry';
-import type { Amount, Entry, Frame, Keyframe, KeyframeId, Move, Rig } from './rig';
+import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
 // From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
 // so importing a value back out of it would be a runtime cycle. See
 // `cornermaps.ts`.
@@ -550,7 +550,7 @@ export interface World {
    * thing nobody has written anything about stands at rest, wherever it was
    * put. See `rig.ts`.
    */
-  rigs: Map<Id, Rig>
+  rigs: Map<Id, KeyRig>
   /** What the timeline's row headers say about each thing: hidden, locked,
    * soloed. Absent is none of them. See `Flags`. */
   flags: ReadonlyMap<Id, Flags>
@@ -1060,11 +1060,20 @@ export function marked(s: EditorState, was: World): EditorState {
  * `world` with what the step from `was` wrote stamped with one gesture id,
  * fresh from `nextId`.
  *
- * Written is an operation that was not in that thing's timeline before: a new
- * entry, or one the step changed what it does. An entry told how often to
- * repeat, where to wait, or pushed along keeps its operation, and with it the
- * gesture it had. Only the timelines the step replaced are looked at.
+ * Written is a key that was not in that thing's timeline before, or one the
+ * step changed what it does. A key told how often to repeat, where to wait, or
+ * pushed along still does the same thing, and keeps the gesture it had. Only
+ * the timelines the step replaced are looked at.
  */
+function doing(key: Key | undefined): string {
+  if (key === undefined) return '';
+
+  const held = (m: ReadonlyMap<VertexId, unknown> | undefined) => (m === undefined ? '' : JSON.stringify([...m]));
+
+  return JSON.stringify([key.by ?? null, key.stand ?? null])
+    + [key.corners, key.depths, key.rounds, key.deforms].map(held).join('|');
+}
+
 export function gestured(world: World, was: World): World {
   const gesture = world.nextId;
   const rigs = new Map(world.rigs);
@@ -1073,28 +1082,45 @@ export function gestured(world: World, was: World): World {
   for (const [id, rig] of world.rigs) {
     const old = was.rigs.get(id);
 
-    if (rig === old) continue;
-
-    const ops = new Set<unknown>();
-
-    if (old !== undefined) {
-      for (const list of old.keys.values()) for (const e of list) ops.add(e.op);
-      for (const m of CORNER_MAPS) for (const map of old[m].values()) for (const e of map.values()) ops.add(e.op);
-    }
+    if (old === rig) continue;
 
     let stamped = false;
 
-    const mark = <E extends Entry>(e: E): E => {
-      if (ops.has(e.op)) return e;
+    /** What the keyframe's keys did before this step, and how many of each:
+     * a key doing one of those things is one of those keys, wherever it sits
+     * in the list now. */
+    const before = (at: KeyframeId): Map<string, number> => {
+      const out = new Map<string, number>();
 
-      stamped = true;
+      for (const key of old?.keys.get(at) ?? []) {
+        const what = doing(key);
 
-      return { ...e, gesture };
+        out.set(what, (out.get(what) ?? 0) + 1);
+      }
+
+      return out;
     };
-    const corners = <E extends Entry>(m: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>) =>
-      new Map([...m].map(([v, map]) => [v, new Map([...map].map(([k, e]) => [k, mark(e)]))]));
 
-    const now: Rig = eachCornerMap({ ...rig, keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(mark)])) }, corners);
+    const now: KeyRig = {
+      keys: new Map([...rig.keys].map(([at, list]) => {
+        const had = before(at);
+
+        return [at, list.map(key => {
+          const what = doing(key);
+          const left = had.get(what) ?? 0;
+
+          if (key.group === gesture || left > 0) {
+            had.set(what, left - 1);
+
+            return key;
+          }
+
+          stamped = true;
+
+          return { ...key, group: gesture };
+        })];
+      })),
+    };
 
     if (stamped) {
       rigs.set(id, now);

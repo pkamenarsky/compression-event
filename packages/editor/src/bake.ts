@@ -623,14 +623,6 @@ export function stamp(world: World, from: number): Stamp {
       if (upto.has(k)) mine.push(k, list);
     }
 
-    for (const m of CORNER_MAPS) {
-      for (const [c, map] of rig[m]) {
-        for (const [k, e] of map) {
-          if (upto.has(k)) mine.push(c, k, e);
-        }
-      }
-    }
-
     if (mine.length > 0) written.push(id, ...mine);
   }
 

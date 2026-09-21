@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'vitest';
 import { addPath } from './paths';
-import { FORMAT, SavedRig, keysOfSaved, restored, restoredKeyRig, saved, savedKeyRig, savedRig } from './save';
+import {
+  FORMAT,
+  Saved,
+  SavedKeyRig,
+  SavedRig,
+  keysOfSaved,
+  restored,
+  restoredKeyRig,
+  saved,
+  savedKeyRig,
+  savedRig,
+} from './save';
 import {
   TOP,
   addArtefact,
@@ -29,8 +40,8 @@ import {
   stateAt,
   withKeys,
 } from './rig';
-import { NOTHING, keysOf, walkedBy } from './rig';
-import { EditorState, FLOOR, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
+import { NOTHING, entriesOf, keysOf, walkedBy } from './rig';
+import { EditorState, FLOOR, Id, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
 /**
@@ -85,6 +96,23 @@ function trip(state: EditorState): EditorState {
   return restored(JSON.parse(JSON.stringify(saved(state))));
 }
 
+/**
+ * A file with its timelines written as entries, the way everything before a 24
+ * wrote them: what the tests of older formats start from. See `FORMAT`.
+ */
+function asOld(file: Saved): Saved {
+  const out = JSON.parse(JSON.stringify(file)) as Saved;
+
+  // A 23: the last format that wrote entries. See `FORMAT`.
+  out.format = 23;
+  out.world.rigs = out.world.rigs.map(([id, rig]) => [
+    id,
+    savedRig(entriesOf(restoredKeyRig(rig as SavedKeyRig))),
+  ]);
+
+  return JSON.parse(JSON.stringify(out)) as Saved;
+}
+
 describe('save', () => {
   test('a state survives the trip through a file', () => {
     const before = world();
@@ -116,7 +144,7 @@ describe('save', () => {
     const repeat = [...after.world.rigs.values()].flatMap(r => [...r.keys.values()].flat())
       .find(e => e.times === null)!;
 
-    expect(repeat.op).toEqual({ kind: 'erode', by: 1 });
+    expect(repeat.by?.erode).toBe(1);
   });
 
   test('a stand comes back with its maps', () => {
@@ -162,13 +190,13 @@ describe('save', () => {
 
   test('a 21, which had no effects, reads as one with none', () => {
     const before = world();
-    const file = JSON.parse(JSON.stringify(saved(before)));
+    const file = asOld(saved(before));
 
     file.format = 21;
     delete file.world.effects;
     delete file.world.cornerEffects;
 
-    for (const [, rig] of file.world.rigs) {
+    for (const [, rig] of file.world.rigs as [Id, SavedRig][]) {
       delete rig.rounds;
       delete rig.deforms;
     }
@@ -185,10 +213,10 @@ describe('save', () => {
     w = withRig(w, id, cornerRounded(rigOf(w, id), corner, 1, 3));
     w = keyed(w, 2, id, [once(handed(w, 2, id))]);
 
-    const file = JSON.parse(JSON.stringify(saved({ ...before, world: w })));
+    const file = asOld(saved({ ...before, world: w }));
     let stands = 0;
 
-    for (const [, rig] of file.world.rigs) {
+    for (const [, rig] of file.world.rigs as [Id, SavedRig][]) {
       for (const [, entries] of rig.keys) {
         for (const e of entries) {
           if (e.op.kind !== 'stand') continue;
@@ -267,24 +295,24 @@ describe('save', () => {
       deforms: new Map(),
     };
 
-    const file = JSON.parse(JSON.stringify(saved({
+    const file = asOld(saved({
       ...before,
-      world: { ...before.world, rigs: new Map([[id, rig]]) },
-    })));
+      world: { ...before.world, rigs: new Map([[id, keysOf(rig)]]) },
+    }));
 
     // As 20 wrote them: no `lean`, and no `skew` in a stand's frame.
     file.format = 20;
 
-    for (const [, keys] of file.world.rigs) {
-      for (const [, list] of keys.keys) {
+    for (const [, mine] of file.world.rigs as [Id, SavedRig][]) {
+      for (const [, list] of mine.keys) {
         for (const e of list) {
-          delete e.op.lean;
-          if (e.op.kind === 'stand') delete e.op.frame.skew;
+          delete (e.op as { lean?: number }).lean;
+          if (e.op.kind === 'stand') delete (e.op.frame as { skew?: number }).skew;
         }
       }
     }
 
-    expect(restored(file).world.rigs.get(id)).toEqual(rig);
+    expect(restored(file).world.rigs.get(id)).toEqual(keysOf(rig));
   });
 
   test('groups survive the trip', () => {
@@ -470,7 +498,7 @@ describe('keys in a file', () => {
     const rig = entries();
     const tl: Timeline = {
       keyframes: KEYFRAMES,
-      rigs: new Map([[1, rig]]),
+      rigs: new Map([[1, keysOf(rig)]]),
       polygons: new Map([[1, { birth: 0, points: CORNERS }]]),
       groups: new Map(),
       artefacts: new Map(),

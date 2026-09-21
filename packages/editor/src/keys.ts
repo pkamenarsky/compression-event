@@ -28,6 +28,8 @@ import {
   indexIn,
   skipping,
   withKeys,
+  entriesFor,
+  keysOf,
 } from './rig';
 import { rigOf, withRig, without } from './scene';
 import { Id, VertexId, World } from './types';
@@ -422,7 +424,7 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
     return { ...e, skip: new Set([...(e.skip ?? []), key]) };
   };
 
-  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, everyEntry(rig, skipped)]));
+  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, keysOf(everyEntry(entriesFor(rig), skipped))]));
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
   return { world: { ...world, keyframes: order, rigs }, key };
@@ -464,7 +466,8 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
   const rigs = new Map<Id, Rig>();
 
-  for (const [id, was] of world.rigs) {
+  for (const [id, keyed] of world.rigs) {
+    const was = entriesFor(keyed);
     const rig = everyEntry(was, shortened);
     const keys = new Map(rig.keys);
     const mine = keys.get(k) ?? [];
@@ -552,7 +555,7 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
     polygons,
     artefacts,
     paths,
-    rigs: new Map([...rigs].filter(([, r]) => !blank(r))),
+    rigs: new Map([...rigs].filter(([, r]) => !blank(r)).map(([id, r]) => [id, keysOf(r)])),
   };
 
   return gone.size === 0 ? out : without(out, gone);
