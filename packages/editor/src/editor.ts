@@ -25,6 +25,8 @@ import {
   stamped,
   unchained,
   ungrouping,
+  broken,
+  split,
 } from './scene';
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
@@ -484,7 +486,7 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       const e = yield* keyPressed(
         input,
         'KeyA', 'KeyV', 'KeyP', 'KeyW', 'KeyI', 'KeyZ', 'KeyY', 'KeyC', 'KeyE', 'KeyG',
-        'KeyU', 'KeyL', 'BracketLeft', 'BracketRight',
+        'KeyU', 'KeyL', 'KeyK', 'BracketLeft', 'BracketRight',
         'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract',
       );
 
@@ -555,6 +557,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       else if (e.code === 'KeyL') {
         update(s => shut(s, !e.shiftKey));
       }
+      else if (e.code === 'KeyK') {
+        update(s => (e.shiftKey ? cut(s) : ended(s)));
+      }
       else if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
         update(s => rebirthed(s, e.code === 'BracketRight' ? 1 : -1));
       }
@@ -610,6 +615,42 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
     }
   });
+}
+
+/**
+ * The picked things' key at the keyframe on screen closed: what is done next
+ * there is a key of its own rather than more of this one. See `broken`.
+ *
+ * Not an edit of what the world does — a closed key plays exactly as it did —
+ * so it is not a gesture and writes no gesture id. It is in the history all
+ * the same: undo takes back the break.
+ */
+function ended(s: EditorState): EditorState {
+  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
+  const world = broken(s.world, s.keyframe, ids);
+
+  return world === s.world ? s : { ...s, world, status: null, history: { past: [...s.history.past, s.world], future: [] } };
+}
+
+/**
+ * The last gesture taken out of the key it was folded into, into a key of its
+ * own. See `split`.
+ *
+ * What it is split against is the world before the last step, which the
+ * history is holding. Nothing where there is none — the first thing done in a
+ * sitting has nothing to be taken out of.
+ */
+function cut(s: EditorState): EditorState {
+  const was = s.history.past[s.history.past.length - 1];
+
+  if (was === undefined) return saying(s, 'nothing has been done here to take out');
+
+  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
+  const world = split(s.world, was, s.keyframe, ids);
+
+  return world === s.world
+    ? saying(s, 'the last thing done here is a key of its own already')
+    : { ...s, world, status: null, history: { past: [...s.history.past, s.world], future: [] } };
 }
 
 /**

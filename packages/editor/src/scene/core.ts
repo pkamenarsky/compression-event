@@ -140,6 +140,10 @@ import {
   everyOp,
   playingAt,
   playingOn,
+  anywhere,
+  idle,
+  lessBy,
+  near,
 } from '../rig';
 
 export type { Affine };
@@ -1490,6 +1494,72 @@ export function appended(world: World, v: KeyframeId, id: Id, op: Op): World {
   const now = appendedBy(rig, v, 'ref' in op ? op.ref : REST.t, by);
 
   return now === rig ? world : withKeyRig(world, id, now);
+}
+
+/**
+ * The keyframe's last key for each of `ids` closed: the next thing written
+ * there is a key of its own.
+ *
+ * A gesture folds into the key the one before it left — a hand that moves a
+ * thing and then turns it leaves one key, which is one motion — and this is
+ * how an author says that one is finished. Nothing else about it changes; a
+ * closed key plays exactly as it did.
+ */
+export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
+  let out = world;
+
+  for (const id of ids) {
+    const rig = keyRigOf(out, id);
+    const list = keysAt(rig, v);
+    const last = list[list.length - 1];
+
+    if (last === undefined || last.closed) continue;
+
+    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, -1), { ...last, closed: true }]));
+  }
+
+  return out;
+}
+
+/**
+ * The last gesture taken out of the key it was folded into, into a key of its
+ * own: what `was` does not say and the world does.
+ *
+ * The editor knows what the hand just did even though the key has absorbed it,
+ * because it kept the world from before — see `EditorState.history`. What is
+ * split off is the difference between the two, which is exact: a delta and a
+ * delta about one painted point compose by adding their numbers, so they come
+ * apart by taking them away again.
+ *
+ * Nothing where the key is not there in both, where the gesture wrote a key of
+ * its own, or where it wrote about single corners, which is a key of its own
+ * already.
+ */
+export function split(world: World, was: World, v: KeyframeId, ids: readonly Id[]): World {
+  let out = world;
+
+  for (const id of ids) {
+    const rig = keyRigOf(out, id);
+    const list = keysAt(rig, v);
+    const at = list.length - 1;
+    const now = list[at];
+    const before = keysAt(keyRigOf(was, id), v).find(k => k.id === now?.id);
+
+    // The key's painted point is the gesture's where what was there before it
+    // had none of its own — see `anywhere` in `rig.ts`.
+    if (now?.by === undefined || before?.by === undefined) continue;
+    if (!near(now.ref, before.ref) && !anywhere(before.by)) continue;
+
+    const by = lessBy(now.by, before.by);
+
+    if (idle(by)) continue;
+
+    const key: RigKey = { id: nextKey(rig), ref: now.ref, by, times: 1 };
+
+    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, at), { ...before, closed: true }, key]));
+  }
+
+  return out;
 }
 
 /**

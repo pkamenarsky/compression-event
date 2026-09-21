@@ -1036,6 +1036,15 @@ export interface Key {
   skip?: ReadonlySet<KeyframeId>
   /** The state outright, instead of a delta: what unchaining writes. */
   stand?: Stand
+  /**
+   * Whether the author has said this key is finished.
+   *
+   * A gesture folds into the keyframe's last key, which is how a hand that
+   * moves a thing and then turns it leaves one key rather than two. Breaking
+   * says the next thing written is a key of its own — see `broken` in
+   * `scene/core.ts`. Absent is open.
+   */
+  closed?: boolean
   /** The gesture that wrote it, where one wrote keys on several things. */
   group?: number
 }
@@ -1652,6 +1661,9 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
         ...(by === null ? { stand: e.op as Stand } : { by }),
         times: e.times,
         ...(e.skip === undefined ? {} : { skip: e.skip }),
+        // An entry is a thing on its own — a list of them never folded — so
+        // what it comes back as is a key nothing folds into. See `Key.closed`.
+        closed: true,
         ...(e.gesture === undefined ? {} : { group: e.gesture }),
       });
     }
@@ -1669,6 +1681,7 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
       ref: ORIGIN,
       times: e.times,
       ...(e.skip === undefined ? {} : { skip: e.skip }),
+      closed: true,
       ...(e.gesture === undefined ? {} : { group: e.gesture }),
     };
 
@@ -1932,8 +1945,23 @@ export function appendedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): K
 export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
   const was = key.by;
 
-  if (was === undefined || key.times !== 1 || key.skip !== undefined) return null;
-  if (!near(key.ref, ref) || !oneChannel(was, by)) return null;
+  // A key that repeats is what a thing keeps doing, and a hand adding to it is
+  // saying how far each step goes rather than writing another — which is
+  // `nudged`'s rule for a corner, and not this. A closed one is closed.
+  if (was === undefined || key.times !== 1 || key.skip !== undefined || key.closed) return null;
+
+  // A delta that neither turns nor reshapes says the same thing about every
+  // point of the thing — a move is a move wherever it is painted, and an
+  // amount is not about a point at all — so it takes the other's point. Two
+  // that do turn or reshape fold only about one.
+  if (!anywhere(was) && !anywhere(by) && !near(key.ref, ref)) return null;
+
+  // The axes are whichever of them stretches or shears, and two that both do
+  // along different axes are two keys: what the axes decide is the way
+  // between the keyframes, and there is one of those.
+  const axes = shaping(by) ? by : shaping(was) ? was : by;
+
+  if (shaping(was) && shaping(by) && (was.along !== by.along || was.lean !== by.lean)) return null;
 
   const now: Delta = {
     ...was,
@@ -1941,40 +1969,77 @@ export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
     angle: was.angle + by.angle,
     skew: was.skew + by.skew,
     scale: { x: was.scale.x * by.scale.x, y: was.scale.y * by.scale.y },
+    along: axes.along,
+    lean: axes.lean,
     erode: was.erode + by.erode,
     round: was.round + by.round,
     deform: was.deform + by.deform,
   };
 
-  // A turn keeps the anchor it was written about, which is where the painted
-  // point went round; the move the pair make is worked out from it again.
-  if (now.angle !== 0 && was.about !== undefined) {
-    const to = spun(was.about, now.angle);
+  delete now.about;
 
-    now.about = was.about;
-    now.move = whole(now.angle) ? { x: 0, y: 0 } : { x: was.about.x - to.x, y: was.about.y - to.y };
+  // Where it turns about, worked out again from what the two of them come to.
+  // A turn by a whole number of turns cannot say, so it keeps the centre the
+  // first of them went round — see `Delta.about`.
+  if (now.angle !== 0) {
+    const solved = aboutOf(now);
+
+    if (solved !== null) now.about = solved;
+    else if (was.about !== undefined) now.about = was.about;
   }
 
-  return idle(now) ? 'gone' : { ...key, by: now };
+  // The painted point is the one that has one: a move folded with a turn is
+  // the turn's, which is what the pair act about.
+  return idle(now) ? 'gone' : { ...key, ref: anywhere(was) ? ref : key.ref, by: now };
 }
 
-/** Whether two deltas are the same one channel, about the same axes: what can
- * be folded while a key has to be an entry. */
-function oneChannel(a: Delta, b: Delta): boolean {
-  const mine = channelOf(a), theirs = channelOf(b);
+/**
+ * What `b` has to do after `a` to come to `a` folded with it: the fold undone.
+ *
+ * Exact, and for the same reason the fold is: about one painted point the
+ * numbers add and multiply, so they take away and divide. The axes are the
+ * ones the fold left, and where it turns about is worked out again.
+ */
+export function lessBy(both: Delta, a: Delta): Delta {
+  const out: Delta = {
+    ...both,
+    move: { x: both.move.x - a.move.x, y: both.move.y - a.move.y },
+    angle: both.angle - a.angle,
+    skew: both.skew - a.skew,
+    scale: { x: both.scale.x / a.scale.x, y: both.scale.y / a.scale.y },
+    erode: both.erode - a.erode,
+    round: both.round - a.round,
+    deform: both.deform - a.deform,
+  };
 
-  if (mine === null || mine !== theirs) return false;
-  if (a.along !== b.along || a.lean !== b.lean) return false;
+  delete out.about;
 
-  // Two turns fold only about the same centre, as two entries do: the second's
-  // anchor is where the first left the painted point.
-  if (mine === 'turn') {
-    const to = a.about === undefined ? null : spun(a.about, a.angle);
+  if (out.angle !== 0) {
+    const solved = aboutOf(out);
 
-    return to !== null && b.about !== undefined && near(to, b.about);
+    if (solved !== null) out.about = solved;
+    else if (both.about !== undefined) out.about = both.about;
   }
 
-  return true;
+  return out;
+}
+
+/** Whether a delta changes the thing's shape, which is what reads its axes. */
+function shaping(d: Delta): boolean {
+  return d.scale.x !== 1 || d.scale.y !== 1 || d.skew !== 0;
+}
+
+/**
+ * Whether a delta says the same thing about every point of the thing, and so
+ * has no painted point of its own.
+ *
+ * A move is a move wherever it is painted, and an amount is not about a point
+ * at all. One of these folds about whatever it is folded with, and takes that
+ * one's point — which is why a key's point can change when a gesture is
+ * absorbed into it, and why `split` has to know.
+ */
+export function anywhere(d: Delta): boolean {
+  return d.angle === 0 && !shaping(d);
 }
 
 /**

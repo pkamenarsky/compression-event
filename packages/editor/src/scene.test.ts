@@ -60,9 +60,10 @@ import {
   stamped,
   listAt,
   unplace,
+  keysOfAt,
 } from './scene';
 import { affineOf, stateAt } from './rig';
-import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote, wroteOne } from './testing';
 import { addPath } from './paths';
 import { unionAt } from './export';
 import {
@@ -3181,26 +3182,27 @@ describe('moving something at one keyframe moves it at the keyframes after it', 
     expect(middle(out, 1, ids[0]).y).toBeCloseTo(before.y, 6);
   });
 
-  test('a drag in steps lands where the same drag in one go lands, as one entry', () => {
+  test('a drag in steps lands where the same drag in one go lands, as one key', () => {
     // Moves one after another are one move, and a hand that went there in four
-    // goes has written the same thing as one that went there in one.
+    // goes has written the same thing as one that went there in one — which is
+    // what a gesture folding into the key before it means. See `appendedBy`.
     const { world, ids } = box();
     const turned = transformed(world, 1, ids[0], { rotation: Math.PI / 2 });
 
     let stepped = turned;
 
     for (const x of [20, 25, 25, 30]) {
-      stepped = transformed(stepped, 0, ids[0], { translation: { x, y: 0 } });
+      stepped = wroteOne(stepped, 0, ids[0], move(x, 0));
     }
 
-    const once = transformed(turned, 0, ids[0], { translation: { x: 100, y: 0 } });
+    const once = wroteOne(turned, 0, ids[0], move(100, 0));
 
     for (const v of [0, 1]) {
       expect(middle(stepped, v, ids[0]).x).toBeCloseTo(middle(once, v, ids[0]).x, 6);
       expect(middle(stepped, v, ids[0]).y).toBeCloseTo(middle(once, v, ids[0]).y, 6);
     }
 
-    expect(rigOf(stepped, ids[0]).keys.get(0)).toHaveLength(1);
+    expect(keysOfAt(stepped, 0, ids[0])).toHaveLength(1);
   });
 
   test('a turn at an earlier version is inherited, as it always was', () => {

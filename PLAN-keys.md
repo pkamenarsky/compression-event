@@ -267,9 +267,21 @@ already in, and there is nothing to solve. Folding happens in one place only —
 a gesture absorbed into the open key — and there it has the frame to hand,
 which it needs where the two painted points differ.
 
-**3d — break and split.** The two that are new: closing the open key, and
-taking the last gesture out of it into one of its own. Everything else in the
-editing surface is a key where there was an entry.
+**3d — break and split.** The two that are new: closing the open key (⌘K),
+and taking the last gesture out of it into one of its own (⇧⌘K). With them,
+the fold stops asking what kind a gesture is: a hand that moves a thing and
+then turns it leaves one key, which is one motion, until the author says
+otherwise.
+
+A delta that neither turns nor reshapes has no painted point of its own — a
+move is a move wherever it is painted, an amount is about no point at all — so
+it folds about whatever it is folded with and takes that one's point. Without
+that a move and a turn could never be one key, their points being the origin
+and the thing's middle.
+
+What a test writes stays one key per operation: `wrote` breaks between them,
+and `wroteOne` is the hand that does not. So the baseline is untouched by the
+fold, and what it guards it goes on guarding.
 
 What is not in this phase: the view still draws a key per icon as it drew an
 entry per icon, which is phase 4, and the group fold, the copy and the unroll
@@ -318,7 +330,8 @@ What is left of entries: `rigOf`, `withRig`, `listAt` and `keyed` in
 - **A fold changes the way, not the ends.** Two gestures folded into one key
   land where the two landed, and go there as one motion rather than as one
   after the other. Nothing a keyframe shows moves; what the game draws between
-  two keyframes does.
+  two keyframes does. Breaking before the second gesture keeps the two ways,
+  and splitting after it takes them back apart.
 - **A key's axes are frozen.** A stretch repeated after something upstream
   turns the thing goes on stretching along the axes it was written along.
   Same as today, now said in one place.

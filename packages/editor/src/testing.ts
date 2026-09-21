@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { appended, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
+import { appended, broken, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
 import { Amount, Move, Op, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
 import { Id, KeyframeId, Options, World } from './types';
@@ -17,9 +17,28 @@ import { Id, KeyframeId, Options, World } from './types';
  * written — which is what a gesture's is. */
 export type Writing = Op | ((world: World, v: KeyframeId, id: Id) => Op);
 
-/** `ops` added to the end of what `v` does to `id`, one after another, each
- * written against the world the ones before it left. */
+/**
+ * `ops` added to the end of what `v` does to `id`, one after another, each
+ * written against the world the ones before it left, and each a key of its
+ * own.
+ *
+ * Broken between them, where the canvas would fold them into one: what a test
+ * says by writing four things is a keyframe that holds four, and a fold has
+ * `wroteOne` and its own tests. See `broken` in `scene/core.ts`.
+ */
 export function wrote(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): World {
+  let out = world;
+
+  for (const op of ops) {
+    out = broken(appended(out, v, id, typeof op === 'function' ? op(out, v, id) : op), v, [id]);
+  }
+
+  return out;
+}
+
+/** The same, as one gesture after another with nothing between: what the
+ * canvas writes, which folds into one key. */
+export function wroteOne(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): World {
   let out = world;
 
   for (const op of ops) out = appended(out, v, id, typeof op === 'function' ? op(out, v, id) : op);

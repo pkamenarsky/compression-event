@@ -1,8 +1,21 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, editedAt, grouped, keysOfAt, listAt, moveOf, refolded, scaleOf, turnOf } from './scene';
-import { Frame, framed, worldFrame } from './rig';
-import { erode, moved, repeated, scaled, turned, wrote } from './testing';
+import {
+  TOP,
+  addPolygon,
+  broken,
+  editedAt,
+  grouped,
+  keysOfAt,
+  listAt,
+  moveOf,
+  refolded,
+  scaleOf,
+  split,
+  turnOf,
+} from './scene';
+import { Frame, framed, playingAt, playingOn, stateAt, worldFrame } from './rig';
+import { erode, move, moved, repeated, scaled, turned, wrote, wroteOne } from './testing';
 import { Id, KeyframeId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -99,5 +112,99 @@ describe('editing one entry', () => {
 
     expect(listAt(edit(w, 1, id, 0, { move: { x: 5, y: 5 } }), 1, id)[0].op).toEqual({ kind: 'move', by: { x: 15, y: 5 } });
     expect(listAt(edit(w, 1, id, 1, { erode: -4 }), 1, id).map(e => e.op.kind)).toEqual(['move']);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Break and split
+//
+// The two that say where one key ends. Breaking says the next thing written is
+// a key of its own; splitting says the last thing written was.
+// -----------------------------------------------------------------------------
+
+describe('break and split', () => {
+  /** A room, and a hand that moves it and then turns it without letting go of
+   * the keyframe. */
+  const both = () => {
+    const { world, id } = room();
+    const one = wroteOne(world, 1, id, move(10, 0));
+
+    return { world, id, moved: one, turned: wroteOne(one, 1, id, turned(0.5, { x: 200, y: 0 })) };
+  };
+
+  test('two gestures at one keyframe are one key', () => {
+    const { id, turned } = both();
+    const keys = keysOfAt(turned, 1, id);
+
+    expect(keys).toHaveLength(1);
+    expect(keys[0].by!.angle).toBeCloseTo(0.5, 12);
+    expect(keys[0].by!.move).not.toEqual({ x: 0, y: 0 });
+  });
+
+  test('broken, the next gesture is a key of its own, and nothing moves', () => {
+    const { id, moved, turned: together } = both();
+    const apart = wroteOne(broken(moved, 1, [id]), 1, id, turned(0.5, { x: 200, y: 0 }));
+
+    expect(keysOfAt(apart, 1, id)).toHaveLength(2);
+
+    // Where it stands at the keyframe is the same either way: what breaking
+    // changes is the way between, not the ends.
+    expectFrame(at(apart, id, 1), at(together, id, 1));
+    expectFrame(at(apart, id, 2), at(together, id, 2));
+  });
+
+  test('split takes the last gesture out and leaves the one before it', () => {
+    const { id, moved, turned } = both();
+    const apart = split(turned, moved, 1, [id]);
+    const keys = keysOfAt(apart, 1, id);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0].by!.angle).toBe(0);
+    expect(keys[0].by!.move).toEqual(keysOfAt(moved, 1, id)[0].by!.move);
+    expect(keys[1].by!.angle).toBeCloseTo(0.5, 12);
+
+    // And the first is closed, so the next gesture is its own key too.
+    expect(keys[0].closed).toBe(true);
+    expectFrame(at(apart, id, 1), at(turned, id, 1));
+  });
+
+  /** Where the thing is half way from the keyframe before to `v`, which is
+   * what the bake puts in flight. See `flown` in `bake.ts`. */
+  const half = (world: World, id: Id): Frame =>
+    playingAt(world, id, 1).reduce((f, p) => playingOn(f, p, 0.5), stateAt(world, id, 0).frame);
+
+  test('folded, the way between the keyframes is one motion', () => {
+    const { world, id } = room();
+    const first = wroteOne(world, 1, id, turned(0.5, { x: 200, y: 0 }));
+    const together = wroteOne(first, 1, id, scaled(2, 0.5));
+    const apart = wroteOne(broken(first, 1, [id]), 1, id, scaled(2, 0.5));
+
+    // The ends are the same and the way between is not: one key is one motion
+    // — the painted point round the point the pair leave still — where two are
+    // one after the other. That is what breaking is for, and what a fold
+    // costs: see *Known and accepted* in `PLAN-keys.md`.
+    expectFrame(stateAt(apart, id, 1).frame, stateAt(together, id, 1).frame);
+    expect(half(together, id).t.x).not.toBeCloseTo(half(apart, id).t.x, 6);
+  });
+
+  test('a gesture that wrote a key of its own is already split', () => {
+    const { world, id } = room();
+    const one = wroteOne(world, 1, id, move(10, 0));
+
+    expect(keysOfAt(split(one, world, 1, [id]), 1, id)).toHaveLength(1);
+  });
+
+  test('split gives back exactly what the hand did, whatever it did', () => {
+    const { world, id } = room();
+    const first = wroteOne(world, 1, id, scaled(2, 0.5));
+    const now = wroteOne(first, 1, id, turned(0.3, { x: 0, y: 0 }), move(4, -7));
+    const apart = split(now, first, 1, [id]);
+    const keys = keysOfAt(apart, 1, id);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0].by).toEqual(keysOfAt(first, 1, id)[0].by);
+
+    // The two of them still land where the one did.
+    for (const v of [1, 2] as const) expectFrame(at(apart, id, v), at(now, id, v));
   });
 });

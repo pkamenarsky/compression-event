@@ -39,6 +39,7 @@ import {
   appendedBy,
   deltaOf,
   keysAt,
+  playedBy,
 } from './rig';
 import { Id, Vertex } from './types';
 
@@ -313,8 +314,33 @@ describe('a keyframe\'s keys', () => {
     return keysAt(rig, 0);
   };
 
-  test('turns about different centres are kept apart', () => {
-    expect(writing(first, turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 }))).toHaveLength(2);
+  /** Where the painted point lands with one key played over the room's rest
+   * frame, which is where the two it folded left it. */
+  const placedBy = (key: Key): Point => placed(playedBy(REST, key.ref, key.by!), r);
+
+  test('turns about different centres are one key too, and land where two land', () => {
+    const second = turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 });
+    const list = writing(first, second);
+
+    expect(list).toHaveLength(1);
+
+    // Two turns are a turn: about a third centre, which the pair work out.
+    // The keyframe is where the two of them left it, and what happens between
+    // this keyframe and the one before is one swing rather than two.
+    const apart = keyed(room, 0, P, [first, second]);
+
+    expect(list[0].by!.angle).toBeCloseTo(60 * Math.PI / 180, 12);
+    near(refAt(apart, P, 0, r), placedBy(list[0]));
+  });
+
+  test('and stay two where the author breaks between them', () => {
+    const second = turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 });
+    let rig = appendedBy(EMPTY_KEYS, 0, r, deltaOf(first)!);
+
+    rig = { keys: new Map([[0, keysAt(rig, 0).map(k => ({ ...k, closed: true }))]]) };
+    rig = appendedBy(rig, 0, r, deltaOf(second)!);
+
+    expect(keysAt(rig, 0)).toHaveLength(2);
   });
 
   test('turns about the same centre are one key, and it is exact', () => {
@@ -543,9 +569,13 @@ describe('effect amounts', () => {
     expect(writing(round(2), round(3))[0].by!.round).toBe(5);
     expect(writing(deform(2), deform(-2))).toEqual([]);
 
-    // Two kinds at once is a key an entry cannot be made of, and nothing
-    // writes one yet: they stay two. See `appendedBy` in `rig.ts`.
-    expect(writing(round(2), deform(2))).toHaveLength(2);
+    // Two kinds at once is one key: what a hand does at a keyframe is what
+    // that keyframe does, until it says otherwise.
+    const both = writing(round(2), deform(2));
+
+    expect(both).toHaveLength(1);
+    expect(both[0].by!.round).toBe(2);
+    expect(both[0].by!.deform).toBe(2);
     expect(writing(erode(2), round(0))[0].by!.erode).toBe(2);
     expect(writing(erode(2), round(0))).toHaveLength(1);
   });
