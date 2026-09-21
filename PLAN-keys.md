@@ -198,17 +198,50 @@ those files gather into two keys.
 24 before then; the golden baseline is re-baked with the wiring, for the same
 reason.
 
-### 3 — editing
+### 3 — the editor onto the keys
 
-The open key, break, split, stand-on-a-key, pull and push, delete, and the
-repeat drag.
+The switch, in four commits, each of them green. What makes it possible to
+take in pieces is that a rig of entries converts to keys and nothing has to
+convert back: the readers move over first, reading keys made from the entries
+that are still stored, and the writers follow.
+
+**3a — the states come off the keys.** The key model moves into `rig.ts`,
+because the walk needs the keyframes, the corner lives and the repeat counting,
+and a file that reads `rig.ts` while `rig.ts` reads it is the cycle the rule in
+`CLAUDE.md` is about. `stateAt` walks keys, converted from the stored entries
+once per rig and cached against it, as the entry walk is. The entry walk stays
+for `playedAt` and `sourcesAt`, whose callers have not moved yet. Both walks
+run over the same rigs and the existing tests hold them to each other.
+
+**3b — the bake plays deltas.** `playingAt` gives a keyframe's contributions as
+`{ ref, by }`, in order, and `flown` plays each with `playedBy(…, t)` instead
+of `played(op, t)`. The golden baseline is re-baked and has to come out
+unchanged: partial play is exactly today's for every delta a converted entry
+makes, so a diff here is a bug rather than a decision. `divergence.test.ts`
+guards the rest.
+
+**3c — the world holds keys.** `World.rigs` becomes `Map<Id, KeyRig>`, the
+converter runs at load, and `FORMAT` becomes 24. Every writer moves in this
+commit, because there is no way back from a key to an entry once one holds two
+channels: the gestures (`appended` becomes the open key absorbing the
+gesture), the corner writes (`nudged`, `deepened`, `cornerRounded`,
+`edgeDeformed`), unchaining (`handed`), and `keys.ts`.
 
 Pull and push are a splice, not a fold: the key leaves its column's list and
 goes on the end of the column before, or the front of the column after. The
 keys either side are untouched, the order they play in is the order they were
 already in, and there is nothing to solve. Folding happens in one place only —
-a gesture absorbed into the open key — and there it has the frame to hand, which
-it needs where the two painted points differ.
+a gesture absorbed into the open key — and there it has the frame to hand,
+which it needs where the two painted points differ.
+
+**3d — break and split.** The two that are new: closing the open key, and
+taking the last gesture out of it into one of its own. Everything else in the
+editing surface is a key where there was an entry.
+
+What is not in this phase: the view still draws a key per icon as it drew an
+entry per icon, which is phase 4, and the group fold, the copy and the unroll
+still compare operations, which is phase 5. Those keep `Op`, `Entry` and the
+entry walk alive until then; the walk is deleted with them.
 
 ### 4 — the view
 
