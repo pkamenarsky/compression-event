@@ -1374,32 +1374,41 @@ function whole(angle: number): boolean {
  * point, or in a line where it has none. See *Part way*.
  */
 export function movedBy(d: Delta, u: number): Point {
-  if (d.angle === 0) {
-    // Nothing turns: each axis eases with its own stretch, in the axes the
-    // delta was written along. `slid(1, u)` is `u`, so a shear and a move go
-    // in a line and an axis that is not stretched does too.
+  const fixed = aboutOf(d);
+
+  if (fixed === null) {
+    // Nothing it turns about: each axis eases with its own stretch, in the
+    // axes the delta was written along. `slid(1, u)` is `u`, so a shear and a
+    // move go in a line and an axis that is not stretched does too.
     const w = unsheared(d.move, d.along, d.lean);
     const along = { x: w.x * slid(d.scale.x, u), y: w.y * slid(d.scale.y, u) };
 
     return sheared(along, d.along, d.lean);
   }
 
-  const fixed = fixedOf(d);
+  // `w − Lᵤ · w`: where the point has swung to, about the point that stays.
+  const w = unsheared(fixed, d.along, d.lean);
+  const back = sheared(
+    { x: w.x * Math.pow(d.scale.x, u), y: w.y * Math.pow(d.scale.y, u) },
+    d.along + d.angle * u,
+    d.lean + d.skew * u,
+  );
 
-  if (fixed === null) return { x: d.move.x * u, y: d.move.y * u };
-
-  // `(I − Lᵤ) · w`: where the point has swung to, about the point that stays.
-  const lu = linearOf(upTo(d, u));
-  const go = through(lu, fixed);
-
-  return { x: fixed.x - go.x, y: fixed.y - go.y };
+  return { x: fixed.x - back.x, y: fixed.y - back.y };
 }
 
 /**
  * Where the delta turns about, as an offset from the painted point, or nothing
- * where it has no one such point: `w` with `(I − L) w = move`.
+ * where it does not turn or has no one such point: `w` with `(I − L) w = move`.
+ *
+ * Nothing where it does not turn, though a stretch has such a point too: the
+ * easing per axis says the same thing there and says it about each axis on its
+ * own, which is what a stretch along one axis needs. So this is the question
+ * *the other way of saying it cannot answer*, and it is what the shipped table
+ * tells its two kinds apart by. See `OP_STRIDE` in `baked.ts`.
  */
-function fixedOf(d: Delta): Point | null {
+export function aboutOf(d: Delta): Point | null {
+  if (d.angle === 0) return null;
   if (d.about !== undefined) return d.about;
 
   const l = linearOf(d);
@@ -1695,16 +1704,18 @@ export interface Walking {
   playing: Playing[][]
 }
 
-/** A delta played over the frame it starts from, all of it or `u` of the way
- * through, as the operations it is made of. Exactly what its operation did
- * where the key came from one, which is every key until a gesture folds two
- * into one — see `opsOf`. */
+/**
+ * What one contribution does to the frame it starts from, all of it or `u` of
+ * the way through.
+ *
+ * One motion, which is what a key is: `playedBy` for a delta, and a stand
+ * straight to its numbers. The same arithmetic the shipped table is played by
+ * — see `OP_STRIDE` in `baked.ts`, which is this on the other side.
+ */
 export function playingOn(f: Frame, p: Playing, u = 1): Frame {
-  let out = f;
+  if (p.stand !== undefined) return played(f, p.stand, u);
 
-  for (const op of opsOf(p)) out = played(out, op, u);
-
-  return out;
+  return p.by === undefined ? f : playedBy(f, p.ref, p.by, u);
 }
 
 /** Whether a contribution moves the frame at all, as against only deepening,

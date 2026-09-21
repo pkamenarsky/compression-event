@@ -67,38 +67,48 @@ import type { Point } from './world';
 export const FRAME_STRIDE = 12;
 
 /**
- * Eight floats per operation: its kind, and its numbers.
+ * Twelve floats per key: its kind, and its numbers.
  *
- *   OP_MOVE   by x, by y
- *   OP_TURN   angle, painted point x, y, offset of the anchor from it x, y
- *   OP_SCALE  by x, by y, painted point x, y, slide x, y
- *   OP_STAND  translation x, y, angle, scale x, y, skew
- *   OP_SKEW   by, painted point x, y, slide x, y
+ * A key is what a keyframe does to a thing, as one thing — a change to the
+ * frame's own numbers, and where it takes one point of the thing:
+ *
+ *   1, 2    the painted point, in the thing's rest frame
+ *   3, 4    where that point goes (`OP_MOVE`), or the offset from it to the
+ *           point the key leaves where it is (`OP_ABOUT`)
+ *   5       added to the angle
+ *   6       added to the skew
+ *   7, 8    multiplied into the scale, along the thing's own axes
+ *   9, 10   the angle and the skew those axes stood at when it was written
+ *   11      spare
+ *
+ *   OP_STAND  translation x, y, angle, scale x, y, skew — the state outright
  *
  * Part way, `u` of the way through — which is `t`, the span being one
- * keyframe's worth — each goes the way it would have gone under the hand:
+ * keyframe's worth — the numbers go `u` of the way: `u · angle`, `u · skew`,
+ * `scaleᵘ`. Where the painted point is is the question a key answers two ways,
+ * and which one it answers is its kind:
  *
- *   MOVE   the translation goes `u · by`
- *   TURN   `u · angle` about the anchor, which is the painted point placed
- *          by the frame as it stands when the turn begins, plus the offset
- *   SCALE  `byᵘ` along the thing's own axes about the painted point placed
- *          the same way, and the slide eased to match: by `(1 − dᵘ)/(1 − d)`
- *          along each axis, which keeps the gesture's own centre still
- *   SKEW   `u · by` along the thing's first axis about the painted point,
- *          and `u` of the slide, a shear being linear in how far it goes
- *   STAND  every component straight to its numbers
+ *   OP_ABOUT  it swings round the point the key leaves still: `w − Lᵤ · w`,
+ *             for `w` the offset to that point and `Lᵤ` the key's own change
+ *             of shape `u` of the way, in the axes it was written along. A
+ *             turn comes out as the arc about its anchor, and a stretch as the
+ *             easing that holds the gesture's centre still.
+ *   OP_MOVE   it goes in a line, eased along each of the written axes by
+ *             `(1 − dᵘ)/(1 − d)` — which is `u` itself where that axis is not
+ *             stretched. What a key with no one such point does: a move, a
+ *             shear, a stretch along one axis.
  *
- * The anchor is placed off the frame as it stands, rather than stored placed,
- * because an operation that comes after another in the same keyframe acts
+ * The painted point is placed off the frame as it stands, rather than stored
+ * placed, because a key that comes after another in the same keyframe acts
  * about a point the one before it is still carrying.
  */
-export const OP_STRIDE = 8;
+export const OP_STRIDE = 12;
 
+/** The painted point goes where it says, in a line eased by the stretch. */
 export const OP_MOVE = 0;
-export const OP_TURN = 1;
-export const OP_SCALE = 2;
-export const OP_STAND = 3;
-export const OP_SKEW = 4;
+/** It swings round a point the key leaves where it is. */
+export const OP_ABOUT = 1;
+export const OP_STAND = 2;
 
 /**
  * Eight floats per entry of the table crossings are solved from.
@@ -391,51 +401,61 @@ function slid(d: number, u: number): number {
   return Math.abs(l) < 1e-12 ? u : Math.expm1(u * l) / Math.expm1(l);
 }
 
-/** One operation of the table, `u` of the way through. See `OP_STRIDE`. */
+/** A vector through `R(a) · K(k)`, and back: the axes a key was written
+ * along, which are not the frame's own as it stands. */
+function shearBy(x: number, y: number, a: number, k: number): { x: number, y: number } {
+  return spin(x + k * y, y, a);
+}
+
+function unshearBy(x: number, y: number, a: number, k: number): { x: number, y: number } {
+  const w = spin(x, y, -a);
+
+  return { x: w.x - k * w.y, y: w.y };
+}
+
+/** One key of the table, `u` of the way through. See `OP_STRIDE`. */
 function playedAt(span: BakedSpan, op: number, f: Pose, u: number): Pose {
   const o = span.ops, i = op * OP_STRIDE;
   const kind = o[i];
 
-  if (kind === OP_MOVE) return { ...f, x: f.x + o[i + 1] * u, y: f.y + o[i + 2] * u };
+  if (kind !== OP_STAND) {
+    // Where the painted point is now, and what the key's own numbers do.
+    const p = posed(f, o[i + 1], o[i + 2]);
+    const angle = o[i + 5] * u, skew = o[i + 6] * u;
+    const dx = Math.pow(o[i + 7], u), dy = Math.pow(o[i + 8], u);
+    const along = o[i + 9], lean = o[i + 10];
 
-  if (kind === OP_TURN) {
-    const p = posed(f, o[i + 2], o[i + 3]);
-    const ax = p.x + o[i + 4], ay = p.y + o[i + 5];
-    const angle = o[i + 1] * u;
-    const d = spin(f.x - ax, f.y - ay, angle);
+    let go: { x: number, y: number };
 
-    return { ...f, x: ax + d.x, y: ay + d.y, angle: f.angle + angle };
-  }
+    if (kind === OP_ABOUT) {
+      // `w − Lᵤ · w`: the point swung round the one the key leaves still.
+      const w = unshearBy(o[i + 3], o[i + 4], along, lean);
+      const back = shearBy(w.x * dx, w.y * dy, along + angle, lean + skew);
 
-  if (kind === OP_SCALE) {
-    const p = posed(f, o[i + 3], o[i + 4]);
-    const dx = Math.pow(o[i + 1], u), dy = Math.pow(o[i + 2], u);
-    const own = unshear(f.x - p.x, f.y - p.y, f);
-    const back = shear(own.x * dx, own.y * dy, f);
-    const sh = unshear(o[i + 5], o[i + 6], f);
-    const slide = shear(sh.x * slid(o[i + 1], u), sh.y * slid(o[i + 2], u), f);
+      go = { x: o[i + 3] - back.x, y: o[i + 4] - back.y };
+    }
+    else {
+      const w = unshearBy(o[i + 3], o[i + 4], along, lean);
 
-    return {
-      ...f,
-      x: p.x + back.x + slide.x,
-      y: p.y + back.y + slide.y,
+      go = shearBy(w.x * slid(o[i + 7], u), w.y * slid(o[i + 8], u), along, lean);
+    }
+
+    // The frame with its numbers moved, placed so the painted point lands
+    // where it goes.
+    const out: Pose = {
+      x: 0,
+      y: 0,
+      angle: f.angle + angle,
+      skew: f.skew + skew,
       sx: f.sx * dx,
       sy: f.sy * dy,
     };
-  }
+    const v = shearBy(o[i + 1] * out.sx, o[i + 2] * out.sy, out.angle, out.skew);
 
-  if (kind === OP_SKEW) {
-    const p = posed(f, o[i + 2], o[i + 3]);
-    const by = o[i + 1] * u;
-    const w = spin(f.x - p.x, f.y - p.y, -f.angle);
-    const back = spin(w.x + by * w.y, w.y, f.angle);
+    out.x = p.x + go.x - v.x;
+    out.y = p.y + go.y - v.y;
 
-    return {
-      ...f,
-      x: p.x + back.x + o[i + 4] * u,
-      y: p.y + back.y + o[i + 5] * u,
-      skew: f.skew + by,
-    };
+    return out;
   }
 
   return {

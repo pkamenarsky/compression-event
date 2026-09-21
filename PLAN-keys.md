@@ -225,14 +225,23 @@ operations: `opsOf` gives a delta back as the operation it came from, numbers
 and all, so nothing the game sees moves and the golden baseline stands. What
 changes is only where the bake reads from, which is what lets the entry walk go.
 
-*3b-ii, before 3d.* The table holds deltas: one kind and the stand, instead of
-five kinds. Both replays follow, and the golden is re-baked there, because a
-delta plays as **one motion** — the painted point round the point the delta
-leaves still — where a table of single operations can only play it as its
-parts. They agree at every keyframe and differ in between, which is to say:
-**folding two gestures into one key changes the motion between the keyframes,
-not the keyframes.** That is what a key means, and the shipped table has to be
-able to say it before a gesture can make one.
+*3b-ii.* The table holds keys: two kinds and the stand, instead of five kinds
+of operation, twelve floats each. A key plays as **one motion** — the painted
+point round the point the key leaves still — where a table of single
+operations could only play it as its parts, so **folding two gestures into one
+key changes the motion between the keyframes, not the keyframes**, and this is
+what lets a gesture make one.
+
+Which kind a key is is how its painted point moves, and the reader has no
+solve of its own: `OP_ABOUT` swings it round the point left still, `OP_MOVE`
+sends it in a line eased by the stretch along each written axis. The editor
+decides which when it writes the table, and `aboutOf` is the one place that
+decides it.
+
+Three implementations of that, and they have to agree to the bit: `playedBy`
+here, `playedAt` in `baked.ts` for the CPU, and `played` in `morph.ts` for the
+shader — with a fourth, the transcription in `export.test.ts`, which exists to
+check the table says what the shader will read.
 
 **3c — the world holds keys.** `World.rigs` becomes `Map<Id, KeyRig>`, the
 converter runs at load, and `FORMAT` becomes 24. Every writer moves in this

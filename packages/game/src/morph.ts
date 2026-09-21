@@ -121,52 +121,60 @@ const tablesFor = (depth: number, most: number): string => /* glsl */ `
     return abs(l) < 1e-3 ? u * (1.0 + 0.5 * (u - 1.0) * l) : (exp(u * l) - 1.0) / (exp(l) - 1.0);
   }
 
+  /** A vector through \`R(a) · K(k)\`, and back: the axes a key was written
+   * along, which are not the frame's own as it stands. */
+  vec2 shearedBy(vec2 v, float a, float k) {
+    return spun(vec2(v.x + k * v.y, v.y), a);
+  }
+
+  vec2 unshearedBy(vec2 v, float a, float k) {
+    vec2 w = spun(v, -a);
+    return vec2(w.x - k * w.y, w.y);
+  }
+
   /**
-   * One operation, \`u\` of the way through, from the frame the one before it
-   * left. \`OP_STRIDE\` in \`baked.ts\` says what each kind's numbers are, and
-   * \`playedAt\` there is this on the CPU.
+   * One key, \`u\` of the way through, from the frame the one before it left.
+   * \`OP_STRIDE\` in \`baked.ts\` says what its numbers are, and \`playedAt\`
+   * there is this on the CPU.
    */
   Pose played(Pose f, int op, float u) {
-    vec4 o0 = fetch(uOps, op * 2);
-    vec4 o1 = fetch(uOps, op * 2 + 1);
+    vec4 o0 = fetch(uOps, op * 3);
+    vec4 o1 = fetch(uOps, op * 3 + 1);
+    vec4 o2 = fetch(uOps, op * 3 + 2);
     int kind = int(o0.x + 0.5);
 
-    if (kind == 0) {
-      f.t += o0.yz * u;
-    }
-    else if (kind == 1) {
-      // About the anchor, placed off the frame as it stands: an operation after
-      // another in the same keyframe acts about a point the first is carrying.
-      vec2 anchor = posed(f, o0.zw) + o1.xy;
-      float angle = o0.y * u;
-
-      f.t = anchor + spun(f.t - anchor, angle);
-      f.a += angle;
-    }
-    else if (kind == 2) {
-      vec2 p = posed(f, vec2(o0.w, o1.x));
-      vec2 d = vec2(pow(o0.y, u), pow(o0.z, u));
-      vec2 back = sheared(unsheared(f.t - p, f) * d, f);
-      vec2 slide = unsheared(o1.yz, f);
-
-      f.t = p + back + sheared(vec2(slide.x * slid(o0.y, u), slide.y * slid(o0.z, u)), f);
-      f.s *= d;
-    }
-    else if (kind == 4) {
-      // A shear is linear in how far it goes, and so is its slide.
-      vec2 p = posed(f, o0.zw);
-      float by = o0.y * u;
-      vec2 w = spun(f.t - p, -f.a);
-
-      f.t = p + spun(vec2(w.x + by * w.y, w.y), f.a) + o1.xy * u;
-      f.k += by;
-    }
-    else {
+    if (kind == 2) {
       f.t = mix(f.t, o0.yz, u);
       f.a = mix(f.a, o0.w, u);
       f.k = mix(f.k, o1.z, u);
       f.s = mix(f.s, o1.xy, u);
+      return f;
     }
+
+    // Where the painted point is now, and what the key's own numbers do.
+    vec2 ref = o0.yz;
+    vec2 at = vec2(o0.w, o1.x);
+    vec2 scale = vec2(o1.w, o2.x);
+    float along = o2.y, lean = o2.z;
+    vec2 p = posed(f, ref);
+    float angle = o1.y * u, skew = o1.z * u;
+    vec2 d = pow(scale, vec2(u));
+    vec2 w = unshearedBy(at, along, lean);
+    vec2 go;
+
+    if (kind == 1) {
+      // \`w − Lᵤ · w\`: the point swung round the one the key leaves still.
+      go = at - shearedBy(w * d, along + angle, lean + skew);
+    }
+    else {
+      // In a line, eased along each written axis by the stretch on it.
+      go = shearedBy(vec2(w.x * slid(scale.x, u), w.y * slid(scale.y, u)), along, lean);
+    }
+
+    f.a += angle;
+    f.k += skew;
+    f.s *= d;
+    f.t = p + go - shearedBy(ref * f.s, f.a, f.k);
 
     return f;
   }

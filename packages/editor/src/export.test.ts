@@ -973,54 +973,49 @@ function shaderFrame(flat: BakedSpan, slot: number, t: number): Affine {
   };
   const mix = (a: number, b: number, u: number): number => a + (b - a) * u;
 
+  const shearedBy = (v: Point, a: number, k: number): Point => spun({ x: v.x + k * v.y, y: v.y }, a);
+  const unshearedBy = (v: Point, a: number, k: number): Point => {
+    const w = spun(v, -a);
+
+    return { x: w.x - k * w.y, y: w.y };
+  };
+
   const played = (p: Pose, op: number, u: number): Pose => {
     const i = op * OP_STRIDE;
     const kind = Math.round(o[i]);
 
-    if (kind === 0) return { ...p, t: { x: p.t.x + o[i + 1] * u, y: p.t.y + o[i + 2] * u } };
-
-    if (kind === 1) {
-      const at = posed(p, { x: o[i + 2], y: o[i + 3] });
-      const anchor = { x: at.x + o[i + 4], y: at.y + o[i + 5] };
-      const d = spun({ x: p.t.x - anchor.x, y: p.t.y - anchor.y }, o[i + 1] * u);
-
-      return { ...p, t: { x: anchor.x + d.x, y: anchor.y + d.y }, a: p.a + o[i + 1] * u };
-    }
-
     if (kind === 2) {
-      const at = posed(p, { x: o[i + 3], y: o[i + 4] });
-      const d = { x: Math.pow(o[i + 1], u), y: Math.pow(o[i + 2], u) };
-      const own = unsheared({ x: p.t.x - at.x, y: p.t.y - at.y }, p);
-      const back = sheared({ x: own.x * d.x, y: own.y * d.y }, p);
-      const sh = unsheared({ x: o[i + 5], y: o[i + 6] }, p);
-      const slide = sheared({ x: sh.x * slid(o[i + 1], u), y: sh.y * slid(o[i + 2], u) }, p);
-
       return {
-        ...p,
-        t: { x: at.x + back.x + slide.x, y: at.y + back.y + slide.y },
-        s: { x: p.s.x * d.x, y: p.s.y * d.y },
+        t: { x: mix(p.t.x, o[i + 1], u), y: mix(p.t.y, o[i + 2], u) },
+        a: mix(p.a, o[i + 3], u),
+        k: mix(p.k, o[i + 6], u),
+        s: { x: mix(p.s.x, o[i + 4], u), y: mix(p.s.y, o[i + 5], u) },
       };
     }
 
-    if (kind === 4) {
-      const at = posed(p, { x: o[i + 2], y: o[i + 3] });
-      const by = o[i + 1] * u;
-      const w = spun({ x: p.t.x - at.x, y: p.t.y - at.y }, -p.a);
-      const back = spun({ x: w.x + by * w.y, y: w.y }, p.a);
+    const ref = { x: o[i + 1], y: o[i + 2] };
+    const at = { x: o[i + 3], y: o[i + 4] };
+    const scale = { x: o[i + 7], y: o[i + 8] };
+    const along = o[i + 9], lean = o[i + 10];
+    const here = posed(p, ref);
+    const angle = o[i + 5] * u, skew = o[i + 6] * u;
+    const d = { x: Math.pow(scale.x, u), y: Math.pow(scale.y, u) };
+    const w = unshearedBy(at, along, lean);
 
-      return {
-        ...p,
-        t: { x: at.x + back.x + o[i + 4] * u, y: at.y + back.y + o[i + 5] * u },
-        k: p.k + by,
-      };
-    }
+    const go = kind === 1
+      ? (() => {
+          const back = shearedBy({ x: w.x * d.x, y: w.y * d.y }, along + angle, lean + skew);
 
-    return {
-      t: { x: mix(p.t.x, o[i + 1], u), y: mix(p.t.y, o[i + 2], u) },
-      a: mix(p.a, o[i + 3], u),
-      k: mix(p.k, o[i + 6], u),
-      s: { x: mix(p.s.x, o[i + 4], u), y: mix(p.s.y, o[i + 5], u) },
-    };
+          return { x: at.x - back.x, y: at.y - back.y };
+        })()
+      : shearedBy({ x: w.x * slid(scale.x, u), y: w.y * slid(scale.y, u) }, along, lean);
+
+    const out: Pose = { t: { x: 0, y: 0 }, a: p.a + angle, k: p.k + skew, s: { x: p.s.x * d.x, y: p.s.y * d.y } };
+    const v = shearedBy({ x: ref.x * out.s.x, y: ref.y * out.s.y }, out.a, out.k);
+
+    out.t = { x: here.x + go.x - v.x, y: here.y + go.y - v.y };
+
+    return out;
   };
 
   const link = (at: number): Affine => {

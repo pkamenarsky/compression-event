@@ -10,12 +10,22 @@
 // test holds this branch to the same, bit for bit, so that nothing built for
 // effects moves anything that does not have one.
 //
-// The digests were re-made once, on `keys`, when `stateAt` moved from walking
-// entries to walking the keys they convert into: the arithmetic differs in the
-// last bits, so every hash here moved. What was checked before re-making them
-// is that nothing else did — every scene's rings came out with the same
-// structure, the worst number anywhere 7.1e-14 out — and master's digests are
-// in the history at the commit before. Nothing else has re-made them.
+// The digests have been re-made twice, both times on `keys`, and both times
+// with what moved measured first:
+//
+//   - when `stateAt` moved from walking entries to walking the keys they
+//     convert into. Two arithmetics for one answer, so every hash moved; every
+//     scene's rings came out with the same structure, the worst number
+//     anywhere 7.1e-14 out.
+//   - when the shipped table moved from a kind of operation to a key. The
+//     `csg` digests did not move at all, which is the keyframes saying nothing
+//     changed; `shipped` moved because the table is a new format, and the
+//     spans because a flight holds keys. Every span's geometry was compared
+//     against the commit before, scene by scene: no structural difference
+//     anywhere, the worst number 1.1e-13 out.
+//
+// Master's digests are in the history at the first of those. Nothing else has
+// re-made them.
 //
 // Written against master's API and nothing newer, so the same file runs on
 // both. The golden file is otherwise only ever made on master: in a worktree

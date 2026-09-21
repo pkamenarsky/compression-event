@@ -23,12 +23,10 @@ import {
   ENTRY_STRIDE,
   FRAME_STRIDE,
   Floor,
+  OP_ABOUT,
   OP_MOVE,
-  OP_SCALE,
-  OP_SKEW,
   OP_STAND,
   OP_STRIDE,
-  OP_TURN,
   Artefact as GameArtefact,
   Polygon as GamePolygon,
   Version as GameVersion,
@@ -37,7 +35,7 @@ import {
   withNormals,
 } from '@ce/game';
 import { Bake, Flight, Origin, Ref, Rider, Span, Stretch, loadedFor, spanAt } from './bake';
-import { Op, amount } from './rig';
+import { Playing, aboutOf, flying } from './rig';
 import { Shape, simplify, subtract, union } from './geometry';
 import { Contributed, EMPTY_LIVE, contributing, live, placeAt, resolveAt, settled, sourced } from './scene';
 import { ArtefactId, Id, PolygonId, SLOTS, SetName, KeyframeId, World, slotOf } from './types';
@@ -102,25 +100,37 @@ function most(riders: Map<Id, Rider>): number {
   return out;
 }
 
-/** One operation as the table holds it. See `OP_STRIDE`. */
-function record(op: Op): number[] {
-  if (amount(op)) throw new Error('an amount is in the geometry, not in the frame table');
+/**
+ * One key as the table holds it. See `OP_STRIDE`.
+ *
+ * Which kind it is is how the painted point moves: round the point the key
+ * leaves still where it has one, and in a line eased by the stretch where it
+ * has none. `aboutOf` is the one that answers that, and the reader tells the
+ * two apart by the kind alone — it has no solve of its own.
+ */
+export function record(p: Playing): number[] {
+  if (!flying(p)) throw new Error('an amount is in the geometry, not in the frame table');
 
-  switch (op.kind) {
-    case 'move':
-      return [OP_MOVE, op.by.x, op.by.y, 0, 0, 0, 0, 0];
-    case 'turn':
-      return [OP_TURN, op.angle, op.ref.x, op.ref.y, op.about.x, op.about.y, 0, 0];
-    case 'scale':
-      return [OP_SCALE, op.by.x, op.by.y, op.ref.x, op.ref.y, op.shift.x, op.shift.y, 0];
-    case 'skew':
-      return [OP_SKEW, op.by, op.ref.x, op.ref.y, op.shift.x, op.shift.y, 0, 0];
-    case 'stand': {
-      const f = op.frame;
+  if (p.stand !== undefined) {
+    const f = p.stand.frame;
 
-      return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0];
-    }
+    return [OP_STAND, f.t.x, f.t.y, f.angle, f.scale.x, f.scale.y, f.skew, 0, 0, 0, 0, 0];
   }
+
+  const d = p.by!;
+  const about = aboutOf(d);
+  const go = about ?? d.move;
+
+  return [
+    about === null ? OP_MOVE : OP_ABOUT,
+    p.ref.x, p.ref.y,
+    go.x, go.y,
+    d.angle,
+    d.skew,
+    d.scale.x, d.scale.y,
+    d.along, d.lean,
+    0,
+  ];
 }
 
 /** Every slot's frame, and every slot's operations laid end to end. */

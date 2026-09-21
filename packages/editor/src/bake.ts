@@ -219,7 +219,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, opsOf, played, playingAt, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Playing, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -320,21 +320,17 @@ export type Origin =
  * round twice, and a spin with a drag in the same keyframe spins while it
  * slides — each of which a single motion fitted to the ends gets wrong, and
  * the first of which it gets wrong only when the keyframe holds anything else.
- * See `played` in `rig.ts` for how each one goes part way.
+ * See `playingOn` in `rig.ts` for how each one goes part way.
  *
- * The keys a keyframe plays, as the operations they are made of: what the
- * shipped table holds, and what `played` knows how to play part way. A key
- * that came from one operation gives back that operation, so this is what it
- * always was — until the table holds deltas themselves, which is when a key
- * that holds two channels at once can be shipped. See `opsOf` in `rig.ts` and
- * `PLAN-keys.md`.
+ * The keys the keyframe plays, each stepped for its repeat: what the shipped
+ * table holds, one for one. See `OP_STRIDE` in `baked.ts`.
  *
  * Only what moves the frame. An erosion, a round or a deform is an amount,
- * which is lerped, and `opsOf` leaves it out.
+ * which is lerped.
  */
 export interface Flight {
   frame: Pose
-  ops: readonly Op[]
+  ops: readonly Playing[]
 }
 
 /**
@@ -361,15 +357,15 @@ export interface Rider extends Flight {
   holders: Holder[]
 }
 
-/** A flight `t` of the way through: every operation that far, one after
- * another, each from the frame the one before it left. Its own frame exactly at
- * nought, and exactly the far keyframe's at one. */
+/** A flight `t` of the way through: everything the keyframe does that far, one
+ * after another, each from the frame the one before it left. Its own frame
+ * exactly at nought, and exactly the far keyframe's at one. */
 export function flown(f: Flight, t: number): Pose {
   if (t === 0) return f.frame;
 
   let out = f.frame;
 
-  for (const op of f.ops) out = played(out, op, t);
+  for (const p of f.ops) out = playingOn(out, p, t);
 
   return out;
 }
@@ -1148,7 +1144,7 @@ function flightOf(world: World, from: number, id: Id, here: boolean, there: bool
   const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
 
   if (here && there) {
-    return { frame: stateAt(world, id, near).frame, ops: playingAt(world, id, far).flatMap(opsOf) };
+    return { frame: stateAt(world, id, near).frame, ops: playingAt(world, id, far).filter(flying) };
   }
 
   return { frame: stateAt(world, id, here ? near : far).frame, ops: [] };
