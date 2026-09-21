@@ -1042,16 +1042,27 @@ const DEPTH = 200;
 export function marked(s: EditorState, was: World): EditorState {
   if (s.world === was) return s;
 
+  const world = gestured(s.world, was);
+
   return {
     ...s,
-    world: gestured(s.world, was),
+    world,
     status: null,
-    // An edit is a moment of its own: what was being stood on was a key of a
-    // world that has moved on, and its place in the list may be somebody
-    // else's now.
-    standing: null,
+    // Still standing on the same key, wherever the edit left it: a gesture
+    // while standing adjusts that key, and the next one has to adjust it too
+    // or the first would be the only one that landed there.
+    standing: still(s.standing, world),
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
+}
+
+/** Where the key stood on is now, or nothing where the edit took it out. */
+function still(on: EditorState['standing'], world: World): EditorState['standing'] {
+  if (on === null) return null;
+
+  const at = (world.rigs.get(on.id)?.keys.get(on.at) ?? []).findIndex(k => k.id === on.key);
+
+  return at < 0 ? null : { ...on, index: at };
 }
 
 /**
@@ -1253,13 +1264,17 @@ export interface EditorState {
    * of them is asking to see the thing as that key leaves it: the canvas draws
    * the world `upto` that key, and where the keyframe ends up is a ghost over
    * it. Nothing else moves — every other thing is where the keyframe leaves
-   * it.
+   * it, and a gesture adjusts the key stood on rather than writing another.
    *
-   * Not in the file, and dropped by anything that moves: another keyframe,
-   * another selection, an edit. Where the cursor is standing is about this
-   * moment rather than about the world.
+   * `key` is the key's own id and `index` is where it sits in the keyframe's
+   * list. Both, because the gesture wants the place and an edit may move it:
+   * standing goes on standing across one, at wherever the key it named is now
+   * — see `marked`. It is gone where that key is.
+   *
+   * Not in the file. Where the cursor is standing is about this moment rather
+   * than about the world.
    */
-  standing: { id: Id, at: KeyframeId, index: number } | null
+  standing: { id: Id, at: KeyframeId, index: number, key: number } | null
 
   /**
    * What the editor last had to say for itself, or nothing.

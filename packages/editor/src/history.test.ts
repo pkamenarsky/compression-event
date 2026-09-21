@@ -10,8 +10,9 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon, deepen, rigOf } from './scene';
+import { TOP, addPolygon, deepen, editedAt, keyRigOf, keysOfAt, moveOf, refolded, rigOf, withKeyRig } from './scene';
 import { timed } from './keys';
+import { NOTHING, withKeysAt } from './rig';
 import { erode, move, wrote } from './testing';
 import {
   EditorState,
@@ -182,5 +183,46 @@ describe('gestures', () => {
 
     expect(rigOf(t.world, ids[0]).keys.get(0)![0]).toEqual({ op: erode(1), times: null, gesture: was });
     expect(t.world.nextId).toEqual(s.world.nextId);
+  });
+});
+
+describe('standing across an edit', () => {
+  /** A room with two keys at v1, stood on the first of them. */
+  const stood = () => {
+    const { world, id } = square(emptyWorld(), 0);
+    const w = wrote(world, 1, id, move(10, 0), move(0, 20));
+    const key = keysOfAt(w, 1, id)[0];
+    const s = { ...initialState(w), keyframe: 1, standing: { id, at: 1, index: 0, key: key.id } };
+
+    return { s, id, key };
+  };
+
+  test('goes on standing on the same key, so the next gesture lands there too', () => {
+    const { s, id, key } = stood();
+    const read = editedAt(s.world, 1, id, key)!;
+    const after = step(s, refolded(s.world, 1, id, 0, moveOf(read.paint, { x: 5, y: 0 })));
+
+    expect(after.standing).toEqual({ id, at: 1, index: 0, key: key.id });
+    expect(keysOfAt(after.world, 1, id)[0].by!.move).toEqual({ x: 15, y: 0 });
+  });
+
+  test('at wherever the edit left it', () => {
+    const { s, id, key } = stood();
+
+    // Something written in front of it: the key is the same key, one along.
+    const now = withKeyRig(s.world, id, withKeysAt(
+      keyRigOf(s.world, id),
+      1,
+      [{ id: 99, ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 1 }, times: 1 }, ...keysOfAt(s.world, 1, id)],
+    ));
+
+    expect(step(s, now).standing).toEqual({ id, at: 1, index: 1, key: key.id });
+  });
+
+  test('and stops where the key is taken out', () => {
+    const { s, id } = stood();
+    const now = withKeyRig(s.world, id, withKeysAt(keyRigOf(s.world, id), 1, keysOfAt(s.world, 1, id).slice(1)));
+
+    expect(step(s, now).standing).toBeNull();
   });
 });

@@ -53,9 +53,24 @@ import { Signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
 import { Input, keyOwned, pressedAway } from './input';
-import { Place, Refused, deleted, droppedAt, entryAt, inserted, pulledAt, pushedAt, reborn, redied, samePlace, skipToggledAt, timedAt } from './keys';
+import {
+  Listed,
+  Place,
+  Refused,
+  deleted,
+  droppedAt,
+  entryAt,
+  inserted,
+  pulledAt,
+  pushedAt,
+  reborn,
+  redied,
+  samePlace,
+  skipToggledAt,
+  timedAt,
+} from './keys';
 import { KeyframeId } from './rig';
-import { order, unchainedAt } from './scene';
+import { keysOfAt, order, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
@@ -697,10 +712,12 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         ctx.change(l => ({ ...l, picked: { lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) } }));
 
         // Stood on: the canvas draws the thing as this key leaves it, with
-        // where the keyframe ends up a ghost over it. A key about single
-        // corners is a place in a corner's row rather than a moment of the
-        // thing, and stands on nothing.
-        ctx.stand('index' in place ? { id: place.id, at, index: place.index } : null);
+        // where the keyframe ends up a ghost over it, and a gesture there
+        // adjusts it. A key about single corners is a place in a corner's row
+        // rather than a moment of the thing, and stands on nothing.
+        const key = 'index' in place ? keysOfAt(w, at, place.id)[place.index] : undefined;
+
+        ctx.stand(key === undefined ? null : { id: place.id, at, index: (place as Listed).index, key: key.id });
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the
