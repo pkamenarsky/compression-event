@@ -219,7 +219,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, amount, played, playedAt, stateAt } from './rig';
+import { CORNER_MAPS, Frame as Pose, Op, REST, State, affineOf, opsOf, played, playingAt, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 
 // -----------------------------------------------------------------------------
@@ -315,15 +315,22 @@ export type Origin =
  * frame of whatever holds it, and what the far keyframe plays over it, in
  * order.
  *
- * The operations themselves, and not one motion that joins the two ends. A
- * turned selection swings about the centre it was turned about, a turn of 720°
- * goes round twice, and a spin with a drag in the same keyframe spins while it
+ * What the keyframe does, and not one motion that joins the two ends. A turned
+ * selection swings about the centre it was turned about, a turn of 720° goes
+ * round twice, and a spin with a drag in the same keyframe spins while it
  * slides — each of which a single motion fitted to the ends gets wrong, and
  * the first of which it gets wrong only when the keyframe holds anything else.
  * See `played` in `rig.ts` for how each one goes part way.
  *
+ * The keys a keyframe plays, as the operations they are made of: what the
+ * shipped table holds, and what `played` knows how to play part way. A key
+ * that came from one operation gives back that operation, so this is what it
+ * always was — until the table holds deltas themselves, which is when a key
+ * that holds two channels at once can be shipped. See `opsOf` in `rig.ts` and
+ * `PLAN-keys.md`.
+ *
  * Only what moves the frame. An erosion, a round or a deform is an amount,
- * which is lerped.
+ * which is lerped, and `opsOf` leaves it out.
  */
 export interface Flight {
   frame: Pose
@@ -352,11 +359,6 @@ export interface Holder extends Flight {
  */
 export interface Rider extends Flight {
   holders: Holder[]
-}
-
-/** Only what moves a frame: the operations a flight plays. */
-function moves(ops: readonly Op[]): Op[] {
-  return ops.filter(op => !amount(op));
 }
 
 /** A flight `t` of the way through: every operation that far, one after
@@ -1146,7 +1148,7 @@ function flightOf(world: World, from: number, id: Id, here: boolean, there: bool
   const near = keyAt(world, from)!, far = keyAt(world, from + 1)!;
 
   if (here && there) {
-    return { frame: stateAt(world, id, near).frame, ops: moves(playedAt(world, id, far)) };
+    return { frame: stateAt(world, id, near).frame, ops: playingAt(world, id, far).flatMap(opsOf) };
   }
 
   return { frame: stateAt(world, id, here ? near : far).frame, ops: [] };

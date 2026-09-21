@@ -213,12 +213,26 @@ once per rig and cached against it, as the entry walk is. The entry walk stays
 for `playedAt` and `sourcesAt`, whose callers have not moved yet. Both walks
 run over the same rigs and the existing tests hold them to each other.
 
-**3b — the bake plays deltas.** `playingAt` gives a keyframe's contributions as
-`{ ref, by }`, in order, and `flown` plays each with `playedBy(…, t)` instead
-of `played(op, t)`. The golden baseline is re-baked and has to come out
-unchanged: partial play is exactly today's for every delta a converted entry
-makes, so a diff here is a bug rather than a decision. `divergence.test.ts`
-guards the rest.
+**3b — the bake reads keys.** In two, because the operations are not only the
+editor's: the shipped level carries a table of them, and both the game's CPU
+replay (`playedAt` in `baked.ts`) and the shader (`played` in `morph.ts`) play
+that table part way, exactly as `played` does here.
+
+*3b-i.* `playingAt` gives a keyframe's contributions — each a key's delta,
+stepped for its repeat, about the point it acts about — and the bake takes its
+flights from there instead of from `playedAt`. What a flight holds is still
+operations: `opsOf` gives a delta back as the operation it came from, numbers
+and all, so nothing the game sees moves and the golden baseline stands. What
+changes is only where the bake reads from, which is what lets the entry walk go.
+
+*3b-ii, before 3d.* The table holds deltas: one kind and the stand, instead of
+five kinds. Both replays follow, and the golden is re-baked there, because a
+delta plays as **one motion** — the painted point round the point the delta
+leaves still — where a table of single operations can only play it as its
+parts. They agree at every keyframe and differ in between, which is to say:
+**folding two gestures into one key changes the motion between the keyframes,
+not the keyframes.** That is what a key means, and the shipped table has to be
+able to say it before a gesture can make one.
 
 **3c — the world holds keys.** `World.rigs` becomes `Map<Id, KeyRig>`, the
 converter runs at load, and `FORMAT` becomes 24. Every writer moves in this
@@ -270,6 +284,10 @@ with a tail, so the pane stops having a second idea of what a repeat is.
 - **Grain is the author's, and permanent.** Two drags that would fold today
   stay two keys unless a break is missing between them. Files get longer; the
   view folds them for display, the data does not.
+- **A fold changes the way, not the ends.** Two gestures folded into one key
+  land where the two landed, and go there as one motion rather than as one
+  after the other. Nothing a keyframe shows moves; what the game draws between
+  two keyframes does.
 - **A key's axes are frozen.** A stretch repeated after something upstream
   turns the thing goes on stretching along the axes it was written along.
   Same as today, now said in one place.

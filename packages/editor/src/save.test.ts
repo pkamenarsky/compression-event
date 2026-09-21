@@ -479,7 +479,7 @@ describe('keys in a file', () => {
 
     // Through a file, as opening one goes: entries out, keys in.
     const file = JSON.parse(JSON.stringify(savedRig(rig))) as SavedRig;
-    const mine = walkedBy(KEYFRAMES, keysOfSaved(file), CORNERS, 0);
+    const mine = walkedBy(KEYFRAMES, keysOfSaved(file), CORNERS, 0).states;
 
     for (let i = 0; i < KEYFRAMES.length; i++) {
       const theirs = stateAt(tl, 1, KEYFRAMES[i].id);

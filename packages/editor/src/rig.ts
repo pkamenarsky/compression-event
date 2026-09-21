@@ -942,6 +942,19 @@ export function sourcesAt(tl: Timeline, id: Id, k: KeyframeId): readonly Source[
   return (i < 0 ? undefined : walked(tl, id)?.sources[i]) ?? [];
 }
 
+/**
+ * What a keyframe does to a thing, in the order it does it: the steps of
+ * repeats begun earlier, each adjusted, and then its own keys.
+ *
+ * Played one after another from the state the keyframe before left, these are
+ * that state carried to this one. What the bake puts in flight over a span.
+ */
+export function playingAt(tl: Timeline, id: Id, k: KeyframeId): readonly Playing[] {
+  const i = indexIn(tl.keyframes, k);
+
+  return (i < 0 ? undefined : stood(tl, id)?.playing[i]) ?? [];
+}
+
 /** A thing's frame at a keyframe in world units: its own, and every group
  * holding it, each at that keyframe. */
 export function worldFrame(tl: Timeline, id: Id, k: KeyframeId): Affine {
@@ -1256,10 +1269,19 @@ export interface Delta {
   round: number
   deform: number
   /**
-   * Where the delta turns about, as an offset from the painted point, for the
-   * one delta that cannot say: a turn by a whole number of turns, whose linear
-   * part is the identity and whose `move` is therefore nought. Absent
-   * everywhere else, where the pair says it already.
+   * Where the delta turns about, as an offset from the painted point: the
+   * point it leaves where it is.
+   *
+   * Derivable from the rest wherever the delta has one such point — it is `w`
+   * with `(I − L) w = move` — and kept all the same, for the two reasons that
+   * outweigh the redundancy. A turn by a whole number of turns *cannot* say
+   * it: its linear part is the identity and its `move` is nought. And the
+   * shipped table holds a turn as an angle and an anchor, so a delta that came
+   * from one gives back the numbers it came from rather than the numbers a
+   * solve makes of them.
+   *
+   * Absent where there is no one such point: a move, a shear, a stretch that
+   * is 1 on an axis.
    */
   about?: Point
 }
@@ -1378,7 +1400,7 @@ export function movedBy(d: Delta, u: number): Point {
  * where it has no one such point: `w` with `(I − L) w = move`.
  */
 function fixedOf(d: Delta): Point | null {
-  if (whole(d.angle)) return d.about ?? null;
+  if (d.about !== undefined) return d.about;
 
   const l = linearOf(d);
   const a = 1 - l.a, b = -l.b, c = -l.c, e = 1 - l.d;
@@ -1427,12 +1449,50 @@ function through(m: Affine, v: Point): Point {
 export function steppedBy(d: Delta, n: number): Delta {
   if (n === 0) return d;
 
+  const about = d.about === undefined ? undefined : { ...stepAbout(d, n) };
+
+  return { ...d, move: moveOn(d, n), ...(about === undefined ? {} : { about }) };
+}
+
+/**
+ * Where the painted point goes on the `n`-th step: `Lⁿ · move`.
+ *
+ * Worked out in closed form for a delta that turns, stretches or shears alone,
+ * rather than by multiplying the map out `n` times — which is the same number
+ * up to the arithmetic, and is the number the operation it came from would
+ * have made. A delta that does two of them at once has no closed form and
+ * takes the multiplication.
+ */
+function moveOn(d: Delta, n: number): Point {
+  const turns = d.angle !== 0;
+  const stretches = d.scale.x !== 1 || d.scale.y !== 1;
+  const shears = d.skew !== 0;
+
+  if (turns && !stretches && !shears) {
+    // Round the anchor `n` steps on, which is where the point has swung to.
+    const about = stepAbout(d, n);
+    const to = spun(about, d.angle);
+
+    return { x: about.x - to.x, y: about.y - to.y };
+  }
+
+  if (stretches && !turns && !shears) {
+    const w = unsheared(d.move, d.along, d.lean);
+
+    return sheared({ x: w.x * Math.pow(d.scale.x, n), y: w.y * Math.pow(d.scale.y, n) }, d.along, d.lean);
+  }
+
+  if (shears && !turns && !stretches) {
+    // `Xⁿ` is the shear by `n · by`: shears along one axis add.
+    return sheared(unsheared(d.move, d.along, -n * d.skew), d.along, 0);
+  }
+
   const l = linearOf(d);
   let move = d.move;
 
   for (let i = 0; i < n; i++) move = through(l, move);
 
-  return { ...d, move, ...(d.about === undefined ? {} : { about: stepAbout(d, n) }) };
+  return move;
 }
 
 /** A whole turn's centre, `n` steps on: it rides the painted point, and the
@@ -1454,13 +1514,17 @@ export function deltaOf(op: Op): Delta | null {
 
     case 'turn': {
       // Where the painted point goes, turning about the anchor: `(I − R) ·
-      // about`, since the anchor is `about` away from it. By a whole number of
-      // turns it goes nowhere and the anchor is lost, so the anchor comes too.
-      if (whole(op.angle)) return { ...NOTHING, angle: op.angle, about: op.about };
-
+      // about`, since the anchor is `about` away from it. The anchor comes
+      // too: by a whole number of turns the point goes nowhere and nothing
+      // else could say where it turned.
       const d = spun(op.about, op.angle);
 
-      return { ...NOTHING, angle: op.angle, move: { x: op.about.x - d.x, y: op.about.y - d.y } };
+      return {
+        ...NOTHING,
+        angle: op.angle,
+        move: whole(op.angle) ? { x: 0, y: 0 } : { x: op.about.x - d.x, y: op.about.y - d.y },
+        about: op.about,
+      };
     }
 
     case 'scale':
@@ -1516,9 +1580,12 @@ export function walkedBy(
   rig: KeyRig,
   corners: readonly Vertex[],
   birth: KeyframeId,
-): (State | undefined)[] {
+): Walking {
   const n = keyframes.length;
-  const out: (State | undefined)[] = new Array(n).fill(undefined);
+  const out: Walking = {
+    states: new Array(n).fill(undefined),
+    playing: Array.from({ length: n }, () => []),
+  };
   const born = indexIn(keyframes, birth);
 
   if (born < 0) return out;
@@ -1536,9 +1603,11 @@ export function walkedBy(
 
   for (let i = born; i < n; i++) {
     const at = keyframes[i].id;
+    const playing = out.playing[i];
 
     const apply = (key: Key, step: number): void => {
       if (key.stand !== undefined) {
+        playing.push({ ref: key.ref, stand: key.stand, key, at, step });
         frame = key.stand.frame;
         for (const kind of AMOUNT_KINDS) totals[kind] = key.stand[AMOUNTS[kind].total];
 
@@ -1549,6 +1618,7 @@ export function walkedBy(
 
       const d = steppedBy(key.by, step);
 
+      playing.push({ ref: key.ref, by: d, key, at, step });
       frame = playedBy(frame, key.ref, d);
       for (const kind of AMOUNT_KINDS) totals[kind] += d[kind];
     };
@@ -1585,7 +1655,7 @@ export function walkedBy(
 
     const none = placing.length === 0;
 
-    out[i] = {
+    out.states[i] = {
       frame,
       erosion: totals.erode,
       corners: none ? NO_CORNERS : standingBy(keyframes, rig, placing, stood, i),
@@ -1598,6 +1668,113 @@ export function walkedBy(
   }
 
   return out;
+}
+
+/**
+ * One thing a keyframe does, in the order it does it: a key's delta, adjusted
+ * for which step of its repeat this is, about the painted point it acts about.
+ *
+ * `key`, `at` and `step` are where it came from — the key, the keyframe it is
+ * written at, and nought for the key itself. What the view picks by and what
+ * the fold compares.
+ */
+export interface Playing {
+  ref: Point
+  /** What it does, or nothing where it stands outright. */
+  by?: Delta
+  stand?: Stand
+  key: Key
+  at: KeyframeId
+  step: number
+}
+
+/** A walk's answer: where the thing stands at each keyframe, and what each
+ * keyframe did to get there. */
+export interface Walking {
+  states: (State | undefined)[]
+  playing: Playing[][]
+}
+
+/** A delta played over the frame it starts from, all of it or `u` of the way
+ * through, as the operations it is made of. Exactly what its operation did
+ * where the key came from one, which is every key until a gesture folds two
+ * into one — see `opsOf`. */
+export function playingOn(f: Frame, p: Playing, u = 1): Frame {
+  let out = f;
+
+  for (const op of opsOf(p)) out = played(out, op, u);
+
+  return out;
+}
+
+/** Whether a contribution moves the frame at all, as against only deepening,
+ * rounding or deforming. */
+export function flying(p: Playing): boolean {
+  if (p.stand !== undefined) return true;
+
+  const d = p.by;
+
+  return d !== undefined
+    && (d.move.x !== 0 || d.move.y !== 0 || d.angle !== 0 || d.skew !== 0 || d.scale.x !== 1 || d.scale.y !== 1);
+}
+
+/**
+ * A contribution as the operations it is made of, in the order they play:
+ * shear, stretch, turn, move.
+ *
+ * What the shipped table holds and what plays part way, until the table holds
+ * deltas themselves. A delta that came from one operation gives back that
+ * operation, numbers and all — a turn keeps the anchor it was written with
+ * rather than one solved from its move, which is why `about` is stored.
+ *
+ * A delta that holds more than one of them is exact at the ends and takes its
+ * own path between: each part about the painted point, and the move last. That
+ * is not what a key means — a key is one motion, about the point it leaves
+ * still — and it is what a table of single operations can say. See
+ * `PLAN-keys.md`.
+ */
+export function opsOf(p: Playing): Op[] {
+  if (p.stand !== undefined) return [p.stand];
+
+  const d = p.by;
+
+  if (d === undefined) return [];
+
+  const turns = d.angle !== 0;
+  const stretches = d.scale.x !== 1 || d.scale.y !== 1;
+  const shears = d.skew !== 0;
+  const alone = Number(turns) + Number(stretches) + Number(shears) <= 1;
+  const moved = d.move.x !== 0 || d.move.y !== 0;
+
+  // One of them, with the move it carries: the operation this came from.
+  if (alone) {
+    if (turns) return [{ kind: 'turn', angle: d.angle, ref: p.ref, about: d.about ?? fixed(d) }];
+    if (stretches) return [{ kind: 'scale', by: d.scale, ref: p.ref, shift: d.move, along: d.along, lean: d.lean }];
+    if (shears) return [{ kind: 'skew', by: d.skew, ref: p.ref, shift: d.move, along: d.along }];
+
+    return moved ? [{ kind: 'move', by: d.move }] : [];
+  }
+
+  const out: Op[] = [];
+  const none = { x: 0, y: 0 };
+
+  if (shears) out.push({ kind: 'skew', by: d.skew, ref: p.ref, shift: none, along: d.along });
+  if (stretches) out.push({ kind: 'scale', by: d.scale, ref: p.ref, shift: none, along: d.along, lean: d.lean });
+  if (turns) out.push({ kind: 'turn', angle: d.angle, ref: p.ref, about: none });
+  if (moved) out.push({ kind: 'move', by: d.move });
+
+  return out;
+}
+
+/** The anchor of a turn whose delta has lost it, which nothing written by
+ * `deltaOf` has. */
+function fixed(d: Delta): Point {
+  const c = Math.cos(d.angle), s = Math.sin(d.angle);
+  const det = (1 - c) * (1 - c) + s * s;
+
+  return det === 0
+    ? { x: 0, y: 0 }
+    : { x: ((1 - c) * d.move.x + s * d.move.y) / det, y: ((1 - c) * d.move.y - s * d.move.x) / det };
 }
 
 /** Where every corner standing at `i` stands, in the rest frame: what a stand
@@ -1808,11 +1985,10 @@ export function keysFor(rig: Rig): KeyRig {
   return held;
 }
 
-interface Stood {
+interface Stood extends Walking {
   rig: Rig
   thing: object
   order: KeyframeId[]
-  states: (State | undefined)[]
 }
 
 const standings = new WeakMap<object, Stood>();
@@ -1836,7 +2012,7 @@ function stood(tl: Timeline, id: Id): Stood | null {
     rig,
     thing: record,
     order: tl.keyframes.map(f => f.id),
-    states: walkedBy(tl.keyframes, keysFor(rig), thing.points ?? [], thing.birth),
+    ...walkedBy(tl.keyframes, keysFor(rig), thing.points ?? [], thing.birth),
   };
 
   standings.set(rig === EMPTY_RIG ? record : rig, out);

@@ -94,7 +94,7 @@ describe('a world read as keys stands where it stood', () => {
 
         // Both ways in: converted in memory, and read back out of the file.
         for (const keys of [keysOf(rig), keysOfSaved(saved)]) {
-          const mine = walkedBy(keyframes, keys, corners, birth);
+          const mine = walkedBy(keyframes, keys, corners, birth).states;
 
           for (let i = 0; i < keyframes.length; i++) {
             const at = keyframes[i].id;

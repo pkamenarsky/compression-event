@@ -19,7 +19,7 @@ import {
   withKeys,
 } from './rig';
 import { Vertex, VertexId } from './types';
-import { deltaOf, keysOf, playedBy, steppedBy, walkedBy } from './rig';
+import { Delta, Key, NOTHING, deltaOf, flying, keysOf, opsOf, playedBy, playingOn, steppedBy, walkedBy } from './rig';
 
 // A handful of frames a key might be played over: at rest, moved, turned,
 // stretched, sheared, and all of it at once. What a delta does must not depend
@@ -367,7 +367,7 @@ describe('the walk over keys is the walk over entries', () => {
     test(`rig ${seed}`, () => {
       const rig = someRig(seed);
       const tl = timelineOf(rig);
-      const mine = walkedBy(WALK_KEYFRAMES, keysOf(rig), CORNERS, 0);
+      const mine = walkedBy(WALK_KEYFRAMES, keysOf(rig), CORNERS, 0).states;
 
       for (let i = 0; i < WALK_KEYFRAMES.length; i++) {
         const at = WALK_KEYFRAMES[i].id;
@@ -396,3 +396,92 @@ describe('the walk over keys is the walk over entries', () => {
     });
   }
 });
+
+// -----------------------------------------------------------------------------
+// As operations
+//
+// What the shipped table holds, until it holds deltas: a key as the operations
+// it is made of. A key that came from one operation has to give back that
+// operation, numbers and all, or a bake would move where nothing changed.
+// -----------------------------------------------------------------------------
+
+describe('a key as the operations it is made of', () => {
+  test('one that came from an operation gives it back exactly', () => {
+    for (const f of FRAMES) {
+      for (const op of wroteAt(f)) {
+        const d = deltaOf(op)!;
+        const ref = refsFor(op)[0];
+        const back = opsOf({ ref, by: d, key: KEY, at: 0, step: 0 });
+
+        if (op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform') {
+          expect(back, 'an amount does not move the frame').toEqual([]);
+          continue;
+        }
+
+        expect(back).toEqual([op]);
+      }
+    }
+  });
+
+  test('and so does every step of its repeat', () => {
+    for (const f of FRAMES) {
+      for (const op of wroteAt(f)) {
+        if (op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform') continue;
+
+        const d = deltaOf(op)!;
+        const ref = refsFor(op)[0];
+
+        for (let n = 1; n <= 3; n++) {
+          const back = opsOf({ ref, by: steppedBy(d, n), key: KEY, at: 0, step: n });
+
+          expect(back, `${op.kind} step ${n}`).toEqual([stepped(op, n)]);
+        }
+      }
+    }
+  });
+
+  test('one that holds two at once is exact at the ends', () => {
+    // What a gesture folded into the open key will make, which no single
+    // operation says: its path between the ends is the operations', and its
+    // ends are its own.
+    const both: Delta = {
+      ...NOTHING,
+      angle: 0.6,
+      scale: { x: 1.4, y: 0.75 },
+      move: { x: 12, y: -5 },
+      along: 0.2,
+      lean: 0.1,
+    };
+
+    for (const f of FRAMES) {
+      for (const ref of REFS) {
+        const p = { ref, by: both, key: KEY, at: 0, step: 0 };
+
+        near(playingOn(f, p), playedBy(f, ref, both), 'two channels at once');
+        near(playingOn(f, p, 0), f, 'nought of the way through');
+      }
+    }
+  });
+
+  test('a stand is itself, and moves the frame', () => {
+    const stand: Stand = {
+      kind: 'stand',
+      frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
+      erosion: 0,
+      corners: new Map(),
+      depths: new Map(),
+      bevel: 0,
+      amplitude: 0,
+      bevels: new Map(),
+      amplitudes: new Map(),
+    };
+    const p = { ref: { x: 0, y: 0 }, stand, key: KEY, at: 0, step: 0 };
+
+    expect(opsOf(p)).toEqual([stand]);
+    expect(flying(p)).toBe(true);
+    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 3 }, key: KEY, at: 0, step: 0 })).toBe(false);
+    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, move: { x: 1, y: 0 } }, key: KEY, at: 0, step: 0 })).toBe(true);
+  });
+});
+
+const KEY: Key = { id: 0, ref: { x: 0, y: 0 }, times: 1 };
