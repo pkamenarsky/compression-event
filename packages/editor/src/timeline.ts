@@ -201,6 +201,16 @@ export function timeline(
       [
         // Delete is the pick's for as long as there is one.
         effect(() => local().picked !== null, on => (on ? input.claim(ctx, ...KEYS) : undefined)),
+
+        // Stepped to another keyframe — by the arrows, say — a pick at the one
+        // left behind goes: the keyframe on screen is as it ends.
+        effect(keyframe, k => {
+          const p = local().picked;
+
+          if (p !== null && p.lead.at !== k) change(l => ({ ...l, picked: null }));
+
+          return undefined;
+        }),
         keys(ctx, input),
 
         // A press anywhere else lets the pick go, so that Delete is the
@@ -729,9 +739,12 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the
       // one before — and what is picked with it, where it is picked.
-      const moved = (up: PointerEvent) => {
+      // Where the icon was let go rather than the pointer, which holds it off
+      // centre and can be past where the icon was held back to.
+      const x = placed(m, r, col, i);
+      const moved = (_up: PointerEvent, dx: number) => {
         const w = ctx.state().world;
-        const to = colAt(ctx, up.clientX);
+        const to = colAt(ctx, (ctx.inner?.getBoundingClientRect().left ?? 0) + x + dx);
         const going = picked && m.picked !== null ? m.picked.all : [place];
 
         if (to > col) {
@@ -758,7 +771,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         onpointerenter: (e: PointerEvent) => {
           (e.currentTarget as HTMLElement).title = entryTitle(ctx, place);
         },
-        onpointerdown: (e: PointerEvent) => dragged(e, click, moved),
+        onpointerdown: (e: PointerEvent) => dragged(e, click, moved, reach(m, r, col, x)),
       });
     }),
   ]);
@@ -773,11 +786,35 @@ function entryTitle(ctx: Ctx, place: Place): string {
 }
 
 /**
- * A press that is either a click or a drag along the columns: `click` if it
- * never went anywhere, and `done` with where it was let go otherwise. The
- * element follows the pointer meanwhile, and nothing is written until then.
+ * How far a key at `x` in `col` can be dragged and still land somewhere: back
+ * to after the last key of the keyframe before, on to before the first of the
+ * one after — a drop is a pull or a push by one keyframe, and nothing further.
+ * Where there is no keyframe that way, no further than its own.
  */
-function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (up: PointerEvent) => void): void {
+function reach(m: Model, r: Row, col: number, x: number): { lo: number, hi: number } {
+  const n = r.cells[col - 1]?.places.length ?? 0;
+  const lo = col === 0
+    ? m.xs[col]
+    : Math.min(m.xs[col - 1] + m.widths[col - 1] - 1, n === 0 ? slot(m, col - 1, 0) : placed(m, r, col - 1, n - 1) + SLOT / 2);
+  const hi = col === m.xs.length - 1
+    ? m.xs[col] + m.widths[col] - 1
+    : Math.max(m.xs[col + 1] + 1, slot(m, col + 1, 0) - SLOT / 2);
+
+  return { lo: lo - x, hi: hi - x };
+}
+
+/**
+ * A press that is either a click or a drag along the columns: `click` if it
+ * never went anywhere, and `done` with how far along it was let go otherwise —
+ * held to `within`, as far as it may go either way, where that is given. The element
+ * follows the pointer meanwhile, and nothing is written until then.
+ */
+function dragged(
+  e: PointerEvent,
+  click: (up: PointerEvent) => void,
+  done: (up: PointerEvent, dx: number) => void,
+  within?: { lo: number, hi: number },
+): void {
   if (e.button !== 0) return;
 
   e.preventDefault();
@@ -788,11 +825,15 @@ function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (up: 
   const was = el.style.transform;
   let moving = false;
 
-  const move = (ev: PointerEvent) => {
+  const along = (ev: PointerEvent) => {
     const dx = ev.clientX - x0;
 
-    if (Math.abs(dx) > 3) moving = true;
-    if (moving) el.style.transform = `translateX(${dx}px) ${was}`;
+    return within === undefined ? dx : Math.max(within.lo, Math.min(within.hi, dx));
+  };
+
+  const move = (ev: PointerEvent) => {
+    if (Math.abs(ev.clientX - x0) > 3) moving = true;
+    if (moving) el.style.transform = `translateX(${along(ev)}px) ${was}`;
   };
 
   const up = (ev: PointerEvent) => {
@@ -800,7 +841,7 @@ function dragged(e: PointerEvent, click: (up: PointerEvent) => void, done: (up: 
     window.removeEventListener('pointerup', up);
     el.style.transform = was;
 
-    if (moving) done(ev);
+    if (moving) done(ev, along(ev));
     else click(ev);
   };
 
