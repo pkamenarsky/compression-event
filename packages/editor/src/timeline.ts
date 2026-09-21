@@ -9,9 +9,9 @@
 // view scrolls, its headings staying where they are.
 //
 // A key is what a hand did at a keyframe without saying it was finished, and
-// it draws as one diamond however much that is — filled where it is more than
-// one thing. What it does in words is on hovering it. See `drawn`, and `Key`
-// in `rig.ts`.
+// it draws as one diamond however much that is. Hollow is a key that does
+// nothing yet — what breaking leaves, waiting to be filled. What a key does in
+// words is on hovering it. See `drawn`, and `Key` in `rig.ts`.
 //
 // A key about single corners alone is not in the thing's row at all: it is in
 // the rows of the corners it names, which are a projection of the keys rather
@@ -645,15 +645,19 @@ const ICONS: Record<Kind, string> = {
 };
 
 /**
- * What a key is drawn as: a diamond.
+ * What a key is drawn as: a diamond, filled where it does anything.
  *
  * One shape for one key, whatever it holds — a hand that turned a thing and
  * then moved it wrote one key, and the row says so by drawing one thing.
- * Which of them it is is on hovering it, in words, and the canvas shows it
- * outright; a row of little pictures inside the diamond would be a list where
- * the point is that there is no list.
+ * What it does in words is on hovering it, and the canvas shows it outright; a
+ * row of little pictures inside the diamond would be a list where the point is
+ * that there is no list.
  *
- * An unchaining is not one: it is where the thing stops hearing from upstream
+ * Hollow is a key that does nothing yet: what breaking leaves, so that saying
+ * "this one is finished" is a thing you can see happen, and the gesture that
+ * fills it fills it in. See `broken` in `scene/core.ts`.
+ *
+ * An unchaining is neither: it is where the thing stops hearing from upstream
  * rather than something done to it, and it keeps the two bars it has always
  * been drawn as.
  */
@@ -673,8 +677,7 @@ function drawn(kinds: readonly Kind[], colour: string): VNode[] {
 
   return [path({
     d: `M${half} 1.5 L${ICON - 1.5} ${half} L${half} ${ICON - 1.5} L1.5 ${half} Z`,
-    // Filled where it holds more than one thing: the fold, seen from here.
-    fill: kinds.length > 1 ? colour : 'none',
+    fill: kinds.length > 0 ? colour : 'none',
     stroke: colour,
     'stroke-width': 1.4,
     'stroke-linejoin': 'round',

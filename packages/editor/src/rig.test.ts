@@ -36,6 +36,8 @@ import {
   keysOf,
   EMPTY_KEYS,
   Key,
+  NOTHING,
+  addedBy,
   appendedBy,
   deltaOf,
   keysAt,
@@ -337,10 +339,17 @@ describe('a keyframe\'s keys', () => {
     const second = turnAbout(30, r, rotated(r, 30), { x: 50, y: 50 });
     let rig = appendedBy(EMPTY_KEYS, 0, r, deltaOf(first)!);
 
-    rig = { keys: new Map([[0, keysAt(rig, 0).map(k => ({ ...k, closed: true }))]]) };
+    // Breaking is an empty key on the end; the next gesture fills that one
+    // rather than growing the one before. See `broken` in `scene/core.ts`.
+    rig = addedBy(rig, 0, ORIGIN, NOTHING);
+
+    expect(keysAt(rig, 0)).toHaveLength(2);
+    expect(keysAt(rig, 0)[1].by).toEqual(NOTHING);
+
     rig = appendedBy(rig, 0, r, deltaOf(second)!);
 
     expect(keysAt(rig, 0)).toHaveLength(2);
+    expect(keysAt(rig, 0)[1].by!.angle).toBeCloseTo(30 * Math.PI / 180, 12);
   });
 
   test('turns about the same centre are one key, and it is exact', () => {

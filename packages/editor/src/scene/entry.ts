@@ -126,17 +126,13 @@ export function refolded(world: World, k: KeyframeId, id: Id, index: number, op:
   const also = kindOf(key) === 'scale' && by.scale !== undefined
     ? { ...by, along: key.by.along, lean: key.by.lean }
     : by;
-  // Its own repeat and whether it is closed are the key's, not the fold's:
-  // what is being asked is what the two operations come to.
-  const both = foldedBy({ ...key, times: 1, skip: undefined, closed: undefined }, key.ref, also);
+  // Its own repeat is the key's, not the fold's: what is being asked is what
+  // the two operations come to.
+  const both = foldedBy({ ...key, times: 1, skip: undefined }, key.ref, also);
 
   if (both === null) return world;
 
-  const kept = {
-    times: key.times,
-    ...(key.skip === undefined ? {} : { skip: key.skip }),
-    ...(key.closed === undefined ? {} : { closed: key.closed }),
-  };
+  const kept = { times: key.times, ...(key.skip === undefined ? {} : { skip: key.skip }) };
   const now = both === 'gone'
     ? list.filter((_x, i) => i !== index)
     : list.map((x, i) => (i === index ? { ...both, ...kept } : x));

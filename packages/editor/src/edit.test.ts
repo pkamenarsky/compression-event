@@ -15,7 +15,7 @@ import {
   turnOf,
   upto,
 } from './scene';
-import { Frame, framed, playingAt, playingOn, stateAt, worldFrame } from './rig';
+import { Frame, NOTHING, framed, playingAt, playingOn, stateAt, worldFrame } from './rig';
 import { erode, move, moved, repeated, scaled, turned, wrote, wroteOne } from './testing';
 import { Id, KeyframeId, World, emptyWorld } from './types';
 
@@ -164,8 +164,7 @@ describe('break and split', () => {
     expect(keys[0].by!.move).toEqual(keysOfAt(moved, 1, id)[0].by!.move);
     expect(keys[1].by!.angle).toBeCloseTo(0.5, 12);
 
-    // And the first is closed, so the next gesture is its own key too.
-    expect(keys[0].closed).toBe(true);
+
     expectFrame(at(apart, id, 1), at(turned, id, 1));
   });
 
@@ -255,5 +254,38 @@ describe('standing on a key', () => {
     const { world, id } = two();
 
     expect(upto(world, 1, id, keysOfAt(world, 1, id).length - 1)).toBe(world);
+  });
+});
+
+describe('an empty key', () => {
+  test('breaking leaves one, and the next gesture fills it', () => {
+    const { world, id } = room();
+    const moved = wroteOne(world, 1, id, move(10, 0));
+    const after = broken(moved, 1, [id]);
+    const keys = keysOfAt(after, 1, id);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[1].by).toEqual(NOTHING);
+
+    // It does nothing, so the thing is where it was.
+    expectFrame(at(after, id, 1), at(moved, id, 1));
+
+    const spun = wroteOne(after, 1, id, turned(0.5, { x: 200, y: 0 }));
+
+    expect(keysOfAt(spun, 1, id)).toHaveLength(2);
+    expect(keysOfAt(spun, 1, id)[1].by!.angle).toBeCloseTo(0.5, 12);
+  });
+
+  test('breaking twice says what breaking once said', () => {
+    const { world, id } = room();
+    const once = broken(wroteOne(world, 1, id, move(10, 0)), 1, [id]);
+
+    expect(broken(once, 1, [id])).toBe(once);
+  });
+
+  test('and one where nothing is written at all is still one', () => {
+    const { world, id } = room();
+
+    expect(keysOfAt(broken(world, 1, [id]), 1, id)).toHaveLength(1);
   });
 });

@@ -132,8 +132,6 @@ export interface SavedKey {
   /** Absent is none. */
   skip?: KeyframeId[]
   stand?: SavedStand
-  /** Absent is open. See `Key`. */
-  closed?: boolean
   /** Absent is none. */
   group?: number
 }
@@ -400,7 +398,6 @@ function savedKey(key: Key): SavedKey {
     times: key.times,
     skip: key.skip === undefined || key.skip.size === 0 ? undefined : [...key.skip],
     stand: key.stand === undefined ? undefined : savedStand(key.stand),
-    closed: key.closed === true ? true : undefined,
     group: key.group,
   });
 }
@@ -423,7 +420,6 @@ function restoredKey(key: SavedKey): Key {
     times: key.times,
     skip: key.skip === undefined || key.skip.length === 0 ? undefined : new Set(key.skip),
     stand: key.stand === undefined ? undefined : restoredStand(key.stand),
-    closed: key.closed,
     group: key.group,
   });
 }

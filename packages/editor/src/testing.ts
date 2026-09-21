@@ -8,8 +8,8 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { appended, broken, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withRig } from './scene';
-import { Amount, Move, Op, repeating, withKeys } from './rig';
+import { appended, keyRigOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig } from './scene';
+import { Amount, Move, Op, REST, addedBy, deltaOf, idle, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
 import { Id, KeyframeId, Options, World } from './types';
 
@@ -22,15 +22,20 @@ export type Writing = Op | ((world: World, v: KeyframeId, id: Id) => Op);
  * written against the world the ones before it left, and each a key of its
  * own.
  *
- * Broken between them, where the canvas would fold them into one: what a test
- * says by writing four things is a keyframe that holds four, and a fold has
- * `wroteOne` and its own tests. See `broken` in `scene/core.ts`.
+ * A key each, where the canvas would fold them into one: what a test says by
+ * writing four things is a keyframe that holds four. The hand that does not
+ * let go is `wroteOne`, and the fold has its own tests.
  */
 export function wrote(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): World {
   let out = world;
 
   for (const op of ops) {
-    out = broken(appended(out, v, id, typeof op === 'function' ? op(out, v, id) : op), v, [id]);
+    const written = typeof op === 'function' ? op(out, v, id) : op;
+    const by = deltaOf(written);
+
+    if (by === null || idle(by)) continue;
+
+    out = withKeyRig(out, id, addedBy(keyRigOf(out, id), v, 'ref' in written ? written.ref : REST.t, by));
   }
 
   return out;

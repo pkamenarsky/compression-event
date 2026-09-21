@@ -1001,7 +1001,8 @@ export interface Delta {
   about?: Point
 }
 
-/** A delta that does nothing. */
+/** A delta that does nothing: what an empty key holds, until a gesture fills
+ * it. */
 export const NOTHING: Delta = {
   move: { x: 0, y: 0 },
   angle: 0,
@@ -1036,15 +1037,6 @@ export interface Key {
   skip?: ReadonlySet<KeyframeId>
   /** The state outright, instead of a delta: what unchaining writes. */
   stand?: Stand
-  /**
-   * Whether the author has said this key is finished.
-   *
-   * A gesture folds into the keyframe's last key, which is how a hand that
-   * moves a thing and then turns it leaves one key rather than two. Breaking
-   * says the next thing written is a key of its own — see `broken` in
-   * `scene/core.ts`. Absent is open.
-   */
-  closed?: boolean
   /** The gesture that wrote it, where one wrote keys on several things. */
   group?: number
 }
@@ -1661,9 +1653,6 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
         ...(by === null ? { stand: e.op as Stand } : { by }),
         times: e.times,
         ...(e.skip === undefined ? {} : { skip: e.skip }),
-        // An entry is a thing on its own — a list of them never folded — so
-        // what it comes back as is a key nothing folds into. See `Key.closed`.
-        closed: true,
         ...(e.gesture === undefined ? {} : { group: e.gesture }),
       });
     }
@@ -1681,7 +1670,6 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
       ref: ORIGIN,
       times: e.times,
       ...(e.skip === undefined ? {} : { skip: e.skip }),
-      closed: true,
       ...(e.gesture === undefined ? {} : { group: e.gesture }),
     };
 
@@ -1911,6 +1899,13 @@ export function nextKey(rig: KeyRig): number {
   return out;
 }
 
+/** A key of its own at the end of a keyframe's list, whatever is already
+ * there: what breaking writes, and what a test writes when it says a keyframe
+ * holds several things. */
+export function addedBy(rig: KeyRig, k: KeyframeId, ref: Point, by: Delta): KeyRig {
+  return withKeysAt(rig, k, [...keysAt(rig, k), keyOnce(nextKey(rig), ref, by)]);
+}
+
 /**
  * `by` added to the end of a keyframe's list, folded into the last key where
  * the two are exactly one, and left off where it does nothing.
@@ -1947,8 +1942,8 @@ export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
 
   // A key that repeats is what a thing keeps doing, and a hand adding to it is
   // saying how far each step goes rather than writing another — which is
-  // `nudged`'s rule for a corner, and not this. A closed one is closed.
-  if (was === undefined || key.times !== 1 || key.skip !== undefined || key.closed) return null;
+  // `nudged`'s rule for a corner, and not this.
+  if (was === undefined || key.times !== 1 || key.skip !== undefined) return null;
 
   // A delta that neither turns nor reshapes says the same thing about every
   // point of the thing — a move is a move wherever it is painted, and an

@@ -144,6 +144,8 @@ import {
   idle,
   lessBy,
   near,
+  NOTHING,
+  addedBy,
 } from '../rig';
 
 export type { Affine };
@@ -1515,13 +1517,14 @@ export function upto(world: World, v: KeyframeId, id: Id, index: number): World 
 }
 
 /**
- * The keyframe's last key for each of `ids` closed: the next thing written
- * there is a key of its own.
+ * An empty key at the end of the keyframe for each of `ids`: the next thing
+ * written there fills it rather than growing the one before.
  *
- * A gesture folds into the key the one before it left — a hand that moves a
- * thing and then turns it leaves one key, which is one motion — and this is
- * how an author says that one is finished. Nothing else about it changes; a
- * closed key plays exactly as it did.
+ * A gesture folds into the keyframe's last key — a hand that moves a thing and
+ * then turns it leaves one key, which is one motion — so an author says that
+ * one is finished by starting another. An empty key does nothing at all, and
+ * says so: the keyframe view draws it hollow, and the gesture that fills it
+ * fills it in.
  */
 export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
   let out = world;
@@ -1531,9 +1534,10 @@ export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
     const list = keysAt(rig, v);
     const last = list[list.length - 1];
 
-    if (last === undefined || last.closed) continue;
+    // One empty key is enough: breaking twice says what breaking once said.
+    if (last?.by !== undefined && idle(last.by)) continue;
 
-    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, -1), { ...last, closed: true }]));
+    out = withKeyRig(out, id, addedBy(rig, v, REST.t, NOTHING));
   }
 
   return out;
@@ -1574,7 +1578,7 @@ export function split(world: World, was: World, v: KeyframeId, ids: readonly Id[
 
     const key: RigKey = { id: nextKey(rig), ref: now.ref, by, times: 1 };
 
-    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, at), { ...before, closed: true }, key]));
+    out = withKeyRig(out, id, withKeysAt(rig, v, [...list.slice(0, at), before, key]));
   }
 
   return out;
