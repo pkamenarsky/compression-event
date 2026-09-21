@@ -3029,59 +3029,62 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
 
   /** Whether a repeat still has steps to take after the copy keyframe. */
   const reaches = (u: Unrolled): boolean => {
-    const times = rigOf(world, u.id).keys.get(u.at)?.[u.nth]?.times;
+    const times = keysOfAt(world, u.at, u.id)[u.nth]?.times;
 
     return times === null || (times !== undefined && offset(u.at) + times - 1 > 0);
   };
 
   /** What happens to `id` after the copy keyframe: in world units for the
    * outermost, and in the frame of what holds it for the rest. */
-  const timed = (id: Id, outermost: boolean): Timed & { keysOf: Rig } => {
+  const timed = (id: Id, outermost: boolean): Timed => {
     const freeing = outermost ? freed(world, id) : { world, unrolled: [] };
     const src = freeing.world;
-    const rig = rigOf(src, id);
+    const rig = keyRigOf(src, id);
     const state = stateAt(world, id, v);
-    const mine = rig.keys.get(v) ?? [];
+    const mine = keysAt(rig, v);
 
-    // A repeat's step, as an entry of its own that carries on from there.
-    const carrying = (op: Op, { entry, step }: Source, k: KeyframeId): Entry =>
-      skipping(world.keyframes, { ...entry, op, times: entry.times === null ? null : entry.times - step }, k);
+    // A repeat's step, as a key of its own that carries on from there.
+    const carrying = (p: Playing, k: KeyframeId): RigKey =>
+      skipping(world.keyframes, {
+        ...p.key,
+        ...(p.stand === undefined ? { by: p.by } : { stand: p.stand }),
+        ref: p.ref,
+        times: p.key.times === null ? null : p.key.times - p.step,
+      }, k);
 
     // Up to its last stand, the copy keyframe's own list is where the copy
     // starts: a stand holds nothing that can be written again elsewhere.
-    const cut = mine.map(e => e.op.kind).lastIndexOf('stand') + 1;
-    const stand = cut > 0 ? mine[cut - 1].op as Stand : null;
+    const cut = mine.map(e => (e.stand === undefined ? '' : 'stand')).lastIndexOf('stand') + 1;
+    const stand = cut > 0 ? mine[cut - 1].stand! : null;
     const was = at > 0 ? stateAt(src, id, world.keyframes[at - 1].id) : null;
 
     // With no stand, it starts where the keyframe before left it, and the
     // copy keyframe comes across as what it does: the steps of the repeats
     // running into it, as entries that carry on, and then its own list. So a
     // repeat begun there begins where the paste lands, in the same order.
-    const sources = sourcesAt(src, id, v);
     const running = stand !== null
       ? []
-      : playedAt(src, id, v).flatMap((op, j) => (sources[j].at === v ? [] : [carrying(op, sources[j], v)]));
+      : playingAt(src, id, v).flatMap(p => (p.at === v ? [] : [carrying(p, v)]));
 
     // Behind a stand, what is running goes on past it, and comes across as its
     // next step at the head of the keyframe after: the same rig with nothing
     // after the stand in it, walked on.
-    const before = withRig(src, id, {
-      ...rig,
+    const before = withKeyRig(src, id, {
       keys: new Map([...[...rig.keys].filter(([k]) => offset(k) < 0), ...(cut > 0 ? [[v, mine.slice(0, cut)] as const] : [])]),
     });
 
-    const keys: [number, Entry[]][] = [];
+    const keys: [number, RigKey[]][] = [];
 
     if (running.length + mine.length - cut > 0) keys.push([0, [...running, ...mine.slice(cut)]]);
 
     for (let i = at + 1; i < n; i++) {
       const k = world.keyframes[i].id;
-      const own = rig.keys.get(k) ?? [];
+      const own = keysAt(rig, k);
 
       // Only the keyframe right after: from there, the walk steps them on.
-      const steps: Entry[] = stand === null || i > at + 1
+      const steps: RigKey[] = stand === null || i > at + 1
         ? []
-        : playedAt(before, id, k).map((op, j) => carrying(op, sourcesAt(before, id, k)[j], k));
+        : playingAt(before, id, k).map(p => carrying(p, k));
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
@@ -3103,13 +3106,8 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       // What the fold took apart matters only where it goes on past the copy.
       unrolled: freeing.unrolled.filter(reaches),
       ...(world.effects.has(id) ? { effects: world.effects.get(id)! } : {}),
-      keysOf: rig,
     };
   };
-
-  /** A corner's entries after the copy keyframe, by offset. */
-  const later = <E>(map: ReadonlyMap<KeyframeId, E> | undefined): [number, E][] =>
-    [...(map ?? [])].flatMap(([k, e]): [number, E][] => (offset(k) > 0 ? [[offset(k), e]] : []));
 
   const clip = (id: Id, outermost: boolean): Clipping[] => {
     const here = new Set(chain(world, v));
@@ -3119,24 +3117,20 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     const thing = world.artefacts.get(id);
 
     if (thing !== undefined) {
-      const { keysOf: _rig, ...time } = timed(id, outermost);
-
-      return [{ kind: 'artefact', type: thing.type, at: thing.at, death: outliving(world, thing, v), ...time }];
+      return [{ kind: 'artefact', type: thing.type, at: thing.at, death: outliving(world, thing, v), ...timed(id, outermost) }];
     }
 
     const walk = world.paths.get(id);
 
     if (walk !== undefined) {
-      const { keysOf: _rig, ...time } = timed(id, outermost);
-
-      return [{ kind: 'path', points: walk.points, death: outliving(world, walk, v), ...time }];
+      return [{ kind: 'path', points: walk.points, death: outliving(world, walk, v), ...timed(id, outermost) }];
     }
 
     const group = world.groups.get(id);
 
     if (group !== undefined) {
       const members = group.members.flatMap(m => clip(m, false));
-      const { keysOf: _rig, ...time } = timed(id, outermost);
+      const time = timed(id, outermost);
 
       return members.length === 0 ? [] : [{ kind: 'group', sealed: group.sealed, members, ...time }];
     }
@@ -3146,7 +3140,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     if (polygon === undefined) return [];
 
     const state = stateAt(world, id, v);
-    const { keysOf: rig, ...time } = timed(id, outermost);
+    const time = timed(id, outermost);
 
     const points = polygon.points
       .filter(c => state.corners.has(c.id) || offset(c.birth) > 0)
@@ -3167,10 +3161,6 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       depths: [...state.depths],
       bevels: [...state.bevels],
       amplitudes: [...state.amplitudes],
-      nudges: [...rig.nudges].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
-      deep: [...rig.depths].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
-      rounds: [...rig.rounds].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
-      deforms: [...rig.deforms].filter(([c]) => kept.has(c)).map(([c, m]) => [c, later(m)]),
       cornerEffects: [...kept].flatMap(c => (world.cornerEffects.has(c) ? [[c, world.cornerEffects.get(c)!] as [VertexId, Partial<Effects>]] : [])),
       death: outliving(world, polygon, v),
       ...time,
@@ -3325,16 +3315,19 @@ function written(
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
 
-  const keys = new Map<KeyframeId, readonly Entry[]>([
-    [v, [once<Stand>({
-      kind: 'stand',
-      frame: start,
-      erosion: clip.erosion,
-      corners,
-      ...amounts,
-      bevel: clip.bevel ?? 0,
-      amplitude: clip.amplitude ?? 0,
-    })]],
+  const stand: Stand = {
+    kind: 'stand',
+    frame: start,
+    erosion: clip.erosion,
+    corners,
+    ...amounts,
+    bevel: clip.bevel ?? 0,
+    amplitude: clip.amplitude ?? 0,
+  };
+
+  let made = 0;
+  const keys = new Map<KeyframeId, readonly RigKey[]>([
+    [v, [{ id: made++, ref: ORIGIN, stand, times: 1 }]],
   ]);
 
   for (const [offset, list] of clip.keys) {
@@ -3346,10 +3339,10 @@ function written(
 
     // A skip names the keyframe it was meant for, and stays on it where the
     // paste still reaches it. What the copy keyframe did plays over the stand.
-    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, e, k))]);
+    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, { ...e, id: made++ }, k))]);
   }
 
-  return withRig(world, id, { ...rigOf(world, id), keys });
+  return withKeyRig(world, id, { keys });
 }
 
 /** A pasted thing's effects, where it has some. */
@@ -3357,32 +3350,50 @@ function effectsPasted(world: World, id: Id, fx: Effects | undefined): World {
   return fx === undefined ? world : { ...world, effects: new Map(world.effects).set(id, fx) };
 }
 
-/** A corner's entries after the copy, landed at `v` and renamed. */
-function landed<E extends Entry>(
-  world: World,
-  v: KeyframeId,
-  entries: readonly [VertexId, [number, E][]][],
-  renamed: ReadonlyMap<VertexId, VertexId>,
-): Map<VertexId, Map<KeyframeId, E>> {
-  const out = new Map<VertexId, Map<KeyframeId, E>>();
+/**
+ * A pasted timeline with its corners renamed: the copy's corner ids are the
+ * original's, and what is pasted has ids of its own.
+ *
+ * What a key says about a corner the paste did not bring — one the original
+ * had and the copy did not reach — goes, and a key left holding nothing but
+ * that goes with it.
+ */
+function renamedCorners(rig: KeyRig, renamed: ReadonlyMap<VertexId, VertexId>): KeyRig {
+  const named = <T>(m: ReadonlyMap<VertexId, T> | undefined): ReadonlyMap<VertexId, T> | undefined => {
+    if (m === undefined) return undefined;
 
-  for (const [c, list] of entries) {
-    const id = renamed.get(c);
+    const out = new Map<VertexId, T>();
 
-    if (id === undefined) continue;
+    for (const [c, by] of m) {
+      const now = renamed.get(c);
 
-    const mine = new Map<KeyframeId, E>();
-
-    for (const [offset, e] of list) {
-      const k = landingAt(world, v, offset);
-
-      if (k !== null) mine.set(k, skipping(world.keyframes, e, k));
+      if (now !== undefined) out.set(now, by);
     }
 
-    if (mine.size > 0) out.set(id, mine);
+    return out.size === 0 ? undefined : out;
+  };
+
+  const keys = new Map<KeyframeId, RigKey[]>();
+
+  for (const [at, list] of rig.keys) {
+    const mine = list.flatMap(key => {
+      const out: RigKey = {
+        ...key,
+        corners: named(key.corners),
+        depths: named(key.depths),
+        rounds: named(key.rounds),
+        deforms: named(key.deforms),
+      };
+
+      const held = out.corners ?? out.depths ?? out.rounds ?? out.deforms;
+
+      return out.by === undefined && out.stand === undefined && held === undefined ? [] : [out];
+    });
+
+    if (mine.length > 0) keys.set(at, mine);
   }
 
-  return out;
+  return { keys };
 }
 
 /**
@@ -3490,13 +3501,7 @@ function restore(
     bevels: renaming(clip.bevels),
     amplitudes: renaming(clip.amplitudes),
   }, into);
-  out = withRig(out, id, {
-    ...rigOf(out, id),
-    nudges: landed(out, v, clip.nudges, renamed),
-    depths: landed(out, v, clip.deep, renamed),
-    rounds: landed(out, v, clip.rounds ?? [], renamed),
-    deforms: landed(out, v, clip.deforms ?? [], renamed),
-  });
+  out = withKeyRig(out, id, renamedCorners(keyRigOf(out, id), renamed));
 
   return { world: out, id };
 }
@@ -3612,10 +3617,6 @@ export function stamped(
           .map(c => ({ ...c, death: null })),
         death: undefined,
         keys: [],
-        nudges: [],
-        deep: [],
-        rounds: [],
-        deforms: [],
       };
 
   return pasted(world, v, clips.map(now), by, where);

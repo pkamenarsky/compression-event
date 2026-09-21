@@ -1575,9 +1575,11 @@ export interface KeyRig {
 
 export const EMPTY_KEYS: KeyRig = { keys: new Map() };
 
-/** A key's repeat under way: the key, and how many steps it has taken. */
+/** A key's repeat under way: the key, the keyframe it is written at, and how
+ * many steps it has taken. */
 interface Stepping {
   key: Key
+  at: KeyframeId
   steps: number
 }
 
@@ -1617,9 +1619,9 @@ export function walkedBy(
     const at = keyframes[i].id;
     const playing = out.playing[i];
 
-    const apply = (key: Key, step: number): void => {
+    const apply = (key: Key, wrote: KeyframeId, step: number): void => {
       if (key.stand !== undefined) {
-        playing.push({ ref: key.ref, stand: key.stand, key, at, step });
+        playing.push({ ref: key.ref, stand: key.stand, key, at: wrote, step });
         frame = key.stand.frame;
         for (const kind of AMOUNT_KINDS) totals[kind] = key.stand[AMOUNTS[kind].total];
 
@@ -1630,7 +1632,7 @@ export function walkedBy(
 
       const d = steppedBy(key.by, step);
 
-      playing.push({ ref: key.ref, by: d, key, at, step });
+      playing.push({ ref: key.ref, by: d, key, at: wrote, step });
       frame = playedBy(frame, key.ref, d);
       for (const kind of AMOUNT_KINDS) totals[kind] += d[kind];
     };
@@ -1648,20 +1650,20 @@ export function walkedBy(
       if (r.key.times !== null && r.steps + 1 >= r.key.times) continue;
 
       r.steps += 1;
-      apply(r.key, r.steps);
+      apply(r.key, r.at, r.steps);
       going.push(r);
     }
 
     running = going;
 
     for (const key of rig.keys.get(at) ?? []) {
-      apply(key, 0);
+      apply(key, at, 0);
 
       if (key.stand !== undefined) {
         stood = { at: i, op: key.stand };
       }
       else if (key.times === null || key.times > 1) {
-        running.push({ key, steps: 0 });
+        running.push({ key, at, steps: 0 });
       }
     }
 
@@ -1686,9 +1688,10 @@ export function walkedBy(
  * One thing a keyframe does, in the order it does it: a key's delta, adjusted
  * for which step of its repeat this is, about the painted point it acts about.
  *
- * `key`, `at` and `step` are where it came from — the key, the keyframe it is
- * written at, and nought for the key itself. What the view picks by and what
- * the fold compares.
+ * `key`, `at` and `step` are where it came from — the key, the keyframe the
+ * key is written at, which is not this one for a step of a repeat begun
+ * earlier, and nought for the key itself. What the view picks by and what the
+ * fold compares.
  */
 export interface Playing extends Motion {
   key: Key

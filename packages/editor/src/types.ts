@@ -952,8 +952,8 @@ export interface Timed {
   /** Where it stood at the copy keyframe, everything there in: what a stamp
    * starts at. */
   stood: { frame: Frame, erosion: number, bevel?: number, amplitude?: number }
-  /** Each keyframe's list from the copy on, by offset. */
-  keys: [number, Entry[]][]
+  /** Each keyframe's keys from the copy on, by offset. */
+  keys: [number, Key[]][]
   /** Its effects. Absent is none. */
   effects?: Effects
   /** The repeats that came across as single entries. */
@@ -962,10 +962,10 @@ export interface Timed {
 
 /**
  * A repeat that could not stay one across a fold, and was written as a single
- * entry per step instead — which looks the same, but edits as many things, and
+ * key per step instead — which looks the same, but edits as many things, and
  * stops at the last keyframe there is today. See `carried` in `scene.ts`.
  *
- * `id` wrote it, at `at`, as the `nth` entry there. `why`:
+ * `id` wrote it, at `at`, as the `nth` key there. `why`:
  *
  * - `squash`: across a squash it is a turn, a skew and a stretch, never one
  *   operation;
@@ -991,12 +991,6 @@ export type Clipping =
        * edges. Absent is none. */
       bevels?: [VertexId, number][]
       amplitudes?: [VertexId, number][]
-      /** Nudges, depths, rounds and deforms on single corners after it, by
-       * offset. */
-      nudges: [VertexId, [number, Entry<Move>][]][]
-      deep: [VertexId, [number, Entry<Amount<'erode'>>][]][]
-      rounds?: [VertexId, [number, Entry<Amount<'round'>>][]][]
-      deforms?: [VertexId, [number, Entry<Amount<'deform'>>][]][]
       /** Its corners' own options. Absent is none. */
       cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)
