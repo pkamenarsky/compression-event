@@ -114,6 +114,33 @@ describe('editing one entry', () => {
     expectFrame(at(out, id, 1), at(once, id, 1));
   });
 
+  test('a move edited with a turn turns about the thing as it stands', () => {
+    const { world, id } = room();
+    const w = wrote(world, 1, id, moved(20, 5), moved(0, 30));
+    const once = wrote(world, 1, id, moved(20, 5), turned(0.4, about(w, 1, id, 0)), moved(0, 30));
+
+    expectFrame(at(edit(w, 1, id, 0, { turn: 0.4 }), id, 1), at(once, id, 1));
+  });
+
+  test('a key that turns and erodes at once turns about the thing as it stands', () => {
+    const { world, id } = room();
+    const c = { x: 150, y: 20 };
+    const w = edit(wrote(world, 1, id, turned(0.3, c)), 1, id, 0, { erode: 3 });
+    const once = wrote(world, 1, id, turned(0.3, c), turned(0.2, about(w, 1, id, 0)));
+
+    expectFrame(at(edit(w, 1, id, 0, { turn: 0.2 }), id, 1), at(once, id, 1));
+  });
+
+  test('a key edited back to nothing is kept, empty, as the same key', () => {
+    const { world, id } = room();
+    const w = wrote(world, 1, id, moved(10, 0), moved(0, 5));
+    const key = keysOfAt(w, 1, id)[0];
+    const out = edit(w, 1, id, 0, { move: { x: -10, y: 0 } });
+
+    expect(keysOfAt(out, 1, id)).toHaveLength(2);
+    expect(keysOfAt(out, 1, id)[0].id).toBe(key.id);
+  });
+
   test('a move and an erosion add, and one edited back to nothing goes', () => {
     const { world, id } = room();
     const w = wrote(world, 1, id, moved(10, 0), erode(4));

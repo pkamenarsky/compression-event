@@ -20,15 +20,17 @@ import { place } from '../affine';
 import {
   Frame,
   Key as RigKey,
+  NOTHING,
   Op,
   REST,
+  anywhere,
   deltaOf,
   foldedBy,
   keysAt,
-  kindOf,
   placed,
   playingAt,
   playingOn,
+  shaping,
   stateAt,
   withKeysAt,
 } from '../rig';
@@ -76,10 +78,12 @@ export function editedAt(world: World, k: KeyframeId, id: Id, key: RigKey): { pa
 
   if (frames === null || key.by === undefined) return null;
 
-  const kind = kindOf(key);
   const held = under(world, k, id);
   const middle = painted(world, k, id).ref;
-  const ref = kind === 'turn' || kind === 'scale' ? key.ref : middle;
+  // A key that turns or reshapes is about its own painted point and folds
+  // only about that one — whatever else it does alongside. One that does
+  // neither takes any, and the thing's middle is the one to hand.
+  const ref = anywhere(key.by) ? middle : key.ref;
   const paint = { ref, at: placed(frames.after, ref), frame: frames.after, held };
 
   return { paint, pivot: place(held, [placed(frames.after, middle)])[0] };
@@ -87,8 +91,8 @@ export function editedAt(world: World, k: KeyframeId, id: Id, key: RigKey): { pa
 
 /**
  * The key at `index` of `k`'s list with `op` folded into it: what it did, and
- * then `op`, as one key repeating as it did. Taken out where the two come to
- * nothing, and left alone where they are not one — which an edit read by
+ * then `op`, as one key repeating as it did. Left empty where the two come to
+ * nothing, and alone where they are not one — which an edit read by
  * `editedAt` never is.
  */
 export function refolded(world: World, k: KeyframeId, id: Id, index: number, op: Op): World {
@@ -100,19 +104,21 @@ export function refolded(world: World, k: KeyframeId, id: Id, index: number, op:
   if (key === undefined || by === null || key.by === undefined) return world;
 
   // Along the axes the key was written along, which only its repeats read.
-  const also = kindOf(key) === 'scale' && by.scale !== undefined
-    ? { ...by, along: key.by.along, lean: key.by.lean }
-    : by;
+  const also = shaping(key.by) ? { ...by, along: key.by.along, lean: key.by.lean } : by;
+  // About the point the operation was worked out about, which is the key's
+  // own where it has one to keep — see `editedAt`.
+  const ref = 'ref' in op ? op.ref : key.ref;
   // Its own repeat is the key's, not the fold's: what is being asked is what
   // the two operations come to.
-  const both = foldedBy({ ...key, times: 1, skip: undefined }, key.ref, also);
+  const both = foldedBy({ ...key, times: 1, skip: undefined }, ref, also);
 
   if (both === null) return world;
 
+  // Edited back to nothing, it is an empty key rather than none: the key is
+  // still the one being stood on, and the hand is still on it.
   const kept = { times: key.times, ...(key.skip === undefined ? {} : { skip: key.skip }) };
-  const now = both === 'gone'
-    ? list.filter((_x, i) => i !== index)
-    : list.map((x, i) => (i === index ? { ...both, ...kept } : x));
+  const done = both === 'gone' ? { ...key, by: NOTHING } : both;
+  const now = list.map((x, i) => (i === index ? { ...done, ...kept } : x));
 
   return withKeyRig(world, id, withKeysAt(rig, k, now));
 }

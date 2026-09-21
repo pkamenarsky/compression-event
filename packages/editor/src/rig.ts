@@ -2020,7 +2020,7 @@ export function lessBy(both: Delta, a: Delta): Delta {
 }
 
 /** Whether a delta changes the thing's shape, which is what reads its axes. */
-function shaping(d: Delta): boolean {
+export function shaping(d: Delta): boolean {
   return d.scale.x !== 1 || d.scale.y !== 1 || d.skew !== 0;
 }
 
