@@ -26,7 +26,9 @@
 //
 // A click picks a key and everything else in its column the same gesture
 // wrote, shown here: a turn of several things at once. ⌥-click picks the one
-// key alone. The arrow beside the clicked key repeats all of them, each told
+// key alone. It also stands on it: the canvas draws the thing as that key
+// leaves it, and a gesture there adjusts that key rather than writing another
+// after it. See `EditorState.standing`. The arrow beside the clicked key repeats all of them, each told
 // to run to the same keyframe, and dragging the end of a key's lane or
 // clicking a dot on it picks the same and does the same to all of them. With
 // ⌥ held, each is about its own key only.
@@ -56,7 +58,7 @@ import { KeyframeId } from './rig';
 import { order, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
-import { EditorState, Editing, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
+import { EditorState, Flags, Selection, Update, World, flagged, marked, saying, within } from './types';
 
 const LABEL = 196;
 const ROW = 24;
@@ -72,9 +74,6 @@ const PAD = 10;
 
 /** A column holds this many entries side by side before it widens. */
 const ROOMY = 5;
-
-/** How soon a second click on an icon makes a double click. */
-const DOUBLE_MS = 350;
 
 /** What Delete and Escape mean while an entry is picked. */
 const KEYS = ['Backspace', 'Delete', 'Escape'];
@@ -110,7 +109,6 @@ export function timeline(
   go: (k: KeyframeId) => void,
   /** Stand on a key, or on nothing. See `EditorState.standing`. */
   stand: (on: EditorState['standing']) => void,
-  edits: Signal<Editing>,
 ): VNode {
   const initial: Local = { picked: null };
 
@@ -154,7 +152,6 @@ export function timeline(
       update,
       go,
       stand,
-      edits,
       local,
       change,
       acted,
@@ -162,7 +159,6 @@ export function timeline(
       current,
       inner: null,
       model: null,
-      clicked: null,
     };
 
     let root: (() => void) | null = null;
@@ -214,7 +210,6 @@ interface Ctx {
   go: (k: KeyframeId) => void
   /** Stand on a key, or on nothing. See `EditorState.standing`. */
   stand: (on: EditorState['standing']) => void
-  edits: Signal<Editing>
   local: Value<Local>
   change: (f: (l: Local) => Local) => void
   acted: (out: World | Refused) => void
@@ -223,10 +218,6 @@ interface Ctx {
   current: Value<number>
   inner: HTMLElement | null
   model: Model | null
-  /** The last click on an icon, and when: the second of two is a double
-   * click. Timed here, since a press that may be a drag takes the page's own
-   * reading of clicks away. */
-  clicked: { place: Place, when: number } | null
 }
 
 function keys(ctx: Ctx, input: Input): VNode {
@@ -337,8 +328,7 @@ function centre(m: Model, col: number): number {
  *
  * From the left rather than about the middle, so that an icon stays where it
  * is when the picked one's arrow comes out beside it: only what comes after
- * the arrow moves, and the second click of a double click lands where the
- * first did.
+ * the arrow moves, and a second click lands where the first did.
  */
 function slot(m: Model, col: number, i: number): number {
   return m.xs[col] + PAD + i * SLOT + SLOT / 2;
@@ -700,16 +690,9 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       const picked = isPicked(m, place);
       const colour = picked ? theme.accent : theme.text;
 
-      // Twice is an edit, by the gesture the entry was written by: see
-      // `editing` in `canvas.ts`. Only a list's: a corner's is written by
-      // dragging the corner.
       const click = (e: PointerEvent) => {
-        const now = performance.now();
-        const was = ctx.clicked;
-        const twice = was !== null && samePlace(was.place, place) && now - was.when < DOUBLE_MS;
         const w = ctx.state().world;
 
-        ctx.clicked = twice ? null : { place, when: now };
         ctx.go(at);
         ctx.change(l => ({ ...l, picked: { lead: place, all: e.altKey ? [place] : gestureOf(w, m.rows, col, place) } }));
 
@@ -718,8 +701,6 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         // corners is a place in a corner's row rather than a moment of the
         // thing, and stands on nothing.
         ctx.stand('index' in place ? { id: place.id, at, index: place.index } : null);
-
-        if (twice && 'index' in place) ctx.edits.emit(place);
       };
 
       // Dropped a keyframe along: pushed to the next, or pulled back into the

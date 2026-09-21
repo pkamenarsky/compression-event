@@ -96,7 +96,7 @@ import {
   setPath,
 } from '../paths';
 import { beneath } from '../track';
-import { Amount, Op as Operation, kindOf } from '../rig';
+import { Amount, Op as Operation } from '../rig';
 import {
   AmountKind,
   amountWritten,
@@ -137,7 +137,6 @@ import {
   VertexId,
   View,
   World,
-  Editing,
   clickable,
   visible,
   GroupId,
@@ -202,8 +201,6 @@ export function worldCanvas(
   setEye: (eye: Eye | null) => void,
   input: Input,
   update: Update,
-  /** Entries asked to be edited, from the keyframes. See `editing`. */
-  edits: Signal<Editing>,
 ): VNode {
   /** The eye, or nothing at all while the 3D view is down. Everything on this
    * side asks this rather than the cell. */
@@ -616,90 +613,6 @@ export function worldCanvas(
       };
 
       return { aim, scaling };
-    }
-
-    /**
-     * One entry edited by the gesture its kind is written by — asked for by a
-     * double click on its icon in the keyframes.
-     *
-     * The same readings of the hand a transform takes and the same operation
-     * out of them, about the entry's own centre and against the thing as the
-     * entry leaves it, folded into the entry rather than added after it: so it
-     * stays one entry, repeating as it did, and what comes after it in the
-     * list still acts where it did. See `editedAt` and `refolded`.
-     *
-     * Nothing is held down to end it, since nothing was pressed to start it:
-     * it goes like laying down a polygon. It starts reading the hand once the
-     * cursor is over the canvas, so the way there from the keyframes is not a
-     * drag; a click keeps what is on screen, and Escape or a press anywhere
-     * else puts the entry back.
-     */
-    function* editing(target: Editing): Op<void> {
-      const was = world();
-      const { id, at: k, index } = target;
-      const entry = keysOfAt(was, k, id)[index];
-      const code = entry === undefined ? undefined : EDITED[kindOf(entry) ?? ''];
-
-      if (entry === undefined || code === undefined || el === undefined) return;
-
-      const read = editedAt(was, k, id, entry);
-
-      if (read === null) return;
-
-      const { paint, pivot } = read;
-      const mode = TRANSFORMS[code];
-
-      // Escape is this gesture's, over the keyframes', which hold it while the
-      // entry is picked.
-      const me = {};
-      const release = input.claim(me, 'Escape');
-
-      // The pointer is this one's too: it is waiting for a click to keep what
-      // it is showing, and a click is not the 3D view being clicked into. See
-      // `grab`.
-      const ungrabbed = input.grab(me);
-
-      update(s => saying(s, `Editing a ${kindOf(entry)}: move over the canvas, click to keep it, Escape to put it back.`));
-      setLocal({ ...local(), previewing: true });
-
-      try {
-        const start = yield* select({
-          over: pointerOver(el),
-          cancel: keyOwned(input, me),
-          away: pressedAway(input, 'canvas'),
-          lost: blurred(),
-        });
-
-        if (start.tag !== 'over') return;
-
-        const e = start.value;
-        const from = at(e);
-        const { aim, scaling } = readers(code, pivot, from, { x: e.clientX, y: e.clientY });
-
-        cursor('crosshair');
-
-        const end = yield* select({
-          moving: pointerMoved(e => {
-            const op = mode(paint, { pivot, from, to: aim(e), alt: e.altKey, factor: scaling(e) });
-
-            update(s => ({ ...s, world: refolded(was, k, id, index, op) }));
-          }),
-          panning: alongside(),
-          done: pressedOn(input, 'canvas'),
-          cancel: keyOwned(input, me),
-          away: pressedAway(input, 'canvas'),
-          lost: blurred(),
-        });
-
-        update(s => settled(s, was, end.tag !== 'done'));
-      }
-      finally {
-        release();
-        ungrabbed();
-        cursor('');
-        setLocal({ ...local(), previewing: false });
-        update(s => (s.status?.startsWith('Editing a ') ? { ...s, status: null } : s));
-      }
     }
 
     /**
@@ -2359,14 +2272,8 @@ export function worldCanvas(
             // The right button lists everything under it, what cannot be
             // picked included — which is how a locked thing is got back.
             menu: pressedOn(input, 'canvas', 2),
-            edit: edits,
             lost: blurred(),
           });
-
-          if (started.tag === 'edit') {
-            yield* editing(started.value);
-            continue;
-          }
 
           if (started.tag === 'menu') {
             const e = started.value;
@@ -2719,17 +2626,6 @@ const TURN = Math.PI / 36;
 /** What a turn lands on with Alt held: the eighth of a circle, which is the
  * only angle most of a level is ever turned by. */
 const EIGHTH = Math.PI / 4;
-
-/** The gesture each kind of key is written by, which is the one it is edited
- * by. A skew has none: only a fold writes one. */
-const EDITED: Record<string, string | undefined> = {
-  move: 'KeyT',
-  turn: 'KeyR',
-  scale: 'KeyS',
-  erode: 'KeyE',
-  round: 'KeyB',
-  deform: 'KeyD',
-};
 
 /** A deform's options, whose spacing the vertical moves. */
 type Spacing = EffectOptions['deform'];

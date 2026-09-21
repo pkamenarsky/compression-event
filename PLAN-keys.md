@@ -313,7 +313,11 @@ leaves it, about the key's own centre, and folded back in — `editedAt` and
 `refolded`, which the double-click edit already used. It is about the thing
 stood on alone, a key belonging to one thing.
 
-Not yet: an inspector, and the double-click edit is still there beside it.
+The double-click edit is gone with it: standing on a key is what it was for,
+and it could only ever edit a key that did one thing — it picked its gesture
+from the key's kind, which a folded key has none of.
+
+Not yet: an inspector.
 
 ### 5 — the rest — done with 3c
 

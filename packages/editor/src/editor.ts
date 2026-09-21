@@ -38,7 +38,6 @@ import { timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
-  Editing,
   Id,
   EASINGS,
   REPLAY_EASE,
@@ -85,8 +84,6 @@ export function editor(initial: World): VNode {
 
   // A double click on an entry in the keyframes, for the canvas to edit it by
   // the gesture it was written by.
-  const edits = signal<Editing>();
-
   return stateful(initialState(initial), (state, set) => {
     const update: Update = fn => set(fn(state()));
 
@@ -136,7 +133,6 @@ export function editor(initial: World): VNode {
               setEye,
               input,
               update,
-              edits,
             ),
 
             preview(
@@ -190,7 +186,6 @@ export function editor(initial: World): VNode {
                 update,
                 k => update(t => switched(t, k)),
                 stood => update(t => ({ ...t, standing: stood })),
-                edits,
               ),
             ],
           ),
