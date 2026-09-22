@@ -3855,12 +3855,13 @@ export function outlineOf(
  * eroded by the group's depth last. See PLAN-bevel, phase 2.
  *
  * A straight is a maximal run of the fold's outline in one line, so two
- * members side by side along a wall are one straight with one pattern, from
- * its middle. The points in `square` are deformed geometry of the members',
- * which the round leaves as it is and the deform does not tooth again; the
- * points in `keep` are the bake's, carried along the teeth to where the
- * erosion puts them. The teeth are keyed nought, every straight alike: a
- * union's edges have no ids to tell them apart by.
+ * members side by side along a wall are one straight with one pattern. It
+ * takes the name of the lowest-ranked of the `lines` along it and lays its
+ * teeth from that edge's own middle rather than its own, so an end of the run
+ * moving moves no tooth: see `namesOf` and PLAN-bevel 2.3. The points in
+ * `square` are deformed geometry of the members', which the round leaves as
+ * it is and the deform does not tooth again; the points in `keep` are the
+ * bake's, carried along the teeth to where the erosion puts them.
  *
  * Held, as a polygon's round is (see `drawnBevels`), a corner is drawn at
  * `bevel` and as much again as the erosion takes back off it, so the round
