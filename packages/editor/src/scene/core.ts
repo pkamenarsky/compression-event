@@ -51,6 +51,7 @@ import {
   diameter,
   mitred,
   nextOf,
+  keeping,
   outlineOf,
   Straights,
   toothedRing,
@@ -460,6 +461,9 @@ function arcDeform(
 export interface LooseDeform {
   e: Effecting
   amplitude: number
+  /** Whether its timeline ever deforms, so its members' edges carry its
+   * teeth at every amplitude: see `Straights`. */
+  toothed: boolean
 }
 
 /**
@@ -467,7 +471,9 @@ export interface LooseDeform {
  * sealed group's deform is laid on its fold instead: see `groupDeform`.
  */
 export function looseDeforms(world: World, v: KeyframeId, id: Id): LooseDeform[] {
-  return deforms(world, v, id).filter(d => d.owner !== id).map(d => ({ e: d.e, amplitude: d.amplitude(0 as VertexId) }));
+  return deforms(world, v, id)
+    .filter(d => d.owner !== id)
+    .map(d => ({ e: d.e, amplitude: d.amplitude(0 as VertexId), toothed: d.toothed(0 as VertexId) }));
 }
 
 /**
@@ -494,19 +500,20 @@ function straightsOf(
 
     out.push({
       e: { ...e, spacing: e.spacing * scale },
-      amplitude: corners.map(c => (ever.all || ever.edges.has(c.id) ? amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0) : 0)),
+      amplitude: corners.map(c => amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0)),
+      toothed: corners.map(c => ever.all || ever.edges.has(c.id)),
       keys,
     });
   }
 
-  for (const d of loose) out.push({ e: d.e, amplitude: corners.map(() => d.amplitude), keys });
+  for (const d of loose) out.push({ e: d.e, amplitude: corners.map(() => d.amplitude), toothed: corners.map(() => d.toothed), keys });
 
   return out;
 }
 
 /** Effects kept only where they do something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0) || e.straights.some(d => d.amplitude.some(a => a !== 0));
+  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0) || e.straights.some(d => d.toothed.some(Boolean));
 
   return any ? e : null;
 }
@@ -520,7 +527,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
 
   const straights: Memo[] = e.straights.map(d => [
     d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.e.offset ? 1 : 0,
-    d.amplitude.map(a => a / s), [...d.keys],
+    d.amplitude.map(a => a / s), d.toothed.map(Number), [...d.keys],
   ]);
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), straights, deform, (e.apart ?? []).map(Number)];
@@ -1041,10 +1048,16 @@ export const project = remembered((
   depths: readonly number[] | null,
   effects: readonly Memo[] | null,
 ): Shape => {
-  if (effects === null) return offsetOf(source, rings, erosion, depths);
+  if (effects === null) {
+    return keeping(offsetOf(source, rings, erosion, depths), flatOf(source, rings, erosion, depths));
+  }
 
-  // Rounded, deformed along its arcs, and then eroded: see `outlineOf`.
-  return simplify(imagedBy(source, rings, erosion, depths, effects).shape);
+  // Rounded, deformed along its arcs, and then eroded: see `outlineOf`. The
+  // points it runs straight through are asked back after the arrangement,
+  // which is the one thing that would drop them: see `flatOf`.
+  const im = imagedBy(source, rings, erosion, depths, effects);
+
+  return keeping(simplify(im.shape), im.flat ?? []);
 });
 
 /** Where each of a polygon's features lands: the construction `project`
@@ -1068,9 +1081,9 @@ const imagedBy = remembered((
 
   // The straights toothed first, afresh: see `toothedRing`.
   const chain: Straights[] = straightKeys.map(k => {
-    const [sp, pt, sd, sides, jitter, falloff, offset, amplitude, keys] = k as [number, number, number, number, number, number, number, number[], number[]];
+    const [sp, pt, sd, sides, jitter, falloff, offset, amplitude, toothed, keys] = k as [number, number, number, number, number, number, number, number[], number[], number[]];
 
-    return { e: { spacing: sp, pattern: PATTERNS[pt], seed: sd, sides: SIDES[sides], jitter, falloff, offset: offset === 1 }, amplitude, keys };
+    return { e: { spacing: sp, pattern: PATTERNS[pt], seed: sd, sides: SIDES[sides], jitter, falloff, offset: offset === 1 }, amplitude, toothed: toothed.map(x => x === 1), keys };
   });
   const toothed = toothedRing(source, rings, chain, i => bevels[i], depths, i => apart[i] === 1);
   const own = toothed.owner;
@@ -1087,6 +1100,7 @@ const imagedBy = remembered((
 
   return {
     shape: offsetOf(o.ring, o.rings, erosion, deep),
+    flat: flatOf(o.ring, o.rings, erosion, deep),
     corners: source.map((_p, i) => {
       const images = o.arcs[where[i]].map(image);
 
@@ -1099,6 +1113,41 @@ const imagedBy = remembered((
     restSquare: [],
   };
 });
+
+/**
+ * Where the points a drawn outline runs straight through land once it is
+ * eroded: a tooth the ramp laid flat, a corner standing in its wall, an arc
+ * of no bevel.
+ *
+ * They are points of the outline like any other, and the arrangement would
+ * drop them for not turning — so they are asked back by position, and a
+ * point that is flat here and turns a moment later is in the ring at both,
+ * with a line that comes up as it turns rather than appearing whole. See
+ * `keeping`.
+ */
+function flatOf(ring: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Point[] {
+  const n = ring.length;
+  let extent = 1;
+
+  for (const p of ring) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = extent * 1e-9;
+  const out: Point[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    if (reach === 0 || Math.abs(ux * vy - uy * vx) / reach > snap) continue;
+
+    const p = mitred(ring, rings, i, depths?.[i] ?? erosion);
+
+    if (p !== null) out.push(p);
+  }
+
+  return out;
+}
 
 /** The noise's name for a corner's arc: its own, told apart from the edge it
  * starts, which has the same id. */

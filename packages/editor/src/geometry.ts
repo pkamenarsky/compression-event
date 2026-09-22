@@ -2672,12 +2672,17 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   const places = [...before.reverse(), ...after];
 
   for (const [j, at] of places) {
+    // Clear of the arcs either end, where the edge has a straight for it to
+    // stand on, and laid flat where the ramp has taken it to nothing rather
+    // than left off: a tooth that is there and flat draws no line, and its
+    // line comes up as it rises. Outside the straight there is nowhere for
+    // it to be at all.
+    if (at <= clear || at >= length - clearTo) continue;
+
     const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
 
-    if (room <= 0) continue;
-
     along.push(at / length);
-    across.push(amplitude * room * patterned(e, key, j));
+    across.push(amplitude * Math.max(0, room) * patterned(e, key, j));
     teeth.push(j);
   }
 
@@ -2794,6 +2799,61 @@ export function subdivided(
   });
 
   return done;
+}
+
+/**
+ * The shape with each of `points` present as a vertex, splitting whatever edge
+ * it lies on.
+ *
+ * The exception `cornersOnly` leaves room for. A point of a drawn outline
+ * that the outline runs straight through — a tooth laid flat, a corner
+ * standing in its wall — is not a corner and would be dropped, and then it
+ * would not be there for a span to turn it. Kept, it is a point that draws
+ * no line, and the line comes up as it starts to turn: see `flatOf`.
+ *
+ * Asked for by position, off the same instant's own geometry, so nothing is
+ * carried from one instant to another. Anything that does not land on an
+ * edge is not put anywhere: an eroded ring that has swallowed the edge a
+ * point sat on genuinely does not have it.
+ */
+export function keeping(shape: Shape, points: readonly Point[]): Shape {
+  if (points.length === 0) return shape;
+
+  // The same tolerance the arrangement works to, taken off the same geometry.
+  let scale = 1;
+
+  for (const ring of shape) {
+    for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+  }
+
+  const snap = scale * 1e-9;
+  const out = shape.map(ring => [...ring]);
+
+  for (const p of points) {
+    let best: { ring: number, index: number, off: number } | null = null;
+
+    for (let r = 0; r < out.length; r++) {
+      const ring = out[r];
+
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const l = Math.hypot(dx, dy);
+
+        if (l === 0) continue;
+
+        const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
+        const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
+
+        if (along <= snap || along >= l - snap) continue;
+        if (best === null || off < best.off) best = { ring: r, index: i, off };
+      }
+    }
+
+    if (best !== null && best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
+  }
+
+  return out;
 }
 
 /**
@@ -3618,12 +3678,18 @@ export function outlineOf(
 /**
  * One deform a polygon's straights go through, as the projection lays it:
  * its options, the amplitude of the edge starting at each point of the ring
- * it is laid on — nought for an edge it leaves alone — and each edge's name
- * to the noise. See `toothedRing`.
+ * it is laid on, which edges it teeth at all, and each edge's name to the
+ * noise.
+ *
+ * An edge it teeth is toothed at every amplitude, nought included: the teeth
+ * are laid flat there, and are points of the outline that draw no line until
+ * they rise. An edge its timeline never deforms is left alone. See
+ * `toothedRing` and `flatOf`.
  */
 export interface Straights {
   e: Effecting
   amplitude: readonly number[]
+  toothed: readonly boolean[]
   keys: readonly number[]
 }
 
@@ -3697,7 +3763,7 @@ export function toothedRing(
       // A tooth's edge is part of the source edge it was laid on.
       const amp = (i: number) => d.amplitude[root[at + i]];
       const key = (i: number) => (owner[at + i] >= 0 ? d.keys[owner[at + i]] : keys[at + i]);
-      const laid = subdivided(ring, d.e, amp, key, out, i => (c === 0 ? Math.max(0, clear(owner[at + i])) : 0), i => amp(i) !== 0);
+      const laid = subdivided(ring, d.e, amp, key, out, i => (c === 0 ? Math.max(0, clear(owner[at + i])) : 0), i => d.toothed[root[at + i]]);
 
       nextStarts.push(next.length);
 
@@ -3939,6 +4005,9 @@ export interface Imaged {
   /** The teeth along the straights, where the projection laid them: see
    * `toothedRing`. */
   straight?: Point[]
+  /** Where the outline runs straight through a point of it, which the
+   * arrangement drops and the projection asks back: see `flatOf`. */
+  flat?: Point[]
   /** Each corner's arc as it is drawn, before the erosion, where a polygon's
    * effects drew one: see `outlineOf`. */
   drawn?: Point[][]

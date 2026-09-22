@@ -849,15 +849,16 @@ describe('a corner that is not there does not draw a line', () => {
     return { world: removeVertices(added.world, 1, [added.vertex]), vertex: added.vertex };
   }
 
-  test('flat on the wall at both ends, it is never a point of the ring', () => {
+  test('flat on the wall at both ends, it stands in the ring and draws nothing', () => {
     const track = run(bakeSpan(dying().world, 0)).tracks[0];
 
-    // Nothing fades it: a corner that does not turn is not in the ring, and
-    // this one does not turn at either end. The room's four, and the run
-    // closing on its first.
+    // Kept, because it is a point of the outline (see `flatOf`), and dark at
+    // both ends of every stretch, because it never turns. The room's four,
+    // this one, and the run closing on its first.
     for (const s of track.stretches) {
-      expect(s.a.reduce((n, r) => n + r.points.length, 0)).toBe(5);
-      expect(Math.min(...s.opacity[0].flat(), ...s.opacity[1].flat())).toBe(1);
+      expect(s.a.reduce((n, r) => n + r.points.length, 0)).toBe(6);
+      expect(s.opacity[0].flat().filter(v => v === 0)).toHaveLength(1);
+      expect(s.opacity[1].flat().filter(v => v === 0)).toHaveLength(1);
     }
 
     // And the cover really does run end to end.

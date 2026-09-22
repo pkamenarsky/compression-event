@@ -2380,12 +2380,18 @@ function numbered(a: Taken, b: Taken): boolean {
 }
 
 /**
- * Whether every point that turns between these two readings turns at both.
+ * Whether every point that turns — or stops turning — between these two
+ * readings has something to fade over.
  *
- * Corner-ness is drawn: a wall stands a vertical where the boundary turns.
- * Nothing fades one in, so a point that starts or stops turning part way is
- * an event, and the cut pins it: the line is there on one side of it and not
- * on the other, and half-open ownership draws neither at once.
+ * Corner-ness is drawn: a wall stands a vertical where the boundary turns. A
+ * point of somebody's outline is in the ring whether or not it turns there
+ * (see `flatOf`), so its line has a value at each end of the stretch and
+ * fades between them: a vertex emerging is a move, not an event.
+ *
+ * A crossing is not. Two rooms flush at one version and apart at the next
+ * make a junction that exists at a single instant, with nothing either side
+ * of it to fade from, so the cut pins it and half-open ownership draws
+ * neither instant.
  */
 function explained(a: Taken, b: Taken): boolean {
   const plan = lining(a.frame, b.frame);
@@ -2397,7 +2403,8 @@ function explained(a: Taken, b: Taken): boolean {
   return a.frame.every((run, r) => {
     const other = there[r];
 
-    return other !== undefined && run.corner.every((c, i) => c === other.corner[i]);
+    return other !== undefined && run.corner.every((c, i) =>
+      c === other.corner[i] || run.whence[i]?.kind === 'vertex');
   });
 }
 
