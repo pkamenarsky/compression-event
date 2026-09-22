@@ -585,8 +585,8 @@ export interface World {
  *   `tension` is how hard it turns in its middle and how straight it runs
  *   off its edges, from about a circle at nought to tight in the corner at
  *   one (see `curveOf`).
- * - `deform`: points put into each edge every `spacing` of its length, each
- *   strayed along it by up to `jitter` of the spacing, and pushed off it by
+ * - `deform`: points put into each edge every `spacing` of its length, the
+ *   gaps between them stretched and squeezed by `jitter`, and pushed off it by
  *   the pattern. `seed` is the noise's and the jitter's. With `clear`, a
  *   polygon's teeth keep out of its corners' bevels, stopping short of each
  *   round; a group's deform takes no notice of it.

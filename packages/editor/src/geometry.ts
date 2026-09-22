@@ -2601,12 +2601,16 @@ export interface Effecting {
   pattern: Pattern
   seed: number
   sides: Sides
-  /** How far each tooth may stray from where the spacing puts it, as a
-   * fraction of the spacing: the gaps between teeth come out anywhere within
-   * that fraction of the spacing either way. Below one, so that no two teeth
-   * pass each other. */
+  /** How far the gaps between teeth may stray from the spacing, from nought
+   * to one: at one a gap is anywhere from a `GAPS`th of the spacing to `GAPS`
+   * times it, evenly on a log scale, and at nought every gap is the spacing.
+   * A gap is never nothing, so no two teeth pass each other. */
   jitter: number
 }
+
+/** The most a jitter stretches a gap by, or squeezes it by: see
+ * `Effecting.jitter`. */
+export const GAPS = 4;
 
 /** No effects at all: every corner a point and every edge straight. */
 export const PLAIN: Effecting = { spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
@@ -2633,9 +2637,11 @@ export interface EdgeRun {
  * pattern is about as dense on every edge. Tooth `j` is the same tooth
  * however long the edge is.
  *
- * With a jitter, each tooth is moved off its place along the edge by up to
- * half the jitter's share of the spacing, either way, by the seed: its own
- * stray, the same however long the edge is, so the pattern stays continuous.
+ * With a jitter, each gap is the spacing stretched or squeezed by the seed
+ * (see `Effecting.jitter`), and a tooth is where the gaps between it and the
+ * middle add up to. Its gaps are its own and so is its place, the same however
+ * long the edge is, so the pattern stays continuous. With none, every gap is
+ * the spacing and tooth `j` is `j` spacings off the middle.
  *
  * `clear` and `clearTo` are how much of each end is kept free of teeth, for
  * the round of the corner there: a tooth inside a bevel would be a corner the
@@ -2649,11 +2655,25 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
 
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
 
-  const first = Math.ceil(-anchor / e.spacing), last = Math.floor((length - anchor) / e.spacing);
+  // Tooth `j`'s gap is the one between it and its neighbour towards the
+  // middle, so the middle tooth has none. Without a jitter a place is
+  // multiplied out rather than added up, so that it is exactly `j` spacings
+  // off the middle and nothing has built up by the ends.
+  const gap = (j: number): number => e.spacing * Math.pow(GAPS, e.jitter * (2 * hashed(e.seed, ~key, j) - 1));
+  const next = (j: number, at: number): number => (e.jitter > 0
+    ? at + Math.sign(j) * gap(j)
+    : anchor + j * e.spacing);
 
-  for (let j = first; j <= last; j++) {
-    const stray = e.jitter > 0 ? e.jitter * e.spacing * (hashed(e.seed, ~key, j) - 0.5) : 0;
-    const at = anchor + j * e.spacing + stray;
+  // Outward from the middle both ways, as far as the edge goes, then laid
+  // end to end in order along it.
+  const before: [number, number][] = [], after: [number, number][] = [];
+
+  for (let j = 0, at = anchor; at <= length; j++, at = next(j, at)) after.push([j, at]);
+  for (let j = -1, at = next(-1, anchor); at >= 0; j--, at = next(j, at)) before.push([j, at]);
+
+  const places = [...before.reverse(), ...after];
+
+  for (const [j, at] of places) {
     const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / e.spacing);
 
     if (room <= 0) continue;

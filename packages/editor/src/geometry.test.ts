@@ -41,6 +41,7 @@ import {
   imaged,
   patterned,
   patternRun,
+  GAPS,
   facetsOf,
   SQUARE,
   precisionFor,
@@ -2118,31 +2119,37 @@ describe('round and deform', () => {
     expect(fades.map(f => f.v)).toEqual([0.25, 0.25, 0.25, 0.25]);
   });
 
-  test('a jitter strays each tooth by its seed, and keeps it the same tooth', () => {
-    const plain = patternRun(zigzag, 5, 1, 40);
-    const jittered = patternRun({ ...zigzag, jitter: 0.5, seed: 3 }, 5, 1, 40);
-    const at = (run: typeof plain) => run.along.map(u => u * 40);
+  test('without a jitter a tooth is a whole number of spacings off the middle', () => {
+    const run = patternRun(zigzag, 5, 1, 40);
 
-    // The same teeth, each moved, and none further than a quarter of the
-    // spacing: half the jitter's share of it, either way.
-    expect(jittered.teeth).toEqual(plain.teeth);
-    expect(at(jittered)).not.toEqual(at(plain));
-    at(jittered).forEach((x, k) => expect(Math.abs(x - at(plain)[k])).toBeLessThanOrEqual(3 * 0.25));
+    run.teeth.forEach((j, k) => expect(run.along[k] * 40).toBe(20 + j * 3));
+    expect(run.teeth).toEqual(Array.from({ length: 13 }, (_, k) => k - 6));
+  });
 
-    // The gaps within half the spacing of it, either way.
-    at(jittered).slice(1).forEach((x, k) => {
-      const gap = x - at(jittered)[k];
+  test('a jitter stretches and squeezes each gap by its seed, and keeps every tooth in order', () => {
+    const jittered = patternRun({ ...zigzag, jitter: 1, seed: 3 }, 5, 1, 400);
+    const at = jittered.along.map(u => u * 400);
+    const gaps = at.slice(1).map((x, k) => x - at[k]);
 
-      expect(gap).toBeGreaterThanOrEqual(3 * 0.5);
-      expect(gap).toBeLessThanOrEqual(3 * 1.5);
+    // Each gap within GAPS of the spacing either way, and between them a
+    // spread no fixed grid with a stray could make.
+    gaps.forEach(g => {
+      expect(g).toBeGreaterThanOrEqual(3 / GAPS - 1e-9);
+      expect(g).toBeLessThanOrEqual(3 * GAPS + 1e-9);
     });
+    expect(Math.max(...gaps) / Math.min(...gaps)).toBeGreaterThan(4);
 
-    // Its own stray, the same on a longer edge: tooth for tooth, off the
+    // Counted out from the middle, one apart.
+    jittered.teeth.slice(1).forEach((j, k) => expect(j).toBe(jittered.teeth[k] + 1));
+    expect(jittered.teeth).toContain(0);
+    expect(at[jittered.teeth.indexOf(0)]).toBeCloseTo(200, 9);
+
+    // Its own place, the same on a longer edge: tooth for tooth, off the
     // middle by the same.
-    const longer = patternRun({ ...zigzag, jitter: 0.5, seed: 3 }, 5, 1, 46);
-    const mid = (run: typeof plain, l: number, j: number) => run.along[run.teeth.indexOf(j)] * l - l / 2;
+    const longer = patternRun({ ...zigzag, jitter: 1, seed: 3 }, 5, 1, 460);
+    const mid = (run: typeof jittered, l: number, j: number) => run.along[run.teeth.indexOf(j)] * l - l / 2;
 
-    expect(mid(longer, 46, 2)).toBeCloseTo(mid(jittered, 40, 2), 9);
+    [-3, 2, 5].forEach(j => expect(mid(longer, 460, j)).toBeCloseTo(mid(jittered, 400, j), 9));
   });
 
   test('teeth keep clear of the bevels at the ends, and stay the same teeth', () => {

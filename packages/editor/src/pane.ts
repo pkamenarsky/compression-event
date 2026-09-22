@@ -71,8 +71,8 @@ interface Model {
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDES: Sides[] = ['both', 'out', 'in'];
 
-/** The most jitter, in percent of the spacing. */
-const JITTER = 90;
+/** The most jitter, in percent: see `Effecting.jitter`. */
+const JITTER = 100;
 
 /** The finest precision a round is asked for: past it, `FINEST` segments
  * cap it anyway. */
@@ -232,8 +232,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       field('spacing', slider(m.spacing, 1, SPACING, (v, further) => changed('deform', { spacing: v }, further), Infinity)),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
-      // Out of the spacing, as a percentage, and short of a whole one: teeth
-      // strayed by as much as their spacing would pass each other.
+      // How far the gaps stray from the spacing, as a percentage.
       field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, (v, further) => changed('deform', { jitter: Math.round(v) / 100 }, further))),
       // A seed is the noise's and the jitter's.
       show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)))),

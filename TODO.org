@@ -1,6 +1,5 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO give the deform jitter a higher range (capped at 90% so teeth never pass each other; see `Effecting.jitter`)
 
 * Before the final level file format
 ** TODO level history
