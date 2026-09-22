@@ -271,13 +271,22 @@ export function worldCanvas(
     function* panning(): Op<void> {
       cursor('grab');
 
-      yield* select({
-        panning: pan(update),
-        done: keyReleased(input, 'Space'),
-        lost: blurred(),
-      });
+      // Held by a key and never by a press, like a transform, and so with the
+      // input to itself for as long as the key is down: a click into the 3D
+      // view meanwhile is not a hand taking the controls there. See `grab`.
+      const ungrabbed = input.grab({});
 
-      cursor('');
+      try {
+        yield* select({
+          panning: pan(update),
+          done: keyReleased(input, 'Space'),
+          lost: blurred(),
+        });
+      }
+      finally {
+        ungrabbed();
+        cursor('');
+      }
     }
 
     /**
