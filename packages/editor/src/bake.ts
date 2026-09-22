@@ -2102,7 +2102,7 @@ const PROBES = 16;
  * between the source and them. A group's union reaches further out only at its
  * convex corners, and those are its members' own.
  */
-function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, placed: Ring, t: number): Point[] {
+function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, frame: Affine, placed: Ring, t: number): Point[] {
   let groups = 0;
 
   for (const h of m.holders) {
@@ -2111,17 +2111,10 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, placed
     if (d !== undefined) groups += Math.abs(mix(d[0], d[1], t));
   }
 
-  // Part way a depth is its own length lerped times the scale then
-  // (`deepAt`), which the frame here does not say. So the deepest own length
-  // of the two ends at the bigger of their scales: a bound too big is only a
-  // little work, where one too small is wrong.
-  const [k0, k1] = m.scales;
-  const bound = (a: number, b: number): number => (!(k0 > 0 && k1 > 0) || (k0 === 1 && k1 === 1)
-    ? mix(a, b, t)
-    : Math.min(a / k0, b / k1) * Math.max(k0, k1));
+  // The depth as it is at `t`, which goes with the scale the frame has then.
   const own = m.varying
-    ? m.depths[0].map((d, i) => bound(d, m.depths[1][i]))
-    : m.corners.map(() => bound(m.depth[0], m.depth[1]));
+    ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t))
+    : m.corners.map(() => deepAt(m, m.depth[0], m.depth[1], frame, t));
 
   const out = own.map(d => Math.max(0, -d) + groups);
 
@@ -2139,8 +2132,9 @@ function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB 
 
   for (let k = 0; k <= PROBES; k++) {
     const t = k / PROBES;
-    const placed = place(riding(m, t), between(m.local[0], m.local[1], t));
-    const now = [...placed, ...grown(m, scopes, placed, t)];
+    const frame = riding(m, t);
+    const placed = place(frame, between(m.local[0], m.local[1], t));
+    const now = [...placed, ...grown(m, scopes, frame, placed, t)];
     const box = ofRings([now]);
 
     all = all === null ? box : merge(all, box);
