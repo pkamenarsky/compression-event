@@ -78,6 +78,12 @@ const JITTER = 90;
  * cap it anyway. */
 const PRECISEST = 0.01;
 
+/** Where the sliders stop. The box beside each takes more, up to whatever the
+ * field itself allows: these are the ranges worth reaching by hand. */
+const SPACING = 100;
+const SEEDS = 100;
+const COARSEST = 2;
+
 /** What the pane is about: the things picked, or the polygons of the corners
  * or edges picked. */
 export function effectTargets(world: World, selection: Selection, tool: Tool): Id[] {
@@ -221,14 +227,14 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
-      field('spacing', number(m.spacing, 1, v => changed('deform', { spacing: v }))),
+      field('spacing', slider(m.spacing, 1, SPACING, v => changed('deform', { spacing: v }), Infinity)),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // Out of the spacing, as a percentage, and short of a whole one: teeth
       // strayed by as much as their spacing would pass each other.
-      field('jitter %', number(() => Math.round(m.jitter() * 100), 0, v => changed('deform', { jitter: Math.round(v) / 100 }), JITTER)),
+      field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, v => changed('deform', { jitter: Math.round(v) / 100 }))),
       // A seed is the noise's and the jitter's.
-      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', number(m.seed, 0, v => changed('deform', { seed: Math.round(v) }))))),
+      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, v => changed('deform', { seed: Math.round(v) }), Infinity)))),
       // Teeth stopping short of the corners' rounds rather than running into
       // them. A group's round is of its union, which has no corners to keep.
       show(m.polygons, fragment(field('clear corners', tick(m.clear, v => changed('deform', { clear: v }))))),
@@ -240,9 +246,9 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     options(m.round, [
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
-      show(() => !m.chamfer(), fragment(field('precision', number(m.precision, PRECISEST, v => changed('round', { precision: v }), Infinity, 'any')))),
+      show(() => !m.chamfer(), fragment(field('precision', slider(m.precision, PRECISEST, COARSEST, v => changed('round', { precision: v }), Infinity, 'any')))),
       // From about a circle at nought to tight in the corner at one.
-      show(() => !m.chamfer(), fragment(field('tension', number(m.tension, 0, v => changed('round', { tension: v }), 1, '0.05')))),
+      show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, v => changed('round', { tension: v }), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
@@ -316,6 +322,45 @@ function number(value: Value<number>, min: number, onchange: (v: number) => void
       else el.value = String(value());
     },
   });
+}
+
+/**
+ * A range to drag and the number box beside it, one value between them.
+ *
+ * The slider writes when it is let go rather than on every step, so that one
+ * drag is one entry in the history; while it moves it only keeps the box up
+ * with it. `reach` is how far the box goes past the slider's `max`.
+ */
+function slider(
+  value: Value<number>,
+  min: number,
+  max: number,
+  onchange: (v: number) => void,
+  reach = max,
+  step = '1',
+): VNode {
+  return div({ style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+    input({
+      type: 'range',
+      min: String(min),
+      max: String(max),
+      step: step === 'any' ? String((max - min) / 100) : step,
+      value: () => String(Math.min(max, value())),
+      style: { flex: '1', minWidth: '0', margin: '0' },
+      oninput: (e: Event) => {
+        const el = e.target as HTMLInputElement;
+
+        (el.nextElementSibling!.firstElementChild as HTMLInputElement).value = el.value;
+      },
+      onchange: (e: Event) => {
+        const el = e.target as HTMLInputElement;
+
+        el.blur();
+        onchange(el.valueAsNumber);
+      },
+    }),
+    div({ style: { width: '52px', flex: 'none' } }, [number(value, min, onchange, reach, step)]),
+  ]);
 }
 
 function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: (v: T) => void): VNode {

@@ -1,8 +1,6 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO spacing in deform a slider; everything in the deform panel -> sliders
-   give the deform jitter a higher range
-   the fields are all `number(...)` in editor/src/pane.ts:300; add a range input next to or instead of it
+** TODO give the deform jitter a higher range (capped at 90% so teeth never pass each other; see `Effecting.jitter`)
 ** TODO ask yes/no if level unsaved
    keep the world last saved/opened in state, compare by identity, `beforeunload` + confirm on open
 
@@ -44,7 +42,6 @@
 *** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
-*** TODO spacing in deform a slider; everything in the deform panel -> sliders
 *** TODO show RenderConfig in the editor, not with \ + ~
 *** TODO styling: right click dialog (the "under the cursor" picker)
 *** TODO pressing ? overlays tooltips on everything visible
