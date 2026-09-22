@@ -212,15 +212,36 @@ What the two tables show:
   jumped, and the bake cut every such instant down to its narrowest width.
   A test bake went from minutes to a second.
 - **Open, may change: an arc tooth's shape and its curvature limit.** An
-  arc tooth is now a triangle standing on the curve: its flanks run straight
-  down to the curve `falloff` of the spacing either side, never less than
-  `NARROWEST`, and at one they run tooth to tooth. And an arc is never pushed
-  further in than 0.9 of the radius it bends at. Both were tried against a
-  jump in `scratch/world-2026-09-22T14-17-44Z.json` — a room with inward
-  teeth of 294 on held arcs of some 465, eroding — and neither fixed it: at
-  the jump the outline before the erosion moves by 1e-13 and `simplify` of it
-  gives one ring at one instant and two with 60,000 less area at the next.
-  Being investigated; either may be undone once the cause is known.
+  arc tooth is a triangle standing on the curve: its tip, and a foot on the
+  curve either side where its flanks come down, `falloff` of the spacing
+  away, never less than `NARROWEST`; at one they run tooth to tooth. And an
+  arc is never pushed further in than 0.9 of the radius it bends at. The
+  curvature limit did nothing for the jump below; it is a guard and may go.
+- **The jump in `scratch/world-2026-09-22T14-17-44Z.json`**, a room with
+  inward teeth of 294 on held arcs of some 465, eroding, and jumping by up to
+  130 where it had moved by 0.48 before phase 1. Three things, found in turn:
+  1. *An arc's point beside a tooth's tip* (fixed). The arc's points were
+     pushed with the teeth, so one sliding under a tooth stood a hair from
+     its tip, and the edge between the two had its own direction: the
+     erosion moves a tip along the mitre of the edges there, and that
+     mitre flipped as the point came and went — or as `simplify` welded it
+     to the tip at one instant and not the next — 586 one moment and 1,113
+     the next at a depth of 112. Now an arc's points under a flank are left
+     out, and the flank runs straight to a foot; one is left out as it
+     reaches a foot, where it is the foot. Tested.
+  2. *An island born* (not a fault). Eroding the teeth pinches off specks
+     of material that grow out of nothing; the jump measure read them as a
+     jump of their distance from everything else.
+  3. *Walls starting to cross* (open). Held, the arcs grow as the room
+     erodes, so the teeth move during an erosion span and start crossing
+     each other and the walls. Where two start to cross there is a new
+     notch, a corner of some 160°, and the erosion mitres it: its mitre,
+     five times the depth, is there whole the instant the corner is. This is
+     `erode`'s own, not the round's — two members of a sealed group starting
+     to overlap while it erodes do the same — and before phase 1 the teeth
+     did not move during an erosion span, so it did not arise here.
+  After 1, the room steps by 0.56 and 0.69 at a falloff of one; at 0.15 one
+  jump of 3 is left, and at nought one of 15, both 3.
 - **Then: a falloff.** The push above made an arc read as a zigzag along
   the curve, and spikes on the curve read better. Now each tooth adds its
   height to the arc falling away with the distance along it — first as an

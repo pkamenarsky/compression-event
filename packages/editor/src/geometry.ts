@@ -3292,26 +3292,62 @@ function arcsWith(
       return { x: p.x + m.x * off, y: p.y + m.y * off };
     };
 
-    const placed: { s: number, p: Point }[] = teethAt.map(t => ({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)) }));
     const along = laid.us.map(lengthAt);
     const arcPoints = laid.points.map((p, j) => (j === 0 || j === laid.points.length - 1 ? p : pushed(laid.us[j], heightAt(along[j]))));
 
-    // In order along the curve. A tooth where one of the arc's own points is
-    // is that point, which is pushed off as far as it: two points in one place
-    // are an edge of no length, and it is left out.
-    const all: Point[] = [], arcAt: number[] = [];
-    const same = total * 1e-9;
-    let k = 0;
+    // Each tooth is its tip and a foot on the curve either side of it where
+    // its flanks come down, and the arc's own points under a flank are left
+    // out: so no point of the arc ever stands close by a tip. One that did
+    // made the edge out of the tip too short to have the flank's direction,
+    // and the erosion, which moves a tip along the mitre of the two edges
+    // there, flipped it about as the point passed, or was welded to it, or
+    // not. A point is left out as it reaches a foot, where it is the foot,
+    // and a foot as it reaches another tooth's, where it is that foot: so
+    // nothing jumps. A foot past the arc's ends is not laid; the flank runs
+    // to the end instead.
+    const under = (at: number, but = -1): boolean => teethAt.some((t, k) => k !== but && Math.abs(at - t.s) < reach);
+    const laidAt: { s: number, p: Point, arc: number }[] = [];
 
-    arcPoints.forEach((p, j) => {
-      while (k < placed.length && placed[k].s < along[j] - same) all.push(placed[k++].p);
-      while (k < placed.length && placed[k].s <= along[j] + same) k++;
+    teethAt.forEach((t, k) => {
+      laidAt.push({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)), arc: -1 });
 
-      arcAt.push(all.length);
-      all.push(p);
+      for (const foot of [t.s - reach, t.s + reach]) {
+        if (foot > 0 && foot < total && !under(foot, k)) laidAt.push({ s: foot, p: pushed(uAt(foot), heightAt(foot)), arc: -1 });
+      }
     });
 
-    while (k < placed.length) all.push(placed[k++].p);
+    arcPoints.forEach((p, j) => {
+      const end = j === 0 || j === arcPoints.length - 1;
+
+      laidAt.push({ s: along[j], p, arc: end || !teethAt.some(t => Math.abs(along[j] - t.s) <= reach) ? j : -2 - j });
+    });
+
+    // By length, an arc's end before anything at its length and after.
+    laidAt.sort((x, y) => x.s - y.s || (x.arc === 0 ? -1 : y.arc === 0 ? 1 : x.arc === arcPoints.length - 1 ? 1 : y.arc === arcPoints.length - 1 ? -1 : 0));
+
+    const all: Point[] = [], arcAt: number[] = new Array<number>(arcPoints.length).fill(0);
+
+    for (const x of laidAt) {
+      // An arc's point left out takes the place of whatever comes next.
+      if (x.arc <= -2) {
+        arcAt[-2 - x.arc] = all.length;
+        continue;
+      }
+
+      if (x.arc >= 0) arcAt[x.arc] = all.length;
+
+      const last = all[all.length - 1];
+
+      if (last !== undefined && last.x === x.p.x && last.y === x.p.y) {
+        if (x.arc >= 0) arcAt[x.arc] = all.length - 1;
+        continue;
+      }
+
+      all.push(x.p);
+    }
+
+    // One left out after the last point laid takes the last.
+    arcAt.forEach((k, j) => (arcAt[j] = Math.min(k, all.length - 1)));
 
     return { arc: arcPoints, all, arcAt, point: false };
   }

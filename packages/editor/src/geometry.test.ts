@@ -37,6 +37,7 @@ import {
   xor,
   Effecting,
   PLAIN,
+  outlineOf,
   deformed,
   imaged,
   patterned,
@@ -1957,6 +1958,39 @@ describe('round and deform', () => {
 
     run.teeth.forEach((j, k) => expect(run.along[k] * 40).toBeCloseTo(20 + first(1) + j * 3, 9));
     expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].some(k => patternRun(e, k, 1, 1.5).teeth.length === 0)).toBe(true);
+  });
+
+  test('no point of an arc stands under a tooth\'s flank, however the arc slides under it', () => {
+    // A corner rounded ever deeper, so its teeth slide along its curve past
+    // the curve's own points: at every depth, each tooth's two neighbours
+    // are its feet or further, never a point by its tip.
+    const e: Effecting = { ...PLAIN, spacing: 12, pattern: 'zigzag', falloff: 0.1, offset: false };
+    const reach = 0.1 * 12;
+
+    for (let k = 0; k <= 40; k++) {
+      const bevel = 20 + k * 0.37;
+      const o = outlineOf(square.map(p => ({ x: p.x * 10, y: p.y * 10 })), [0], () => false, () => facetsOf(16), i => (i === 0 ? bevel : 0), i => (i === 0 ? { e, before: 5, after: 5, key: 3 } : null));
+      const n = o.ring.length;
+
+      // A tip is a tooth that stands off the line through its neighbours; the
+      // rest of `teeth` are feet, on the curve.
+      const tips = o.teeth.filter(t => {
+        const a = o.ring[(t - 1 + n) % n], p = o.ring[t], c = o.ring[(t + 1) % n];
+        const l = Math.hypot(c.x - a.x, c.y - a.y);
+
+        return l > 0 && Math.abs((c.x - a.x) * (p.y - a.y) - (c.y - a.y) * (p.x - a.x)) / l > 1;
+      });
+
+      expect(tips.length).toBeGreaterThan(0);
+
+      for (const t of tips) {
+        for (const m of [(t - 1 + n) % n, (t + 1) % n]) {
+          const p = o.ring[t], q = o.ring[m];
+
+          expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeGreaterThan(reach * 0.5);
+        }
+      }
+    }
   });
 
   test('noise is the edge\'s own, whatever its place', () => {
