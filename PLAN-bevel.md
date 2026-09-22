@@ -457,13 +457,17 @@ The group's round rides the path it rides today — `shapes` in the bake's
 scope, the facets and bevel mixed across the span — but before the scope's
 depth instead of after the fold. The group's teeth ride it with the group's
 amplitude added beside the bevel. The bake's group effects become
-`{ facets, bevel, amplitude, deform }` per scope.
+`{ facets, bevel, held, deform }` per scope, the deform carrying its spacing
+and amplitude at each end: a group's spacing goes with its scale, as its
+members' corners do, and taking the near end's for the whole span puts the
+bake a whole tooth away from the editor at the far one.
 
 ### 2.6 What goes
 
-`roundedFold`, `squaredThrough`, `squareFrom`, `squareIn`, `Resolved`'s
-`square` and the `squares` map in `reading.ts`; `effectedSquare` and `imaged`
-if phase 1 left them; `restSquare`.
+`roundedFold` went with 2.2. What stays until phase 3, because it is what
+keeps a group's round off its members' teeth: `squaredThrough`, `squareFrom`,
+`squareIn`, `Resolved`'s `square` and the `squares` map in `reading.ts`,
+`effectedSquare` and `imaged`, and `restSquare`.
 
 ### 2.7 Tests
 
@@ -486,17 +490,13 @@ shape. The group's deform is no longer pushed onto its members. The bake
 carries the deform's spacing and amplitude across the span. The square
 machinery stays, until phase 3, for members' own teeth under a group round.
 
-Left, and known:
+It left the union's straights anonymous — one noise for every wall, and teeth
+laid from a run's own middle, which moves whenever either of its ends does.
+That is 2.9, which is now done too; 2.11 says where the two together leave it.
 
-- **The union's straights have no names.** A tooth that comes or goes on
-  one, as the clear by an arc grows or a member moves, is a bake jump, at
-  nought height: the outline does not move, but its vertical pops in rather
-  than fading. Naming each straight by the member edge at its middle (2.3)
-  would let the bake seed and fade them as it does a polygon's.
-- **Every straight is keyed nought**, so noise and jitter repeat from
-  straight to straight. The same naming fixes it.
-- A member's teeth next to a straight make that straight untoothed: the
-  group does not tooth its members' deformed geometry again.
+One thing from here stands either way: a member's teeth next to a straight
+make that straight untoothed, the group not toothing its members' deformed
+geometry again.
 
 ### 2.8b What the one-pipeline experiment found
 
@@ -531,91 +531,170 @@ way; with teeth, 41 stretches and 6 jumps today against 132 and 45.
 
 So the order stays as it is, and the work is 2.9.
 
-### 2.9 Scoped: naming the union's straights and arcs
+### 2.9 Naming the union's straights and arcs
 
 **What it is for.** A sealed group that is rounded, deformed and eroded should
 resolve to what a polygon of the same outline resolves to: the same shape in
 the editor and the same walls in the game, with the group's deform running
 along its members' arcs as it runs along a polygon's. The morph may fade a
-vertical in where it cannot carry a tooth across a span, where that is what
-keeps the code simple; the still may not differ at all.
+vertical in where it cannot carry a tooth across a span; the still may not
+differ at all.
 
-What 2.8 left. A union straight is anonymous today, so its teeth are keyed
-nought and the bake cannot tell one of its teeth at the near end from one at
-the far. Naming them fixes the noise, the jump, and most of phase 3 at once.
+What 2.8 left was anonymity. A union straight had no name, so its teeth were
+keyed nought — one noise for every wall — and were laid from the run's own
+middle, which moved whenever anything at either end of the run did.
 
 **By the line, not by the arrangement.** A union straight lies on the line of
-exactly one member edge — the arrangement cuts edges up and drops the pieces
+exactly one member edge: the arrangement cuts edges up and drops the pieces
 inside, but it never moves one off its line. So a member publishes its eroded
-edges as lines with the source edge's id beside them, and a straight is named
-by the line its middle lies on. This is the same mechanism phase 3 needs
-("Where they come from", below), and doing it here is most of that phase.
+edges as lines, and the fold names each straight by the line along it.
 
-The other way is to tag the union: `combineTagged` already keeps every output
-point's provenance, and `unionAll` throws it away. Rejected, for now: the tag
-names a *shape* point, and a member's shape points are its arcs and teeth
-rather than its source edges, so the tag would still have to be taken back to
-an edge — and it would have to survive `erode` on the way up through a nested
-scope, which a line does for nothing.
+The other way was to tag the union: `combineTagged` keeps every output point's
+provenance and `unionAll` throws it away. Rejected, because a tag names a
+*shape* point — a member's arcs and teeth, not its source edges — so it would
+still have to be taken back to an edge, and it would have to survive `erode`
+on the way up through a nested scope, which a line does for nothing.
 
-**The pieces.**
+**What was built.**
 
-1. **A member's lines.** `Resolved` gains `edges`: per source edge that
-   reaches the projection, the line it lies on after the erosion and the
-   corner id it starts at. A polygon's come from `imagesOf` — the straight
-   between one corner's arc and the next one's is that source edge — and a
-   scope's from its own fold, so they stack up through nesting. Teeth and
-   arcs are not edges and get none: a straight beside a member's tooth is
-   already left untoothed.
-2. **`slotted` carries them up**, moved in by the slot's depth the way the
-   kept points are.
-3. **`foldShaped` names each straight** by the lowest-ranked line along it,
-   anchors its pattern at that edge's own middle (2.3), and keys its teeth by
-   that corner id — the noise, the jitter and the offset
-   then belong to the edge, as a polygon's do. A straight over no line keeps
-   nought, which is what a straight made of two members' crossings is.
-4. **The group's deform runs along a member's arc**, as it runs along one of
-   a polygon's own corners, rather than being laid per facet as though each
-   were a wall. `arcsWith` already builds a curve and lays teeth on it in two
-   steps — `arc` hands back `{ points, us, on, normal, bend }` and `withTeeth`
-   lays the teeth — so the second half comes out as a function over a curve
-   that arrives as points rather than one it has just built. Then:
-   - a member publishes its arcs beside its lines, keyed by the corner id
-     they round; `imagesOf` has them already;
-   - a run of the fold is matched to a published arc by position, whole or
-     cut, the union having kept the member's points where nothing crosses
-     them;
-   - the teeth are laid in the whole arc's own length and kept where they
-     fall on the surviving piece, so a crossing eating part of the curve
-     moves none of them — the same clip the straights have at their ends;
-   - and the group stops rounding those facet corners: a run that is a
-     member's arc is a curve already, not a string of corners to bevel.
+1. **`namesOf(resolved)` → `Named`.** Per source edge that reaches the
+   projection, the line it lies on *after* the erosion, named by the corner it
+   leaves; and per rounded corner with any length, its arc as points. Off
+   `imagesOf` where a polygon has effects and off `mitred` where it has none.
+   A tooth names nothing: it belongs to the edge its `root` names, and that
+   edge's line runs from the arc at one end of it to the arc at the other,
+   which the teeth stand off but do not move.
+2. **`movedIn(named, depth)`.** A line goes along its own normal, which is
+   exactly where the erosion puts it; an arc's points each on the mitre of the
+   two segments at them — the two inside the run, and at its ends the line
+   that leaves it, which is why lines and arcs are moved together. A line's
+   ends are then taken from the moved arc's, so the two keep sharing points
+   exactly: `movedIn` finds an arc's neighbouring segments *by* those points,
+   so a nested scope moving an already-moved outline depends on it. `slotted`
+   gathers what its members publish and moves it in by the slot's signed
+   depth; `resolves` publishes a scope's own, moved in by its depth.
+3. **A straight takes a name and an anchor.** `foldShaped` finds the first
+   line along a straight — first being lowest-ranked, which is what settles a
+   shared edge in the union — keys its teeth by that corner id, and lays them
+   from that edge's own middle (2.3). `patternRun` gained `from`, where along
+   the run the pattern is centred, and `subdivided` passes one per edge. An
+   anchor off the run is walked from all the same: the way out that reaches
+   the run lays what lands on it, and the other stops at once.
+4. **An arc is a curve, not a string of corners.** `teethAlong` came out of
+   `arcsWith` as a function over a `Curved` — `{ points, us, on, normal, bend }`
+   — so teeth can stand on a curve that arrives as points. `curveThrough`
+   reads such a curve back off a point run: `on` walks the polyline, `normal`
+   is the segment's, `bend` the circle through three neighbours. A run of the
+   fold that matches a published arc is then left unrounded and takes the
+   group's teeth along the whole curve, cut back to the piece the fold kept —
+   so a crossing eating part of an arc moves none of its teeth. The point a
+   run ends at stands as itself: the straight leaving the curve starts there.
+5. **Teeth stand in the fold before they turn.** A polygon's teeth are corners
+   of its own, lying flat on a wall an amplitude of nought leaves straight.
+   The fold had none, and a flat tooth is in line with its neighbours, so the
+   arrangement dropped it. `FoldShaped.fades` reports each flat tooth with
+   nought beside it; `Contributed.faded` keeps it in the ring and gives the
+   bake a value to fade the line up from. Arcs take their teeth at nought
+   amplitude too, for the same reason and one more: an arc's teeth take its
+   own points off it, so an arc that gains them at the first instant of a span
+   changes what it is made of, all at once.
 
-   `bend` on a curve that arrives as points is an estimate off three
-   neighbours rather than the curve's own, which the tent's fold limit leans
-   on; and an arc may be cut at both ends. Those are the two unknowns.
+**What the curve experiment found** (`experiments/curve.test.ts`). A corner is
+rounded, its curve thrown away, and the same teeth laid on a curve read back
+off the facet points. Same tips, same points, same folds in every case —
+including three-facet arcs and amplitudes pushed hard enough inward to reach
+the fold limit, where `bend` is only an estimate. The tips land 0.24 to 4.72
+off the analytic ones, growing with coarseness, which is the polyline sitting
+inside the curve it was laid as. In a fold that is not error: the polyline is
+the outline, and the curve it came from is gone.
 
-5. **A tooth is as solid as it is tall.** The first plan here was to seed:
-   the fold evaluated at each end of the span, and a tooth only one end has
-   laid flat at the other. It is not needed, and the flat tooth is wrong
-   anyway — a tooth with no room is one inside the clear by an arc, where the
-   arc already is, so laying it there puts a point off the outline.
+### 2.10 What went wrong on the way
 
-   Nor is a tooth's *height* what its line should say. That was tried — as
-   solid as it is tall — and it dims every short tooth for good: a tooth near
-   the end of a wall stands at a fifth of the amplitude forever, and it is a
-   corner, so its line is drawn.
+Each of these was found by measuring a world, not by reading the code, and
+each is worth keeping: they are the ways this construction fails.
 
-   What the fold was missing is the teeth themselves. A polygon's teeth are
-   corners of its own, standing flat on a wall an amplitude of nought leaves
-   straight, and their lines come up as the deform does. The fold had none:
-   a flat tooth is in line with its neighbours and the arrangement drops it,
-   so every tooth arrived at once at the first instant after the keyframe.
-   `FoldShaped.fades` now reports each flat tooth with nought beside it, which
-   `Contributed.faded` both keeps in the ring and gives the bake to fade from.
+1. **Faceted as drawn rather than as seen.** A held round drawn deeper by the
+   erosion gained a facet — twelve to thirteen — and the line on it faded in
+   across a whole span where nothing anyone could see had changed. Faceted by
+   the seen bevel now.
+2. **An arc gaining its teeth all at once.** With no teeth at nought
+   amplitude, an arc kept all of its points; at the first instant after the
+   keyframe the teeth took out every point under a flank — forty of ninety-five
+   — and the outline moved 14.87. Laid at nought amplitude: 0.18, and the span
+   went from eight stretches and two jumps to one and none.
+3. **The seen ratio cut off at one.** `ArcTeeth.seen` lays an arc's teeth as
+   it is seen so the erosion does not slide them, and it was held to at most
+   one to stop a negative erosion cramming a whole pattern into nothing. That
+   threw away the reflex case, where a held round is drawn *smaller* than it
+   is seen, and those teeth crept along their shrinking arc: 8.68 in one span,
+   46.19 in another. Capped at `CRAMMED` instead of one — `min` is continuous
+   either way — giving 0.50 and 13.46.
+4. **A held round eroded away.** A reflex corner with any round at all erodes
+   to a fan of radius the depth; a square one mitres to a point. So when the
+   erosion ate the last of a held round the whole fan went at once — 6,848 of
+   area on an L drawn for the purpose. A held round now keeps `SEEDING` of
+   itself, which is what a corner barely turning already keeps: 13.46 to 2.69.
+5. **Teeth arriving all at once.** With the amplitude starting at nought a
+   fold had nine points at the keyframe and twenty-six at the next instant.
+   That is piece 5 above: 1 stretch and no jumps, against 8 and 2.
 
-   A tooth that dies in a ramp still ends a stretch: it is flush with the wall
-   as it goes, so nothing moves, and the plan leaves it there.
+And two designs that were built and taken out again:
+
+- **Seeding flat teeth at their pattern place.** A tooth with no room is one
+  inside the clear by an arc, where the arc already is, so laying it flat
+  there puts a point off the outline: the group's outline jumped 2.47 where it
+  should move less than 0.5.
+- **A line as solid as its tooth is tall.** It dims every short tooth for
+  good — a tooth near the end of a wall stands at a fifth of the amplitude
+  forever and is a corner all the same, so its line is drawn. In the world it
+  was found in, teeth sat at 0.24, 0.10 and 0.03 permanently, and jumped to
+  solid at the keyframe. What a fade must say is whether the corner is
+  *there*, not how big it is.
+
+Two of my own mistakes, for the record: the anchor work added loops that laid
+some teeth twice, the ordinary walk already handling an anchor off the run;
+and a `process.env` debug print left in `foldShaped` broke the editor at load.
+`tsc`, the tests and the cycle check all run in node, so none of them sees
+that.
+
+### 2.11 Where phase 2 stands
+
+`world-2026-09-22T21-40-17Z` — two overlapping rooms sealed, rounded 180 with
+a noise deform, then eroded 61 four times — span by span, with the worst the
+outline moves between neighbouring instants and how many lines come or go at a
+seam with anything left to see:
+
+| span | stretches | jumps | worst step | lines popping |
+|---|---|---|---|---|
+| 0, the deform arriving | 1 | 0 | 0.18 | 0 |
+| 1 | 98 | 20 | 0.50 | 0 |
+| 2 | 60 | 10 | 0.58 | 0 |
+| 3 | 91 | 14 | 2.69 | 14 |
+| 4 | 41 | 6 | 0.65 | 2 |
+
+The other worlds kept for this — `jump-walls-crossing` and
+`world-2026-09-22T14-17-44Z` — are unchanged at 0.61/0.55 and 1.53/1.18.
+
+**Tests.** In `effects.test.ts`: what a plain room publishes and what a
+rounded, deformed one does; names moved in by a depth landing where that depth
+puts the outline; a run's teeth staying put while the far end moves; a run cut
+in two keeping the teeth on the piece its naming edge is on; the deform
+running along a member's arc, which gives teeth of the group's own size rather
+than a stunted one per facet; a held round eroded past its bevel keeping a
+hair of itself; and a held round faceted as it is seen. In `bake.test.ts`: a
+group's deform starting from nought fading its verticals in; a group's tooth
+standing solid however short it is; a union edge cut in two keeping its teeth.
+
+**What is left.**
+
+- **A reflex arc under an erosion deeper than its bevel**, which is where the
+  fourteen and the two come from: see the `CRAMMED` table below. Everything
+  before that depth is clean.
+- **A run splitting or merging** re-anchors the piece that loses the naming
+  edge, at an event the arrangement already has.
+- **A scope's own arcs have no names**, its corners having no ids, so a group
+  nested in another names its straights but not its curves.
+- **Phase 3**, which the naming was most of.
 
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
@@ -635,9 +714,12 @@ neighbouring instants over five spans:
 |---|---|---|---|---|---|
 | worst step | 8.68 | 3.27 | **2.69** | 10.27 | 34.41 |
 
-So four. What is left there is fourteen lines popping in one span and two in
-another, all of them on reflex arcs at a depth past the bevel; the spans
-before that have none.
+So four; one is the behaviour before the reflex case was honoured. Going
+further here is not another constant: it would be to lay a deeply eroded
+reflex arc's teeth on the arc as it is *seen* — the fan the erosion makes —
+rather than cramming them onto the sliver that is drawn, which is a deform
+after the erosion for that one case and cuts against the order phase 2 is
+built on.
 
 **Where a straight has no name.** Not at a crossing: a crossing is a corner,
 and every piece of the union's boundary is a piece of some member's edge. What
@@ -652,14 +734,6 @@ so members sliding until the join passes the middle flip the name and jump the
 pattern, with no event to hide it. So the run takes the lowest-ranked member
 edge along it rather than the one under its middle: rank is already what
 settles a shared edge in the union, and it changes only when the run does.
-
-**Tests.** A sealed group of one rounded, deformed, eroded room, against the
-same room on its own: the same shape, point for point. Two rooms along one
-wall: each straight's teeth keyed by its own
-member edge, and the noise on one wall different from the noise on another; a
-group eroding with a round, whose clear eats a tooth: no jump, and the
-tooth's vertical fades over exactly the stretch it goes in; the bake still
-reproduces the still at every stretch end.
 
 ## Phase 3: a member's deform under a group's bevel
 
