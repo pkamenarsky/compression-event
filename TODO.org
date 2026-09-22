@@ -1,5 +1,16 @@
+* Bugs
+* TODO copying something in a later version and pasting it should not change its shape
+
 * Low hanging fruit
-* TODO insert a key befor the current one + shortcut
+* TODO 3d view from upper right corner and resizable
+* TODO inspector view scrollable
+* TODO round tension of 0.2 is a good default i think
+* TODO offset in deform separate slider
+* TODO show amount in bothe deform and round in inspector view
+* TODO text in 3d view (replace up down arrows by left right)
+* TODO always draw first keyframe actually (also before any transform)
+* TODO precision higher -> more polys, not fewer
+* TODO insert a key before the current one + shortcut
 * TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
 
 * Before the final level file format
