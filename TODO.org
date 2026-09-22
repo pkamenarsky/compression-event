@@ -38,6 +38,7 @@
 **** snap to grid
 **** autobake
 ** Look & layout
+*** TODO draw effects in order in the inspector pane with arrows pointing down between them
 *** TODO statusbar shows errors, action + available modifier keys (it only shows messages now)
 **** should be prominent so it can't be missed
 *** TODO make it more clear when drilled into group (breadcrumb exists)
