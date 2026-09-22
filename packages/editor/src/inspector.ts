@@ -44,6 +44,8 @@ import {
   withEffect,
 } from './effects';
 import { Pattern, Sides } from './geometry';
+import { entryAt, lastKeys } from './keys';
+import { Key } from './rig';
 import { kindsOf, owning, repartedPolygons, retypable } from './scene';
 import { theme } from './theme';
 import {
@@ -56,6 +58,7 @@ import {
   PolygonKind,
   Selection,
   SetName,
+  Target,
   Tool,
   Update,
   VertexId,
@@ -76,6 +79,23 @@ type Some = 'all' | 'some' | 'none';
  * how many of them have options of their own.
  */
 interface Model {
+  /** Whether there is a key to show: see `currentKey`. */
+  key: boolean
+  /** What it does to the thing as a whole, in the units it is typed in:
+   * degrees for the turn and the skew. Identity where it holds only corners. */
+  moveX: number
+  moveY: number
+  angle: number
+  skew: number
+  scaleX: number
+  scaleY: number
+  erodes: number
+  rounds: number
+  deforms: number
+  /** How many keyframes it plays at, `∞` to the end. */
+  times: string
+  /** Whether it holds anything about single corners as well, or instead. */
+  cornered: boolean
   /** Whether there are polygons to say the kind of. */
   kinds: boolean
   /** How many of them play each part, one field per box. */
@@ -134,12 +154,27 @@ export function effectTargets(world: World, selection: Selection, tool: Tool): I
   return selection.polygons.filter(id => world.polygons.has(id) || world.groups.has(id));
 }
 
+/**
+ * The key the inspector shows: the one the hand is on, wherever it is, or else
+ * the last the first picked thing has at this keyframe — the one the next
+ * gesture folds into. Nothing where neither has one, which is also what a key
+ * taken out comes to.
+ */
+function currentKey(world: World, target: Target | null, k: KeyframeId, ids: readonly Id[]): Key | undefined {
+  if (target !== null) return entryAt(world, target.lead);
+
+  const [last] = lastKeys(world, k, ids);
+
+  return last === undefined ? undefined : entryAt(world, last);
+}
+
 export function inspector(
   world: Value<World>,
   selection: Value<Selection>,
   tool: Value<Tool>,
   remembered: Value<Options>,
   keyframe: Value<KeyframeId>,
+  target: Value<Target | null>,
   top: number,
   update: Update,
 ): VNode {
@@ -153,7 +188,15 @@ export function inspector(
   // See `retypable`.
   const reached = () => (tool() === 'polygon' ? retypable(world(), selection().polygons) : []);
 
-  const model = (): Model => modelOf(world(), keyframe(), targets(), corners(), reached(), remembered());
+  const model = (): Model => modelOf(
+    world(),
+    keyframe(),
+    targets(),
+    corners(),
+    reached(),
+    remembered(),
+    currentKey(world(), target(), keyframe(), targets()),
+  );
 
   return show(
     () => targets().length > 0,
@@ -203,8 +246,12 @@ function modelOf(
   corners: readonly VertexId[],
   reached: readonly PolygonId[],
   remembered: Options,
+  key: Key | undefined,
 ): Model {
   const kinds = kindsOf(world, reached);
+  const by = key?.by;
+  const degrees = (r: number) => Math.round(r * 180 / Math.PI * 100) / 100;
+  const fine = (n: number) => Math.round(n * 1000) / 1000;
 
   // The first picked thing's that has one, switched on or not, and otherwise
   // what is remembered.
@@ -219,6 +266,18 @@ function modelOf(
   const r = mine ? cornerRound(world, corners[0]) ?? remembered.round : shown('round');
 
   return {
+    key: key !== undefined,
+    moveX: fine(by?.move.x ?? 0),
+    moveY: fine(by?.move.y ?? 0),
+    angle: degrees(by?.angle ?? 0),
+    skew: degrees(by?.skew ?? 0),
+    scaleX: fine(by?.scale.x ?? 1),
+    scaleY: fine(by?.scale.y ?? 1),
+    erodes: fine(by?.erode ?? 0),
+    rounds: fine(by?.round ?? 0),
+    deforms: fine(by?.deform ?? 0),
+    times: key === undefined ? '' : key.times === null ? '∞' : String(key.times),
+    cornered: key !== undefined && [key.corners, key.depths, key.rounds, key.deforms].some(m => m !== undefined && m.size > 0),
     kinds: kinds.length > 0,
     hollow: some(kinds, k => k.level === 'hollow'),
     solid: some(kinds, k => k.level === 'solid'),
@@ -331,6 +390,32 @@ function body(
       ]),
     ])),
 
+    show(() => m.key(), fragment([
+      div({ style: { color: theme.muted } }, [text('Key')]),
+      div({
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0, 1fr)',
+          alignItems: 'center',
+          gap: '2px 8px',
+          paddingLeft: '22px',
+          paddingBottom: '4px',
+          borderBottom: `1px solid ${theme.border}`,
+          fontVariantNumeric: 'tabular-nums',
+        },
+      }, [
+        ...readout('move', () => `${m.moveX()}, ${m.moveY()}`),
+        ...readout('turn', () => `${m.angle()}°`),
+        ...readout('skew', () => `${m.skew()}°`),
+        ...readout('scale', () => `${m.scaleX()} × ${m.scaleY()}`),
+        ...readout('erode', () => String(m.erodes())),
+        ...readout('round', () => String(m.rounds())),
+        ...readout('deform', () => String(m.deforms())),
+        ...readout('plays', () => (m.times() === '1' ? 'once' : `${m.times()} times`)),
+        ...readout('', () => (m.cornered() ? 'and single corners' : '')),
+      ]),
+    ])),
+
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
       // A length, shown as a percentage of the thing's size so that the
@@ -404,6 +489,19 @@ function options(on: Value<Some>, fields: (VNode | VNode[])[]): VNode {
       opacity: () => (on() === 'none' ? '0.5' : '1'),
     },
   }, fields.flat());
+}
+
+/**
+ * One of the key's numbers, faded where it does nothing, so that what the key
+ * does stands out from the list of what a key could do.
+ */
+function readout(name: string, value: () => string): VNode[] {
+  const idle = () => ['0, 0', '0°', '1 × 1', '0', ''].includes(value());
+
+  return [
+    span({ style: { color: theme.muted } }, [text(name)]),
+    span({ style: { opacity: () => (idle() ? '0.4' : '1') } }, [text(value)]),
+  ];
 }
 
 function field(name: string, control: VNode): VNode[] {

@@ -1,8 +1,4 @@
 * Low hanging fruit
-** TODO inspector view - show all transforms + effects in the same pane
-*** should always reflect the current key's tranform
-*** if key transform is deleted, inspector view should be updated
-**** use kontinuum reactivity for all of that
 
 * Before the final level file format
 ** TODO level history
