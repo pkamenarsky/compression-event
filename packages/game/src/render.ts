@@ -59,6 +59,9 @@ export interface RendererOptions {
    * depends on it: the dither pattern is in pixels. */
   pixelRatio?: number
   fov?: number
+  /** A frame rate in the corner. Off unless asked for: it is for whoever is
+   * building the level, not for whoever is playing it. */
+  fps?: boolean
 }
 
 export interface Renderer {
@@ -165,7 +168,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
   camera.position.set(0, 1.6, 0);
 
   const screen = new ScreenPass(renderer);
-  const meter = fps(element);
+  const meter = options.fps === true ? fps(element) : null;
 
   screen.quantised = options.dither ?? true;
 
@@ -478,13 +481,13 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
     render(): void {
       overhead.follow(camera, performance.now() / 1000);
       screen.apply(scene, camera);
-      meter.tick();
+      meter?.tick();
     },
 
     blank(): void {
       renderer.setRenderTarget(null);
       renderer.clear();
-      meter.tick();
+      meter?.tick();
     },
 
     dispose(): void {
@@ -500,7 +503,7 @@ export function renderer(element: HTMLElement, options: RendererOptions = {}): R
       scene.remove(overhead.mesh);
       overhead.dispose();
       screen.dispose();
-      meter.dispose();
+      meter?.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },

@@ -1,7 +1,5 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO remove debug output/controls when game NOT started from editor (editor can pass a debug: true option to game or something that is by default false)
-*** fps counter, <, > shader switching (and ; ' sky switching beside it)
 ** TODO write rotation degrees / scale factor / move distance while transforming
    the amount gestures already set `reading` in the same move handler (canvas/index.ts:811); add labels for T/R/S/X/Y
 ** TODO spacing in deform a slider; everything in the deform panel -> sliders
@@ -82,9 +80,6 @@
 ** TODO maybe we don't need the fade
 ** TODO artefact: "DON'T LOOK BACK"
 ** TODO artefact: shrink walls for 5sec
-** TODO remove debug output
-*** fps counter
-*** <, > for shader switching
 
 * Later
 ** sound: dinosaurs? https://www.youtube.com/watch?v=Fqf8EYdCehw

@@ -463,7 +463,7 @@ function started(s: EditorState): void {
 
   // No title screen: Cmd+\ is the gesture that asked for it, and the
   // level is already there.
-  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, credits: false, leave }), host };
+  afoot = { game: play(host, shipped(s.world, s.bake), { title: false, credits: false, tools: true, leave }), host };
 }
 
 /**

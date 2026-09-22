@@ -645,7 +645,7 @@ function panel(
         effect(() => {
           if (host === undefined) return;
 
-          view = renderer(host, { dither: false, fov: FOV_DEGREES });
+          view = renderer(host, { dither: false, fov: FOV_DEGREES, fps: true });
           crowd = artefacts(view.scene);
           crowd.configure(look);
 

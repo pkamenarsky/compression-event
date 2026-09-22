@@ -25,7 +25,7 @@
 // `vertigo` is not here at all: it is the camera's view narrowing, and the
 // game does it. As far as the shader knows it is `none`.
 //
-// Experimental, and switched between in the game with `<` and `>`.
+// Experimental, and switched between with `<` and `>` in the game the editor starts.
 // -----------------------------------------------------------------------------
 
 import * as THREE from 'three';

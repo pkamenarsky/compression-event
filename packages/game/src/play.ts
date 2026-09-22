@@ -136,6 +136,13 @@ export interface PlayOptions {
   debug?: boolean
 
   /**
+   * The controls for whoever is building the level rather than playing it: a
+   * frame rate in the corner, `<` and `>` through the warps and `;` and `'`
+   * through the skies. Off unless asked for, which the editor does.
+   */
+  tools?: boolean
+
+  /**
    * Someone leaving: Escape, or letting go of the pointer they had taken.
    *
    * Whoever put the game on screen is the one who can take it off again, so
@@ -153,7 +160,7 @@ interface Near {
 }
 
 export function play(host: HTMLElement, world: World, options: PlayOptions = {}): Game {
-  const view = renderer(host, { dither: true });
+  const view = renderer(host, { dither: true, fps: options.tools === true });
   const crowd = artefacts(view.scene);
   const say = hud(host);
 
@@ -731,7 +738,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       return;
     }
 
-    if (e.key === '<' || e.key === '>') {
+    if (options.tools === true && (e.key === '<' || e.key === '>')) {
       const at = WARPS.indexOf(look.warp.kind);
       const kind = WARPS[(at + (e.key === '>' ? 1 : WARPS.length - 1)) % WARPS.length];
 
@@ -741,7 +748,7 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
       return;
     }
 
-    if (e.key === ';' || e.key === "'") {
+    if (options.tools === true && (e.key === ';' || e.key === "'")) {
       const at = SKIES.indexOf(look.sky.kind);
       const kind = SKIES[(at + (e.key === "'" ? 1 : SKIES.length - 1)) % SKIES.length];
 
