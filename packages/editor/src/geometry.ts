@@ -2698,7 +2698,7 @@ export interface EdgeRun {
  * shrink to nothing at that line as they do at an end, and stay where the
  * spacing puts them, so they are continuous in the bevel too.
  */
-export function patternRun(e: Effecting, key: number, amplitude: number, length: number, clear = 0, clearTo = 0): EdgeRun {
+export function patternRun(e: Effecting, key: number, amplitude: number, length: number, clear = 0, clearTo = 0, ramp = e.spacing): EdgeRun {
   // From the middle — or, offset, off it by a share of the spacing the seed
   // gives the edge: so no tooth is sure to stand in the middle of every edge,
   // and one shorter than the spacing may have none.
@@ -2722,7 +2722,7 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   const places = [...before.reverse(), ...after];
 
   for (const [j, at] of places) {
-    const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / e.spacing);
+    const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
 
     if (room <= 0) continue;
 
@@ -3137,6 +3137,38 @@ interface ArcLaid {
   point: boolean
 }
 
+/** `a · x = b` for a square `a`, by elimination with partial pivoting. */
+function solved(a: number[][], b: number[]): number[] {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]]);
+
+  for (let c = 0; c < n; c++) {
+    let p = c;
+
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r][c]) > Math.abs(m[p][c])) p = r;
+
+    [m[c], m[p]] = [m[p], m[c]];
+
+    for (let r = c + 1; r < n; r++) {
+      const f = m[r][c] / m[c][c];
+
+      for (let k = c; k <= n; k++) m[r][k] -= f * m[c][k];
+    }
+  }
+
+  const x = new Array<number>(n).fill(0);
+
+  for (let r = n - 1; r >= 0; r--) {
+    let sum = m[r][n];
+
+    for (let k = r + 1; k < n; k++) sum -= m[r][k] * x[k];
+
+    x[r] = sum / m[r][r];
+  }
+
+  return x;
+}
+
 /** How finely an arc's length is read, to put its teeth back on it. */
 const LENGTHS = 64;
 
@@ -3203,7 +3235,11 @@ function arcsWith(
     }
 
     const total = lengths[LENGTHS];
-    const run = patternRun(tt.e, tt.key, 1, total);
+    // Its teeth come out of nothing at its ends over the falloff's reach, not
+    // a whole spacing as an edge's do: an arc is often shorter than one, and
+    // every tooth on it would be cut down by its nearness to an end.
+    const reach = Math.max(tt.e.falloff, 1e-3) * tt.e.spacing;
+    const run = patternRun(tt.e, tt.key, 1, total, 0, 0, reach);
 
     // Where along the curve a length falls, and how far along it a `u` is.
     const uAt = (want: number): number => {
@@ -3225,9 +3261,15 @@ function arcsWith(
     // the arc's own points alike, so a tooth sliding past one of them along
     // the curve as the bevel changes goes past it without a jump. Near
     // nought it is the tooth alone, a spike on the curve.
+    //
+    // Each tooth's share is scaled so that the whole passes through every
+    // tooth at its own height, as an edge's teeth stand at theirs, whatever
+    // the teeth beside it add: the kernel's matrix is positive definite, so
+    // the shares are one answer, and continuous in where the teeth are.
     const teethAt = run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) }));
-    const reach = Math.max(tt.e.falloff, 1e-3) * tt.e.spacing;
-    const heightAt = (at: number): number => teethAt.reduce((sum, t) => sum + t.h * Math.exp(-Math.abs(at - t.s) / reach), 0);
+    const kernel = (a: number, b: number) => Math.exp(-Math.abs(a - b) / reach);
+    const shares = solved(teethAt.map(p => teethAt.map(q => kernel(p.s, q.s))), teethAt.map(t => t.h));
+    const heightAt = (at: number): number => teethAt.reduce((sum, t, k) => sum + shares[k] * kernel(at, t.s), 0);
     const pushed = (u: number, h: number): Point => {
       const m = normal(u), p = on(u);
 

@@ -425,6 +425,18 @@ describe('editing effects', () => {
     const offCurve = (p: Point) => Math.min(...arcsOf(plain).flat().map(q => Math.hypot(p.x - q.x, p.y - q.y)));
 
     [...im.teeth!, ...arcsOf(toothed).flat()].forEach(p => expect(offCurve(p)).toBeLessThan(3 + 10));
+
+    // A tooth on an arc stands as tall as one on an edge: out, the tallest
+    // are the amplitude off the curve, as near as the curve read at its
+    // points, not between them, lets that be read.
+    const out = { ...fx, deform: { ...fx.deform, sides: 'out' as const } };
+    const outward = imagesOf(resolveAt(wrote(withEffects(world, id, out), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!)!;
+    const fine = resolveAt(wrote(withEffects(world, id, { round: inSegments(64, 30) }), 0, id, round(30)), 0).find(r => r.id === id)!;
+    const curve = imagesOf(fine)!.corners.filter((r): r is Point[] => r !== null && r.length > 1).flat();
+    const tallest = Math.max(...outward.teeth!.map(p => Math.min(...curve.map(q => Math.hypot(p.x - q.x, p.y - q.y)))));
+
+    expect(tallest).toBeGreaterThan(3 * 0.95);
+    expect(tallest).toBeLessThan(3 * 1.15);
   });
 });
 
