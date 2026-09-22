@@ -3235,11 +3235,8 @@ function arcsWith(
     }
 
     const total = lengths[LENGTHS];
-    // Its teeth come out of nothing at its ends over the falloff's reach, not
-    // a whole spacing as an edge's do: an arc is often shorter than one, and
-    // every tooth on it would be cut down by its nearness to an end.
     const reach = Math.max(tt.e.falloff, 1e-3) * tt.e.spacing;
-    const run = patternRun(tt.e, tt.key, 1, total, 0, 0, reach);
+    const run = patternRun(tt.e, tt.key, 1, total);
 
     // Where along the curve a length falls, and how far along it a `u` is.
     const uAt = (want: number): number => {
