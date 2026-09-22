@@ -298,6 +298,32 @@ describe('a group\'s effects', () => {
     off.forEach(p => expect(drawn.has(p)).toBe(false));
   });
 
+  test('a held round eroded past its bevel keeps a hair of itself', () => {
+    // A corner that turns into the material is drawn at less than its bevel
+    // as the erosion deepens, and would reach nought. It must not: a rounded
+    // corner eroded fans out at the depth, and a square one mitres to a
+    // point, so the outline would jump by the whole of that fan. A sliver of
+    // the round keeps it on the fan side throughout.
+    const l = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 200 }, { x: 200, y: 200 }, { x: 200, y: 400 }, { x: 0, y: 400 }];
+    const { world, id } = room(emptyWorld(), l);
+    const w = withEffects(world, id, { round: inSegments(8, 40) });
+    const area = (depth: number) => shapeArea(shapeOf(wrote(w, 0, id, round(40), erode(depth)), id));
+
+    // The area falls with the depth, and how fast it falls changes slowly.
+    // The reflex corner's bevel runs out at a depth of forty: without the
+    // sliver the outline loses its fan there, and the step from 39 to 41 is
+    // some three thousand out of line with the steps either side of it.
+    const steps = [36, 38, 40, 42, 44].map(d => area(d - 1) - area(d + 1));
+    const worst = Math.max(...steps.slice(1).map((s, i) => Math.abs(s - steps[i])));
+
+    // Some forty of kink as the fan takes over, against some three thousand
+    // of jump without the sliver.
+    expect(worst).toBeLessThan(100);
+
+    // And the erosion is still an erosion: deeper is smaller.
+    expect(area(60)).toBeLessThan(area(40));
+  });
+
   test('a run\'s teeth are its naming edge\'s, so the far end moving leaves them where they are', () => {
     // Two rooms along one wall, sealed and deformed as one. The wall is one
     // straight of the fold and takes one pattern — the first room's edge

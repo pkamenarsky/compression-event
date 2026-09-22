@@ -37,6 +37,7 @@ import {
   CRAMMED,
   FALLOFF,
   Facets,
+  SEEDING,
   ArcTeeth,
   Imaged,
   PLAIN,
@@ -424,7 +425,14 @@ export function drawnBevels(
 
     if (!(seen > 0) || round.held === false) return Math.max(0, seen);
 
-    return Math.max(0, seen + depth(i) * convex(i));
+    // Down to a sliver of itself, never to nothing: an erosion deep enough to
+    // take a corner that turns into the material back past its own bevel
+    // would leave it square, and a square corner eroded mitres to a point
+    // where a rounded one — however little — fans out at the depth. The two
+    // are not near each other, so the corner keeps a hair of its round and
+    // the fan is there throughout. `SEEDING` is what a corner barely turning
+    // keeps of its bevel, for the same reason. See `arcs`.
+    return Math.max(seen * SEEDING, seen + depth(i) * convex(i));
   });
 }
 
