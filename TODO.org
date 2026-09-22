@@ -1,8 +1,6 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
 ** TODO give the deform jitter a higher range (capped at 90% so teeth never pass each other; see `Effecting.jitter`)
-** TODO ask yes/no if level unsaved
-   keep the world last saved/opened in state, compare by identity, `beforeunload` + confirm on open
 
 * Before the final level file format
 ** TODO level history
@@ -45,7 +43,6 @@
 *** TODO show RenderConfig in the editor, not with \ + ~
 *** TODO styling: right click dialog (the "under the cursor" picker)
 *** TODO pressing ? overlays tooltips on everything visible
-*** TODO ask yes/no if level unsaved
 *** TODO layout: statusbar; above it group breadcrumbs; above that baking progress
 **** where: bake button, 3d view button, keyframe strip, delink button
 ** Shortcuts (magit-like sketch)

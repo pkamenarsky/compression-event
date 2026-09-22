@@ -364,36 +364,61 @@ function switched(s: EditorState, to: KeyframeId): EditorState {
  * signal wakes its waiters synchronously.
  */
 function saving(state: Value<EditorState>, input: Input, update: Update): VNode {
-  return interaction(function* () {
-    while (true) {
-      const e = yield* keyPressed(input, 'KeyS', 'KeyO');
+  // The world as it was last written to a file or read from one, or as the
+  // editor opened on. By identity: every edit makes a new world, and undoing
+  // back to this one makes it this one again, so the question of whether
+  // anything is unsaved is a comparison and nothing has to keep count.
+  return stateful<World>(state().world, (saved, setSaved) => fragment([
+    effect(() => state().world !== saved(), unsaved => (unsaved ? held() : undefined)),
 
-      // Holding a key repeats it, and one press should be one file
-      if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
+    interaction(function* () {
+      while (true) {
+        const e = yield* keyPressed(input, 'KeyS', 'KeyO');
 
-      e.preventDefault();
+        // Holding a key repeats it, and one press should be one file
+        if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
 
-      if (e.code === 'KeyS') {
-        void download(state());
+        e.preventDefault();
+
+        if (e.code === 'KeyS') {
+          const s = state();
+
+          void download(s).then(() => setSaved(s.world));
+        }
+        else {
+          if (state().world !== saved() && !confirm('This level has changes that are not saved. Open another anyway?')) continue;
+
+          // The load lands whenever the picker is answered, which is long after
+          // this. Everything the editor keeps is in the file, the bake as the
+          // game gets it rather than as the editor works it out — so a level
+          // opened that way plays at once, and is baked again for the replay.
+          //
+          // The file says where it was looking and not how big the canvas was,
+          // so the measurements are this window's to keep. Nothing resizes on a
+          // load, so no observation comes along to make them again: taking the
+          // ones a view starts with would size the backing store to no window at
+          // all, and leave every click landing beside what it aimed at.
+          upload(loaded => {
+            update(s => ({
+              ...loaded,
+              view: { ...loaded.view, width: s.view.width, height: s.view.height, dpr: s.view.dpr },
+            }));
+            setSaved(loaded.world);
+          });
+        }
       }
-      else {
-        // The load lands whenever the picker is answered, which is long after
-        // this. Everything the editor keeps is in the file, the bake as the
-        // game gets it rather than as the editor works it out — so a level
-        // opened that way plays at once, and is baked again for the replay.
-        //
-        // The file says where it was looking and not how big the canvas was,
-        // so the measurements are this window's to keep. Nothing resizes on a
-        // load, so no observation comes along to make them again: taking the
-        // ones a view starts with would size the backing store to no window at
-        // all, and leave every click landing beside what it aimed at.
-        upload(loaded => update(s => ({
-          ...loaded,
-          view: { ...loaded.view, width: s.view.width, height: s.view.height, dpr: s.view.dpr },
-        })));
-      }
-    }
-  });
+    }),
+  ]));
+}
+
+/** The browser's own question on the way out of the page, for as long as this
+ * is held: the level lives nowhere but in the page. */
+function held(): () => void {
+  const asked = (e: BeforeUnloadEvent): void => e.preventDefault();
+
+  window.addEventListener('beforeunload', asked);
+
+  return () => window.removeEventListener('beforeunload', asked);
 }
 
 /** Whether every span between here and there has been baked and still stands.
