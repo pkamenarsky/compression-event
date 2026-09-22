@@ -823,14 +823,48 @@ drifts up to about a fifth of its amplitude over a span (1.13 on amplitude 6,
 depth 0→10) and the measured split puts it right in one cut. That is the class
 the bake already pays for `clear`.
 
-The real cost is that **teeth no longer erode**, so nothing is self-limiting: a
-corridor eroded to a sliver still carries teeth at full depth, which will cross
-the far wall. Option B got that free from pinch-off. Here it wants an amplitude
-that fades with the local clearance — which can be smooth, so it brings no jump
-back, and is more controllable than a look that is an accident of the offset.
+The other cost is that **teeth no longer erode**, so nothing is self-limiting:
+a corridor eroded to a sliver still carries teeth at full depth, and they reach
+across it. Three things this is *not*, each checked rather than assumed:
+
+- **Not a bad outline.** The crossing opens from a point, so the outline is
+  continuous throughout; what changes is combinatorics, which is what a stretch
+  boundary is for, and the arrangement finds it by measure like any other. It
+  is the same event an eroded reflex corner makes against the opposite wall —
+  a pop in the fade, not in the geometry.
+- **Not more events.** A tooth pinching off today is also one event per tooth.
+  N crossings against N pinches is the same order. The difference is direction:
+  a pinch is terminal, so past that depth the wall is smooth and quiet, while
+  teeth that persist keep their vertices and keep making events as the depth
+  goes on. More geometry at depth rather than less, bounded either way.
+- **Not a broken guarantee.** Nothing downstream reads the depth as clearance.
+  `BakedSpan.depth` is the nesting depth; the game is handed outlines and never
+  sees an erosion; there is no connectivity or reachability taken anywhere. So
+  a depth set to part two rooms that the teeth then bridge is something the
+  author sees and changes the number for.
+
+What is left is the look and the vertex count, and both are had back by
+reproducing the pinch rather than measuring the clearance. Today's pinch is a
+function of the amplitude, the spacing, the depth and the tooth's own angle —
+all local, all in hand — so the amplitude can be faded by that same law without
+asking anything about the wall opposite. Local, smooth, no jump, and the deeply
+eroded outline simplifies the way it does now. Measuring the true clearance is
+the thing to avoid: it is a medial-axis query, so the deform would depend on
+the whole outline and would jump wherever the nearest opposite wall changes
+identity — a discontinuity tied to no event the arrangement has, which is worse
+than anything being deleted here.
+
 The bevel is still drawn and not seen, as in B: convex arcs shrink with the
 depth and go sharp past the radius, with `bevel ± depth` available to hold what
 is seen steady.
+
+**And one thing the bake must be told.** `reach` boxes a polygon from `placed`
+plus `grown`, and today the teeth ride inside `placed` for free, since the
+deform runs on the source before anything. Laid last they are in neither, so
+the box wants the amplitude — into `grown`'s `out`, or into `expandBox`'s
+margin. It costs a slightly looser neighbourhood. Worth writing down because
+nothing fails loudly if it is missed: an undersized box drops a polygon from a
+neighbour's neighbourhood and the events between them are never looked for.
 
 **Sealed groups and phase 3 fall out.** The order is members → fold → group
 round → group erosion → group deform. The group's teeth are laid on the final
@@ -843,9 +877,9 @@ is naming — which source edge a run belongs to, so the anchor and the amplitud
 can be found — and that is needed either way.
 
 **So: worth taking.** It is phase 2 plus one move, and the move pays for
-itself. Against B it gives up pinch-off and takes on the clearance fade; it
-gets back `CRAMMED`, `ArcTeeth.seen`, the whole of phase 3, and a bake that is
-exact where the present one curves.
+itself. Against B it gives up pinch-off as something the offset does for free
+and takes it back as a law of its own; it gets `CRAMMED`, `ArcTeeth.seen`, the
+whole of phase 3, and a bake that is exact where the present one curves.
 
 ## Open questions
 
@@ -853,8 +887,10 @@ exact where the present one curves.
   one deform carried round the corner, which gives up the middle anchor on one
   side.
 - **Whether to take the third order** before phase 3 is built, since it
-  deletes phase 3 rather than finishing it. The open piece is the clearance
-  fade that keeps teeth from crossing a thin wall.
+  deletes phase 3 rather than finishing it.
+- **Whether the analytic pinch is wanted at all** under the third order. It
+  buys no correctness — it is the look, and an outline that thins out at depth
+  instead of staying busy. Cheap enough to be a knob rather than a decision.
 - **Phase 3's trade-off**: teeth eroded by the group's depth only. The other
   choice is to leave members' deforms inside them and the group's round to
   leave their teeth square, which is phase 2 without phase 3.
