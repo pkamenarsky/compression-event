@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon, deepen, editedAt, keyRigOf, keysOfAt, moveOf, rigOf, withKeyRig, writtenInto } from './scene';
+import { TOP, addPolygon, broken, deepen, editedAt, keyRigOf, keysOfAt, moveOf, rigOf, withKeyRig, writtenInto } from './scene';
 import { aimed, aiming, timed } from './keys';
 import { NOTHING, withKeysAt } from './rig';
 import { erode, move, turned, wrote } from './testing';
@@ -237,7 +237,7 @@ describe('the keys the hand is on', () => {
 
   test('and an undo that takes the key back lets go of it', () => {
     const { s, id } = on();
-    const out = writtenInto(s.world, 1, id, null, move(1, 1));
+    const out = writtenInto(broken(s.world, 1, [id]), 1, id, null, move(1, 1));
     const t = step({ ...s, target: aiming([{ id, at: 1, key: out.key! }]) }, out.world);
 
     expect(aimed(undone(t)).target).toBeNull();
@@ -245,10 +245,13 @@ describe('the keys the hand is on', () => {
 });
 
 describe('a gesture', () => {
-  test('with the hand on no key writes a new one, and the next goes into it whatever it is', () => {
+  test('with the hand on no key folds into the last, and only a break starts another', () => {
     const { world, id } = square(emptyWorld(), 0);
     const w = wrote(world, 1, id, erode(2));
-    const first = writtenInto(w, 1, id, null, move(10, 0));
+
+    expect(keysOfAt(writtenInto(w, 1, id, null, move(10, 0)).world, 1, id)).toHaveLength(1);
+
+    const first = writtenInto(broken(w, 1, [id]), 1, id, null, move(10, 0));
 
     expect(keysOfAt(first.world, 1, id)).toHaveLength(2);
 

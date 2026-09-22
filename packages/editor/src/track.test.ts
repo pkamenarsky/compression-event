@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
+import { TOP, addPolygon, broken, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, deepened, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
 import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, steppedKey, timesTo } from './track';
@@ -36,6 +36,24 @@ describe('rows', () => {
     // Two keys, each doing one thing, since `wrote` breaks between them.
     expect(rows[0].cells[1].kinds).toEqual([['move'], ['erode']]);
     expect(listAt(w, 2, made.id).map(e => e.op.kind)).toEqual(['stand']);
+  });
+
+  test('the first key where a thing is born is folded into it, and a break there is shown', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const made = wroteOne(world, 2, id, move(10, 0));
+
+    expect(keysOfAt(made, 2, id)).toHaveLength(1);
+    expect(rowsOf(made, [id])[0].cells[2].places).toHaveLength(0);
+
+    const cut = broken(made, 2, [id]);
+
+    expect(rowsOf(cut, [id])[0].cells[2].places).toHaveLength(1);
+
+    // Broken before anything was written, the hidden key is made first.
+    const bare = broken(world, 2, [id]);
+
+    expect(keysOfAt(bare, 2, id)).toHaveLength(2);
+    expect(rowsOf(bare, [id])[0].cells[2].places).toHaveLength(1);
   });
 
   test('the rightmost repeat has the nearest lane', () => {

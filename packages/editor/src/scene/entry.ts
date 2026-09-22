@@ -152,8 +152,9 @@ export function standingOn(world: World, k: KeyframeId, target: Target | null): 
 }
 
 /**
- * `op` written into the key of `id` at `k` whose id is `key`, or into a new
- * key at the end where `key` is nothing or names no key there — with the key
+ * `op` written into the key of `id` at `k` whose id is `key` — the
+ * keyframe's last where `key` is nothing, since only a break starts another —
+ * or into a new key at the end where there is none to write into: with the key
  * it went into, or nothing where it wrote nothing.
  *
  * The one way a gesture writes. Where it goes is `EditorState.target`'s to
@@ -162,7 +163,14 @@ export function standingOn(world: World, k: KeyframeId, target: Target | null): 
  * new key after it rather than being lost.
  */
 export function writtenInto(world: World, k: KeyframeId, id: Id, key: number | null, op: Op): { world: World, key: number | null } {
-  const index = key === null ? -1 : keysAt(keyRigOf(world, id), k).findIndex(x => x.id === key);
+  const list = keysAt(keyRigOf(world, id), k);
+  const last = list.length - 1;
+  // Not into one that repeats, though: adjusting every step of it is what a
+  // hand put on it means, and never what a hand on nothing does.
+  const plain = last >= 0 && list[last].times === 1 && list[last].skip === undefined;
+  const index = key === null ? (plain ? last : -1) : list.findIndex(x => x.id === key);
+
+  key = index >= 0 ? list[index].id : null;
 
   if (index >= 0) {
     const out = refolded(world, k, id, index, op);

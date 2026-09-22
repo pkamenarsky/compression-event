@@ -1602,10 +1602,17 @@ export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
     const list = keysAt(rig, v);
     const last = list[list.length - 1];
 
-    // One empty key is enough: breaking twice says what breaking once said.
-    if (last?.by !== undefined && idle(last.by)) continue;
+    // The first key where a thing is born is not shown — what it does there
+    // is its shape, not a motion — so a break before anything was written
+    // there makes that one and then the empty one it asked for.
+    const birth = lived(out, id)?.birth === v;
+    const first = last === undefined && birth;
 
-    out = withKeyRig(out, id, addedBy(rig, v, REST.t, NOTHING));
+    // One empty key is enough: breaking twice says what breaking once said.
+    if (last?.by !== undefined && idle(last.by) && !(birth && list.length === 1)) continue;
+    const under = first ? addedBy(rig, v, REST.t, NOTHING) : rig;
+
+    out = withKeyRig(out, id, addedBy(under, v, REST.t, NOTHING));
   }
 
   return out;
