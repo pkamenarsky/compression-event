@@ -23,14 +23,17 @@ import {
   KeyRig,
   Keyframe,
   KeyframeId,
+  NOTHING,
   REST,
   Repeat,
+  Typed,
   blankKeys,
   counted1,
   heldOf,
   indexIn,
   keysAt,
   nextKey,
+  retyped,
   kindOf,
   skipping,
   withKeysAt,
@@ -248,6 +251,19 @@ export function timedAt(world: World, p: Place, times: number | null): World | R
   if (e.stand !== undefined) return { refused: 'an unchaining does not repeat' };
 
   return rewritten(world, p, { ...e, times });
+}
+
+/**
+ * The key at `p` with some of its numbers typed over: see `retyped` in
+ * `rig.ts`. A key about corners alone gets a delta to hold them.
+ */
+export function retypedAt(world: World, p: Place, typed: Typed): World | Refused {
+  const e = entryAt(world, p);
+
+  if (e === undefined) return world;
+  if (e.stand !== undefined) return { refused: 'an unchaining is a state, not a change to type into' };
+
+  return rewritten(world, p, { ...e, by: retyped(e.by ?? NOTHING, typed) });
 }
 
 // -----------------------------------------------------------------------------

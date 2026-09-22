@@ -44,8 +44,8 @@ import {
   withEffect,
 } from './effects';
 import { Pattern, Sides } from './geometry';
-import { entryAt, lastKeys } from './keys';
-import { Key } from './rig';
+import { Place, entryAt, lastKeys, retypedAt, timedAt } from './keys';
+import { Delta, NOTHING, Typed } from './rig';
 import { kindsOf, owning, repartedPolygons, retypable } from './scene';
 import { theme } from './theme';
 import {
@@ -65,6 +65,7 @@ import {
   World,
   marked,
   picks,
+  saying,
 } from './types';
 
 type Some = 'all' | 'some' | 'none';
@@ -96,6 +97,9 @@ interface Model {
   times: string
   /** Whether it holds anything about single corners as well, or instead. */
   cornered: boolean
+  /** Whether it is an unchaining, a state rather than a change, which is not
+   * typed into. */
+  stand: boolean
   /** Whether there are polygons to say the kind of. */
   kinds: boolean
   /** How many of them play each part, one field per box. */
@@ -155,17 +159,15 @@ export function effectTargets(world: World, selection: Selection, tool: Tool): I
 }
 
 /**
- * The key the inspector shows: the one the hand is on, wherever it is, or else
- * the last the first picked thing has at this keyframe — the one the next
- * gesture folds into. Nothing where neither has one, which is also what a key
- * taken out comes to.
+ * Where the key the inspector shows is: the one the hand is on, wherever it
+ * is, or else the last the first picked thing has at this keyframe — the one
+ * the next gesture folds into. Nothing where neither has one, which is also
+ * what a key taken out comes to.
  */
-function currentKey(world: World, target: Target | null, k: KeyframeId, ids: readonly Id[]): Key | undefined {
-  if (target !== null) return entryAt(world, target.lead);
+function currentPlace(world: World, target: Target | null, k: KeyframeId, ids: readonly Id[]): Place | undefined {
+  const p = target?.lead ?? lastKeys(world, k, ids)[0];
 
-  const [last] = lastKeys(world, k, ids);
-
-  return last === undefined ? undefined : entryAt(world, last);
+  return p === undefined || entryAt(world, p) === undefined ? undefined : p;
 }
 
 export function inspector(
@@ -195,7 +197,7 @@ export function inspector(
     corners(),
     reached(),
     remembered(),
-    currentKey(world(), target(), keyframe(), targets()),
+    currentPlace(world(), target(), keyframe(), targets()),
   );
 
   return show(
@@ -220,7 +222,7 @@ export function inspector(
           gap: '6px',
         },
       },
-      [object(model, m => body(m, targets, corners, reached, update))],
+      [object(model, m => body(m, targets, corners, reached, () => currentPlace(world(), target(), keyframe(), targets()), update))],
     ),
   );
 }
@@ -246,9 +248,10 @@ function modelOf(
   corners: readonly VertexId[],
   reached: readonly PolygonId[],
   remembered: Options,
-  key: Key | undefined,
+  place: Place | undefined,
 ): Model {
   const kinds = kindsOf(world, reached);
+  const key = place === undefined ? undefined : entryAt(world, place);
   const by = key?.by;
   const degrees = (r: number) => Math.round(r * 180 / Math.PI * 100) / 100;
   const fine = (n: number) => Math.round(n * 1000) / 1000;
@@ -276,7 +279,8 @@ function modelOf(
     erodes: fine(by?.erode ?? 0),
     rounds: fine(by?.round ?? 0),
     deforms: fine(by?.deform ?? 0),
-    times: key === undefined ? '' : key.times === null ? '∞' : String(key.times),
+    times: key === undefined || key.times === null ? '' : String(key.times),
+    stand: key?.stand !== undefined,
     cornered: key !== undefined && [key.corners, key.depths, key.rounds, key.deforms].some(m => m !== undefined && m.size > 0),
     kinds: kinds.length > 0,
     hollow: some(kinds, k => k.level === 'hollow'),
@@ -310,8 +314,37 @@ function body(
   targets: () => Id[],
   corners: () => VertexId[],
   reached: () => PolygonId[],
+  place: () => Place | undefined,
   update: Update,
 ): VNode {
+  /** Numbers typed into the key the inspector shows. Given what the key holds
+   * now, so that one half of a point typed in keeps the other half exactly
+   * rather than as the box rounds it. */
+  const typedIn = (typed: (by: Delta) => Typed) => update(s => {
+    const p = place();
+
+    if (p === undefined) return s;
+
+    const world = retypedAt(s.world, p, typed(entryAt(s.world, p)?.by ?? NOTHING));
+
+    return 'refused' in world ? saying(s, world.refused) : marked({ ...s, world }, s.world);
+  });
+
+  /** How many keyframes it plays at, blank or `∞` for to the end. */
+  const timesIn = (typed: string) => update(s => {
+    const p = place();
+
+    if (p === undefined) return s;
+
+    const t = typed.trim();
+    const world = timedAt(s.world, p, t === '' || t === '∞' ? null : Number(t));
+
+    return 'refused' in world ? saying(s, world.refused) : marked({ ...s, world }, s.world);
+  });
+
+  const radians = (deg: number) => deg * Math.PI / 180;
+  const fixed = () => m.stand();
+
   /** One set's part given to every polygon the kind is about, or taken off
    * where every one of them already plays it. */
   const reparted = (set: SetName, part: LevelPart | FloorPart, on: Value<Some>) => update(s => marked(
@@ -404,15 +437,22 @@ function body(
           fontVariantNumeric: 'tabular-nums',
         },
       }, [
-        ...readout('move', () => `${m.moveX()}, ${m.moveY()}`),
-        ...readout('turn', () => `${m.angle()}°`),
-        ...readout('skew', () => `${m.skew()}°`),
-        ...readout('scale', () => `${m.scaleX()} × ${m.scaleY()}`),
-        ...readout('erode', () => String(m.erodes())),
-        ...readout('round', () => String(m.rounds())),
-        ...readout('deform', () => String(m.deforms())),
-        ...readout('plays', () => (m.times() === '1' ? 'once' : `${m.times()} times`)),
-        ...readout('', () => (m.cornered() ? 'and single corners' : '')),
+        ...field('move', pair(
+          number(m.moveX, -Infinity, v => typedIn(by => ({ move: { x: v, y: by.move.y } })), Infinity, 'any', fixed),
+          number(m.moveY, -Infinity, v => typedIn(by => ({ move: { x: by.move.x, y: v } })), Infinity, 'any', fixed),
+        )),
+        ...field('turn °', number(m.angle, -Infinity, v => typedIn(() => ({ angle: radians(v) })), Infinity, 'any', fixed)),
+        ...field('skew °', number(m.skew, -89, v => typedIn(() => ({ skew: radians(v) })), 89, 'any', fixed)),
+        // Nought would fold the thing flat, and a flat thing has no way back.
+        ...field('scale', pair(
+          number(m.scaleX, SMALLEST, v => typedIn(by => ({ scale: { x: v, y: by.scale.y } })), Infinity, 'any', fixed),
+          number(m.scaleY, SMALLEST, v => typedIn(by => ({ scale: { x: by.scale.x, y: v } })), Infinity, 'any', fixed),
+        )),
+        ...field('erode', number(m.erodes, -Infinity, v => typedIn(() => ({ erode: v })), Infinity, 'any', fixed)),
+        ...field('round', number(m.rounds, -Infinity, v => typedIn(() => ({ round: v })), Infinity, 'any', fixed)),
+        ...field('deform', number(m.deforms, -Infinity, v => typedIn(() => ({ deform: v })), Infinity, 'any', fixed)),
+        ...field('plays', times(m.times, timesIn, fixed)),
+        ...field('', span({ style: { color: theme.faded } }, [text(() => (m.cornered() ? 'and single corners' : ''))])),
       ]),
     ])),
 
@@ -491,17 +531,31 @@ function options(on: Value<Some>, fields: (VNode | VNode[])[]): VNode {
   }, fields.flat());
 }
 
-/**
- * One of the key's numbers, faded where it does nothing, so that what the key
- * does stands out from the list of what a key could do.
- */
-function readout(name: string, value: () => string): VNode[] {
-  const idle = () => ['0, 0', '0°', '1 × 1', '0', ''].includes(value());
+/** The smallest stretch that can be typed into a key. */
+const SMALLEST = 0.001;
 
-  return [
-    span({ style: { color: theme.muted } }, [text(name)]),
-    span({ style: { opacity: () => (idle() ? '0.4' : '1') } }, [text(value)]),
-  ];
+/** Two boxes side by side, for the two halves of a point or a stretch. */
+function pair(x: VNode, y: VNode): VNode {
+  return div({ style: { display: 'flex', gap: '4px' } }, [x, y]);
+}
+
+/** How many keyframes a key plays at: a count, or blank for to the end. */
+function times(value: Value<string>, onchange: (v: string) => void, disabled: Value<boolean>): VNode {
+  return input({
+    type: 'text',
+    value,
+    placeholder: '∞',
+    disabled,
+    style: CONTROL,
+    onchange: (e: Event) => {
+      const el = e.target as HTMLInputElement;
+
+      el.blur();
+      onchange(el.value);
+      // Back to what the key says, whatever was taken.
+      el.value = value();
+    },
+  });
 }
 
 function field(name: string, control: VNode): VNode[] {
@@ -519,11 +573,19 @@ const CONTROL = {
   padding: '1px 4px',
 } as const;
 
-function number(value: Value<number>, min: number, onchange: (v: number) => void, max = Infinity, step?: string): VNode {
+function number(
+  value: Value<number>,
+  min: number,
+  onchange: (v: number) => void,
+  max = Infinity,
+  step?: string,
+  disabled: Value<boolean> = () => false,
+): VNode {
   return input({
     type: 'number',
     value: () => String(value()),
-    min: String(min),
+    disabled,
+    ...(min === -Infinity ? {} : { min: String(min) }),
     ...(step === undefined ? {} : { step }),
     ...(max === Infinity ? {} : { max: String(max) }),
     style: CONTROL,

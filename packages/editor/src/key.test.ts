@@ -11,9 +11,11 @@ import {
   Rig,
   Stand,
   Timeline,
+  linearOf,
   once,
   played,
   repeating,
+  retyped,
   stateAt,
   stepped,
   withKeys,
@@ -505,3 +507,59 @@ describe('a key as the operations it is made of', () => {
   });
 });
 
+
+describe('numbers typed into a delta', () => {
+  const fixedPoint = (d: Delta) => {
+    const l = linearOf(d);
+
+    // Where the offset `w` goes: `L w + move` is `w` again at the fixed point.
+    return (w: Point) => ({ x: l.a * w.x + l.c * w.y + d.move.x, y: l.b * w.x + l.d * w.y + d.move.y });
+  };
+
+  test('a turn typed in goes about the point the key turned about', () => {
+    const w = { x: 10, y: 0 };
+    const quarter: Delta = { ...NOTHING, angle: Math.PI / 2, move: { x: 10, y: -10 }, about: w };
+    const half = retyped(quarter, { angle: Math.PI });
+    const at = fixedPoint(half)(w);
+
+    expect(half.about).toEqual(w);
+    expect(half.move.x).toBeCloseTo(20, 9);
+    expect(half.move.y).toBeCloseTo(0, 9);
+    expect(at.x).toBeCloseTo(w.x, 9);
+    expect(at.y).toBeCloseTo(w.y, 9);
+  });
+
+  test('a stretch typed in keeps the point the stretch left where it was', () => {
+    const w = { x: 5, y: 5 };
+    const twice: Delta = { ...NOTHING, scale: { x: 2, y: 2 }, move: { x: -5, y: -5 } };
+    const thrice = retyped(twice, { scale: { x: 3, y: 3 } });
+
+    expect(thrice.move.x).toBeCloseTo(-10, 9);
+    expect(thrice.move.y).toBeCloseTo(-10, 9);
+    expect(thrice.about).toBeUndefined();
+    expect(fixedPoint(thrice)(w).x).toBeCloseTo(w.x, 9);
+  });
+
+  test('a turn typed into a move goes about the painted point, and the move stays', () => {
+    const moved: Delta = { ...NOTHING, move: { x: 7, y: 3 } };
+    const turned = retyped(moved, { angle: 1 });
+
+    expect(turned.move).toEqual({ x: 7, y: 3 });
+    expect(turned.angle).toBe(1);
+  });
+
+  test('a move typed in is taken as it is, and what it turns about solved again', () => {
+    const quarter: Delta = { ...NOTHING, angle: Math.PI / 2, move: { x: 10, y: -10 }, about: { x: 10, y: 0 } };
+    const out = retyped(quarter, { move: { x: 0, y: 0 } });
+
+    expect(out.move).toEqual({ x: 0, y: 0 });
+    expect(out.about).toBeUndefined();
+    expect(out.angle).toBe(Math.PI / 2);
+  });
+
+  test('an amount typed in is only that', () => {
+    const d: Delta = { ...NOTHING, angle: 1, move: { x: 2, y: 3 }, about: { x: 1, y: 1 } };
+
+    expect(retyped(d, { erode: 4 })).toEqual({ ...d, erode: 4 });
+  });
+});

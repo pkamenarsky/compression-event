@@ -1127,6 +1127,51 @@ export function aboutOf(d: Delta): Point | null {
   if (d.angle === 0) return null;
   if (d.about !== undefined) return d.about;
 
+  return solved(d);
+}
+
+/** The numbers of a delta that can be typed in. */
+export type Typed = Partial<Pick<Delta, 'move' | 'angle' | 'skew' | 'scale' | 'erode' | 'round' | 'deform'>>;
+
+/**
+ * A delta with some of its numbers typed over, and the rest kept meaning what
+ * they meant.
+ *
+ * A turn, a skew or a stretch typed in goes about the point the delta already
+ * left where it was, so a key that turned a thing about its corner turns it
+ * further about that corner rather than about the painted point: `move` is
+ * worked out again as `(I − L′) w`. Where there is no such point — a move and
+ * nothing else — it goes about the painted point, and the move stays.
+ *
+ * A move typed in is taken as it is, and the point the delta turns about is
+ * whatever that move makes it, which `aboutOf` solves for.
+ */
+export function retyped(d: Delta, typed: Typed): Delta {
+  const { about: _about, ...rest } = d;
+
+  if (typed.move !== undefined) return { ...rest, ...typed };
+  if (typed.angle === undefined && typed.skew === undefined && typed.scale === undefined) return { ...d, ...typed };
+
+  const w = fixedOf(d);
+  const next: Delta = { ...rest, ...typed };
+
+  if (w === null) return next;
+
+  const lw = through(linearOf(next), w);
+  const move = { x: w.x - lw.x, y: w.y - lw.y };
+
+  // Kept only where it is the one thing that can say it: see `Delta.about`.
+  return next.angle === 0 ? { ...next, move } : { ...next, move, about: w };
+}
+
+/** The point a delta leaves where it is, as an offset from the painted point,
+ * turning or not; nothing where it has no one such point. */
+function fixedOf(d: Delta): Point | null {
+  return d.about ?? solved(d);
+}
+
+/** `w` with `(I − L) w = move`, or nothing where `I − L` is singular. */
+function solved(d: Delta): Point | null {
   const l = linearOf(d);
   const a = 1 - l.a, b = -l.b, c = -l.c, e = 1 - l.d;
   const det = a * e - b * c;
