@@ -2559,6 +2559,29 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
+  test('a group\'s deform starting from nought fades its verticals in', () => {
+    // Its teeth stand in the fold from the start, flat on the walls where
+    // the amplitude is nought, exactly as a polygon's do: so the ring keeps
+    // its points across the span and each line comes up as its tooth does.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 1, g.id, deform(5));
+    const span = run(bakeSpan(w, 0));
+    const s = span.tracks[0].stretches[0];
+
+    expect(span.tracks.every(t => t.stretches.length === 1 && t.jumps.length === 0)).toBe(true);
+    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+
+    // The teeth: flat and dark at the near end, standing and solid at the far.
+    const rising = s.opacity[0].flat().map((v, i) => [v, s.opacity[1].flat()[i]]).filter(([a, b]) => a < b);
+
+    expect(rising.length).toBeGreaterThanOrEqual(8);
+    rising.forEach(([a]) => expect(a).toBe(0));
+  });
+
   test('a group\'s tooth is as solid as it is tall', () => {
     // A tooth on the fold shrinks into the wall as the erosion grows the
     // clear by an arc, and the line standing on it comes down with it: as

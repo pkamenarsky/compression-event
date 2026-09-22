@@ -4006,6 +4006,13 @@ export function foldShaped(
   };
 
   const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [], solid: number[] = [];
+
+  // Teeth of no height, on a wall an amplitude of nought leaves straight:
+  // they stand in the ring as a polygon's do, so that the ring keeps its
+  // points while the deform comes up out of nothing and the lines on them
+  // come up with it. The arrangement drops a point in line with its
+  // neighbours, so these are kept by hand.
+  const flat: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
@@ -4036,7 +4043,7 @@ export function foldShaped(
     const curved = (i: number): { p: Point, v: number }[] => {
       const a = mine[i]!.arc;
       const whole = arcs[a];
-      const tt: ArcTeeth | null = deform === null || deform.amplitude === 0
+      const tt: ArcTeeth | null = deform === null
         ? null
         : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: whole.id, seen: 1 };
       const on = teethAlong(curveThrough(whole.points), tt, out);
@@ -4109,6 +4116,8 @@ export function foldShaped(
         edges[edges.length - 1].laid.push({ at: made.at, along: made.along });
       }
 
+      if (made.j !== null && deform !== null && deform.amplitude === 0) flat.push(source.length);
+
       source.push(made.at);
       tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
@@ -4156,31 +4165,38 @@ export function foldShaped(
 
   // A kept point is on a straight of the fold: carried to the same share of
   // the way along it on the teeth, and moved in with the segment it is on.
-  const kept = keep.flatMap(p => {
-    for (const edge of edges) {
-      const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y, l2 = dx * dx + dy * dy;
+  const kept = [
+    // A tooth lying flat, which the arrangement would drop.
+    ...flat.map(i => image(o.arcs[i][0])).filter((p): p is Point => p !== null),
 
-      if (l2 === 0) continue;
+    // A kept point is on a straight of the fold: carried to the same share of
+    // the way along it on the teeth, and moved in with the segment it is on.
+    ...keep.flatMap(p => {
+      for (const edge of edges) {
+        const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y, l2 = dx * dx + dy * dy;
 
-      const u = ((p.x - edge.a.x) * dx + (p.y - edge.a.y) * dy) / l2;
+        if (l2 === 0) continue;
 
-      if (u <= 0 || u >= 1 || Math.abs((p.x - edge.a.x) * dy - (p.y - edge.a.y) * dx) > tol * Math.sqrt(l2)) continue;
+        const u = ((p.x - edge.a.x) * dx + (p.y - edge.a.y) * dy) / l2;
 
-      const pts = [...edge.laid, { at: edge.b, along: 1 }];
-      let k = 0;
+        if (u <= 0 || u >= 1 || Math.abs((p.x - edge.a.x) * dy - (p.y - edge.a.y) * dx) > tol * Math.sqrt(l2)) continue;
 
-      while (k < pts.length - 2 && pts[k + 1].along < u) k++;
+        const pts = [...edge.laid, { at: edge.b, along: 1 }];
+        let k = 0;
 
-      const s = pts[k], e = pts[k + 1];
-      const w = (u - s.along) / Math.max(e.along - s.along, 1e-300);
-      const on = { x: s.at.x + (e.at.x - s.at.x) * w, y: s.at.y + (e.at.y - s.at.y) * w };
-      const sx = e.at.x - s.at.x, sy = e.at.y - s.at.y, sl = Math.hypot(sx, sy);
+        while (k < pts.length - 2 && pts[k + 1].along < u) k++;
 
-      return sl === 0 ? [] : [{ x: on.x - sy / sl * depth, y: on.y + sx / sl * depth }];
-    }
+        const s = pts[k], e = pts[k + 1];
+        const w = (u - s.along) / Math.max(e.along - s.along, 1e-300);
+        const on = { x: s.at.x + (e.at.x - s.at.x) * w, y: s.at.y + (e.at.y - s.at.y) * w };
+        const sx = e.at.x - s.at.x, sy = e.at.y - s.at.y, sl = Math.hypot(sx, sy);
 
-    return [];
-  });
+        return sl === 0 ? [] : [{ x: on.x - sy / sl * depth, y: on.y + sx / sl * depth }];
+      }
+
+      return [];
+    }),
+  ];
 
   return { shape, runs, square: squared, keep: kept, fades };
 }
