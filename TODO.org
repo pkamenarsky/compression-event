@@ -1,4 +1,5 @@
 * Low hanging fruit
+* TODO insert a key befor the current one + shortcut
 
 * Before the final level file format
 ** TODO level history
@@ -37,7 +38,8 @@
 **** snap to grid
 **** autobake
 ** Look & layout
-*** TODO statusbar shows action + available modifier keys (it only shows messages now)
+*** TODO statusbar shows errors, action + available modifier keys (it only shows messages now)
+**** should be prominent so it can't be missed
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
 *** TODO show RenderConfig in the editor, not with \ + ~
