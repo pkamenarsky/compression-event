@@ -42,7 +42,7 @@ import { move, moved as step, scaled, turned, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 function dropped(v = 0, x = 10, y = 20): { world: World, id: number } {
   return addArtefact(emptyWorld(), 'key', { x, y }, v, TOP);

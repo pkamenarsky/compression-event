@@ -34,7 +34,7 @@ import { move, scaled, turned as turning, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 describe('timings', () => {
   test('start at zero and add up along the legs', () => {

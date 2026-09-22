@@ -23,7 +23,7 @@ import {
 /** A room or a pillar, by the short name this file calls it. */
 type Named = 'level' | 'solid';
 
-const kind = (k: Named): PolygonKind => ({ level: k });
+const kind = (k: Named): PolygonKind => ({ level: k === 'level' ? 'hollow' : k });
 
 function seeded(from: number): () => number {
   let s = from;

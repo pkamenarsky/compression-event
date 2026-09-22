@@ -43,7 +43,7 @@ import { erode, move, scaled, spun, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 /** A world with something of every kind written about it: moves, a turn, a
  * stretch, depths, a repeat with a skip in it, a nudge and a corner depth,

@@ -57,7 +57,7 @@ type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void';
 const kind = (k: Named): PolygonKind =>
   k === 'hole' ? { floor: 'void' }
     : k === 'void' ? { level: 'void' }
-      : k === 'floor' ? { floor: 'floor' } : { level: k };
+      : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -311,7 +311,7 @@ describe('resolving a group', () => {
     const out = resolveGroup(made.world, 0, made.id)!;
 
     // One polygon, on one side of the set. Nothing is taken back out.
-    expect([...out.world.polygons.values()].map(p => kindName(p))).toEqual(['level']);
+    expect([...out.world.polygons.values()].map(p => kindName(p))).toEqual(['hollow']);
 
     const [polygon] = [...out.world.polygons.values()];
 
@@ -620,7 +620,7 @@ describe('the group does not survive being resolved', () => {
     // nothing of it left to be a solid.
     expect(out.world.groups.size).toBe(0);
     expect(out.ids.length).toBe(1);
-    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('level');
+    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('hollow');
 
     const it = resolveAt(out.world, 0)[0];
 
@@ -644,7 +644,7 @@ describe('the group does not survive being resolved', () => {
     // what resolving to one shape costs.
     expect(out.world.groups.size).toBe(0);
     expect(out.ids.length).toBe(1);
-    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('level');
+    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('hollow');
 
     const it = resolveAt(out.world, 0)[0];
 
@@ -971,7 +971,7 @@ describe('floors are clipped to the ground', () => {
     // was only ever invisible because a wall stood in front of it.
     expect(out.ids.length).toBe(2);
 
-    for (const kind of ['level', 'floor'] as const) {
+    for (const kind of ['hollow', 'floor'] as const) {
       const it = resolveAt(out.world, 0).find(r => kindName(r.polygon) === kind)!;
 
       expect(it.rings.length).toBe(2);
@@ -989,7 +989,7 @@ describe('floors are clipped to the ground', () => {
     const out = resolveGroup(made.world, 0, made.id)!;
 
     expect(out.ids.length).toBe(1);
-    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('level');
+    expect(kindName(out.world.polygons.get(out.ids[0])!)).toBe('hollow');
   });
 
   test('what the floor is clipped to is the set, not the rooms', () => {
@@ -1004,7 +1004,7 @@ describe('floors are clipped to the ground', () => {
     const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
-    const level = resolveAt(out.world, 0).find(r => r.polygon.level === 'level')!;
+    const level = resolveAt(out.world, 0).find(r => r.polygon.level === 'hollow')!;
     const floor = resolveAt(out.world, 0).find(r => r.polygon.floor === 'floor')!;
 
     expect(shapeArea(floor.shape)).toBeCloseTo(shapeArea(level.shape), 6);
@@ -1136,7 +1136,7 @@ describe('the two ways to a scope agree', () => {
 
     /** What the scope put into `set`, by the id its side goes by. */
     const at = (set: 'level' | 'floor') => shapeArea(
-      mine.filter(c => (sidedWith(c.id) ?? c.id) === id && kindName(c.kind) === set)
+      mine.filter(c => (sidedWith(c.id) ?? c.id) === id && kindName(c.kind) === (set === 'level' ? 'hollow' : set))
         .flatMap(c => c.shape),
     );
 

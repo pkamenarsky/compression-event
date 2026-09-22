@@ -20,7 +20,7 @@ import { scaled, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -232,7 +232,7 @@ function through(file: Old): EditorState {
 
     expect(out.format).toBe(26);
     expect(out.world.polygons.map(([, p]) => ({ level: p.level, floor: p.floor, type: 'type' in p }))).toEqual([
-      { level: 'level', floor: undefined, type: false },
+      { level: 'hollow', floor: undefined, type: false },
       { level: 'solid', floor: undefined, type: false },
       { level: undefined, floor: 'floor', type: false },
       { level: 'void', floor: undefined, type: false },

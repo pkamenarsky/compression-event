@@ -100,7 +100,7 @@ function oneRing(ring: Point[]): Vertex[] {
 type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { floor: 'void' } : k === 'void' ? { level: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
+  k === 'hole' ? { floor: 'void' } : k === 'void' ? { level: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k === 'level' ? 'hollow' : k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -173,7 +173,7 @@ const runLength = (runs: Point[][]) =>
 
 /** The perimeter the outline ought to have, taken the ring way round. */
 function outlineOf(items: Resolved[]): number {
-  const level = items.filter(i => i.polygon.level === 'level').flatMap(i => i.shape);
+  const level = items.filter(i => i.polygon.level === 'hollow').flatMap(i => i.shape);
   const solid = items.filter(i => i.polygon.level === 'solid').flatMap(i => i.shape);
   const shape: Shape = solid.length === 0
     ? simplify(level)
@@ -1855,7 +1855,7 @@ describe('making and taking apart', () => {
 
   test('a group\'s spin begun before a member was born stays one on it', () => {
     const { world, ids, group } = pair();
-    const late = addPolygon(world, { level: 'level' }, rect(40, 40, 10, 10), 1, landing(world, 1, group));
+    const late = addPolygon(world, { level: 'hollow' }, rect(40, 40, 10, 10), 1, landing(world, 1, group));
     const w = repeated(late.world, 0, group, spun(0.4));
 
     const done = ungrouping(w, group)!;
@@ -2191,7 +2191,7 @@ describe('a group erodes as one shape', () => {
     const out = contributing(w, 0, resolveAt(w, 0));
 
     // One contribution, and it is a level: nothing that cuts leaves a scope.
-    expect(out.map(c => kindName(c.kind))).toEqual(['level']);
+    expect(out.map(c => kindName(c.kind))).toEqual(['hollow']);
 
     // The room pulls in and the pillar pushes out. Eroding the group as one
     // shape pulls in the boundary of `level - solid`, and the boundary of a
@@ -2717,7 +2717,7 @@ describe('going inside a group', () => {
     // One contributor under one group, and it is a level: the room with the
     // hole in it. There used to be two, kept apart so that the pillar could
     // cut the rooms outside the group as well as its own.
-    expect(shown.map(c => kindName(c.kind))).toEqual(['level']);
+    expect(shown.map(c => kindName(c.kind))).toEqual(['hollow']);
     expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id]);
     expect(shapeArea(shown[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
@@ -2911,11 +2911,11 @@ describe('a polygon in both sets', () => {
   }
 
   test('contributes to each set, the floor under an id of its own', () => {
-    const { world, id } = both({ level: 'level', floor: 'floor' });
+    const { world, id } = both({ level: 'hollow', floor: 'floor' });
     const out = contributing(world, 0, resolveAt(world, 0));
 
     expect(out.map(c => [c.id, c.kind])).toEqual([
-      [id, { level: 'level' }],
+      [id, { level: 'hollow' }],
       [sideOf(id, { floor: 'floor' }), { floor: 'floor' }],
     ]);
     expect(csg(world, 0)).toEqual(csg(drawn(['level', rect(0, 0, 100, 100)]).world, 0));
@@ -2943,18 +2943,18 @@ describe('a polygon in both sets', () => {
   });
 
   test('a part given keeps the other set where the pair is offered', () => {
-    const { world, id } = both({ level: 'level' });
+    const { world, id } = both({ level: 'hollow' });
     const kindAfter = (w: World) => kindOf(w.polygons.get(id)!);
 
     const ground = repartedPolygons(world, [id], 'floor', 'floor');
 
-    expect(kindAfter(ground)).toEqual({ level: 'level', floor: 'floor' });
+    expect(kindAfter(ground)).toEqual({ level: 'hollow', floor: 'floor' });
 
     // A solid over a floor is not offered, so the floor goes.
     expect(kindAfter(repartedPolygons(ground, [id], 'level', 'solid'))).toEqual({ level: 'solid' });
 
     // Nothing in either set is not a kind: taking the last part away is nothing.
-    expect(kindAfter(repartedPolygons(world, [id], 'level', null))).toEqual({ level: 'level' });
+    expect(kindAfter(repartedPolygons(world, [id], 'level', null))).toEqual({ level: 'hollow' });
     expect(kindAfter(repartedPolygons(ground, [id], 'level', null))).toEqual({ floor: 'floor' });
   });
 });

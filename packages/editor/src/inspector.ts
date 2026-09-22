@@ -78,10 +78,12 @@ type Some = 'all' | 'some' | 'none';
 interface Model {
   /** Whether there are polygons to say the kind of. */
   kinds: boolean
-  /** The part every one of them plays in each set, `NONE` where none plays
-   * any, or `MIXED` where they disagree. */
-  level: string
-  floor: string
+  /** How many of them play each part, one field per box. */
+  hollow: Some
+  solid: Some
+  voidLevel: Some
+  floor: Some
+  voidFloor: Some
   /** Whether every one of them is in the other set, so that taking this one's
    * part away leaves each still something. */
   bareLevel: boolean
@@ -106,11 +108,6 @@ interface Model {
   corners: boolean
   own: Some
 }
-
-const NONE = '—', MIXED = 'mixed';
-
-const LEVEL_PARTS: readonly string[] = [NONE, 'level', 'solid', 'void'];
-const FLOOR_PARTS: readonly string[] = [NONE, 'floor', 'void'];
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDES: Sides[] = ['both', 'out', 'in'];
@@ -199,13 +196,6 @@ function bare<O extends { off?: boolean }>(o: O): O {
   return rest as O;
 }
 
-/** What every one of `kinds` plays in `set`, as the kind rows show it. */
-function partOf(kinds: readonly PolygonKind[], set: SetName): string {
-  const parts = new Set(kinds.map(k => k[set] ?? NONE));
-
-  return parts.size === 1 ? [...parts][0] : MIXED;
-}
-
 function modelOf(
   world: World,
   v: KeyframeId,
@@ -230,8 +220,11 @@ function modelOf(
 
   return {
     kinds: kinds.length > 0,
-    level: partOf(kinds, 'level'),
-    floor: partOf(kinds, 'floor'),
+    hollow: some(kinds, k => k.level === 'hollow'),
+    solid: some(kinds, k => k.level === 'solid'),
+    voidLevel: some(kinds, k => k.level === 'void'),
+    floor: some(kinds, k => k.floor === 'floor'),
+    voidFloor: some(kinds, k => k.floor === 'void'),
     bareLevel: kinds.every(k => k.floor !== undefined),
     bareFloor: kinds.every(k => k.level !== undefined),
     deform: some(ids, id => applies(world, id, 'deform')),
@@ -260,17 +253,10 @@ function body(
   reached: () => PolygonId[],
   update: Update,
 ): VNode {
-  /** One set's part given to every polygon the kind is about. */
-  const reparted = (set: SetName, part: string) => update(s => marked(
-    {
-      ...s,
-      world: repartedPolygons(
-        s.world,
-        reached(),
-        set,
-        part === NONE ? null : part as LevelPart | FloorPart,
-      ),
-    },
+  /** One set's part given to every polygon the kind is about, or taken off
+   * where every one of them already plays it. */
+  const reparted = (set: SetName, part: LevelPart | FloorPart, on: Value<Some>) => update(s => marked(
+    { ...s, world: repartedPolygons(s.world, reached(), set, on() === 'all' ? null : part) },
     s.world,
   ));
 
@@ -333,8 +319,15 @@ function body(
           borderBottom: `1px solid ${theme.border}`,
         },
       }, [
-        ...field('level', part(LEVEL_PARTS, m.level, m.bareLevel, v => reparted('level', v))),
-        ...field('floor', part(FLOOR_PARTS, m.floor, m.bareFloor, v => reparted('floor', v))),
+        ...field('level', row([
+          part('hollow', m.hollow, m.bareLevel, () => reparted('level', 'hollow', m.hollow)),
+          part('solid', m.solid, m.bareLevel, () => reparted('level', 'solid', m.solid)),
+          part('void', m.voidLevel, m.bareLevel, () => reparted('level', 'void', m.voidLevel)),
+        ])),
+        ...field('floor', row([
+          part('floor', m.floor, m.bareFloor, () => reparted('floor', 'floor', m.floor)),
+          part('void', m.voidFloor, m.bareFloor, () => reparted('floor', 'void', m.voidFloor)),
+        ])),
       ]),
     ])),
 
@@ -496,29 +489,38 @@ function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: 
   }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
 }
 
-/**
- * One set's part: a choice of the ones it has, and none.
- *
- * None is there only where every polygon it is about plays a part in the other
- * set, because a polygon in neither is not a kind. Where they disagree, it says
- * so and offers nothing to pick until one of the others is.
- */
-function part(all: readonly string[], value: Value<string>, bare: Value<boolean>, onchange: (v: string) => void): VNode {
-  return select({
-    style: CONTROL,
-    onchange: (e: Event) => {
-      const el = e.target as HTMLSelectElement;
+/** One set's boxes, side by side. */
+function row(parts: VNode[]): VNode {
+  return div({ style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, parts);
+}
 
-      el.blur();
-      onchange(el.value);
-    },
-  }, [
-    option({ value: MIXED, disabled: true, hidden: () => value() !== MIXED, selected: () => value() === MIXED }, [text(MIXED)]),
-    ...all.map(v => option({
-      value: v,
-      disabled: () => v === NONE && !bare(),
-      selected: () => v === value(),
-    }, [text(v)])),
+/**
+ * One part's box. The boxes of a set are exclusive: ticking one is that part
+ * and none of the others, and unticking the one ticked is no part in the set.
+ *
+ * Half-ticked where only some of the polygons play it. Unticking is there only
+ * where every one of them plays a part in the other set, because a polygon in
+ * neither is not a kind.
+ */
+function part(name: string, on: Value<Some>, bare: Value<boolean>, onchange: () => void): VNode {
+  return label({ style: { display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' } }, [
+    input({
+      type: 'checkbox',
+      checked: () => on() === 'all',
+      disabled: () => on() === 'all' && !bare(),
+      // A property kontinuum sets as one, missing from its attribute types.
+      ...({ indeterminate: () => on() === 'some' } as object),
+      style: { margin: '0' },
+      onchange: (e: Event) => {
+        const el = e.target as HTMLInputElement;
+
+        el.blur();
+        // Put back to what the model says: the update decides, not the click.
+        el.checked = on() === 'all';
+        onchange();
+      },
+    }),
+    span({}, [text(name)]),
   ]);
 }
 

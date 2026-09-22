@@ -919,7 +919,7 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
 function shaded(ctx: CanvasRenderingContext2D, kind: PolygonKind): void {
   // A room is the plain case and is left unfilled. Everything else carries a
   // texture, and which texture it is says which way it goes.
-  if (kind.level === 'level' && kind.floor === undefined) return;
+  if (kind.level === 'hollow' && kind.floor === undefined) return;
 
   const pattern = patterned(kind);
 

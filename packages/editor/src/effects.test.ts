@@ -27,7 +27,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld(), at: Point[] = rect(0, 0, 100, 100)): { world: World, id: PolygonId } {
-  return addPolygon(world, { level: 'level' }, at, 0, TOP);
+  return addPolygon(world, { level: 'hollow' }, at, 0, TOP);
 }
 
 function withEffects(world: World, id: Id, fx: Effects): World {

@@ -87,7 +87,8 @@ export const SETS: readonly SetName[] = ['level', 'floor'];
 /**
  * What a polygon is, as it was drawn: the part it plays in each set, if any.
  *
- * `level` is somewhere to stand. `solid` is what stands in it — a pillar, a
+ * A `hollow` is somewhere to stand, a room carved out of the level. `solid` is
+ * what stands in it — a pillar, a
  * wall, a block. `floor` is somewhere to look at. `void` is the one that took
  * a restructure to say: it cuts, and what it cuts is the solids or the floors
  * rather than the level. A pillar with a void across its edge is a U-shaped
@@ -110,7 +111,7 @@ export interface PolygonKind {
   floor?: FloorPart
 }
 
-export type LevelPart = 'level' | 'solid' | 'void';
+export type LevelPart = 'hollow' | 'solid' | 'void';
 export type FloorPart = 'floor' | 'void';
 
 /**
@@ -126,7 +127,7 @@ export type FloorPart = 'floor' | 'void';
  * one of its slots still has that slot.
  */
 export const SLOT_PARTS: { level: readonly LevelPart[], floor: readonly FloorPart[] } = {
-  level: ['level', 'solid', 'void'],
+  level: ['hollow', 'solid', 'void'],
   floor: ['floor', 'void'],
 };
 
@@ -136,7 +137,7 @@ export const SLOT_PARTS: { level: readonly LevelPart[], floor: readonly FloorPar
  * split into two before anything downstream sees it. See `parts`.
  */
 export const PARTS: readonly PolygonKind[] = [
-  { level: 'level' },
+  { level: 'hollow' },
   { level: 'solid' },
   { floor: 'floor' },
   { level: 'void' },
@@ -155,8 +156,8 @@ export const PARTS: readonly PolygonKind[] = [
 export const KINDS: readonly PolygonKind[] = [
   ...PARTS,
   { level: 'void', floor: 'void' },
-  { level: 'level', floor: 'floor' },
-  { level: 'level', floor: 'void' },
+  { level: 'hollow', floor: 'floor' },
+  { level: 'hollow', floor: 'void' },
   { level: 'void', floor: 'floor' },
 ];
 

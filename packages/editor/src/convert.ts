@@ -245,7 +245,7 @@ export function kinded(file: Saved): Saved {
       };
     }
 
-    return old.type === 'floor' ? { floor: 'floor' } : { level: old.type };
+    return old.type === 'floor' ? { floor: 'floor' } : { level: old.type === 'level' ? 'hollow' : old.type };
   };
 
   const polygons = file.world.polygons.map(([id, p]): [PolygonId, Polygon] => {

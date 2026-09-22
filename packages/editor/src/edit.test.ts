@@ -25,7 +25,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld()): { world: World, id: Id } {
-  return addPolygon(world, { level: 'level' }, rect(0, 0, 100, 60), 0, TOP);
+  return addPolygon(world, { level: 'hollow' }, rect(0, 0, 100, 60), 0, TOP);
 }
 
 function expectFrame(a: Frame, b: Frame): void {
@@ -82,7 +82,7 @@ describe('editing one entry', () => {
 
   test('a turn in a group edits about the thing as it stands', () => {
     const a = room();
-    const b = addPolygon(a.world, { level: 'level' }, rect(200, 0, 50, 50), 0, TOP);
+    const b = addPolygon(a.world, { level: 'hollow' }, rect(200, 0, 50, 50), 0, TOP);
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
     const base = wrote(g.world, 0, g.id, turned(0.4, { x: 10, y: 10 }));
     const w = wrote(base, 1, a.id, turned(0.2, { x: 50, y: 50 }));
@@ -270,7 +270,7 @@ describe('break and split', () => {
 describe('standing on a key', () => {
   const two = () => {
     const { world, id } = room();
-    const other = addPolygon(world, { level: 'level' }, rect(300, 0, 40, 40), 0, TOP);
+    const other = addPolygon(world, { level: 'hollow' }, rect(300, 0, 40, 40), 0, TOP);
     const w = wrote(other.world, 1, id, move(10, 0), move(0, 20));
 
     return { world: wrote(w, 1, other.id, move(-5, 0)), id, other: other.id };

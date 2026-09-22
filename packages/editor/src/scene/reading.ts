@@ -942,7 +942,7 @@ export function occupiedShape(o: Occupied): Shape {
 /** Whether a shut group's floor lies inside its outline: only where the
  * outline is a room, which is the only thing a floor is cut to. */
 export function floorsIn(o: Occupied): boolean {
-  return o.shape.length !== 0 && o.kind.level === 'level';
+  return o.shape.length !== 0 && o.kind.level === 'hollow';
 }
 
 /**
@@ -1038,7 +1038,7 @@ function withExtents(
 
     shown.push({
       id,
-      kind: { level: 'level' },
+      kind: { level: 'hollow' },
       shape,
       floor: [],
       gone: world.groups.get(id)?.sealed === true ? 'empty' : 'loose',

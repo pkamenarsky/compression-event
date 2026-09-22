@@ -13,7 +13,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld(), birth: KeyframeId = 0): { world: World, id: Id } {
-  return addPolygon(world, { level: 'level' }, rect(0, 0, 100, 60), birth, TOP);
+  return addPolygon(world, { level: 'hollow' }, rect(0, 0, 100, 60), birth, TOP);
 }
 
 function ok(out: World | Refused): World {
@@ -31,7 +31,7 @@ describe('rows', () => {
 
     const rows = rowsOf(w, [made.id]);
 
-    expect(rows.map(r => [r.label, r.depth])).toEqual([[`group ${made.id}`, 0], [`level ${a.id}`, 1], [`level ${b.id}`, 1]]);
+    expect(rows.map(r => [r.label, r.depth])).toEqual([[`group ${made.id}`, 0], [`hollow ${a.id}`, 1], [`hollow ${b.id}`, 1]]);
     expect(rows[0].cells.map(c => c.places.length)).toEqual([0, 2, 0, 1, 0, 0, 0, 0, 0]);
     // Two keys, each doing one thing, since `wrote` breaks between them.
     expect(rows[0].cells[1].kinds).toEqual([['move'], ['erode']]);
@@ -112,7 +112,7 @@ describe('corner rows', () => {
 
     const rows = rowsOf(w, [id], true);
 
-    expect(rows.map(r => [r.label, r.depth, r.corner])).toEqual([[`level ${id}`, 0, null], ['corner 0', 1, corners[0]], ['corner 2', 1, corners[2]]]);
+    expect(rows.map(r => [r.label, r.depth, r.corner])).toEqual([[`hollow ${id}`, 0, null], ['corner 0', 1, corners[0]], ['corner 2', 1, corners[2]]]);
     expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }, { id, at: 1, corner: corners[2], kind: 'erode' }]);
     expect(rows[2].cells[1].kinds).toEqual([['move'], ['erode']]);
     expect(rows[1].bars.map(b => [b.from, b.end])).toEqual([[3, 4]]);
