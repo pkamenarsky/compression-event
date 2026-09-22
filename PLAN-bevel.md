@@ -240,8 +240,10 @@ What the two tables show:
      `erode`'s own, not the round's — two members of a sealed group starting
      to overlap while it erodes do the same — and before phase 1 the teeth
      did not move during an erosion span, so it did not arise here.
-  After 1, the room steps by 0.56 and 0.69 at a falloff of one; at 0.15 one
-  jump of 3 is left, and at nought one of 15, both 3.
+  After 1, the room's worst step, over two hundred of a span, is 0.56 and
+  0.69 at a falloff of one. At 0.15 one of 14.75 is left, which is 3; at
+  nought one of 54, which is no jump at all — no instant has it — but a
+  mitre growing fast as a corner sharpens, which the bake follows.
 - **Then: a falloff.** The push above made an arc read as a zigzag along
   the curve, and spikes on the curve read better. Now each tooth adds its
   height to the arc falling away with the distance along it — first as an
