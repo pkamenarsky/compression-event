@@ -852,6 +852,41 @@ function spanning(was: Resolved, now: Resolved): Spanned {
     return k;
   };
 
+  /**
+   * Where between two teeth a drawn corner goes, at the end that does not
+   * have it: where the teeth cross the edge as it is drawn there, or as near
+   * it as they come. Anywhere between them is the same shape; there, the arcs
+   * either side are not turned towards it the instant it is there. See
+   * `effectsOver`. Only for a polygon that is rounded: nothing else turns.
+   * Between two corners that are not teeth, `taste`.
+   */
+  const onDrawn = (i: number, side: 0 | 1, lo: Point, hi: Point, taste: number): number => {
+    const mine = ends[side];
+    const drawnNearest = (step: number): number => {
+      let k = i;
+
+      do {
+        k = alongOf(rings, n, k, step);
+      }
+      while ((!mine.has(corners[k].id) || corners[k].root !== undefined) && k !== i);
+
+      return k;
+    };
+
+    const a = drawnNearest(-1), b = drawnNearest(1);
+
+    if (a === i || b === i) return taste;
+
+    const p = mine.get(corners[a].id)!, q = mine.get(corners[b].id)!;
+    const off = (x: Point) => (q.x - p.x) * (x.y - p.y) - (q.y - p.y) * (x.x - p.x);
+    const [da, db] = [off(lo), off(hi)];
+
+    if (da === db) return taste;
+    if (da * db < 0) return da / (da - db);
+
+    return Math.abs(da) < Math.abs(db) ? 0.1 : 0.9;
+  };
+
   corners.forEach((c, i) => {
     for (const side of [0, 1] as const) {
       const mine = ends[side], other = ends[1 - side];
@@ -875,7 +910,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
       // that arc short of the one the editor draws.
       const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
 
-      local[side][i] = between2(lo, hi, taste);
+      local[side][i] = between2(lo, hi, c.root === undefined && [was, now][side].effected ? onDrawn(i, side, lo, hi, taste) : taste);
 
       const at = fraction(from, to, local[side][i]);
 
@@ -1340,7 +1375,7 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     flat: e[0].flat,
     deform: d0 === null || d1 === null
       ? d0 ?? d1
-      : { e: d0.e, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
+      : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
   };
 }
 

@@ -2612,7 +2612,17 @@ export interface Effecting {
    * spacing.
    * A gap is never nothing, so no two teeth pass each other. */
   jitter: number
+  /** How far along an arc a tooth reaches into the curve around it, as a
+   * share of the spacing: see `arcsWith`. Near nought a tooth is a spike on
+   * the curve; further, the teeth run together into a wave along it. */
+  falloff: number
+  /** Whether each edge's teeth start off its middle by a share of the
+   * spacing its seed gives it, rather than at it: see `patternRun`. */
+  offset: boolean
 }
+
+/** The falloff a deform starts with: spikes on the curve, all but. */
+export const FALLOFF = 0.15;
 
 /**
  * The largest distance between any two of `points`: the size a deform is
@@ -2652,7 +2662,7 @@ export function diameter(points: readonly Point[]): number {
 export const GAPS = 4;
 
 /** No effects at all: every corner a point and every edge straight. */
-export const PLAIN: Effecting = { spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+export const PLAIN: Effecting = { spacing: 0, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, falloff: FALLOFF, offset: false };
 
 /** An edge's teeth: each a fraction of the way along it, a distance off it
  * out of the material where positive, and which tooth it is, counted from
@@ -2689,7 +2699,10 @@ export interface EdgeRun {
  * spacing puts them, so they are continuous in the bevel too.
  */
 export function patternRun(e: Effecting, key: number, amplitude: number, length: number, clear = 0, clearTo = 0): EdgeRun {
-  const anchor = length / 2;
+  // From the middle — or, offset, off it by a share of the spacing the seed
+  // gives the edge: so no tooth is sure to stand in the middle of every edge,
+  // and one shorter than the spacing may have none.
+  const anchor = length / 2 + (e.offset ? (hashed(e.seed, key ^ OFFSET, 0) - 0.5) * e.spacing : 0);
   const along: number[] = [], across: number[] = [], teeth: number[] = [];
 
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
@@ -2754,6 +2767,9 @@ export function patterned(e: Effecting, key: number, j: number): number {
 
   return v;
 }
+
+/** What an edge's key is told apart by, for its offset: see `patternRun`. */
+const OFFSET = 0x2545f491;
 
 /** Three integers to a number in [0, 1), the same every time. */
 function hashed(a: number, b: number, c: number): number {
@@ -3203,32 +3219,22 @@ function arcsWith(
       return mix(lengths[j], lengths[j + 1], x - j);
     };
 
-    // The teeth by length, with the arc's ends flat: between two of them the
-    // arc is pushed off by what the two say, in proportion, as a straight edge
-    // runs straight between its teeth. So a facet's point is pushed off with
-    // the teeth either side of it, and a tooth sliding past it along the curve
-    // as the bevel changes goes past without a jump.
-    const heights = [
-      { s: 0, h: 0 },
-      ...run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) })),
-      { s: total, h: 0 },
-    ];
-    const heightAt = (at: number): number => {
-      let j = 0;
-
-      while (j < heights.length - 2 && heights[j + 1].s < at) j++;
-
-      const p = heights[j], q = heights[j + 1];
-
-      return q.s > p.s ? mix(p.h, q.h, (at - p.s) / (q.s - p.s)) : p.h;
-    };
+    // How far the arc is pushed off the curve at a length along it: every
+    // tooth's height, falling away from it with the distance, `falloff` of the
+    // spacing to a factor of e. One function of the length for the teeth and
+    // the arc's own points alike, so a tooth sliding past one of them along
+    // the curve as the bevel changes goes past it without a jump. Near
+    // nought it is the tooth alone, a spike on the curve.
+    const teethAt = run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) }));
+    const reach = Math.max(tt.e.falloff, 1e-3) * tt.e.spacing;
+    const heightAt = (at: number): number => teethAt.reduce((sum, t) => sum + t.h * Math.exp(-Math.abs(at - t.s) / reach), 0);
     const pushed = (u: number, h: number): Point => {
       const m = normal(u), p = on(u);
 
       return { x: p.x + m.x * h * out, y: p.y + m.y * h * out };
     };
 
-    const placed: { s: number, p: Point }[] = run.along.map((f, k) => ({ s: f * total, p: pushed(uAt(f * total), heights[k + 1].h) }));
+    const placed: { s: number, p: Point }[] = teethAt.map(t => ({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)) }));
     const along = laid.us.map(lengthAt);
     const arcPoints = laid.points.map((p, j) => (j === 0 || j === laid.points.length - 1 ? p : pushed(laid.us[j], heightAt(along[j]))));
 

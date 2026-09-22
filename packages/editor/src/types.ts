@@ -616,7 +616,9 @@ export interface Effects {
   /** `held` keeps a round the bevel it is asked for however deep the thing is
    * eroded, which it is unless it says otherwise: see `drawnBevels`. */
   round?: { precision: number, tension: number, chamfer: boolean, held?: boolean, off?: boolean }
-  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
+  /** `falloff` is how far a tooth reaches along an arc: see
+   * `Effecting.falloff`. */
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, falloff?: number, off?: boolean }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
 }

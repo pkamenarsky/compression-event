@@ -211,13 +211,28 @@ What the two tables show:
   sliding past a facet point swapped places with it in the ring, the outline
   jumped, and the bake cut every such instant down to its narrowest width.
   A test bake went from minutes to a second.
+- **Then: a falloff.** The push above made an arc read as a zigzag along
+  the curve, and spikes on the curve read better. Now each tooth adds its
+  height to the arc falling away with the distance along it — `falloff` of
+  the spacing to a factor of e, a slider — and the teeth and the arc's own
+  points are samples of that one function. Near nought it is spikes on the
+  curve; further, a wave. Continuous whatever it is set to.
+- **And an offset.** Each edge's and arc's teeth start off its middle by a
+  share of the spacing its seed gives it (`Effecting.offset`), so a short
+  edge may have none. Not for a group's deform laid on its members: two
+  members' teeth along a shared wall then fall anywhere and the arrangement
+  flickers where they meet. Phase 2 lays that on the union instead.
 - **A corner the bake invents is rounded apart** (`Effected.apart`). It sits
   where its neighbours put it at the end that does not have it — between two
   teeth, often — and a drawn corner there would turn the arcs beside it. Its
   arc is a sliver along the points either side, with no teeth.
 - **The bake seeds a corner on the straight as it is drawn**: `straightOf`
   answers with the ends of the arcs before the erosion, not fractions of the
-  drawn edge, since the outline no longer runs to the drawn corner.
+  drawn edge, since the outline no longer runs to the drawn corner. A drawn
+  corner seeded between two teeth of a rounded polygon goes where they cross
+  the drawn edge, or as near as they come, so the arcs beside it barely turn
+  when it starts to exist: a pop of 0.4 left in one test, where the two
+  teeth are on one side.
 - **`held` is optional and on by default**, a tick in the round's section.
   `clear` is gone from the type and the inspector; a saved one is ignored,
   with no converter, since nothing reads it.

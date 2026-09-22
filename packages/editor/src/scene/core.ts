@@ -34,6 +34,7 @@ import { Point } from '@ce/game/world';
 import {
   fraction,
   Effecting,
+  FALLOFF,
   Facets,
   ArcTeeth,
   Imaged,
@@ -277,6 +278,8 @@ export interface ArcDeform {
   e: Effecting
   before: readonly number[]
   after: readonly number[]
+  /** Each corner's arc's name to the noise and the offset: its id. */
+  keys: readonly number[]
 }
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
@@ -324,6 +327,8 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
     seed: deform?.seed ?? 0,
     sides: deform?.sides ?? PLAIN.sides,
     jitter: deform?.jitter ?? 0,
+    falloff: deform?.falloff ?? FALLOFF,
+    offset: true,
   };
 }
 
@@ -442,6 +447,7 @@ function arcDeform(
     e: { ...e, spacing: e.spacing * scale },
     before: corners.map((_c, i) => amplitude(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitude(edge(c))),
+    keys: corners.map(c => arcKey(c.id)),
   };
 }
 
@@ -465,7 +471,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.before.map(a => a / s), d.after.map(a => a / s)];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys]];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
 }
@@ -988,29 +994,27 @@ export const project = remembered((
   if (effects === null) return offsetOf(source, rings, erosion, depths);
 
   // Rounded, deformed along its arcs, and then eroded: see `outlineOf`.
-  return simplify(imagedBy(source, rings, erosion, depths, effects, null).shape);
+  return simplify(imagedBy(source, rings, erosion, depths, effects).shape);
 });
 
 /** Where each of a polygon's features lands: the construction `project`
- * builds its effects by, before the arrangement. `ids` names each corner's
- * arc to the noise, and is the corners' ids — by default their places. */
+ * builds its effects by, before the arrangement. */
 const imagedBy = remembered((
   source: Ring,
   rings: readonly number[],
   erosion: number,
   depths: readonly number[] | null,
   effects: readonly Memo[],
-  ids: readonly number[] | null,
 ): Imaged => {
   const [facets, bevels, flat, deform, apart] = effects as [Memo[], number[], number[], Memo[], number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, before, after] = deform as [number, number, number, number, number, number[], number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys] = deform as [number, number, number, number, number, number, number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
     ? null
-    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter };
+    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: true };
   const teeth = (i: number): ArcTeeth | null => (e === null || (before[i] === 0 && after[i] === 0)
     ? null
-    : { e, before: before[i], after: after[i], key: arcKey(ids?.[i] ?? i) });
+    : { e, before: before[i], after: after[i], key: keys[i] });
 
   const o = outlineOf(source, rings, i => flat[i] === 1, i => each[i], i => bevels[i], teeth, i => apart[i] === 1);
   const deep = depths === null ? null : o.owner.map(i => depths[i]);
@@ -1052,11 +1056,9 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
 
   const s = similarity(at.frame);
 
-  const ids = at.corners.map(c => c.id);
+  if (s === null) return imagedBy(at.source, at.rings, at.erosion, at.depths, effectKey(fx));
 
-  if (s === null) return imagedBy(at.source, at.rings, at.erosion, at.depths, effectKey(fx), ids);
-
-  const im = imagedBy(at.local, at.rings, at.erosion / s, scaled(at.depths, s), effectKey(fx, s), ids);
+  const im = imagedBy(at.local, at.rings, at.erosion / s, scaled(at.depths, s), effectKey(fx, s));
   const run = (r: Point[] | null) => (r === null ? null : place(at.frame, r));
 
   return {
@@ -1336,7 +1338,11 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
 
     out.push({
       owner,
-      e: { ...e, spacing: e.spacing * scaleAt(world, owner, v) },
+      // A group's deform is laid along each member's edges, the walls they
+      // share included, and stays from their middles: offset, two members'
+      // teeth along one wall fall wherever they fall, and the arrangement
+      // flickers where they meet. Phase 2 of PLAN-bevel lays it on the union.
+      e: { ...e, spacing: e.spacing * scaleAt(world, owner, v), offset: own },
       amplitude: own ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
       toothed: own ? from => ever.all || ever.edges.has(from) : () => ever.all,
     });

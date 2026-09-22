@@ -26,7 +26,7 @@ import {
   unionAll,
 } from '../geometry';
 
-let E: Effecting = { spacing: 12, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+let E: Effecting = { spacing: 12, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, falloff: 0, offset: false };
 let N = 8;
 const TENSION = 0.5;
 
@@ -437,7 +437,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: the real bake, both ways',
    * which is the plan's pipeline wherever it is linear: see the table in the
    * plan. */
   function planned(a: Amounts, b: Amounts): World {
-    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, falloff: 0, offset: false };
     N = SEGMENTS;
 
     // With no teeth at either end, none are laid, flat or not.
@@ -611,7 +611,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: fading and groups', () => 
   function laid(ring: Ring, bevel: number, amplitude: number, teeth: number, arcAmplitude = amplitude): Laid {
     const was = [E, N] as const;
 
-    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, falloff: 0, offset: false };
     N = SEGMENTS;
 
     const out = roundThenDeform(ring, bevel, amplitude, teeth, arcAmplitude);

@@ -43,7 +43,7 @@ import {
   switchedOn,
   withEffect,
 } from './effects';
-import { Pattern, Sides } from './geometry';
+import { FALLOFF, Pattern, Sides } from './geometry';
 import { Place, entryAt, lastKeys, retypedAt, timedAt } from './keys';
 import { Delta, NOTHING, Typed } from './rig';
 import { kindsOf, owning, repartedPolygons, retypable } from './scene';
@@ -121,6 +121,7 @@ interface Model {
   sides: Sides
   seed: number
   jitter: number
+  falloff: number
   erode: Some
   round: Some
   precision: number
@@ -295,6 +296,7 @@ function modelOf(
     sides: d.sides,
     seed: d.seed,
     jitter: d.jitter,
+    falloff: d.falloff ?? FALLOFF,
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     precision: r.precision,
@@ -378,7 +380,7 @@ function body(
 
     const shown = name === 'round'
       ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer(), held: m.held() }
-      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
+      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter(), falloff: m.falloff() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
     return further ? { ...s, world, remembered } : marked({ ...s, world, remembered }, s.world);
@@ -472,8 +474,12 @@ function body(
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // How far the gaps stray from the spacing, as a percentage.
       field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, (v, further) => changed('deform', { jitter: Math.round(v) / 100 }, further))),
-      // A seed is the noise's and the jitter's.
-      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)))),
+      // How far a tooth on an arc reaches into the curve around it, as a
+      // percentage of the spacing: a spike near nought, a wave further.
+      field('falloff %', slider(() => Math.round(m.falloff() * 100), 0, 100, (v, further) => changed('deform', { falloff: Math.round(v) / 100 }, further))),
+      // A seed is the noise's, the jitter's, and where each edge's teeth
+      // start.
+      field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),

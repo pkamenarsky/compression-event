@@ -1935,6 +1935,30 @@ describe('round and deform', () => {
     before.slice(1, 6).forEach((p, k) => expect(Math.hypot(after[k + 2].x - p.x, after[k + 2].y - p.y)).toBeLessThan(1e-8));
   });
 
+  test('offset, an edge\'s teeth start off its middle by a share of the spacing its seed gives it', () => {
+    const e: Effecting = { ...PLAIN, spacing: 3, pattern: 'zigzag', offset: true };
+    const first = (key: number, seed = 0) => {
+      const run = patternRun({ ...e, seed }, key, 1, 40);
+
+      return run.along[run.teeth.indexOf(0)] * 40 - 20;
+    };
+
+    // Within half a spacing of the middle either way, the edge's own: the same
+    // every time, and not the same from one edge or seed to the next.
+    const offs = [1, 2, 3, 4, 5, 6].map(k => first(k));
+
+    offs.forEach(o => expect(Math.abs(o)).toBeLessThanOrEqual(1.5));
+    expect(offs.map(o => first(1) === o).filter(Boolean)).toHaveLength(1);
+    expect(first(1, 9)).not.toBeCloseTo(first(1), 6);
+
+    // Still a whole number of spacings apart, and one shorter than the spacing
+    // may have none at all.
+    const run = patternRun(e, 1, 1, 40);
+
+    run.teeth.forEach((j, k) => expect(run.along[k] * 40).toBeCloseTo(20 + first(1) + j * 3, 9));
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].some(k => patternRun(e, k, 1, 1.5).teeth.length === 0)).toBe(true);
+  });
+
   test('noise is the edge\'s own, whatever its place', () => {
     const e: Effecting = { ...PLAIN, spacing: 1, pattern: 'noise', seed: 7 };
     const values = [1, 2, 3, 4, 5].map(k => patterned(e, 42, k));
