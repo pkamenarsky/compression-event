@@ -3129,9 +3129,12 @@ export interface ArcTeeth {
   key: number
   /** The arc as it is seen against the arc as it is drawn: other than one
    * where a round is held, and the erosion takes the drawn one back to the
-   * seen — less where the corner turns out of the material, more in. The teeth are laid along the arc as seen, and carried onto the
-   * drawn one where they fall on its curve, so the erosion growing the
-   * drawn arc does not slide them along it. See `drawnBevels`. */
+   * seen. The teeth are laid along the arc as seen, and carried onto the
+   * drawn one where they fall on its curve, so the erosion growing the drawn
+   * arc does not slide them along it. Never more than one: an arc drawn
+   * shorter than it is seen — down to nought, eroded out of the material —
+   * keeps the teeth its own length has, rather than the seen arc's crammed
+   * into it. See `drawnBevels`. */
   seen: number
 }
 
