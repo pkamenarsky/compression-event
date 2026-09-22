@@ -116,7 +116,7 @@ export function effectsPane(
           position: 'absolute',
           left: '12px',
           top: `${top}px`,
-          width: '196px',
+          width: '232px',
           padding: '8px 10px',
           boxSizing: 'border-box',
           borderRadius: '8px',
@@ -191,8 +191,10 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   });
 
   /** One option changed on every one that has the effect, on or off — or on
-   * the picked corners' own rounds — and remembered. */
-  const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>) => update(s => {
+   * the picked corners' own rounds — and remembered. `further` is a slider
+   * still moving: the step before it already went into the history, so this
+   * one only carries it on. */
+  const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>, further = false) => update(s => {
     let world = s.world;
 
     if (name === 'round' && m.corners()) {
@@ -211,7 +213,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter(), clear: m.clear() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
-    return marked({ ...s, world, remembered }, s.world);
+    return further ? { ...s, world, remembered } : marked({ ...s, world, remembered }, s.world);
   });
 
   const rounded = () => {
@@ -227,14 +229,14 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
-      field('spacing', slider(m.spacing, 1, SPACING, v => changed('deform', { spacing: v }), Infinity)),
+      field('spacing', slider(m.spacing, 1, SPACING, (v, further) => changed('deform', { spacing: v }, further), Infinity)),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // Out of the spacing, as a percentage, and short of a whole one: teeth
       // strayed by as much as their spacing would pass each other.
-      field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, v => changed('deform', { jitter: Math.round(v) / 100 }))),
+      field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, (v, further) => changed('deform', { jitter: Math.round(v) / 100 }, further))),
       // A seed is the noise's and the jitter's.
-      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, v => changed('deform', { seed: Math.round(v) }), Infinity)))),
+      show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)))),
       // Teeth stopping short of the corners' rounds rather than running into
       // them. A group's round is of its union, which has no corners to keep.
       show(m.polygons, fragment(field('clear corners', tick(m.clear, v => changed('deform', { clear: v }))))),
@@ -246,9 +248,9 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
     options(m.round, [
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
-      show(() => !m.chamfer(), fragment(field('precision', slider(m.precision, PRECISEST, COARSEST, v => changed('round', { precision: v }), Infinity, 'any')))),
+      show(() => !m.chamfer(), fragment(field('precision', slider(m.precision, PRECISEST, COARSEST, (v, further) => changed('round', { precision: v }, further), Infinity, 'any')))),
       // From about a circle at nought to tight in the corner at one.
-      show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, v => changed('round', { tension: v }), 1, '0.05')))),
+      show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
@@ -279,7 +281,7 @@ function options(on: Value<Some>, fields: (VNode | VNode[])[]): VNode {
   return div({
     style: {
       display: 'grid',
-      gridTemplateColumns: 'auto 1fr',
+      gridTemplateColumns: 'auto minmax(0, 1fr)',
       alignItems: 'center',
       gap: '4px 8px',
       paddingLeft: '22px',
@@ -327,18 +329,20 @@ function number(value: Value<number>, min: number, onchange: (v: number) => void
 /**
  * A range to drag and the number box beside it, one value between them.
  *
- * The slider writes when it is let go rather than on every step, so that one
- * drag is one entry in the history; while it moves it only keeps the box up
- * with it. `reach` is how far the box goes past the slider's `max`.
+ * The slider writes on every step, so the level answers while it moves, and
+ * one drag is still one entry in the history: every step after the first says
+ * it is `further`. `reach` is how far the box goes past the slider's `max`.
  */
 function slider(
   value: Value<number>,
   min: number,
   max: number,
-  onchange: (v: number) => void,
+  onchange: (v: number, further: boolean) => void,
   reach = max,
   step = '1',
 ): VNode {
+  let moving = false;
+
   return div({ style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
     input({
       type: 'range',
@@ -348,18 +352,15 @@ function slider(
       value: () => String(Math.min(max, value())),
       style: { flex: '1', minWidth: '0', margin: '0' },
       oninput: (e: Event) => {
-        const el = e.target as HTMLInputElement;
-
-        (el.nextElementSibling!.firstElementChild as HTMLInputElement).value = el.value;
+        onchange((e.target as HTMLInputElement).valueAsNumber, moving);
+        moving = true;
       },
       onchange: (e: Event) => {
-        const el = e.target as HTMLInputElement;
-
-        el.blur();
-        onchange(el.valueAsNumber);
+        moving = false;
+        (e.target as HTMLInputElement).blur();
       },
     }),
-    div({ style: { width: '52px', flex: 'none' } }, [number(value, min, onchange, reach, step)]),
+    div({ style: { width: '44px', flex: 'none' } }, [number(value, min, v => onchange(v, false), reach, step)]),
   ]);
 }
 
