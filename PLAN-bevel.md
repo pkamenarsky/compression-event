@@ -975,29 +975,41 @@ of each against its still.
    eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
    teeth" and go; `merged` in the bake says so itself — "without teeth that is
    the polygon's list, filtered". Commit.
-3. **Done in part.** `patternRun` has `reach` — how far either way from its
-   anchor the teeth are laid, whatever the run's own ends do — so given a
-   source edge's half, which an erosion does not change, the same teeth come
-   out at every depth and one whose room has gone stands flat rather than not
-   being laid. On a run shortening 120 to 90 it lays the same seven teeth
-   throughout, the end rooms fading 1 to 0. `foldShaped` keeps a room-nought
-   tooth the way it keeps an amplitude-nought one.
+3. **Done, and the worry it came from was misplaced.** `patternRun` has
+   `reach` — how far either way from its anchor the teeth are laid, whatever
+   the run's own ends do — so given a source edge's half, which an erosion
+   does not change, the same teeth come out at every depth and one whose room
+   has gone stands flat rather than not being laid. On a run shortening 120 to
+   90 it lays the same seven teeth throughout, the end rooms fading 1 to 0.
+   `foldShaped` keeps a room-nought tooth the way it keeps an
+   amplitude-nought one.
 
-   **What that did not fix**, and is the next thing to find: a polygon's ring
-   still goes 42 points to 36 over a depth of 0 to 8. P9 puts it in two
-   places, neither of them `patternRun`:
+   **But the ring still sheds points, and that turns out to be fine.** Walked
+   at a tenth of a unit from a depth of 0 to 8, a polygon's outline goes 42
+   points to 34 in four steps, and the outline does not jump at any of them:
 
-   | depth | 0 | 2 | 4 | 6 | 8 |
-   |---|---|---|---|---|---|
-   | undeformed, held | 34 | 34 | 32 | 32 | 30 |
-   | its teeth, held | 8 | 8 | 8 | 6 | 6 |
-   | its teeth, unheld | 8 | 8 | 6 | 0 | 0 |
+   | | worst step where the count changes | worst step where it does not |
+   |---|---|---|
+   | unheld | 0.74 | 1.18 |
+   | held | 1.09 | 1.09 |
 
-   So the round's own points merge as the erosion runs (held, 34 to 30), and
-   the teeth go anyway — all of them by a depth of 6 unheld, which is past the
-   bevel. Since `patternRun` lays them, something between it and the shape is
-   dropping them: `named` failing to match a line, `toothed`, or the
-   arrangement. That is where to look next.
+   A tooth leaves at nought height — that is what the `room` ramp is for — so
+   the outline is exactly as continuous there as anywhere else, and the figure
+   is the walls moving under the erosion, not a pop. The count changing costs
+   a cut, and today's order pays the same cost in the same places, a tooth
+   whose room runs out being dropped there too. So this was never a
+   precondition for anything; it is a stretch to be counted at the end, not a
+   thing to design around.
+
+   **And the naming holds throughout.** All four straights of the eroded
+   outline find their line at every depth, held or not — so `named` was never
+   the suspect it looked like.
+
+   `reach` stays because *3.1* wants it for its own sake: with the teeth laid
+   on the eroded outline they belong to the source edge, not to the run, and
+   `reach` is what says so. In this diagnostic it changes nothing, because a
+   flat tooth past the end clamps onto the corner and is dropped as a
+   duplicate.
 4. The bake meets the teeth in the projection rather than in the corners,
    which piece 3 is most of. Commit.
 5. `reach`, and the rest of the bake notes of *3.3*. Commit.
