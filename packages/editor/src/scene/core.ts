@@ -491,6 +491,7 @@ function straightsOf(
   scale: number,
   loose: readonly LooseDeform[],
 ): Straights[] {
+  const inner = addedOnto(corners);
   const fx = world.effects.get(id);
   const keys = corners.map(c => c.id as number);
   const out: Straights[] = [];
@@ -503,11 +504,12 @@ function straightsOf(
       e: { ...e, spacing: e.spacing * scale },
       amplitude: corners.map(c => amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0)),
       toothed: corners.map(c => ever.all || ever.edges.has(c.id)),
+      inner,
       keys,
     });
   }
 
-  for (const d of loose) out.push({ e: d.e, amplitude: corners.map(() => d.amplitude), toothed: corners.map(() => d.toothed), keys });
+  for (const d of loose) out.push({ e: d.e, amplitude: corners.map(() => d.amplitude), toothed: corners.map(() => d.toothed), inner, keys });
 
   return out;
 }
@@ -528,7 +530,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
 
   const straights: Memo[] = e.straights.map(d => [
     d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.e.offset ? 1 : 0,
-    d.amplitude.map(a => a / s), d.toothed.map(Number), [...d.keys],
+    d.amplitude.map(a => a / s), d.toothed.map(Number), d.inner.map(Number), [...d.keys],
   ]);
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), straights, deform, (e.apart ?? []).map(Number)];
@@ -1082,9 +1084,15 @@ const imagedBy = remembered((
 
   // The straights toothed first, afresh: see `toothedRing`.
   const chain: Straights[] = straightKeys.map(k => {
-    const [sp, pt, sd, sides, jitter, falloff, offset, amplitude, toothed, keys] = k as [number, number, number, number, number, number, number, number[], number[], number[]];
+    const [sp, pt, sd, sides, jitter, falloff, offset, amplitude, toothed, inner, keys] = k as [number, number, number, number, number, number, number, number[], number[], number[], number[]];
 
-    return { e: { spacing: sp, pattern: PATTERNS[pt], seed: sd, sides: SIDES[sides], jitter, falloff, offset: offset === 1 }, amplitude, toothed: toothed.map(x => x === 1), keys };
+    return {
+      e: { spacing: sp, pattern: PATTERNS[pt], seed: sd, sides: SIDES[sides], jitter, falloff, offset: offset === 1 },
+      amplitude,
+      toothed: toothed.map(x => x === 1),
+      inner: inner.map(x => x === 1),
+      keys,
+    };
   });
   const toothed = toothedRing(source, rings, chain, i => bevels[i], depths, i => apart[i] === 1);
   const own = toothed.owner;
@@ -1434,6 +1442,34 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
   }
 
   return out;
+}
+
+/**
+ * Which of a polygon's corners were added onto an edge rather than drawn as
+ * corners of their own — which is to say, which stand in line with their
+ * neighbours where the polygon was drawn.
+ *
+ * A deform runs its pattern straight through these: the wall they were added
+ * to is one wall still, however many corners it has been given since, and
+ * laying each piece from its own middle would move every tooth on it the
+ * moment one was added. See `Straights` and `laidChain`.
+ *
+ * Asked of where the corners were drawn rather than of where the timeline
+ * has taken them, so it is the same answer at every keyframe and at every
+ * instant between: a corner put on a wall and dragged off it in the same
+ * breath was still put on that wall. Nothing is written down, so a world
+ * saved before any of this reads the same way.
+ */
+function addedOnto(corners: readonly Vertex[]): boolean[] {
+  const rings = ringsOf(corners), n = corners.length;
+
+  return corners.map((c, i) => {
+    const a = corners[prevOf(rings, n, i)].at, b = c.at, d = corners[nextOf(rings, n, i)].at;
+    const ux = b.x - a.x, uy = b.y - a.y, vx = d.x - b.x, vy = d.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    return reach > 0 && Math.abs(ux * vy - uy * vx) / reach <= reach * 1e-9;
+  });
 }
 
 /**

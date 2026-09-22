@@ -3685,12 +3685,93 @@ export function outlineOf(
  * are laid flat there, and are points of the outline that draw no line until
  * they rise. An edge its timeline never deforms is left alone. See
  * `toothedRing` and `flatOf`.
+ *
+ * `inner` is which corners were added onto an edge rather than drawn as
+ * corners of their own: the pattern runs straight through them, along the
+ * chain of edges the one they split became, so that adding a corner to a
+ * wall does not move a tooth. See `laidChain`.
  */
 export interface Straights {
   e: Effecting
   amplitude: readonly number[]
   toothed: readonly boolean[]
+  inner: readonly boolean[]
   keys: readonly number[]
+}
+
+/**
+ * A deform laid along a chain of edges — one wall, whatever corners have
+ * since been added onto it — as `patternRun` lays it along one.
+ *
+ * Measured along the path rather than across the chord, so a corner rising
+ * out of the wall lengthens the path a little and the teeth slide along it,
+ * rather than the pattern starting again either side of it. Where the chain
+ * is one edge, this is `patternRun` on that edge exactly.
+ *
+ * `clear` is how much of each end the corners' rounds keep free, and `inner`
+ * how much each corner along the way keeps free: a tooth that would stand
+ * inside a round has nowhere to be, so it shrinks to nothing as it comes up
+ * to one and is left off inside it.
+ */
+export function laidChain(
+  path: Ring,
+  clear: [number, number],
+  inner: readonly number[],
+  e: Effecting,
+  key: number,
+  amplitude: number,
+  out: 1 | -1,
+): { at: Point, seg: number, along: number, j: number }[] {
+  const lengths: number[] = [], cumulative = [0];
+
+  for (let i = 0; i + 1 < path.length; i++) {
+    const l = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
+
+    lengths.push(l);
+    cumulative.push(cumulative[i] + l);
+  }
+
+  const total = cumulative[cumulative.length - 1];
+  const run = patternRun(e, key, amplitude, total, clear[0], clear[1]);
+  const laid: { at: Point, seg: number, along: number, j: number }[] = [];
+
+  run.along.forEach((u, k) => {
+    const d = u * total;
+
+    // Clear of the rounds the corners along the way take, and fading into
+    // them over a spacing, as the teeth do at the chain's ends.
+    let room = 1;
+
+    for (let m = 1; m + 1 < path.length; m++) {
+      // Only where there is a round to keep clear of: a corner drawn square
+      // is one the pattern rides straight over.
+      if (inner[m] > 0) room = Math.min(room, (Math.abs(d - cumulative[m]) - inner[m]) / e.spacing);
+    }
+
+    if (room <= 0) return;
+
+    let seg = 0;
+
+    while (seg < lengths.length - 1 && cumulative[seg + 1] < d) seg++;
+
+    const l = lengths[seg];
+
+    if (l === 0) return;
+
+    const along = (d - cumulative[seg]) / l;
+    const a = path[seg], b = path[seg + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const across = run.across[k] * Math.min(1, room);
+
+    laid.push({
+      at: { x: a.x + dx * along + dy / l * out * across, y: a.y + dy * along - dx / l * out * across },
+      seg,
+      along,
+      j: run.teeth[k],
+    });
+  });
+
+  return laid;
 }
 
 /**
@@ -3760,31 +3841,70 @@ export function toothedRing(
 
     slices.forEach((ring, r) => {
       const at = starts[r];
+      const m = ring.length;
+
       // A tooth's edge is part of the source edge it was laid on.
       const amp = (i: number) => d.amplitude[root[at + i]];
       const key = (i: number) => (owner[at + i] >= 0 ? d.keys[owner[at + i]] : keys[at + i]);
-      const laid = subdivided(ring, d.e, amp, key, out, i => (c === 0 ? Math.max(0, clear(owner[at + i])) : 0), i => d.toothed[root[at + i]]);
+      const inner = (i: number) => c === 0 && owner[at + i] >= 0 && d.inner[owner[at + i]];
+      const bevel = (i: number) => (c === 0 && owner[at + i] >= 0 ? Math.max(0, clear(owner[at + i])) : 0);
 
       nextStarts.push(next.length);
 
-      for (const made of laid) {
-        next.push(made.at);
-        nextRoot.push(root[at + made.from]);
+      // A chain: a corner drawn as one, and the corners added onto the edge
+      // it starts, which the pattern runs straight through.
+      const chainAt = (i: number): number[] => {
+        const path = [i];
 
-        if (made.j === null) {
-          nextOwner.push(owner[at + made.from]);
-          nextKeys.push(key(made.from));
-          nextDeep?.push(deep![at + made.from]);
+        while (path.length < m && inner((i + path.length) % m)) path.push((i + path.length) % m);
+
+        path.push((i + path.length) % m);
+
+        return path;
+      };
+
+      let head = 0;
+
+      while (head < m && inner(head)) head++;
+
+      const first = head % m;
+      let i = first, steps = 0;
+
+      do {
+        const path = chainAt(i);
+        const laid = d.toothed[root[at + i]]
+          ? laidChain(path.map(k => ring[k]), [bevel(i), bevel(path[path.length - 1])], path.map(k => bevel(k)), d.e, key(i), amp(i), out)
+          : [];
+
+        // The chain's own corners, each with the teeth that fell on the edge
+        // leaving it.
+        for (let q = 0; q + 1 < path.length; q++) {
+          const k = path[q];
+
+          next.push(ring[k]);
+          nextRoot.push(root[at + k]);
+          nextOwner.push(owner[at + k]);
+          nextKeys.push(key(k));
+          nextDeep?.push(deep![at + k]);
+
+          for (const made of laid) {
+            if (made.seg !== q) continue;
+
+            next.push(made.at);
+            nextRoot.push(root[at + k]);
+            nextOwner.push(-1);
+            nextKeys.push(Math.floor(hashed(key(i), made.j, c) * 4294967296) | 0);
+
+            const d0 = deep?.[at + k] ?? 0, d1 = deep?.[at + path[q + 1]] ?? 0;
+
+            nextDeep?.push(d0 + (d1 - d0) * made.along);
+          }
         }
-        else {
-          nextOwner.push(-1);
-          nextKeys.push(Math.floor(hashed(key(made.from), made.j, c) * 4294967296) | 0);
 
-          const d0 = deep?.[at + made.from] ?? 0, d1 = deep?.[at + (made.from + 1) % ring.length] ?? 0;
-
-          nextDeep?.push(d0 + (d1 - d0) * made.along);
-        }
+        i = path[path.length - 1];
+        steps += path.length - 1;
       }
+      while (i !== first && steps <= m);
     });
 
     pts = next;
