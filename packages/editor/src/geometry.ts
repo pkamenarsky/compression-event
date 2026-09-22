@@ -3196,6 +3196,11 @@ interface ArcLaid {
   arcAt: number[]
   /** Where in `all` the teeth are, their tips and their feet. */
   teethAt: number[]
+  /** Per point of `all`, how solid it stands: one for a point of the arc
+   * itself, and for a tooth the room it had — a tooth still coming out of
+   * the curve at an end carries its tip and its feet up with it. See
+   * `EdgeRun.room`. */
+  solid: number[]
   point: boolean
 }
 
@@ -3326,7 +3331,9 @@ export function curveThrough(points: readonly Point[]): Curved {
 export function teethAlong(laid: Curved, tt: ArcTeeth | null, out: 1 | -1): ArcLaid {
   const at = laid.points.map((_p, k) => k);
 
-  if (laid.point || tt === null || laid.on === null) return { arc: laid.points, all: laid.points, arcAt: at, teethAt: [], point: laid.point };
+  if (laid.point || tt === null || laid.on === null) {
+    return { arc: laid.points, all: laid.points, arcAt: at, teethAt: [], solid: laid.points.map(() => 1), point: laid.point };
+  }
 
   const { on, normal, bend } = laid;
 
@@ -3373,7 +3380,7 @@ export function teethAlong(laid: Curved, tt: ArcTeeth | null, out: 1 | -1): ArcL
   // the teeth beside it add where their flanks overlap: the kernel's matrix
   // is positive definite, so the shares are one answer, and continuous in
   // where the teeth are.
-  const teethAt = run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) }));
+  const teethAt = run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)), v: run.room[k] }));
   const kernel = (a: number, b: number) => Math.max(0, 1 - Math.abs(a - b) / reach);
   const shares = solved(teethAt.map(p => teethAt.map(q => kernel(p.s, q.s))), teethAt.map(t => t.h));
   const heightAt = (at: number): number => teethAt.reduce((sum, t, k) => sum + shares[k] * kernel(at, t.s), 0);
@@ -3405,26 +3412,26 @@ export function teethAlong(laid: Curved, tt: ArcTeeth | null, out: 1 | -1): ArcL
   // nothing jumps. A foot past the arc's ends is not laid; the flank runs
   // to the end instead.
   const under = (at: number, but = -1): boolean => teethAt.some((t, k) => k !== but && Math.abs(at - t.s) < reach);
-  const laidAt: { s: number, p: Point, arc: number }[] = [];
+  const laidAt: { s: number, p: Point, arc: number, v: number }[] = [];
 
   teethAt.forEach((t, k) => {
-    laidAt.push({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)), arc: -1 });
+    laidAt.push({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)), arc: -1, v: t.v });
 
     for (const foot of [t.s - reach, t.s + reach]) {
-      if (foot > 0 && foot < total && !under(foot, k)) laidAt.push({ s: foot, p: pushed(uAt(foot), heightAt(foot)), arc: -1 });
+      if (foot > 0 && foot < total && !under(foot, k)) laidAt.push({ s: foot, p: pushed(uAt(foot), heightAt(foot)), arc: -1, v: t.v });
     }
   });
 
   arcPoints.forEach((p, j) => {
     const end = j === 0 || j === arcPoints.length - 1;
 
-    laidAt.push({ s: along[j], p, arc: end || !teethAt.some(t => Math.abs(along[j] - t.s) <= reach) ? j : -2 - j });
+    laidAt.push({ s: along[j], p, arc: end || !teethAt.some(t => Math.abs(along[j] - t.s) <= reach) ? j : -2 - j, v: 1 });
   });
 
   // By length, an arc's end before anything at its length and after.
   laidAt.sort((x, y) => x.s - y.s || (x.arc === 0 ? -1 : y.arc === 0 ? 1 : x.arc === arcPoints.length - 1 ? 1 : y.arc === arcPoints.length - 1 ? -1 : 0));
 
-  const all: Point[] = [], arcAt: number[] = new Array<number>(arcPoints.length).fill(0), teethIn: number[] = [];
+  const all: Point[] = [], arcAt: number[] = new Array<number>(arcPoints.length).fill(0), teethIn: number[] = [], solid: number[] = [];
 
   for (const x of laidAt) {
     // An arc's point left out takes the place of whatever comes next.
@@ -3444,13 +3451,14 @@ export function teethAlong(laid: Curved, tt: ArcTeeth | null, out: 1 | -1): ArcL
 
     if (x.arc === -1) teethIn.push(all.length);
 
+    solid.push(x.v);
     all.push(x.p);
   }
 
   // One left out after the last point laid takes the last.
   arcAt.forEach((k, j) => (arcAt[j] = Math.min(k, all.length - 1)));
 
-  return { arc: arcPoints, all, arcAt, teethAt: teethIn, point: false };
+  return { arc: arcPoints, all, arcAt, teethAt: teethIn, solid, point: false };
 }
 
 function arcsWith(
@@ -4025,7 +4033,7 @@ export function foldShaped(
 
     /** The run of one arc starting at ring point `i`, laid with the group's
      * teeth along the whole curve and cut back to the piece the fold has. */
-    const curved = (i: number): Point[] => {
+    const curved = (i: number): { p: Point, v: number }[] => {
       const a = mine[i]!.arc;
       const whole = arcs[a];
       const tt: ArcTeeth | null = deform === null || deform.amplitude === 0
@@ -4061,13 +4069,13 @@ export function foldShaped(
 
       // The laid points between them, with the piece's own ends kept where
       // the fold has them: the curve is the member's and the cut is not.
-      const kept = on.all.filter(p => {
+      const kept = on.all.flatMap((p, k) => {
         const s = at(p);
 
-        return s > from + tol && s < to - tol;
+        return s > from + tol && s < to - tol ? [{ p, v: on.solid[k] }] : [];
       });
 
-      return [ring[i], ...(total === 0 ? [] : kept)];
+      return [{ p: ring[i], v: 1 }, ...(total === 0 ? [] : kept)];
     };
 
     for (const made of laid) {
@@ -4084,11 +4092,11 @@ export function foldShaped(
       if (here !== null && !before && after) {
         edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
 
-        for (const p of curved(made.from)) {
+        for (const { p, v } of curved(made.from)) {
           source.push(p);
           tooth.push(true);
           drawn.push(0);
-          solid.push(1);
+          solid.push(v);
         }
 
         continue;

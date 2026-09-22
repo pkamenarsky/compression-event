@@ -595,12 +595,21 @@ scope, which a line does for nothing.
    neighbours rather than the curve's own, which the tent's fold limit leans
    on; and an arc may be cut at both ends. Those are the two unknowns.
 
-5. **The bake seeds the teeth it is missing.** `Cast.shapes` already holds
-   what each end of the span asks for; the fold is evaluated at each end, and
-   a tooth on a straight at one end only is laid flat at the other — at the
-   place the pattern gives it, at nought amplitude — and faded in through
-   `Contributed.faded`, which the facets already use. The editor lays none,
-   and a flat tooth moves no geometry, so the two still agree at a keyframe.
+5. **A tooth is as solid as it is tall.** The first plan here was to seed:
+   the fold evaluated at each end of the span, and a tooth only one end has
+   laid flat at the other. It is not needed, and the flat tooth is wrong
+   anyway — a tooth with no room is one inside the clear by an arc, where the
+   arc already is, so laying it there puts a point off the outline.
+
+   What the line on a tooth should say is how much of the tooth there is.
+   `patternRun` already scales a tooth by the room it has, from nought at the
+   clear to one a ramp in; `EdgeRun.room` carries that out, `teethAlong`
+   carries it through a curve's tips and feet, and `FoldShaped.fades` reports
+   every tooth short of its full height as a `Fade`, which `Contributed.faded`
+   already takes to the bake. So a tooth going comes down into the wall with
+   its line fading out as it goes, and where it finally goes there is nothing
+   left to see. The count still changes there, which costs a stretch; nothing
+   moves and nothing pops.
 
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
