@@ -539,6 +539,19 @@ function lived(world: World, id: Id): { birth: KeyframeId, death: KeyframeId | n
 }
 
 /**
+ * The keyframe a thing came in at: where a polygon, an artefact or a path was
+ * born, and where a group was made — the first keyframe for one that never
+ * said.
+ */
+export function bornAt(world: World, id: Id): KeyframeId | undefined {
+  const group = world.groups.get(id);
+
+  if (group !== undefined) return group.birth ?? world.keyframes[0]?.id;
+
+  return lived(world, id)?.birth;
+}
+
+/**
  * Where an artefact stands at a version, or nothing if it is not there yet.
  *
  * Its own point taken through every transform down the chain, which is the same
@@ -1605,7 +1618,7 @@ export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
     // The first key where a thing is born is not shown — what it does there
     // is its shape, not a motion — so a break before anything was written
     // there makes that one and then the empty one it asked for.
-    const birth = lived(out, id)?.birth === v;
+    const birth = bornAt(out, id) === v;
     const first = last === undefined && birth;
 
     // One empty key is enough: breaking twice says what breaking once said.
@@ -2022,7 +2035,7 @@ export function grouped(
   const id = world.nextId;
   const groups = new Map(world.groups);
 
-  groups.set(id, { members: tops, sealed: false });
+  groups.set(id, { members: tops, sealed: false, birth: v });
 
   // Taken out of wherever they were, so nothing is claimed twice: the members
   // belong to the new group now, and the new group belongs where they were.
@@ -3642,7 +3655,7 @@ function restore(
     const id = out.nextId;
     const groups = new Map(out.groups);
 
-    groups.set(id, { members, sealed: clip.sealed });
+    groups.set(id, { members, sealed: clip.sealed, birth: v });
     out = effectsPasted({ ...out, groups, nextId: id + 1 }, id, clip.effects);
 
     return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };

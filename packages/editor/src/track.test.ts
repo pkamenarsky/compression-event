@@ -56,6 +56,22 @@ describe('rows', () => {
     expect(rowsOf(bare, [id])[0].cells[2].places).toHaveLength(1);
   });
 
+  test('a group hides its first key where it was made, and a break there is shown', () => {
+    const a = room();
+    const b = room(a.world);
+    const made = grouped(b.world, 3, [a.id, b.id], TOP)!;
+    const moved = wroteOne(made.world, 3, made.id, move(10, 0));
+
+    expect(rowsOf(moved, [made.id])[0].cells[3].places).toHaveLength(0);
+    expect(rowsOf(broken(moved, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(1);
+    expect(rowsOf(broken(made.world, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(1);
+
+    // Made at the first keyframe, as every group kept before it said.
+    const first = grouped(b.world, 0, [a.id, b.id], TOP)!;
+
+    expect(rowsOf(broken(first.world, 0, [first.id]), [first.id])[0].cells[0].places).toHaveLength(1);
+  });
+
   test('the rightmost repeat has the nearest lane', () => {
     const { world, id } = room();
     const w = repeated(repeated(repeated(world, 1, id, move(1, 0), null), 1, id, erode(1), 3), 4, id, move(0, 1), 2);

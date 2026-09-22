@@ -678,9 +678,17 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
     }
   }
 
+  // A group made at `k` was made at the one its keys went to, or where `k` was
+  // the last, at the one before. See `bornAt`.
+  const groups = new Map([...world.groups].map(([id, g]) => [
+    id,
+    g.birth === k ? { ...g, birth: next ?? keyframes[d - 1].id } : g,
+  ]));
+
   const out: World = {
     ...world,
     keyframes: numbered(left),
+    groups,
     polygons,
     artefacts,
     paths,

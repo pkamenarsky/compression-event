@@ -445,6 +445,13 @@ export interface Group {
    * nothing for the depth to move.
    */
   sealed: boolean
+  /**
+   * The keyframe it was made at, where its first key is its shape rather than
+   * a motion and is not shown. Nothing is the first keyframe, which is what a
+   * group from before this was kept reads as. Only the keyframe view and a
+   * break ask: a group is there wherever its members are.
+   */
+  birth?: KeyframeId
 }
 
 /**
