@@ -2704,11 +2704,25 @@ export interface EdgeRun {
  * shrink to nothing at that line as they do at an end, and stay where the
  * spacing puts them, so they are continuous in the bevel too.
  */
-export function patternRun(e: Effecting, key: number, amplitude: number, length: number, clear = 0, clearTo = 0, ramp = e.spacing): EdgeRun {
+export function patternRun(
+  e: Effecting,
+  key: number,
+  amplitude: number,
+  length: number,
+  clear = 0,
+  clearTo = 0,
+  ramp = e.spacing,
+  /** Where along the run the pattern is centred, for a run whose middle is
+   * not its own: a fold's straight is centred on the member edge that names
+   * it, so that the run's ends can move without moving a tooth. Outside the
+   * run is allowed — the teeth march out from it either way, and only the
+   * ones that land on the run are laid. See PLAN-bevel 2.3. */
+  from = length / 2,
+): EdgeRun {
   // From the middle — or, offset, off it by a share of the spacing the seed
   // gives the edge: so no tooth is sure to stand in the middle of every edge,
   // and one shorter than the spacing may have none.
-  const anchor = length / 2 + (e.offset ? (hashed(e.seed, key ^ OFFSET, 0) - 0.5) * e.spacing : 0);
+  const anchor = from + (e.offset ? (hashed(e.seed, key ^ OFFSET, 0) - 0.5) * e.spacing : 0);
   const along: number[] = [], across: number[] = [], teeth: number[] = [];
 
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
@@ -2718,12 +2732,26 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   const gap = (j: number): number => e.spacing * Math.pow(GAPS, e.jitter * (2 * hashed(e.seed, ~key, j) - 1));
   const next = (j: number, at: number): number => at + Math.sign(j) * gap(j);
 
-  // Outward from the middle both ways, as far as the edge goes, then laid
+  // Outward from the anchor both ways, as far as the edge goes, then laid
   // end to end in order along it.
   const before: [number, number][] = [], after: [number, number][] = [];
 
   for (let j = 0, at = anchor; at <= length; j++, at = next(j, at)) after.push([j, at]);
   for (let j = -1, at = next(-1, anchor); at >= 0; j--, at = next(j, at)) before.push([j, at]);
+
+  // An anchor off the run's own end: the teeth that fall on it are still
+  // laid, counted out from where the anchor is.
+  if (anchor < 0) {
+    for (let j = 1, at = next(1, anchor); at <= length && j < RUNAWAY; j++, at = next(j, at)) {
+      if (at >= 0) after.push([j, at]);
+    }
+  }
+
+  if (anchor > length) {
+    for (let j = -2, at = next(-2, next(-1, anchor)); at >= 0 && -j < RUNAWAY; j--, at = next(j, at)) {
+      if (at <= length) before.push([j, at]);
+    }
+  }
 
   const places = [...before.reverse(), ...after];
 
@@ -2773,6 +2801,10 @@ export function patterned(e: Effecting, key: number, j: number): number {
 
   return v;
 }
+
+/** How many teeth `patternRun` counts past an anchor off the run before
+ * giving up: a run whose naming edge is a long way off it. */
+const RUNAWAY = 4096;
 
 /** What an edge's key is told apart by, for its offset: see `patternRun`. */
 const OFFSET = 0x2545f491;
@@ -2826,6 +2858,9 @@ export function subdivided(
   out: 1 | -1,
   clear: (i: number) => number = () => 0,
   toothed: (i: number) => boolean = () => true,
+  /** Where along edge `i` its pattern is centred, or nothing for its own
+   * middle: see `patternRun`. */
+  from: (i: number) => number | undefined = () => undefined,
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2839,7 +2874,7 @@ export function subdivided(
     if (l === 0 || !toothed(i)) return;
 
     const nx = dy / l * out, ny = -dx / l * out;
-    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n));
+    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n), e.spacing, from(i) ?? l / 2);
 
     run.along.forEach((u, k) => done.push({
       at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
@@ -3782,6 +3817,11 @@ export function foldShaped(
   fold: Shape,
   square: readonly Point[],
   keep: readonly Point[],
+  /** What the members published about their outlines, in the order they were
+   * unioned in: each straight of the fold takes the name of the first line
+   * along it, and lays its teeth from that edge's own middle. See
+   * `namesOf` and PLAN-bevel 2.3. */
+  lines: readonly { id: number, a: Point, b: Point }[],
   facets: Facets,
   bevel: number,
   held: boolean,
@@ -3797,6 +3837,28 @@ export function foldShaped(
   const tol = scale * 1e-9;
   const same = (p: Point, q: Point) => Math.abs(p.x - q.x) <= tol && Math.abs(p.y - q.y) <= tol;
   const isSquare = (p: Point) => square.some(q => same(p, q));
+
+  // Which member edge a straight of the fold lies on: the first along it, so
+  // that a wall two members share takes one of them and keeps it while
+  // either of them moves — rank settles a shared edge in the union the same
+  // way. With it, where the naming edge's middle falls along the straight,
+  // which is where its pattern is centred.
+  const onLine = scale * 1e-6;
+  const named = (a: Point, b: Point): { key: number, from: number } | null => {
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    if (l === 0) return null;
+
+    const off = (line: { a: Point, b: Point }, p: Point) => Math.abs((p.x - line.a.x) * (line.b.y - line.a.y) - (p.y - line.a.y) * (line.b.x - line.a.x))
+      / Math.max(Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y), 1e-300);
+    const mine = lines.find(line => off(line, a) <= onLine && off(line, b) <= onLine);
+
+    if (mine === undefined) return null;
+
+    const mid = { x: (mine.a.x + mine.b.x) / 2, y: (mine.a.y + mine.b.y) / 2 };
+
+    return { key: mine.id, from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / l };
+  };
 
   // An arrangement's rings all have their material to the left: an outline
   // counter-clockwise and its holes the other way. See `deformedAt`.
@@ -3841,9 +3903,19 @@ export function foldShaped(
   cleaned.forEach((ring, r) => {
     const sq = ring.map(isSquare);
     const bevels = ring.map((_p, i) => (sq[i] ? 0 : drawnAt(ring, i)));
+    const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
     const laid = deform === null
       ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0 }))
-      : subdivided(ring, deform.e, () => deform.amplitude, () => 0, out, i => bevels[i], i => !sq[i] && !sq[(i + 1) % ring.length]);
+      : subdivided(
+        ring,
+        deform.e,
+        () => deform.amplitude,
+        i => names[i]?.key ?? 0,
+        out,
+        i => bevels[i],
+        i => !sq[i] && !sq[(i + 1) % ring.length],
+        i => names[i]?.from,
+      );
 
     starts.push(source.length);
 

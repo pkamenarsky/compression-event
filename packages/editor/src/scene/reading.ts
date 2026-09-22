@@ -478,13 +478,27 @@ const squaredThrough = remembered((shapes: readonly Shape[], depth: number, squa
 
 /** A scope's fold as its own effects draw it, by `shapeKey`: see
  * `foldShaped`. */
-const shapedFold = remembered((fold: Shape, square: readonly Point[], keep: readonly Point[], key: readonly number[], depth: number) => {
+const shapedFold = remembered((
+  fold: Shape,
+  square: readonly Point[],
+  keep: readonly Point[],
+  /** The members' lines, three entries each — the corner that names it, and
+   * its two ends — since what is remembered is named by plain geometry. */
+  lines: readonly (number | Point)[],
+  key: readonly number[],
+  depth: number,
+) => {
   const [n, from, to, at, tension, bevel, held, ...d] = key;
   const deform = d.length === 0
     ? null
     : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: d[6] };
+  const named = [];
 
-  return foldShaped(fold, square, keep, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
+  for (let i = 0; i + 2 < lines.length; i += 3) {
+    named.push({ id: lines[i] as number, a: lines[i + 1] as Point, b: lines[i + 2] as Point });
+  }
+
+  return foldShaped(fold, square, keep, named, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
 });
 
 /**
@@ -769,7 +783,16 @@ export function contributed(
     // any, and before a floor is cut to its level, whose arcs it takes as they
     // come.
     const inside = slots.flatMap(u => u.square);
-    const shaped = shapedBy === null ? null : shapedFold(settles, inside, slots.flatMap(u => u.keep), shapedBy, here!.depth);
+    const shaped = shapedBy === null
+      ? null
+      : shapedFold(
+        settles,
+        inside,
+        slots.flatMap(u => u.keep),
+        slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b])),
+        shapedBy,
+        here!.depth,
+      );
     const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep) };
     const cut = set === 'floor' && top(id, 'level') === 0
       ? underfoot(rounded.shape, resolves(id, 'level'))

@@ -298,6 +298,55 @@ describe('a group\'s effects', () => {
     off.forEach(p => expect(drawn.has(p)).toBe(false));
   });
 
+  test('a run\'s teeth are its naming edge\'s, so the far end moving leaves them where they are', () => {
+    // Two rooms along one wall, sealed and deformed as one. The wall is one
+    // straight of the fold and takes one pattern — the first room's edge
+    // names it, and the teeth are counted out from that edge's own middle.
+    // So the second room growing at the far end moves nothing over the first.
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const build = (by: number) => {
+      const a = room(emptyWorld(), rect(0, 0, 200, 140));
+      const b = room(a.world, rect(160, 0, 200 + by, 140));
+      const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
+
+      return wrote(withEffects(sealing(g.world, g.id, true), g.id, { deform: zigzag }), 0, g.id, deform(6));
+    };
+
+    // The teeth on the near half of the wall, where only the first room is.
+    const near = (w: World) => csg(w, 0).flat()
+      .filter(p => p.y > 140 - 1e-9 && p.x > 10 && p.x < 150)
+      .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+
+    expect(near(build(0)).length).toBeGreaterThanOrEqual(4);
+    expect(near(build(40))).toEqual(near(build(0)));
+    expect(near(build(130))).toEqual(near(build(0)));
+  });
+
+  test('a run cut in two keeps the teeth on the piece its naming edge is on', () => {
+    // A pillar rising through the wall cuts the run. The piece the naming
+    // edge is still on keeps every tooth it had; the other piece re-anchors
+    // to whichever edge names it, which is an event either way.
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const build = (cut: boolean) => {
+      const a = room(emptyWorld(), rect(0, 0, 300, 140));
+
+      // A room off on its own, so the group has two members either way, and
+      // the one that cuts the wall where it is asked for.
+      const away = room(a.world, rect(600, 0, 60, 60));
+      const w = cut ? addPolygon(away.world, { level: 'hollow' }, rect(240, 120, 40, 60), 0, TOP) : null;
+      const ids = w === null ? [a.id, away.id] : [a.id, away.id, w.id];
+      const g = grouped(w?.world ?? away.world, 0, ids, TOP)!;
+
+      return wrote(withEffects(sealing(g.world, g.id, true), g.id, { deform: zigzag }), 0, g.id, deform(6));
+    };
+    const near = (world: World) => csg(world, 0).flat()
+      .filter(p => p.y > 140 - 1e-9 && p.x > 10 && p.x < 200)
+      .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+
+    expect(near(build(false)).length).toBeGreaterThanOrEqual(4);
+    expect(near(build(true))).toEqual(near(build(false)));
+  });
+
   test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const s = addPolygon(a.world, { level: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
