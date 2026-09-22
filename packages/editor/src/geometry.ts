@@ -3250,6 +3250,60 @@ export interface Curved {
 }
 
 /**
+ * The curve a run of points was laid as, read back off them: `on` walks the
+ * polyline, `normal` is the segment's, and `bend` is the circle through three
+ * neighbours.
+ *
+ * For a curve that reaches a scope's fold as points and not as the corner it
+ * was built from — a member's arc, which the erosion has already mitred facet
+ * by facet and the union may have cut. The polyline is the outline there, so
+ * teeth laid on it stand on the boundary, which is what a tooth's feet have
+ * to do. See PLAN-bevel 2.9.
+ */
+export function curveThrough(points: readonly Point[]): Curved {
+  const n = points.length - 1;
+  const lengths = [0];
+
+  for (let k = 1; k <= n; k++) {
+    lengths.push(lengths[k - 1] + Math.hypot(points[k].x - points[k - 1].x, points[k].y - points[k - 1].y));
+  }
+
+  const total = lengths[n];
+  const at = (u: number): { k: number, f: number } => {
+    const want = Math.min(1, Math.max(0, u)) * total;
+    let k = 0;
+
+    while (k < n - 1 && lengths[k + 1] < want) k++;
+
+    return { k, f: (want - lengths[k]) / Math.max(lengths[k + 1] - lengths[k], 1e-300) };
+  };
+  const on = (u: number): Point => {
+    const { k, f } = at(u);
+
+    return { x: points[k].x + (points[k + 1].x - points[k].x) * f, y: points[k].y + (points[k + 1].y - points[k].y) * f };
+  };
+  const normal = (u: number): Point => {
+    const { k } = at(u);
+    const x = points[k + 1].x - points[k].x, y = points[k + 1].y - points[k].y, l = Math.hypot(x, y);
+
+    return l === 0 ? { x: 0, y: 0 } : { x: y / l, y: -x / l };
+  };
+
+  // Twice the area three points a step apart make, over their three sides:
+  // one over the radius of the circle through them, signed as `bend` is.
+  const bend = (u: number): number => {
+    const h = 1 / (2 * Math.max(n, 1));
+    const a = on(u - h), b = on(u), c = on(u + h);
+    const la = Math.hypot(b.x - a.x, b.y - a.y), lb = Math.hypot(c.x - b.x, c.y - b.y), lc = Math.hypot(c.x - a.x, c.y - a.y);
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+
+    return la === 0 || lb === 0 || lc === 0 ? 0 : 2 * cross / (la * lb * lc);
+  };
+
+  return { points: [...points], us: lengths.map(l => (total === 0 ? 0 : l / total)), point: total === 0, on, normal, bend };
+}
+
+/**
  * A curve with `tt`'s teeth standing on it: the curve's own points pushed off
  * it by whatever the teeth put there, the teeth themselves, and where each of
  * the curve's points ended up. `out` is which side of it is out of the
@@ -3822,6 +3876,10 @@ export function foldShaped(
    * along it, and lays its teeth from that edge's own middle. See
    * `namesOf` and PLAN-bevel 2.3. */
   lines: readonly { id: number, a: Point, b: Point }[],
+  /** The members' arcs, in the same order: a run of the fold that is one of
+   * these is a curve, not a string of corners, so the group leaves it
+   * unrounded and lays its teeth along it. */
+  arcs: readonly { id: number, points: Point[] }[],
   facets: Facets,
   bevel: number,
   held: boolean,
@@ -3897,13 +3955,39 @@ export function foldShaped(
     return Math.max(0, held ? bevel + depth * Math.sign(turnAt(ring, i)) : bevel);
   };
 
+  // Which published arc each point of a ring belongs to, and where along
+  // that arc it is: a run of the fold sharing one arc is that curve, whole or
+  // cut by whatever crossed it.
+  const along = arcs.map(arc => {
+    const lengths = [0];
+
+    for (let k = 1; k < arc.points.length; k++) {
+      lengths.push(lengths[k - 1] + Math.hypot(arc.points[k].x - arc.points[k - 1].x, arc.points[k].y - arc.points[k - 1].y));
+    }
+
+    return lengths;
+  });
+  const onArc = (p: Point): { arc: number, at: number } | null => {
+    for (let a = 0; a < arcs.length; a++) {
+      const k = arcs[a].points.findIndex(q => same(p, q));
+
+      if (k >= 0) return { arc: a, at: along[a][k] };
+    }
+
+    return null;
+  };
+
   const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
     const sq = ring.map(isSquare);
-    const bevels = ring.map((_p, i) => (sq[i] ? 0 : drawnAt(ring, i)));
+    const mine = ring.map(onArc);
+    const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
+    // An edge between two points of one arc is inside a curve, and the
+    // curve's own teeth run along it: see `teethAlong`.
+    const inside = (i: number) => mine[i] !== null && mine[(i + 1) % ring.length]?.arc === mine[i]!.arc;
     const laid = deform === null
       ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0 }))
       : subdivided(
@@ -3913,13 +3997,82 @@ export function foldShaped(
         i => names[i]?.key ?? 0,
         out,
         i => bevels[i],
-        i => !sq[i] && !sq[(i + 1) % ring.length],
+        i => !sq[i] && !sq[(i + 1) % ring.length] && !inside(i),
         i => names[i]?.from,
       );
 
     starts.push(source.length);
 
+    /** The run of one arc starting at ring point `i`, laid with the group's
+     * teeth along the whole curve and cut back to the piece the fold has. */
+    const curved = (i: number): Point[] => {
+      const a = mine[i]!.arc;
+      const whole = arcs[a];
+      const tt: ArcTeeth | null = deform === null || deform.amplitude === 0
+        ? null
+        : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: whole.id, seen: 1 };
+      const on = teethAlong(curveThrough(whole.points), tt, out);
+      const total = along[a][along[a].length - 1];
+
+      // Where the piece starts and ends along the whole curve: the points the
+      // fold kept, which a crossing may have cut short of either end.
+      let last = i;
+
+      while (inside(last)) last = (last + 1) % ring.length;
+
+      const from = mine[i]!.at, to = mine[last]!.at;
+      const at = (p: Point): number => {
+        let best = 0, far = Infinity;
+
+        for (let k = 1; k < whole.points.length; k++) {
+          const q = whole.points[k - 1], r = whole.points[k];
+          const dx = r.x - q.x, dy = r.y - q.y, l2 = dx * dx + dy * dy;
+          const u = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((p.x - q.x) * dx + (p.y - q.y) * dy) / l2));
+          const d = Math.hypot(p.x - q.x - dx * u, p.y - q.y - dy * u);
+
+          if (d < far) {
+            far = d;
+            best = along[a][k - 1] + u * Math.hypot(dx, dy);
+          }
+        }
+
+        return best;
+      };
+
+      // The laid points between them, with the piece's own ends kept where
+      // the fold has them: the curve is the member's and the cut is not.
+      const kept = on.all.filter(p => {
+        const s = at(p);
+
+        return s > from + tol && s < to - tol;
+      });
+
+      return [ring[i], ...(total === 0 ? [] : kept)];
+    };
+
     for (const made of laid) {
+      const here = mine[made.from];
+      const before = here === null ? false : mine[(made.from - 1 + ring.length) % ring.length]?.arc === here.arc;
+      const after = here === null ? false : inside(made.from);
+
+      // A run of one arc is laid as the curve it is, once, at the point it
+      // starts from; the points inside it are the curve's and come with it.
+      // The one it ends at stands as itself: the straight leaving the curve
+      // starts there.
+      if (here !== null && before && after) continue;
+
+      if (here !== null && !before && after) {
+        edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
+
+        for (const p of curved(made.from)) {
+          source.push(p);
+          tooth.push(true);
+          drawn.push(0);
+        }
+
+        continue;
+      }
+
       if (made.j === null) {
         edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
       }
@@ -3928,7 +4081,7 @@ export function foldShaped(
       }
 
       source.push(made.at);
-      tooth.push(made.j !== null || sq[made.from]);
+      tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
     }
   });

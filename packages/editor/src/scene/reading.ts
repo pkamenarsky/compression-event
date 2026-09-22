@@ -485,6 +485,9 @@ const shapedFold = remembered((
   /** The members' lines, three entries each — the corner that names it, and
    * its two ends — since what is remembered is named by plain geometry. */
   lines: readonly (number | Point)[],
+  /** The members' arcs: the corner that names each, how many points it has,
+   * and then the points. */
+  arcs: readonly (number | Point)[],
   key: readonly number[],
   depth: number,
 ) => {
@@ -498,7 +501,16 @@ const shapedFold = remembered((
     named.push({ id: lines[i] as number, a: lines[i + 1] as Point, b: lines[i + 2] as Point });
   }
 
-  return foldShaped(fold, square, keep, named, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
+  const curves = [];
+
+  for (let i = 0; i + 1 < arcs.length;) {
+    const id = arcs[i] as number, count = arcs[i + 1] as number;
+
+    curves.push({ id, points: arcs.slice(i + 2, i + 2 + count) as Point[] });
+    i += 2 + count;
+  }
+
+  return foldShaped(fold, square, keep, named, curves, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
 });
 
 /**
@@ -790,6 +802,7 @@ export function contributed(
         inside,
         slots.flatMap(u => u.keep),
         slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b])),
+        slots.flatMap(u => u.named.arcs.flatMap(a => [a.id, a.points.length, ...a.points])),
         shapedBy,
         here!.depth,
       );

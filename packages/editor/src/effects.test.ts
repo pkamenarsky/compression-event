@@ -347,6 +347,45 @@ describe('a group\'s effects', () => {
     expect(near(build(true))).toEqual(near(build(false)));
   });
 
+  test('its deform runs along a member\'s arc, as it would along its own', () => {
+    // A member's round reaches the fold as facets, and the group's deform
+    // runs along it as one curve — teeth at its own spacing, standing their
+    // full amplitude off it — rather than a tooth to a facet, which would be
+    // a dozen tiny ones that never reach their height.
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const build = (amplitude: number) => {
+      const a = room(emptyWorld(), rect(0, 0, 200, 140));
+      const away = room(a.world, rect(600, 0, 60, 60));
+      const w = withEffects(away.world, a.id, { round: inSegments(8, 30) });
+      const g = grouped(w, 0, [a.id, away.id], TOP)!;
+      const sealed = withEffects(sealing(g.world, g.id, true), g.id, { deform: zigzag });
+
+      return wrote(wrote(sealed, 0, a.id, round(30)), 0, g.id, deform(amplitude));
+    };
+
+    // The corner's own arc, as the group leaves it with no deform at all.
+    const plain = csg(build(0), 0).flat().filter(p => p.x < 40 && p.y < 40);
+    const off = (p: Point) => Math.min(...plain.map((q, i) => {
+      const r = plain[(i + 1) % plain.length];
+      const dx = r.x - q.x, dy = r.y - q.y, l2 = dx * dx + dy * dy;
+      const u = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((p.x - q.x) * dx + (p.y - q.y) * dy) / l2));
+
+      return Math.hypot(p.x - q.x - dx * u, p.y - q.y - dy * u);
+    }));
+
+    expect(plain.length).toBeGreaterThanOrEqual(9);
+
+    const toothed = csg(build(8), 0).flat().filter(p => p.x < 40 && p.y < 40);
+    const heights = toothed.map(off);
+
+    // Teeth of the group's own size: a tip its whole amplitude off the curve,
+    // and two or three of them on an arc some forty long at a spacing of
+    // twenty — not one to each of the eight facets.
+    expect(Math.max(...heights)).toBeGreaterThan(7.5);
+    expect(heights.filter(h => h > 4).length).toBeGreaterThanOrEqual(1);
+    expect(heights.filter(h => h > 4).length).toBeLessThanOrEqual(3);
+  });
+
   test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const s = addPolygon(a.world, { level: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
