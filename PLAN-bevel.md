@@ -232,7 +232,7 @@ What the two tables show:
   2. *An island born* (not a fault). Eroding the teeth pinches off specks
      of material that grow out of nothing; the jump measure read them as a
      jump of their distance from everything else.
-  3. *Walls starting to cross* (open). Held, the arcs grow as the room
+  3. *Walls starting to cross* (kept from happening). Held, the arcs grow as the room
      erodes, so the teeth move during an erosion span and start crossing
      each other and the walls. Where two start to cross there is a new
      notch, a corner of some 160°, and the erosion mitres it: its mitre,
@@ -240,10 +240,16 @@ What the two tables show:
      `erode`'s own, not the round's — two members of a sealed group starting
      to overlap while it erodes do the same — and before phase 1 the teeth
      did not move during an erosion span, so it did not arise here.
-  After 1, the room's worst step, over two hundred of a span, is 0.56 and
-  0.69 at a falloff of one. At 0.15 one of 14.75 is left, which is 3; at
-  nought one of 54, which is no jump at all — no instant has it — but a
-  mitre growing fast as a corner sharpens, which the bake follows.
+  4. *The teeth held still* (the fix for 3). A held arc's teeth are laid
+     along the arc as it is seen, at the bevel asked for, and carried onto
+     the drawn arc where they fall on its curve (`ArcTeeth.seen`). The seen
+     bevel does not change while only the depth does, so the teeth keep
+     their places along the curve as the erosion grows the drawn arc, and
+     do not start crossing anything part way. Tested.
+  After all of it, the room's worst step over two hundred of a span is 0.54
+  to 1.53 at every falloff, against 0.48 before phase 1.
+  `scratch/jump-walls-crossing.json` is the room at a falloff of 0.15, which
+  jumped at 61% of v0 → v1.
 - **Then: a falloff.** The push above made an arc read as a zigzag along
   the curve, and spikes on the curve read better. Now each tooth adds its
   height to the arc falling away with the distance along it — first as an

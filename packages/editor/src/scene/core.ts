@@ -280,6 +280,9 @@ export interface ArcDeform {
   after: readonly number[]
   /** Each corner's arc's name to the noise and the offset: its id. */
   keys: readonly number[]
+  /** Each corner's bevel as it is seen, which its arc's teeth are laid by:
+   * see `ArcTeeth.seen`. */
+  seen: readonly number[]
 }
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
@@ -357,6 +360,7 @@ export function effectedOf(
   if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) return null;
 
   const bevels = drawnBevels(world, id, corners, local, amounts, depth);
+  const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
     (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel, scale), round.tension));
   const flat = corners.map(c => c.root !== undefined);
@@ -365,7 +369,7 @@ export function effectedOf(
     facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i]))),
     bevels,
     flat,
-    deform: arcDeform(world, id, corners, amounts, scale),
+    deform: arcDeform(world, id, corners, amounts, scale, seen),
   });
 }
 
@@ -432,6 +436,7 @@ function arcDeform(
   corners: readonly Vertex[],
   amounts: Pick<State, 'amplitude' | 'amplitudes'>,
   scale: number,
+  seen: readonly number[],
 ): ArcDeform | null {
   const fx = world.effects.get(id);
 
@@ -448,6 +453,7 @@ function arcDeform(
     before: corners.map((_c, i) => amplitude(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitude(edge(c))),
     keys: corners.map(c => arcKey(c.id)),
+    seen,
   };
 }
 
@@ -471,7 +477,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys]];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s)];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
 }
@@ -1008,13 +1014,13 @@ const imagedBy = remembered((
 ): Imaged => {
   const [facets, bevels, flat, deform, apart] = effects as [Memo[], number[], number[], Memo[], number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys] = deform as [number, number, number, number, number, number, number[], number[], number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen] = deform as [number, number, number, number, number, number, number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
     ? null
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: true };
   const teeth = (i: number): ArcTeeth | null => (e === null || (before[i] === 0 && after[i] === 0)
     ? null
-    : { e, before: before[i], after: after[i], key: keys[i] });
+    : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? seen[i] / bevels[i] : 1 });
 
   const o = outlineOf(source, rings, i => flat[i] === 1, i => each[i], i => bevels[i], teeth, i => apart[i] === 1);
   const deep = depths === null ? null : o.owner.map(i => depths[i]);

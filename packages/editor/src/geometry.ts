@@ -3127,6 +3127,12 @@ export interface ArcTeeth {
   before: number
   after: number
   key: number
+  /** The arc as it is seen against the arc as it is drawn: other than one
+   * where a round is held, and the erosion takes the drawn one back to the
+   * seen — less where the corner turns out of the material, more in. The teeth are laid along the arc as seen, and carried onto the
+   * drawn one where they fall on its curve, so the erosion growing the
+   * drawn arc does not slide them along it. See `drawnBevels`. */
+  seen: number
 }
 
 /**
@@ -3140,6 +3146,8 @@ interface ArcLaid {
   arc: Point[]
   all: Point[]
   arcAt: number[]
+  /** Where in `all` the teeth are, their tips and their feet. */
+  teethAt: number[]
   point: boolean
 }
 
@@ -3230,7 +3238,7 @@ function arcsWith(
     const at = laid.points.map((_p, k) => k);
     const tt = teeth(i);
 
-    if (laid.point || tt === null || laid.on === null) return { arc: laid.points, all: laid.points, arcAt: at, point: laid.point };
+    if (laid.point || tt === null || laid.on === null) return { arc: laid.points, all: laid.points, arcAt: at, teethAt: [], point: laid.point };
 
     const { on, normal, bend } = laid;
 
@@ -3242,6 +3250,9 @@ function arcsWith(
 
       lengths.push(lengths[k - 1] + Math.hypot(q.x - p.x, q.y - p.y));
     }
+
+    // As it is seen: the same curve, as much shorter as its bevel is.
+    for (let k = 0; k <= LENGTHS; k++) lengths[k] *= tt.seen;
 
     const total = lengths[LENGTHS];
     const reach = Math.max(tt.e.falloff, NARROWEST) * tt.e.spacing;
@@ -3325,7 +3336,7 @@ function arcsWith(
     // By length, an arc's end before anything at its length and after.
     laidAt.sort((x, y) => x.s - y.s || (x.arc === 0 ? -1 : y.arc === 0 ? 1 : x.arc === arcPoints.length - 1 ? 1 : y.arc === arcPoints.length - 1 ? -1 : 0));
 
-    const all: Point[] = [], arcAt: number[] = new Array<number>(arcPoints.length).fill(0);
+    const all: Point[] = [], arcAt: number[] = new Array<number>(arcPoints.length).fill(0), teethIn: number[] = [];
 
     for (const x of laidAt) {
       // An arc's point left out takes the place of whatever comes next.
@@ -3343,13 +3354,15 @@ function arcsWith(
         continue;
       }
 
+      if (x.arc === -1) teethIn.push(all.length);
+
       all.push(x.p);
     }
 
     // One left out after the last point laid takes the last.
     arcAt.forEach((k, j) => (arcAt[j] = Math.min(k, all.length - 1)));
 
-    return { arc: arcPoints, all, arcAt, point: false };
+    return { arc: arcPoints, all, arcAt, teethAt: teethIn, point: false };
   }
 
   function arc(v: Point, i: number): { points: Point[], us: number[], point: boolean, on: ((u: number) => Point) | null, normal: (u: number) => Point, bend: (u: number) => number } {
@@ -3692,12 +3705,10 @@ export function outlineOf(
       }
 
       const base = ring.length;
-      const isArc = new Set(arc.arcAt);
 
       arcAt[i] = arc.arcAt.map(j => base + j);
-      arc.all.forEach((p, j) => {
-        if (!isArc.has(j)) toothAt.push(ring.length);
-
+      toothAt.push(...arc.teethAt.map(j => base + j));
+      arc.all.forEach(p => {
         ring.push(p);
         owner.push(i);
       });

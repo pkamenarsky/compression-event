@@ -1340,7 +1340,7 @@ function effectsOver(
     facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
     bevels: other.bevels.map(() => 0),
     flat: other.flat,
-    deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0) },
+    deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0), seen: other.deform.seen.map(() => 0) },
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
@@ -1375,7 +1375,7 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     flat: e[0].flat,
     deform: d0 === null || d1 === null
       ? d0 ?? d1
-      : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
+      : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },
   };
 }
 

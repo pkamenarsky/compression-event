@@ -1969,7 +1969,7 @@ describe('round and deform', () => {
 
     for (let k = 0; k <= 40; k++) {
       const bevel = 20 + k * 0.37;
-      const o = outlineOf(square.map(p => ({ x: p.x * 10, y: p.y * 10 })), [0], () => false, () => facetsOf(16), i => (i === 0 ? bevel : 0), i => (i === 0 ? { e, before: 5, after: 5, key: 3 } : null));
+      const o = outlineOf(square.map(p => ({ x: p.x * 10, y: p.y * 10 })), [0], () => false, () => facetsOf(16), i => (i === 0 ? bevel : 0), i => (i === 0 ? { e, before: 5, after: 5, key: 3, seen: 1 } : null));
       const n = o.ring.length;
 
       // A tip is a tooth that stands off the line through its neighbours; the
@@ -1990,6 +1990,47 @@ describe('round and deform', () => {
           expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeGreaterThan(reach * 0.5);
         }
       }
+    }
+  });
+
+  test('an arc\'s teeth are laid as it is seen: drawn deeper, they are where they were along it', () => {
+    // A corner seen two hundred deep and drawn deeper, as a held round is for an
+    // erosion to take back: its teeth are at the same fractions of the curve
+    // at every depth, the curve only scaled about the corner.
+    const e: Effecting = { ...PLAIN, spacing: 60, pattern: 'zigzag', falloff: 0.1, offset: false };
+    const big = square.map(p => ({ x: p.x * 100, y: p.y * 100 }));
+    const tipsAt = (drawn: number) => {
+      const o = outlineOf(big, [0], () => false, () => facetsOf(16), i => (i === 0 ? drawn : 0), i => (i === 0 ? { e, before: 1, after: 1, key: 3, seen: 200 / drawn } : null));
+      const n = o.ring.length;
+
+      // A tip is a tooth off the plain curve; the rest of `teeth` are feet, on
+      // it. Its place is its angle from the corner.
+      const plain = outlineOf(big, [0], () => false, () => facetsOf(64), i => (i === 0 ? drawn : 0), () => null).ring;
+      const off = (p: Point) => Math.min(...plain.map((a, k) => {
+        const c = plain[(k + 1) % plain.length], dx = c.x - a.x, dy = c.y - a.y, l2 = dx * dx + dy * dy;
+        const u = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+
+        return Math.hypot(a.x + dx * u - p.x, a.y + dy * u - p.y);
+      }));
+
+      void n;
+
+      return o.teeth.filter(t => off(o.ring[t]) > 0.5).map(t => Math.atan2(o.ring[t].y, o.ring[t].x));
+    };
+
+    // Seen as deep as it is drawn, and drawn deeper: the height of a tooth,
+    // one, is about a hundredth of a radian of its angle from the corner.
+    const at200 = tipsAt(200);
+
+    expect(at200.length).toBeGreaterThan(1);
+
+    // Each tip one of the others, give or take the smallest by the arc's ends,
+    // which stand too little off the curve to be told from it every time.
+    for (const drawn of [260, 330, 400]) {
+      const there = tipsAt(drawn);
+
+      expect(Math.abs(there.length - at200.length)).toBeLessThanOrEqual(2);
+      there.forEach(angle => expect(Math.min(...at200.map(a => Math.abs(angle - a)))).toBeLessThan(0.01));
     }
   });
 
