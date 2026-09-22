@@ -211,11 +211,22 @@ What the two tables show:
   sliding past a facet point swapped places with it in the ring, the outline
   jumped, and the bake cut every such instant down to its narrowest width.
   A test bake went from minutes to a second.
+- **Open, may change: an arc tooth's shape and its curvature limit.** An
+  arc tooth is now a triangle standing on the curve: its flanks run straight
+  down to the curve `falloff` of the spacing either side, never less than
+  `NARROWEST`, and at one they run tooth to tooth. And an arc is never pushed
+  further in than 0.9 of the radius it bends at. Both were tried against a
+  jump in `scratch/world-2026-09-22T14-17-44Z.json` — a room with inward
+  teeth of 294 on held arcs of some 465, eroding — and neither fixed it: at
+  the jump the outline before the erosion moves by 1e-13 and `simplify` of it
+  gives one ring at one instant and two with 60,000 less area at the next.
+  Being investigated; either may be undone once the cause is known.
 - **Then: a falloff.** The push above made an arc read as a zigzag along
   the curve, and spikes on the curve read better. Now each tooth adds its
-  height to the arc falling away with the distance along it — `falloff` of
-  the spacing to a factor of e, a slider — and the teeth and the arc's own
-  points are samples of that one function. Near nought it is spikes on the
+  height to the arc falling away with the distance along it — first as an
+  exponential, `falloff` of the spacing to a factor of e, now as the triangle
+  above — and the teeth and the arc's own points are samples of that one
+  function. Near nought it is spikes on the
   curve; further, a wave. Continuous whatever it is set to.
 - **And an offset.** Each edge's and arc's teeth start off its middle by a
   share of the spacing its seed gives it (`Effecting.offset`), so a short

@@ -474,8 +474,9 @@ function body(
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // How far the gaps stray from the spacing, as a percentage.
       field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, (v, further) => changed('deform', { jitter: Math.round(v) / 100 }, further))),
-      // How far a tooth on an arc reaches into the curve around it, as a
-      // percentage of the spacing: a spike near nought, a wave further.
+      // How far a tooth on an arc runs its flanks along the curve, as a
+      // percentage of the spacing: a spike on the curve when small, a zigzag
+      // along it at a hundred.
       field('falloff %', slider(() => Math.round(m.falloff() * 100), 0, 100, (v, further) => changed('deform', { falloff: Math.round(v) / 100 }, further))),
       // A seed is the noise's, the jitter's, and where each edge's teeth
       // start.

@@ -2612,17 +2612,23 @@ export interface Effecting {
    * spacing.
    * A gap is never nothing, so no two teeth pass each other. */
   jitter: number
-  /** How far along an arc a tooth reaches into the curve around it, as a
-   * share of the spacing: see `arcsWith`. Near nought a tooth is a spike on
-   * the curve; further, the teeth run together into a wave along it. */
+  /** How far along an arc a tooth's flanks run before they meet the curve,
+   * either side of it, as a share of the spacing — never less than
+   * `NARROWEST`: see `arcsWith`. Small, a tooth is a spike standing on the
+   * curve; at one, each flank runs to the next tooth, as an edge's do. */
   falloff: number
   /** Whether each edge's teeth start off its middle by a share of the
    * spacing its seed gives it, rather than at it: see `patternRun`. */
   offset: boolean
 }
 
-/** The falloff a deform starts with: spikes on the curve, all but. */
+/** The falloff a deform starts with: spikes on the curve. */
 export const FALLOFF = 0.15;
+
+/** The narrowest a tooth on an arc stands, as a share of the spacing. A
+ * tooth any narrower is all but a hairpin, whose two flanks an erosion takes
+ * off towards infinity, and flips over as it tips past straight. */
+export const NARROWEST = 0.05;
 
 /**
  * The largest distance between any two of `points`: the size a deform is
@@ -3169,6 +3175,9 @@ function solved(a: number[][], b: number[]): number[] {
   return x;
 }
 
+/** How far in, against the radius it bends at, an arc may be pushed. */
+const FOLD = 0.9;
+
 /** How finely an arc's length is read, to put its teeth back on it. */
 const LENGTHS = 64;
 
@@ -3223,7 +3232,7 @@ function arcsWith(
 
     if (laid.point || tt === null || laid.on === null) return { arc: laid.points, all: laid.points, arcAt: at, point: laid.point };
 
-    const { on, normal } = laid;
+    const { on, normal, bend } = laid;
 
     // The arc's length, read along the curve, and where along it each `u` is.
     const lengths = [0];
@@ -3235,7 +3244,7 @@ function arcsWith(
     }
 
     const total = lengths[LENGTHS];
-    const reach = Math.max(tt.e.falloff, 1e-3) * tt.e.spacing;
+    const reach = Math.max(tt.e.falloff, NARROWEST) * tt.e.spacing;
     const run = patternRun(tt.e, tt.key, 1, total);
 
     // Where along the curve a length falls, and how far along it a `u` is.
@@ -3252,25 +3261,35 @@ function arcsWith(
       return mix(lengths[j], lengths[j + 1], x - j);
     };
 
-    // How far the arc is pushed off the curve at a length along it: every
-    // tooth's height, falling away from it with the distance, `falloff` of the
-    // spacing to a factor of e. One function of the length for the teeth and
-    // the arc's own points alike, so a tooth sliding past one of them along
-    // the curve as the bevel changes goes past it without a jump. Near
-    // nought it is the tooth alone, a spike on the curve.
+    // How far the arc is pushed off the curve at a length along it: each
+    // tooth a triangle standing on the curve, its flanks straight down to it
+    // `falloff` of the spacing either side. One function of the length for
+    // the teeth and the arc's own points alike: a point of the arc near a
+    // tooth is on its flank, so a tooth sliding past one as the bevel changes
+    // goes past it without a jump, and its flanks never fold onto each other
+    // however near one it comes. At one, the flanks run tooth to tooth.
     //
     // Each tooth's share is scaled so that the whole passes through every
     // tooth at its own height, as an edge's teeth stand at theirs, whatever
-    // the teeth beside it add: the kernel's matrix is positive definite, so
-    // the shares are one answer, and continuous in where the teeth are.
+    // the teeth beside it add where their flanks overlap: the kernel's matrix
+    // is positive definite, so the shares are one answer, and continuous in
+    // where the teeth are.
     const teethAt = run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) }));
-    const kernel = (a: number, b: number) => Math.exp(-Math.abs(a - b) / reach);
+    const kernel = (a: number, b: number) => Math.max(0, 1 - Math.abs(a - b) / reach);
     const shares = solved(teethAt.map(p => teethAt.map(q => kernel(p.s, q.s))), teethAt.map(t => t.h));
     const heightAt = (at: number): number => teethAt.reduce((sum, t, k) => sum + shares[k] * kernel(at, t.s), 0);
+    // Never pushed further in than the curve's own radius there, less a
+    // little: past it the arc would fold back on itself into loops, which the
+    // arrangement cannot be trusted to take the same way twice. Out, there is
+    // nothing to fold. `normal` is to the right of the way round, and the
+    // curve bends towards its left where `bend` is positive.
     const pushed = (u: number, h: number): Point => {
-      const m = normal(u), p = on(u);
+      const m = normal(u), p = on(u), k = bend(u);
+      let off = h * out;
 
-      return { x: p.x + m.x * h * out, y: p.y + m.y * h * out };
+      if (k !== 0 && -Math.sign(k) * off > FOLD / Math.abs(k)) off = -Math.sign(k) * FOLD / Math.abs(k);
+
+      return { x: p.x + m.x * off, y: p.y + m.y * off };
     };
 
     const placed: { s: number, p: Point }[] = teethAt.map(t => ({ s: t.s, p: pushed(uAt(t.s), heightAt(t.s)) }));
@@ -3297,7 +3316,7 @@ function arcsWith(
     return { arc: arcPoints, all, arcAt, point: false };
   }
 
-  function arc(v: Point, i: number): { points: Point[], us: number[], point: boolean, on: ((u: number) => Point) | null, normal: (u: number) => Point } {
+  function arc(v: Point, i: number): { points: Point[], us: number[], point: boolean, on: ((u: number) => Point) | null, normal: (u: number) => Point, bend: (u: number) => number } {
     const { a, b } = ways[i];
     const before = (i - 1 + n) % n, after = (i + 1) % n;
     const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
@@ -3308,7 +3327,7 @@ function arcsWith(
     if (t === 0 || a === null || b === null) {
       for (let k = 0; k <= facets.n; k++) out.push(v);
 
-      return { points: out, us: out.map((_p, k) => (facets.n === 0 ? 0 : k / facets.n)), point: true, on: null, normal: () => none };
+      return { points: out, us: out.map((_p, k) => (facets.n === 0 ? 0 : k / facets.n)), point: true, on: null, normal: () => none, bend: () => 0 };
     }
 
     const t1 = { x: v.x + a.x * t, y: v.y + a.y * t };
@@ -3342,6 +3361,18 @@ function arcsWith(
       return l === 0 ? none : { x: y / l, y: -x / l };
     };
 
+    // How much the curve bends at `u`, signed: positive where it turns left,
+    // the way round, and one over the radius it bends at there.
+    const d2A = differenced(d1A), d2B = differenced(d1B);
+    const bend = (u: number): number => {
+      const p = bezier(d1A, u), q = bezier(d1B, u), p2 = bezier(d2A, u), q2 = bezier(d2B, u);
+      const x = (a.x * p + b.x * q) * t, y = (a.y * p + b.y * q) * t;
+      const x2 = (a.x * p2 + b.x * q2) * t, y2 = (a.y * p2 + b.y * q2) * t;
+      const l = Math.hypot(x, y);
+
+      return l === 0 ? 0 : (x * y2 - y * x2) / (l * l * l);
+    };
+
     /** The `n + 1` points laid as an arc of `s` segments: its own points at
      * `n / s` apart, as near as whole points go, and the rest along the
      * facets between them. Each is linear in `t`, as `on` is. With where on
@@ -3369,7 +3400,7 @@ function arcsWith(
       return { points: out, us: at };
     };
 
-    const done = (x: { points: Point[], us: number[] }) => ({ ...x, point: false, on, normal });
+    const done = (x: { points: Point[], us: number[] }) => ({ ...x, point: false, on, normal, bend });
     const near = laid(Math.max(1, Math.min(facets.n, facets.from)));
 
     if (facets.from === facets.to || facets.at === 0) return done(near);
