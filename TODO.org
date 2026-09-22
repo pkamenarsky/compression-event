@@ -1,20 +1,34 @@
 #+TODO: TODO | DONE
 
-* Before making levels
-** Saving
-*** TODO saving levels is cumbersome currently
-*** TODO when saving levels, don't overwrite; append
-*** TODO ask yes/no if level unsaved
+* Before the final level file format
+** TODO ops should be append-only? e.g. how to repeat the last small translate otherwise?
+*** or should repeatable transforms be "effects" as well? and only effects can repeat?
+** TODO keyframe can be repeated
+** TODO keyframes in keyframes... can we simplify?
+** TODO polygon masks (level + void{solid} etc)
+** TODO each level has different wall heights/RenderConfigs
+*** even better - different RenderConfig for each version/keyframe
+*** sky shader configurable (pasting GLSL into the editor is fine)
+** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
+** TODO effects act on selection: chamfer etc, erosion as well?
+** TODO when saving levels, don't overwrite; append
+** DONE keyframes: edit, add keyframe stores delta to previous; click a keyframe to edit it
+   (implemented as keys; ⌥←/⌥→ step between them)
+
+* Before the final editor UI (clips of making levels)
 ** Keyframes & versions
 *** TODO a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
 *** TODO dragging transforms left/right only drags one version
-*** TODO ops should be append-only? e.g. how to repeat the last small translate otherwise?
-**** or should repeatable transforms be "effects" as well? and only effects can repeat?
 *** TODO two tiered keyframe view? the versions + then the keys in a separate view
-*** DONE keyframes: edit, add keyframe stores delta to previous; click a keyframe to edit it
-    (implemented as keys; ⌥←/⌥→ step between them)
-**** open: keyframe can be repeated
-**** open: keyframes in keyframes... can we simplify?
+*** TODO version view horizontal, like keyframes
+**** version management
+**** visible versions as a strip instead of individual lines
+**** button: none/all/next/subsequent/strip (current version always visible)
+** Baking
+*** TODO bake button in the version view (also bake for specific versions only)
+*** TODO draw red line in timeline at topology events after baking
+*** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
+*** TODO settings: autobake
 ** Editing tools
 *** DONE select polygons / edges / points (one tool, three pickings; shift, marquee)
 *** DONE create: rect, n-gon, polyline/path, artefact
@@ -29,18 +43,8 @@
 *** TODO create button should be selected first (!)
 *** TODO n-gon shows slider for point count (arrow up/down + count)
 *** TODO mirror something; one-time op?
-*** TODO effects act on selection: chamfer etc, erosion as well?
-** Baking
-*** TODO bake button in the version view (also bake for specific versions only)
-*** TODO draw red line in timeline at topology events after baking
-*** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
-
-* While making levels
-** Editor UI
-*** TODO version view horizontal, like keyframes
-**** version management
-**** visible versions as a strip instead of individual lines
-**** button: none/all/next/subsequent/strip (current version always visible)
+** Look & layout
+*** TODO remove pkamenarsky itch.io from 3d view in editor
 *** TODO statusbar shows action + available modifier keys
 *** TODO write rotation degrees when rotating (maybe any transformation), in the n-gon count style
 *** TODO make it more clear when drilled into group (breadcrumb exists)
@@ -50,9 +54,10 @@
 *** TODO show RenderConfig in the editor, not with \ + ~
 *** TODO styling: right click dialog
 *** TODO pressing ? overlays tooltips on everything visible
+*** TODO saving levels is cumbersome currently
+*** TODO ask yes/no if level unsaved
 *** TODO layout: statusbar; above it group breadcrumbs; above that baking progress
 **** where: bake button, 3d view button, version strip, delink button
-*** TODO settings: autobake
 ** Shortcut scheme (design note)
    c create: cr rect, cn n-gon, cv polyline, ca artefact, cp path
      drag creates (click for artefact, click+click... for polyline/path)
@@ -66,24 +71,16 @@
      create a rect and want to move/scale it right away?
      create an artefact but want to move it?
      want to edit an edge? have to click it first
-** Game / rendering
-*** TODO polygon masks (level + void{solid} etc)
-*** TODO fog when dying so you can't see "behind the walls"
-*** TODO maybe we don't need the fade
-*** TODO each level has different wall heights/RenderConfigs
-**** even better - different RenderConfig for each version/keyframe
-**** sky shader configurable (pasting GLSL into the editor is fine)
-** Performance
-*** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
 
-* Before release
-** TODO remove pkamenarsky itch.io from 3d view in editor
+* Before clips of the game
+** TODO fog when dying so you can't see "behind the walls"
+** TODO maybe we don't need the fade
+** TODO artefact: "DON'T LOOK BACK"
+** TODO artefact: shrink walls for 5sec
 ** TODO remove debug output
 *** fps counter
 *** <, > for shader switching
 
-* Ideas
-** artefact: "DON'T LOOK BACK"
-** artefact: shrink walls for 5sec
+* Later
 ** sound: dinosaurs? https://www.youtube.com/watch?v=Fqf8EYdCehw
 ** marketing: https://www.youtube.com/watch?v=90ImoX_e8nE
