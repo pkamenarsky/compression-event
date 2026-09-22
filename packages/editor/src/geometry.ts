@@ -3884,13 +3884,16 @@ export interface FoldShaped {
   square: Point[]
   keep: Point[]
   /**
-   * Each tooth that is not standing at its whole height, with how much of it
-   * it has: nought where it has no room at all and lies flat in the run.
+   * The teeth lying flat, with nought beside each: a wall an amplitude of
+   * nought leaves straight still has its teeth standing in it, as a
+   * polygon's does, and they turn as the deform comes up.
    *
-   * A tooth comes out of the wall as its run makes room for it, and the line
-   * standing on it comes up with it rather than at once — so the point is in
-   * the ring throughout, and the bake has something to fade over. See
-   * `Contributed.faded`, which the facets already use.
+   * They are points of the ring that do not turn, so the arrangement would
+   * drop them and the line standing on one has nothing to be drawn at. Both
+   * are what this is for: `Contributed.faded` keeps them and gives the bake a
+   * value to fade the line from, which is the one thing that lets a corner
+   * arrive over a span rather than at an instant. See `explained` in the
+   * bake.
    */
   fades: Fade[]
 }
@@ -4005,7 +4008,7 @@ export function foldShaped(
     return null;
   };
 
-  const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [], solid: number[] = [];
+  const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
 
   // Teeth of no height, on a wall an amplitude of nought leaves straight:
   // they stand in the ring as a polygon's do, so that the ring keeps its
@@ -4040,7 +4043,7 @@ export function foldShaped(
 
     /** The run of one arc starting at ring point `i`, laid with the group's
      * teeth along the whole curve and cut back to the piece the fold has. */
-    const curved = (i: number): { p: Point, v: number }[] => {
+    const curved = (i: number): Point[] => {
       const a = mine[i]!.arc;
       const whole = arcs[a];
       const tt: ArcTeeth | null = deform === null
@@ -4076,13 +4079,13 @@ export function foldShaped(
 
       // The laid points between them, with the piece's own ends kept where
       // the fold has them: the curve is the member's and the cut is not.
-      const kept = on.all.flatMap((p, k) => {
+      const kept = on.all.filter(p => {
         const s = at(p);
 
-        return s > from + tol && s < to - tol ? [{ p, v: on.solid[k] }] : [];
+        return s > from + tol && s < to - tol;
       });
 
-      return [{ p: ring[i], v: 1 }, ...(total === 0 ? [] : kept)];
+      return [ring[i], ...(total === 0 ? [] : kept)];
     };
 
     for (const made of laid) {
@@ -4099,11 +4102,10 @@ export function foldShaped(
       if (here !== null && !before && after) {
         edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
 
-        for (const { p, v } of curved(made.from)) {
+        for (const p of curved(made.from)) {
           source.push(p);
           tooth.push(true);
           drawn.push(0);
-          solid.push(v);
         }
 
         continue;
@@ -4121,7 +4123,6 @@ export function foldShaped(
       source.push(made.at);
       tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
-      solid.push(made.room);
     }
   });
 
@@ -4133,18 +4134,6 @@ export function foldShaped(
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
   const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
-
-  // A tooth still coming out of its wall, where the erosion leaves it: the
-  // line on it is as solid as the tooth is tall.
-  const fades: Fade[] = [];
-
-  solid.forEach((v, i) => {
-    if (v >= 1) return;
-
-    const p = image(o.arcs[i][0]);
-
-    if (p !== null) fades.push({ p, v });
-  });
 
   const squared = [
     ...tooth.flatMap((t, i) => (t ? o.arcs[i] : [])),
@@ -4166,9 +4155,6 @@ export function foldShaped(
   // A kept point is on a straight of the fold: carried to the same share of
   // the way along it on the teeth, and moved in with the segment it is on.
   const kept = [
-    // A tooth lying flat, which the arrangement would drop.
-    ...flat.map(i => image(o.arcs[i][0])).filter((p): p is Point => p !== null),
-
     // A kept point is on a straight of the fold: carried to the same share of
     // the way along it on the teeth, and moved in with the segment it is on.
     ...keep.flatMap(p => {
@@ -4197,6 +4183,12 @@ export function foldShaped(
       return [];
     }),
   ];
+
+  // A tooth lying flat is not a corner, and stands at nought until it turns.
+  const fades: Fade[] = flat
+    .map(i => image(o.arcs[i][0]))
+    .filter((p): p is Point => p !== null)
+    .map(p => ({ p, v: 0 }));
 
   return { shape, runs, square: squared, keep: kept, fades };
 }

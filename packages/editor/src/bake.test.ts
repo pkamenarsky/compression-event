@@ -2582,43 +2582,23 @@ describe('effects', () => {
     rising.forEach(([a]) => expect(a).toBe(0));
   });
 
-  test('a group\'s tooth is as solid as it is tall', () => {
-    // A tooth on the fold shrinks into the wall as the erosion grows the
-    // clear by an arc, and the line standing on it comes down with it: as
-    // solid as the tooth is tall, so that where the tooth finally goes there
-    // was nothing left of the line to see.
+  test('a group\'s tooth stands solid however short it is', () => {
+    // A tooth near the end of a wall is only as tall as it has room for, and
+    // it is a corner all the same: the line on it is drawn. What fades is a
+    // tooth that is not there — one lying flat where the amplitude is
+    // nought — and nothing else.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
+    const w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
 
-    w = wrote(w, 1, g.id, erode(30));
-
+    // Nothing is arriving here: the deform is the same at both ends.
     const span = run(bakeSpan(w, 0));
-    let seen = 0;
+    const s = span.tracks[0].stretches[0];
+    const heights = s.a.flatMap((r, i) => r.points.map((p, j) => ({ off: Math.min(Math.abs(p.y), Math.abs(p.y - 100)), v: s.opacity[0][i][j] })));
+    const teeth = heights.filter(h => h.off > 1e-9 && h.off < 5 - 1e-9 && h.off > 0.2);
 
-    for (const s of span.tracks[0].stretches) {
-      for (const [end, t] of [[0, s.t0], [1, s.t1]] as const) {
-        const frame = end === 0 ? s.a : s.b;
-
-        frame.forEach((r, i) => r.points.forEach((p, j) => {
-          const v = s.opacity[end][i][j];
-
-          // On the bottom wall, away from the corners: the wall is at the
-          // erosion's own depth, and a tooth stands off it by the amplitude
-          // it has room for.
-          if (!(v > 0) || v >= 1 || p.x < 30 || p.x > 130) return;
-
-          const height = Math.abs(p.y - 30 * t);
-
-          if (height > 6) return;
-
-          seen++;
-          expect(height).toBeCloseTo(5 * v, 0);
-        }));
-      }
-    }
-
-    expect(seen).toBeGreaterThan(0);
+    expect(teeth.length).toBeGreaterThan(0);
+    teeth.forEach(t => expect(t.v).toBe(1));
   });
 
   test('a union edge cut in two lays its teeth from the middles of the two', () => {

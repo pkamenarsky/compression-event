@@ -818,7 +818,7 @@ export function contributed(
         ? []
         : rounded.runs.flatMap(run => facetFades(run, fx.facets))),
 
-      // And its teeth still coming out of their walls: see `FoldShaped`.
+      // And its teeth still lying flat in it: see `FoldShaped.fades`.
       ...(shaped?.fades ?? []),
     ];
 

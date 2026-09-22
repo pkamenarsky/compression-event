@@ -601,15 +601,21 @@ scope, which a line does for nothing.
    anyway — a tooth with no room is one inside the clear by an arc, where the
    arc already is, so laying it there puts a point off the outline.
 
-   What the line on a tooth should say is how much of the tooth there is.
-   `patternRun` already scales a tooth by the room it has, from nought at the
-   clear to one a ramp in; `EdgeRun.room` carries that out, `teethAlong`
-   carries it through a curve's tips and feet, and `FoldShaped.fades` reports
-   every tooth short of its full height as a `Fade`, which `Contributed.faded`
-   already takes to the bake. So a tooth going comes down into the wall with
-   its line fading out as it goes, and where it finally goes there is nothing
-   left to see. The count still changes there, which costs a stretch; nothing
-   moves and nothing pops.
+   Nor is a tooth's *height* what its line should say. That was tried — as
+   solid as it is tall — and it dims every short tooth for good: a tooth near
+   the end of a wall stands at a fifth of the amplitude forever, and it is a
+   corner, so its line is drawn.
+
+   What the fold was missing is the teeth themselves. A polygon's teeth are
+   corners of its own, standing flat on a wall an amplitude of nought leaves
+   straight, and their lines come up as the deform does. The fold had none:
+   a flat tooth is in line with its neighbours and the arrangement drops it,
+   so every tooth arrived at once at the first instant after the keyframe.
+   `FoldShaped.fades` now reports each flat tooth with nought beside it, which
+   `Contributed.faded` both keeps in the ring and gives the bake to fade from.
+
+   A tooth that dies in a ramp still ends a stretch: it is flush with the wall
+   as it goes, so nothing moves, and the plan leaves it there.
 
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
