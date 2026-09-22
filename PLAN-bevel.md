@@ -134,9 +134,55 @@ Every span stays inside the tolerance. Here is what the counts show:
   look. One way is to scale a tooth's height by how much room it has along
   the arc, as a straight's is scaled by its distance from an end.
 
-Not measured: spans where the bevel eats a straight's tooth. The planned side
-is built from fixed corners, and the bake would seed the tooth instead. Also
-not measured: fading in a change of tooth count, and a group's round.
+### Fading and groups
+
+Both are in the same file. A point that only one end of a span has is placed
+at the other end the way the bake seeds a corner: half way between its
+nearest neighbours there. This covers a straight's tooth that a growing bevel
+eats, and a tooth arriving on an arc. The other way an arc can fade a tooth in
+is **rising**: the far end's teeth are laid at both ends, flat on the curve at
+the near one, as the plan's fade does.
+
+**Fading.** A 200 square with teeth, held, while the bevel grows:
+
+| span | today | seeded | rising |
+|---|---|---|---|
+| bevel 10 → 40, depth 4 (arc teeth 0 → 2, 16 straight teeth eaten) | 5 | 14 | 28 |
+| bevel 10 → 40, depth 0 → 10 (0 → 3, 20 eaten) | 9 | 14 | 12 |
+| bevel 10 → 60, depth 4 (0 → 3, 28 eaten) | 9 | 12 | 13 |
+
+**A sealed group.** Two rooms overlapping, with one sliding so that the
+crossings move in straight lines. Today is the group with its effects. Planned
+is the union's ring at each end, named, rounded and deformed by the prototype
+(held), and baked as one plain room:
+
+| span | today | planned |
+|---|---|---|
+| round only | 8 | 8 |
+| round, group depth 0 → 6 | 12 | 8 |
+| round and deform | 12 | 8 |
+| round, deform, depth, an arc tooth arriving, seeded | 12 | **48** |
+| the same, no arc teeth | 12 | 8 |
+| the same, the arc tooth there throughout | 12 | 10 |
+| the same, the arc tooth rising | 12 | 12 |
+
+What the two tables show:
+
+- **A group's round and deform cost no more than today**, and sometimes less,
+  when laid on the union. The crossings here move in straight lines. A
+  turning member would make them curve, both today and planned.
+- **Teeth arriving on an arc must not be seeded like corners.** A tooth put
+  half way between its neighbours then has to reach its place and rise while
+  it is eroded. That cost 48 stretches against 12.
+- **Rising is not always better.** On a small arc that grows fast (the first
+  fading row), laying the far end's teeth flat onto the near end's arc packs
+  them tightly among the facets, and it cost twice what seeding did. So the
+  count probably wants to follow the arc's length, with each tooth's height
+  given by its room along the arc. Then a tooth rises where there is room for
+  it, and none is laid where there is none. That is the `room` of *1.2* taken
+  seriously, and it is the next thing to try.
+- **Where the bevel grows a lot, fading costs 1.3–3× today.** This is the one
+  place the plan is clearly dearer, and it is bounded.
 
 ## Phase 1: a polygon
 

@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { bakeSpan } from '../bake';
-import { TOP, addPolygon, rigOf, withRig } from '../scene';
+import { TOP, addPolygon, grouped, rigOf, sealing, withRig } from '../scene';
 import { nudged } from '../rig';
-import { Writing, erode, inSegments, wrote } from '../testing';
+import { Writing, erode, inSegments, moved, wrote } from '../testing';
 import { Effects, PolygonId, World, emptyWorld } from '../types';
 import { Point } from '@ce/game/world';
 import {
@@ -64,7 +64,7 @@ interface Laid {
  * Every tooth is laid, flat or not, so two ends of a span have the same
  * points in the same order: what the bake's seeding would guarantee.
  */
-function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: number): Laid {
+function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: number, arcAmplitude = amplitude): Laid {
   const n = ring.length;
   const points: Point[] = [], kind: Laid['kind'][number][] = [], ids: string[] = [];
   const unit = (p: Point, q: Point) => {
@@ -109,7 +109,7 @@ function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: nu
       }
 
       const room = Math.min(1, 2 * Math.min(u, 1 - u) * (teeth + 1) / 2);
-      const h = amplitude * room * patterned(E, ~i, j);
+      const h = arcAmplitude * room * patterned(E, ~i, j);
       const m = normal(u);
 
       points.push({ x: p.x + m.x * h, y: p.y + m.y * h });
@@ -485,3 +485,197 @@ describe('experiment: the real bake, both ways', () => {
     console.log(`\nThe real bake, a ${SIDE} square room:\n${lines.join('\n')}\n`);
   });
 });
+
+/**
+ * Two ends laid over the same corners, the way the bake's seeding does it: a
+ * point one end has and the other does not is put, at the end without it,
+ * half way between its nearest neighbours there. So a tooth arriving on an
+ * arc grows out of the outline, and one a growing bevel eats lands back on it.
+ */
+function seeded(l0: Laid, l1: Laid): { ids: string[], p0: Point[], p1: Point[] } {
+  const ids = [...l0.ids];
+
+  l1.ids.forEach((id, k) => {
+    if (ids.includes(id)) return;
+
+    // After the nearest one before it that is already in.
+    let before = k - 1;
+
+    while (before >= 0 && !ids.includes(l1.ids[before])) before--;
+
+    ids.splice(before < 0 ? 0 : ids.indexOf(l1.ids[before]) + 1, 0, id);
+  });
+
+  const fill = (l: Laid): Point[] => {
+    const at = new Map(l.ids.map((id, i) => [id, l.points[i]]));
+    const n = ids.length;
+
+    return ids.map((id, i) => {
+      const own = at.get(id);
+
+      if (own !== undefined) return own;
+
+      let a = i, b = i;
+
+      do a = (a - 1 + n) % n; while (!at.has(ids[a]));
+      do b = (b + 1) % n; while (!at.has(ids[b]));
+
+      return lerpP(at.get(ids[a])!, at.get(ids[b])!, 0.5);
+    });
+  };
+
+  return { ids, p0: fill(l0), p1: fill(l1) };
+}
+
+/** A plain room drawn at `p0`, its corners nudged to `p1` at keyframe 1, and
+ * eroded by `d0` then `d1`: what the plan's pipeline bakes as. */
+function plainRoom(p0: Point[], p1: Point[], d0: number, d1: number): World {
+  const added = addPolygon(emptyWorld(), { level: 'hollow' }, p0, 0, TOP);
+  const vertices = added.world.polygons.get(added.id)!.points;
+  let rig = rigOf(added.world, added.id);
+
+  vertices.forEach((v, i) => {
+    const by = { x: p1[i].x - p0[i].x, y: p1[i].y - p0[i].y };
+
+    if (by.x !== 0 || by.y !== 0) rig = nudged(rig, v.id, 1, by);
+  });
+
+  let w = withRig(added.world, added.id, rig);
+
+  w = wrote(w, 0, added.id, erode(d0));
+  w = wrote(w, 1, added.id, erode(d1 - d0));
+
+  return w;
+}
+
+function measured(w: World): string {
+  const t0 = performance.now();
+  const span = run(bakeSpan(w, 0));
+  const ms = performance.now() - t0;
+  const stretches = span.tracks.reduce((n, t) => n + t.stretches.length, 0);
+
+  return `${stretches} stretches, worst ${span.worst.toFixed(3)}, ${ms.toFixed(0)} ms`;
+}
+
+describe('experiment: fading and groups', () => {
+  const SPACING = 20, SEGMENTS = 4;
+  const fx = (deform: boolean): Effects => ({
+    round: inSegments(SEGMENTS, 20),
+    ...(deform ? { deform: { spacing: SPACING, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0, clear: true } } : {}),
+  });
+  const round = (by: number): Writing => ({ kind: 'round', by });
+  const deform = (by: number): Writing => ({ kind: 'deform', by });
+
+  /** The prototype with this section's spacing and segments. */
+  function laid(ring: Ring, bevel: number, amplitude: number, teeth: number, arcAmplitude = amplitude): Laid {
+    const was = [E, N] as const;
+
+    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+    N = SEGMENTS;
+
+    const out = roundThenDeform(ring, bevel, amplitude, teeth, arcAmplitude);
+
+    [E, N] = was;
+
+    return out;
+  }
+
+  /** How many teeth an arc of a quarter turn gets at `bevel`: one a spacing
+   * of its length, less one, as a straight's are. */
+  const arcTeeth = (bevel: number) => Math.max(0, Math.floor(bevel * 1.2 / SPACING));
+
+  it('fading: an arc gaining teeth, a straight losing them to the bevel', () => {
+    const square: Ring = [{ x: -100, y: -100 }, { x: 100, y: -100 }, { x: 100, y: 100 }, { x: -100, y: 100 }];
+    const lines: string[] = [];
+
+    for (const [name, b0, b1, amp, depth] of [
+      ['bevel 10 → 40, depth 4', 10, 40, 4, 4],
+      ['bevel 10 → 40, depth 0 → 10', 10, 40, 4, -1],
+      ['bevel 10 → 60, depth 4', 10, 60, 4, 4],
+    ] as [string, number, number, number, number][]) {
+      const d0 = depth < 0 ? 0 : depth, d1 = depth < 0 ? 10 : depth;
+
+      const added = addPolygon(emptyWorld(), { level: 'hollow' }, square, 0, TOP);
+      let w: World = { ...added.world, effects: new Map([[added.id, fx(true)]]) };
+
+      w = wrote(w, 0, added.id, round(b0), deform(amp), erode(d0));
+      w = wrote(w, 1, added.id, round(b1 - b0), erode(d1 - d0));
+
+      // Held: drawn at bevel + depth.
+      const l0 = laid(square, b0 + d0, amp, arcTeeth(b0 + d0)), l1 = laid(square, b1 + d1, amp, arcTeeth(b1 + d1));
+      const s = seeded(l0, l1);
+      const eaten = l0.ids.filter(id => !l1.ids.includes(id)).length, arriving = l1.ids.filter(id => !l0.ids.includes(id)).length;
+
+      // The arcs' teeth coming up out of the curve instead: the far end's
+      // count laid at both ends, flat at the near one. Only for a count
+      // starting from nought, which these all do.
+      const r0 = laid(square, b0 + d0, amp, arcTeeth(b1 + d1), 0);
+      const r = seeded(r0, l1);
+
+      lines.push(`${name}: today ${measured(w)} | planned, held, seeded ${measured(plainRoom(s.p0, s.p1, d0, d1))} | rising ${measured(plainRoom(r.p0, r.p1, d0, d1))} (${arriving} arriving, ${eaten} eaten, arc teeth ${arcTeeth(b0 + d0)} → ${arcTeeth(b1 + d1)})`);
+    }
+
+    console.log(`\nFading:\n${lines.join('\n')}\n`);
+  });
+
+  it('groups: two rooms, one sliding, the group rounded', () => {
+    const rect = (x0: number, y0: number, x1: number, y1: number): Ring => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+    const A = rect(-100, -60, 20, 60), B = rect(-20, -40, 100, 80);
+    const slide = { x: 15, y: 20 };
+    const Bt = (t: number) => B.map(p => ({ x: p.x + slide.x * t, y: p.y + slide.y * t }));
+    const lines: string[] = [];
+
+    /** The union's outer ring at `t`, started at its leftmost-lowest corner so
+     * both ends begin at the same one. */
+    const union = (t: number): Ring => {
+      const out = unionAll([[A], [Bt(t)]]);
+      const ring = out.reduce((a, r) => (Math.abs(area(r)) > Math.abs(area(a)) ? r : a));
+      const start = ring.reduce((k, p, i) => (p.x < ring[k].x || (p.x === ring[k].x && p.y < ring[k].y) ? i : k), 0);
+
+      return [...ring.slice(start), ...ring.slice(0, start)];
+    };
+
+    for (const [name, amp, bevel, depth, fixed, rising] of [
+      ['round only', 0, 12, 0],
+      ['round, depth 0 → 6', 0, 12, 6],
+      ['round and deform', 4, 12, 0],
+      ['round, deform, depth 0 → 6', 4, 12, 6],
+      ['round, deform, depth 0 → 6, no arc teeth', 4, 12, 6, 0],
+      ['round, deform, depth 0 → 6, one arc tooth throughout', 4, 12, 6, 1],
+      ['round, deform, depth 0 → 6, arc tooth coming up out of the curve', 4, 12, 6, 1, true],
+    ] as [string, number, number, number, number?, boolean?][]) {
+      const a = addPolygon(emptyWorld(), { level: 'hollow' }, A, 0, TOP);
+      const b = addPolygon(a.world, { level: 'hollow' }, B, 0, TOP);
+      const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
+      let w = sealing(g.world, g.id, true);
+
+      w = { ...w, effects: new Map([[g.id, fx(amp > 0)]]) };
+      w = wrote(w, 0, g.id, round(bevel), ...(amp > 0 ? [deform(amp)] : []));
+      w = wrote(w, 1, g.id, erode(depth));
+      w = wrote(w, 1, b.id, moved(slide.x, slide.y));
+
+      const u0 = union(0), u1 = union(1);
+
+      expect(u1.length).toBe(u0.length);
+
+      // Held, and the union's arcs with teeth as a polygon's would have.
+      const l0 = laid(u0, bevel, amp, fixed ?? (amp > 0 ? arcTeeth(bevel) : 0), rising === true ? 0 : amp);
+      const l1 = laid(u1, bevel + depth, amp, fixed ?? (amp > 0 ? arcTeeth(bevel + depth) : 0));
+      const flat = amp === 0;
+      const strip = (l: Laid): Laid => {
+        const keep = l.kind.map(k => !flat || k === 'arc');
+
+        return { points: l.points.filter((_p, i) => keep[i]), ids: l.ids.filter((_d, i) => keep[i]), kind: l.kind.filter((_k, i) => keep[i]) };
+      };
+      const s = seeded(strip(l0), strip(l1));
+
+      lines.push(`${name}: today ${measured(w)} | planned, held ${measured(plainRoom(s.p0, s.p1, 0, depth))}`);
+    }
+
+    console.log(`\nA sealed group of two, ${A.length + B.length} corners, one sliding:\n${lines.join('\n')}\n`);
+  });
+});
+
+function area(r: Ring): number {
+  return r.reduce((s, p, i) => s + p.x * r[(i + 1) % r.length].y - r[(i + 1) % r.length].x * p.y, 0) / 2;
+}
