@@ -1,73 +1,74 @@
 #+TODO: TODO | DONE
 
 * Before the final level file format
-** TODO ops should be append-only? e.g. how to repeat the last small translate otherwise?
+** TODO ops should be append-only? how to repeat the last small translate otherwise?
 *** or should repeatable transforms be "effects" as well? and only effects can repeat?
-** TODO keyframe can be repeated
 ** TODO keyframes in keyframes... can we simplify?
-** TODO polygon masks (level + void{solid} etc)
 ** TODO each level has different wall heights/RenderConfigs
 *** even better - different RenderConfig for each version/keyframe
 *** sky shader configurable (pasting GLSL into the editor is fine)
 ** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
-** TODO effects act on selection: chamfer etc, erosion as well?
 ** TODO when saving levels, don't overwrite; append
 ** DONE keyframes: edit, add keyframe stores delta to previous; click a keyframe to edit it
-   (implemented as keys; ⌥←/⌥→ step between them)
+   (keys; ⌥←/⌥→ step between them)
+** DONE keyframe can be repeated
+   (repeats with a count and skipped keyframes, drawn as lanes in the keyframe view)
+** DONE polygon masks (level + void{solid} etc)
+   (sealed groups resolve level - (solid - void) within themselves)
+** DONE effects act on selection: chamfer etc, erosion as well
+   (round/chamfer, deform, erode; per corner too)
 
 * Before the final editor UI (clips of making levels)
 ** Keyframes & versions
 *** TODO a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
-*** TODO dragging transforms left/right only drags one version
 *** TODO two tiered keyframe view? the versions + then the keys in a separate view
-*** TODO version view horizontal, like keyframes
-**** version management
+*** TODO ghost button: none/all/next/subsequent/strip (current version always visible)
+    (per-thing ghost switch exists)
 **** visible versions as a strip instead of individual lines
-**** button: none/all/next/subsequent/strip (current version always visible)
+*** DONE dragging transforms left/right only drags one version
+    (keys drag along the timeline, with what is picked)
+*** DONE version view horizontal, like keyframes; version management
+    (keyframes across; add/delete keyframe)
 ** Baking
-*** TODO bake button in the version view (also bake for specific versions only)
+*** TODO bake for specific versions only (bake button exists)
 *** TODO draw red line in timeline at topology events after baking
 *** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
 *** TODO settings: autobake
 ** Editing tools
-*** DONE select polygons / edges / points (one tool, three pickings; shift, marquee)
-*** DONE create: rect, n-gon, polyline/path, artefact
-*** DONE snap to grid; grid size +/-; five-degree / 45° steps with Alt
-*** TODO a shape in both create and select mode has handles to scale, rotate and erode
-**** TODO exact shape and form
+*** TODO handles on a shape to scale, rotate and erode — or is this superseded by the T/R/S/E key gestures?
+**** exact shape and form
 **** created shape can't be dragged (nice to create shapes inside other shapes) — either a handle for transformation or disable dragging; dragging points/edges still works
 *** TODO dragging a point scales/rotates uniformly
-*** TODO add/delete points and edges in point/edge picking
-*** TODO selection stack needs to be able to hold heterogeneous shapes
-*** TODO selection of overlapping vertices
+*** TODO selection of overlapping vertices (right-click lists things under the cursor, but not corners)
 *** TODO create button should be selected first (!)
-*** TODO n-gon shows slider for point count (arrow up/down + count)
-*** TODO mirror something; one-time op?
+*** TODO mirror something; one-time op? (scale can't go negative)
+*** DONE select polygons / edges / points (one tool, three pickings; shift, marquee)
+*** DONE selection holds heterogeneous shapes (polygons, corners, edges, artefacts, paths)
+*** DONE add/delete points (click a line adds a corner; delete in the corner tool)
+*** DONE create: rect, n-gon, polyline, path, artefact
+*** DONE n-gon shows its point count while dragging
+*** DONE snap to grid; grid size +/-; 5° / 45° with Alt; Alt locks a move to an axis
 ** Look & layout
 *** TODO remove pkamenarsky itch.io from 3d view in editor
-*** TODO statusbar shows action + available modifier keys
-*** TODO write rotation degrees when rotating (maybe any transformation), in the n-gon count style
+*** TODO write rotation degrees when rotating (and scale factor, move distance); only amounts have a label now
+*** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)
-*** TODO better UI for unchained poly/groups
-*** TODO show/hide floor polygons
+*** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
+*** TODO show/hide floor polygons (per-thing hide/lock/solo exist, no per-kind switch)
 *** TODO spacing in deform a slider; everything in the deform panel -> sliders
 *** TODO show RenderConfig in the editor, not with \ + ~
-*** TODO styling: right click dialog
+*** TODO styling: right click dialog (the "under the cursor" picker)
 *** TODO pressing ? overlays tooltips on everything visible
-*** TODO saving levels is cumbersome currently
+*** TODO saving levels is cumbersome currently (Cmd+S downloads, Cmd+O opens)
 *** TODO ask yes/no if level unsaved
 *** TODO layout: statusbar; above it group breadcrumbs; above that baking progress
-**** where: bake button, 3d view button, version strip, delink button
-** Shortcut scheme (design note)
-   c create: cr rect, cn n-gon, cv polyline, ca artefact, cp path
-     drag creates (click for artefact, click+click... for polyline/path)
-   e edit: ep points, ee edges, ep polys (artefacts always selectable)
-     t translate, r rotate, s scale; groups; selection stack per element
-   e effects (clashes with edit): ec chamfer, en noise — click poly/group & drag
-   v versions: vn/↓ next, vp/↑ prev
-   bb bake
-   old: gg/cmd+g group, gu/cmd+shift+g ungroup; cmd+click selects poly; +/- add/delete points
-   friction questions:
+**** where: bake button, 3d view button, keyframe strip, delink button
+** Shortcuts
+   the planned c/e/v/bb scheme is superseded by what's bound now:
+   tools V select, A corners, P create, W path, I artefact;
+   gestures T move, R turn, S/X/Y scale, E erode, B bevel, D deform;
+   Cmd+G/U/L/K, [ ] rebirth, Cmd+E flatten
+   friction questions still open:
      create a rect and want to move/scale it right away?
      create an artefact but want to move it?
      want to edit an edge? have to click it first
