@@ -8,6 +8,7 @@ import {
   TOLERANCE,
   bakeAll,
   bakeSpan,
+  ready,
   lined,
   pruned,
   sample,
@@ -26,8 +27,11 @@ import {
   depths,
   removeVertices,
   resolveAt,
+  keyRigOf,
   rigOf,
   sideOf,
+  unchained,
+  withKeyRig,
   withRig,
 } from './scene';
 import { nudged, stateAt } from './rig';
@@ -2452,6 +2456,45 @@ describe('effects', () => {
     expect(drift(w)).toBeLessThan(1e-6);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
+  test('a growing wall\'s reach follows a scale that peaks inside the span', () => {
+    // A stand plays its scale axis by axis in a line, so tall to wide passes
+    // through square: (1, 4) to (4, 1) is (2.5, 2.5) half way, a scale of 2.5
+    // against 2 at either end. With its walls pushed a long way out, the room
+    // reaches furthest sideways there, past where it reaches at either end —
+    // far enough to touch a room it touches nowhere else. So it is that
+    // room's neighbour, or where they meet goes unsolved.
+    const room = rect(-5, -5, 10, 10);
+    // Unchained at the far keyframe, which writes the state there outright,
+    // and that stand turned from tall to wide.
+    const growing = (world: World, id: PolygonId): World => {
+      const w = unchained(wrote(world, 0, id, scaled(1, 4, { x: 0, y: 0 }), erode(-40)), 1, [id]);
+      const rig = keyRigOf(w, id);
+      const keys = rig.keys.get(1)!.map(k => (k.stand === undefined
+        ? k
+        : { ...k, stand: { ...k.stand, frame: { ...k.stand.frame, scale: { x: 4, y: 1 } } } }));
+
+      return withKeyRig(w, id, { ...rig, keys: new Map(rig.keys).set(1, keys) });
+    };
+
+    // On its own, sideways: 5 + 40·2 at the near end, 20 + 40·2 at the far
+    // and 12.5 + 40·2.5 half way, the most of it.
+    const alone = drawn(['level', room]);
+    const w0 = growing(alone.world, alone.ids[0]);
+    const reach = (t: number) => Math.max(...truth(w0, 0, t).flatMap(r => r.points).map(p => p.x));
+
+    expect(reach(0)).toBeLessThan(106);
+    expect(reach(1)).toBeLessThan(106);
+    expect(reach(0.5)).toBeGreaterThan(106);
+
+    // And with the other room there, where only the peak reaches it.
+    const { world, ids } = drawn(['level', room], ['level', rect(106, -5, 10, 10)]);
+    const [a, b] = ids;
+    const w = growing(world, a);
+    const near = ready(w, 0).near.find(n => n[0].at.id === a)!;
+
+    expect(near.map(m => m.at.id)).toContain(b);
   });
 
   test('a group growing keeps the teeth on its rooms, and nothing jumps', () => {
