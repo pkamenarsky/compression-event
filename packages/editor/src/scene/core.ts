@@ -54,6 +54,7 @@ import {
   diameter,
   mitred,
   nextOf,
+  foldShaped,
   outlineOf,
   prevOf,
   signedArea2,
@@ -282,6 +283,9 @@ export interface ArcDeform {
   after: readonly number[]
   /** Each corner's arc's name to the noise and the offset: its id. */
   keys: readonly number[]
+  /** Each corner's own id, which is what names the edge leaving it: see
+   * `namesOf`. The teeth along that edge are keyed and anchored by it. */
+  ids: readonly number[]
   /** Each corner's bevel as it is seen, which its arc's teeth are laid by:
    * see `ArcTeeth.seen`. */
   seen: readonly number[]
@@ -358,8 +362,12 @@ export function effectedOf(
   scale = 1,
 ): Effected | null {
   const fx = world.effects.get(id);
+  const deform = arcDeform(world, id, corners, amounts, scale, drawnBevels(world, id, corners, local, amounts, () => 0));
 
-  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) return null;
+  // A deform with no round still has somewhere to be: the teeth are laid on
+  // the eroded outline and the round is only one more thing that happens to
+  // it first. See PLAN-bevel 3.1.
+  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined) && deform === null) return null;
 
   const bevels = drawnBevels(world, id, corners, local, amounts, depth);
   const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
@@ -374,7 +382,7 @@ export function effectedOf(
     facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0))),
     bevels,
     flat,
-    deform: arcDeform(world, id, corners, amounts, scale, seen),
+    deform,
   });
 }
 
@@ -465,6 +473,7 @@ function arcDeform(
     before: corners.map((_c, i) => amplitude(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitude(edge(c))),
     keys: corners.map(c => arcKey(c.id)),
+    ids: corners.map(c => c.id),
     seen,
   };
 }
@@ -477,11 +486,13 @@ export function unrounded(corners: readonly Vertex[]): boolean[] {
   return corners.map(c => c.root !== undefined);
 }
 
-/** A round kept only where it does something. */
+/** Kept only where it does something: a round that rounds, or a deform whose
+ * teeth stand anywhere. */
 export function shaping(e: Effected): Effected | null {
   const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0);
+  const toothed = e.deform !== null && e.deform.after.some(a => a !== 0);
 
-  return any ? e : null;
+  return any || toothed ? e : null;
 }
 
 /** A round as numbers, lengths divided by `s`, for `project`. */
@@ -489,7 +500,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s)];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids]];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
 }
@@ -1026,7 +1037,7 @@ const imagedBy = remembered((
 ): Imaged => {
   const [facets, bevels, flat, deform, apart] = effects as [Memo[], number[], number[], Memo[], number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen] = deform as [number, number, number, number, number, number, number[], number[], number[], number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
     ? null
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: true };
@@ -1034,23 +1045,66 @@ const imagedBy = remembered((
     ? null
     : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
 
-  const o = outlineOf(source, rings, i => flat[i] === 1, i => each[i], i => bevels[i], teeth, i => apart[i] === 1);
+  // Rounded and nothing else: the teeth are laid on what the erosion leaves,
+  // not on this. See PLAN-bevel 3.1.
+  const o = outlineOf(source, rings, () => false, i => each[i], i => bevels[i], () => null, i => apart[i] === 1);
   const deep = depths === null ? null : o.owner.map(i => depths[i]);
   const at = (k: number) => deep?.[k] ?? erosion;
   const image = (k: number) => mitred(o.ring, o.rings, k, at(k));
+  const corners = o.arcs.map(run => {
+    const images = run.map(image);
 
-  return {
-    shape: offsetOf(o.ring, o.rings, erosion, deep),
-    corners: o.arcs.map(run => {
-      const images = run.map(image);
+    return images.some(p => p === null) ? null : images as Point[];
+  });
+  const eroded = offsetOf(o.ring, o.rings, erosion, deep);
+  const drawn = o.arcs.map(run => run.map(k => o.ring[k]));
+  const rest = { corners, teeth: [] as Point[], drawn, rest: [], restSquare: [] };
 
-      return images.some(p => p === null) ? null : images as Point[];
-    }),
-    teeth: o.teeth.map(image).filter((p): p is Point => p !== null),
-    drawn: o.arcs.map(run => run.map(k => o.ring[k])),
-    rest: [],
-    restSquare: [],
-  };
+  if (e === null) return { shape: eroded, ...rest };
+
+  // What each run of the eroded outline is: a source edge's line, named by
+  // the corner it leaves, and a rounded corner's arc, named by that corner.
+  // The same thing `namesOf` reports, built from the inside so that nothing
+  // has to resolve to ask. See PLAN-bevel 2.9.
+  const n = source.length;
+  const lines: { id: number, a: Point, b: Point }[] = [];
+  const curves: { id: number, points: Point[] }[] = [];
+  const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
+
+  corners.forEach((run, i) => {
+    if (run === null || run.length < 2 || run.every(p => same(p, run[0]))) return;
+
+    curves.push({ id: ids[i], points: run });
+  });
+
+  for (let i = 0; i < n; i++) {
+    const mine = corners[i], theirs = corners[nextOf(rings, n, i)];
+
+    if (mine === null || theirs === null) continue;
+
+    const a = mine[mine.length - 1], b = theirs[0];
+
+    if (same(a, b)) continue;
+
+    lines.push({ id: ids[i], a, b });
+  }
+
+  // The teeth belong to the source edge, which the erosion does not change,
+  // so they are laid over its length wherever the eroded run's ends are.
+  const amplitude = new Map(ids.map((id, i) => [id, after[i]]));
+  const reach = new Map(ids.map((id, i) => {
+    const q = source[nextOf(rings, n, i)];
+
+    return [id, Math.hypot(q.x - source[i].x, q.y - source[i].y) / 2];
+  }));
+
+  const laid = foldShaped(eroded, [], [], lines, curves, SQUARE, 0, false, {
+    e,
+    amplitude: (key: number) => amplitude.get(key) ?? 0,
+    reach: (key: number) => reach.get(key),
+  }, 0);
+
+  return { shape: laid.shape, ...rest };
 });
 
 /** The noise's name for a corner's arc: its own, told apart from the edge it
@@ -1655,7 +1709,10 @@ function deformedAt(
 ): { corners: Vertex[], local: Point[], source: Point[], over: ReadonlyMap<VertexId, number> } {
   const chain = deforms(world, v, id);
 
-  if (chain.length === 0) return { corners: [...corners], local: [...local], source: place(frame, local), over };
+  // Nothing here any more: the teeth are laid on the eroded outline, in the
+  // projection, and a polygon's standing corners are the ones it was drawn
+  // with. See PLAN-bevel 3.1 and `imagedBy`.
+  if (chain.length >= 0) return { corners: [...corners], local: [...local], source: place(frame, local), over };
 
   let cs: Vertex[] = [...corners];
   let pts: Point[] = place(frame, local);
