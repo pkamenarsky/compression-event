@@ -30,7 +30,6 @@ import {
   cornersSwitched,
   ownRound,
   switchedOff,
-  sizedFor,
   switchedOn,
   withEffect,
 } from './effects';
@@ -186,8 +185,7 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   /** Switched on for every one of them, or off where every one had it on. */
   const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
-    const first = name === 'deform' ? sizedFor(s.world, s.keyframe, ids, s.remembered) : s.remembered;
-    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, first);
+    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, s.remembered);
 
     return marked({ ...s, world }, s.world);
   });
@@ -231,7 +229,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
-      field('spacing', slider(m.spacing, 1, SPACING, (v, further) => changed('deform', { spacing: v }, further), Infinity)),
+      // A percentage of the thing's size: see `diameterAt`.
+      field('spacing %', slider(() => Math.round(m.spacing() * 1000) / 10, 1, SPACING, (v, further) => changed('deform', { spacing: v / 100 }, further), Infinity, 'any')),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // How far the gaps stray from the spacing, as a percentage.

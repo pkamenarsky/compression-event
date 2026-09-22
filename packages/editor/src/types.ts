@@ -604,7 +604,7 @@ export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
   round: { precision: 0.5, tension: 0.5, chamfer: false },
-  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false },
+  deform: { spacing: 0.2, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false },
 };
 
 /**

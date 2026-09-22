@@ -54,9 +54,13 @@ import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
  * those said is written down there rather than here, where a reading of it
  * would have to be carried for ever.
  *
+ * 25: a deform's spacing and amplitudes are fractions of the thing's size —
+ * see `diameterAt` — rather than lengths in the world. The shape is a 24's;
+ * `convert.ts` takes a 24 across.
+ *
  * A file is one shape, and this is the shape.
  */
-export const FORMAT = 24;
+export const FORMAT = 25;
 
 /**
  * The oldest this reads, which is the one it writes.

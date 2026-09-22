@@ -48,6 +48,7 @@ import {
   imaged,
   isCCW,
   keeping,
+  diameter,
   mitred,
   nextOf,
   prevOf,
@@ -1156,6 +1157,46 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
   return out;
 }
 
+/** What `diameterAt` has answered, for each world it was asked about. */
+const diameters = new WeakMap<World, Map<string, number>>();
+
+/**
+ * How big a thing is at `v`, for its deform: the diameter of every corner it
+ * stands on, in the world, before any deform or erosion. A deform's spacing
+ * and amplitude are fractions of it, so that the teeth are the same teeth
+ * however the thing is moved, turned or scaled, and evenly spaced whichever
+ * way it is stretched.
+ *
+ * A group's is of all its members together, which is the diameter of their
+ * union: the union covers every corner, and nothing of it reaches past their
+ * hull.
+ */
+export function diameterAt(world: World, v: KeyframeId, id: Id): number {
+  let known = diameters.get(world);
+
+  if (known === undefined) diameters.set(world, known = new Map());
+
+  const key = `${v}:${id}`;
+  const was = known.get(key);
+
+  if (was !== undefined) return was;
+
+  const from = new Set(chain(world, v));
+  const points: Point[] = [];
+
+  for (const p of polygonsIn(world, [id])) {
+    if (!standingIn(world, p, from)) continue;
+
+    points.push(...place(worldFrame(world, p, v), [...stateAt(world, p, v).corners.values()]));
+  }
+
+  const size = diameter(points);
+
+  known.set(key, size);
+
+  return size;
+}
+
 /**
  * One deform a polygon's rings go through. `toothed` is whether an edge gets
  * teeth at all: only one some amount somewhere in the timeline deforms, so an
@@ -1231,7 +1272,12 @@ function deformedAt(
   let pts: Point[] = place(frame, local);
   let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
 
-  for (const { owner, e, amplitude, toothed, clear: clearing } of chain) {
+  for (const { owner, e: relative, amplitude: relativeTo, toothed, clear: clearing } of chain) {
+    // Out of fractions of the owner's size into the world, where the rings are.
+    const size = diameterAt(world, v, owner);
+    const e = { ...relative, spacing: relative.spacing * size };
+    const amplitude = (from: VertexId) => relativeTo(from) * size;
+
     const rings = ringsOf(cs);
     const slices = sliced(pts, rings);
 

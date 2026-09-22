@@ -74,6 +74,7 @@ import {
   reaching,
   live,
   placeVertex,
+  diameterAt,
   polygonsIn,
   removeVertices,
   resolveAt,
@@ -105,7 +106,6 @@ import {
   edgesWithinBox,
   endsOf,
   cornersSwitched,
-  sizedFor,
   switchedOn,
   withEffect,
 } from '../effects';
@@ -690,8 +690,7 @@ export function worldCanvas(
       // that has never had it the options last used. From there it works
       // over that.
       const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
-      const first = kind === 'deform' ? sizedFor(was, v, targets, remembered()) : remembered();
-      const on = kind === undefined ? was : switchedOn(was, targets, kind, first);
+      const on = kind === undefined ? was : switchedOn(was, targets, kind, remembered());
 
       // Corners left square on their own are rounded again by a round on them.
       const base = kind === 'round' && corners.size > 0 ? cornersSwitched(on, [...corners], true, remembered()) : on;
@@ -847,13 +846,19 @@ export function worldCanvas(
               const wrote: Listed[] = [];
 
               for (const [id, p] of paints) {
+                // An amplitude is a fraction of the thing's size, so the drag
+                // is taken into each one's: the teeth come out as far as the
+                // hand went, on whatever it is.
+                const size = kind === 'deform' ? diameterAt(was, v, id) : 1;
+                const amount = size > 0 ? by / size : 0;
+
                 if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
-                  world = cornersAmounted(world, v, id, kind, corners, by);
+                  world = cornersAmounted(world, v, id, kind, corners, amount);
                   continue;
                 }
 
                 const op = kind !== undefined
-                  ? { kind, by } satisfies Amount
+                  ? { kind, by: amount } satisfies Amount
                   : mode(p, { pivot, from, to, alt: e.altKey, factor });
 
                 const out = writtenInto(world, v, id, hand.keys.get(id) ?? null, op);
@@ -2686,14 +2691,14 @@ function spaced(o: Spacing, up: number, free: boolean): Spacing {
   const past = Math.sign(up) * Math.max(0, Math.abs(up) - DRIFT);
   const spacing = o.spacing * Math.pow(2, past / DOUBLING);
 
-  return { ...o, spacing: free ? spacing : Math.max(1, Math.round(spacing)) };
+  return { ...o, spacing: free ? spacing : Math.max(0.01, Math.round(spacing * 100) / 100) };
 }
 
 /** What an amount gesture has come to, for the label by the cursor. */
 function amountLabel(kind: AmountKind, by: number, o: Spacing | null): string {
   const n = `${by > 0 ? '+' : ''}${Math.round(by * 10) / 10}`;
 
-  if (o !== null) return `amplitude ${n} · every ${Math.round(o.spacing * 10) / 10}`;
+  if (o !== null) return `amplitude ${n} · every ${Math.round(o.spacing * 1000) / 10}%`;
 
   return kind === 'erode' ? `depth ${n}` : kind === 'round' ? `bevel ${n}` : `${kind} ${n}`;
 }

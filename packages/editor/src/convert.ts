@@ -1,11 +1,13 @@
 // -----------------------------------------------------------------------------
-// Files from before keys, as files of keys
+// Files from before keys, as files of keys, and deforms in the world as
+// deforms in proportion
 //
 //   pnpm convert <world.json>...
 //
-// Writes `<world>.v24.json` beside each. What it reads is a 20, a 21, a 22 or
-// a 23 — the formats whose timelines are lists of operations — and what it
-// writes is a 24, whose timelines are keys. See `FORMAT` in `save.ts` for what
+// Writes `<world>.v25.json` beside each. What it reads is a 20, a 21, a 22 or
+// a 23 — the formats whose timelines are lists of operations — which it makes
+// a 24, whose timelines are keys (`converted`); and a 24, whose deforms are
+// lengths, which it makes a 25, whose deforms are fractions (`relative`). See `FORMAT` in `save.ts` for what
 // each of those said, and `convert-19-20.ts` for what takes a 19 to a 21.
 //
 // Its own file, and not a branch inside `save.ts`, because a format is a thing
@@ -31,7 +33,9 @@ import {
   keysOf,
   stateAt,
 } from './rig';
-import { Saved, SavedKey, savedKeyRig } from './save';
+import { FORMAT, Saved, SavedKey, restored, saved, savedKeyRig } from './save';
+import { diameterAt } from './scene';
+import { Key } from './rig';
 import { Effects, Id, Options, REMEMBERED, VertexId, World } from './types';
 
 /** A timeline as a 23 and older wrote it: its lists, and a map per corner. */
@@ -211,3 +215,55 @@ function rounding(round: Effects['round'] & object): Options['round'] {
 }
 
 export type { SavedKey };
+
+/**
+ * A 24 as a 25: every deform's spacing and amplitudes, which were lengths in
+ * the world, as fractions of the size of the thing it is on (`diameterAt`).
+ *
+ * Taken at the first keyframe the thing stands at, which is where it was
+ * made. The amounts add up, so dividing every one of them divides what they
+ * come to, and the thing is deformed there exactly as it was. Where it grows
+ * or shrinks afterwards its teeth now grow and shrink with it, which is the
+ * point of the change.
+ */
+export function relative(file: Saved): Saved | { refused: string } {
+  if (file.format !== 24) return { refused: `format ${file.format}, and this takes 24` };
+
+  const state = restored({ ...file, format: FORMAT });
+  const world = state.world;
+  const effects = new Map(world.effects);
+  const rigs = new Map(world.rigs);
+
+  for (const [id, fx] of world.effects) {
+    if (fx.deform === undefined) continue;
+
+    const size = world.keyframes.map(k => diameterAt(world, k.id, id)).find(d => d > 0);
+
+    if (size === undefined) continue;
+
+    effects.set(id, { ...fx, deform: { ...fx.deform, spacing: fx.deform.spacing / size } });
+
+    const rig = world.rigs.get(id);
+
+    if (rig === undefined) continue;
+
+    const shrunk = (m: ReadonlyMap<number, number>) => new Map([...m].map(([c, a]) => [c, a / size]));
+    const key = (k: Key): Key => ({
+      ...k,
+      ...(k.by === undefined ? {} : { by: { ...k.by, deform: k.by.deform / size } }),
+      ...(k.deforms === undefined ? {} : { deforms: shrunk(k.deforms) }),
+      ...(k.stand === undefined
+        ? {}
+        : { stand: { ...k.stand, amplitude: k.stand.amplitude / size, amplitudes: shrunk(k.stand.amplitudes) } }),
+    });
+
+    rigs.set(id, { ...rig, keys: new Map([...rig.keys].map(([at, keys]) => [at, keys.map(key)])) });
+  }
+
+  return {
+    ...saved({ ...state, world: { ...world, effects, rigs } }),
+    // Baked against teeth that are where they were, but cheap to make again,
+    // and a bake is the last place to find out a conversion was wrong.
+    baked: undefined,
+  };
+}

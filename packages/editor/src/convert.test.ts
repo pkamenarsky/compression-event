@@ -8,12 +8,13 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Old, OldEntry, OldRig, converted } from './convert';
+import { Old, OldEntry, OldRig, converted, relative } from './convert';
 import { Saved, restored, restoredKeyRig, saved } from './save';
 import { Entry, KeyframeId, Op, Rig, entriesOf, keysOf } from './rig';
-import { TOP, addPolygon, grouped, handed, keyed, rigOf, withRig } from './scene';
+import { TOP, addPolygon, diameterAt, grouped, handed, keyed, resolveAt, rigOf, withRig } from './scene';
+import { withEffect } from './effects';
 import { cornerRounded, once } from './rig';
-import { EditorState, FLOOR, Id, PolygonKind, VertexId, emptyWorld, initialState } from './types';
+import { EditorState, FLOOR, Id, PolygonKind, REMEMBERED, VertexId, World, emptyWorld, initialState } from './types';
 import { wrote } from './testing';
 
 type Named = 'level' | 'solid' | 'floor' | 'hole';
@@ -97,7 +98,11 @@ function savedOldEntry(e: Entry): OldEntry {
 
 /** A file taken through the converter and opened. */
 function through(file: Old): EditorState {
-  const out = converted(file);
+  const keyed = converted(file);
+
+  if ('refused' in keyed) throw new Error(keyed.refused);
+
+  const out = relative(JSON.parse(JSON.stringify(keyed)) as Saved);
 
   if ('refused' in out) throw new Error(out.refused);
 
@@ -161,11 +166,43 @@ function through(file: Old): EditorState {
 
     const w = through(file).world;
 
+    // The spacing a fraction of the polygon's size, as a 25 keeps it.
     expect(w.effects.get(id)).toEqual({
       round: { precision: 0.5, tension: 0.5, chamfer: false },
-      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
+      deform: { spacing: 12 / Math.hypot(100, 60), pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
     });
     expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
+  });
+
+  test('a 24 made a 25 has its teeth where they were', () => {
+    const [id] = [...world().world.polygons.keys()];
+    const size = diameterAt(world().world, 0, id);
+
+    // The same deform twice: in proportion, as this opens it, and in the
+    // world, as a 24 held it.
+    const deformed = (spacing: number, amplitude: number) => {
+      const w = withEffect(world().world, id, 'deform', { ...REMEMBERED.deform, spacing, jitter: 0.5, seed: 4 });
+
+      return initialState(wrote(w, 1, id, { kind: 'deform', by: amplitude }));
+    };
+
+    const now = deformed(0.1, 0.02);
+    const out = relative({ ...saved(deformed(0.1 * size, 0.02 * size)), format: 24 });
+
+    if ('refused' in out) throw new Error(out.refused);
+
+    const opened = restored(JSON.parse(JSON.stringify(out)) as Saved).world;
+    const ring = (w: World, v: KeyframeId) => resolveAt(w, v).find(it => it.id === id)!.source;
+
+    for (const v of [0, 1, 2]) {
+      const want = ring(now.world, v), got = ring(opened, v);
+
+      expect(got.length).toBe(want.length);
+      got.forEach((p, i) => {
+        expect(p.x).toBeCloseTo(want[i].x, 9);
+        expect(p.y).toBeCloseTo(want[i].y, 9);
+      });
+    }
   });
 
   test('a format this does not take is refused rather than half-read', () => {

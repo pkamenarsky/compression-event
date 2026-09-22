@@ -2609,6 +2609,39 @@ export interface Effecting {
   jitter: number
 }
 
+/**
+ * The largest distance between any two of `points`: the size a deform is
+ * measured against, since it is the same however the points are turned.
+ * Nought for fewer than two.
+ *
+ * Over the convex hull, which is where the two farthest points are, so that
+ * a group of many rooms costs its outline rather than every pair.
+ */
+export function diameter(points: readonly Point[]): number {
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const turn = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = (from: Point[]): Point[] => {
+    const out: Point[] = [];
+
+    for (const p of from) {
+      while (out.length >= 2 && turn(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+
+    return out;
+  };
+  const hull = [...half(sorted), ...half([...sorted].reverse())];
+  let most = 0;
+
+  for (let i = 0; i < hull.length; i++) {
+    for (let j = i + 1; j < hull.length; j++) {
+      most = Math.max(most, Math.hypot(hull[j].x - hull[i].x, hull[j].y - hull[i].y));
+    }
+  }
+
+  return most;
+}
+
 /** The most a jitter stretches a gap by, or squeezes it by: see
  * `Effecting.jitter`. */
 export const GAPS = 4;

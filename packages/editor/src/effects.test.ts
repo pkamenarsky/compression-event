@@ -34,6 +34,11 @@ function withEffects(world: World, id: Id, fx: Effects): World {
   return { ...world, effects: new Map(world.effects).set(id, fx) };
 }
 
+/** The diameters of a room and of two joined side by side: a deform's
+ * spacing and amplitude are fractions of them. See `diameterAt`. */
+const ROOM = Math.hypot(100, 100);
+const PAIR = Math.hypot(200, 100);
+
 const round = (by: number) => ({ kind: 'round' as const, by });
 const deform = (by: number) => ({ kind: 'deform' as const, by });
 
@@ -105,13 +110,13 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out, on the line, out — every
     // twenty from the middle of each wall, the two at its ends half as tall.
-    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
-    const w = wrote(withEffects(world, id, fx), 0, id, deform(2));
+    const fx: Effects = { deform: { spacing: 20 / ROOM, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
+    const w = wrote(withEffects(world, id, fx), 0, id, deform(2 / ROOM));
     const ring = shapeOf(w, id)[0];
 
     expect(ring).toHaveLength(4 * 6);
 
-    const out = ring.map(p => Math.max(-p.x, p.x - 100, -p.y, p.y - 100)).filter(d => d > 0);
+    const out = ring.map(p => Math.max(-p.x, p.x - 100, -p.y, p.y - 100)).filter(d => d > 1e-9).map(d => Math.round(d * 1e6) / 1e6);
 
     expect(out.sort()).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2]);
   });
@@ -153,7 +158,7 @@ describe('a group\'s effects', () => {
   });
 
   test('its round leaves its members\' deformed geometry square, and its own deform\'s', () => {
-    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0, clear: false };
+    const zigzag = { spacing: 20 / ROOM, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0, clear: false };
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const b = room(a.world, rect(60, 0, 140, 100));
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
@@ -169,7 +174,7 @@ describe('a group\'s effects', () => {
 
     // One edge of a room deformed: its teeth and its ends are where they are
     // in the union, square, and the rest of the union rounded as before.
-    const top = (world: World) => cornersAmounted(withEffects(world, a.id, { deform: zigzag }), 0, a.id, 'deform', new Set([a.world.polygons.get(a.id)!.points[2].id]), 4);
+    const top = (world: World) => cornersAmounted(withEffects(world, a.id, { deform: zigzag }), 0, a.id, 'deform', new Set([a.world.polygons.get(a.id)!.points[2].id]), 4 / ROOM);
     const one = top(sealed);
     const teeth = teethOf(one, a.id);
 
@@ -179,7 +184,7 @@ describe('a group\'s effects', () => {
     expect(vertices(one).has('0.000000,0.000000')).toBe(false);
 
     // Deformed by the group itself, the same.
-    const whole = wrote(withEffects(sealed, g.id, { round: inSegments(8, 10), deform: zigzag }), 0, g.id, deform(4));
+    const whole = wrote(withEffects(sealed, g.id, { round: inSegments(8, 10), deform: { ...zigzag, spacing: 20 / PAIR } }), 0, g.id, deform(4 / PAIR));
 
     // Every vertex of the union a point of its rooms', and none of an arc.
     const drawn = new Set(resolveAt(whole, 0).flatMap(it => it.source).map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
@@ -212,7 +217,7 @@ describe('a group\'s effects', () => {
   });
 
   test('its union\'s noise belongs to its members\' edges, whatever else joins it', () => {
-    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both', jitter: 0, clear: false } };
+    const noise: Effects = { deform: { spacing: 15 / PAIR, pattern: 'noise', seed: 3, sides: 'both', jitter: 0, clear: false } };
     const top = (w: World) => csg(w, 0).flat().filter(p => p.y > 95 && p.x > 5 && p.x < 150);
     const build = (extra: boolean) => {
       const a = room(emptyWorld(), rect(0, 0, 100, 100));
@@ -221,7 +226,9 @@ describe('a group\'s effects', () => {
       let w = b.world;
 
       if (extra) {
-        const c = room(w, rect(190, 30, 40, 40));
+        // Out past the right wall, and not so far that the group is any
+        // bigger: its teeth are fractions of its size.
+        const c = room(w, rect(190, 30, 15, 40));
 
         w = c.world;
         ids.push(c.id);
@@ -229,7 +236,7 @@ describe('a group\'s effects', () => {
 
       const g = grouped(w, 0, ids, TOP)!;
 
-      return wrote(withEffects(sealing(g.world, g.id, true), g.id, noise), 0, g.id, deform(4));
+      return wrote(withEffects(sealing(g.world, g.id, true), g.id, noise), 0, g.id, deform(4 / PAIR));
     };
 
     // A room joined on the right comes before the top in the union's ring,
@@ -250,7 +257,7 @@ describe('a group\'s effects', () => {
 });
 
 describe('editing effects', () => {
-  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
+  const DEFORM: Effects = { deform: { spacing: 20 / ROOM, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
 
   test('switched on, an effect keeps the options a thing already had', () => {
     const { world, id } = room();
@@ -264,7 +271,7 @@ describe('editing effects', () => {
   test('switched off, an effect does nothing and keeps everything, and switched on is as it was', () => {
     const { world, id } = room();
     const corner = world.polygons.get(id)!.points[0].id;
-    let w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2));
+    let w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2 / ROOM));
 
     w = cornersAmounted(w, 0, id, 'round', new Set([corner]), 4);
 
@@ -272,7 +279,7 @@ describe('editing effects', () => {
 
     expect(applies(off, id, 'round')).toBe(false);
     expect(rigOf(off, id)).toBe(rigOf(w, id));
-    expect(shapeOf(off, id)).toEqual(shapeOf(wrote(withEffects(world, id, DEFORM), 0, id, erode(3), deform(2)), id));
+    expect(shapeOf(off, id)).toEqual(shapeOf(wrote(withEffects(world, id, DEFORM), 0, id, erode(3), deform(2 / ROOM)), id));
     expect(shapeOf(switchedOn(off, [id], 'round', REMEMBERED), id)).toEqual(shapeOf(w, id));
   });
 
@@ -329,7 +336,7 @@ describe('editing effects', () => {
   test('an edge runs from its drawn corner to the next, through its teeth', () => {
     const { world, id } = room();
     const points = world.polygons.get(id)!.points;
-    const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(2));
+    const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(2 / ROOM));
     const it = resolveAt(w, 0).find(r => r.id === id)!;
     const run = edgeRun(it, points[0].id);
 
@@ -349,7 +356,7 @@ describe('editing effects', () => {
     const { world, id } = room();
     const [a, b, c, d] = world.polygons.get(id)!.points;
     const rounded = wrote(withEffects(world, id, { round: inSegments(8, 30), ...DEFORM }), 0, id, round(30));
-    const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
+    const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3 / ROOM);
     const it = resolveAt(w, 0).find(r => r.id === id)!;
 
     expect(edgeRun(it, a.id).length).toBeGreaterThan(2);
@@ -365,7 +372,7 @@ describe('editing effects', () => {
     const { world, id } = room();
     const [a] = world.polygons.get(id)!.points;
     const fx = { round: inSegments(8, 6), deform: { ...DEFORM.deform!, sides: 'in' as const } };
-    const w = cornersAmounted(wrote(withEffects(world, id, fx), 0, id, erode(10), round(6)), 0, id, 'deform', new Set([a.id]), 3);
+    const w = cornersAmounted(wrote(withEffects(world, id, fx), 0, id, erode(10), round(6)), 0, id, 'deform', new Set([a.id]), 3 / ROOM);
     const im = imagesOf(resolveAt(w, 0).find(r => r.id === id)!)!;
 
     // The erosion eats teeth, and what it makes of them is square.
@@ -379,7 +386,7 @@ describe('editing effects', () => {
     const w = (clear: boolean) => {
       const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, clear } };
 
-      return resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
+      return resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3 / ROOM)), 0).find(r => r.id === id)!;
     };
     const teeth = (it: Resolved) => edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
     const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
