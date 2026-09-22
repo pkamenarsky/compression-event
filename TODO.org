@@ -1,9 +1,8 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
 ** TODO remove pkamenarsky itch.io from game/3d view in editor
-** TODO remove debug output/controls when game NOT started from editor
+** TODO remove debug output/controls when game NOT started from editor (editor can pass a debug: true option to game or something that is by default false)
 *** fps counter, <, > shader switching (and ; ' sky switching beside it)
-    two branches in `pressed`, game/src/play.ts:725
 ** TODO write rotation degrees / scale factor / move distance while transforming
    the amount gestures already set `reading` in the same move handler (canvas/index.ts:811); add labels for T/R/S/X/Y
 ** TODO spacing in deform a slider; everything in the deform panel -> sliders
