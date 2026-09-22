@@ -231,19 +231,8 @@ function panel(
    * ghost; after it there is one until the panel goes. */
   let stands = false;
 
-  /**
-   * Whether the panel has the keyboard, and which keys it owes the page a
-   * release for.
-   *
-   * A key taken while the mouse was down is still down when the mouse comes
-   * up, and the browser goes on repeating it. Stopping at the release would
-   * hand those repeats — and the release itself — to the editor, where W is a
-   * command; so a key swallowed once stays swallowed until it is let go, which
-   * is what `sunk` is. It moves nothing: `held`, which does, is emptied the
-   * moment the press ends.
-   */
+  /** Whether a hand is on the controls, which is what WASD is read for. */
   let pressing = false;
-  const sunk = new Set<string>();
 
   /**
    * Which of the two the little panel is showing, and everything under it.
@@ -567,13 +556,18 @@ function panel(
         onpointerdown: (e: PointerEvent) => {
           e.stopPropagation();
 
-          // A gesture already has the pointer — a scale held by its key over
-          // on the canvas, say. The click that ends it is that gesture's, and
-          // taking it here would leave somebody walking about in here while
-          // their room was still being scaled out there.
+          // Somebody already has the input — a scale held by its key over on
+          // the canvas, say. The click is theirs, and taking it here would
+          // leave somebody walking about in here while their room was still
+          // being scaled out there.
           if (host === undefined || roaming() || input.grabbed()) return;
 
           host.setPointerCapture(e.pointerId);
+
+          // And for as long as this press lasts the input is this panel's: the
+          // hand is on WASD and the mouse, and a space held to look around is
+          // not the canvas being panned, nor a letter a shortcut. See `grab`.
+          const ungrabbed = input.grab(host);
 
           let x = e.clientX, y = e.clientY;
 
@@ -597,6 +591,7 @@ function panel(
           const done = () => {
             pressing = false;
             held.clear();
+            ungrabbed();
 
             host?.removeEventListener('pointermove', moved);
             host?.removeEventListener('pointerup', done);
@@ -623,30 +618,18 @@ function panel(
         },
       },
       [
-        // The keys the panel takes while it is being held, read directly rather
-        // than off the editor's bus — nothing else is listening for a key being
-        // *held*, which is the whole of moving — and taken off it in the
-        // capture phase, so that W does not also do whatever W does out here.
+        // The keys the panel moves by while it is being held, read directly
+        // rather than off the editor's bus: nothing else is listening for a key
+        // being *held*, which is the whole of moving. Keeping them from the
+        // editor is not this listener's business — the press has the bus for
+        // as long as it lasts, and a key that went down meanwhile stays kept
+        // until it comes up. See `grab`.
         effect(() => {
           const down = (k: KeyboardEvent) => {
-            if (!MOVES.includes(k.code)) return;
-            if (!pressing && !sunk.has(k.code)) return;
-
-            k.preventDefault();
-            k.stopPropagation();
-
-            sunk.add(k.code);
-            if (pressing) held.add(k.code);
+            if (pressing && MOVES.includes(k.code)) held.add(k.code);
           };
 
-          const up = (k: KeyboardEvent) => {
-            held.delete(k.code);
-
-            if (!sunk.delete(k.code)) return;
-
-            k.preventDefault();
-            k.stopPropagation();
-          };
+          const up = (k: KeyboardEvent) => held.delete(k.code);
 
           window.addEventListener('keydown', down, true);
           window.addEventListener('keyup', up, true);
@@ -813,7 +796,6 @@ function panel(
           if (host === undefined) return;
 
           held.clear();
-          sunk.clear();
           entered(host, on);
 
           // Standing up in the panel and then filling the window keeps the spot;

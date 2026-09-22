@@ -767,10 +767,12 @@ export function worldCanvas(
 
       cursor('crosshair');
 
-      // The pointer is this gesture's for as long as the key is held, though
-      // it never pressed anything: a press landing elsewhere meanwhile is a
-      // stray click during this, not something else starting. See `grab`.
-      const ungrabbed = input.grab({});
+      // The input is this gesture's for as long as the key is held, though it
+      // never pressed anything: a press landing elsewhere meanwhile is a stray
+      // click during this, not something else starting. Escape is let past,
+      // being how it is put back; space needs no letting, since panning reads
+      // it off `holding`. See `grab`.
+      const ungrabbed = input.grab({}, 'Escape');
 
       try {
         setLocal({ ...local(), previewing: true });

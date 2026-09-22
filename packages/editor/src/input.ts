@@ -67,22 +67,24 @@ export interface Input {
    */
   claim: (by: object, ...codes: string[]) => () => void
   /**
-   * Take the pointer for `by`, for as long as the returned function has not
-   * been called.
+   * Take the input for `by`, for as long as the returned function has not
+   * been called: until then the bus is `by`'s alone.
    *
-   * For the gestures that own it without ever having pressed anything: one
-   * started by a key holds the pointer until the key is let go, and a press
-   * that lands somewhere else meanwhile is a stray click during that gesture
-   * rather than something else beginning. Whoever would otherwise take such a
-   * press asks `grabbed` first — see the 3D view, which would otherwise start
-   * walking under a scale in progress.
+   * While it is held, no press is dispatched, and no key but `codes` — so
+   * nothing anywhere can start while somebody else is in the middle of
+   * something. That is the whole of it, and it is the same rule for both of the
+   * kinds of gesture that need it: one started by a key, which owns the
+   * pointer until the key comes up without ever having pressed anything, and
+   * one that lives outside the bus altogether — the 3D view, whose hand is on
+   * WASD and the mouse and which reads both itself.
    *
-   * Nothing here stops the press being dispatched: the gestures that want to
-   * hear about one landing away from them still do. This is only about who may
-   * start something new with it.
+   * Key-ups still go through, and `holding` still knows what is down: a
+   * release never starts anything, and the gestures already running end on
+   * one. The newest grab is the one that says which keys pass.
    */
-  grab: (by: object) => () => void
-  /** Whether any gesture has the pointer. */
+  grab: (by: object, ...codes: string[]) => () => void
+  /** Whether anybody has the input, which is what a handler outside the bus
+   * asks before starting something of its own. */
   grabbed: () => boolean
   /**
    * `el` and everything in it is the surface `name`, for as long as the
@@ -116,7 +118,17 @@ export function createInput(): Input {
   let pointer: PointerEvent | null = null;
   const down = new Set<string>();
   const claims: { by: object, codes: readonly string[] }[] = [];
-  const grabs: object[] = [];
+  const grabs: { by: object, codes: readonly string[] }[] = [];
+
+  /**
+   * Keys that went down while somebody had the input, and have not come up.
+   *
+   * A key held across the end of a grab is still down when the grab lets go,
+   * and the browser goes on repeating it; handing those repeats to everybody
+   * the moment the grab ended would have W, held to walk, arrive out here as a
+   * command. So a key the bus kept from everyone stays kept until it is let go.
+   */
+  const kept = new Set<string>();
   const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
@@ -125,6 +137,18 @@ export function createInput(): Input {
     if (typing(e.target)) return;
 
     down.add(e.code);
+
+    // Somebody has the input, and this is not one of the keys they let past.
+    // Counted as down all the same, so a release later is the release of
+    // something `holding` knew about.
+    const grabbed = grabs[grabs.length - 1];
+
+    if (grabbed !== undefined && !grabbed.codes.includes(e.code)) {
+      kept.add(e.code);
+      return;
+    }
+
+    if (kept.has(e.code)) return;
 
     let owner: object | null = null;
 
@@ -137,12 +161,15 @@ export function createInput(): Input {
 
   function onKeyUp(e: KeyboardEvent) {
     down.delete(e.code);
+    kept.delete(e.code);
     keyUp.emit(e);
   }
 
   // In the capture phase, so that it is heard wherever it lands, whatever
   // stops it on the way.
   function onPointerDown(e: PointerEvent) {
+    if (grabs.length > 0) return;
+
     let on: Surface | null = null;
 
     for (let n = e.target as Node | null; n !== null && on === null; n = n.parentNode) {
@@ -160,6 +187,7 @@ export function createInput(): Input {
   // and would read as held for ever after.
   function onBlur() {
     down.clear();
+    kept.clear();
   }
 
   return {
@@ -184,12 +212,14 @@ export function createInput(): Input {
       };
     },
 
-    grab: by => {
-      grabs.push(by);
+    grab: (by, ...codes) => {
+      const grab = { by, codes };
+
+      grabs.push(grab);
 
       // Safe to call twice, for the reason a claim's release is.
       return () => {
-        const i = grabs.indexOf(by);
+        const i = grabs.indexOf(grab);
 
         if (i >= 0) grabs.splice(i, 1);
       };
