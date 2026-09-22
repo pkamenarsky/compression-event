@@ -1,129 +1,89 @@
-* two tiered keyframe view? the versions + then the keys in a separate view
-* keyframes
-** edit, then click on add keyframe, delta to previous one is stored
-** keyframe can be repeated
-** if you want to edit a keyframe component, just click on keyframe and change stuff
-** but then we have keyframes in keyframes... can we simplify?
+#+TODO: TODO | DONE
 
-* WHAT IS NECESSARY TO START MAKING LEVELS vs WHAT CAN WE DO WHILE MAKING LEVELS
+* Before making levels
+** Saving
+*** TODO saving levels is cumbersome currently
+*** TODO when saving levels, don't overwrite; append
+*** TODO ask yes/no if level unsaved
+** Keyframes & versions
+*** TODO a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
+*** TODO dragging transforms left/right only drags one version
+*** TODO ops should be append-only? e.g. how to repeat the last small translate otherwise?
+**** or should repeatable transforms be "effects" as well? and only effects can repeat?
+*** TODO two tiered keyframe view? the versions + then the keys in a separate view
+*** DONE keyframes: edit, add keyframe stores delta to previous; click a keyframe to edit it
+    (implemented as keys; ⌥←/⌥→ step between them)
+**** open: keyframe can be repeated
+**** open: keyframes in keyframes... can we simplify?
+** Editing tools
+*** DONE select polygons / edges / points (one tool, three pickings; shift, marquee)
+*** DONE create: rect, n-gon, polyline/path, artefact
+*** DONE snap to grid; grid size +/-; five-degree / 45° steps with Alt
+*** TODO a shape in both create and select mode has handles to scale, rotate and erode
+**** TODO exact shape and form
+**** created shape can't be dragged (nice to create shapes inside other shapes) — either a handle for transformation or disable dragging; dragging points/edges still works
+*** TODO dragging a point scales/rotates uniformly
+*** TODO add/delete points and edges in point/edge picking
+*** TODO selection stack needs to be able to hold heterogeneous shapes
+*** TODO selection of overlapping vertices
+*** TODO create button should be selected first (!)
+*** TODO n-gon shows slider for point count (arrow up/down + count)
+*** TODO mirror something; one-time op?
+*** TODO effects act on selection: chamfer etc, erosion as well?
+** Baking
+*** TODO bake button in the version view (also bake for specific versions only)
+*** TODO draw red line in timeline at topology events after baking
+*** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
 
-* a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
-* dragging transforms left/right only drags one version
-* saving levels is cumbersome currently
-** when saving levels, don't overwrite; append
-* mirror something; one-time op?
-* maybe we don't need the fade
-* polygon masks
-** level + void{solid} etc etc
-* ops should be append-only? e.g. how to repeat the last small translate otherwise?
-** or should repeatable transforms be "effects" as well? and only effects can repeat?
+* While making levels
+** Editor UI
+*** TODO version view horizontal, like keyframes
+**** version management
+**** visible versions as a strip instead of individual lines
+**** button: none/all/next/subsequent/strip (current version always visible)
+*** TODO statusbar shows action + available modifier keys
+*** TODO write rotation degrees when rotating (maybe any transformation), in the n-gon count style
+*** TODO make it more clear when drilled into group (breadcrumb exists)
+*** TODO better UI for unchained poly/groups
+*** TODO show/hide floor polygons
+*** TODO spacing in deform a slider; everything in the deform panel -> sliders
+*** TODO show RenderConfig in the editor, not with \ + ~
+*** TODO styling: right click dialog
+*** TODO pressing ? overlays tooltips on everything visible
+*** TODO layout: statusbar; above it group breadcrumbs; above that baking progress
+**** where: bake button, 3d view button, version strip, delink button
+*** TODO settings: autobake
+** Shortcut scheme (design note)
+   c create: cr rect, cn n-gon, cv polyline, ca artefact, cp path
+     drag creates (click for artefact, click+click... for polyline/path)
+   e edit: ep points, ee edges, ep polys (artefacts always selectable)
+     t translate, r rotate, s scale; groups; selection stack per element
+   e effects (clashes with edit): ec chamfer, en noise — click poly/group & drag
+   v versions: vn/↓ next, vp/↑ prev
+   bb bake
+   old: gg/cmd+g group, gu/cmd+shift+g ungroup; cmd+click selects poly; +/- add/delete points
+   friction questions:
+     create a rect and want to move/scale it right away?
+     create an artefact but want to move it?
+     want to edit an edge? have to click it first
+** Game / rendering
+*** TODO polygon masks (level + void{solid} etc)
+*** TODO fog when dying so you can't see "behind the walls"
+*** TODO maybe we don't need the fade
+*** TODO each level has different wall heights/RenderConfigs
+**** even better - different RenderConfig for each version/keyframe
+**** sky shader configurable (pasting GLSL into the editor is fine)
+** Performance
+*** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
 
-* ask yes/no if level unsaved
-* fog when dying in order to not see "behind the walls"
+* Before release
+** TODO remove pkamenarsky itch.io from 3d view in editor
+** TODO remove debug output
+*** fps counter
+*** <, > for shader switching
 
-* artefact idea - "DON'T LOOK BACK"
-* artefact idea - shrink walls for 5sec
-* each level has different wall heights/RenderConfigs
-** even better - different RenderConfig for each version/keyframe
-** sky shader configurable (directly pasting GLSL code into the editor is fine)
-
-* a shape in both create and select mode has handles to scale, rotate and erode
-** TODO exact shape and form
-* create button - like now, but each created shape can be transformed with the handles
-** but it can't be dragged? cause it's nice to be able to create shapes from inside other shapes
-** either a handle for transformation or disable dragging
-** dragging of points/edges works though
-* select
-** polygons/groups - select polygons/groups (shift, marquee), transform, delete
-** points - select points (shift, marquee), transform, add, delete
-** edges - select edges (shift, marquee), transform, add, delete
-*** maybe no need for modes: since we can't add points by clicking on edges we can select edges, points and polys equally
-**** selection stack needs to be able to hold heterogenous shapes
-** dragging a point scales/rotates uniformly
-* points mode
-** drag points as usual + add/delete points
-* effects - act on selection
-** chamfer etc
-** erosion as well?
-
-* snap to grid function
-* create button
-** (!) should be selected first
-** rect
-** n-gon shape shows slider for point count
-*** show arrow up down and point count
-** polyline
-** also artifacts? would make sense
-
-* remove pkamenarsky itch.io from 3d view in editor
-* spacing in deform a slider; everything in the deform panel -> sliders
-* show RenderConfig in the editor, not with \ + ~
-* styling
-** right click dialog
-* better UI for unchained poly/groups
-* version view horizontal, like keyframes
-** version management
-** bake button right there (also bake button for specific versions only)
-** visible versions can be a strip instead of individual lines
-** button: none/all/next/subsequent/strip (current version is always visible)
-** draw red line in timeline at topology events after baking
-** slow motion animation so user can check for strange frames
-*** just drag the arrow in the keyframe strip?
-* show/hide floor polygons
-* make it more clear when drilled into group
-* write rotation degrees when rotating (and maybe when doing any kind of transformation)
-** in the same style as n-gon point count arrow
-* statusbar shows action + available modifier keys to modify action
-* settings
-** autobake
-** grid size
-** snap to grid (translate rotate etc; also translate/rotate + alt = snap to horizontal/vertical or 5 degree increments (so we must show the degrees))
-
-* selection of overlapping vertices
-* adaptive tables? - don't subdivide to smallest event, make it per polygon (chaining more precise table to parent table?)
-
-* shortcuts
-  c - create shape; cr - rect; cn - n-gon; cv - polyline; ca - artefact; cp - path
-    mode in UI; drag - creates shape (or click in case of artefact or click + click + ... in the case of polyline or path)
-  e - edit; ep - points; ee - edges; ep - polys (artefacts are always selectable)
-    mode in UI; t - translate; r - rotate; s - scale; groups; selection (+selection stack for each element), direct selection;
-  e - effects; ec - chamfer; en - noise
-    click on poly / group & drag
-
-  v - versions; vn/arrow down (global) - next; vp/arrow up (global) - prev
-  bb - bake
-
-  // p - paths; same as in points mode
-  // a - artifacts
-  // p - points; + - add points; - delete points; click - select; drag - marquee; shift+selection gesture - add to selection
-  // t - select; tt - translate; tr - rotate; ts - scale; te - erode; gg/cmd+g - group; gu/cmd-shift-g - ungroup; click - select group; cmd+click - select poly; drag - marquee; shift+selection gesture - add to selection
-
-  questions
-    create a rect and want to move/scale it right away? friction
-    create an artefact but want to move it? friction
-    want to edit edge? have to click on edge first - friction
-* UI
-  pressing ? overlays tooltips on everything that is visible
-
-  statusbar
-  above that - group breadcrumbs, if any
-  above that - baking progressbar if any
-
-  bake button where?
-  3d view button where?
-
-  version strip where?
-
-  delink button where?
-
-* sound
-  dinosaurs?
-  https://www.youtube.com/watch?v=Fqf8EYdCehw
-
-* marketing
-** https://www.youtube.com/watch?v=90ImoX_e8nE
-
-* remove debug output
-** fps counter
-** <, > for shader switching
-
+* Ideas
+** artefact: "DON'T LOOK BACK"
+** artefact: shrink walls for 5sec
+** sound: dinosaurs? https://www.youtube.com/watch?v=Fqf8EYdCehw
+** marketing: https://www.youtube.com/watch?v=90ImoX_e8nE
