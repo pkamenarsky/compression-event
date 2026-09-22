@@ -1,3 +1,4 @@
+* two tiered keyframe view? the versions + then the keys in a separate view
 * keyframes
 ** edit, then click on add keyframe, delta to previous one is stored
 ** keyframe can be repeated
@@ -20,6 +21,7 @@
 * ask yes/no if level unsaved
 * fog when dying in order to not see "behind the walls"
 
+* artefact idea - "DON'T LOOK BACK"
 * artefact idea - shrink walls for 5sec
 * each level has different wall heights/RenderConfigs
 ** even better - different RenderConfig for each version/keyframe
