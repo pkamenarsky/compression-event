@@ -608,13 +608,15 @@ export interface World {
  *   one (see `curveOf`).
  * - `deform`: points put into each edge every `spacing` of its length, the
  *   gaps between them stretched and squeezed by `jitter`, and pushed off it by
- *   the pattern. `seed` is the noise's and the jitter's. With `clear`, a
- *   polygon's teeth keep out of its corners' bevels, stopping short of each
- *   round; a group's deform takes no notice of it.
+ *   the pattern. `seed` is the noise's and the jitter's. The teeth stop short
+ *   of a polygon's rounds, whose arcs take teeth of their own: see
+ *   `outlineOf`.
  */
 export interface Effects {
-  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean }
-  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, clear: boolean, off?: boolean }
+  /** `held` keeps a round the bevel it is asked for however deep the thing is
+   * eroded, which it is unless it says otherwise: see `drawnBevels`. */
+  round?: { precision: number, tension: number, chamfer: boolean, held?: boolean, off?: boolean }
+  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, off?: boolean }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
 }
@@ -625,7 +627,7 @@ export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
   round: { precision: 0.5, tension: 0.5, chamfer: false },
-  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false },
+  deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
 };
 
 /**

@@ -194,6 +194,42 @@ What the two tables show:
 
 ## Phase 1: a polygon
 
+**Done.** How it differs from the plan below:
+
+- **The round is drawn in the projection, not as corners.** Arcs that were
+  corners of the polygon would take the drawn corner out of its ring, and the
+  editor's handles, edges and `addVertex` all stand on it. So `Resolved`
+  keeps its corners as they were — drawn corners and the straights' teeth —
+  and `project` draws the outline from them (`outlineOf`: arcs laid along the
+  drawn corners either side, teeth along the arcs) and erodes that. The bake
+  already recomputes the projection at every instant from lerped amounts, so
+  it kept its structure: `effectsOver` lerps the bevels and now the arcs'
+  amplitudes.
+- **An arc's teeth push the whole arc.** Each of its points is pushed off the
+  curve by what the teeth either side say, in proportion, as a straight runs
+  straight between its teeth. Laid only as points among the facets, a tooth
+  sliding past a facet point swapped places with it in the ring, the outline
+  jumped, and the bake cut every such instant down to its narrowest width.
+  A test bake went from minutes to a second.
+- **A corner the bake invents is rounded apart** (`Effected.apart`). It sits
+  where its neighbours put it at the end that does not have it — between two
+  teeth, often — and a drawn corner there would turn the arcs beside it. Its
+  arc is a sliver along the points either side, with no teeth.
+- **The bake seeds a corner on the straight as it is drawn**: `straightOf`
+  answers with the ends of the arcs before the erosion, not fractions of the
+  drawn edge, since the outline no longer runs to the drawn corner.
+- **`held` is optional and on by default**, a tick in the round's section.
+  `clear` is gone from the type and the inspector; a saved one is ignored,
+  with no converter, since nothing reads it.
+- **A group's round is as it was**, on its union after its erosion, still
+  leaving its members' teeth and the corners beside them square. That is
+  phase 2.
+
+Stretches, the new code against the old on a 200 square room, spacing 20:
+depth 0 → 20, 54 against 18; bevel 6 → 18, 18 against 9; amplitude 1 → 6, 4
+against 4; bevel 10 → 40, 16 against 5.
+
+
 ### 1.1 Rounded as drawn
 
 `rounded` already makes a ring with every corner's arc in it, `n + 1` points a

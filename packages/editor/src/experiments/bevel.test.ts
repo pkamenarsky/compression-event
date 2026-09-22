@@ -1,6 +1,9 @@
 // An experiment for PLAN-bevel.md, not a test of anything shipped: the hard
 // parts of round → deform → erode, measured against deform → erode → round
-// before committing to the plan. It prints what it finds; the few assertions
+// before committing to the plan. Since phase 1, what it calls today is the
+// new order for a polygon, and its figures are the plan's record, not this.
+//
+// Not run with the rest: `EXPERIMENT=1 pnpm vitest run experiments` runs it. It prints what it finds; the few assertions
 // are only that what it measures is there to be measured.
 
 import { describe, expect, it } from 'vitest';
@@ -265,7 +268,7 @@ function room(nudge = 0): Ring {
 const report: string[] = [];
 const log = (s: string) => report.push(s);
 
-describe('experiment: round → deform → erode', () => {
+describe.skipIf(!process.env.EXPERIMENT)('experiment: round → deform → erode', () => {
   it('H1: the amounts alone, against today', () => {
     // Corners still; bevel, amplitude and depth change over the span, one at a
     // time and all together.
@@ -403,7 +406,7 @@ function run<T>(g: Generator<number, T, void>): T {
   return step.value;
 }
 
-describe('experiment: the real bake, both ways', () => {
+describe.skipIf(!process.env.EXPERIMENT)('experiment: the real bake, both ways', () => {
   const SIDE = 200;
   const SPACING = 20, SEGMENTS = 4;
   let ARC_TEETH = 1;
@@ -418,7 +421,7 @@ describe('experiment: the real bake, both ways', () => {
     const added = addPolygon(emptyWorld(), { level: 'hollow' }, square, 0, TOP);
     const fx: Effects = {
       round: inSegments(SEGMENTS, 20),
-      deform: { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: true },
+      deform: { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
     };
     let w: World = { ...added.world, effects: new Map([[added.id, fx]]) };
 
@@ -595,11 +598,11 @@ function measured(w: World): string {
   return `${stretches} stretches, worst ${span.worst.toFixed(3)}, ${ms.toFixed(0)} ms`;
 }
 
-describe('experiment: fading and groups', () => {
+describe.skipIf(!process.env.EXPERIMENT)('experiment: fading and groups', () => {
   const SPACING = 20, SEGMENTS = 4;
   const fx = (deform: boolean): Effects => ({
     round: inSegments(SEGMENTS, 20),
-    ...(deform ? { deform: { spacing: SPACING, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0, clear: true } } : {}),
+    ...(deform ? { deform: { spacing: SPACING, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 } } : {}),
   });
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });

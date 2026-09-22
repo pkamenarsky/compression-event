@@ -121,14 +121,12 @@ interface Model {
   sides: Sides
   seed: number
   jitter: number
-  clear: boolean
-  /** Whether a polygon is among them: `clear` is a polygon's alone. */
-  polygons: boolean
   erode: Some
   round: Some
   precision: number
   tension: number
   chamfer: boolean
+  held: boolean
   corners: boolean
   own: Some
 }
@@ -297,13 +295,12 @@ function modelOf(
     sides: d.sides,
     seed: d.seed,
     jitter: d.jitter,
-    clear: d.clear,
-    polygons: ids.some(id => world.polygons.has(id)),
     erode: some(ids, id => applies(world, id, 'erode')),
     round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
     precision: r.precision,
     tension: r.tension,
     chamfer: r.chamfer,
+    held: r.held !== false,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
@@ -380,8 +377,8 @@ function body(
     }
 
     const shown = name === 'round'
-      ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer() }
-      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter(), clear: m.clear() };
+      ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer(), held: m.held() }
+      : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
     return further ? { ...s, world, remembered } : marked({ ...s, world, remembered }, s.world);
@@ -477,10 +474,6 @@ function body(
       field('jitter %', slider(() => Math.round(m.jitter() * 100), 0, JITTER, (v, further) => changed('deform', { jitter: Math.round(v) / 100 }, further))),
       // A seed is the noise's and the jitter's.
       show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)))),
-      // Teeth stopping short of the corners' rounds rather than running into
-      // them. A group's round is of its union, which has no corners to keep,
-      // so with no polygon in the pane it is there but cannot be ticked.
-      field('clear corners', tick(m.clear, v => changed('deform', { clear: v }), m.polygons)),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
@@ -493,6 +486,9 @@ function body(
       // From about a circle at nought to tight in the corner at one.
       show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
+      // The bevel as it is seen, however deep the erosion; unticked, the round
+      // is drawn and eroded with the rest, and tightens as the walls grow.
+      field('held', tick(m.held, v => changed('round', { held: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
@@ -698,11 +694,10 @@ function part(name: string, on: Value<Some>, bare: Value<boolean>, onchange: () 
   ]);
 }
 
-function tick(value: Value<boolean>, onchange: (v: boolean) => void, enabled: Value<boolean> = () => true): VNode {
+function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
   return input({
     type: 'checkbox',
     checked: value,
-    disabled: () => !enabled(),
     style: { justifySelf: 'start' },
     onchange: (e: Event) => {
       const el = e.target as HTMLInputElement;

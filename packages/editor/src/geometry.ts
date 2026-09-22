@@ -2559,29 +2559,34 @@ function norm(t: number): number {
 // A deform happens to a thing's rings before anything else does: each edge is
 // subdivided and its new corners pushed off it in a pattern, as though they
 // had been drawn by hand (`subdivided`). From there they are corners like any
-// other — eroded, rounded, carried by the bake — so they appear, go and move
-// the way corners do, and the machinery for that is the one already there.
+// other — eroded and carried by the bake — so they appear, go and move the
+// way corners do, and the machinery for that is the one already there.
 //
-// A round happens after the erosion, to the boundary: each corner becomes a
-// curve leaving each of its two edges along it and with no curvature, so it
-// runs into them with no seam (`rounded`, and see `Curve`). A polygon's teeth
-// are left square, and the corners at the ends of its deformed edges with
-// them unless the deform keeps their bevels clear (`unrounded`). A
-// round's amount is its bevel: how deep from the corner, along each edge, its
-// curve starts — the same at any angle, so a sharp corner and a blunt one are
-// cut back alike. It is faceted where it bends: see `spread`. It is the same
-// bevel wherever it is, since it is taken of what is seen; and a group's is
-// taken of its union, so the joins between its rooms are not rounded.
+// A polygon's round is drawn next, before the erosion: each drawn corner
+// becomes a curve leaving each of its two edges along it and with no
+// curvature, so it runs into them with no seam (`outlineOf`, `arcs`, and see
+// `Curve`). The teeth along an edge stop short of it (`patternRun`'s
+// `clear`), and the deform lays teeth of its own along the curve, as it lays
+// them along an edge: pushing the curve off itself between them, so that a
+// tooth sliding along it as the bevel changes goes past its points without a
+// jump. Then the erosion takes the lot, as it would take corners drawn by
+// hand. A round's amount is its bevel: how deep from the corner, along each
+// edge, its curve starts — the same at any angle, so a sharp corner and a
+// blunt one are cut back alike — and, held, the depth on top of that, so
+// that what the erosion leaves is the bevel asked for (`drawnBevels` in
+// `scene/core.ts`). It is faceted where it bends: see `spread`.
+//
+// A group's round is still laid after its erosion, on its union, so the
+// joins between its rooms are not rounded, and it leaves its members' teeth
+// square (`imaged`, `effectedSquare`).
 //
 // A rounded corner is always `n + 1` points, whatever its bevel, nought
 // included, and in the thing's own frame every point is linear in the bevel:
 // each is the corner plus multiples of it along its two edge directions, the
-// multiples of the corner's angle alone. Where a bevel of nought makes an arc's points coincide
-// they are still all there, on one point, and the arrangement welds them; the
-// bake seeds such an end rather than collapse it. A corner running straight
-// through never collapses: its arc is a sliver of a run along its wall, which
-// lies on an edge whatever the edges beside it do, so `keeping` can always
-// put it back.
+// multiples of the corner's angle alone. A corner running straight through
+// never collapses: its arc is a sliver of a run along its wall, which lies on
+// an edge whatever the edges beside it do, so `keeping` can always put it
+// back.
 // -----------------------------------------------------------------------------
 
 /** How a deformed edge is pushed: sharp teeth, a wave, or seeded noise. */
@@ -3084,6 +3089,52 @@ export function precisionFor(segments: number, bevel: number, tension = TENSION)
  * adds it to one that turns out.
  */
 function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) => number): Point[][] {
+  return arcsWith(ring, facetsOf, bevel).map(a => a.arc);
+}
+
+/**
+ * The teeth a deform lays along one corner's arc: as it lays them along an
+ * edge (`patternRun`), over the arc's length, from its middle, each put back
+ * on the curve where its length falls and pushed along the curve's own
+ * normal there — not the facet's — so they follow the curve. Their height is
+ * the amplitude of the edge the arc leaves, going over to the one it joins.
+ * `key` names the arc to the noise.
+ */
+export interface ArcTeeth {
+  e: Effecting
+  before: number
+  after: number
+  key: number
+}
+
+/**
+ * One corner's arc as `arcsWith` lays it: `arc` is its `n + 1` points, pushed
+ * off the curve with the teeth either side of each, `all` the same with the
+ * teeth among them in order along the curve, and `arcAt` where each of `arc`
+ * is in `all`. `point` where the arc has no length, so that all its points
+ * are the corner.
+ */
+interface ArcLaid {
+  arc: Point[]
+  all: Point[]
+  arcAt: number[]
+  point: boolean
+}
+
+/** How finely an arc's length is read, to put its teeth back on it. */
+const LENGTHS = 64;
+
+/**
+ * `arcs`, with the teeth `teeth` asks for laid along each arc. `out` is which
+ * side of the ring is out of the material, as `subdivided` takes it.
+ */
+function arcsWith(
+  ring: Ring,
+  facetsOf: (i: number) => Facets,
+  bevel: (i: number) => number,
+  teeth: (i: number) => ArcTeeth | null = () => null,
+  out: 1 | -1 = 1,
+): ArcLaid[] {
   const n = ring.length;
   const lengths = ring.map((p, i) => Math.hypot(ring[(i + 1) % n].x - p.x, ring[(i + 1) % n].y - p.y));
   const unit = (from: Point, to: Point, l: number): Point | null =>
@@ -3115,19 +3166,104 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
 
   const room = (i: number, other: number): number => lengths[i] - Math.min(wants[other], lengths[i] / 2);
 
-  return ring.map((v, i) => arc(v, i));
+  return ring.map((v, i) => withTeeth(v, i));
 
-  function arc(v: Point, i: number): Point[] {
+  function withTeeth(v: Point, i: number): ArcLaid {
+    const laid = arc(v, i);
+    const at = laid.points.map((_p, k) => k);
+    const tt = teeth(i);
+
+    if (laid.point || tt === null || laid.on === null) return { arc: laid.points, all: laid.points, arcAt: at, point: laid.point };
+
+    const { on, normal } = laid;
+
+    // The arc's length, read along the curve, and where along it each `u` is.
+    const lengths = [0];
+
+    for (let k = 1; k <= LENGTHS; k++) {
+      const p = on((k - 1) / LENGTHS), q = on(k / LENGTHS);
+
+      lengths.push(lengths[k - 1] + Math.hypot(q.x - p.x, q.y - p.y));
+    }
+
+    const total = lengths[LENGTHS];
+    const run = patternRun(tt.e, tt.key, 1, total);
+
+    // Where along the curve a length falls, and how far along it a `u` is.
+    const uAt = (want: number): number => {
+      let j = 0;
+
+      while (j < LENGTHS - 1 && lengths[j + 1] < want) j++;
+
+      return Math.min(1, Math.max(0, (j + (want - lengths[j]) / Math.max(lengths[j + 1] - lengths[j], 1e-300)) / LENGTHS));
+    };
+    const lengthAt = (u: number): number => {
+      const x = Math.min(LENGTHS, Math.max(0, u * LENGTHS)), j = Math.min(LENGTHS - 1, Math.floor(x));
+
+      return mix(lengths[j], lengths[j + 1], x - j);
+    };
+
+    // The teeth by length, with the arc's ends flat: between two of them the
+    // arc is pushed off by what the two say, in proportion, as a straight edge
+    // runs straight between its teeth. So a facet's point is pushed off with
+    // the teeth either side of it, and a tooth sliding past it along the curve
+    // as the bevel changes goes past without a jump.
+    const heights = [
+      { s: 0, h: 0 },
+      ...run.along.map((f, k) => ({ s: f * total, h: run.across[k] * mix(tt.before, tt.after, uAt(f * total)) })),
+      { s: total, h: 0 },
+    ];
+    const heightAt = (at: number): number => {
+      let j = 0;
+
+      while (j < heights.length - 2 && heights[j + 1].s < at) j++;
+
+      const p = heights[j], q = heights[j + 1];
+
+      return q.s > p.s ? mix(p.h, q.h, (at - p.s) / (q.s - p.s)) : p.h;
+    };
+    const pushed = (u: number, h: number): Point => {
+      const m = normal(u), p = on(u);
+
+      return { x: p.x + m.x * h * out, y: p.y + m.y * h * out };
+    };
+
+    const placed: { s: number, p: Point }[] = run.along.map((f, k) => ({ s: f * total, p: pushed(uAt(f * total), heights[k + 1].h) }));
+    const along = laid.us.map(lengthAt);
+    const arcPoints = laid.points.map((p, j) => (j === 0 || j === laid.points.length - 1 ? p : pushed(laid.us[j], heightAt(along[j]))));
+
+    // In order along the curve. A tooth where one of the arc's own points is
+    // is that point, which is pushed off as far as it: two points in one place
+    // are an edge of no length, and it is left out.
+    const all: Point[] = [], arcAt: number[] = [];
+    const same = total * 1e-9;
+    let k = 0;
+
+    arcPoints.forEach((p, j) => {
+      while (k < placed.length && placed[k].s < along[j] - same) all.push(placed[k++].p);
+      while (k < placed.length && placed[k].s <= along[j] + same) k++;
+
+      arcAt.push(all.length);
+      all.push(p);
+    });
+
+    while (k < placed.length) all.push(placed[k++].p);
+
+    return { arc: arcPoints, all, arcAt, point: false };
+  }
+
+  function arc(v: Point, i: number): { points: Point[], us: number[], point: boolean, on: ((u: number) => Point) | null, normal: (u: number) => Point } {
     const { a, b } = ways[i];
     const before = (i - 1 + n) % n, after = (i + 1) % n;
     const t = Math.max(0, Math.min(wants[i], room(before, before), room(i, after)));
     const facets = facetsOf(i);
     const out: Point[] = [];
+    const none = { x: 0, y: 0 };
 
     if (t === 0 || a === null || b === null) {
       for (let k = 0; k <= facets.n; k++) out.push(v);
 
-      return out;
+      return { points: out, us: out.map((_p, k) => (facets.n === 0 ? 0 : k / facets.n)), point: true, on: null, normal: () => none };
     }
 
     const t1 = { x: v.x + a.x * t, y: v.y + a.y * t };
@@ -3150,13 +3286,26 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
       return { x: v.x + a.x * p + b.x * q, y: v.y + a.y * p + b.y * q };
     };
 
+    // Out of the material is to the right of the way round, for `out` of one:
+    // the curve's tangent turned a quarter clockwise.
+    const d1A = differenced(curve.alongA), d1B = differenced(curve.alongB);
+    const normal = (u: number): Point => {
+      const p = bezier(d1A, u), q = bezier(d1B, u);
+      const x = a.x * p + b.x * q, y = a.y * p + b.y * q;
+      const l = Math.hypot(x, y);
+
+      return l === 0 ? none : { x: y / l, y: -x / l };
+    };
+
     /** The `n + 1` points laid as an arc of `s` segments: its own points at
      * `n / s` apart, as near as whole points go, and the rest along the
-     * facets between them. Each is linear in `t`, as `on` is. */
-    const laid = (s: number): Point[] => {
-      const turns = spreadOn(curve, c, s).map(on);
+     * facets between them. Each is linear in `t`, as `on` is. With where on
+     * the curve each is, as near as a point on a facet has one. */
+    const laid = (s: number): { points: Point[], us: number[] } => {
+      const us = spreadOn(curve, c, s);
+      const turns = us.map(on);
       const index = (q: number): number => Math.round(q * facets.n / s);
-      const out: Point[] = [];
+      const out: Point[] = [], at: number[] = [];
 
       for (let q = 0; q < s; q++) {
         const p = turns[q], r = turns[q + 1], from = index(q), to = index(q + 1);
@@ -3165,23 +3314,29 @@ function arcs(ring: Ring, facetsOf: (i: number) => Facets, bevel: (i: number) =>
           const f = (j - from) / (to - from);
 
           out.push(f === 0 ? p : { x: mix(p.x, r.x, f), y: mix(p.y, r.y, f) });
+          at.push(mix(us[q], us[q + 1], f));
         }
       }
 
       out.push(turns[s]);
+      at.push(1);
 
-      return out;
+      return { points: out, us: at };
     };
 
+    const done = (x: { points: Point[], us: number[] }) => ({ ...x, point: false, on, normal });
     const near = laid(Math.max(1, Math.min(facets.n, facets.from)));
 
-    if (facets.from === facets.to || facets.at === 0) return near;
+    if (facets.from === facets.to || facets.at === 0) return done(near);
 
     const far = laid(Math.max(1, Math.min(facets.n, facets.to)));
 
-    if (facets.at === 1) return far;
+    if (facets.at === 1) return done(far);
 
-    return near.map((p, j) => ({ x: mix(p.x, far[j].x, facets.at), y: mix(p.y, far[j].y, facets.at) }));
+    return done({
+      points: near.points.map((p, j) => ({ x: mix(p.x, far.points[j].x, facets.at), y: mix(p.y, far.points[j].y, facets.at) })),
+      us: near.us.map((u, j) => mix(u, far.us[j], facets.at)),
+    });
   }
 }
 
@@ -3349,6 +3504,98 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
 }
 
 /**
+ * A polygon's ring as its effects draw it, before it is eroded: every drawn
+ * corner rounded, the arc laid along the drawn corners either side of it and
+ * not the teeth between, a deform's teeth along each arc, and the teeth a
+ * deform already laid along the straights (`tooth`) left where they are. The
+ * erosion takes what this makes as it would take corners drawn by hand, so a
+ * round is a drawn curve, deformed as one, and then eroded.
+ *
+ * `owner` is the corner of `source` each point came of; `arcs` is where each
+ * corner's `n + 1` arc points are in the ring — one point `n + 1` times where
+ * the arc has no length, so that nothing is two points in one place — or just
+ * the corner for one not rounded; `teeth` where the arcs' teeth are.
+ *
+ * A corner `apart` is rounded on its own, from the points either side of it,
+ * with no teeth, and the arcs around it are laid as though it were not there:
+ * a corner the bake has had to invent, sitting wherever its neighbours put it.
+ */
+export interface Outline {
+  ring: Ring
+  rings: number[]
+  owner: number[]
+  arcs: number[][]
+  teeth: number[]
+}
+
+export function outlineOf(
+  source: Ring,
+  rings: readonly number[],
+  tooth: (i: number) => boolean,
+  facets: (i: number) => Facets,
+  bevel: (i: number) => number,
+  teeth: (i: number) => ArcTeeth | null,
+  apart: (i: number) => boolean = () => false,
+): Outline {
+  const n = source.length;
+  const starts = rings.length === 0 ? [0] : [...rings];
+  const ring: Point[] = [], owner: number[] = [], out: number[] = [], toothAt: number[] = [];
+  const arcAt: number[][] = source.map(() => []);
+
+  // Out of the material is to the right of a ring wound the way the outline
+  // is, and a hole is wound the other way: see `deformedAt`.
+  const first = source.slice(0, starts[1] ?? n);
+  const side: 1 | -1 = signedArea2(first) >= 0 ? 1 : -1;
+
+  starts.forEach((start, r) => {
+    const end = starts[r + 1] ?? n;
+    const here = Array.from({ length: end - start }, (_x, k) => start + k);
+    const drawn = here.filter(i => !tooth(i) && !apart(i));
+    const laid = drawn.length < 3
+      ? null
+      : arcsWith(drawn.map(i => source[i]), k => facets(drawn[k]), k => bevel(drawn[k]), k => teeth(drawn[k]), side);
+
+    out.push(ring.length);
+
+    let k = 0;
+
+    here.forEach((i, h) => {
+      if (laid === null || tooth(i)) {
+        arcAt[i] = [ring.length];
+        ring.push(source[i]);
+        owner.push(i);
+        return;
+      }
+
+      const beside = [source[here[(h - 1 + here.length) % here.length]], source[i], source[here[(h + 1) % here.length]]];
+      const arc = apart(i)
+        ? arcsWith(beside, j => (j === 1 ? facets(i) : SQUARE), j => (j === 1 ? bevel(i) : 0), () => null, side)[1]
+        : laid[k++];
+
+      if (arc.point) {
+        arcAt[i] = arc.arc.map(() => ring.length);
+        ring.push(source[i]);
+        owner.push(i);
+        return;
+      }
+
+      const base = ring.length;
+      const isArc = new Set(arc.arcAt);
+
+      arcAt[i] = arc.arcAt.map(j => base + j);
+      arc.all.forEach((p, j) => {
+        if (!isArc.has(j)) toothAt.push(ring.length);
+
+        ring.push(p);
+        owner.push(i);
+      });
+    });
+  });
+
+  return { ring, rings: out, owner, arcs: arcAt, teeth: toothAt };
+}
+
+/**
  * An eroded boundary rounded, and where each corner of the source landed in
  * it: corner `i` as the run of its arc, or `null` for a corner not on the
  * eroded boundary at all.
@@ -3369,6 +3616,12 @@ export function mitred(ring: Ring, rings: readonly number[], i: number, depth: n
 export interface Imaged {
   shape: Shape
   corners: (Point[] | null)[]
+  /** The teeth along the arcs, where a polygon's effects laid any: see
+   * `outlineOf`. */
+  teeth?: Point[]
+  /** Each corner's arc as it is drawn, before the erosion, where a polygon's
+   * effects drew one: see `outlineOf`. */
+  drawn?: Point[][]
   rest: Point[][]
   /** Which of `rest` were left square, beside deformed geometry. */
   restSquare: boolean[]

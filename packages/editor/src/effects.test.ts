@@ -50,14 +50,27 @@ function shapeOf(world: World, id: Id) {
 const ROUND: Effects = { round: inSegments(8, 5) };
 
 describe('a polygon\'s effects', () => {
-  test('a rounded room is its arcs, after its erosion', () => {
+  test('a rounded room is its arcs, eroded: held, the bevel it asked for', () => {
     const { world, id } = room();
-    const w = wrote(withEffects(world, id, ROUND), 0, id, erode(10), round(5));
-    const shape = shapeOf(w, id);
+    const held = wrote(withEffects(world, id, ROUND), 0, id, erode(10), round(5));
 
-    expect(shape).toHaveLength(1);
-    expect(shape[0]).toHaveLength(4 * 9);
-    expect(shapeArea(shape)).toBeCloseTo(roundedRect(80, 80, 5, 8), 6);
+    // Drawn fifteen deep and eroded ten: a round five deep, near enough — an
+    // offset curve is not the curve again at a smaller size, and is some two
+    // square units off it a corner.
+    expect(shapeOf(held, id)).toHaveLength(1);
+    expect(Math.abs(shapeArea(shapeOf(held, id)) - roundedRect(80, 80, 5, 8))).toBeLessThan(16);
+
+    // And not held, the same round drawn five deep: eroded past it, it is
+    // square again.
+    const unheld = wrote(withEffects(world, id, { round: { ...ROUND.round!, held: false } }), 0, id, erode(10), round(5));
+
+    expect(shapeArea(shapeOf(unheld, id))).toBeCloseTo(80 * 80, 6);
+
+    // With no erosion, held or not, it is its arcs.
+    const plain = wrote(withEffects(world, id, ROUND), 0, id, round(5));
+
+    expect(shapeOf(plain, id)[0]).toHaveLength(4 * 9);
+    expect(shapeArea(shapeOf(plain, id))).toBeCloseTo(roundedRect(100, 100, 5, 8), 6);
   });
 
   test('with nothing to them, the projection is the erosion alone', () => {
@@ -106,7 +119,7 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out, on the line, out — every
     // twenty from the middle of each wall, the two at its ends half as tall.
-    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0 } };
     const w = wrote(withEffects(world, id, fx), 0, id, deform(2));
     const ring = shapeOf(w, id)[0];
 
@@ -154,7 +167,7 @@ describe('a group\'s effects', () => {
   });
 
   test('its round leaves its members\' deformed geometry square, and its own deform\'s', () => {
-    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0, clear: false };
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0 };
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const b = room(a.world, rect(60, 0, 140, 100));
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
@@ -213,7 +226,7 @@ describe('a group\'s effects', () => {
   });
 
   test('its union\'s noise belongs to its members\' edges, whatever else joins it', () => {
-    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both', jitter: 0, clear: false } };
+    const noise: Effects = { deform: { spacing: 15, pattern: 'noise', seed: 3, sides: 'both', jitter: 0 } };
     const top = (w: World) => csg(w, 0).flat().filter(p => p.y > 95 && p.x > 5 && p.x < 150);
     const build = (extra: boolean) => {
       const a = room(emptyWorld(), rect(0, 0, 100, 100));
@@ -251,7 +264,7 @@ describe('a group\'s effects', () => {
 });
 
 describe('editing effects', () => {
-  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0, clear: false } };
+  const DEFORM: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'out', jitter: 0 } };
 
   test('switched on, an effect keeps the options a thing already had', () => {
     const { world, id } = room();
@@ -362,45 +375,55 @@ describe('editing effects', () => {
     expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
   });
 
-  test('eroded, what a deform made stays square', () => {
-    const { world, id } = room();
-    const [a] = world.polygons.get(id)!.points;
-    const fx = { round: inSegments(8, 6), deform: { ...DEFORM.deform!, sides: 'in' as const } };
-    const w = cornersAmounted(wrote(withEffects(world, id, fx), 0, id, erode(10), round(6)), 0, id, 'deform', new Set([a.id]), 3);
-    const im = imagesOf(resolveAt(w, 0).find(r => r.id === id)!)!;
-
-    // The erosion eats teeth, and what it makes of them is square.
-    expect(im.rest.length).toBeGreaterThan(0);
-    im.rest.forEach(run => expect(run).toHaveLength(1));
-  });
-
-  test('cleared, a polygon\'s teeth stop short of its corners\' bevels', () => {
+  test('a polygon\'s teeth stop short of its corners\' arcs, and are never rounded', () => {
     const { world, id } = room();
     const [a, b] = world.polygons.get(id)!.points;
-    const w = (clear: boolean) => {
-      const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, clear } };
-
-      return resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
-    };
-    const teeth = (it: Resolved) => edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
+    const fx = { round: inSegments(8, 30), deform: DEFORM.deform! };
+    const it = resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
+    const teeth = edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
     const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
 
-    expect(teeth(w(false)).some(p => from(p, a.at) < 30 || from(p, b.at) < 30)).toBe(true);
-    expect(teeth(w(true)).every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
-    expect(teeth(w(true)).length).toBeGreaterThan(0);
+    expect(teeth.length).toBeGreaterThan(0);
+    expect(teeth.every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
 
-    // The teeth are never rounded, and the corners at the edge's ends only
-    // when cleared: a square corner's arc is the one point.
-    const arcs = (it: Resolved) => imagesOf(it)!.corners.map(r => r?.length);
-    const at = (it: Resolved, id: number) => arcs(it)[it.corners.findIndex(q => q.id === id)];
+    // A square corner's arc is the one point; a drawn corner's is its nine.
+    const arcs = imagesOf(it)!.corners.map(r => r?.length);
+    const at = (vertex: number) => arcs[it.corners.findIndex(q => q.id === vertex)];
 
-    [false, true].forEach(clear => {
-      const it = w(clear);
+    edgeRun(it, a.id).slice(1, -1).forEach(i => expect(arcs[i] ?? 1).toBe(1));
+    expect(at(a.id)).toBe(9);
+    expect(at(b.id)).toBe(9);
+  });
 
-      edgeRun(it, a.id).slice(1, -1).forEach(i => expect(arcs(it)[i] ?? 1).toBe(1));
-      expect(at(it, a.id)).toBe(clear ? 9 : 1);
-      expect(at(it, b.id)).toBe(clear ? 9 : 1);
+  test('a polygon\'s arcs take teeth of their own, along the curve, laid as its edges\' are', () => {
+    const { world, id } = room();
+    const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, spacing: 10 } };
+    const plain = resolveAt(wrote(withEffects(world, id, { round: fx.round }), 0, id, round(30)), 0).find(r => r.id === id)!;
+    const toothed = resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
+    const im = imagesOf(toothed)!;
+
+    // An arc thirty deep is some forty long: a tooth every ten of it, less
+    // those within a spacing of its ends, which are flat there and not laid.
+    expect(im.teeth!.length).toBeGreaterThanOrEqual(4 * 2);
+
+    // Each arc is still its nine points, from where it leaves one edge to
+    // where it joins the next: the teeth push its points off the curve
+    // between them, as an edge's teeth push its straight between them, and
+    // leave its ends where they were.
+    const arcsOf = (it: Resolved) => imagesOf(it)!.corners.filter((r): r is Point[] => r !== null && r.length > 1);
+
+    expect(arcsOf(toothed)).toHaveLength(4);
+    arcsOf(toothed).forEach((run, k) => {
+      expect(run).toHaveLength(9);
+      expect(run[0]).toEqual(arcsOf(plain)[k][0]);
+      expect(run[8]).toEqual(arcsOf(plain)[k][8]);
     });
+
+    // And every point of them, teeth and all, off the curve by no more than
+    // the amplitude, near enough: the plain arc's facets are a little off it.
+    const offCurve = (p: Point) => Math.min(...arcsOf(plain).flat().map(q => Math.hypot(p.x - q.x, p.y - q.y)));
+
+    [...im.teeth!, ...arcsOf(toothed).flat()].forEach(p => expect(offCurve(p)).toBeLessThan(3 + 10));
   });
 });
 

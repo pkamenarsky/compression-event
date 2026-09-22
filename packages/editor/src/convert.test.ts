@@ -168,7 +168,7 @@ function through(file: Old): EditorState {
 
     expect(w.effects.get(id)).toEqual({
       round: { precision: 0.5, tension: 0.5, chamfer: false },
-      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
+      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
     expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
   });

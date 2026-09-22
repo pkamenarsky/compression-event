@@ -874,9 +874,10 @@ function spanning(was: Resolved, now: Resolved): Spanned {
       // not on a stretch one of them has rounded away, where it would clamp
       // that arc short of the one the editor draws.
       const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
-      const at = lo + (hi - lo) * taste;
 
-      local[side][i] = between2(from, to, at);
+      local[side][i] = between2(lo, hi, taste);
+
+      const at = fraction(from, to, local[side][i]);
 
       // The depth it would have had if it were on the edge, because it is: a
       // corner is flat in the projection only where its own offset agrees with
@@ -939,30 +940,25 @@ function merged(a: readonly Vertex[], b: readonly Vertex[], points: readonly Ver
 }
 
 /**
- * Where along an edge of the polygon as drawn the straight part is, as
- * fractions of the source edge from one corner to the next: between the end
- * of the first corner's arc and the start of the second's. The whole of it
- * for a polygon that is not rounded.
- *
- * An eroded edge is parallel to its source edge, so a point on it is read off
- * the source line by where its foot falls.
+ * Where the straight part of an edge of the polygon as drawn runs, in its own
+ * frame: from the end of the first corner's arc to the start of the second's,
+ * where a round draws them before the erosion. The whole of it for a polygon
+ * that is not rounded, and for a corner that is not.
  */
-function straightOf(it: Resolved): (a: VertexId, b: VertexId, from: Point, to: Point) => [number, number] {
+function straightOf(it: Resolved): (a: VertexId, b: VertexId, from: Point, to: Point) => [Point, Point] {
   const im = it.effected ? imagesOf(it) : null;
+  const drawn = im?.drawn;
 
-  if (im === null) return () => [0, 1];
+  if (drawn === undefined) return (_a, _b, from, to) => [from, to];
 
   const index = new Map(it.corners.map((c, i) => [c.id, i]));
 
   return (a, b, from, to) => {
-    const first = im.corners[index.get(a)!], second = im.corners[index.get(b)!];
+    const first = drawn[index.get(a)!], second = drawn[index.get(b)!];
 
-    if (first === null || second === null) return [0, 1];
+    if (first === undefined || second === undefined || first.length === 0 || second.length === 0) return [from, to];
 
-    const lo = fraction(from, to, unplace(it.frame, first[first.length - 1]));
-    const hi = fraction(from, to, unplace(it.frame, second[0]));
-
-    return lo < hi ? [lo, hi] : [0, 1];
+    return [unplace(it.frame, first[first.length - 1]), unplace(it.frame, second[0])];
   };
 }
 
@@ -1198,7 +1194,7 @@ function moving(world: World, from: number): Moving[] {
         varying: it.depths !== null,
         scales: [scaleAt(world, it.id, far), scaleAt(world, it.id, far)] as [number, number],
         holders: holders(world, from, it.id),
-        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)]),
+        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)], [budding(it.local), it.local], [it.corners.map(() => 0), flatDepths(it)], null),
       };
     }
 
@@ -1215,7 +1211,7 @@ function moving(world: World, from: number): Moving[] {
       varying: was.depths !== null || it.depths !== null,
       scales: [scaleAt(world, it.id, near), scaleAt(world, it.id, far)] as [number, number],
       holders: holders(world, from, it.id),
-      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)]),
+      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)], over.local, over.depths, over.dead),
     };
   });
 
@@ -1241,7 +1237,7 @@ function moving(world: World, from: number): Moving[] {
       varying: was.depths !== null,
       scales: [scaleAt(world, id, near), scaleAt(world, id, near)] as [number, number],
       holders: holders(world, from, id),
-      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1]),
+      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1], [was.local, budding(was.local)], [flatDepths(was), was.corners.map(() => 0)], null),
     });
   }
 
@@ -1249,21 +1245,23 @@ function moving(world: World, from: number): Moving[] {
 }
 
 /** A thing's amounts where it is not there: none. */
-const NOTHING: Pick<State, 'bevel' | 'bevels'> = {
+const NOTHING: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'> = {
   bevel: 0,
   bevels: new Map(),
+  amplitude: 0,
+  amplitudes: new Map(),
 };
 
 /**
- * A polygon's round at both ends of a span, written over the same corners.
- * Nothing where it has none. Its deform is not here: that is in its corners
- * already, teeth and all, and the bake carries them as it carries any.
+ * A polygon's round at both ends of a span, written over the same corners,
+ * and the deform its arcs take. Nothing where it has none. The deform of its
+ * straights is not here: that is in its corners already, teeth and all, and
+ * the bake carries them as it carries any.
  *
  * A degenerate end is seeded, never collapsed. A bevel of nought at one end
  * and more at the other is `SEEDING` of the other there, so the arc turns,
  * however little, and the arrangement keeps its points unasked: the ring is
- * the same length at both ends. So is the polygon's own bevel, which what
- * the erosion made takes and no slot answers for.
+ * the same length at both ends.
  *
  * Nor does a corner's count of points change across a span, though its
  * segments do: each end's are what its bevel asks for, the still's at that
@@ -1271,6 +1269,15 @@ const NOTHING: Pick<State, 'bevel' | 'bevels'> = {
  * end has. At the coarser end the points it has over are on its facets, so
  * its outline is the still's; across the span the arc goes over from the one
  * to the other. See `Facets`.
+ *
+ * `local` and `depths` are the corners at each end, for a round held against
+ * the erosion: see `drawnBevels`.
+ *
+ * A corner `spanning` invented at an end sits, at that end, wherever its
+ * neighbours there put it — between two teeth as likely as not — and a drawn
+ * corner there would turn the arcs beside it towards it. So it is rounded
+ * apart there: its arc a sliver along the points either side, and the arcs
+ * around it laid as though it were not there. See `outlineOf`.
  */
 function effectsOver(
   world: World,
@@ -1279,9 +1286,16 @@ function effectsOver(
   ends: [State | null, State | null],
   /** What took each end's amounts into the world: see `segmentsOf`. */
   scales: [number, number],
+  local: [Ring, Ring],
+  depths: [number[], number[]],
+  dead: [boolean[], boolean[]] | null,
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
-  const two = ends.map((e, i) => effectedOf(world, id, corners, e ?? NOTHING, scales[i])) as [Effected | null, Effected | null];
+  const deadened = (e: Effected | null, end: 0 | 1): Effected | null => (e === null || dead === null || !dead[end].some(Boolean) ? e : {
+    ...e,
+    apart: dead[end],
+  });
+  const two = ([0, 1] as const).map(i => deadened(effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i]), i)) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
@@ -1290,9 +1304,8 @@ function effectsOver(
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
     facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
     bevels: other.bevels.map(() => 0),
-    own: other.own.n > 0 ? facetsOf(1, other.own.tension) : other.own,
-    bevel: 0,
     flat: other.flat,
+    deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0) },
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
@@ -1301,14 +1314,12 @@ function effectsOver(
   const ended = (e: Effected, at: number): Effected => ({
     ...e,
     facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
-    own: spanned(a.own, b.own, at),
   });
 
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
     bevels: e.bevels.map((r, i) => (e.facets[i].n > 0 ? seed(r, o.bevels[i]) : r)),
-    bevel: seed(e.bevel, o.bevel),
   });
 
   return {
@@ -1321,12 +1332,15 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
   if (t === 0) return e[0];
   if (t === 1) return e[1];
 
+  const [d0, d1] = [e[0].deform, e[1].deform];
+
   return {
     facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
-    own: { ...e[0].own, at: weighed(e[0].bevel, e[1].bevel, t) },
-    bevel: mix(e[0].bevel, e[1].bevel, t),
     flat: e[0].flat,
+    deform: d0 === null || d1 === null
+      ? d0 ?? d1
+      : { e: d0.e, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
   };
 }
 
@@ -1535,16 +1549,13 @@ function facetsFading(it: Omit<Resolved, 'shape'>): Fade[] {
 
   const faded = (f: Facets) => f.n > 0 && (f.from !== f.to || f.from < f.n);
 
-  if (!e.facets.some(faded) && !faded(e.own)) return [];
+  if (!e.facets.some(faded)) return [];
 
   const im = imagesOf(it);
 
   if (im === null) return [];
 
-  return [
-    ...im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i]))),
-    ...im.rest.flatMap(run => facetFades(run, e.own)),
-  ];
+  return im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i])));
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */

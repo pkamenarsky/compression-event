@@ -31,6 +31,7 @@ import {
   keeping,
   mitred,
   nextOf,
+  prevOf,
   onBoundary,
   simplify,
   sliced,
@@ -478,18 +479,19 @@ const roundedFold = remembered((slots: readonly Shape[], cut: Shape, round: read
 
 /**
  * The points of a polygon's shape that are deformed geometry, which a group's
- * round leaves square as the polygon's own does: its teeth, the corners at the
- * ends of its edges with teeth — whether or not its own deform clears them,
- * since that is of its own bevels — and what its erosion made of them.
+ * round leaves square: its teeth, along its edges and along its arcs, and the
+ * corners at the ends of its edges with teeth, which its own round is laid
+ * clear of but a group's is not — where its erosion put them.
  */
 function squareIn(it: Resolved): Point[] {
-  const flags = unrounded(it.corners, false);
-
-  if (!flags.some(Boolean)) return [];
-
+  const teeth = unrounded(it.corners);
+  const n = it.corners.length;
+  const flags = teeth.map((t, i) => t || teeth[nextOf(it.rings, n, i)] || teeth[prevOf(it.rings, n, i)]);
   const im = imagesOf(it);
 
-  if (im !== null) return [...flags.flatMap((f, i) => (f ? im.corners[i] ?? [] : [])), ...im.rest.filter((_r, k) => im.restSquare[k]).flat()];
+  if (im !== null) return [...flags.flatMap((f, i) => (f ? im.corners[i] ?? [] : [])), ...(im.teeth ?? [])];
+
+  if (!flags.some(Boolean)) return [];
 
   return flags.flatMap((f, i) => {
     const m = f ? mitred(it.source, it.rings, i, it.depths?.[i] ?? it.erosion) : null;
