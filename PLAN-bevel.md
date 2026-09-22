@@ -885,7 +885,9 @@ pattern along it.
   middle, which moves as the depth trims the ends. `patternRun` already takes
   an anchor outside the run (*2.3*), so this is the argument it is given, not
   new machinery. Along-the-edge, the anchor does not move with the depth at
-  all, so no tooth slides.
+  all, so no tooth slides. **On an arc this holds the anchor and not the
+  teeth** — see *3.7*, which is the one thing the experiment found that the
+  case above did not say.
 - **A corner the erosion made carries no name and no teeth.** The runs either
   side fade into it through `room`, as they fade into anything.
 
@@ -956,6 +958,64 @@ of each against its still.
 6. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
    regenerated once at the end. Commit.
 
+### 3.7 What the experiment found
+
+`packages/editor/src/experiments/deformlast.test.ts`, on a room with no two
+corners alike, against a tolerance of 0.05. Today is the shipped pipeline read
+through `resolveAt` and `imagesOf`, not a prototype — phase 1 made the shipped
+order the plan's own. Last is 3.1 with the pinch off. Each figure is the worst
+a point of the outline is from the lerp of the span's two ends, which is what
+the bake cuts a stretch finer for.
+
+| span | today | last |
+|---|---|---|
+| amplitude 0 → 3 | 1.34 | **0** |
+| amplitude 1 → 6 | 0.16 | **0** |
+| bevel and depth, no teeth | 0.89 | **0** |
+| bevel 4 → 14 | 2.00 | **0.71** |
+| all three | 2.04 | **0.38** |
+| depth 0 → 20 | 1.98 | **1.36** |
+| depth 0 → 5 | **0.25** | 0.56 |
+| a corner moving 30 | **0.44** | 0.60 |
+
+- **A span that moves the amplitude is exact**, and so is one with no teeth.
+  These are the two the case was made on, and they come out as predicted: the
+  apex is a point on an offset line plus the amplitude along a normal that does
+  not turn, so there is no mitre and nothing to curve.
+- **Every mixed span is better**, by two to five times.
+- **The one thing not better is a tooth on an arc**, which is every remaining
+  worst point. It is not the prototype: drawn at 2, 4, 8, 16 and 32 segments an
+  arc the figure converges on 1.19, so it is the geometry. The reason is that a
+  tooth marched out from the arc's middle by the spacing sits at an angle of
+  its length over the radius, and the erosion is what moves the radius — so the
+  angle is not linear in the depth even though the arc's points are.
+- **Anchoring an arc's teeth by `u` instead** — laid on the arc as drawn and
+  the fractions carried over, which does hold the angle — was measured and is
+  worse everywhere (0.93, 2.04, 1.18 against 0.56, 1.36, 0.71). Holding the
+  angle costs more than it saves, because the spacing then drifts with the
+  radius. So the teeth are marched by length, and the arc keeps a term the
+  straights do not.
+- **Held does not rescue it.** Drawn at `bevel + depth`, a depth span goes from
+  1.36 to 2.28. Held is still wanted for what it is for — an arc eroded past
+  its radius — but it is not the answer here.
+
+**Points carried, at amplitude 6:**
+
+| depth | 0 | 6 | 20 | 40 |
+|---|---|---|---|---|
+| today | 34 | 31 | 16 | 1 |
+| last | 38 | 38 | 38 | 42 |
+
+Which is *3.2* in one table: eroded, today's outline thins out and at the end
+is gone, and laid last it never does. This is the cost the pinch buys back, and
+the reason it is on by default.
+
+**So the arc tooth is the open piece of phase 3**, and it is a smaller one than
+what it replaces: today's arc teeth carry `CRAMMED`, `ArcTeeth.seen` and the
+drawn-against-seen handling to get where they are, and come out worse on five
+spans of seven. Whether the residual is worth chasing is a question for when
+the pipeline is moved and there is a real bake to count.
+
 ## Open questions
 
 - **Seams at the middle of an arc** between two differently deformed edges, or
@@ -966,6 +1026,10 @@ of each against its still.
   group nested in another names its straights but not its curves (*2.11*).
   Phase 3 needs the naming for everything, so this becomes work rather than a
   known gap.
+- **The arc tooth's angle** (*3.7*): marched by length it is not linear in the
+  depth, and by `u` it is worse. There may be a third way — an anchor that
+  holds the angle while the spacing stays a world length — or it may be a term
+  to pay, as today's teeth pay one.
 - **What the pinch's law should be exactly** — the depth at which a tooth of a
   given amplitude, spacing and angle would have pinched is arithmetic, but
   whether the fade should reach nought there or short of it is a look
