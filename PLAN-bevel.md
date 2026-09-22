@@ -1,25 +1,40 @@
-# Plan: bevel before deform, erosion last
+# Plan: bevel first, erosion next, deform last
 
-Today a thing goes **deform → erode → round**: its edges get teeth as though
-drawn by hand, the teeth are eroded with everything else, and the round is
-laid on what the erosion left. So a round runs into the teeth, and everything
-between the two — `clear`, `unrounded`, the `flat` flags, `squareIn`,
-`restSquare` — exists to keep them out of each other's way.
+Before this plan a thing went **deform → erode → round**: its edges got teeth
+as though drawn by hand, the teeth were eroded with everything else, and the
+round was laid on what the erosion left. So a round ran into the teeth, and
+everything between the two — `clear`, `unrounded`, the `flat` flags,
+`squareIn`, `restSquare` — existed to keep them out of each other's way.
 
-This plan turns it round to **round → deform → erode**, at every level:
+Phases 1 and 2 turned it to **round → deform → erode**, and are done. Phase 3
+takes the last step, to **round → erode → deform**: the deform moves past the
+erosion and is laid last, on the outline that comes out. That is the order this
+plan now commits to, and *Phase 3* says why — briefly, that every jump fought
+here has been a classification flipping, and laid last there is nothing left to
+classify.
 
-- a polygon's corners are rounded as though drawn, its deform is laid along
-  the rounded outline — the straights and the curves — and the erosion
-  offsets the lot;
+So, at every level:
+
+- a polygon's corners are rounded as though drawn, the erosion offsets that,
+  and the deform lays its teeth along what the offset leaves — straights and
+  curves alike, one kind of run;
 - a sealed group does the same to the fold of its members: rounds the union's
-  corners, lays its deform along the union's outline, and then offsets it by
-  its own depth, which is what its depth already means;
-- a member's deform under a group that rounds waits for the group's round, so
-  its teeth run along the group's bevel, crossings included.
+  corners, offsets by its own depth, which is what its depth already means,
+  and lays one pattern along the result;
+- a member's deform is laid there too, with everything else. There is nothing
+  to push down and nothing to delay.
 
 Teeth stay corners. They go through the arrangement, change topology, and get
 their vertical lines exactly as they do now — detecting slope at runtime is not
 an option. Nothing about the playback design changes.
+
+**What phases 1 and 2 keep.** Almost all of it. The round drawn in the
+projection (*1.1*), `held`, the arcs and their ids, the fold at depth nought,
+and the naming of the union's straights and arcs (*2.9*) are what phase 3
+stands on — a run still has to know which source edge it belongs to, to find
+its anchor and its amplitude, and that is the same question whether the deform
+runs before the erosion or after it. What phase 3 takes out is listed in
+*3.4*.
 
 ## What changes in the look
 
@@ -27,8 +42,11 @@ an option. Nothing about the playback design changes.
   tightens and goes sharp once the depth passes its radius; a concave one
   opens out. Today the bevel is the same wherever it is. A round's new `held`
   option keeps it so: see *1.1*.
-- **Everything erodes.** Teeth on arcs as well as on straights; their mitres
-  lengthen and they pinch off as walls grow, as straight teeth already do.
+- **Everything erodes** — through phase 2. Teeth on arcs as well as on
+  straights; their mitres lengthen and they pinch off as walls grow, as
+  straight teeth already do. Phase 3 changes this: teeth are laid on the
+  eroded outline and so are not eroded themselves, and the pinch comes back
+  as a law of its own rather than as something the offset does (*3.2*).
 - **A corner the erosion makes is square.** Where two walls grow into each
   other, or a tooth pinches off, nothing rounds the result. Today it takes
   `rest`.
@@ -689,12 +707,13 @@ standing solid however short it is; a union edge cut in two keeping its teeth.
 
 - **A reflex arc under an erosion deeper than its bevel**, which is where the
   fourteen and the two come from: see the `CRAMMED` table below. Everything
-  before that depth is clean.
+  before that depth is clean. Phase 3 is what this became.
 - **A run splitting or merging** re-anchors the piece that loses the naming
   edge, at an event the arrangement already has.
 - **A scope's own arcs have no names**, its corners having no ids, so a group
   nested in another names its straights but not its curves.
-- **Phase 3**, which the naming was most of.
+- **A member's deform on the group's outline**, which the naming was most of,
+  and which phase 3 gets for nothing.
 
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
@@ -714,12 +733,11 @@ neighbouring instants over five spans:
 |---|---|---|---|---|---|
 | worst step | 8.68 | 3.27 | **2.69** | 10.27 | 34.41 |
 
-So four; one is the behaviour before the reflex case was honoured. Going
-further here is not another constant: it would be to lay a deeply eroded
-reflex arc's teeth on the arc as it is *seen* — the fan the erosion makes —
-rather than cramming them onto the sliver that is drawn, which is a deform
-after the erosion for that one case and cuts against the order phase 2 is
-built on.
+So four, and one is the behaviour before the reflex case was honoured. There
+is no better constant to find here: going further would be to lay the teeth on
+the arc as it is *seen* — the fan the erosion makes — rather than cramming
+them onto the sliver that is drawn, and that is a deform after the erosion. So
+this is where phase 3 came from, and `CRAMMED` goes when phase 3 lands.
 
 **Where a straight has no name.** Not at a crossing: a crossing is a corner,
 and every piece of the union's boundary is a piece of some member's edge. What
@@ -735,41 +753,12 @@ pattern, with no event to hide it. So the run takes the lowest-ranked member
 edge along it rather than the one under its middle: rank is already what
 settles a shared edge in the union, and it changes only when the run does.
 
-## Phase 3: a member's deform under a group's bevel
+## Phase 3: the deform moves past the erosion
 
-A member whose group rounds keeps its deform back: it resolves rounded and
-eroded by its own depth, without teeth, and hands the group its deform with
-the edges it applies to. The group lays it in *2.2* step 3, on the union edges
-those member edges became, along the group's arcs at the corners they end at —
-a member's own corner or a crossing with another member's edge, which at that
-point is a corner like any other.
-
-- **Which deform on a union edge**: the member's where it has one, else the
-  group's. At an arc between two edges with different deforms, each side's
-  teeth shrink to nothing at the arc's middle.
-- **Where they come from**: a union edge lies on one member's eroded edge, and
-  that is a source edge, found by which line it lies on — not by matching
-  points. The member carries its eroded edges' lines and ids up with its
-  shape.
-- **What it costs**: the member's teeth are eroded by the group's depth only,
-  not by the member's own. Where a member has no depth of its own it is
-  nothing; where it has one, its teeth are sharper than its walls.
-- Only under a group with a round of its own. Under one without, the member's
-  deform stays in the member, as in phase 1.
-
-Tests: a deformed member under a rounded group has teeth along the group's arc
-at its own corner and at a crossing; one under an unrounded group is exactly
-as it is alone. Commit.
-
-## The third order: round, erode, deform
-
-Phase 2 is built on round, deform, erode. The other order worth naming is
-round, *erode*, deform — the round drawn on the source as it is now, the
-erosion a mitred offset over it, and the teeth laid last, on the outline that
-comes out. It is what the `CRAMMED` note above reaches for and then puts down
-as cutting against phase 2's order, and it is worth writing out, because what
-it cuts against is smaller than it looks and what it buys is most of the
-machinery.
+The round stays drawn on the source as phase 1 leaves it, the erosion stays a
+mitred offset over it, and the teeth move to the end: laid on the outline that
+comes out. This is the order the plan takes, and what follows is the case for
+it, then the work.
 
 **Why it ends the jumps.** Every jump this plan has fought is a
 *classification* flipping: straight against arc, `unrounded`, `clear`, `flat`,
@@ -866,31 +855,118 @@ margin. It costs a slightly looser neighbourhood. Worth writing down because
 nothing fails loudly if it is missed: an undersized box drops a polygon from a
 neighbour's neighbourhood and the events between them are never looked for.
 
-**Sealed groups and phase 3 fall out.** The order is members → fold → group
-round → group erosion → group deform. The group's teeth are laid on the final
-union outline, arcs included: no seams, no teeth on the joins inside the group.
-And phase 3 stops being a phase. Its whole difficulty is that a member's deform
-has to be delayed past the group's round and then laid on union edges found by
-which line they lie on; with the deform last for everything, member and group
-alike, there is nothing to delay and nothing to push down. What survives of 2.9
-is naming — which source edge a run belongs to, so the anchor and the amplitude
-can be found — and that is needed either way.
+**And a member's deform stops being a problem.** The order is members → fold →
+group round → group erosion → group deform, and the member's teeth are laid in
+that last step with everything else. What made this hard before was that a
+member's deform had to be held back past the group's round and then found again
+on the union edges its own edges became; with the deform last for everything,
+member and group alike, there is nothing to hold back and nothing to push down.
+The member's teeth are eroded by no depth rather than by the group's own — a
+milder version of the trade this was always going to make. What survives of *2.9* is the
+naming — which source edge a run belongs to, so its anchor and its amplitude
+can be found — and that is wanted either way.
 
-**So: worth taking.** It is phase 2 plus one move, and the move pays for
-itself. Against B it gives up pinch-off as something the offset does for free
-and takes it back as a law of its own; it gets `CRAMMED`, `ArcTeeth.seen`, the
-whole of phase 3, and a bake that is exact where the present one curves.
+### 3.1 The deform runs on the eroded outline
+
+`project` draws the outline from the standing corners and erodes it. The deform
+moves to after that: `outlineOf` stops laying teeth, `erodedCorners` runs on a
+round with no teeth in it, and a new step walks what comes out and lays the
+pattern along it.
+
+- **A run is a run.** A straight and an arc are the same thing to
+  `patternRun`; the split between them, and everything that told them apart,
+  goes. An arc offset by the depth is a concentric arc, so its points come
+  through the erosion as its points.
+- **Each run is named** — which source edge or which arc it came from — by
+  *2.9*'s naming, extended to cover a polygon's own edges as it covers a
+  union's. That is what says which deform applies, what its amplitude is, and
+  where its anchor sits.
+- **The anchor is the source middle, pushed out.** Not the eroded run's own
+  middle, which moves as the depth trims the ends. `patternRun` already takes
+  an anchor outside the run (*2.3*), so this is the argument it is given, not
+  new machinery. Along-the-edge, the anchor does not move with the depth at
+  all, so no tooth slides.
+- **A corner the erosion made carries no name and no teeth.** The runs either
+  side fade into it through `room`, as they fade into anything.
+
+### 3.2 The pinch, reproduced
+
+Teeth laid after the erosion are not eroded, so nothing makes a tooth vanish as
+the walls thicken. Nothing breaks without it (see above), but the look and the
+vertex count want it, so the amplitude is faded by the law the pinch already
+follows: a function of the amplitude, the spacing, the depth and the tooth's
+own angle, all local and all in hand. No query about the wall opposite.
+
+**On by default**, beside `held`, and off is a tick. Off, a deeply eroded
+deformed wall keeps its teeth at full height and its full vertex count; on, it
+smooths out the way it does now.
+
+It costs some of the exactness above — the amplitude regains a dependence on the
+depth, so a span moving both is a product of two lerps — but it is a smooth
+scalar on the height, and the apex still does not walk a mitre. The measured
+split absorbs it.
+
+### 3.3 The bake
+
+- **`reach` wants the amplitude**, since the teeth no longer ride inside
+  `placed`: into `grown`'s `out` or into `expandBox`'s margin. See the note
+  above for why this is the one thing that fails quietly.
+- **`effectsOver` keeps lerping the amounts.** The deform's spacing and
+  amplitude are carried across a span as they are now; what changes is when
+  they are read, not how.
+- **`straightOf` and the seeding** are simpler: a corner the bake invents sits
+  on the eroded outline, which has no teeth on it when the corners are made.
+  `Effected.apart` may not be needed at all — worth checking before removing.
+- **Re-measure.** `experiments/bevel.test.ts` and the tables in *Why it bakes*
+  and *Fading and groups* were taken against round → deform → erode. They are
+  the baseline to beat, not the record of what is there.
+
+### 3.4 What goes
+
+`CRAMMED` and `ArcTeeth.seen`, with the whole of the drawn-arc-against-seen-arc
+handling and the reflex case of *2.11*. `ArcTeeth` itself, and `arcRun`'s
+merging of a tooth with a facet. The curvature limit of *Phase 1*. Whatever is
+left of `squareIn`, `restSquare` and the `flat` flags. `effectedSquare` and
+`imaged`, the group no longer needing to leave its members' teeth square.
+
+What stays: `held`, the arcs and their ids, the fold at depth nought, the
+naming of *2.9*, and `patternRun` unchanged but for the arguments it is given.
+
+### 3.5 Tests
+
+A polygon rounded, eroded and deformed has teeth of one size along straights
+and arcs alike, with none on a corner the erosion made. A tooth stays put along
+its edge as the depth runs, and the ends fade in and out. A reflex arc under an
+erosion deeper than its bevel has ordinary teeth — the case *2.11* leaves at a
+worst step of 2.69. A sealed group's outline is a polygon's: one pattern, no
+seam where two members meet, teeth on the arcs. A deformed member on the
+group's outline has teeth at its own corners and at a crossing. With the pinch
+on, a wall eroded past the teeth is smooth; off, it is not. And the baked span
+of each against its still.
+
+### 3.6 Order of work
+
+1. The naming of *2.9* extended to a polygon's own edges and arcs, which
+   nothing else can start without.
+2. The deform moved after the erosion for a polygon, with the pinch off.
+   Re-measure against the tables above. Commit.
+3. The pinch, on by default. Commit.
+4. `reach`, and the bake notes of *3.3*. Commit.
+5. The group, which by then should be the same code path. Commit.
+6. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
+   regenerated once at the end. Commit.
 
 ## Open questions
 
 - **Seams at the middle of an arc** between two differently deformed edges, or
   one deform carried round the corner, which gives up the middle anchor on one
-  side.
-- **Whether to take the third order** before phase 3 is built, since it
-  deletes phase 3 rather than finishing it.
-- **Whether the analytic pinch is wanted at all** under the third order. It
-  buys no correctness — it is the look, and an outline that thins out at depth
-  instead of staying busy. Cheap enough to be a knob rather than a decision.
-- **Phase 3's trade-off**: teeth eroded by the group's depth only. The other
-  choice is to leave members' deforms inside them and the group's round to
-  leave their teeth square, which is phase 2 without phase 3.
+  side. Phase 3 does not answer this; it only makes the arc an ordinary run, so
+  the question is the same one a straight already asks.
+- **A scope's own arcs still have no names**, its corners having no ids, so a
+  group nested in another names its straights but not its curves (*2.11*).
+  Phase 3 needs the naming for everything, so this becomes work rather than a
+  known gap.
+- **What the pinch's law should be exactly** — the depth at which a tooth of a
+  given amplitude, spacing and angle would have pinched is arithmetic, but
+  whether the fade should reach nought there or short of it is a look
+  question, to be set once there is something to look at.
