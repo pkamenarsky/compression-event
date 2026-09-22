@@ -969,8 +969,23 @@ of each against its still.
 2. **Done in part** — `foldShaped` now takes an amplitude per name, since a
    polygon's is its edge's own, and P7 confirms the call works on a polygon's
    eroded outline in shipped code: one ring, untouched at nought amplitude,
-   toothed at four, at every depth. What is left is that `deformedAt` stops
-   making teeth into corners and `imagedBy` makes the call. This is the whole of it, and where it will be won
+   toothed at four, at every depth.
+
+   **The rest is written, on `phase3-deform-last`.** `deformedAt` no longer
+   subdivides, and `imagedBy` rounds the drawn corners, erodes that, and hands
+   what comes out to `foldShaped` with the lines and arcs named from the
+   inside — the same names `namesOf` reports, built where nothing has to
+   resolve to ask. `ArcDeform` carries the corner ids for it, a line being
+   named by the corner it leaves, and an `Effected` is now kept for a deform
+   with no round, which before had nowhere to be because the teeth were
+   already corners.
+
+   1063 of 1072 pass. The five that fail are the old contract written down,
+   not regressions: four ask `edgeRun` to walk a polygon's corners through its
+   teeth and read `imagesOf().teeth`, and one asks a member to publish its
+   teeth as square geometry for its group's round — all of it what *3.4*
+   takes out. Rewriting them against the shape rather than the corners is the
+   next piece, and the branch stays off master until they are. This is the whole of it, and where it will be won
    or lost: `Resolved.corners` becomes drawn corners only, which is what the
    eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
    teeth" and go; `merged` in the bake says so itself — "without teeth that is
