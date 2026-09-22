@@ -869,18 +869,34 @@ can be found — and that is wanted either way.
 ### 3.1 The deform runs on the eroded outline
 
 `project` draws the outline from the standing corners and erodes it. The deform
-moves to after that: `outlineOf` stops laying teeth, `erodedCorners` runs on a
-round with no teeth in it, and a new step walks what comes out and lays the
-pattern along it.
+moves to after that: `outlineOf` stops laying teeth, the erosion runs on a
+round with no teeth in it, and the pattern is laid along what comes out.
+
+**The step is `foldShaped`, and it is already written.** What phase 2 built for
+a group is exactly this: take a shape that came out of an arrangement, clean it
+to its corners, find each maximal straight and name it by the line along it
+with the anchor that line's middle gives, find the runs that are published arcs,
+and lay the teeth. It rounds and erodes as well, and both are switched off by
+their own arguments — `drawnAt` returns nought where the bevel or the facets
+are, and `depth === 0` short-circuits the erosion and the imaging both. So a
+polygon's third step is
+
+```
+foldShaped(eroded, [], keep, lines, arcs, SQUARE, 0, held, deform, 0)
+```
+
+with `lines` and `arcs` from `namesOf(at)`, which already reports them *after*
+the erosion — "a line is where the edge is, not where it was drawn" — so a
+polygon needs no `movedIn` at all. The two pipelines converge here rather than
+at the end: what *3.6* had as step 5 arrives with step 2.
 
 - **A run is a run.** A straight and an arc are the same thing to
   `patternRun`; the split between them, and everything that told them apart,
   goes. An arc offset by the depth is a concentric arc, so its points come
   through the erosion as its points.
 - **Each run is named** — which source edge or which arc it came from — by
-  *2.9*'s naming, extended to cover a polygon's own edges as it covers a
-  union's. That is what says which deform applies, what its amplitude is, and
-  where its anchor sits.
+  *2.9*'s naming. `namesOf` already answers this for a polygon; what it has
+  not had is a caller.
 - **The anchor is the source middle, pushed out.** Not the eroded run's own
   middle, which moves as the depth trims the ends. `patternRun` already takes
   an anchor outside the run (*2.3*), so this is the argument it is given, not
@@ -948,14 +964,23 @@ of each against its still.
 
 ### 3.6 Order of work
 
-1. The naming of *2.9* extended to a polygon's own edges and arcs, which
-   nothing else can start without.
-2. The deform moved after the erosion for a polygon, with the pinch off.
-   Re-measure against the tables above. Commit.
-3. The pinch, on by default. Commit.
-4. `reach`, and the bake notes of *3.3*. Commit.
-5. The group, which by then should be the same code path. Commit.
-6. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
+1. **Done** — the experiment of *3.7*, which says what this is worth before
+   the pipeline is disturbed.
+2. `deformedAt` stops making teeth into corners, and `imagedBy` gains the
+   `foldShaped` call above. This is the whole of it, and where it will be won
+   or lost: `Resolved.corners` becomes drawn corners only, which is what the
+   eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
+   teeth" and go; `merged` in the bake says so itself — "without teeth that is
+   the polygon's list, filtered". Commit.
+3. The bake meets the teeth in the projection rather than in the corners. A
+   tooth that one end of a span has and the other does not is `room` ramping
+   to nought, as it is for the fold (*2.9* piece 5), not a corner to seed.
+   Commit.
+4. `reach`, and the rest of the bake notes of *3.3*. Commit.
+5. The pinch of *3.2*, on by default. Commit.
+6. The group, which by then is the same call with a depth and a bevel in it.
+   Commit.
+7. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
    regenerated once at the end. Commit.
 
 ### 3.7 What the experiment found
