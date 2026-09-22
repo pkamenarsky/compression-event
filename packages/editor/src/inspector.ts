@@ -334,7 +334,9 @@ function body(
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
       // A length, shown as a percentage of the thing's size so that the
-      // slider has somewhere to stop: see `sizeOf`.
+      // slider has somewhere to stop: see `sizeOf`. Along the slider by its
+      // logarithm, since going from 1% to 2% halves the teeth and going from
+      // 90% to 100% hardly shows.
       field('spacing %', slider(
         () => (m.size() > 0 ? Math.round(m.spacing() / m.size() * 1000) / 10 : m.spacing()),
         1,
@@ -342,6 +344,7 @@ function body(
         (v, further) => changed('deform', { spacing: m.size() > 0 ? v / 100 * m.size() : v }, further),
         Infinity,
         'any',
+        true,
       )),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
@@ -445,7 +448,13 @@ function number(value: Value<number>, min: number, onchange: (v: number) => void
  * The slider writes on every step, so the level answers while it moves, and
  * one drag is still one entry in the history: every step after the first says
  * it is `further`. `reach` is how far the box goes past the slider's `max`.
+ *
+ * With `log`, the slider runs along the value's logarithm, so an equal drag is
+ * an equal ratio. The box still says the value itself.
  */
+/** How many steps a logarithmic slider has from end to end. */
+const LOG_STEPS = 1000;
+
 function slider(
   value: Value<number>,
   min: number,
@@ -453,19 +462,24 @@ function slider(
   onchange: (v: number, further: boolean) => void,
   reach = max,
   step = '1',
+  log = false,
 ): VNode {
   let moving = false;
+
+  // Where along the slider a value is, and back, in `LOG_STEPS` steps.
+  const at = (v: number) => (log ? Math.log(v / min) / Math.log(max / min) * LOG_STEPS : v);
+  const of = (x: number) => (log ? min * (max / min) ** (x / LOG_STEPS) : x);
 
   return div({ style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
     input({
       type: 'range',
-      min: String(min),
-      max: String(max),
-      step: step === 'any' ? String((max - min) / 100) : step,
-      value: () => String(Math.min(max, value())),
+      min: String(log ? 0 : min),
+      max: String(log ? LOG_STEPS : max),
+      step: log ? '1' : step === 'any' ? String((max - min) / 100) : step,
+      value: () => String(at(Math.max(min, Math.min(max, value())))),
       style: { flex: '1', minWidth: '0', margin: '0' },
       oninput: (e: Event) => {
-        onchange((e.target as HTMLInputElement).valueAsNumber, moving);
+        onchange(of((e.target as HTMLInputElement).valueAsNumber), moving);
         moving = true;
       },
       onchange: (e: Event) => {

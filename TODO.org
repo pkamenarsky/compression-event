@@ -1,9 +1,8 @@
 * Low hanging fruit
-** TODO deform spacing should be logarithmic - currently almost no change at the right end, a lot of change at the left end
-** TODO inspector view
+** TODO inspector view - show all transforms + effects in the same pane
 *** should always reflect the current key's tranform
 *** if key transform is deleted, inspector view should be updated
-**** use kontinuum reactivity
+**** use kontinuum reactivity for all of that
 
 * Before the final level file format
 ** TODO level history
@@ -42,8 +41,6 @@
 **** snap to grid
 **** autobake
 ** Look & layout
-*** TODO inspector view - all transforms + effects in one pane
-**** polygon masks (level + void{solid} etc)
 *** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
@@ -78,6 +75,7 @@
 ** TODO maybe we don't need the fade
 ** TODO artefact: "DON'T LOOK BACK"
 ** TODO artefact: shrink walls for 5sec
+** TODO recursive levels? somehow?
 
 * Later
 ** sound: dinosaurs? https://www.youtube.com/watch?v=Fqf8EYdCehw
