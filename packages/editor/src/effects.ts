@@ -19,7 +19,7 @@
 
 import { nextOf } from './geometry';
 import { Amount, AmountKind, amountedBy, nextKey } from './rig';
-import { Resolved, keyRigOf, optionOf, withKeyRig } from './scene';
+import { Resolved, keyRigOf, optionOf, polygonsIn, resolveAt, withKeyRig } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
@@ -47,6 +47,39 @@ export function withEffect<N extends EffectName>(world: World, id: Id, name: N, 
   effects.set(id, { ...world.effects.get(id), [name]: options });
 
   return { ...world, effects };
+}
+
+/** A deform's spacing, out of the larger side of the box round what it is
+ * first put on: see `sizedFor`. */
+const FIRST_SPACING = 0.2;
+
+/**
+ * `options` with the deform's spacing made to fit `ids` as they stand at `v`:
+ * a fifth of the larger side of the box round all of them, whole. What a
+ * deform is given the first time it goes on something, so that its teeth
+ * come out a size the thing can carry however big it is — the spacing last
+ * used was chosen for something else. Left alone where nothing stands.
+ */
+export function sizedFor(world: World, v: KeyframeId, ids: readonly Id[], options: Options): Options {
+  const reached = new Set(polygonsIn(world, ids));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+
+  for (const it of resolveAt(world, v)) {
+    if (!reached.has(it.id)) continue;
+
+    for (const p of it.source) {
+      x0 = Math.min(x0, p.x);
+      y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x);
+      y1 = Math.max(y1, p.y);
+    }
+  }
+
+  if (!(x1 > x0 || y1 > y0)) return options;
+
+  const spacing = Math.max(1, Math.round(FIRST_SPACING * Math.max(x1 - x0, y1 - y0)));
+
+  return { ...options, deform: { ...options.deform, spacing } };
 }
 
 /**

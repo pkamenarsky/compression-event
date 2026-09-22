@@ -105,6 +105,7 @@ import {
   edgesWithinBox,
   endsOf,
   cornersSwitched,
+  sizedFor,
   switchedOn,
   withEffect,
 } from '../effects';
@@ -689,7 +690,8 @@ export function worldCanvas(
       // that has never had it the options last used. From there it works
       // over that.
       const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
-      const on = kind === undefined ? was : switchedOn(was, targets, kind, remembered());
+      const first = kind === 'deform' ? sizedFor(was, v, targets, remembered()) : remembered();
+      const on = kind === undefined ? was : switchedOn(was, targets, kind, first);
 
       // Corners left square on their own are rounded again by a round on them.
       const base = kind === 'round' && corners.size > 0 ? cornersSwitched(on, [...corners], true, remembered()) : on;

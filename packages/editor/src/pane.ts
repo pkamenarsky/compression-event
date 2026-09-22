@@ -30,6 +30,7 @@ import {
   cornersSwitched,
   ownRound,
   switchedOff,
+  sizedFor,
   switchedOn,
   withEffect,
 } from './effects';
@@ -185,7 +186,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   /** Switched on for every one of them, or off where every one had it on. */
   const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
-    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, s.remembered);
+    const first = name === 'deform' ? sizedFor(s.world, s.keyframe, ids, s.remembered) : s.remembered;
+    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, first);
 
     return marked({ ...s, world }, s.world);
   });
