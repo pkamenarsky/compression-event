@@ -254,8 +254,9 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
       // A seed is the noise's and the jitter's.
       show(() => m.pattern() === 'noise' || m.jitter() > 0, fragment(field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)))),
       // Teeth stopping short of the corners' rounds rather than running into
-      // them. A group's round is of its union, which has no corners to keep.
-      show(m.polygons, fragment(field('clear corners', tick(m.clear, v => changed('deform', { clear: v }))))),
+      // them. A group's round is of its union, which has no corners to keep,
+      // so with no polygon in the pane it is there but cannot be ticked.
+      field('clear corners', tick(m.clear, v => changed('deform', { clear: v }), m.polygons)),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
@@ -392,10 +393,11 @@ function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: 
   }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
 }
 
-function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
+function tick(value: Value<boolean>, onchange: (v: boolean) => void, enabled: Value<boolean> = () => true): VNode {
   return input({
     type: 'checkbox',
     checked: value,
+    disabled: () => !enabled(),
     style: { justifySelf: 'start' },
     onchange: (e: Event) => {
       const el = e.target as HTMLInputElement;
