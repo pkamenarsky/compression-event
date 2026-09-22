@@ -808,7 +808,9 @@ export function worldCanvas(
 
             options = each[0]?.[1] ?? null;
 
-            if (kind !== undefined) setLocal({ ...local(), reading: { at: at(e), label: amountLabel(kind, by, options) } });
+            const label = kind !== undefined ? amountLabel(kind, by, options) : transformLabel(code, from, to, pivot, factor);
+
+            if (label !== null) setLocal({ ...local(), reading: { at: at(e), label } });
 
             // Its own point and its own facing, off the same reading of the
             // drag: a turn about itself is a turn of the direction alone, which
@@ -2692,6 +2694,29 @@ function amountLabel(kind: AmountKind, by: number, o: Spacing | null): string {
   if (o !== null) return `amplitude ${n} · every ${Math.round(o.spacing * 10) / 10}`;
 
   return kind === 'erode' ? `depth ${n}` : kind === 'round' ? `bevel ${n}` : `${kind} ${n}`;
+}
+
+/** What a transform has come to, for the same label: how far, how many
+ * degrees, how many times. Null for a code that is not a transform. */
+function transformLabel(code: string, from: Point, to: Point, pivot: Point, factor: Point): string | null {
+  const tenths = (n: number) => `${Math.round(n * 10) / 10}`;
+  const times = (n: number) => `×${Math.round(n * 100) / 100}`;
+
+  if (code === 'KeyT') return `${tenths(to.x - from.x)}, ${tenths(to.y - from.y)}`;
+
+  if (code === 'KeyR') {
+    // Round to the nearest turn either way rather than past a half, so that a
+    // turn of 350° reads as the -10° it looks like.
+    const a = Math.atan2(Math.sin(about(pivot, from, to)), Math.cos(about(pivot, from, to)));
+
+    return `${tenths(a * 180 / Math.PI)}°`;
+  }
+
+  if (code === 'KeyS') return factor.x === factor.y ? times(factor.x) : `${times(factor.x)} ${times(factor.y)}`;
+  if (code === 'KeyX') return times(factor.x);
+  if (code === 'KeyY') return times(factor.y);
+
+  return null;
 }
 
 /** The gestures that write an amount rather than move anything, and the kind

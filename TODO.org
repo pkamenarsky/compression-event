@@ -1,7 +1,5 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO write rotation degrees / scale factor / move distance while transforming
-   the amount gestures already set `reading` in the same move handler (canvas/index.ts:811); add labels for T/R/S/X/Y
 ** TODO spacing in deform a slider; everything in the deform panel -> sliders
    give the deform jitter a higher range
    the fields are all `number(...)` in editor/src/pane.ts:300; add a range input next to or instead of it
@@ -43,7 +41,6 @@
 ** Look & layout
 *** TODO inspector view - all transforms + effects in one pane
 **** polygon masks (level + void{solid} etc)
-*** TODO write rotation degrees when rotating (and scale factor, move distance); only amounts have a label now
 *** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)

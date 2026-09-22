@@ -66,7 +66,7 @@ export interface Local {
    * in the document's selection: a path is not part of the level, and nothing
    * else in the editor has anything to say about one. */
   onPath: OnPath | null
-  /** What an amount gesture has come to, said by the cursor: the reading of
+  /** What a transform or an amount gesture has come to, said by the cursor: the reading of
    * an axis with nothing on it to read against. */
   reading: { at: Point, label: string } | null
   /**
