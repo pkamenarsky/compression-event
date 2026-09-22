@@ -90,15 +90,20 @@ function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: nu
       return { x: dy / l, y: -dx / l };
     };
 
+    // `teeth` below nought lays the arc as any other run: `patternRun` along
+    // its length, from its middle, each tooth where its length puts it.
+    const spaced = teeth < 0 ? spacedOn(at, t, i, arcAmplitude) : null;
+
     // The facets' turns and the teeth, merged by `u`: a turn where a tooth is
     // is the tooth, or the two are one point whenever the tooth is flat.
-    const toothU = Array.from({ length: teeth }, (_x, j) => (j + 1) / (teeth + 1));
-    const us: { u: number, j: number | null }[] = [
-      ...spread(a.x * b.x + a.y * b.y, N, TENSION).filter(u => !toothU.some(w => Math.abs(w - u) < 1e-6)).map(u => ({ u, j: null })),
-      ...Array.from({ length: teeth }, (_x, j) => ({ u: (j + 1) / (teeth + 1), j })),
+    const toothU = spaced?.map(x => x.u) ?? Array.from({ length: teeth }, (_x, j) => (j + 1) / (teeth + 1));
+    const toothJ = spaced?.map(x => x.j) ?? toothU.map((_u, j) => j);
+    const us: { u: number, j: number | null, k: number }[] = [
+      ...spread(a.x * b.x + a.y * b.y, N, TENSION).filter(u => !toothU.some(w => Math.abs(w - u) < 1e-6)).map(u => ({ u, j: null, k: -1 })),
+      ...toothU.map((u, k) => ({ u, j: toothJ[k], k })),
     ].sort((p, q) => p.u - q.u);
 
-    for (const { u, j } of us) {
+    for (const { u, j, k } of us) {
       const p = at(u);
 
       if (j === null) {
@@ -109,7 +114,7 @@ function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: nu
       }
 
       const room = Math.min(1, 2 * Math.min(u, 1 - u) * (teeth + 1) / 2);
-      const h = arcAmplitude * room * patterned(E, ~i, j);
+      const h = spaced !== null ? spaced[k].across : arcAmplitude * room * patterned(E, ~i, j);
       const m = normal(u);
 
       points.push({ x: p.x + m.x * h, y: p.y + m.y * h });
@@ -132,6 +137,39 @@ function roundThenDeform(ring: Ring, bevel: number, amplitude: number, teeth: nu
   });
 
   return { points, kind, ids };
+}
+
+/**
+ * An arc's teeth as a straight's are laid: `patternRun` along its length, a
+ * tooth every spacing out from its middle, shrinking to nothing within a
+ * spacing of either end. Each is put back on the curve at the `u` its length
+ * along it falls at, so it moves round the curve as the bevel changes.
+ */
+function spacedOn(at: (u: number) => Point, bevel: number, key: number, amplitude: number): { u: number, j: number, across: number }[] {
+  if (!(bevel > 0)) return [];
+
+  const K = 400;
+  const lengths = [0];
+
+  for (let k = 1; k <= K; k++) {
+    const p = at((k - 1) / K), q = at(k / K);
+
+    lengths.push(lengths[k - 1] + Math.hypot(q.x - p.x, q.y - p.y));
+  }
+
+  const total = lengths[K];
+  const run = patternRun(E, ~key, amplitude, total);
+
+  return run.along.map((f, n) => {
+    const want = f * total;
+    let k = 0;
+
+    while (k < K - 1 && lengths[k + 1] < want) k++;
+
+    const u = (k + (want - lengths[k]) / Math.max(lengths[k + 1] - lengths[k], 1e-12)) / K;
+
+    return { u: Math.min(1 - 1e-9, Math.max(1e-9, u)), j: run.teeth[n], across: run.across[n] };
+  }).filter(x => x.across !== 0 || true);
 }
 
 /** `patternRun` with every tooth kept, flat or not: see `roundThenDeform`. */
@@ -612,10 +650,31 @@ describe('experiment: fading and groups', () => {
       const r0 = laid(square, b0 + d0, amp, arcTeeth(b1 + d1), 0);
       const r = seeded(r0, l1);
 
-      lines.push(`${name}: today ${measured(w)} | planned, held, seeded ${measured(plainRoom(s.p0, s.p1, d0, d1))} | rising ${measured(plainRoom(r.p0, r.p1, d0, d1))} (${arriving} arriving, ${eaten} eaten, arc teeth ${arcTeeth(b0 + d0)} → ${arcTeeth(b1 + d1)})`);
+      const q = seeded(laid(square, b0 + d0, amp, -1), laid(square, b1 + d1, amp, -1));
+
+      lines.push(`${name}: today ${measured(w)} | planned, held, seeded ${measured(plainRoom(s.p0, s.p1, d0, d1))} | rising ${measured(plainRoom(r.p0, r.p1, d0, d1))} | as any other ${measured(plainRoom(q.p0, q.p1, d0, d1))} (${arriving} arriving, ${eaten} eaten, arc teeth ${arcTeeth(b0 + d0)} → ${arcTeeth(b1 + d1)})`);
     }
 
     console.log(`\nFading:\n${lines.join('\n')}\n`);
+  });
+
+  it('how far a tooth spaced along an arc strays from its straight line', () => {
+    const square: Ring = [{ x: -100, y: -100 }, { x: 100, y: -100 }, { x: 100, y: 100 }, { x: -100, y: 100 }];
+    const lines: string[] = [];
+
+    for (const [b0, b1] of [[10, 40], [20, 25], [30, 40], [40, 60]]) {
+      const at = (t: number): Named => {
+        const l = laid(square, mix(b0, b1, t), 4, -1);
+
+        return new Map(l.ids.map((id, i) => [id, l.points[i]]));
+      };
+
+      const err = midError(at);
+
+      lines.push(`bevel ${b0} → ${b1}: mid-span error ${err.toFixed(3)} at ${JSON.stringify(worstAt)}`);
+    }
+
+    console.log(`\nArc teeth as any other, off their lerp half way (tolerance 0.05):\n${lines.join('\n')}\n`);
   });
 
   it('groups: two rooms, one sliding, the group rounded', () => {
@@ -643,6 +702,7 @@ describe('experiment: fading and groups', () => {
       ['round, deform, depth 0 → 6, no arc teeth', 4, 12, 6, 0],
       ['round, deform, depth 0 → 6, one arc tooth throughout', 4, 12, 6, 1],
       ['round, deform, depth 0 → 6, arc tooth coming up out of the curve', 4, 12, 6, 1, true],
+      ['round, deform, depth 0 → 6, arc teeth as any other', 4, 12, 6, -1],
     ] as [string, number, number, number, number?, boolean?][]) {
       const a = addPolygon(emptyWorld(), { level: 'hollow' }, A, 0, TOP);
       const b = addPolygon(a.world, { level: 'hollow' }, B, 0, TOP);

@@ -52,18 +52,20 @@ So a stretch still holds wherever the combinatorics hold, and the round and
 the deform are, to the bake, what drawn corners and today's teeth are to it:
 corners with ids, carried by `budding` and `effectsOver` across a span.
 
-What keeps this true is that **a tooth on an arc keeps its `u`**. A tooth laid
-by length along the path would slide round the arc as the bevel changes, and
-the slide is not linear in anything. So on a straight a tooth is where the
-spacing puts it, measured from the middle as now; on an arc the teeth are at
-fixed fractions of the arc, and a change in their count across a span comes up
-out of the curve the way a change in facets does (`Facets.from/to/at`,
-`facetFades`).
+**A tooth on an arc is laid as any other tooth.** The arc is one more run for
+`patternRun`: a tooth every spacing by length out from its middle, shrinking to
+nothing within a spacing of either end, and at full height everywhere else.
+Teeth may cross each other and other walls, and the arrangement settles that
+as it does for any tooth now. As an arc grows it gains teeth at its ends out
+of nothing, as a growing edge does. This is not linear in the bevel, since a
+tooth at a fixed length along a curve that scales moves round it. The
+experiment puts that at a few more stretches, not a different picture (see
+*Fading and groups*).
 
 ## What the experiment found
 
 `packages/editor/src/experiments/bevel.test.ts` prototypes phase 1's
-geometry (round, teeth on the straights and at fixed `u` on the arcs, then
+geometry (round, teeth on the straights and on the arcs, then
 `erodedCorners`) beside today's order, and measures how far the middle of a
 span is from the lerp of its ends, point by point, named as the bake names
 them. That is what the bake cuts a stretch finer for: each figure is a worst
@@ -174,13 +176,19 @@ What the two tables show:
 - **Teeth arriving on an arc must not be seeded like corners.** A tooth put
   half way between its neighbours then has to reach its place and rise while
   it is eroded. That cost 48 stretches against 12.
+- **Arc teeth laid as any other** (see *Why it bakes*) cost 10, 16 and 14 in
+  the fading rows, and 8 in the group. That is the best or near it
+  everywhere, and it is what the plan now says. The table cannot see a tooth
+  moving round the curve, because the planned side moves its corners in
+  straight lines. That was measured on its own: half way through a span, a
+  tooth is 0.06–1.1 units from its straight line, for bevels 30 → 40 up to
+  10 → 40. Most of it comes from the end ramp. It is about the size of
+  today's own nonlinear terms, and the bake chases it with a few more
+  stretches.
 - **Rising is not always better.** On a small arc that grows fast (the first
   fading row), laying the far end's teeth flat onto the near end's arc packs
-  them tightly among the facets, and it cost twice what seeding did. So the
-  count probably wants to follow the arc's length, with each tooth's height
-  given by its room along the arc. Then a tooth rises where there is room for
-  it, and none is laid where there is none. That is the `room` of *1.2* taken
-  seriously, and it is the next thing to try.
+  them tightly among the facets, and it cost twice what seeding did. Laying them
+  as any other avoids this.
 - **Where the bevel grows a lot, fading costs 1.3–3× today.** This is the one
   place the plan is clearly dearer, and it is bounded.
 
@@ -226,13 +234,13 @@ a straight between two arcs, or an arc.
   lengths the arcs at its ends take off it — always, not as an option. The
   teeth shrink to nothing where the arc starts, and are continuous in the
   bevel.
-- **On an arc**, a new `arcRun`: the tooth count from the arc's length at the
-  keyframe over the spacing, the teeth at even fractions of `u` between its
-  ends, each pushed along the curve's normal at `u` — from `Curve`'s tangent,
-  not from the facet it lands on, so the teeth follow the curve and not its
-  facets — which is the point of the whole change. Each shrinks to nothing at
-  the arc's ends as a straight's do at theirs, and its pattern is keyed by the corner's id, so noise belongs to the
-  corner.
+- **On an arc**, a new `arcRun`: `patternRun` over the arc's length, each
+  tooth put back on the curve at the `u` its length falls at (the curve's
+  lengths tabulated once per angle, as `spread` tabulates its weights), and
+  pushed along the curve's normal there. The normal comes from `Curve`'s
+  tangent, not from the facet the tooth lands on, so the teeth follow the
+  curve and not its facets, which is the point of the whole change. Its
+  pattern is keyed by the corner's id, so noise belongs to the corner.
 - **Its amplitude** is the corner's two edges' amplitudes, blended across
   the arc, so a corner between an edge deformed on its own and one that is not
   goes smoothly from one to the other.
@@ -282,7 +290,7 @@ Its three uses go with it:
   `b` and their mean, same depth, and the mean's points are the mean of the
   others' until the arrangement changes;
 - the same for the amplitude, with teeth on arcs;
-- a tooth on an arc keeps its `u` across a span whose bevel changes;
+- an arc gaining a tooth as its bevel grows gains it at its ends, out of nothing;
 - the teeth count on an arc changing across a span comes up out of the curve:
   at `t = 0` the new teeth lie on it;
 - a convex arc eroded past its radius comes out as the mitred corner;
