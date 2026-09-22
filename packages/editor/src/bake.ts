@@ -149,6 +149,7 @@ import {
   betweenOf,
   erodedRingCorners,
   ground,
+  Effecting,
   Facets,
   Fade,
   SEEDING,
@@ -193,6 +194,7 @@ import {
   under,
   unplace,
   resolveAt,
+  groupDeform,
   optionOf,
   scaleAt,
   scaledState,
@@ -1770,7 +1772,12 @@ export interface Cast {
   scopes: Map<GroupId, [number, number]>
   /** Each scope's effects: its options, and its bevel and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, { facets: Facets, bevel: [number, number] }>
+  shapes: Map<GroupId, {
+    facets: Facets
+    bevel: [number, number]
+    held: boolean
+    deform: { e: Effecting, spacing: [number, number], amplitude: [number, number] } | null
+  }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1823,17 +1830,24 @@ function casting(world: World, from: number): Cast {
 
   for (const id of scopes.keys()) {
     const round = optionOf(world.effects.get(id), 'round');
-
-    if (round === undefined) continue;
-
     const was = scaledState(world, id, near), now = scaledState(world, id, far);
 
+    // The group's own deform, laid on its fold, in the world: its spacing
+    // goes with its scale, as its members' corners do. See `groupDeform`.
+    const d = groupDeform(world, id, was.amplitude, scaleAt(world, id, near));
+    const dTo = groupDeform(world, id, now.amplitude, scaleAt(world, id, far));
+
+    if (round === undefined && d === null) continue;
+
     // Laid as a polygon's corners are across a span: see `effectsOver`.
-    const from = segmentsOf(round, was.bevel, scaleAt(world, id, near)), to = segmentsOf(round, now.bevel, scaleAt(world, id, far));
+    const from = round === undefined ? 0 : segmentsOf(round, was.bevel, scaleAt(world, id, near));
+    const to = round === undefined ? 0 : segmentsOf(round, now.bevel, scaleAt(world, id, far));
 
     shapes.set(id, {
-      facets: { n: Math.max(from, to), from, to, at: 0, tension: round.tension },
-      bevel: [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
+      facets: { n: Math.max(from, to), from, to, at: 0, tension: round?.tension ?? 0.5 },
+      bevel: round === undefined ? [0, 0] : [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
+      held: round?.held !== false,
+      deform: d === null ? null : { e: d.e, spacing: [d.e.spacing, dTo?.e.spacing ?? d.e.spacing], amplitude: [was.amplitude, now.amplitude] },
     });
   }
 
@@ -1888,7 +1902,17 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
-          effects: { facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) }, bevel: mix(fx.bevel[0], fx.bevel[1], t) },
+          effects: {
+            facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) },
+            bevel: mix(fx.bevel[0], fx.bevel[1], t),
+            held: fx.held,
+            ...(fx.deform === null ? {} : {
+              deform: {
+                e: { ...fx.deform.e, spacing: mix(fx.deform.spacing[0], fx.deform.spacing[1], t) },
+                amplitude: mix(fx.deform.amplitude[0], fx.deform.amplitude[1], t),
+              },
+            }),
+          },
         }),
       };
     },

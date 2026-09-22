@@ -3722,6 +3722,173 @@ export function outlineOf(
 }
 
 /**
+ * A sealed group's fold as its own effects draw it: what `outlineOf` does to
+ * a polygon, done to the union of its members at depth nought — every corner
+ * rounded, the group's deform laid along its straights and its arcs — and
+ * eroded by the group's depth last. See PLAN-bevel, phase 2.
+ *
+ * A straight is a maximal run of the fold's outline in one line, so two
+ * members side by side along a wall are one straight with one pattern, from
+ * its middle. The points in `square` are deformed geometry of the members',
+ * which the round leaves as it is and the deform does not tooth again; the
+ * points in `keep` are the bake's, carried along the teeth to where the
+ * erosion puts them. The teeth are keyed nought, every straight alike: a
+ * union's edges have no ids to tell them apart by.
+ *
+ * Held, as a polygon's round is (see `drawnBevels`), a corner is drawn at
+ * `bevel` and as much again as the erosion takes back off it, so the round
+ * that comes out is the one asked for. `runs` is each rounded corner's arc
+ * where the erosion put it, for the bake's facet fades, and `square` what
+ * came out deformed, for a scope holding this one to leave square.
+ */
+export interface FoldShaped {
+  shape: Shape
+  runs: Point[][]
+  square: Point[]
+  keep: Point[]
+}
+
+export function foldShaped(
+  fold: Shape,
+  square: readonly Point[],
+  keep: readonly Point[],
+  facets: Facets,
+  bevel: number,
+  held: boolean,
+  deform: { e: Effecting, amplitude: number } | null,
+  depth: number,
+): FoldShaped {
+  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [] };
+
+  let scale = 1;
+
+  for (const ring of fold) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+
+  const tol = scale * 1e-9;
+  const same = (p: Point, q: Point) => Math.abs(p.x - q.x) <= tol && Math.abs(p.y - q.y) <= tol;
+  const isSquare = (p: Point) => square.some(q => same(p, q));
+
+  // An arrangement's rings all have their material to the left: an outline
+  // counter-clockwise and its holes the other way. See `deformedAt`.
+  const out: 1 | -1 = 1;
+
+  // Each ring down to its corners: a point in line with its neighbours is not
+  // one, and would split a straight's pattern in two.
+  const cleaned = fold.map(ring => {
+    let pts = ring.filter((p, i) => !same(p, ring[(i + 1) % ring.length]));
+
+    while (pts.length > 3) {
+      const at = pts.findIndex((b, i) => {
+        const a = pts[(i - 1 + pts.length) % pts.length], c = pts[(i + 1) % pts.length];
+        const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+        const cross = ux * vy - uy * vx, dot = ux * vx + uy * vy;
+
+        return !isSquare(b) && dot > 0 && Math.abs(cross) <= 1e-9 * Math.hypot(ux, uy) * Math.hypot(vx, vy);
+      });
+
+      if (at < 0) break;
+
+      pts = pts.filter((_p, i) => i !== at);
+    }
+
+    return pts;
+  }).filter(ring => ring.length >= 3);
+
+  const turnAt = (ring: Ring, i: number): number => {
+    const a = ring[(i - 1 + ring.length) % ring.length], b = ring[i], c = ring[(i + 1) % ring.length];
+
+    return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+  };
+  const drawnAt = (ring: Ring, i: number): number => {
+    if (!(bevel > 0) || facets.n <= 0) return 0;
+
+    return Math.max(0, held ? bevel + depth * Math.sign(turnAt(ring, i)) : bevel);
+  };
+
+  const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
+  const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
+
+  cleaned.forEach((ring, r) => {
+    const sq = ring.map(isSquare);
+    const bevels = ring.map((_p, i) => (sq[i] ? 0 : drawnAt(ring, i)));
+    const laid = deform === null
+      ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0 }))
+      : subdivided(ring, deform.e, () => deform.amplitude, () => 0, out, i => bevels[i], i => !sq[i] && !sq[(i + 1) % ring.length]);
+
+    starts.push(source.length);
+
+    for (const made of laid) {
+      if (made.j === null) {
+        edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
+      }
+      else {
+        edges[edges.length - 1].laid.push({ at: made.at, along: made.along });
+      }
+
+      source.push(made.at);
+      tooth.push(made.j !== null || sq[made.from]);
+      drawn.push(made.j === null ? bevels[made.from] : 0);
+    }
+  });
+
+  const arcTeeth = (i: number): ArcTeeth | null => (deform === null || deform.amplitude === 0 || !(drawn[i] > 0)
+    ? null
+    : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: 0, seen: Math.min(1, bevel / drawn[i]) });
+  const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
+
+  const simple = simplify(sliced(o.ring, o.rings));
+  const shape = depth === 0 ? simple : erode(simple, depth);
+  const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
+
+  const squared = [
+    ...tooth.flatMap((t, i) => (t ? o.arcs[i] : [])),
+    ...o.teeth,
+  ].map(image).filter((p): p is Point => p !== null);
+
+  const runs = drawn.flatMap((b, i) => {
+    if (tooth[i] || !(b > 0) || facets.n <= 0) return [];
+
+    const run = o.arcs[i];
+
+    if (run.every(k => k === run[0])) return [];
+
+    const images = run.map(image);
+
+    return images.some(p => p === null) ? [] : [images as Point[]];
+  });
+
+  // A kept point is on a straight of the fold: carried to the same share of
+  // the way along it on the teeth, and moved in with the segment it is on.
+  const kept = keep.flatMap(p => {
+    for (const edge of edges) {
+      const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y, l2 = dx * dx + dy * dy;
+
+      if (l2 === 0) continue;
+
+      const u = ((p.x - edge.a.x) * dx + (p.y - edge.a.y) * dy) / l2;
+
+      if (u <= 0 || u >= 1 || Math.abs((p.x - edge.a.x) * dy - (p.y - edge.a.y) * dx) > tol * Math.sqrt(l2)) continue;
+
+      const pts = [...edge.laid, { at: edge.b, along: 1 }];
+      let k = 0;
+
+      while (k < pts.length - 2 && pts[k + 1].along < u) k++;
+
+      const s = pts[k], e = pts[k + 1];
+      const w = (u - s.along) / Math.max(e.along - s.along, 1e-300);
+      const on = { x: s.at.x + (e.at.x - s.at.x) * w, y: s.at.y + (e.at.y - s.at.y) * w };
+      const sx = e.at.x - s.at.x, sy = e.at.y - s.at.y, sl = Math.hypot(sx, sy);
+
+      return sl === 0 ? [] : [{ x: on.x - sy / sl * depth, y: on.y + sx / sl * depth }];
+    }
+
+    return [];
+  });
+
+  return { shape, runs, square: squared, keep: kept };
+}
+
+/**
  * An eroded boundary rounded, and where each corner of the source landed in
  * it: corner `i` as the run of its arc, or `null` for a corner not on the
  * eroded boundary at all.

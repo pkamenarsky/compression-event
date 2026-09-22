@@ -485,8 +485,8 @@ function effectKey(e: Effected, s = 1): Memo[] {
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
 }
 
-const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
-const SIDES: readonly Effecting['sides'][] = ['in', 'out', 'both'];
+export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
+export const SIDES: readonly Effecting['sides'][] = ['in', 'out', 'both'];
 
 export function facetKey(f: Facets): number[] {
   return [f.n, f.from, f.to, f.at, f.tension];
@@ -1338,6 +1338,10 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
   for (const owner of [id, ...enclosing(world, id)]) {
     const fx = world.effects.get(owner);
 
+    // A sealed group's deform is laid on its fold, not on its members: see
+    // `groupDeform`.
+    if (owner !== id && world.groups.get(owner)?.sealed === true) continue;
+
     if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
 
     const state = scaledState(world, owner, v);
@@ -1347,10 +1351,10 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
 
     out.push({
       owner,
-      // A group's deform is laid along each member's edges, the walls they
-      // share included, and stays from their middles: offset, two members'
-      // teeth along one wall fall wherever they fall, and the arrangement
-      // flickers where they meet. Phase 2 of PLAN-bevel lays it on the union.
+      // A loose group's deform is laid along each member's edges, the walls
+      // they share included, and stays from their middles: offset, two
+      // members' teeth along one wall fall wherever they fall, and the
+      // arrangement flickers where they meet.
       e: { ...e, spacing: e.spacing * scaleAt(world, owner, v), offset: own },
       amplitude: own ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
       toothed: own ? from => ever.all || ever.edges.has(from) : () => ever.all,
@@ -1358,6 +1362,23 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
   }
 
   return out;
+}
+
+/**
+ * A sealed group's own deform, which is laid along its fold rather than its
+ * members' edges: see `foldShaped`. Nothing where it has none, or where its
+ * timeline never deforms the whole of it — a union's edges have no ids for an
+ * amount to be written about one of them by.
+ */
+export function groupDeform(world: World, id: Id, amplitude: number, scale: number): { e: Effecting, amplitude: number } | null {
+  const fx = world.effects.get(id);
+
+  if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) return null;
+  if (!everDeformed(keyRigOf(world, id)).all) return null;
+
+  const e = effecting(fx);
+
+  return { e: { ...e, spacing: e.spacing * scale, offset: false }, amplitude };
 }
 
 /** What `diameterAt` has answered, for each world it was asked about. */

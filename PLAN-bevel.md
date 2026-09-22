@@ -470,6 +470,26 @@ if phase 1 left them; `restSquare`.
 
 Regenerate the golden. Commit.
 
+### 2.8 Done, and what is left
+
+Done: a sealed group with a round or a deform folds its slots at depth
+nought, and `foldShaped` rounds (held), deforms and erodes the fold as one
+shape. The group's deform is no longer pushed onto its members. The bake
+carries the deform's spacing and amplitude across the span. The square
+machinery stays, until phase 3, for members' own teeth under a group round.
+
+Left, and known:
+
+- **The union's straights have no names.** A tooth that comes or goes on
+  one, as the clear by an arc grows or a member moves, is a bake jump, at
+  nought height: the outline does not move, but its vertical pops in rather
+  than fading. Naming each straight by the member edge at its middle (2.3)
+  would let the bake seed and fade them as it does a polygon's.
+- **Every straight is keyed nought**, so noise and jitter repeat from
+  straight to straight. The same naming fixes it.
+- A member's teeth next to a straight make that straight untoothed: the
+  group does not tooth its members' deformed geometry again.
+
 ## Phase 3: a member's deform under a group's bevel
 
 A member whose group rounds keeps its deform back: it resolves rounded and

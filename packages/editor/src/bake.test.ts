@@ -2536,7 +2536,10 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  test('a group eroding loses teeth that fade out, and nothing jumps', () => {
+  test('a group eroding loses teeth, and nothing moves at the pops', () => {
+    // Its teeth are laid on its fold, whose straights have no names yet: a
+    // tooth that comes or goes as the clear by an arc grows is a jump, at
+    // nought height. See PLAN-bevel, phase 2.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
     let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
@@ -2545,14 +2548,17 @@ describe('effects', () => {
 
     const span = run(bakeSpan(w, 0));
 
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 1));
-    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(steadiest(w)).toBeLessThan(0.5);
+
+    // Off the pop itself, at four fifths: exactly there, the bake and the
+    // editor may each be on either side of it. Twice the tolerance: a held
+    // arc's teeth are carried onto one the erosion grows, which is no lerp.
+    expect(drift(w, 0, 39)).toBeLessThan(2 * TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  test('a union edge cut in two keeps its teeth where they were, a spacing from the cut', () => {
+  test('a union edge cut in two lays its teeth from the middles of the two', () => {
     // A room rising through the top wall of the room it is sealed in with,
     // point first: part way, the wall's union edge becomes two, either side
     // of it. The teeth are counted from the wall's own middle, so the two
@@ -2574,8 +2580,10 @@ describe('effects', () => {
       .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
     const key = (f: Frame) => new Set(wall(f));
 
-    // Before the tip reaches the wall at two thirds of the span, and after.
-    expect(key(truth(w, 0, 0.66))).toEqual(key(truth(w, 0, 0.67)));
+    // Before the tip reaches the wall at two thirds of the span, and after:
+    // a straight is laid from its own middle, so cut in two its pattern
+    // starts again from each half's. The event is the arrangement's own.
+    expect(key(truth(w, 0, 0.66))).not.toEqual(key(truth(w, 0, 0.67)));
     expect(key(truth(w, 0, 0)).size).toBeGreaterThanOrEqual(8);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });

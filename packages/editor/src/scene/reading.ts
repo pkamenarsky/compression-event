@@ -26,7 +26,9 @@ import {
   contains,
   effected as effectedAll,
   effectedSquare,
+  Effecting,
   encloses,
+  foldShaped,
   erode,
   keeping,
   mitred,
@@ -81,6 +83,9 @@ import { once, placed, stateAt, worldFrame } from '../rig';
 
 import {
   facetKey,
+  groupDeform,
+  PATTERNS,
+  SIDES as DEFORM_SIDES,
   Painted,
   Resolved,
   artefactsIn,
@@ -163,15 +168,21 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   return out;
 }
 
-/** A group's round as keyframe `v` leaves it. Nothing where it has none. */
+/** A group's round and deform as keyframe `v` leaves them. Nothing where it
+ * has neither. */
 export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
   const round = optionOf(world.effects.get(id), 'round');
+  const state = scaledState(world, id, v), scale = scaleAt(world, id, v);
+  const deform = groupDeform(world, id, state.amplitude, scale);
 
-  if (round === undefined) return undefined;
+  if (round === undefined && deform === null) return undefined;
 
-  const bevel = scaledState(world, id, v).bevel;
-
-  return { facets: facetsOf(segmentsOf(round, bevel, scaleAt(world, id, v)), round.tension), bevel };
+  return {
+    facets: round === undefined ? SQUARE : facetsOf(segmentsOf(round, state.bevel, scale), round.tension),
+    bevel: round === undefined ? 0 : state.bevel,
+    held: round?.held !== false,
+    ...(deform === null ? {} : { deform }),
+  };
 }
 
 /**
@@ -323,8 +334,10 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its round, on its union after the depth. Absent is none. */
-  effects?: { facets: Facets, bevel: number }
+  /** Its round and its deform, on its fold before the depth: see
+   * `foldShaped`. Absent is neither. `bevel` is the round as it is seen,
+   * which a held one is drawn out from. */
+  effects?: { facets: Facets, bevel: number, held?: boolean, deform?: { e: Effecting, amplitude: number } }
   /**
    * The frame to keep the union's points in.
    *
@@ -460,21 +473,15 @@ const squaredThrough = remembered((shapes: readonly Shape[], depth: number, squa
   return eroded.length === 0 ? [] : effectedSquare(shapes, all, eroded, depth, SQUARE, 0, square).square;
 });
 
-/**
- * A scope's slots folded into `cut` and rounded, its deformed geometry left
- * square, with the arcs it rounded for the bake to fade, and what it left
- * square for a scope holding it. After the fold, so the corners where a slot
- * cuts another are rounded as any are.
- */
-const roundedFold = remembered((slots: readonly Shape[], cut: Shape, round: readonly number[], square: readonly Point[]) => {
-  const [n, from, to, at, tension, bevel] = round;
-  const facets = { n, from, to, at, tension };
+/** A scope's fold as its own effects draw it, by `shapeKey`: see
+ * `foldShaped`. */
+const shapedFold = remembered((fold: Shape, square: readonly Point[], keep: readonly Point[], key: readonly number[], depth: number) => {
+  const [n, from, to, at, tension, bevel, held, ...d] = key;
+  const deform = d.length === 0
+    ? null
+    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: d[6] };
 
-  if (cut.length === 0) return { shape: cut, runs: [] as Point[][], square: [] as Point[] };
-
-  if (square.length === 0) return { shape: effectedAll(cut, facets, bevel) as Shape, runs: arcRuns(cut, facets, bevel), square: [] as Point[] };
-
-  return effectedSquare(slots, cut, cut, 0, facets, bevel, square);
+  return foldShaped(fold, square, keep, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
 });
 
 /**
@@ -500,12 +507,22 @@ function squareIn(it: Resolved): Point[] {
   });
 }
 
-/** A group's round as `roundedFold` takes it, or nothing where it does
- * nothing. A group's deform is not here: it is its members'. See `deforms`. */
-function unionKey(s: Standing | null): number[] | null {
+/** A group's round and deform as `shapedFold` takes them, or nothing where
+ * they do nothing. */
+function shapeKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
-  return fx === undefined || fx.facets.n <= 0 || fx.bevel <= 0 ? null : [...facetKey(fx.facets), fx.bevel];
+  if (fx === undefined) return null;
+
+  const round = fx.facets.n > 0 && fx.bevel > 0;
+  const d = fx.deform;
+
+  if (!round && d === undefined) return null;
+
+  return [
+    ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0, fx.held === false ? 0 : 1,
+    ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude]),
+  ];
 }
 
 export function contributed(
@@ -572,13 +589,15 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number): { shape: Shape, keep: Point[], square: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[] } => {
     const group = world.groups.get(id);
 
     if (group === undefined) return { shape: [], keep: [], square: [] };
 
+    // Flat, at depth nought: for a scope whose effects are laid on its fold
+    // before its depth. See `foldShaped`.
     const here = standing(id);
-    const d = here?.depth ?? 0;
+    const d = flat ? 0 : here?.depth ?? 0;
 
     // What is taken away goes the other way, and this is not a choice — it is
     // what eroding the scope as one shape *means*: eroding a complement is
@@ -600,7 +619,7 @@ export function contributed(
     // What its members' deforms made, which a round leaves square — its own,
     // after the fold, or a scope's holding it — where the erosion moved it.
     const inside = group.members.flatMap(m => squareFrom(m, set, k));
-    const square = inside.length === 0 ? [] : squaredThrough(shapes, depth, inside);
+    const square = inside.length === 0 ? [] : depth === 0 ? inside : squaredThrough(shapes, depth, inside);
 
     // What its members keep for the bake, moved in with their edges: a union
     // is an arrangement, and would drop them — see `Resolved.keep`.
@@ -699,33 +718,37 @@ export function contributed(
     }
 
     const from = top(id, set);
+    const here = standing(id);
+    const shapedBy = shapeKey(here);
     const slots: { shape: Shape, keep: Point[], square: Point[] }[] = [];
 
-    for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k));
+    for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k, shapedBy !== null));
 
     const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
 
-    // Rounded after the fold, so a solid cutting the level leaves corners the
-    // round takes as it takes any, and before a floor is cut to its level,
-    // whose arcs it takes as they come.
-    const here = standing(id);
-    const round = unionKey(here);
+    // With effects of its own, folded flat, rounded, deformed and then eroded
+    // as one shape — which is what eroding the slots apart and folding them
+    // comes to, where there are no corners: see `foldShaped`. After the fold,
+    // so a solid cutting the level leaves corners the round takes as it takes
+    // any, and before a floor is cut to its level, whose arcs it takes as they
+    // come.
     const inside = slots.flatMap(u => u.square);
-    const rounded = round === null ? { shape: settles, runs: [], square: inside } : roundedFold(slots.map(u => u.shape), settles, round, inside);
+    const shaped = shapedBy === null ? null : shapedFold(settles, inside, slots.flatMap(u => u.keep), shapedBy, here!.depth);
+    const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep) };
     const cut = set === 'floor' && top(id, 'level') === 0
       ? underfoot(rounded.shape, resolves(id, 'level'))
       : rounded.shape;
 
     // Where the bake has its arcs on their facets, fading: see `facetFades`.
     const fx = here?.effects;
-    const faded = fx === undefined || round === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
+    const faded = fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
       ? []
       : rounded.runs.flatMap(run => facetFades(run, fx.facets));
 
     // Folding the slots is an arrangement again, and would drop them again.
     // And the points its arcs have on their facets, at the end they lie
     // straight.
-    const keep = [...slots.flatMap(u => u.keep), ...faded.filter(f => f.v === 0).map(f => f.p)];
+    const keep = [...rounded.keep, ...faded.filter(f => f.v === 0).map(f => f.p)];
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
     const square = rounded.square;

@@ -178,7 +178,7 @@ describe('a group\'s effects', () => {
     expect(shapeArea(set)).toBeCloseTo(roundedRect(200, 100, 10, 8), 6);
   });
 
-  test('its round leaves its members\' deformed geometry square, and its own deform\'s', () => {
+  test('its round leaves its members\' deformed geometry square, and its own deform is on its union', () => {
     const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0 };
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const b = room(a.world, rect(60, 0, 140, 100));
@@ -207,10 +207,13 @@ describe('a group\'s effects', () => {
     // Deformed by the group itself, the same.
     const whole = wrote(withEffects(sealed, g.id, { round: inSegments(8, 10), deform: zigzag }), 0, g.id, deform(4));
 
-    // Every vertex of the union a point of its rooms', and none of an arc.
+    // Its teeth are laid on the union, not its rooms: they stand off the
+    // wall, and none of them is a point of a room's.
     const drawn = new Set(resolveAt(whole, 0).flatMap(it => it.source).map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    const off = [...vertices(whole)].filter(p => Number(p.split(',')[1]) > 100 + 1e-6);
 
-    vertices(whole).forEach(p => expect(drawn.has(p)).toBe(true));
+    expect(off.length).toBeGreaterThan(0);
+    off.forEach(p => expect(drawn.has(p)).toBe(false));
   });
 
   test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
