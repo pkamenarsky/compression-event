@@ -534,8 +534,20 @@ scope, which a line does for nothing.
 
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
-A straight whose line is a crossing of two members has no name and keeps the
-shared key.
+
+**Where a straight has no name.** Not at a crossing: a crossing is a corner,
+and every piece of the union's boundary is a piece of some member's edge. What
+has no name is a piece of a line that is not a *source* edge — a facet of a
+member's own arc, a flank of its teeth, or either of those from a nested
+scope's fold. The first two are beside a member's deformed geometry and are
+left untoothed anyway.
+
+**Which member names a shared run.** Two members' collinear edges along one
+wall are one run, and the name is whichever edge lies under the run's middle —
+so members sliding until the join passes the middle flip the name and jump the
+pattern, with no event to hide it. So the run takes the lowest-ranked member
+edge along it rather than the one under its middle: rank is already what
+settles a shared edge in the union, and it changes only when the run does.
 
 **Tests.** Two rooms along one wall: each straight's teeth keyed by its own
 member edge, and the noise on one wall different from the noise on another; a
