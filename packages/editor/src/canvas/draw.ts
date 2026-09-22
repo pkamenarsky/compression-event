@@ -159,6 +159,10 @@ export function layers(
    * nothing where none are: a ghost over the moment on screen. See
    * `EditorState.target`. */
   ends: Resolved[] | null,
+  /** The world as it is, where `world` is the moment stood on: the ghosts
+   * are the other keyframes and the keyframe's end as they really are, and a
+   * moment inside this keyframe says nothing about them. */
+  whole: World = world,
 ): Layer[] {
   const out: Layer[] = [];
 
@@ -169,17 +173,17 @@ export function layers(
   const reached = new Set(polygonsIn(world, selection.polygons));
   const path = opened(world, inside);
 
-  for (const k of ghostVersions(world, current, local.previewing)) {
-    const shown = resolveAt(world, k);
-    const stroke = ghostColour(order(world, k) - order(world, current));
+  for (const k of ghostVersions(whole, current, local.previewing)) {
+    const shown = resolveAt(whole, k);
+    const stroke = ghostColour(order(whole, k) - order(whole, current));
 
-    out.push(ctx => ghosts(ctx, view, world, k, shown, stroke));
+    out.push(ctx => ghosts(ctx, view, whole, k, shown, stroke));
   }
 
   // Where the keyframe ends up, over the moment being stood on: the same
   // outline a ghost of another keyframe is, in the colour of the one after.
   if (ends !== null && ends.length > 0) {
-    out.push(ctx => ghosts(ctx, view, world, current, ends, ghostColour(1)));
+    out.push(ctx => ghosts(ctx, view, whole, current, ends, ghostColour(1)));
   }
 
   // A shut group is one shape, and its members are not on screen at all: the

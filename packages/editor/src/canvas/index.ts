@@ -2258,6 +2258,7 @@ export function worldCanvas(
                     played === null ? null : r,
                     g,
                     ends,
+                    w,
                   ),
                 );
               }
