@@ -4126,11 +4126,6 @@ export function foldShaped(
     : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
 
-  if (process.env.DBG3) {
-    console.log('DRAWN', o.ring.filter(p => p.x > -400 && p.x < 400 && p.y > -900 && p.y < -300)
-      .map(p => `${p.x.toFixed(0)},${p.y.toFixed(0)}`).join(' '), 'depth', depth.toFixed(1));
-  }
-
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
   const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
