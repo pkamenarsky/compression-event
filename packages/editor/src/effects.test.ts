@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { rounded, shapeArea } from './geometry';
-import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, namesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, movedIn, namesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
@@ -207,6 +207,35 @@ describe('what a member publishes about its outline', () => {
     // Each wall pulled in by the erosion: the square's walls are at 0 and
     // 100, and five in from either.
     expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([45, 45, 45, 45]);
+  });
+
+  test('moved in by a depth, they are where that depth puts the outline', () => {
+    // What a scope does to what its members published: the same erosion the
+    // fold itself goes through, so the names still lie on it. Against the
+    // room resolved at that depth, which is the answer.
+    // Not held, so the erosion offsets the arc it drew rather than drawing a
+    // bigger one: what a scope's depth does to a member's arc.
+    const { world, id } = room();
+    const fx: Effects = { round: { ...inSegments(8, 10)!, held: false } };
+    const w = withEffects(world, id, fx);
+    const shallow = wrote(w, 0, id, round(10));
+    const deep = wrote(w, 0, id, round(10), erode(7));
+    const at = (x: World) => resolveAt(x, 0).find(r => r.id === id)!;
+    const moved = movedIn(namesOf(at(shallow)), 7);
+    const theirs = namesOf(at(deep));
+    const near = (p: Point, all: readonly Point[]) => Math.min(...all.map(q => Math.hypot(p.x - q.x, p.y - q.y)));
+
+
+    // Every arc point of the one where the other has it: the mitre of the
+    // two facets at a point is where eroding the arc puts it.
+    moved.arcs.forEach((arc, i) => {
+      expect(Math.max(...arc.points.map(p => near(p, theirs.arcs[i].points)))).toBeLessThan(1e-9);
+    });
+
+    moved.lines.forEach((l, i) => {
+      expect(near(l.a, [theirs.lines[i].a])).toBeLessThan(1e-9);
+      expect(near(l.b, [theirs.lines[i].b])).toBeLessThan(1e-9);
+    });
   });
 });
 

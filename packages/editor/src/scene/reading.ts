@@ -84,6 +84,9 @@ import { once, placed, stateAt, worldFrame } from '../rig';
 import {
   facetKey,
   groupDeform,
+  movedIn,
+  namesOf,
+  Named,
   PATTERNS,
   SIDES as DEFORM_SIDES,
   Painted,
@@ -589,10 +592,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[], named: Named } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [], square: [] };
+    if (group === undefined) return { shape: [], keep: [], square: [], named: { lines: [], arcs: [] } };
 
     // Flat, at depth nought: for a scope whose effects are laid on its fold
     // before its depth. See `foldShaped`.
@@ -626,7 +629,39 @@ export function contributed(
     const keep = group.members.flatMap(m => keptFrom(m, set, k))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, square };
+    // What its members' outlines are made of, moved in with them: the fold
+    // names its straights and its arcs by these. See `namesOf`.
+    const named = group.members
+      .map(m => namedFrom(m, set, k))
+      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], arcs: [...all.arcs, ...n.arcs] }), { lines: [], arcs: [] } as Named);
+
+    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, square, named: movedIn(named, depth) };
+  };
+
+  /** What one member of slot `k` publishes about its outline: a polygon's
+   * own, and a scope's what its own fold came to. See `Named`. */
+  const namedFrom = (id: Id, set: SetName, k: number): Named => {
+    const it = mine.get(id);
+    const none: Named = { lines: [], arcs: [] };
+
+    if (it !== undefined) return slotOf(kindOf(it.polygon), set) === k ? namesOf(it) : none;
+
+    const group = world.groups.get(id);
+
+    if (group === undefined) return none;
+
+    if (group.sealed && standing(id) !== null) {
+      if (k !== top(id, set)) return none;
+
+      const key = `${id}:${set}`;
+
+      if (!named.has(key)) resolves(id, set);
+
+      return named.get(key) ?? none;
+    }
+
+    return group.members.flatMap(m => [namedFrom(m, set, k)])
+      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], arcs: [...all.arcs, ...n.arcs] }), none);
   };
 
   /** The points of what one member puts into slot `k` of `set` that are
@@ -678,6 +713,7 @@ export function contributed(
   };
 
   const kept = new Map<string, Point[]>();
+  const named = new Map<string, Named>();
   const fading = new Map<string, Fade[]>();
   const squares = new Map<string, Point[]>();
 
@@ -720,7 +756,7 @@ export function contributed(
     const from = top(id, set);
     const here = standing(id);
     const shapedBy = shapeKey(here);
-    const slots: { shape: Shape, keep: Point[], square: Point[] }[] = [];
+    const slots: { shape: Shape, keep: Point[], square: Point[], named: Named }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k, shapedBy !== null));
 
@@ -752,6 +788,13 @@ export function contributed(
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
     const square = rounded.square;
+
+    // Its own, for a scope holding it: what its members published, moved in
+    // by its own depth. Its arcs are its own and have no ids to be named by.
+    named.set(key, movedIn(slots.reduce(
+      (all, u) => ({ lines: [...all.lines, ...u.named.lines], arcs: [...all.arcs, ...u.named.arcs] }),
+      { lines: [], arcs: [] } as Named,
+    ), here?.depth ?? 0));
 
     kept.set(key, keep);
     fading.set(key, faded);

@@ -1158,6 +1158,86 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
   return { lines, arcs };
 }
 
+/**
+ * `Named` moved in by `depth`, the way the erosion moves what it names: a
+ * line along its own normal, which is exactly where the erosion puts it, and
+ * an arc's points each on the mitre of the two segments at it — the two
+ * inside the run, and at its ends the line that leaves it, which is why the
+ * lines and the arcs are moved together.
+ *
+ * Out of the material is to the right of the way round, so in is to the left.
+ */
+export function movedIn(named: Named, depth: number): Named {
+  if (depth === 0) return named;
+
+  const left = (a: Point, b: Point): Point | null => {
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    return l === 0 ? null : { x: -dy / l, y: dx / l };
+  };
+  const by = (p: Point, n: Point) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth });
+  const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
+  const key = (p: Point) => `${p.x},${p.y}`;
+
+  // What leaves and arrives at an arc's ends: the lines `namesOf` laid from
+  // them, which share their points exactly.
+  const before = (p: Point) => named.lines.find(l => same(l.b, p)) ?? null;
+  const after = (p: Point) => named.lines.find(l => same(l.a, p)) ?? null;
+
+  const arcs = named.arcs.map(arc => {
+    const ends = [before(arc.points[0]), after(arc.points[arc.points.length - 1])];
+    const ways = arc.points.map((p, i) => {
+      const a = i === 0 ? (ends[0] === null ? null : left(ends[0].a, ends[0].b)) : left(arc.points[i - 1], p);
+      const b = i === arc.points.length - 1
+        ? (ends[1] === null ? null : left(ends[1].a, ends[1].b))
+        : left(p, arc.points[i + 1]);
+
+      return { a: a ?? b, b: b ?? a };
+    });
+
+    return {
+      id: arc.id,
+      points: arc.points.map((p, i) => {
+        const { a, b } = ways[i];
+
+        if (a === null || b === null) return p;
+
+        // The two offset lines meet on the bisector, as far out along it as
+        // the half angle between them makes it: `mitred`, for a point whose
+        // two ways are already normals.
+        const x = a.x + b.x, y = a.y + b.y, l = Math.hypot(x, y);
+
+        if (l === 0) return p;
+
+        const cos = Math.max(1e-6, l / 2);
+
+        return { x: p.x + x / l * depth / cos, y: p.y + y / l * depth / cos };
+      }),
+    };
+  });
+
+  // A line ends where an arc does, and goes on doing: both are moved by the
+  // same mitre there, so a scope holding this one still finds its lines and
+  // its arcs by the points they share. Elsewhere a line moves by its own
+  // normal, which is exactly where the erosion puts it.
+  const ends = new Map<string, Point>();
+
+  named.arcs.forEach((arc, i) => {
+    const mine = arcs[i].points;
+
+    ends.set(key(arc.points[0]), mine[0]);
+    ends.set(key(arc.points[arc.points.length - 1]), mine[mine.length - 1]);
+  });
+
+  const lines = named.lines.flatMap(l => {
+    const n = left(l.a, l.b);
+
+    return n === null ? [] : [{ id: l.id, a: ends.get(key(l.a)) ?? by(l.a, n), b: ends.get(key(l.b)) ?? by(l.b, n) }];
+  });
+
+  return { lines, arcs };
+}
+
 /** The erosion alone: the first of the three, and all of it for a polygon
  * with no effects. */
 function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Shape {
