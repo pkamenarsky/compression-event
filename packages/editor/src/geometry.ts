@@ -3905,7 +3905,10 @@ export function foldShaped(
   facets: Facets,
   bevel: number,
   held: boolean,
-  deform: { e: Effecting, amplitude: number } | null,
+  /** How high the teeth stand on a run of the given name, which for a group
+   * is the same everywhere and for a polygon is its edge's own: see
+   * `ArcDeform`. A run with no name asks with nought. */
+  deform: { e: Effecting, amplitude: (key: number) => number } | null,
   depth: number,
 ): FoldShaped {
   if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [] };
@@ -4002,6 +4005,11 @@ export function foldShaped(
 
   const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
 
+  // The names of the runs either side of each point of `source`, so that a
+  // corner of the fold takes the amplitudes of its own two edges the way a
+  // polygon's corner does: see `ArcDeform`.
+  const beforeOf: number[] = [], afterOf: number[] = [];
+
   // Teeth of no height, on a wall an amplitude of nought leaves straight:
   // they stand in the ring as a polygon's do, so that the ring keeps its
   // points while the deform comes up out of nothing and the lines on them
@@ -4023,7 +4031,7 @@ export function foldShaped(
       : subdivided(
         ring,
         deform.e,
-        () => deform.amplitude,
+        i => deform.amplitude(names[i]?.key ?? 0),
         i => names[i]?.key ?? 0,
         out,
         i => bevels[i],
@@ -4038,9 +4046,15 @@ export function foldShaped(
     const curved = (i: number): Point[] => {
       const a = mine[i]!.arc;
       const whole = arcs[a];
+
+      // The straights either side of the run, which are the edges the arc
+      // stands between: their amplitudes are what it takes, as a polygon's
+      // arc takes its two edges' — see `ArcDeform`. The arc's own name where
+      // there is no straight there.
+      const before = names[(i - 1 + ring.length) % ring.length]?.key ?? whole.id;
       const tt: ArcTeeth | null = deform === null
         ? null
-        : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: whole.id, seen: 1 };
+        : { e: deform.e, before: deform.amplitude(before), after: deform.amplitude(whole.id), key: whole.id, seen: 1 };
       const on = teethAlong(curveThrough(whole.points), tt, out);
       const total = along[a][along[a].length - 1];
 
@@ -4110,9 +4124,14 @@ export function foldShaped(
         edges[edges.length - 1].laid.push({ at: made.at, along: made.along });
       }
 
-      if (made.j !== null && deform !== null && deform.amplitude === 0) flat.push(source.length);
+      const nameAfter = names[made.from]?.key ?? 0;
+      const nameBefore = names[(made.from - 1 + ring.length) % ring.length]?.key ?? nameAfter;
+
+      if (made.j !== null && deform !== null && deform.amplitude(nameAfter) === 0) flat.push(source.length);
 
       source.push(made.at);
+      beforeOf.push(made.j === null ? nameBefore : nameAfter);
+      afterOf.push(nameAfter);
       tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
     }
@@ -4124,7 +4143,7 @@ export function foldShaped(
   // of, all at once. See `teethAlong`.
   const arcTeeth = (i: number): ArcTeeth | null => (deform === null || !(drawn[i] > 0)
     ? null
-    : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
+    : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
 
   const simple = simplify(sliced(o.ring, o.rings));

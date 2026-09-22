@@ -494,7 +494,7 @@ const shapedFold = remembered((
   const [n, from, to, at, tension, bevel, held, ...d] = key;
   const deform = d.length === 0
     ? null
-    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: d[6] };
+    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: () => d[6] };
   const named = [];
 
   for (let i = 0; i + 2 < lines.length; i += 3) {
