@@ -1080,6 +1080,84 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
   };
 }
 
+/**
+ * What a member of a sealed scope publishes about its outline, so that the
+ * fold can name the pieces it is made of: see PLAN-bevel 2.9.
+ *
+ * A straight of the fold lies on the line of exactly one member edge — the
+ * arrangement cuts edges up and drops the pieces inside, but it never moves
+ * one off its line — and a run of the fold that is a member's arc is that
+ * arc's own points. So each comes up named by the corner it belongs to, and
+ * the group's teeth are keyed and anchored by that name rather than by where
+ * the piece happens to lie today.
+ *
+ * In world units, as the member's projection is, and after its erosion: a
+ * line is where the edge *is*, not where it was drawn.
+ */
+export interface Named {
+  /** A source edge, named by the corner it leaves: two points on its line,
+   * being where its ends are once its corners are rounded and eroded. */
+  lines: { id: VertexId, a: Point, b: Point }[]
+  /** A rounded corner's arc, named by that corner: its points in ring
+   * order. Nothing for a corner that is not rounded, or whose arc has no
+   * length. */
+  arcs: { id: VertexId, points: Point[] }[]
+}
+
+/**
+ * `Named` for one resolved polygon: an entry per edge that reaches the
+ * projection and per arc that has any length.
+ *
+ * A tooth is not a corner of the source and names nothing; it belongs to the
+ * edge its `root` names, and that edge's line runs from the arc at one end of
+ * it to the arc at the other, which the teeth stand off but do not move.
+ */
+export function namesOf(at: Omit<Resolved, 'shape'>): Named {
+  const lines: Named['lines'] = [], arcs: Named['arcs'] = [];
+  const n = at.corners.length;
+  const drawn = (i: number) => at.corners[i].root === undefined;
+  const im = imagesOf(at);
+  const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
+
+  // Where each corner's arc lies, or the corner's own image where it has
+  // none: what an edge's ends are.
+  const run = (i: number): Point[] | null => {
+    if (im !== null) return im.corners[i];
+
+    const p = mitred(at.source, at.rings, i, at.depths?.[i] ?? at.erosion);
+
+    return p === null ? null : [p];
+  };
+  const runs = at.corners.map((_c, i) => (drawn(i) ? run(i) : null));
+
+  runs.forEach((points, i) => {
+    if (points === null || points.length < 2 || points.every(p => same(p, points[0]))) return;
+
+    arcs.push({ id: at.corners[i].id, points });
+  });
+
+  for (let i = 0; i < n; i++) {
+    if (!drawn(i)) continue;
+
+    // The next corner of the source, whatever teeth the deform put between.
+    let j = nextOf(at.rings, n, i);
+
+    while (!drawn(j) && j !== i) j = nextOf(at.rings, n, j);
+
+    const mine = runs[i], theirs = runs[j];
+
+    if (mine === null || theirs === null) continue;
+
+    const a = mine[mine.length - 1], b = theirs[0];
+
+    if (same(a, b)) continue;
+
+    lines.push({ id: at.corners[i].id, a, b });
+  }
+
+  return { lines, arcs };
+}
+
 /** The erosion alone: the first of the three, and all of it for a polygon
  * with no effects. */
 function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Shape {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { rounded, shapeArea } from './geometry';
-import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, namesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
@@ -154,6 +154,59 @@ describe('a polygon\'s effects', () => {
 
     expect(after.world.effects.get(copy)).toEqual(ROUND);
     expect(shapeArea(shapeOf(after.world, copy))).toBeCloseTo(shapeArea(shapeOf(w, id)), 9);
+  });
+});
+
+describe('what a member publishes about its outline', () => {
+  /** The room's own corners, in ring order: a tooth is its edge's, not one
+   * of these. */
+  const idsOf = (w: World, id: Id) => resolveAt(w, 0).find(r => r.id === id)!.corners.filter(c => c.root === undefined).map(c => c.id);
+  const on = (line: { a: Point, b: Point }, p: Point) => {
+    const dx = line.b.x - line.a.x, dy = line.b.y - line.a.y;
+
+    return Math.abs((p.x - line.a.x) * dy - (p.y - line.a.y) * dx) / Math.hypot(dx, dy);
+  };
+
+  test('a plain room publishes its four edges, on the lines they are eroded to', () => {
+    const { world, id } = room();
+    const w = wrote(world, 0, id, erode(10));
+    const it = resolveAt(w, 0).find(r => r.id === id)!;
+    const names = namesOf(it);
+
+    expect(names.arcs).toEqual([]);
+    expect(names.lines.map(l => l.id)).toEqual(idsOf(w, id));
+
+    // The eroded room is the square pulled in ten: each line is that wall.
+    expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([40, 40, 40, 40]);
+  });
+
+  test('a rounded, deformed room names each arc by its corner and each wall by the corner it leaves', () => {
+    const { world, id } = room();
+    const fx: Effects = { round: inSegments(8, 10), deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
+    const w = wrote(withEffects(world, id, fx), 0, id, round(10), deform(4), erode(5));
+    const it = resolveAt(w, 0).find(r => r.id === id)!;
+    const names = namesOf(it);
+    const corners = idsOf(w, id);
+
+    // One arc per corner, of nine points, and one line per wall — the teeth
+    // between are the wall's, and name nothing of their own.
+    expect(names.arcs.map(a => a.id)).toEqual(corners);
+    expect(new Set(names.arcs.map(a => a.points.length))).toEqual(new Set([9]));
+    expect(names.lines.map(l => l.id)).toEqual(corners);
+
+    // A line runs from the arc at one end of its wall to the arc at the
+    // other, and the wall's teeth stand off it.
+    const im = imagesOf(it)!;
+
+    names.lines.forEach((l, i) => {
+      const mine = im.corners[it.corners.findIndex(c => c.id === l.id)]!;
+
+      expect(on(l, mine[mine.length - 1])).toBeCloseTo(0, 9);
+    });
+
+    // Each wall pulled in by the erosion: the square's walls are at 0 and
+    // 100, and five in from either.
+    expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([45, 45, 45, 45]);
   });
 });
 

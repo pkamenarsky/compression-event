@@ -136,7 +136,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: one pipeline for a group',
       ...(c.bevel > 0 || c.mine.bevel !== undefined ? { round: inSegments(8, Math.max(c.bevel, c.mine.bevel ?? 0)) } : {}),
       ...(c.amplitude > 0 || c.mine.amplitude !== undefined ? { deform: ZIGZAG } : {}),
     };
-    let w = { ...added.world, effects: new Map([[added.id as PolygonId, fx]]) };
+    let w: World = { ...added.world, effects: new Map([[added.id as PolygonId, fx]]) };
 
     // Which corners of the ring are the first room's: those on its outline.
     const vertices = added.world.polygons.get(added.id)!.points;
