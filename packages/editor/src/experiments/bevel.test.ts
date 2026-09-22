@@ -4,6 +4,11 @@
 // are only that what it measures is there to be measured.
 
 import { describe, expect, it } from 'vitest';
+import { bakeSpan } from '../bake';
+import { TOP, addPolygon, rigOf, withRig } from '../scene';
+import { nudged } from '../rig';
+import { Writing, erode, inSegments, wrote } from '../testing';
+import { Effects, PolygonId, World, emptyWorld } from '../types';
 import { Point } from '@ce/game/world';
 import {
   Effecting,
@@ -18,8 +23,8 @@ import {
   unionAll,
 } from '../geometry';
 
-const E: Effecting = { spacing: 12, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
-const N = 8;
+let E: Effecting = { spacing: 12, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+let N = 8;
 const TENSION = 0.5;
 
 // The curve of `curveOf`, again: its control values, a Bézier of them, and
@@ -348,5 +353,135 @@ describe('experiment: round → deform → erode', () => {
 
   it('prints', () => {
     console.log(`\n${report.join('\n')}\n`);
+  });
+});
+
+/** The generator run to the end. */
+function run<T>(g: Generator<number, T, void>): T {
+  let step = g.next();
+
+  while (!step.done) step = g.next();
+
+  return step.value;
+}
+
+describe('experiment: the real bake, both ways', () => {
+  const SIDE = 200;
+  const SPACING = 20, SEGMENTS = 4;
+  let ARC_TEETH = 1;
+  const square: Ring = [{ x: -100, y: -100 }, { x: 100, y: -100 }, { x: 100, y: 100 }, { x: -100, y: 100 }];
+  const round = (by: number): Writing => ({ kind: 'round', by });
+  const deform = (by: number): Writing => ({ kind: 'deform', by });
+
+  type Amounts = { bevel: number, amplitude: number, depth: number };
+
+  /** Today: the effects on the room, the amounts written at each end. */
+  function today(a: Amounts, b: Amounts): World {
+    const added = addPolygon(emptyWorld(), { level: 'hollow' }, square, 0, TOP);
+    const fx: Effects = {
+      round: inSegments(SEGMENTS, 20),
+      deform: { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: true },
+    };
+    let w: World = { ...added.world, effects: new Map([[added.id, fx]]) };
+
+    w = wrote(w, 0, added.id, round(a.bevel), deform(a.amplitude), erode(a.depth));
+    w = wrote(w, 1, added.id, round(b.bevel - a.bevel), deform(b.amplitude - a.amplitude), erode(b.depth - a.depth));
+
+    return w;
+  }
+
+  /** Planned: a plain room whose corners are the round and the deform, laid
+   * as the prototype lays them at each end — the far end's as nudges — and
+   * the erosion written as today. Between the ends the bake lerps the corners,
+   * which is the plan's pipeline wherever it is linear: see the table in the
+   * plan. */
+  function planned(a: Amounts, b: Amounts): World {
+    E = { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 };
+    N = SEGMENTS;
+
+    // With no teeth at either end, none are laid, flat or not.
+    const flat = a.amplitude === 0 && b.amplitude === 0;
+    const laid = (x: Amounts): Laid => {
+      const l = roundThenDeform(square, x.bevel, x.amplitude, flat ? 0 : ARC_TEETH);
+      const keep = l.kind.map(k => !flat || k === 'arc');
+
+      return { points: l.points.filter((_p, i) => keep[i]), ids: l.ids.filter((_d, i) => keep[i]), kind: l.kind.filter((_k, i) => keep[i]) };
+    };
+    const at0 = laid(a), at1 = laid(b);
+
+    E = { ...E, spacing: 12 };
+    N = 8;
+
+    expect(at1.ids).toEqual(at0.ids);
+
+    const added = addPolygon(emptyWorld(), { level: 'hollow' }, at0.points, 0, TOP);
+    const id: PolygonId = added.id;
+    const vertices = added.world.polygons.get(id)!.points;
+    let rig = rigOf(added.world, id);
+
+    vertices.forEach((v, i) => {
+      const by = { x: at1.points[i].x - at0.points[i].x, y: at1.points[i].y - at0.points[i].y };
+
+      if (by.x !== 0 || by.y !== 0) rig = nudged(rig, v.id, 1, by);
+    });
+
+    let w = withRig(added.world, id, rig);
+
+    w = wrote(w, 0, id, erode(a.depth));
+    w = wrote(w, 1, id, erode(b.depth - a.depth));
+
+    return w;
+  }
+
+  const cases: [string, Amounts, Amounts][] = [
+    ['depth 0 → 20', { bevel: 12, amplitude: 4, depth: 0 }, { bevel: 12, amplitude: 4, depth: 20 }],
+    ['depth 0 → 6', { bevel: 12, amplitude: 4, depth: 0 }, { bevel: 12, amplitude: 4, depth: 6 }],
+    ['bevel 6 → 18', { bevel: 6, amplitude: 4, depth: 8 }, { bevel: 18, amplitude: 4, depth: 8 }],
+    ['bevel 4 → 12, depth 1', { bevel: 4, amplitude: 4, depth: 1 }, { bevel: 12, amplitude: 4, depth: 1 }],
+    ['amplitude 1 → 6', { bevel: 12, amplitude: 1, depth: 6 }, { bevel: 12, amplitude: 6, depth: 6 }],
+    ['all three', { bevel: 6, amplitude: 1, depth: 0 }, { bevel: 18, amplitude: 6, depth: 20 }],
+    ['all three, small', { bevel: 6, amplitude: 1, depth: 0 }, { bevel: 12, amplitude: 6, depth: 6 }],
+    ['bevel and depth, no teeth', { bevel: 6, amplitude: 0, depth: 0 }, { bevel: 18, amplitude: 0, depth: 20 }],
+    ['no teeth, depth under the bevel', { bevel: 12, amplitude: 0, depth: 0 }, { bevel: 18, amplitude: 0, depth: 5 }],
+    ['no teeth, depth alone, under the bevel', { bevel: 18, amplitude: 0, depth: 0 }, { bevel: 18, amplitude: 0, depth: 10 }],
+  ];
+
+  /** The planned order with the bevel held: drawn `bevel ± depth`. */
+  const held = (sign: number) => (x: Amounts): Amounts => ({ ...x, bevel: Math.max(0, x.bevel + sign * x.depth) });
+
+  it('stretches, evaluations and time', () => {
+    const lines: string[] = [];
+
+    for (const [name, a, b] of cases) {
+      const measure = (w: World) => {
+        const t0 = performance.now();
+        const span = run(bakeSpan(w, 0));
+        const ms = performance.now() - t0;
+        const stretches = span.tracks.reduce((n, t) => n + t.stretches.length, 0);
+
+        return `${stretches} stretches, ${span.evaluations} evaluations, worst ${span.worst.toFixed(3)}, ${ms.toFixed(0)} ms`;
+      };
+
+      lines.push(`${name}: today ${measure(today(a, b))} | planned ${measure(planned(a, b))}`);
+
+      const tried = (f: () => string) => {
+        try {
+          return f();
+        }
+        catch {
+          return 'n/a (a tooth eaten)';
+        }
+      };
+
+      lines.push(`  held: ${tried(() => measure(planned(held(1)(a), held(1)(b))))}`);
+
+      if (a.amplitude !== 0 || b.amplitude !== 0) {
+        ARC_TEETH = 0;
+        lines.push(`  held, no teeth on the arcs: ${tried(() => measure(planned(held(1)(a), held(1)(b))))}`);
+        ARC_TEETH = 1;
+      }
+    }
+
+    console.log(`\nThe real bake, a ${SIDE} square room:\n${lines.join('\n')}\n`);
   });
 });

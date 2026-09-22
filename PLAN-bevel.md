@@ -98,8 +98,45 @@ point, in world units, against a tolerance of 0.05.
   member edges that cross there, and the names hold across a motion that
   keeps the topology (*2.2*).
 
-Not yet measured: the bake itself — stretch counts and time on a real level —
-the fade of a changing tooth count, and a group's round.
+### The real bake
+
+The same file bakes a 200-unit square room both ways with `bakeSpan`:
+- **Today:** its effects, with the amounts written at each keyframe.
+- **Planned:** a plain room whose corners are the prototype's round and teeth
+  at each keyframe, the far keyframe's written as nudges, and the same
+  erosion.
+
+The planned version is exactly the plan's pipeline wherever that is linear in
+time, and the table above says where that is. Spacing 20, four segments, one
+tooth on each arc. Each figure counts stretches:
+
+| span | today | planned | held | held, no arc teeth |
+|---|---|---|---|---|
+| no teeth, bevel 6 → 18, depth 0 → 20 | 1 | 18 | **1** | — |
+| no teeth, depth under the bevel | 1 | 1 | 1 | — |
+| teeth, depth 0 → 6 | 1 | 6 | 6 | 2 |
+| teeth, bevel 4 → 12 | 4 | 7 | 6 | **1** |
+| teeth, amplitude 1 → 6 | 4 | 10 | 5 | **4** |
+| teeth, all three, small | 5 | 12 | 8 | 6 |
+
+Every span stays inside the tolerance. Here is what the counts show:
+
+- **An unheld round eroded past its radius is expensive.** Its facet edges
+  shrink to nothing one at a time, and each one is a topology event. Held,
+  that never happens and the cost is today's. So held is the default, and it
+  is what the bake wants as well as how a round looks today.
+- **Teeth on the straights cost about what they do today**, sometimes less.
+- **Teeth on the arcs are nearly all of the extra.** On a short arc a tooth is
+  a spike: its edges are a facet long and a tooth high. Erosion collapses
+  them, and those are real events in the new picture, not the bake being
+  careless. What a tooth on an arc costs follows from how sharp it is, so the
+  count and height `arcRun` gives an arc matter for the bake as well as the
+  look. One way is to scale a tooth's height by how much room it has along
+  the arc, as a straight's is scaled by its distance from an end.
+
+Not measured: spans where the bevel eats a straight's tooth. The planned side
+is built from fixed corners, and the bake would seed the tooth instead. Also
+not measured: fading in a change of tooth count, and a group's round.
 
 ## Phase 1: a polygon
 
