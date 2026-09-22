@@ -620,6 +620,25 @@ scope, which a line does for nothing.
 **What it does not fix.** A straight splitting or merging still re-anchors the
 pattern, and still does it where the arrangement already has an event (2.3).
 
+**And what an erosion deeper than the bevel leaves.** A corner turning into
+the material is drawn at less than its bevel and seen at more, and its teeth
+are laid as it is seen (`ArcTeeth.seen`), so what the erosion takes back off
+the drawn arc does not slide them. Past a point that stops working: the seen
+arc's whole pattern has to be crammed into what is drawn, and teeth a fraction
+of their own flanks apart make hairpins. `CRAMMED` is where that is held, and
+it is a trade: hold it low and the teeth slide as the arc shrinks, hold it
+high and they crowd. Measured on `world-2026-09-22T21-40-17Z`, whose erosion
+of 244 is deeper than its bevel of 180, as the worst the outline moves between
+neighbouring instants over five spans:
+
+| `CRAMMED` | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| worst step | 8.68 | 3.27 | **2.69** | 10.27 | 34.41 |
+
+So four. What is left there is fourteen lines popping in one span and two in
+another, all of them on reflex arcs at a depth past the bevel; the spans
+before that have none.
+
 **Where a straight has no name.** Not at a crossing: a crossing is a corner,
 and every piece of the union's boundary is a piece of some member's edge. What
 has no name is a piece of a line that is not a *source* edge — a flank of a
