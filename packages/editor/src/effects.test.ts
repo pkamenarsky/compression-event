@@ -73,6 +73,17 @@ describe('a polygon\'s effects', () => {
     expect(shapeArea(shapeOf(plain, id))).toBeCloseTo(roundedRect(100, 100, 5, 8), 6);
   });
 
+  test('a held round is faceted as it is seen, however deep it is drawn', () => {
+    const { world, id } = room(emptyWorld(), rect(0, 0, 1000, 1000));
+    const fx: Effects = { round: { precision: 2, tension: 0.5, chamfer: false } };
+    const facets = (depth: number) => resolveAt(wrote(withEffects(world, id, fx), 0, id, erode(depth), round(300)), 0)
+      .find(it => it.id === id)!.effected!.facets.map(f => f.n);
+
+    // Drawn at 300 and at 400, the same round of 300 once eroded, and so the
+    // same facets: a facet more would be a line fading in for nothing.
+    expect(facets(100)).toEqual(facets(0));
+  });
+
   test('with nothing to them, the projection is the erosion alone', () => {
     const { world, id } = room();
     const plain = wrote(world, 0, id, erode(10));

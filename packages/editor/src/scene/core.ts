@@ -365,8 +365,11 @@ export function effectedOf(
     (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel, scale), round.tension));
   const flat = corners.map(c => c.root !== undefined);
 
+  // Faceted as the arc is seen, not as it is drawn: a held round the erosion
+  // draws bigger is the same curve once eroded, and would otherwise gain a
+  // facet — and a line fading in — for a change nobody sees.
   return shaping({
-    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i]))),
+    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0))),
     bevels,
     flat,
     deform: arcDeform(world, id, corners, amounts, scale, seen),
