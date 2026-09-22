@@ -975,14 +975,29 @@ of each against its still.
    eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
    teeth" and go; `merged` in the bake says so itself — "without teeth that is
    the polygon's list, filtered". Commit.
-3. **`patternRun` lays a tooth of nought rather than dropping it**, where the
-   caller asks. Today a tooth whose `room` has run out is skipped, so a run
-   that shortens loses points — measured through the real call, a polygon's
-   ring goes from 42 points to 36 over a depth of 0 to 8, held, which is not
-   the round collapsing but the teeth going. A span cannot interpolate across
-   that. Laid flat they stand in the ring as the fold's do, and
-   `FoldShaped.fades` already says what to do with them (*2.9* piece 5).
-   Commit.
+3. **Done in part.** `patternRun` has `reach` — how far either way from its
+   anchor the teeth are laid, whatever the run's own ends do — so given a
+   source edge's half, which an erosion does not change, the same teeth come
+   out at every depth and one whose room has gone stands flat rather than not
+   being laid. On a run shortening 120 to 90 it lays the same seven teeth
+   throughout, the end rooms fading 1 to 0. `foldShaped` keeps a room-nought
+   tooth the way it keeps an amplitude-nought one.
+
+   **What that did not fix**, and is the next thing to find: a polygon's ring
+   still goes 42 points to 36 over a depth of 0 to 8. P9 puts it in two
+   places, neither of them `patternRun`:
+
+   | depth | 0 | 2 | 4 | 6 | 8 |
+   |---|---|---|---|---|---|
+   | undeformed, held | 34 | 34 | 32 | 32 | 30 |
+   | its teeth, held | 8 | 8 | 8 | 6 | 6 |
+   | its teeth, unheld | 8 | 8 | 6 | 0 | 0 |
+
+   So the round's own points merge as the erosion runs (held, 34 to 30), and
+   the teeth go anyway — all of them by a depth of 6 unheld, which is past the
+   bevel. Since `patternRun` lays them, something between it and the shape is
+   dropping them: `named` failing to match a line, `toothed`, or the
+   arrangement. That is where to look next.
 4. The bake meets the teeth in the projection rather than in the corners,
    which piece 3 is most of. Commit.
 5. `reach`, and the rest of the bake notes of *3.3*. Commit.
