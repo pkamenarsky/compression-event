@@ -23,9 +23,10 @@ an option. Nothing about the playback design changes.
 
 ## What changes in the look
 
-- **The bevel is drawn, not seen.** An eroded convex arc tightens and goes
-  sharp once the depth passes its radius; a concave one opens out. Today the
-  bevel is the same wherever it is. See *Open questions* for holding it.
+- **The bevel is drawn, not seen — unless it is held.** An eroded convex arc
+  tightens and goes sharp once the depth passes its radius; a concave one
+  opens out. Today the bevel is the same wherever it is. A round's new `held`
+  option keeps it so: see *1.1*.
 - **Everything erodes.** Teeth on arcs as well as on straights; their mitres
   lengthen and they pinch off as walls grow, as straight teeth already do.
 - **A corner the erosion makes is square.** Where two walls grow into each
@@ -59,6 +60,47 @@ fixed fractions of the arc, and a change in their count across a span comes up
 out of the curve the way a change in facets does (`Facets.from/to/at`,
 `facetFades`).
 
+## What the experiment found
+
+`packages/editor/src/experiments/bevel.test.ts` prototypes phase 1's
+geometry (round, teeth on the straights and at fixed `u` on the arcs, then
+`erodedCorners`) beside today's order, and measures how far the middle of a
+span is from the lerp of its ends, point by point, named as the bake names
+them. That is what the bake cuts a stretch finer for: each figure is a worst
+point, in world units, against a tolerance of 0.05.
+
+| span | today | planned |
+|---|---|---|
+| depth 0 → 5 | 1.00 | 0 |
+| bevel 4 → 14 and depth 0 → 5, no teeth | 0.76 | 0 |
+| held bevel, depth 0 → 8, no teeth | — | 0 |
+| bevel 4 → 14, teeth on | 2.09 | 3.47 |
+| amplitude 0 → 3 | 0.11 | 0.83 |
+| all three together | 1.72 | 0.93 |
+| a corner moving 30 | 2.75 | 0.66 |
+
+- **A round with no teeth is exact** under any bevel and depth, held or not,
+  where today's is not: the arc's points are fixed multiples of the bevel
+  along directions that do not change, and so are their mitres.
+- **A tooth on an arc is the one thing worse**, and only where the bevel or
+  the amplitude changes with a depth on: its mitre turns with its angle,
+  which is the ratio of the two. Today's teeth have the same term, smaller
+  because a straight's teeth are blunter. More stretches where it happens,
+  not a wrong picture. Three teeth forced onto a small arc make it worse
+  (4.26), so the count from the arc's length matters.
+- **A tooth and a facet turn at the same `u` must be one point**: flat, they
+  coincide, the edge between them has no length, and its mitre is anything.
+  So `arcRun` merges them (*1.2*). The same holds for anything the round lays
+  on top of anything else — a flat tooth is never put on an arc's end.
+- **The arrangement keeps them**: 70 points in, 66 out on a shallow erosion,
+  one ring and the right area past the radius, 2–5 ms an erosion.
+- **A union's corners can be named** by the member corner they are or the two
+  member edges that cross there, and the names hold across a motion that
+  keeps the topology (*2.2*).
+
+Not yet measured: the bake itself — stretch counts and time on a real level —
+the fade of a changing tooth count, and a group's round.
+
 ## Phase 1: a polygon
 
 ### 1.1 Rounded as drawn
@@ -75,6 +117,16 @@ standing corners, in its own frame, before the deform:
 - a bevel of nought is still `n + 1` coincident points, and the arrangement
   welds them as now; the bake seeds such an end rather than collapse it
   (`seed` in `effectsOver`).
+
+**Held.** `Options['round']` gains `held: boolean`. Held, a corner's bevel
+is drawn as `bevel + depth` where it turns out of the material and
+`bevel - depth` where it turns in, clamped at nought, so what the erosion
+leaves is an arc of the bevel asked for, at any depth. Still linear in the
+bevel and the depth, and continuous as a corner flattens and turns the other
+way, since its arc there is a sliver along its wall whatever its bevel. The
+clamp is a kink in time, which the bake cuts a stretch at like any other. The
+default is held, which is how a round looks today; unheld tightens as walls
+grow. A tick in the round's section of the inspector.
 
 Where: a new `roundedAt` beside `deformedAt` in `scene/core.ts`, called first
 in `resolveAt`, and the same in the bake's `effectsOver` path. `effectedOf`
@@ -95,8 +147,8 @@ a straight between two arcs, or an arc.
   keyframe over the spacing, the teeth at even fractions of `u` between its
   ends, each pushed along the curve's normal at `u` — from `Curve`'s tangent,
   not from the facet it lands on, so the teeth follow the curve and not its
-  facets. Each shrinks to nothing at the arc's ends as a straight's do at
-  theirs, and its pattern is keyed by the corner's id, so noise belongs to the
+  facets — which is the point of the whole change. Each shrinks to nothing at
+  the arc's ends as a straight's do at theirs, and its pattern is keyed by the corner's id, so noise belongs to the
   corner.
 - **Its amplitude** is the corner's two edges' amplitudes, blended across
   the arc, so a corner between an edge deformed on its own and one that is not
@@ -106,10 +158,9 @@ a straight between two arcs, or an arc.
   that moves from a straight onto an arc is a different corner and the bake
   sees one go and another come, each out of nothing.
 
-A tooth on an arc lies between two arc points, so its own normal is not the
-facet's: at few facets the teeth stand off the facets a little. That is the
-curve they are meant to follow, and at the facet counts in use it is not
-visible. If it is, lay them on the facets instead — see *Open questions*.
+A tooth on an arc is a point of the curve, not of a facet, so the facets and
+the teeth are laid together: the arc's points are its facets' turns and its
+teeth, merged in order of `u`, each on the curve.
 
 Where: `geometry.ts` (`arcRun`, `subdivided` taking runs), `deformedAt`
 taking the rounded ring and the arc points' ids.
@@ -265,13 +316,6 @@ as it is alone. Commit.
 
 ## Open questions
 
-- **Hold the bevel as seen?** A bevel of `bevel + depth` at a convex corner
-  and `bevel - depth` at a concave one, clamped at nought, keeps the rounding
-  the same size at any depth, and stays linear. It changes what the bevel
-  number means, and the author may want the arcs to tighten as walls grow.
-- **Teeth on the curve or on the facets?** On the curve (as planned) follows
-  the round; on the facets is simpler and exact to the drawn outline, and at a
-  coarse round shows the facets through the pattern.
 - **Seams at the middle of an arc** between two differently deformed edges, or
   one deform carried round the corner, which gives up the middle anchor on one
   side.
