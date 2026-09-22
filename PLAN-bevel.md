@@ -761,11 +761,100 @@ Tests: a deformed member under a rounded group has teeth along the group's arc
 at its own corner and at a crossing; one under an unrounded group is exactly
 as it is alone. Commit.
 
+## The third order: round, erode, deform
+
+Phase 2 is built on round, deform, erode. The other order worth naming is
+round, *erode*, deform — the round drawn on the source as it is now, the
+erosion a mitred offset over it, and the teeth laid last, on the outline that
+comes out. It is what the `CRAMMED` note above reaches for and then puts down
+as cutting against phase 2's order, and it is worth writing out, because what
+it cuts against is smaller than it looks and what it buys is most of the
+machinery.
+
+**Why it ends the jumps.** Every jump this plan has fought is a
+*classification* flipping: straight against arc, `unrounded`, `clear`, `flat`,
+`restSquare`, `squareIn`, and the seen arc against the drawn one. Each exists
+because the deform runs while it still matters what kind of thing it is
+standing on, and a classification flips at a threshold — that is what the jump
+*is*. Laid last there is one curve, and `patternRun` does not care whether a
+run came from an edge or an arc. All of the above lose their reason to exist,
+and so do `ArcTeeth.seen` and `CRAMMED`: drawn and seen are the same curve, so
+nothing is ever crammed. The reflex arc under a deep erosion — the case 2.11
+leaves standing at a worst step of 2.69 — stops being a case.
+
+**The tooth keeps its place.** The objection is that teeth laid on the eroded
+outline slide as the outline's length moves with the depth, trading local jumps
+for a global re-phase. They do not, because the pattern is not keyed by arc
+length. `patternRun` takes an anchor and allows it outside the run — which is
+exactly what 2.3 built for a fold's straight. A mitred offset keeps an edge's
+identity: the eroded edge is the source edge translated along its normal and
+re-trimmed at its ends. So the anchor is the source edge's middle pushed out by
+the depth, its coordinate along the edge does not move with the depth at all,
+and teeth only enter and leave at the ends, through the `room` fade that is
+already there. An arc offsets to a concentric arc and is anchored the same way.
+Corners the erosion makes stay sharp and are toothed by nothing — the runs
+either side fade into them.
+
+**It bakes better than what we have.** Measured on a tooth of spacing 20:
+
+| span | apex today | apex laid last |
+|---|---|---|
+| depth 0→8, amplitude held | 0.0000 | 0.0000 |
+| amplitude 0→6, depth held | 0.1564 | **0.0000** |
+| amplitude 1→12, depth 0→8 | 1.4887 | **0.0000** |
+
+as the worst a lerp of the two ends misses the truth. Today a tooth's apex is a
+*corner*, so the erosion walks it along its mitre by `d / sin(θ/2)`, and a
+deform whose amplitude moves is a deform whose every θ moves — a curve per
+tooth, which is the cost `fillTrack` names at the top of its section. Laid
+last, the apex sits on an edge, not at a corner: it is the offset line, linear
+in the depth, plus the amplitude along a normal that does not turn. No mitre,
+no `1/sin`, drift nought. The gain is largest on exactly the spans the deform
+owns, the ones where its own amount is animated.
+
+Arcs go the same way. A point on a rounded corner eroded by `d` is
+`centre(bevel) + (r(bevel) ± d) · u(φ)` — a bevel-linear part *plus* a
+depth-linear part, a sum and not a product, so `weighed` stays exact. Today
+those points are bevel-linear and then walk their mitres, which is the curve.
+
+**What it costs.** One new non-linearity, and it is a kink rather than a curve:
+`room` saturates as the eroded edge shortens, so a tooth inside the end ramp
+drifts up to about a fifth of its amplitude over a span (1.13 on amplitude 6,
+depth 0→10) and the measured split puts it right in one cut. That is the class
+the bake already pays for `clear`.
+
+The real cost is that **teeth no longer erode**, so nothing is self-limiting: a
+corridor eroded to a sliver still carries teeth at full depth, which will cross
+the far wall. Option B got that free from pinch-off. Here it wants an amplitude
+that fades with the local clearance — which can be smooth, so it brings no jump
+back, and is more controllable than a look that is an accident of the offset.
+The bevel is still drawn and not seen, as in B: convex arcs shrink with the
+depth and go sharp past the radius, with `bevel ± depth` available to hold what
+is seen steady.
+
+**Sealed groups and phase 3 fall out.** The order is members → fold → group
+round → group erosion → group deform. The group's teeth are laid on the final
+union outline, arcs included: no seams, no teeth on the joins inside the group.
+And phase 3 stops being a phase. Its whole difficulty is that a member's deform
+has to be delayed past the group's round and then laid on union edges found by
+which line they lie on; with the deform last for everything, member and group
+alike, there is nothing to delay and nothing to push down. What survives of 2.9
+is naming — which source edge a run belongs to, so the anchor and the amplitude
+can be found — and that is needed either way.
+
+**So: worth taking.** It is phase 2 plus one move, and the move pays for
+itself. Against B it gives up pinch-off and takes on the clearance fade; it
+gets back `CRAMMED`, `ArcTeeth.seen`, the whole of phase 3, and a bake that is
+exact where the present one curves.
+
 ## Open questions
 
 - **Seams at the middle of an arc** between two differently deformed edges, or
   one deform carried round the corner, which gives up the middle anchor on one
   side.
+- **Whether to take the third order** before phase 3 is built, since it
+  deletes phase 3 rather than finishing it. The open piece is the clearance
+  fade that keeps teeth from crossing a thin wall.
 - **Phase 3's trade-off**: teeth eroded by the group's depth only. The other
   choice is to leave members' deforms inside them and the group's round to
   leave their teeth square, which is phase 2 without phase 3.
