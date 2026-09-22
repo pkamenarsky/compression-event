@@ -1,6 +1,5 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO remove pkamenarsky itch.io from game/3d view in editor
 ** TODO remove debug output/controls when game NOT started from editor (editor can pass a debug: true option to game or something that is by default false)
 *** fps counter, <, > shader switching (and ; ' sky switching beside it)
 ** TODO write rotation degrees / scale factor / move distance while transforming
@@ -46,7 +45,6 @@
 ** Look & layout
 *** TODO inspector view - all transforms + effects in one pane
 **** polygon masks (level + void{solid} etc)
-*** TODO remove pkamenarsky itch.io from 3d view in editor
 *** TODO write rotation degrees when rotating (and scale factor, move distance); only amounts have a label now
 *** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)

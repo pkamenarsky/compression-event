@@ -120,6 +120,13 @@ export interface PlayOptions {
   title?: boolean
 
   /**
+   * Whether the end of the level signs off with where the game is from. On by
+   * default, for the same page the title screen is for; the editor already
+   * knows.
+   */
+  credits?: boolean
+
+  /**
    * A line in the corner saying what the loop thinks is going on: which
    * version is in force, what is in flight, and what last moved it.
    *
@@ -521,9 +528,11 @@ export function play(host: HTMLElement, world: World, options: PlayOptions = {})
 
         if (!live) break;
 
-        await say.say('forgetful-functor.itch.io', 0, '@pkamenarsky');
+        if (options.credits ?? true) {
+          await say.say('forgetful-functor.itch.io', 0, '@pkamenarsky');
 
-        if (!live) break;
+          if (!live) break;
+        }
 
         say.black();
         break;
