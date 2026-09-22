@@ -190,7 +190,7 @@ describe('a group\'s effects', () => {
 
       // Those standing off the wall: the rest are on its line, and the union,
       // an arrangement, drops them.
-      return it.source.filter((p, i) => it.corners[i].root !== undefined && p.y > 100 + 1e-9);
+      return imagesOf(it)!.straight!.filter(p => p.y > 100 + 1e-9);
     };
 
     // One edge of a room deformed: its teeth and its ends are where they are
@@ -355,7 +355,7 @@ describe('editing effects', () => {
     expect(stateAt(w, id, 0).amplitudes.get(a.id)).toBe(3);
   });
 
-  test('an edge runs from its drawn corner to the next, through its teeth', () => {
+  test('an edge runs from its drawn corner to the next, its teeth laid by the projection', () => {
     const { world, id } = room();
     const points = world.polygons.get(id)!.points;
     const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(2));
@@ -364,8 +364,8 @@ describe('editing effects', () => {
 
     expect(it.corners[run[0]].id).toBe(points[0].id);
     expect(it.corners[run[run.length - 1]].id).toBe(points[1].id);
-    expect(run.slice(1, -1).every(i => it.corners[i].root === points[0].id)).toBe(true);
-    expect(run.length).toBeGreaterThan(2);
+    expect(run).toHaveLength(2);
+    expect(imagesOf(it)!.straight!.length).toBeGreaterThan(0);
 
     expect(endsOf([it], [points[3].id]).sort()).toEqual([points[3].id, points[0].id].sort());
     expect(edgesBetween([it], [points[0].id, points[1].id, points[3].id]).sort()).toEqual([points[0].id, points[3].id].sort());
@@ -381,7 +381,11 @@ describe('editing effects', () => {
     const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
     const it = resolveAt(w, 0).find(r => r.id === id)!;
 
-    expect(edgeRun(it, a.id).length).toBeGreaterThan(2);
+    // Its teeth all along the one edge, from a to b.
+    const teeth = imagesOf(it)!.straight!;
+
+    expect(teeth.length).toBeGreaterThan(0);
+    teeth.forEach(p => expect(Math.abs(p.y - a.at.y)).toBeLessThan(3 + 1e-9));
     [b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
 
     // The corner the deformed edge does not touch is rounded as it was.
@@ -395,17 +399,17 @@ describe('editing effects', () => {
     const [a, b] = world.polygons.get(id)!.points;
     const fx = { round: inSegments(8, 30), deform: DEFORM.deform! };
     const it = resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
-    const teeth = edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
+    const teeth = imagesOf(it)!.straight!;
     const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
+    const corners = world.polygons.get(id)!.points.map(c => c.at);
 
     expect(teeth.length).toBeGreaterThan(0);
-    expect(teeth.every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
+    expect(teeth.every(p => corners.every(q => from(p, q) > 30))).toBe(true);
 
     // A square corner's arc is the one point; a drawn corner's is its nine.
     const arcs = imagesOf(it)!.corners.map(r => r?.length);
     const at = (vertex: number) => arcs[it.corners.findIndex(q => q.id === vertex)];
 
-    edgeRun(it, a.id).slice(1, -1).forEach(i => expect(arcs[i] ?? 1).toBe(1));
     expect(at(a.id)).toBe(9);
     expect(at(b.id)).toBe(9);
   });

@@ -53,6 +53,8 @@ import {
   mitred,
   nextOf,
   outlineOf,
+  Straights,
+  toothedRing,
   prevOf,
   signedArea2,
   subdivided,
@@ -263,8 +265,9 @@ export interface Resolved {
 export interface Effected {
   facets: readonly Facets[]
   bevels: readonly number[]
-  /** Which corners are teeth, which a round leaves square. */
-  flat: readonly boolean[]
+  /** The deforms along its straights, laid where it is projected: its own,
+   * and a loose group's holding it, in order. See `toothedRing`. */
+  straights: readonly Straights[]
   /** The deform along the arcs: its options, and at each corner the
    * amplitude of the edge before it and of the edge after. Nothing where the
    * thing has no deform of its own, or no arc could take one. */
@@ -354,24 +357,28 @@ export function effectedOf(
   depth: (i: number) => number,
   /** What took the amounts into the world: see `segmentsOf`. */
   scale = 1,
+  /** The deforms of loose groups holding it, laid after its own: see
+   * `looseDeforms`. */
+  loose: readonly LooseDeform[] = [],
 ): Effected | null {
   const fx = world.effects.get(id);
+  const straights = straightsOf(world, id, corners, amounts, scale, loose);
 
-  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) return null;
+  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined)) {
+    return shaping({ facets: corners.map(() => SQUARE), bevels: corners.map(() => 0), straights, deform: null });
+  }
 
   const bevels = drawnBevels(world, id, corners, local, amounts, depth);
   const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
     (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel, scale), round.tension));
-  const flat = corners.map(c => c.root !== undefined);
-
   // Faceted as the arc is seen, not as it is drawn: a held round the erosion
   // draws bigger is the same curve once eroded, and would otherwise gain a
   // facet — and a line fading in — for a change nobody sees.
   return shaping({
-    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0))),
+    facets: corners.map((c, i) => faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0)),
     bevels,
-    flat,
+    straights,
     deform: arcDeform(world, id, corners, amounts, scale, seen),
   });
 }
@@ -461,16 +468,59 @@ function arcDeform(
 }
 
 /**
- * Which of `corners` are teeth, which a round leaves square. See
- * `outlineOf`.
+ * A deform of a loose group holding a polygon, as the polygon's straights
+ * take it: see `looseDeforms`.
  */
-export function unrounded(corners: readonly Vertex[]): boolean[] {
-  return corners.map(c => c.root !== undefined);
+export interface LooseDeform {
+  e: Effecting
+  amplitude: number
 }
 
-/** A round kept only where it does something. */
+/**
+ * The deforms of the loose groups holding `id` at `v`, innermost first. A
+ * sealed group's deform is laid on its fold instead: see `groupDeform`.
+ */
+export function looseDeforms(world: World, v: KeyframeId, id: Id): LooseDeform[] {
+  return deforms(world, v, id).filter(d => d.owner !== id).map(d => ({ e: d.e, amplitude: d.amplitude(0 as VertexId) }));
+}
+
+/**
+ * A polygon's straights' deforms, in the world: its own, an edge's
+ * amplitude its own on top of the polygon's — nought for an edge its
+ * timeline never deforms — and then each loose group's, the same on every
+ * edge.
+ */
+function straightsOf(
+  world: World,
+  id: Id,
+  corners: readonly Vertex[],
+  amounts: Pick<State, 'amplitude' | 'amplitudes'>,
+  scale: number,
+  loose: readonly LooseDeform[],
+): Straights[] {
+  const fx = world.effects.get(id);
+  const keys = corners.map(c => c.id as number);
+  const out: Straights[] = [];
+
+  if (fx?.deform !== undefined && fx.deform.off !== true && fx.deform.spacing > 0) {
+    const ever = everDeformed(keyRigOf(world, id));
+    const e = effecting(fx);
+
+    out.push({
+      e: { ...e, spacing: e.spacing * scale },
+      amplitude: corners.map(c => (ever.all || ever.edges.has(c.id) ? amounts.amplitude + (amounts.amplitudes.get(c.id) ?? 0) : 0)),
+      keys,
+    });
+  }
+
+  for (const d of loose) out.push({ e: d.e, amplitude: corners.map(() => d.amplitude), keys });
+
+  return out;
+}
+
+/** Effects kept only where they do something. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0);
+  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0) || e.straights.some(d => d.amplitude.some(a => a !== 0));
 
   return any ? e : null;
 }
@@ -482,7 +532,12 @@ function effectKey(e: Effected, s = 1): Memo[] {
     ? []
     : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s)];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
+  const straights: Memo[] = e.straights.map(d => [
+    d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.e.offset ? 1 : 0,
+    d.amplitude.map(a => a / s), [...d.keys],
+  ]);
+
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), straights, deform, (e.apart ?? []).map(Number)];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1015,7 +1070,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Memo[],
 ): Imaged => {
-  const [facets, bevels, flat, deform, apart] = effects as [Memo[], number[], number[], Memo[], number[]];
+  const [facets, bevels, straightKeys, deform, apart] = effects as [Memo[], number[], Memo[][], Memo[], number[]];
   const each = facets.map(facetsFrom);
   const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen] = deform as [number, number, number, number, number, number, number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
@@ -1025,20 +1080,35 @@ const imagedBy = remembered((
     ? null
     : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(1, seen[i] / bevels[i]) : 1 });
 
-  const o = outlineOf(source, rings, i => flat[i] === 1, i => each[i], i => bevels[i], teeth, i => apart[i] === 1);
-  const deep = depths === null ? null : o.owner.map(i => depths[i]);
+  // The straights toothed first, afresh: see `toothedRing`.
+  const chain: Straights[] = straightKeys.map(k => {
+    const [sp, pt, sd, sides, jitter, falloff, offset, amplitude, keys] = k as [number, number, number, number, number, number, number, number[], number[]];
+
+    return { e: { spacing: sp, pattern: PATTERNS[pt], seed: sd, sides: SIDES[sides], jitter, falloff, offset: offset === 1 }, amplitude, keys };
+  });
+  const toothed = toothedRing(source, rings, chain, i => bevels[i], depths, i => apart[i] === 1);
+  const own = toothed.owner;
+  const mine = <T>(f: (i: number) => T, none: T) => (k: number) => (own[k] < 0 ? none : f(own[k]));
+  const o = outlineOf(toothed.ring, toothed.rings, k => own[k] < 0, mine(i => each[i], SQUARE), mine(i => bevels[i], 0), mine(teeth, null), mine(i => apart[i] === 1, false));
+  const deep = toothed.depths === null ? null : o.owner.map(k => toothed.depths![k]);
   const at = (k: number) => deep?.[k] ?? erosion;
   const image = (k: number) => mitred(o.ring, o.rings, k, at(k));
+  const where: number[] = [];
+
+  own.forEach((i, k) => {
+    if (i >= 0) where[i] = k;
+  });
 
   return {
     shape: offsetOf(o.ring, o.rings, erosion, deep),
-    corners: o.arcs.map(run => {
-      const images = run.map(image);
+    corners: source.map((_p, i) => {
+      const images = o.arcs[where[i]].map(image);
 
       return images.some(p => p === null) ? null : images as Point[];
     }),
     teeth: o.teeth.map(image).filter((p): p is Point => p !== null),
-    drawn: o.arcs.map(run => run.map(k => o.ring[k])),
+    straight: own.flatMap((i, k) => (i < 0 ? o.arcs[k] : [])).map(image).filter((p): p is Point => p !== null),
+    drawn: source.map((_p, i) => o.arcs[where[i]].map(k => o.ring[k])),
     rest: [],
     restSquare: [],
   };
@@ -1074,6 +1144,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
     teeth: place(at.frame, im.teeth ?? []),
+    straight: place(at.frame, im.straight ?? []),
     drawn: (im.drawn ?? []).map(r => place(at.frame, r)),
     rest: im.rest.map(r => place(at.frame, r)),
     restSquare: im.restSquare,
@@ -1461,109 +1532,6 @@ function everDeformed(rig: KeyRig): { all: boolean, edges: ReadonlySet<VertexId>
 }
 
 /**
- * A polygon's standing corners with its deforms done to them: its rings
- * subdivided and perturbed, in the world, before anything else happens to
- * them. See `subdivided` in `geometry.ts`.
- *
- * The teeth are corners from here on, each with an id of its own made from
- * who deforms it, the corner its edge starts at, and which tooth it is — so it
- * is the same corner at every keyframe, and the bake carries it as it carries
- * any other. A tooth's extra depth is its edge's, in proportion along it, so
- * a varying erosion leaves a straight edge straight. What has no deform comes
- * back as it came.
- *
- * Every deform keeps each drawn corner's bevel — `bevel`, as it is drawn —
- * free of teeth, which stop short of the arc there rather than run into it:
- * see `patternRun`. The arc takes teeth of its own: see `outlineOf`.
- */
-function deformedAt(
-  world: World,
-  v: KeyframeId,
-  id: Id,
-  corners: readonly Vertex[],
-  local: readonly Point[],
-  frame: Affine,
-  over: ReadonlyMap<VertexId, number>,
-  bevel: (c: Vertex) => number,
-): { corners: Vertex[], local: Point[], source: Point[], over: ReadonlyMap<VertexId, number> } {
-  const chain = deforms(world, v, id);
-
-  if (chain.length === 0) return { corners: [...corners], local: [...local], source: place(frame, local), over };
-
-  let cs: Vertex[] = [...corners];
-  let pts: Point[] = place(frame, local);
-  let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
-
-  for (const { owner, e, amplitude, toothed } of chain) {
-    const rings = ringsOf(cs);
-    const slices = sliced(pts, rings);
-
-    // Out of the material is to the right of a ring wound the way the outline
-    // is, counter-clockwise, and a hole is wound the other way.
-    const out: 1 | -1 = signedArea2(slices[0]) >= 0 ? 1 : -1;
-    const next: Vertex[] = [], placed: Point[] = [], depths: number[] = [];
-
-    slices.forEach((ring, r) => {
-      const at = rings[r];
-
-      const clear = (i: number) => (cs[at + i].root === undefined ? Math.max(0, bevel(cs[at + i])) : 0);
-      const laid = subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out, clear, i => toothed(cs[at + i].root ?? cs[at + i].id));
-
-      for (const made of laid) {
-        const from = cs[at + made.from];
-        const d0 = deep[at + made.from], d1 = deep[at + (made.from + 1) % ring.length];
-
-        placed.push(made.at);
-
-        if (made.j === null) {
-          next.push(from);
-          depths.push(d0);
-          continue;
-        }
-
-        next.push({ ...from, id: toothId(owner, from.id, made.j), root: from.root ?? from.id });
-        depths.push(d0 + (d1 - d0) * made.along);
-      }
-    });
-
-    cs = next;
-    pts = placed;
-    deep = depths;
-  }
-
-  const inverse = pts.map(p => unplace(frame, p));
-  const deeper = over.size === 0 ? over : new Map(cs.flatMap((c, i) => (deep[i] === 0 ? [] : [[c.id, deep[i]] as const])));
-
-  // A tooth is where it is, in the polygon's own frame, like any corner.
-  return {
-    corners: cs.map((c, i) => (c.root === undefined ? c : { ...c, at: inverse[i] })),
-    local: inverse,
-    source: pts,
-    over: deeper,
-  };
-}
-
-/**
- * A tooth's id: who deformed it, the corner its edge starts at, and which
- * tooth. Negative, so nothing counted out of `nextId` is ever one, and the
- * same numbers every time.
- */
-function toothId(owner: Id, from: VertexId, j: number): VertexId {
-  const text = `${owner}:${from}:${j}`;
-  let a = 0x811c9dc5, b = 0x01000193;
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-
-    a = Math.imul(a ^ c, 0x01000193);
-    b = Math.imul(b ^ c, 0x5bd1e995);
-    b ^= b >>> 13;
-  }
-
-  return -((a >>> 0) * 0x100000 + ((b >>> 0) >>> 12)) - 1;
-}
-
-/**
  * The corners standing at a version, ring by ring, with the rings that are no
  * longer rings left out.
  *
@@ -1652,22 +1620,20 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     const fx = world.effects.get(id);
     const depth = (c: Vertex) => state.erosion + (state.depths.get(c.id) ?? 0);
     const rest = corners.map(c => state.corners.get(c.id)!);
-    const bevels = drawnBevels(world, id, corners, rest, state, i => depth(corners[i]));
-    const bevelOf = new Map(corners.map((c, i) => [c.id, bevels[i]]));
-    const drawn = deformedAt(world, v, id, corners, rest, frame, state.depths, c => bevelOf.get(c.id) ?? 0);
-    const deep = new Map(drawn.corners.map(c => [c.id, depth(c)]));
 
+    // The deform is not in the corners: the projection lays its teeth. See
+    // `toothedRing`.
     out.push(resolved({
       id,
       polygon,
-      corners: drawn.corners,
-      local: drawn.local,
+      corners,
+      local: rest,
       frame,
-      source: drawn.source,
+      source: place(frame, rest),
       erosion: state.erosion,
-      over: drawn.over,
-      depths: varying(drawn.corners, state.erosion, drawn.over),
-      effected: effectedOf(world, id, drawn.corners, drawn.local, state, i => deep.get(drawn.corners[i].id)!, scaleAt(world, id, v)),
+      over: state.depths,
+      depths: varying(corners, state.erosion, state.depths),
+      effected: effectedOf(world, id, corners, rest, state, i => depth(corners[i]), scaleAt(world, id, v), looseDeforms(world, v, id)),
     }));
   }
 

@@ -2335,54 +2335,41 @@ describe('effects', () => {
     return nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
   }
 
-  test('a corner arriving on a deformed floor starts from the editor\'s pattern, and nothing jumps', () => {
-    // At the near end the floor is one edge with one pattern; at the far end
-    // it is two, each with its own. The teeth are corners, so the ones the
-    // halves gain arrive as corners do, and the ones the floor loses go.
+  test('a corner arriving on a deformed floor starts from the editor\'s pattern', () => {
+    // At the near end the floor is one edge with one pattern, the corner flat
+    // on it; past it, two, each laid from its own middle. The teeth are laid
+    // afresh, so the pattern goes over at once, as the span starts: a pop,
+    // which fresh teeth pay where the old ones faded one pattern into the
+    // other. See PLAN-bevel, fresh teeth.
     const w = arriving(ZIGZAG, deform(5));
     const span = run(bakeSpan(w, 0));
 
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 1));
-    expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+    expect(drift(w, 0, 39)).toBeLessThan(TOLERANCE);
   });
 
-  test('rounded as well, its outline never pops', () => {
-    // Where a rounded tooth goes through straight on its way, its arc lies on
-    // a line for an instant and the arrangement drops it there, and the bake
-    // pins that instant; nothing moves either side of it.
+  test('rounded as well, its ends are the editor\'s', () => {
     const w = arriving({ ...ROUND, ...ZIGZAG }, round(10), deform(5));
     const span = run(bakeSpan(w, 0));
 
-    expect(steadiest(w)).toBeLessThan(0.5);
-    expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  test('an edge growing longer gets more points, and they fade in', () => {
+  test('an edge growing longer gets more points, and nothing moves as they come', () => {
     // The right wall pulled out to twice its length: three teeth at the near
-    // end, five at the far.
+    // end, five at the far. Laid afresh, a tooth comes in at nought height
+    // where the edge reaches it: a cut, and no movement.
     const { world, id } = room(ZIGZAG);
     const w0 = wrote(world, 0, id, deform(5));
     const w = nudging(w0, 1, id, w0.polygons.get(id)!.points[2].id, { x: 0, y: 200 });
-
     const span = run(bakeSpan(w, 0));
-    const s = span.tracks[0].stretches[0];
 
-    // A tooth going from out to in lies on its line for an instant half way,
-    // and the bake pins it there; the outline is the same either side.
-    expect(count(span, 0)).toEqual(count(span, 1));
-    expect(drift(w)).toBeLessThan(TOLERANCE);
+    // The wall itself goes half a unit a step: nothing more than that.
+    expect(steadiest(w)).toBeLessThan(0.5 + 1e-6);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
-
-    // The ones it gains are dark at the near end, and coming up.
-    const later = s.opacity[1].flat();
-
-    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(2);
   });
 
   test('a corner arriving inside a rounded corner\'s reach starts on the editor\'s outline', () => {
@@ -2409,31 +2396,15 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  test('a deform starting from nought fades its verticals in', () => {
+  test('a deform starting from nought rises from its walls', () => {
     const { world, id } = room(ZIGZAG);
     const w = wrote(world, 1, id, deform(10));
     const span = run(bakeSpan(w, 0));
-    const s = span.tracks[0].stretches[0];
 
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 1));
+    expect(steadiest(w)).toBeLessThan(0.5);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
     expect(drift(w)).toBeLessThan(TOLERANCE);
-
-    // The twelve deform points, flat on the walls at the near end.
-    const flat: [number, number][] = [];
-
-    s.a.forEach((r, i) => r.points.forEach((p, j) => {
-      if (Math.abs(Math.abs(p.x) - 100) + Math.abs(Math.abs(p.y) - 100) > 1e-6) flat.push([i, j]);
-    }));
-
-    expect(new Set(flat.map(([i, j]) => `${s.a[i].points[j].x},${s.a[i].points[j].y}`)).size).toEqual(12);
-
-    for (const [i, j] of flat) {
-      expect(s.opacity[0][i][j]).toBeCloseTo(0, 9);
-      expect(s.opacity[1][i][j]).toBeCloseTo(1, 9);
-    }
   });
 
   test('a room scaled and eroded in one span is eroded in proportion, and nothing jumps', () => {

@@ -105,7 +105,6 @@ import {
   segmentsOf,
   standingIn,
   under,
-  unrounded,
 } from './core';
 
 // -----------------------------------------------------------------------------
@@ -491,20 +490,16 @@ const shapedFold = remembered((fold: Shape, square: readonly Point[], keep: read
  * clear of but a group's is not — where its erosion put them.
  */
 function squareIn(it: Resolved): Point[] {
-  const teeth = unrounded(it.corners);
-  const n = it.corners.length;
-  const flags = teeth.map((t, i) => t || teeth[nextOf(it.rings, n, i)] || teeth[prevOf(it.rings, n, i)]);
   const im = imagesOf(it);
 
-  if (im !== null) return [...flags.flatMap((f, i) => (f ? im.corners[i] ?? [] : [])), ...(im.teeth ?? [])];
+  if (im === null) return [];
 
-  if (!flags.some(Boolean)) return [];
+  // Toothed, an edge's ends are square too: see `toothedRing`.
+  const n = it.corners.length;
+  const toothed = (i: number) => (it.effected?.straights ?? []).some(d => d.amplitude[i] !== 0);
+  const flags = it.corners.map((_c, i) => toothed(i) || toothed(prevOf(it.rings, n, i)));
 
-  return flags.flatMap((f, i) => {
-    const m = f ? mitred(it.source, it.rings, i, it.depths?.[i] ?? it.erosion) : null;
-
-    return m === null ? [] : [m];
-  });
+  return [...flags.flatMap((f, i) => (f ? im.corners[i] ?? [] : [])), ...(im.teeth ?? []), ...(im.straight ?? [])];
 }
 
 /** A group's round and deform as `shapedFold` takes them, or nothing where

@@ -3722,6 +3722,189 @@ export function outlineOf(
 }
 
 /**
+ * One deform a polygon's straights go through, as the projection lays it:
+ * its options, the amplitude of the edge starting at each point of the ring
+ * it is laid on — nought for an edge it leaves alone — and each edge's name
+ * to the noise. See `toothedRing`.
+ */
+export interface Straights {
+  e: Effecting
+  amplitude: readonly number[]
+  keys: readonly number[]
+}
+
+/**
+ * A ring with its straights toothed, laid afresh wherever it is asked for
+ * rather than carried as corners: each deform of `chain` in turn subdivides
+ * what the one before left, the first one's amplitudes and keys by the
+ * source's corners and a later one's by the edges they became. `clear` is
+ * each source corner's drawn bevel, which the first deform's teeth stop
+ * short of; `depths` is each corner's own, if it has one, and a tooth's is
+ * its edge's in proportion along it, so a varying erosion leaves a straight
+ * edge straight.
+ *
+ * A corner `apart` is not there to the teeth: they are laid along the edge
+ * as though it were not, and it is put back on them where it falls along
+ * that edge. It is one the bake invented, flat on the edge at this end, and
+ * the pattern is the edge's the editor draws. See `effectsOver`.
+ *
+ * `owner` is the source corner each point is, or -1 for a tooth.
+ */
+export function toothedRing(
+  source: Ring,
+  rings: readonly number[],
+  chain: readonly Straights[],
+  clear: (i: number) => number,
+  depths: readonly number[] | null,
+  apart: (i: number) => boolean = () => false,
+): { ring: Ring, rings: number[], owner: number[], depths: number[] | null } {
+  const all = rings.length === 0 ? [0] : [...rings];
+  const n0 = source.length;
+
+  // Those apart taken out, where a ring keeps three without them.
+  const skipped = new Set<number>();
+
+  if (chain.length > 0) {
+    all.forEach((start, r) => {
+      const end = all[r + 1] ?? n0;
+      const out = Array.from({ length: end - start }, (_x, k) => start + k).filter(i => apart(i));
+
+      if (end - start - out.length >= 3) out.forEach(i => skipped.add(i));
+    });
+  }
+
+  let pts: Point[] = [];
+  let starts: number[] = [];
+  let owner: number[] = [];
+
+  all.forEach((start, r) => {
+    starts.push(pts.length);
+
+    for (let i = start; i < (all[r + 1] ?? n0); i++) {
+      if (skipped.has(i)) continue;
+
+      pts.push(source[i]);
+      owner.push(i);
+    }
+  });
+
+  let root = [...owner];
+  let keys: number[] = [];
+  let deep = depths === null ? null : owner.map(i => depths[i]);
+
+  chain.forEach((d, c) => {
+    const slices = sliced(pts, starts);
+    const out: 1 | -1 = signedArea2(slices[0]) >= 0 ? 1 : -1;
+    const next: Point[] = [], nextOwner: number[] = [], nextRoot: number[] = [], nextKeys: number[] = [], nextStarts: number[] = [];
+    const nextDeep: number[] | null = deep === null ? null : [];
+
+    slices.forEach((ring, r) => {
+      const at = starts[r];
+      // A tooth's edge is part of the source edge it was laid on.
+      const amp = (i: number) => d.amplitude[root[at + i]];
+      const key = (i: number) => (owner[at + i] >= 0 ? d.keys[owner[at + i]] : keys[at + i]);
+      const laid = subdivided(ring, d.e, amp, key, out, i => (c === 0 ? Math.max(0, clear(owner[at + i])) : 0), i => amp(i) !== 0);
+
+      nextStarts.push(next.length);
+
+      for (const made of laid) {
+        next.push(made.at);
+        nextRoot.push(root[at + made.from]);
+
+        if (made.j === null) {
+          nextOwner.push(owner[at + made.from]);
+          nextKeys.push(key(made.from));
+          nextDeep?.push(deep![at + made.from]);
+        }
+        else {
+          nextOwner.push(-1);
+          nextKeys.push(Math.floor(hashed(key(made.from), made.j, c) * 4294967296) | 0);
+
+          const d0 = deep?.[at + made.from] ?? 0, d1 = deep?.[at + (made.from + 1) % ring.length] ?? 0;
+
+          nextDeep?.push(d0 + (d1 - d0) * made.along);
+        }
+      }
+    });
+
+    pts = next;
+    owner = nextOwner;
+    root = nextRoot;
+    keys = nextKeys;
+    starts = nextStarts;
+    deep = nextDeep;
+  });
+
+  if (skipped.size === 0) return { ring: pts, rings: starts, owner, depths: deep };
+
+  // Each one apart back where it falls along the edge it was left off: at
+  // the same share of the way from the corner before it to the one after,
+  // on whatever the teeth made between them.
+  const ring: Point[] = [], outRings: number[] = [], outOwner: number[] = [];
+  const outDeep: number[] | null = deep === null ? null : [];
+
+  all.forEach((start, r) => {
+    const end = all[r + 1] ?? n0;
+    const from = starts[r], to = starts[r + 1] ?? pts.length;
+
+    outRings.push(ring.length);
+
+    // The laid points of this ring, and where each source corner is in them.
+    const laid = Array.from({ length: to - from }, (_x, k) => from + k);
+    const kept = Array.from({ length: end - start }, (_x, k) => start + k).filter(i => !skipped.has(i));
+
+    kept.forEach((i, m) => {
+      const j = kept[(m + 1) % kept.length];
+      const a = laid.indexOf(laid.find(k => owner[k] === i)!);
+      const b = laid.indexOf(laid.find(k => owner[k] === j)!);
+      const span = a <= b ? laid.slice(a, b + 1) : [...laid.slice(a), laid[0]];
+
+      // Its own and the teeth after it.
+      span.slice(0, -1).forEach(k => {
+        ring.push(pts[k]);
+        outOwner.push(owner[k]);
+        outDeep?.push(deep![k]);
+      });
+
+      // And those apart between it and the next, in order.
+      const between: number[] = [];
+
+      for (let x = (i + 1 - start) % (end - start) + start; x !== j; x = (x + 1 - start) % (end - start) + start) between.push(x);
+
+      const p = source[i], q = source[j];
+      const dx = q.x - p.x, dy = q.y - p.y, l2 = dx * dx + dy * dy;
+      const lengths = [0];
+
+      for (let k = 1; k < span.length; k++) lengths.push(lengths[k - 1] + Math.hypot(pts[span[k]].x - pts[span[k - 1]].x, pts[span[k]].y - pts[span[k - 1]].y));
+
+      // Where each tooth is along the edge, by its foot on it.
+      const along = span.map(k => (l2 === 0 ? 0 : ((pts[k].x - p.x) * dx + (pts[k].y - p.y) * dy) / l2));
+
+      along[along.length - 1] = 1;
+
+      for (const x of between) {
+        const u = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((source[x].x - p.x) * dx + (source[x].y - p.y) * dy) / l2));
+        let k = 0;
+
+        while (k < span.length - 2 && along[k + 1] < u) k++;
+
+        const w = (u - along[k]) / Math.max(along[k + 1] - along[k], 1e-300);
+        const s0 = pts[span[k]], s1 = pts[span[k + 1]];
+
+        // Put in after the teeth before it: the ring has them in order.
+        const at = ring.length - (span.length - 2 - k);
+
+        ring.splice(at, 0, { x: s0.x + (s1.x - s0.x) * w, y: s0.y + (s1.y - s0.y) * w });
+        outOwner.splice(at, 0, x);
+        outDeep?.splice(at, 0, depths![x]);
+      }
+    });
+  });
+
+  return { ring, rings: outRings, owner: outOwner, depths: outDeep };
+}
+
+/**
  * A sealed group's fold as its own effects draw it: what `outlineOf` does to
  * a polygon, done to the union of its members at depth nought — every corner
  * rounded, the group's deform laid along its straights and its arcs — and
@@ -3912,6 +4095,9 @@ export interface Imaged {
   /** The teeth along the arcs, where a polygon's effects laid any: see
    * `outlineOf`. */
   teeth?: Point[]
+  /** The teeth along the straights, where the projection laid them: see
+   * `toothedRing`. */
+  straight?: Point[]
   /** Each corner's arc as it is drawn, before the erosion, where a polygon's
    * effects drew one: see `outlineOf`. */
   drawn?: Point[][]

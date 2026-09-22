@@ -195,6 +195,8 @@ import {
   unplace,
   resolveAt,
   groupDeform,
+  looseDeforms,
+  LooseDeform,
   optionOf,
   scaleAt,
   scaledState,
@@ -854,41 +856,6 @@ function spanning(was: Resolved, now: Resolved): Spanned {
     return k;
   };
 
-  /**
-   * Where between two teeth a drawn corner goes, at the end that does not
-   * have it: where the teeth cross the edge as it is drawn there, or as near
-   * it as they come. Anywhere between them is the same shape; there, the arcs
-   * either side are not turned towards it the instant it is there. See
-   * `effectsOver`. Only for a polygon that is rounded: nothing else turns.
-   * Between two corners that are not teeth, `taste`.
-   */
-  const onDrawn = (i: number, side: 0 | 1, lo: Point, hi: Point, taste: number): number => {
-    const mine = ends[side];
-    const drawnNearest = (step: number): number => {
-      let k = i;
-
-      do {
-        k = alongOf(rings, n, k, step);
-      }
-      while ((!mine.has(corners[k].id) || corners[k].root !== undefined) && k !== i);
-
-      return k;
-    };
-
-    const a = drawnNearest(-1), b = drawnNearest(1);
-
-    if (a === i || b === i) return taste;
-
-    const p = mine.get(corners[a].id)!, q = mine.get(corners[b].id)!;
-    const off = (x: Point) => (q.x - p.x) * (x.y - p.y) - (q.y - p.y) * (x.x - p.x);
-    const [da, db] = [off(lo), off(hi)];
-
-    if (da === db) return taste;
-    if (da * db < 0) return da / (da - db);
-
-    return Math.abs(da) < Math.abs(db) ? 0.1 : 0.9;
-  };
-
   corners.forEach((c, i) => {
     for (const side of [0, 1] as const) {
       const mine = ends[side], other = ends[1 - side];
@@ -912,7 +879,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
       // that arc short of the one the editor draws.
       const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
 
-      local[side][i] = between2(lo, hi, c.root === undefined && [was, now][side].effected ? onDrawn(i, side, lo, hi, taste) : taste);
+      local[side][i] = between2(lo, hi, taste);
 
       const at = fraction(from, to, local[side][i]);
 
@@ -1231,7 +1198,7 @@ function moving(world: World, from: number): Moving[] {
         varying: it.depths !== null,
         scales: [scaleAt(world, it.id, far), scaleAt(world, it.id, far)] as [number, number],
         holders: holders(world, from, it.id),
-        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)], [budding(it.local), it.local], [it.corners.map(() => 0), flatDepths(it)], null),
+        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)], [budding(it.local), it.local], [it.corners.map(() => 0), flatDepths(it)], null, [looseDeforms(world, far, it.id), looseDeforms(world, far, it.id)]),
       };
     }
 
@@ -1248,7 +1215,7 @@ function moving(world: World, from: number): Moving[] {
       varying: was.depths !== null || it.depths !== null,
       scales: [scaleAt(world, it.id, near), scaleAt(world, it.id, far)] as [number, number],
       holders: holders(world, from, it.id),
-      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)], over.local, over.depths, over.dead),
+      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)], over.local, over.depths, over.dead, [looseDeforms(world, near, it.id), looseDeforms(world, far, it.id)]),
     };
   });
 
@@ -1274,7 +1241,7 @@ function moving(world: World, from: number): Moving[] {
       varying: was.depths !== null,
       scales: [scaleAt(world, id, near), scaleAt(world, id, near)] as [number, number],
       holders: holders(world, from, id),
-      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1], [was.local, budding(was.local)], [flatDepths(was), was.corners.map(() => 0)], null),
+      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1], [was.local, budding(was.local)], [flatDepths(was), was.corners.map(() => 0)], null, [looseDeforms(world, near, id), looseDeforms(world, near, id)]),
     });
   }
 
@@ -1326,13 +1293,15 @@ function effectsOver(
   local: [Ring, Ring],
   depths: [number[], number[]],
   dead: [boolean[], boolean[]] | null,
+  /** The loose groups' deforms at each end: see `looseDeforms`. */
+  loose: [LooseDeform[], LooseDeform[]] = [[], []],
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
   const deadened = (e: Effected | null, end: 0 | 1): Effected | null => (e === null || dead === null || !dead[end].some(Boolean) ? e : {
     ...e,
     apart: dead[end],
   });
-  const two = ([0, 1] as const).map(i => deadened(effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i]), i)) as [Effected | null, Effected | null];
+  const two = ([0, 1] as const).map(i => deadened(effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i], loose[i]), i)) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
@@ -1341,7 +1310,7 @@ function effectsOver(
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
     facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
     bevels: other.bevels.map(() => 0),
-    flat: other.flat,
+    straights: other.straights.map(d => ({ ...d, amplitude: d.amplitude.map(() => 0) })),
     deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0), seen: other.deform.seen.map(() => 0) },
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
@@ -1374,7 +1343,7 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
   return {
     facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
-    flat: e[0].flat,
+    straights: e[0].straights.map((d, k) => ({ ...d, amplitude: d.amplitude.map((a, i) => mix(a, e[1].straights[k]?.amplitude[i] ?? a, t)) })),
     deform: d0 === null || d1 === null
       ? d0 ?? d1
       : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },
