@@ -490,6 +490,59 @@ Left, and known:
 - A member's teeth next to a straight make that straight untoothed: the
   group does not tooth its members' deformed geometry again.
 
+### 2.9 Scoped: naming the union's straights
+
+What 2.8 left. A union straight is anonymous today, so its teeth are keyed
+nought and the bake cannot tell one of its teeth at the near end from one at
+the far. Naming them fixes the noise, the jump, and most of phase 3 at once.
+
+**By the line, not by the arrangement.** A union straight lies on the line of
+exactly one member edge — the arrangement cuts edges up and drops the pieces
+inside, but it never moves one off its line. So a member publishes its eroded
+edges as lines with the source edge's id beside them, and a straight is named
+by the line its middle lies on. This is the same mechanism phase 3 needs
+("Where they come from", below), and doing it here is most of that phase.
+
+The other way is to tag the union: `combineTagged` already keeps every output
+point's provenance, and `unionAll` throws it away. Rejected, for now: the tag
+names a *shape* point, and a member's shape points are its arcs and teeth
+rather than its source edges, so the tag would still have to be taken back to
+an edge — and it would have to survive `erode` on the way up through a nested
+scope, which a line does for nothing.
+
+**The pieces.**
+
+1. **A member's lines.** `Resolved` gains `edges`: per source edge that
+   reaches the projection, the line it lies on after the erosion and the
+   corner id it starts at. A polygon's come from `imagesOf` — the straight
+   between one corner's arc and the next one's is that source edge — and a
+   scope's from its own fold, so they stack up through nesting. Teeth and
+   arcs are not edges and get none: a straight beside a member's tooth is
+   already left untoothed.
+2. **`slotted` carries them up**, moved in by the slot's depth the way the
+   kept points are.
+3. **`foldShaped` names each straight** by the line under its middle, and
+   keys its teeth by that corner id — the noise, the jitter and the offset
+   then belong to the edge, as a polygon's do. A straight over no line keeps
+   nought, which is what a straight made of two members' crossings is.
+4. **The bake seeds the teeth it is missing.** `Cast.shapes` already holds
+   what each end of the span asks for; the fold is evaluated at each end, and
+   a tooth on a straight at one end only is laid flat at the other — at the
+   place the pattern gives it, at nought amplitude — and faded in through
+   `Contributed.faded`, which the facets already use. The editor lays none,
+   and a flat tooth moves no geometry, so the two still agree at a keyframe.
+
+**What it does not fix.** A straight splitting or merging still re-anchors the
+pattern, and still does it where the arrangement already has an event (2.3).
+A straight whose line is a crossing of two members has no name and keeps the
+shared key.
+
+**Tests.** Two rooms along one wall: each straight's teeth keyed by its own
+member edge, and the noise on one wall different from the noise on another; a
+group eroding with a round, whose clear eats a tooth: no jump, and the
+tooth's vertical fades over exactly the stretch it goes in; the bake still
+reproduces the still at every stretch end.
+
 ## Phase 3: a member's deform under a group's bevel
 
 A member whose group rounds keeps its deform back: it resolves rounded and
