@@ -849,35 +849,16 @@ describe('a corner that is not there does not draw a line', () => {
     return { world: removeVertices(added.world, 1, [added.vertex]), vertex: added.vertex };
   }
 
-  test('it is solid where it is a corner and gone where it is not', () => {
-    const flat = bakedSpan(run(bakeSpan(dying().world, 0)));
-
-    // Somewhere in the span a point draws nothing. Everywhere else the corner
-    // is part way out of the wall and turns like any other, so it draws.
-    expect(Math.min(...flat.opacityB)).toBeCloseTo(0, 9);
-
-    for (let i = 0; i < flat.opacityA.length; i++) {
-      expect(flat.opacityA[i]).toBeGreaterThanOrEqual(0);
-      expect(flat.opacityA[i]).toBeLessThanOrEqual(1);
-      expect(flat.opacityB[i]).toBeGreaterThanOrEqual(0);
-      expect(flat.opacityB[i]).toBeLessThanOrEqual(1);
-    }
-  });
-
-  test('and it is exactly gone at the version that took it out', () => {
+  test('flat on the wall at both ends, it is never a point of the ring', () => {
     const track = run(bakeSpan(dying().world, 0)).tracks[0];
 
-    // Asked for the ends themselves rather than for the first and last
-    // stretches, because the two are not always the same thing: where the
-    // corner goes exactly at a version, that version is a jump, and a jump is
-    // not in the cover. `stretchAt` is what the reader asks either way.
-    const end = stretchAt(track, 1)!;
-
-    expect(Math.min(...end.opacity[1].flat())).toBeCloseTo(0, 9);
-
-    const start = stretchAt(track, 0)!;
-
-    expect(Math.min(...start.opacity[0].flat())).toBeCloseTo(1, 9);
+    // Nothing fades it: a corner that does not turn is not in the ring, and
+    // this one does not turn at either end. The room's four, and the run
+    // closing on its first.
+    for (const s of track.stretches) {
+      expect(s.a.reduce((n, r) => n + r.points.length, 0)).toBe(5);
+      expect(Math.min(...s.opacity[0].flat(), ...s.opacity[1].flat())).toBe(1);
+    }
 
     // And the cover really does run end to end.
     expect(track.stretches[0].t0).toBeCloseTo(0, 9);
@@ -1338,13 +1319,14 @@ describe('the standing walls and the bake agree about every vertical', () => {
   });
 
   test('a rounded room whose bevel grows finer over the span', () => {
+    // Thirty deep, then sixty, at a precision thirty is well inside four
+    // segments of: the near end draws its own arcs, and the span gains
+    // segments as it goes, cutting where it does.
     const made = room();
-    const w = wrote(rounded(made), 1, made.id, { kind: 'round', by: 30 });
+    const world = { ...made.world, effects: new Map([[made.id, { round: inSegments(4, 34) }]]) };
+    const w = wrote(wrote(world, 0, made.id, { kind: 'round', by: 30 }), 1, made.id, { kind: 'round', by: 30 });
 
-    // Thirty deep, then sixty: the near end draws its own arcs, and the
-    // span's points over them lie on their facets, standing no vertical.
     expect(same(w)).toEqual(0);
-    expect(run(bakeSpan(w, 0)).tracks[0].stretches[0].a[0].points.length).toBeGreaterThan(21);
   });
 
   test('a sealed group\'s union, rounded', () => {

@@ -48,7 +48,6 @@ import {
   erodeAt,
   erodeRingsAt,
   isCCW,
-  keeping,
   diameter,
   mitred,
   nextOf,
@@ -57,7 +56,6 @@ import {
   toothedRing,
   prevOf,
   signedArea2,
-  subdivided,
   simplify,
   sliced,
 } from '../geometry';
@@ -232,18 +230,6 @@ export interface Resolved {
    * once, here, rather than by every reader comparing numbers.
    */
   depths: readonly number[] | null
-  /**
-   * Points the projection must have as vertices even though it does not turn
-   * at them, in world units.
-   *
-   * The bake's business alone. A corner it invented so that both ends of a
-   * span carry the same ring sits exactly on the edge between its neighbours at
-   * the end that does not have it, and `cornersOnly` would drop it there — so
-   * the ring would change length part way through the span, which is the one
-   * event the invention exists to prevent. Nothing else sets this, and an empty
-   * one costs nothing.
-   */
-  keep?: readonly Point[]
   /**
    * Its rounds and deforms, as the projection takes them: nothing where it has
    * none, or none of them comes to anything. See `effectedOf`.
@@ -544,13 +530,13 @@ export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noi
 export const SIDES: readonly Effecting['sides'][] = ['in', 'out', 'both'];
 
 export function facetKey(f: Facets): number[] {
-  return [f.n, f.from, f.to, f.at, f.tension];
+  return [f.n, f.tension];
 }
 
 function facetsFrom(k: Memo): Facets {
-  const [n, from, to, at, tension] = k as number[];
+  const [n, tension] = k as number[];
 
-  return { n, from, to, at, tension };
+  return { n, tension };
 }
 
 /**
@@ -1256,7 +1242,7 @@ export function resolved(at: Omit<Resolved, 'shape' | 'rings'>): Resolved {
     ...at,
     rings,
     get shape(): Shape {
-      return shape ??= keeping(projection({ ...at, rings }), at.keep ?? []);
+      return shape ??= projection({ ...at, rings });
     },
   };
 }

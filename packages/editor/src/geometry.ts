@@ -2454,62 +2454,6 @@ function cornersOnly(
   return { ring: keep.map(i => ring[i]), tags: keep.map(i => tags[i]) };
 }
 
-/**
- * The shape with each of `points` present as a vertex, splitting whatever edge
- * it lies on.
- *
- * The exception `cornersOnly` leaves room for. A corner the bake invented so
- * that both ends of a span could be written over the same ring sits exactly on
- * the edge between its neighbours at the end that does not have it — which is
- * to say it is not a corner there, and would be dropped. It has to survive
- * anyway: the ring changing length part way through a span is the one event
- * `spanning` exists to prevent, and without it a corner leaving jumps to the
- * wall rather than sliding onto it.
- *
- * So the bake asks for those back, by position, and gets a ring whose
- * combinatorics hold across the span while every other flat vertex is gone.
- * Anything that does not land on an edge is not put anywhere: an eroded ring
- * that has swallowed the edge a corner sat on genuinely does not have it.
- */
-export function keeping(shape: Shape, points: readonly Point[]): Shape {
-  if (points.length === 0) return shape;
-
-  // The same tolerance the arrangement works to, taken off the same geometry.
-  let scale = 1;
-
-  for (const ring of shape) {
-    for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
-  }
-
-  const snap = scale * 1e-9;
-  const out = shape.map(ring => [...ring]);
-
-  for (const p of points) {
-    let best: { ring: number, index: number, off: number } | null = null;
-
-    for (let r = 0; r < out.length; r++) {
-      const ring = out[r];
-
-      for (let i = 0; i < ring.length; i++) {
-        const a = ring[i], b = ring[(i + 1) % ring.length];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const l = Math.hypot(dx, dy);
-
-        if (l === 0) continue;
-
-        const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
-        const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
-
-        if (along <= snap || along >= l - snap) continue;
-        if (best === null || off < best.off) best = { ring: r, index: i, off };
-      }
-    }
-
-    if (best !== null && best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
-  }
-
-  return out;
-}
 
 function successor(
   e: number,
@@ -2853,19 +2797,11 @@ export function subdivided(
 }
 
 /**
- * How a corner's arc is faceted: `n + 1` points, laid as an arc of `from`
- * segments at the near end of a span and of `to` at the far, `at` of the way
- * across. An arc of fewer segments than `n` has its other points on its
- * facets, straight between the points it turns at, so it is the same outline
- * as that arc alone; the bake keeps them there, and their verticals come up
- * as the arc gains its segments. At a keyframe the three are one. `n` of
+ * How a corner's arc is faceted: in `n` segments, `n + 1` points. `n` of
  * nought is a corner not rounded. `tension` is the curve's: see `curveOf`.
  */
 export interface Facets {
   n: number
-  from: number
-  to: number
-  at: number
   tension: number
 }
 
@@ -2874,7 +2810,7 @@ export const TENSION = 0.5;
 
 /** A corner rounded in `n` segments, standing still. */
 export function facetsOf(n: number, tension = TENSION): Facets {
-  return { n, from: n, to: n, at: 0, tension };
+  return { n, tension };
 }
 
 /** A corner not rounded. */
@@ -3452,19 +3388,7 @@ function arcsWith(
       return { points: out, us: at };
     };
 
-    const done = (x: { points: Point[], us: number[] }) => ({ ...x, point: false, on, normal, bend });
-    const near = laid(Math.max(1, Math.min(facets.n, facets.from)));
-
-    if (facets.from === facets.to || facets.at === 0) return done(near);
-
-    const far = laid(Math.max(1, Math.min(facets.n, facets.to)));
-
-    if (facets.at === 1) return done(far);
-
-    return done({
-      points: near.points.map((p, j) => ({ x: mix(p.x, far.points[j].x, facets.at), y: mix(p.y, far.points[j].y, facets.at) })),
-      us: near.us.map((u, j) => mix(u, far.us[j], facets.at)),
-    });
+    return { ...laid(Math.max(1, facets.n)), point: false, on, normal, bend };
   }
 }
 
@@ -3486,38 +3410,8 @@ export function arcRuns(shape: Shape, facets: Facets, bevel: number): Point[][] 
   return shape.flatMap(ring => arcs(ring, () => facets, () => bevel));
 }
 
-/** A point with how solid the vertical standing on it is. */
-export interface Fade {
-  p: Point
-  v: number
-}
 
-/** Which of `n + 1` points an arc laid in `s` segments turns at: the rest
- * are on its facets. See `arcs`. */
-function turning(n: number, s: number): boolean[] {
-  const segments = Math.max(1, Math.min(n, s));
-  const out = new Array<boolean>(n + 1).fill(false);
 
-  for (let q = 0; q <= segments; q++) out[Math.round(q * n / segments)] = true;
-
-  return out;
-}
-
-/**
- * The points of an arc that are on its facets at one end of a span or the
- * other, each as solid as it is corner: nought at the end where it lies
- * straight, whole at the end where the arc turns there, and in between as
- * far as the arc has gone over. Nothing for an arc laid alike at both ends.
- * What the bake fades these points' verticals by, and — at an end, where
- * they are nought — what it keeps through the arrangement.
- */
-export function facetFades(run: readonly Point[], f: Facets): Fade[] {
-  if (f.n === 0 || (f.from === f.to && f.from >= f.n)) return [];
-
-  const near = turning(f.n, f.from), far = turning(f.n, f.to);
-
-  return run.flatMap((p, j) => (near[j] && far[j] ? [] : [{ p, v: mix(near[j] ? 1 : 0, far[j] ? 1 : 0, f.at) }]));
-}
 
 /** A ring subdivided and perturbed by a deform, as points: see `subdivided`.
  * Out is to the right of the way round, as a counter-clockwise ring has it. */
@@ -3913,35 +3807,30 @@ export function toothedRing(
  * A straight is a maximal run of the fold's outline in one line, so two
  * members side by side along a wall are one straight with one pattern, from
  * its middle. The points in `square` are deformed geometry of the members',
- * which the round leaves as it is and the deform does not tooth again; the
- * points in `keep` are the bake's, carried along the teeth to where the
- * erosion puts them. The teeth are keyed nought, every straight alike: a
+ * which the round leaves as it is and the deform does not tooth again. The
+ * teeth are keyed nought, every straight alike: a
  * union's edges have no ids to tell them apart by.
  *
  * Held, as a polygon's round is (see `drawnBevels`), a corner is drawn at
  * `bevel` and as much again as the erosion takes back off it, so the round
- * that comes out is the one asked for. `runs` is each rounded corner's arc
- * where the erosion put it, for the bake's facet fades, and `square` what
- * came out deformed, for a scope holding this one to leave square.
+ * that comes out is the one asked for. `square` is what came out deformed,
+ * for a scope holding this one to leave square.
  */
 export interface FoldShaped {
   shape: Shape
-  runs: Point[][]
   square: Point[]
-  keep: Point[]
 }
 
 export function foldShaped(
   fold: Shape,
   square: readonly Point[],
-  keep: readonly Point[],
   facets: Facets,
   bevel: number,
   held: boolean,
   deform: { e: Effecting, amplitude: number } | null,
   depth: number,
 ): FoldShaped {
-  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [] };
+  if (fold.length === 0) return { shape: [], square: [] };
 
   let scale = 1;
 
@@ -3989,7 +3878,6 @@ export function foldShaped(
   };
 
   const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
-  const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
     const sq = ring.map(isSquare);
@@ -4001,13 +3889,6 @@ export function foldShaped(
     starts.push(source.length);
 
     for (const made of laid) {
-      if (made.j === null) {
-        edges.push({ ring: r, a: ring[made.from], b: ring[(made.from + 1) % ring.length], laid: [{ at: made.at, along: 0 }] });
-      }
-      else {
-        edges[edges.length - 1].laid.push({ at: made.at, along: made.along });
-      }
-
       source.push(made.at);
       tooth.push(made.j !== null || sq[made.from]);
       drawn.push(made.j === null ? bevels[made.from] : 0);
@@ -4028,47 +3909,7 @@ export function foldShaped(
     ...o.teeth,
   ].map(image).filter((p): p is Point => p !== null);
 
-  const runs = drawn.flatMap((b, i) => {
-    if (tooth[i] || !(b > 0) || facets.n <= 0) return [];
-
-    const run = o.arcs[i];
-
-    if (run.every(k => k === run[0])) return [];
-
-    const images = run.map(image);
-
-    return images.some(p => p === null) ? [] : [images as Point[]];
-  });
-
-  // A kept point is on a straight of the fold: carried to the same share of
-  // the way along it on the teeth, and moved in with the segment it is on.
-  const kept = keep.flatMap(p => {
-    for (const edge of edges) {
-      const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y, l2 = dx * dx + dy * dy;
-
-      if (l2 === 0) continue;
-
-      const u = ((p.x - edge.a.x) * dx + (p.y - edge.a.y) * dy) / l2;
-
-      if (u <= 0 || u >= 1 || Math.abs((p.x - edge.a.x) * dy - (p.y - edge.a.y) * dx) > tol * Math.sqrt(l2)) continue;
-
-      const pts = [...edge.laid, { at: edge.b, along: 1 }];
-      let k = 0;
-
-      while (k < pts.length - 2 && pts[k + 1].along < u) k++;
-
-      const s = pts[k], e = pts[k + 1];
-      const w = (u - s.along) / Math.max(e.along - s.along, 1e-300);
-      const on = { x: s.at.x + (e.at.x - s.at.x) * w, y: s.at.y + (e.at.y - s.at.y) * w };
-      const sx = e.at.x - s.at.x, sy = e.at.y - s.at.y, sl = Math.hypot(sx, sy);
-
-      return sl === 0 ? [] : [{ x: on.x - sy / sl * depth, y: on.y + sx / sl * depth }];
-    }
-
-    return [];
-  });
-
-  return { shape, runs, square: squared, keep: kept };
+  return { shape, square: squared };
 }
 
 /**

@@ -47,7 +47,6 @@ import {
   SQUARE,
   precisionFor,
   segmentsFor,
-  facetFades,
   rounded,
   SEEDING,
   subdivided,
@@ -2196,26 +2195,6 @@ describe('round and deform', () => {
 
     // Tighter is more to be faceted in its middle.
     expect(segmentsFor(10, 0.1, 1)).toBeGreaterThan(segmentsFor(10, 0.1, 0));
-  });
-
-  test('an arc laid between two counts is the coarser\'s outline at its end, and the finer\'s at the other', () => {
-    const cross = (a: Point, b: Point, p: Point) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-    const coarse = rounded(square, i => (i === 0 ? 4 : 0), 2).slice(0, 3);
-    const fine = rounded(square, i => (i === 0 ? 4 : 0), 6).slice(0, 7);
-    const laid = (at: number) => imaged([square], square, [0], () => 0, i => (i === 0 ? { n: 6, from: 2, to: 6, at, tension: 0.5 } : SQUARE), () => 4, { bevel: 0, facets: SQUARE }).corners[0]!;
-
-    // Seven points at both ends, the coarse arc's three among them and the
-    // rest on its two facets.
-    expect(laid(0)).toHaveLength(7);
-    [0, 3, 6].forEach((j, q) => close(laid(0)[j], coarse[q]));
-    [1, 2].forEach(j => expect(Math.abs(cross(coarse[0], coarse[1], laid(0)[j]))).toBeLessThan(1e-9));
-    [4, 5].forEach(j => expect(Math.abs(cross(coarse[1], coarse[2], laid(0)[j]))).toBeLessThan(1e-9));
-    laid(1).forEach((p, j) => close(p, fine[j]));
-
-    // The ones on facets at the near end fade in; the coarse arc's own stand.
-    const fades = facetFades(laid(0.25), { n: 6, from: 2, to: 6, at: 0.25, tension: 0.5 });
-
-    expect(fades.map(f => f.v)).toEqual([0.25, 0.25, 0.25, 0.25]);
   });
 
   test('without a jitter a tooth is a whole number of spacings off the middle', () => {

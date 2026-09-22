@@ -18,20 +18,14 @@ import {
   along,
   Facets,
   SQUARE,
-  Fade,
-  arcRuns,
-  facetFades,
   facetsOf,
   Shape,
   contains,
-  effected as effectedAll,
   effectedSquare,
   Effecting,
   encloses,
   foldShaped,
   erode,
-  keeping,
-  mitred,
   nextOf,
   prevOf,
   onBoundary,
@@ -136,12 +130,6 @@ export interface Contributed {
   /** Whether the shape is already an arrangement and `simplify` may be
    * skipped. A projection is one by construction. */
   simple: boolean
-  /** The bake's invented corners, carried through the arrangement. A group's
-   * union has none: nothing invents a corner on it. See `Resolved.keep`. */
-  keep?: readonly Point[]
-  /** A group's arc points on their facets part way through a span, with how
-   * solid each stands. See `facetFades`. */
-  faded?: readonly Fade[]
 }
 
 /**
@@ -474,13 +462,13 @@ const squaredThrough = remembered((shapes: readonly Shape[], depth: number, squa
 
 /** A scope's fold as its own effects draw it, by `shapeKey`: see
  * `foldShaped`. */
-const shapedFold = remembered((fold: Shape, square: readonly Point[], keep: readonly Point[], key: readonly number[], depth: number) => {
-  const [n, from, to, at, tension, bevel, held, ...d] = key;
+const shapedFold = remembered((fold: Shape, square: readonly Point[], key: readonly number[], depth: number) => {
+  const [n, tension, bevel, held, ...d] = key;
   const deform = d.length === 0
     ? null
     : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: d[6] };
 
-  return foldShaped(fold, square, keep, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
+  return foldShaped(fold, square, { n, tension }, bevel, held === 1, deform, depth);
 });
 
 /**
@@ -584,10 +572,10 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[] } => {
+  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, square: Point[] } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [], square: [] };
+    if (group === undefined) return { shape: [], square: [] };
 
     // Flat, at depth nought: for a scope whose effects are laid on its fold
     // before its depth. See `foldShaped`.
@@ -616,12 +604,7 @@ export function contributed(
     const inside = group.members.flatMap(m => squareFrom(m, set, k));
     const square = inside.length === 0 ? [] : depth === 0 ? inside : squaredThrough(shapes, depth, inside);
 
-    // What its members keep for the bake, moved in with their edges: a union
-    // is an arrangement, and would drop them — see `Resolved.keep`.
-    const keep = group.members.flatMap(m => keptFrom(m, set, k))
-      .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
-
-    return { shape: keep.length === 0 ? union : keeping(union, keep), keep, square };
+    return { shape: union, square };
   };
 
   /** The points of what one member puts into slot `k` of `set` that are
@@ -649,31 +632,6 @@ export function contributed(
     return group.members.flatMap(m => squareFrom(m, set, k));
   };
 
-  /**
-   * The points a member keeps for the bake, on its shape, each with the
-   * inward normal of the edge it lies on: a polygon's own, and a scope's
-   * inside, which kept its members'.
-   */
-  const keptFrom = (id: Id, set: SetName, k: number): { p: Point, n: Point }[] => {
-    const it = mine.get(id);
-
-    if (it !== undefined) {
-      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, it.keep ?? []) : [];
-    }
-
-    const group = world.groups.get(id);
-
-    if (group === undefined) return [];
-
-    if (group.sealed && standing(id) !== null) {
-      return k === top(id, set) ? inwards(resolves(id, set), kept.get(`${id}:${set}`) ?? []) : [];
-    }
-
-    return group.members.flatMap(m => keptFrom(m, set, k));
-  };
-
-  const kept = new Map<string, Point[]>();
-  const fading = new Map<string, Fade[]>();
   const squares = new Map<string, Point[]>();
 
   /**
@@ -700,14 +658,7 @@ export function contributed(
     const known = held?.get(key);
 
     if (known !== undefined) {
-      kept.set(key, held?.get(`${key}:keep`)?.[0] ?? []);
       squares.set(key, held?.get(`${key}:square`)?.[0] ?? []);
-
-      // Held as a shape, as everything here is: the points, and beside them
-      // how solid each is.
-      const [points = [], solid = []] = held?.get(`${key}:faded`) ?? [];
-
-      fading.set(key, points.map((p, i) => ({ p, v: solid[i].x })));
 
       return known;
     }
@@ -715,7 +666,7 @@ export function contributed(
     const from = top(id, set);
     const here = standing(id);
     const shapedBy = shapeKey(here);
-    const slots: { shape: Shape, keep: Point[], square: Point[] }[] = [];
+    const slots: { shape: Shape, square: Point[] }[] = [];
 
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k, shapedBy !== null));
 
@@ -728,33 +679,18 @@ export function contributed(
     // any, and before a floor is cut to its level, whose arcs it takes as they
     // come.
     const inside = slots.flatMap(u => u.square);
-    const shaped = shapedBy === null ? null : shapedFold(settles, inside, slots.flatMap(u => u.keep), shapedBy, here!.depth);
-    const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep) };
+    const shaped = shapedBy === null ? null : shapedFold(settles, inside, shapedBy, here!.depth);
+    const rounded = shaped ?? { shape: settles, square: inside };
     const cut = set === 'floor' && top(id, 'level') === 0
       ? underfoot(rounded.shape, resolves(id, 'level'))
       : rounded.shape;
 
-    // Where the bake has its arcs on their facets, fading: see `facetFades`.
-    const fx = here?.effects;
-    const faded = fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
-      ? []
-      : rounded.runs.flatMap(run => facetFades(run, fx.facets));
-
-    // Folding the slots is an arrangement again, and would drop them again.
-    // And the points its arcs have on their facets, at the end they lie
-    // straight.
-    const keep = [...rounded.keep, ...faded.filter(f => f.v === 0).map(f => f.p)];
-    const out = keep.length === 0 ? cut : keeping(cut, keep);
-
+    const out = cut;
     const square = rounded.square;
 
-    kept.set(key, keep);
-    fading.set(key, faded);
     squares.set(key, square);
     held?.set(key, out);
-    held?.set(`${key}:keep`, [keep]);
     held?.set(`${key}:square`, [square]);
-    held?.set(`${key}:faded`, [faded.map(f => f.p), faded.map(f => ({ x: f.v, y: 0 }))]);
 
     return out;
   };
@@ -771,7 +707,6 @@ export function contributed(
           frame: it.frame,
           // Already an arrangement, whatever its depth. See `plainly`.
           simple: true,
-          keep: it.keep,
         });
       });
 
@@ -804,7 +739,6 @@ export function contributed(
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
-      const faded = fading.get(`${id}:${set}`) ?? [];
 
       out.push({
         id: sideOf(id, kind),
@@ -812,7 +746,6 @@ export function contributed(
         shape,
         frame: how.frame ?? IDENTITY,
         simple: true,
-        ...(faded.length === 0 ? {} : { faded }),
       });
     }
   };
@@ -1333,7 +1266,6 @@ export function plainly(items: readonly Resolved[]): Contributed[] {
     kind,
     shape: it.shape,
     frame: it.frame,
-    keep: it.keep,
 
     // A projection came out of an arrangement and is already simple, at every
     // depth. Depth zero is not the exception it used to be: `project` decomposes

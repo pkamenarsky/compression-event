@@ -150,13 +150,8 @@ import {
   erodedRingCorners,
   ground,
   Effecting,
-  Facets,
-  Fade,
-  SEEDING,
-  facetFades,
   facetsOf,
-  keeping,
-  mitred,
+  SQUARE,
   nextOf,
   prevOf,
   simplify,
@@ -182,7 +177,6 @@ import {
   imagesOf,
   keyAt,
   order,
-  outermostSlot,
   parts,
   placeAt,
   sidedWith,
@@ -204,20 +198,19 @@ import {
 } from './scene';
 import {
   ArtefactId,
+  Options,
   GroupId,
   Id,
   PARTS,
   PolygonId,
   PolygonKind,
   SLOTS,
-  SLOT_KINDS,
   SetName,
   KeyframeId,
   Vertex,
   VertexId,
   World,
   enclosing,
-  inverted,
   inside,
   kindKey,
   kindOf,
@@ -774,11 +767,24 @@ interface Moving extends Rider {
   scales: [number, number]
   /**
    * Its rounds and deforms at the two ends, over `corners`, or nothing where
-   * it has no effects. The options are the same at both ends; the amounts are
-   * lerped. See `effectsOver`.
+   * it has none at either. Part way, they are laid afresh from its amounts
+   * lerped: see `effectsOver`.
    */
-  effected: [Effected, Effected] | null
+  effected: [Effected | null, Effected | null] | null
+  /** What lays them part way: the amounts at each end, and the loose
+   * groups' deforms. Nothing where there are no effects. */
+  fresh: Fresh | null
 }
+
+/** A polygon's effects' amounts at both ends of a span, and what lays them
+ * at an instant between. See `effectsOver`. */
+interface Fresh {
+  amounts: [Amounts, Amounts]
+  loose: [LooseDeform[], LooseDeform[]]
+  lay: (local: Ring, amounts: Amounts, depth: (i: number) => number, scale: number, loose: readonly LooseDeform[]) => Effected | null
+}
+
+type Amounts = Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'>;
 
 /**
  * The two ends of a span written over the same corners, so that a ring which
@@ -1257,31 +1263,21 @@ const NOTHING: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'> = {
 };
 
 /**
- * A polygon's round at both ends of a span, written over the same corners,
- * and the deform its arcs take. Nothing where it has none. The deform of its
- * straights is not here: that is in its corners already, teeth and all, and
- * the bake carries them as it carries any.
+ * A polygon's rounds and deforms at both ends of a span, over the same
+ * corners, each laid as the still at that keyframe lays it; and what lays
+ * them part way, afresh, from the amounts lerped. Nothing where it has none.
  *
- * A degenerate end is seeded, never collapsed. A bevel of nought at one end
- * and more at the other is `SEEDING` of the other there, so the arc turns,
- * however little, and the arrangement keeps its points unasked: the ring is
- * the same length at both ends.
- *
- * Nor does a corner's count of points change across a span, though its
- * segments do: each end's are what its bevel asks for, the still's at that
- * keyframe, and the span lays every corner in as many points as the finer
- * end has. At the coarser end the points it has over are on its facets, so
- * its outline is the still's; across the span the arc goes over from the one
- * to the other. See `Facets`.
+ * Nothing is carried from one end to the other: an arc's facets and an
+ * edge's teeth are what the amounts at the instant ask for, as the editor's
+ * are, and where their count changes the bake cuts.
  *
  * `local` and `depths` are the corners at each end, for a round held against
  * the erosion: see `drawnBevels`.
  *
  * A corner `spanning` invented at an end sits, at that end, wherever its
- * neighbours there put it — between two teeth as likely as not — and a drawn
- * corner there would turn the arcs beside it towards it. So it is rounded
- * apart there: its arc a sliver along the points either side, and the arcs
- * around it laid as though it were not there. See `outlineOf`.
+ * neighbours there put it, and a drawn corner there would turn the arcs
+ * beside it towards it. So it is rounded apart there, and the teeth are laid
+ * as though it were not there. See `outlineOf` and `toothedRing`.
  */
 function effectsOver(
   world: World,
@@ -1295,74 +1291,47 @@ function effectsOver(
   dead: [boolean[], boolean[]] | null,
   /** The loose groups' deforms at each end: see `looseDeforms`. */
   loose: [LooseDeform[], LooseDeform[]] = [[], []],
-): Pick<Moving, 'effected'> {
-  const none = { effected: null };
-  const deadened = (e: Effected | null, end: 0 | 1): Effected | null => (e === null || dead === null || !dead[end].some(Boolean) ? e : {
-    ...e,
-    apart: dead[end],
-  });
-  const two = ([0, 1] as const).map(i => deadened(effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i], loose[i]), i)) as [Effected | null, Effected | null];
+): Pick<Moving, 'effected' | 'fresh'> {
+  const amounts: [Amounts, Amounts] = [ends[0] ?? NOTHING, ends[1] ?? NOTHING];
+  const lay: Fresh['lay'] = (at, am, depth, scale, lo) => effectedOf(world, id, corners, at, am, depth, scale, lo);
+  const apart = (e: Effected | null, end: 0 | 1): Effected | null => (e === null || dead === null || !dead[end].some(Boolean) ? e : { ...e, apart: dead[end] });
+  const two = ([0, 1] as const).map(i => apart(lay(local[i], amounts[i], k => depths[i][k], scales[i], loose[i]), i)) as [Effected | null, Effected | null];
 
-  if (two[0] === null && two[1] === null) return none;
+  if (two[0] === null && two[1] === null) return { effected: null, fresh: null };
 
-  // Where it has no effects at one end, it has them at nought there: the
-  // options are a fact about the thing, and the same at both.
-  const bare = (e: Effected | null, other: Effected): Effected => e ?? {
-    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
-    bevels: other.bevels.map(() => 0),
-    straights: other.straights.map(d => ({ ...d, amplitude: d.amplitude.map(() => 0) })),
-    deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0), seen: other.deform.seen.map(() => 0) },
-  };
-  const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
-
-  // One count for the span, laid as each end's own at that end.
-  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension });
-  const ended = (e: Effected, at: number): Effected => ({
-    ...e,
-    facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
-  });
-
-  const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
-  const seeded = (e: Effected, o: Effected): Effected => ({
-    ...e,
-    bevels: e.bevels.map((r, i) => (e.facets[i].n > 0 ? seed(r, o.bevels[i]) : r)),
-  });
-
-  return {
-    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
-  };
-}
-
-/** A polygon's effects `t` of the way across a span. */
-function effectedAt(e: [Effected, Effected], t: number): Effected {
-  if (t === 0) return e[0];
-  if (t === 1) return e[1];
-
-  const [d0, d1] = [e[0].deform, e[1].deform];
-
-  return {
-    facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
-    bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
-    straights: e[0].straights.map((d, k) => ({ ...d, amplitude: d.amplitude.map((a, i) => mix(a, e[1].straights[k]?.amplitude[i] ?? a, t)) })),
-    deform: d0 === null || d1 === null
-      ? d0 ?? d1
-      : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },
-  };
+  return { effected: two, fresh: { amounts, loose, lay } };
 }
 
 /**
- * How far an arc has gone over from its near layout to its far one, `t` of
- * the way across a span whose bevel goes from `a` to `b`: by the bevel, not
- * by the time. Each layout's points are the bevel times something of the
- * corner alone, so blended by `t · b / bevel(t)` a point is the lerp of its
- * two ends exactly, as it is where the layout does not change — and the
- * bake's lerp is exact again. By the time, it would be a product of two
- * lerps, and every stretch a curve to be cut up.
+ * A polygon's effects `t` of the way across a span, laid afresh: each
+ * amount its own length at each end, lerped, and taken into the world by the
+ * scale the frame has then, as a depth is (see `deepAt`).
  */
-function weighed(a: number, b: number, t: number): number {
-  const bevel = mix(a, b, t);
+function effectedAt(m: Moving, local: Ring, frame: Affine, depth: (i: number) => number, t: number): Effected | null {
+  if (m.effected === null || m.fresh === null) return null;
+  if (t === 0) return m.effected[0];
+  if (t === 1) return m.effected[1];
 
-  return bevel > 0 ? t * b / bevel : t;
+  const [a, b] = m.fresh.amounts;
+  const at = (x: number, y: number) => deepAt(m, x, y, frame, t);
+  const each = (p: ReadonlyMap<VertexId, number>, q: ReadonlyMap<VertexId, number>) => {
+    const out = new Map<VertexId, number>();
+
+    for (const k of new Set([...p.keys(), ...q.keys()])) out.set(k, at(p.get(k) ?? 0, q.get(k) ?? 0));
+
+    return out;
+  };
+  const amounts: Amounts = {
+    bevel: at(a.bevel, b.bevel),
+    bevels: each(a.bevels, b.bevels),
+    amplitude: at(a.amplitude, b.amplitude),
+    amplitudes: each(a.amplitudes, b.amplitudes),
+  };
+  const [l0, l1] = m.fresh.loose;
+  const loose = l0.map((d, k) => ({ ...d, amplitude: mix(d.amplitude, l1[k]?.amplitude ?? d.amplitude, t) }));
+  const scale = Math.sqrt(Math.abs(frame.a * frame.d - frame.b * frame.c));
+
+  return m.fresh.lay(local, amounts, depth, scale > 0 ? scale : 1, loose);
 }
 
 /** A depth per corner for a polygon standing still: whatever it is under. */
@@ -1385,83 +1354,6 @@ function between(a: Ring, b: Ring, t: number): Ring {
   });
 }
 
-/**
- * Where the corners `spanning` invented land in the projection, at the one
- * instant each of them is flat.
- *
- * They are only a problem where they are not corners, and that is exactly the
- * end of the span that does not have them — everywhere in between they are part
- * way out of the wall and turn like anything else, so the projection keeps them
- * without being asked. So this is empty at every instant but two, and at those
- * two it is a handful of points.
- *
- * A flat corner's two edges are parallel, so `mitred` comes back with its own
- * position moved along the shared normal by the depth: the mitre a corner would
- * get has nothing to bite on. That is the offset `moved` takes in `erode`, and
- * it has to be, or the point would miss the edge it is meant to land on.
- *
- * And the points of an arc laid on its facets at this end — see
- * `effectsOver` — which are as flat here as an invented corner, and for the
- * same while.
- */
-function invented(
-  m: Moving,
-  at: Omit<Resolved, 'shape' | 'rings'>,
-  t: number,
-): Point[] {
-  const end = t === 0 ? 0 : t === 1 ? 1 : null;
-  if (end === null) return [];
-
-  const rings = ringsOf(m.corners);
-
-  if (m.effected !== null) {
-    return [
-      ...slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : [])),
-      ...facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p),
-    ];
-  }
-
-  const dead = m.dead[end];
-  const out: Point[] = [];
-  const erosion = at.depths ?? at.erosion;
-
-  for (let i = 0; i < at.source.length; i++) {
-    if (dead[i] !== true) continue;
-
-    const p = mitred(at.source, rings, i, typeof erosion === 'number' ? erosion : erosion[i]);
-
-    if (p !== null) out.push(p);
-  }
-
-  return out;
-}
-
-/**
- * A polygon with effects, slot by slot: each corner's arc and each edge's
- * deform points where the projection has them at `t`, and whether the slot is
- * flat at either end.
- *
- * A flat corner's arc is a short run along its wall, never one point — see
- * `shaped` — so at an end where a slot is flat its points lie on an edge of
- * the projection, `keeping` takes every one of them, and the ring is as long
- * at the end as it is in between.
- */
-function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead: [boolean, boolean] }[] {
-  const im = imagesOf(at);
-
-  if (im === null) return [];
-
-  const out: { points: Point[], dead: [boolean, boolean] }[] = [];
-
-  m.corners.forEach((_c, i) => {
-    const run = im.corners[i];
-    const dead: [boolean, boolean] = [m.dead[0][i], m.dead[1][i]];
-
-    if (run !== null && (dead[0] || dead[1])) out.push({ points: run, dead });
-  });
-
-  return out;
-}
 
 /**
  * A depth `t` of the way across the span, from `a` at the near end to `b` at
@@ -1481,6 +1373,8 @@ function deepAt(m: Moving, a: number, b: number, frame: Affine, t: number): numb
 function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
   const local = between(m.local[0], m.local[1], t);
   const frame = riding(m, t);
+  const erosion = deepAt(m, m.depth[0], m.depth[1], frame, t);
+  const depths = m.varying ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t)) : null;
 
   // Named rather than spread: spreading `m.at` would read its projection,
   // which is the one thing worth not doing here.
@@ -1491,9 +1385,9 @@ function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
     local,
     frame,
     source: place(frame, local),
-    erosion: deepAt(m, m.depth[0], m.depth[1], frame, t),
-    depths: m.varying ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t)) : null,
-    effected: m.effected === null ? null : effectedAt(m.effected, t),
+    erosion,
+    depths,
+    effected: effectedAt(m, local, frame, i => depths?.[i] ?? erosion, t),
   };
 }
 
@@ -1502,183 +1396,10 @@ function world1(items: Moving[], t: number): Resolved[] {
   return items.map(m => {
     const at = at1(m, t);
 
-    return resolved({ ...at, keep: invented(m, at, t) });
+    return resolved(at);
   });
 }
 
-/**
- * How solid each vertex of a polygon's projection is, at one instant — the
- * doc's `lineOpacity`, worked out where the answer is actually known.
- *
- * The question is only ever asked about the corners `spanning` invented, and
- * about those it is asked at every instant of the span, not only at the two ends
- * where they are flat. So the point has to be *named*, and the name is
- * arithmetic: erosion moves every edge parallel to itself, so the image of a
- * corner is where its two moved edges meet, which is `mitred` and is the same
- * point `erode` builds the boundary out of.
- *
- * It used to be found instead by projecting the ring again without them and
- * keeping whatever was left over. That is only sound where taking a corner out
- * leaves the same curve — which is to say where it is already flat, which is to
- * say at the two ends of the span and nowhere in between. Everywhere else the
- * two projections are honestly different shapes, the leftovers did not line up,
- * and the whole fade was abandoned: the lines stayed solid for the length of the
- * span and vanished in its last frame, which is the thing they exist not to do.
- *
- * Only polygons whose corner set actually changes across the span pay for it,
- * which in most spans is none of them.
- *
- * The value is the lerp of the two ends: a corner leaving goes 1 to 0 across
- * the span and one arriving goes 0 to 1, so the line fades over exactly the
- * stretch the vertex is emerging through.
- */
-function fading(m: Moving, it: Resolved, t: number): number[][] | null {
-  return paintedOn(it.shape, fadingPoints(m, it, t));
-}
-
-/**
- * The points of a polygon's projection that are not wholly solid at `t`,
- * each with how solid it is: `fading`'s answer before it is put onto a
- * shape, so that a scope holding the polygon can put it onto its own. See
- * `groupFading`.
- */
-function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
-  return m.effected === null ? fadingCorners(m, it, t) : [...fadingSlots(m, it, t), ...facetsFading(it)];
-}
-
-/** Where its arcs' points are on their facets at one end of the span or the
- * other, and fading. See `facetFades`. */
-function facetsFading(it: Omit<Resolved, 'shape'>): Fade[] {
-  const e = it.effected ?? null;
-
-  if (e === null) return [];
-
-  const faded = (f: Facets) => f.n > 0 && (f.from !== f.to || f.from < f.n);
-
-  if (!e.facets.some(faded)) return [];
-
-  const im = imagesOf(it);
-
-  if (im === null) return [];
-
-  return im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i])));
-}
-
-/** `fadingPoints` for a polygon with no round: its corners dead at an end. */
-function fadingCorners(m: Moving, it: Resolved, t: number): Fade[] {
-  const out: { p: Point, v: number }[] = [];
-
-  for (let i = 0; i < m.corners.length; i++) {
-    if (!m.dead[0][i] && !m.dead[1][i]) continue;
-
-    const image = mitred(it.source, it.rings, i, it.depths === null ? it.erosion : it.depths[i]);
-
-    // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
-    // it nowhere to be, and a point that is not drawn needs no opacity.
-    if (image !== null) out.push({ p: image, v: mix(m.dead[0][i] ? 0 : 1, m.dead[1][i] ? 0 : 1, t) });
-  }
-
-  return out;
-}
-
-/** Points with how solid each is, put onto a shape: every point of it one of
- * them lands on, and the rest wholly solid. Nothing where none lands. */
-function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): number[][] | null {
-  if (points.length === 0) return null;
-
-  const snap = near(new Map([[0, shape]]));
-  const out = shape.map(ring => ring.map(() => 1));
-  let any = false;
-
-  for (const { p, v } of points) {
-    const at = corner(shape, p, snap);
-
-    if (at === null) continue;
-
-    out[at.ring][at.index] = Math.min(out[at.ring][at.index], v);
-    any = true;
-  }
-
-  return any ? out : null;
-}
-
-/** `fadingPoints` for a polygon with a round, slot by slot: every point of a
- * slot flat at one end fades over the span. */
-function fadingSlots(m: Moving, it: Resolved, t: number): Fade[] {
-  return slots(m, it).flatMap(slot => {
-    const v = mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t);
-
-    return slot.points.map(p => ({ p, v }));
-  });
-}
-
-/**
- * How solid each point of a scope's side is at `t`: its polygons' fading,
- * carried onto it. A polygon's point is moved in by the depth of every scope
- * from the polygon's up to this one, the way the erosion moves a corner —
- * offsets of one shape add, so the depths can be taken together — and put
- * onto the side's shape where it lands. Without this, a corner arriving on a
- * room inside a sealed group stood its vertical all at once.
- */
-function groupFading(
-  cast: Cast,
-  side: Contributed,
-  moving: ReadonlyMap<Id, Moving>,
-  was: ReadonlyMap<Id, Resolved>,
-  t: number,
-): number[][] | null {
-  const group = sidedWith(side.id) ?? side.id;
-  const world = cast.world;
-
-  if (!world.groups.has(group)) return null;
-
-  const set = setOf(side.kind);
-
-  const points: Fade[] = [...(side.faded ?? [])];
-
-  for (const id of within(world, group)) {
-    const m = moving.get(id), it = was.get(id);
-
-    if (m === undefined || it === undefined) continue;
-
-    const mine = fadingPoints(m, it, t);
-
-    if (mine.length === 0) continue;
-
-    // Every sealed scope from the polygon's up to this one, each at the depth
-    // it stands at, turned the way the slot the one inside it fills is.
-    let depth = 0;
-    let slot = slotOf(kindOf(it.polygon), set);
-
-    for (const g of enclosing(world, id)) {
-      const both = cast.scopes.get(g);
-
-      if (both !== undefined && slot !== null) {
-        const top = outermostSlot(world, g, set) ?? 0;
-        const kinds = SLOT_KINDS[set];
-
-        depth += mix(both[0], both[1], t) * (inverted(kinds[slot]) !== inverted(kinds[top]) ? -1 : 1);
-        slot = top;
-      }
-
-      if (g === group) break;
-    }
-
-    const snap = near(new Map([[id, it.shape]]));
-
-    for (const { p, v } of mine) {
-      const at = corner(it.shape, p, snap);
-
-      if (at === null) continue;
-
-      const moved = depth === 0 ? it.shape[at.ring][at.index] : mitred(it.shape[at.ring], [0], at.index, depth);
-
-      if (moved !== null) points.push({ p: moved, v });
-    }
-  }
-
-  return paintedOn(side.shape, points);
-}
 
 /**
  * The set at one instant, worked out directly rather than interpolated: what
@@ -1717,11 +1438,6 @@ interface Taken {
   /** The runs before they were taken back to their frames, for the same
    * reason: an edge of another contributor is only nearby in the world. */
   out: Frame
-  /** Per contributor, how solid each vertex of its projection is. Missing for
-   * anything whose corners do not change across the span, which is most of
-   * them, and read as one throughout — a group's union has no source corners
-   * to fade, so it is never in here. */
-  fade: Map<Id, number[][]>
 }
 
 /**
@@ -1742,7 +1458,8 @@ export interface Cast {
   /** Each scope's effects: its options, and its bevel and amplitude at each
    * end, seeded where one end has nought. Absent is none. */
   shapes: Map<GroupId, {
-    facets: Facets
+    round: Options['round'] | null
+    scale: [number, number]
     bevel: [number, number]
     held: boolean
     deform: { e: Effecting, spacing: [number, number], amplitude: [number, number] } | null
@@ -1792,10 +1509,8 @@ function casting(world: World, from: number): Cast {
     if (group.sealed) scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
-  // A union has no slots to put back, so an end at nought is seeded: the arc
-  // turns, however little, and the ring keeps its length.
+  // Laid afresh at each instant, from the amounts lerped: see `folded`.
   const shapes: Cast['shapes'] = new Map();
-  const seed = (x: number, y: number): number => (x === 0 && y !== 0 ? y * SEEDING : x);
 
   for (const id of scopes.keys()) {
     const round = optionOf(world.effects.get(id), 'round');
@@ -1808,13 +1523,10 @@ function casting(world: World, from: number): Cast {
 
     if (round === undefined && d === null) continue;
 
-    // Laid as a polygon's corners are across a span: see `effectsOver`.
-    const from = round === undefined ? 0 : segmentsOf(round, was.bevel, scaleAt(world, id, near));
-    const to = round === undefined ? 0 : segmentsOf(round, now.bevel, scaleAt(world, id, far));
-
     shapes.set(id, {
-      facets: { n: Math.max(from, to), from, to, at: 0, tension: round?.tension ?? 0.5 },
-      bevel: round === undefined ? [0, 0] : [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
+      round: round ?? null,
+      scale: [scaleAt(world, id, near), scaleAt(world, id, far)],
+      bevel: round === undefined ? [0, 0] : [was.bevel, now.bevel],
       held: round?.held !== false,
       deform: d === null ? null : { e: d.e, spacing: [d.e.spacing, dTo?.e.spacing ?? d.e.spacing], amplitude: [was.amplitude, now.amplitude] },
     });
@@ -1872,7 +1584,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
         frame: riding(cast.riders.get(id)!, t),
         ...(fx === undefined ? {} : {
           effects: {
-            facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) },
+            facets: fx.round === null ? SQUARE : facetsOf(segmentsOf(fx.round, mix(fx.bevel[0], fx.bevel[1], t), mix(fx.scale[0], fx.scale[1], t)), fx.round.tension),
             bevel: mix(fx.bevel[0], fx.bevel[1], t),
             held: fx.held,
             ...(fx.deform === null ? {} : {
@@ -1987,7 +1699,7 @@ function memberOf(it: Contributed, set: SetName): Member | null {
   // A source ring as drawn is allowed to cross itself, so it goes through an
   // arrangement here — and an arrangement drops the vertices it does not turn
   // at, this one included. Anything already simple is spared it.
-  const shape = it.simple ? it.shape : keeping(simplify(it.shape), it.keep ?? []);
+  const shape = it.simple ? it.shape : simplify(it.shape);
 
   return shape.length === 0 ? null : { id: it.id, slot, shape };
 }
@@ -2067,20 +1779,10 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
   const frames = new Map(at.map(it => [it.id, it.frame]));
   const table = new Map<Id, Shape>();
   const world = new Map<Id, Shape>();
-  const fade = new Map<Id, number[][]>();
-  const moving = new Map(items.map(m => [m.at.id, m]));
-  const was = new Map(resolved.map(it => [it.id, it]));
 
   for (const it of at) {
     world.set(it.id, it.shape);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
-
-    // Only a polygon has source corners, and only they can be invented; a
-    // scope's side fades where its polygons' do.
-    const m = moving.get(it.id), mine = was.get(it.id);
-    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
-
-    if (how !== null) fade.set(it.id, how);
   }
 
   const out = only === null ? everything(at) : share(at, only);
@@ -2093,7 +1795,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     fill: r.fill,
   }));
 
-  return { frame, table, world, out, fade, t };
+  return { frame, table, world, out, t };
 }
 
 // -----------------------------------------------------------------------------
@@ -2678,23 +2380,12 @@ function numbered(a: Taken, b: Taken): boolean {
 }
 
 /**
- * Whether every point that turns — or stops turning — between these two
- * readings has something to fade over.
+ * Whether every point that turns between these two readings turns at both.
  *
- * Corner-ness is drawn: a wall stands a vertical where the boundary turns. It
- * is deliberately not an event, because a vertex emerging over a span is a
- * move, and `fading` gives it a value at each end for the line to fade
- * between. That is the case this is careful to keep.
- *
- * What it will not accept is a corner that changes with no fade behind it,
- * which `fading` cannot produce: it covers vertices that die between the span's
- * two ends, and a corner can also come and go because a *neighbour* moved —
- * two rooms flush against each other at one version and apart at the next make
- * a junction that exists at a single instant. Nothing interpolates that, so the
- * two ends of a stretch holding it differ by a whole unit of opacity, and the
- * line is fully drawn for the width of the stretch and gone after it. Called an
- * event instead, the cut pins it and keeps the two instants either side, and
- * half-open ownership draws neither.
+ * Corner-ness is drawn: a wall stands a vertical where the boundary turns.
+ * Nothing fades one in, so a point that starts or stops turning part way is
+ * an event, and the cut pins it: the line is there on one side of it and not
+ * on the other, and half-open ownership draws neither at once.
  */
 function explained(a: Taken, b: Taken): boolean {
   const plan = lining(a.frame, b.frame);
@@ -2703,19 +2394,10 @@ function explained(a: Taken, b: Taken): boolean {
 
   const there = following(b.frame, plan);
 
-  const covered = (o: Origin): boolean => {
-    if (o.kind !== 'vertex') return false;
-
-    const where = (it: Taken) => it.fade.get(o.at.id)?.[o.at.ring]?.[o.at.index];
-
-    return where(a) !== undefined || where(b) !== undefined;
-  };
-
   return a.frame.every((run, r) => {
     const other = there[r];
 
-    return other !== undefined && run.corner.every((c, i) =>
-      c === other.corner[i] || covered(run.whence[i]));
+    return other !== undefined && run.corner.every((c, i) => c === other.corner[i]);
   });
 }
 
@@ -3019,7 +2701,7 @@ function stretchOf(a: Taken, b: Taken): Stretch {
     // Each end's own reading, rather than the reconciled one: a point the two
     // ends disagree about the provenance of still has an opacity at each of
     // them, and it is the fade that would be lost by insisting they agree.
-    opacity: [faded(a, one), faded(to, two)],
+    opacity: [faded(a), faded(to)],
   };
 }
 
@@ -3033,16 +2715,8 @@ function stretchOf(a: Taken, b: Taken): Stretch {
  * fades the same way. A crossing is a corner by construction and is always
  * drawn.
  */
-function faded(taken: Taken, os: (Origin | null)[][]): number[][] {
-  return taken.out.map((run, r) => run.points.map((_unused, i) => {
-    if (!run.corner[i]) return 0;
-
-    const o = os[r]?.[i];
-
-    if (o === null || o === undefined || o.kind !== 'vertex') return 1;
-
-    return taken.fade.get(o.at.id)?.[o.at.ring]?.[o.at.index] ?? 1;
-  }));
+function faded(taken: Taken): number[][] {
+  return taken.out.map(run => run.corner.map(c => (c ? 1 : 0)));
 }
 
 
@@ -4075,6 +3749,8 @@ function movement(out: unknown[], m: Moving, cast: Cast): void {
   into(out, m.depth);
   into(out, m.varying ? m.depths : null);
   into(out, m.effected);
+  into(out, m.fresh?.amounts ?? null);
+  into(out, m.fresh?.loose ?? null);
   into(out, m.frame);
   into(out, m.ops);
 

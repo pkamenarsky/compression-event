@@ -1449,8 +1449,6 @@ describe('a corner coming or going across a span', () => {
     const pulled = nudging(grown, 1, ids[0], now.corners[where].id, { x: 0, y: -80 });
 
     const span = run(bakeSpan(pulled, 0));
-
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
     expect(drift(pulled)).toBeLessThan(TOLERANCE);
   });
 
@@ -1493,7 +1491,6 @@ describe('a corner coming or going across a span', () => {
 
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(cut, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(cut, 1), 6);
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
   });
 });
 
@@ -1724,40 +1721,6 @@ describe('a corner that was always there but flat at one end', () => {
     };
   }
 
-  test('all three stand in the ring at both ends, so it is one stretch', () => {
-    const { world } = notched();
-    const span = run(bakeSpan(world, 0));
-
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-
-    const at = (t: number) => sample(span, t).reduce((n, r) => n + r.points.length, 0);
-
-    expect(at(0)).toEqual(at(1));
-    expect(at(0)).toEqual(at(0.5));
-  });
-
-  test('and their lines fade in over the span rather than snapping on', () => {
-    const { world } = notched();
-    const span = run(bakeSpan(world, 0));
-    const track = span.tracks[0];
-    const s = track.stretches[0];
-
-    // The three on the bottom wall, by where they stand at the near end.
-    const flat: [number, number][] = [];
-
-    s.a.forEach((r, i) => r.points.forEach((p, j) => {
-      if (Math.abs(p.y + 100) < 1e-6 && Math.abs(p.x) < 99) flat.push([i, j]);
-    }));
-
-    expect(flat.length).toEqual(3);
-
-    for (const [i, j] of flat) {
-      expect(s.opacity[0][i][j]).toBeCloseTo(0, 9);
-      expect(s.opacity[1][i][j]).toBeCloseTo(1, 9);
-    }
-  });
-
   test('and the span still draws what the editor draws at both ends', () => {
     const { world } = notched();
     const span = run(bakeSpan(world, 0));
@@ -1790,32 +1753,6 @@ describe('a wall that is eroded while a corner leaves it', () => {
 
     return { world: removeVertices(deep, 1, [going]), id: ids[0] };
   }
-
-  /** How solid the faintest point of the outline is at `t`. */
-  function dimmest(span: Span, id: PolygonId, t: number): number {
-    const track = span.tracks.find(x => x.id === id)!;
-    const s = stretchAt(track, t)!;
-    const u = s.t1 === s.t0 ? 0 : (t - s.t0) / (s.t1 - s.t0);
-
-    let least = 1;
-
-    s.opacity[0].forEach((ring, r) => ring.forEach((v, i) => {
-      least = Math.min(least, v + (s.opacity[1][r][i] - v) * u);
-    }));
-
-    return least;
-  }
-
-  test('the leaving corner fades over the whole span, not its last frame', () => {
-    const { world, id } = folding();
-    const span = run(bakeSpan(world, 0));
-
-    expect(dimmest(span, id, 0)).toBeCloseTo(1, 9);
-    expect(dimmest(span, id, 0.25)).toBeCloseTo(0.75, 2);
-    expect(dimmest(span, id, 0.5)).toBeCloseTo(0.5, 2);
-    expect(dimmest(span, id, 0.75)).toBeCloseTo(0.25, 2);
-    expect(dimmest(span, id, 1)).toBeCloseTo(0, 9);
-  });
 
   test('and the span still draws what the editor draws at both ends', () => {
     const { world } = folding();
@@ -1874,8 +1811,6 @@ describe('a corner arriving right beside one that is leaving', () => {
       expect(now).toBeGreaterThan(lo - (hi - lo));
       expect(now).toBeLessThan(hi + (hi - lo));
     }
-
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
     expect(drift(world)).toBeLessThan(TOLERANCE);
   });
 
@@ -1923,21 +1858,12 @@ describe('a corner arriving on a room inside a sealed group', () => {
   }
 
   for (const depth of [0, 10]) {
-    test(`is one stretch, and its vertical fades in${depth === 0 ? '' : ', the group eroding'}`, () => {
+    test(`arrives as it does alone${depth === 0 ? '' : ', the group eroding'}`, () => {
       const w = arriving(depth);
       const span = run(bakeSpan(w, 0));
-      const s = span.tracks[0].stretches[0];
 
-      expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
       expect(drift(w)).toBeLessThan(TOLERANCE);
       expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
-
-      // The one on the floor, off the corners, dark at the near end.
-      const floor = s.a.flatMap((r, i) => r.points.flatMap((p, j) => (
-        Math.abs(p.y + 100 - depth) < 1e-6 && Math.abs(p.x) < 50 ? [s.opacity[0][i][j]] : []
-      )));
-
-      expect(floor).toEqual([0]);
     });
   }
 });
@@ -2245,10 +2171,6 @@ describe('effects', () => {
     const { world, id } = room(ROUND);
     const w = wrote(world, 1, id, round(30));
     const span = run(bakeSpan(w, 0));
-
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 0.5));
-    expect(count(span, 1)).toEqual(count(span, 0.5));
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
 
@@ -2257,27 +2179,15 @@ describe('effects', () => {
     expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(30 * 1e-2);
   });
 
-  test('a bevel growing finer keeps its ring, draws the editor\'s outline at both ends, and fades its new points in', () => {
+  test('a bevel growing finer draws the editor\'s outline at both ends', () => {
     // At a precision of `inSegments(4, 20)`, ten deep is three segments and
-    // forty is six: the span lays six at both ends, three of them on facets
-    // at the near one.
+    // forty is six: laid afresh, each instant has what its bevel asks for.
     const { world, id } = room({ round: inSegments(4, 20) });
     const w = wrote(wrote(world, 0, id, round(10)), 1, id, round(30));
     const span = run(bakeSpan(w, 0));
-
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(span.tracks.every(t => t.stretches.length === 1)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 0.5));
-    expect(count(span, 1)).toEqual(count(span, 0.5));
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
-
-    // Dark at the near end where they lie on a facet, and coming up.
-    const s = span.tracks[0].stretches[0];
-    const later = s.opacity[1].flat();
-
-    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0)).toHaveLength(4 * 3);
   });
 
   test('a turning room at a fixed bevel costs no stretches', () => {
@@ -2289,7 +2199,7 @@ describe('effects', () => {
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
 
-  test('a corner arriving into a rounded ring arrives as its arc, and nothing jumps', () => {
+  test('a corner arriving into a rounded ring arrives as its arc', () => {
     const { world, id } = room(ROUND);
     const w0 = wrote(world, 0, id, round(20));
     const it = resolveAt(w0, 1).find(r => r.id === id)!;
@@ -2301,25 +2211,11 @@ describe('effects', () => {
     const span = run(bakeSpan(pulled, 0));
 
     // Cut more than once — an arc whose corner turns is not a lerp of its
-    // ends, as a corner alone is — but never jumping: the arriving arc is in
-    // the ring from the start, laid along the wall.
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 0.5));
-    expect(count(span, 1)).toEqual(count(span, 0.5));
+    // ends, as a corner alone is. Flat on the wall at the near end, the arc
+    // is not there, and comes as the span starts.
     expect(drift(pulled)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(pulled, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(pulled, 1), 6);
-
-    // Its five points, seeded along the wall about where it grows from, are
-    // dark there.
-    const s = span.tracks[0].stretches[0];
-    const seeds: number[] = [];
-
-    s.a[0].points.forEach((p, j) => {
-      if (Math.abs(p.x) < 1 && Math.abs(p.y + 100) < 1e-6) seeds.push(s.opacity[0][0][j]);
-    });
-
-    expect(seeds).toEqual([0, 0, 0, 0, 0]);
   });
 
   /** A room with a corner arriving on its deformed floor at v1, pulled out
@@ -2389,8 +2285,6 @@ describe('effects', () => {
     const where = now.corners.findIndex(c => c.birth === 1);
     const w = nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -60 });
     const span = run(bakeSpan(w, 0));
-
-    expect(count(span, 0)).toEqual(count(span, 1));
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(15 * 1e-3);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
@@ -2564,8 +2458,6 @@ describe('effects', () => {
     const g = sealed(world, 0, ids, TOP)!;
     const w = wrote({ ...g.world, effects: new Map([[g.id, ROUND]]) }, 1, g.id, round(20));
     const span = run(bakeSpan(w, 0));
-
-    expect(count(span, 0)).toEqual(count(span, 1));
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
@@ -2576,9 +2468,6 @@ describe('effects', () => {
     const fx = { ...g.world, effects: new Map([[g.id, { round: inSegments(4, 20) }]]) };
     const w = wrote(wrote(fx, 0, g.id, round(10)), 1, g.id, round(30));
     const span = run(bakeSpan(w, 0));
-
-    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
-    expect(count(span, 0)).toEqual(count(span, 1));
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
