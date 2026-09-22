@@ -1,3 +1,20 @@
+* Low hanging fruit
+  (copies; the originals stay where they are)
+** TODO remove pkamenarsky itch.io from 3d view in editor
+   the end screen in game/src/play.ts:524; skip it through an option like `title: false`, which the editor already passes
+** TODO remove debug output: fps counter
+   one call in game/src/render.ts:168 plus the `fps` helper
+** TODO remove debug output: <, > shader switching (and ; ' sky switching beside it)
+   two branches in `pressed`, game/src/play.ts:725
+** TODO write rotation degrees / scale factor / move distance while transforming
+   the amount gestures already set `reading` in the same move handler (canvas/index.ts:811); add labels for T/R/S/X/Y
+** TODO spacing in deform a slider; everything in the deform panel -> sliders
+   the fields are all `number(...)` in editor/src/pane.ts:300; add a range input next to or instead of it
+** TODO ask yes/no if level unsaved
+   keep the world last saved/opened in state, compare by identity, `beforeunload` + confirm on open
+** TODO show/hide floor polygons
+   one settings flag + a filter where the canvas draws floors; hide/lock/solo flags already show the pattern
+
 * Before the final level file format
 ** TODO level history
 ** TODO keyframes in keyframes... can we simplify?
