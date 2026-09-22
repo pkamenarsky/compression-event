@@ -1,9 +1,12 @@
 * Low hanging fruit
-  (copies; the originals stay where they are)
+** TODO deform spacing should be logarithmic - currently almost no change at the right end, a lot of change at the left end
+** TODO inspector view
+*** should always reflect the current key's tranform
+*** if key transform is deleted, inspector view should be updated
+**** use kontinuum reactivity
 
 * Before the final level file format
 ** TODO level history
-** TODO keyframes in keyframes... can we simplify?
 ** TODO each level has different wall heights/RenderConfigs
 *** even better - different RenderConfig for each version/keyframe
 *** sky shader configurable (pasting GLSL into the editor is fine)
@@ -11,17 +14,21 @@
 
 * Before the final editor UI (clips of making levels)
 ** Keyframes & versions
+*** TODO history management?
+**** maybe displayed in the "back view"?
+**** back view has option pane as well?
+*** TODO version/key management
+**** drag a whole version into another
 *** TODO a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
 *** TODO drag all transforms of a version to next/previous one
 *** TODO two tiered keyframe view? the versions + then the keys in a separate view
 *** TODO ghost button: none/all/next/subsequent/strip (current version always visible)
     (per-thing ghost switch exists)
+*** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
 **** visible versions as a strip instead of individual lines
 ** Baking
 *** TODO bake for specific versions only (bake button exists)
 *** TODO draw red line in timeline at topology events after baking
-*** TODO slow motion animation to check for strange frames (drag the arrow in the keyframe strip?)
-*** TODO settings: autobake
 ** Editing tools
 *** TODO handles on a shape to scale, rotate and erode — or is this superseded by the T/R/S/E key gestures?
 **** exact shape and form
@@ -33,6 +40,7 @@
 *** TODO options pane
 **** show/hide floor polygons (per-thing hide/lock/solo exist, no per-kind switch)
 **** snap to grid
+**** autobake
 ** Look & layout
 *** TODO inspector view - all transforms + effects in one pane
 **** polygon masks (level + void{solid} etc)
