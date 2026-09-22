@@ -427,14 +427,22 @@ goes with it: the event is already there.
 
 ### 2.3 Where the pattern is anchored
 
-A union edge is a run of member edges. Its teeth are laid from the middle of
-the maximal straight run of the union's outline they are on, keyed by the
-member edge at that middle, so:
+A union edge is a run of member edges. The run takes one name — the
+lowest-ranked member edge lying along it (2.9) — and its teeth are laid from
+**that edge's own middle**, across the whole run, exactly as a polygon lays
+them from its edge's middle. So:
 
 - two members side by side along one wall get one pattern across the join;
-- the anchor moves as the run's ends move, continuously;
-- a run splitting or merging jumps the pattern, and that happens only where
-  the arrangement already has an event.
+- the anchor is a member's edge rather than the run's ends, so nothing at
+  either end of the run moves a tooth;
+- a run split in two leaves the piece that keeps the naming edge untouched,
+  and only the other piece re-anchors, at an event the arrangement already
+  has.
+
+It was the run's own middle first, which slid every tooth on a wall whenever
+anything at either end of it moved, and slid them all again when a member
+crossing the wall cut the run in two. A polygon never does either, and the
+whole point of phase 2 is that a group should not.
 
 ### 2.4 The group's deform stops going to its members
 
@@ -490,6 +498,39 @@ Left, and known:
 - A member's teeth next to a straight make that straight untoothed: the
   group does not tooth its members' deformed geometry again.
 
+### 2.8b What the one-pipeline experiment found
+
+Before going further, the other way round was measured: fold the members
+*before* any erosion and run one pass — round, deform, erode — over that ring,
+each corner carrying whichever effects it inherits, so that a group is a
+polygon and there are not two pipelines to drift. `experiments/onepipe.test.ts`
+resolves both ways and reports how far the outlines are apart.
+
+| case | apart | points |
+|---|---|---|
+| group round, plain members | 0.00 | 37 vs 37 |
+| group round + erode, no deform | 0.00 | 37 vs 37 |
+| group round + deform | 5.73 | 77 vs 85 |
+| the same, amplitude 12 | 10.27 | 77 vs 85 |
+| member rounds, group deforms | 4.74 | 83 vs 71 |
+| member erodes, group rounds | 5.65 | 69 vs 37 |
+
+And the bake, the group eroding 0 → 20: with no teeth, one stretch either
+way; with teeth, 41 stretches and 6 jumps today against 132 and 45.
+
+- **Where only the group has effects the two already agree exactly**, erosion
+  and all. The acid test needs no restructuring.
+- **The deform gaps are the pattern's phase, not the pipeline**: they double
+  with the amplitude and the point counts do not move. That is 2.9's naming,
+  and no reordering touches it.
+- **The one real difference is a member's own depth**, and one pipeline
+  cannot express it: a polygon's depth is per corner and interpolates along
+  its edges, a member's is per edge, so a corner where two members meet would
+  carry two depths and slant the edge between them. It would need per-edge
+  depths, which do not exist.
+
+So the order stays as it is, and the work is 2.9.
+
 ### 2.9 Scoped: naming the union's straights and arcs
 
 **What it is for.** A sealed group that is rounded, deformed and eroded should
@@ -528,8 +569,9 @@ scope, which a line does for nothing.
    already left untoothed.
 2. **`slotted` carries them up**, moved in by the slot's depth the way the
    kept points are.
-3. **`foldShaped` names each straight** by the line under its middle, and
-   keys its teeth by that corner id — the noise, the jitter and the offset
+3. **`foldShaped` names each straight** by the lowest-ranked line along it,
+   anchors its pattern at that edge's own middle (2.3), and keys its teeth by
+   that corner id — the noise, the jitter and the offset
    then belong to the edge, as a polygon's do. A straight over no line keeps
    nought, which is what a straight made of two members' crossings is.
 4. **The group's deform runs along a member's arc**, as it runs along one of
