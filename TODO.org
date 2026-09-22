@@ -1,19 +1,16 @@
 * Low hanging fruit
   (copies; the originals stay where they are)
-** TODO remove pkamenarsky itch.io from 3d view in editor
-   the end screen in game/src/play.ts:524; skip it through an option like `title: false`, which the editor already passes
-** TODO remove debug output: fps counter
-   one call in game/src/render.ts:168 plus the `fps` helper
-** TODO remove debug output: <, > shader switching (and ; ' sky switching beside it)
-   two branches in `pressed`, game/src/play.ts:725
+** TODO remove pkamenarsky itch.io from game/3d view in editor
+** TODO remove debug output/controls when game NOT started from editor
+*** fps counter, <, > shader switching (and ; ' sky switching beside it)
+    two branches in `pressed`, game/src/play.ts:725
 ** TODO write rotation degrees / scale factor / move distance while transforming
    the amount gestures already set `reading` in the same move handler (canvas/index.ts:811); add labels for T/R/S/X/Y
 ** TODO spacing in deform a slider; everything in the deform panel -> sliders
+   give the deform jitter a higher range
    the fields are all `number(...)` in editor/src/pane.ts:300; add a range input next to or instead of it
 ** TODO ask yes/no if level unsaved
    keep the world last saved/opened in state, compare by identity, `beforeunload` + confirm on open
-** TODO show/hide floor polygons
-   one settings flag + a filter where the canvas draws floors; hide/lock/solo flags already show the pattern
 
 * Before the final level file format
 ** TODO level history
@@ -45,6 +42,7 @@
 *** TODO create button should be selected first (!)
 *** TODO mirror something; one-time op? (scale can't go negative)
 *** TODO options pane
+**** show/hide floor polygons (per-thing hide/lock/solo exist, no per-kind switch)
 **** snap to grid
 ** Look & layout
 *** TODO inspector view - all transforms + effects in one pane
@@ -54,7 +52,6 @@
 *** TODO statusbar shows action + available modifier keys (it only shows messages now)
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
-*** TODO show/hide floor polygons (per-thing hide/lock/solo exist, no per-kind switch)
 *** TODO spacing in deform a slider; everything in the deform panel -> sliders
 *** TODO show RenderConfig in the editor, not with \ + ~
 *** TODO styling: right click dialog (the "under the cursor" picker)
