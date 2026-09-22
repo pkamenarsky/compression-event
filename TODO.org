@@ -5,24 +5,15 @@
 *** even better - different RenderConfig for each version/keyframe
 *** sky shader configurable (pasting GLSL into the editor is fine)
 ** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
-** DONE keyframes: edit, add keyframe stores delta to previous; click a keyframe to edit it
-   (keys; ⌥←/⌥→ step between them)
-** DONE keyframe can be repeated
-   (repeats with a count and skipped keyframes, drawn as lanes in the keyframe view)
-** DONE effects act on selection: chamfer etc, erosion as well
-   (round/chamfer, deform, erode; per corner too)
 
 * Before the final editor UI (clips of making levels)
 ** Keyframes & versions
 *** TODO a selection should select the births/deaths in the keyframe view as well (and whatever ops are common too?)
+*** TODO drag all transforms of a version to next/previous one
 *** TODO two tiered keyframe view? the versions + then the keys in a separate view
 *** TODO ghost button: none/all/next/subsequent/strip (current version always visible)
     (per-thing ghost switch exists)
 **** visible versions as a strip instead of individual lines
-*** DONE dragging transforms left/right only drags one version
-    (keys drag along the timeline, with what is picked)
-*** DONE version view horizontal, like keyframes; version management
-    (keyframes across; add/delete keyframe)
 ** Baking
 *** TODO bake for specific versions only (bake button exists)
 *** TODO draw red line in timeline at topology events after baking
@@ -36,12 +27,8 @@
 *** TODO selection of overlapping vertices (right-click lists things under the cursor, but not corners)
 *** TODO create button should be selected first (!)
 *** TODO mirror something; one-time op? (scale can't go negative)
-*** DONE select polygons / edges / points (one tool, three pickings; shift, marquee)
-*** DONE selection holds heterogeneous shapes (polygons, corners, edges, artefacts, paths)
-*** DONE add/delete points (click a line adds a corner; delete in the corner tool)
-*** DONE create: rect, n-gon, polyline, path, artefact
-*** DONE n-gon shows its point count while dragging
-*** DONE snap to grid; grid size +/-; 5° / 45° with Alt; Alt locks a move to an axis
+*** TODO options pane
+**** snap to grid
 ** Look & layout
 *** TODO inspector view - all transforms + effects in one pane
 **** polygon masks (level + void{solid} etc)
