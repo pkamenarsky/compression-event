@@ -2728,6 +2728,19 @@ export function patternRun(
    * run is allowed — the teeth march out from it either way, and only the
    * ones that land on the run are laid. See PLAN-bevel 2.3. */
   from = length / 2,
+  /**
+   * How far either way from `from` the pattern runs, whatever the run's own
+   * ends do. Nothing — the default — bounds it by the run instead, and drops
+   * a tooth with no room, which is what an edge that keeps its length wants.
+   *
+   * A run whose ends move with something other than the pattern wants this:
+   * given the length the teeth belong to — a source edge's, which an erosion
+   * does not change — the same teeth are laid at every depth, and one whose
+   * room has run out stands flat at the end nearest it rather than going. So
+   * the ring keeps its points across a span and the bake can interpolate it.
+   * See PLAN-bevel 3.6.
+   */
+  reach?: number,
 ): EdgeRun {
   // From the middle — or, offset, off it by a share of the spacing the seed
   // gives the edge: so no tooth is sure to stand in the middle of every edge,
@@ -2749,20 +2762,28 @@ export function patternRun(
   // and the other stops at once.
   const before: [number, number][] = [], after: [number, number][] = [];
 
-  for (let j = 0, at = anchor; at <= length; j++, at = next(j, at)) after.push([j, at]);
-  for (let j = -1, at = next(-1, anchor); at >= 0; j--, at = next(j, at)) before.push([j, at]);
+  const last = reach === undefined ? length : anchor + reach;
+  const first = reach === undefined ? 0 : anchor - reach;
+
+  for (let j = 0, at = anchor; at <= last; j++, at = next(j, at)) after.push([j, at]);
+  for (let j = -1, at = next(-1, anchor); at >= first; j--, at = next(j, at)) before.push([j, at]);
 
   const places = [...before.reverse(), ...after];
 
   for (const [j, at] of places) {
     const had = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
 
-    if (had <= 0) continue;
+    if (had <= 0 && reach === undefined) continue;
 
-    along.push(at / length);
-    across.push(amplitude * had * patterned(e, key, j));
+    // Flat, a tooth past the run's end stands at the end: it is a point of
+    // the ring that does not turn, which is what `FoldShaped.fades` is for.
+    const on = Math.min(1, Math.max(0, at / length));
+    const room_ = Math.max(0, had);
+
+    along.push(on);
+    across.push(amplitude * room_ * patterned(e, key, j));
     teeth.push(j);
-    room.push(had);
+    room.push(room_);
   }
 
   return { along, across, teeth, room };
@@ -2860,6 +2881,9 @@ export function subdivided(
   /** Where along edge `i` its pattern is centred, or nothing for its own
    * middle: see `patternRun`. */
   from: (i: number) => number | undefined = () => undefined,
+  /** How far either way from its anchor edge `i`'s pattern runs, or nothing
+   * for the edge's own ends: see `patternRun`. */
+  reach: (i: number) => number | undefined = () => undefined,
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2873,7 +2897,7 @@ export function subdivided(
     if (l === 0 || !toothed(i)) return;
 
     const nx = dy / l * out, ny = -dx / l * out;
-    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n), e.spacing, from(i) ?? l / 2);
+    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n), e.spacing, from(i) ?? l / 2, reach(i));
 
     run.along.forEach((u, k) => done.push({
       at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
@@ -3908,7 +3932,14 @@ export function foldShaped(
   /** How high the teeth stand on a run of the given name, which for a group
    * is the same everywhere and for a polygon is its edge's own: see
    * `ArcDeform`. A run with no name asks with nought. */
-  deform: { e: Effecting, amplitude: (key: number) => number } | null,
+  deform: {
+    e: Effecting,
+    amplitude: (key: number) => number,
+    /** How far either way from its anchor a run of the given name lays teeth,
+     * or nothing to let its own ends say: see `patternRun`. A polygon gives
+     * its source edge's half, so the same teeth are laid at every depth. */
+    reach?: (key: number) => number | undefined,
+  } | null,
   depth: number,
 ): FoldShaped {
   if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [] };
@@ -4037,6 +4068,7 @@ export function foldShaped(
         i => bevels[i],
         i => !sq[i] && !sq[(i + 1) % ring.length] && !inside(i),
         i => names[i]?.from,
+        i => (names[i] === null || names[i] === undefined ? undefined : deform.reach?.(names[i]!.key)),
       );
 
     starts.push(source.length);
@@ -4127,7 +4159,10 @@ export function foldShaped(
       const nameAfter = names[made.from]?.key ?? 0;
       const nameBefore = names[(made.from - 1 + ring.length) % ring.length]?.key ?? nameAfter;
 
-      if (made.j !== null && deform !== null && deform.amplitude(nameAfter) === 0) flat.push(source.length);
+      // A tooth with no room left is as flat as one with no amplitude, and
+      // is kept for the same reason: the ring keeps its points while the
+      // pattern comes and goes at a run's ends. See `patternRun`'s `reach`.
+      if (made.j !== null && deform !== null && (deform.amplitude(nameAfter) === 0 || made.room === 0)) flat.push(source.length);
 
       source.push(made.at);
       beforeOf.push(made.j === null ? nameBefore : nameAfter);

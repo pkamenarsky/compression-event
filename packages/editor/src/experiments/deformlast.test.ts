@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Effecting, Ring, SQUARE, erodedCorners, foldShaped, isCCW, patternRun, rounded } from '../geometry';
+import { Effecting, Ring, SQUARE, erodedCorners, foldShaped, isCCW, keeping, patternRun, rounded } from '../geometry';
 import { TOP, addPolygon, imagesOf, namesOf, resolveAt } from '../scene';
 import { Writing, erode, inSegments, wrote } from '../testing';
 import { Effects, World, emptyWorld } from '../types';
@@ -202,10 +202,19 @@ function last(ring: Ring, a: Amounts, arcs_: ArcMode = 'length', seg = SEGMENTS,
  * gives it, no bevel and no depth — so all it does is name the runs and lay
  * the teeth.
  */
-function viaFold(ring: Ring, a: Amounts, held = false): { points: number, rings: number, ring: Point[] } {
+function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points: number, rings: number, ring: Point[] } {
   const w = world(ring, { ...a, amplitude: 0 }, held);
   const at = resolveAt(w, 0)[0];
   const names = namesOf(at);
+
+  // Each source edge's half length, by the corner that names it.
+  const halves = new Map<number, number>();
+
+  at.corners.forEach((c, i) => {
+    const q = at.source[(i + 1) % at.source.length];
+
+    halves.set(c.id, Math.hypot(q.x - at.source[i].x, q.y - at.source[i].y) / 2);
+  });
   const out = foldShaped(
     at.shape,
     [],
@@ -215,11 +224,26 @@ function viaFold(ring: Ring, a: Amounts, held = false): { points: number, rings:
     SQUARE,
     0,
     false,
-    { e: E, amplitude: () => a.amplitude },
+    {
+      e: E,
+      amplitude: () => a.amplitude,
+
+      // Half the edge as *drawn* — the source's, which the erosion does not
+      // change — so the same teeth are laid at every depth: PLAN-bevel 3.6
+      // piece 3. Read off the ring rather than off `namesOf`, which reports a
+      // line where the erosion put it.
+      reach: reach ? key => halves.get(key) : undefined,
+    },
     0,
   );
 
-  return { points: out.shape.reduce((n, r) => n + r.length, 0), rings: out.shape.length, ring: out.shape[0] ?? [] };
+  // As `resolves` does it: the flat teeth are simplified out of the shape and
+  // put back by the caller, which is what keeps the ring its length while the
+  // deform comes up out of nothing. See `FoldShaped.fades`.
+  const held_ = out.fades.filter(f => f.v === 0).map(f => f.p);
+  const shape = held_.length === 0 ? out.shape : keeping(out.shape, held_);
+
+  return { points: shape.reduce((n, r) => n + r.length, 0), rings: shape.length, ring: shape[0] ?? [] };
 }
 
 // -----------------------------------------------------------------------------
@@ -358,30 +382,45 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: round → erode → deform
     // ends can be compared point for point.
     const amounts = (t: number): Amounts => ({ bevel: 12, amplitude: 4, depth: mix(0, 8, t) });
     const held = true;
-    const ends = [viaFold(room(), amounts(0), held), viaFold(room(), amounts(1), held)];
 
-    log(`P8 depth 0 → 8, held: ${ends[0].points} points at each end (${ends[1].points})`);
+    for (const reach of [false, true]) {
+      const ends = [viaFold(room(), amounts(0), held, reach), viaFold(room(), amounts(1), held, reach)];
 
-    if (ends[0].points !== ends[1].points) return;
+      log(`P8 depth 0 → 8, held, reach ${reach}: ${ends[0].points} points at one end, ${ends[1].points} at the other`);
 
-    let worst = 0;
+      if (ends[0].points !== ends[1].points) continue;
 
-    for (let k = 1; k < 16; k++) {
-      const t = k / 16, now = viaFold(room(), amounts(t), held);
+      let worst = 0, moved = false;
 
-      if (now.points !== ends[0].points) {
-        log(`P8   the count moves to ${now.points} at t ${t.toFixed(2)}`);
-        return;
+      for (let k = 1; k < 16 && !moved; k++) {
+        const t = k / 16, now = viaFold(room(), amounts(t), held, reach);
+
+        if (now.points !== ends[0].points) {
+          log(`P8   the count moves to ${now.points} at t ${t.toFixed(2)}`);
+          moved = true;
+          continue;
+        }
+
+        now.ring.forEach((p, i) => {
+          const q = lerpP(ends[0].ring[i], ends[1].ring[i], t);
+
+          worst = Math.max(worst, Math.hypot(p.x - q.x, p.y - q.y));
+        });
       }
 
-      now.ring.forEach((p, i) => {
-        const q = lerpP(ends[0].ring[i], ends[1].ring[i], t);
-
-        worst = Math.max(worst, Math.hypot(p.x - q.x, p.y - q.y));
-      });
+      if (!moved) log(`P8   worst from the lerp of the two ends, every instant: ${worst.toFixed(4)}`);
     }
+  });
 
-    log(`P8   worst from the lerp of the two ends, every instant: ${worst.toFixed(4)}`);
+  it('P9: where the points go as the depth runs', () => {
+    for (const held of [false, true]) {
+      for (const depth of [0, 2, 4, 6, 8]) {
+        const plain = viaFold(room(), { bevel: 12, amplitude: 0, depth }, held, true);
+        const toothed = viaFold(room(), { bevel: 12, amplitude: 4, depth }, held, true);
+
+        log(`P9 held ${held}, depth ${depth}: undeformed ${plain.points}, deformed ${toothed.points} (teeth ${toothed.points - plain.points})`);
+      }
+    }
   });
 
   it('prints', () => {
