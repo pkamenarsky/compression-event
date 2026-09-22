@@ -1,5 +1,6 @@
 * Low hanging fruit
 * TODO insert a key befor the current one + shortcut
+* TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
 
 * Before the final level file format
 ** TODO level history
