@@ -806,16 +806,21 @@ export function contributed(
         shapedBy,
         here!.depth,
       );
-    const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep) };
+    const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep), fades: [] };
     const cut = set === 'floor' && top(id, 'level') === 0
       ? underfoot(rounded.shape, resolves(id, 'level'))
       : rounded.shape;
 
     // Where the bake has its arcs on their facets, fading: see `facetFades`.
     const fx = here?.effects;
-    const faded = fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
-      ? []
-      : rounded.runs.flatMap(run => facetFades(run, fx.facets));
+    const faded = [
+      ...(fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
+        ? []
+        : rounded.runs.flatMap(run => facetFades(run, fx.facets))),
+
+      // And its teeth still coming out of their walls: see `FoldShaped`.
+      ...(shaped?.fades ?? []),
+    ];
 
     // Folding the slots is an arrangement again, and would drop them again.
     // And the points its arcs have on their facets, at the end they lie

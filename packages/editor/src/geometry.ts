@@ -2677,6 +2677,11 @@ export interface EdgeRun {
   along: readonly number[]
   across: readonly number[]
   teeth: readonly number[]
+  /** How much room each tooth had, from just above nought where it is only
+   * coming out of the wall to one where it stands at its whole amplitude:
+   * what its height was scaled by, and how solid the line standing on it is.
+   * See `FoldShaped.fades`. */
+  room: readonly number[]
 }
 
 /**
@@ -2723,9 +2728,9 @@ export function patternRun(
   // gives the edge: so no tooth is sure to stand in the middle of every edge,
   // and one shorter than the spacing may have none.
   const anchor = from + (e.offset ? (hashed(e.seed, key ^ OFFSET, 0) - 0.5) * e.spacing : 0);
-  const along: number[] = [], across: number[] = [], teeth: number[] = [];
+  const along: number[] = [], across: number[] = [], teeth: number[] = [], room: number[] = [];
 
-  if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
+  if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth, room };
 
   // Tooth `j`'s gap is the one between it and its neighbour towards the
   // middle, so the middle tooth has none.
@@ -2756,16 +2761,17 @@ export function patternRun(
   const places = [...before.reverse(), ...after];
 
   for (const [j, at] of places) {
-    const room = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
+    const had = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
 
-    if (room <= 0) continue;
+    if (had <= 0) continue;
 
     along.push(at / length);
-    across.push(amplitude * room * patterned(e, key, j));
+    across.push(amplitude * had * patterned(e, key, j));
     teeth.push(j);
+    room.push(had);
   }
 
-  return { along, across, teeth };
+  return { along, across, teeth, room };
 }
 
 /**
@@ -2833,6 +2839,9 @@ export interface Subdivision {
   j: number | null
   /** How far along its edge, as a fraction: nought for an input corner. */
   along: number
+  /** How much room the tooth had, from nought to one: see `EdgeRun`. One
+   * for an input corner, which is not a tooth and stands whatever happens. */
+  room: number
 }
 
 /**
@@ -2866,7 +2875,7 @@ export function subdivided(
   const done: Subdivision[] = [];
 
   ring.forEach((a, i) => {
-    done.push({ at: a, from: i, j: null, along: 0 });
+    done.push({ at: a, from: i, j: null, along: 0, room: 1 });
 
     const b = ring[(i + 1) % n];
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
@@ -2881,6 +2890,7 @@ export function subdivided(
       from: i,
       j: run.teeth[k],
       along: u,
+      room: run.room[k],
     }));
   });
 
@@ -3865,6 +3875,16 @@ export interface FoldShaped {
   runs: Point[][]
   square: Point[]
   keep: Point[]
+  /**
+   * Each tooth that is not standing at its whole height, with how much of it
+   * it has: nought where it has no room at all and lies flat in the run.
+   *
+   * A tooth comes out of the wall as its run makes room for it, and the line
+   * standing on it comes up with it rather than at once — so the point is in
+   * the ring throughout, and the bake has something to fade over. See
+   * `Contributed.faded`, which the facets already use.
+   */
+  fades: Fade[]
 }
 
 export function foldShaped(
@@ -3886,7 +3906,7 @@ export function foldShaped(
   deform: { e: Effecting, amplitude: number } | null,
   depth: number,
 ): FoldShaped {
-  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [] };
+  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [] };
 
   let scale = 1;
 
@@ -3977,7 +3997,7 @@ export function foldShaped(
     return null;
   };
 
-  const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
+  const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [], solid: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
@@ -3989,7 +4009,7 @@ export function foldShaped(
     // curve's own teeth run along it: see `teethAlong`.
     const inside = (i: number) => mine[i] !== null && mine[(i + 1) % ring.length]?.arc === mine[i]!.arc;
     const laid = deform === null
-      ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0 }))
+      ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0, room: 1 }))
       : subdivided(
         ring,
         deform.e,
@@ -4068,6 +4088,7 @@ export function foldShaped(
           source.push(p);
           tooth.push(true);
           drawn.push(0);
+          solid.push(1);
         }
 
         continue;
@@ -4083,6 +4104,7 @@ export function foldShaped(
       source.push(made.at);
       tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
+      solid.push(made.room);
     }
   });
 
@@ -4094,6 +4116,18 @@ export function foldShaped(
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
   const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
+
+  // A tooth still coming out of its wall, where the erosion leaves it: the
+  // line on it is as solid as the tooth is tall.
+  const fades: Fade[] = [];
+
+  solid.forEach((v, i) => {
+    if (v >= 1) return;
+
+    const p = image(o.arcs[i][0]);
+
+    if (p !== null) fades.push({ p, v });
+  });
 
   const squared = [
     ...tooth.flatMap((t, i) => (t ? o.arcs[i] : [])),
@@ -4140,7 +4174,7 @@ export function foldShaped(
     return [];
   });
 
-  return { shape, runs, square: squared, keep: kept };
+  return { shape, runs, square: squared, keep: kept, fades };
 }
 
 /**

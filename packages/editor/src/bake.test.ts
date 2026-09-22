@@ -5,6 +5,7 @@ import {
   Frame,
   Origin,
   Span,
+  Stretch,
   TOLERANCE,
   bakeAll,
   bakeSpan,
@@ -2556,6 +2557,45 @@ describe('effects', () => {
     expect(drift(w, 0, 39)).toBeLessThan(2 * TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
+  test('a group\'s tooth is as solid as it is tall', () => {
+    // A tooth on the fold shrinks into the wall as the erosion grows the
+    // clear by an arc, and the line standing on it comes down with it: as
+    // solid as the tooth is tall, so that where the tooth finally goes there
+    // was nothing left of the line to see.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
+
+    w = wrote(w, 1, g.id, erode(30));
+
+    const span = run(bakeSpan(w, 0));
+    let seen = 0;
+
+    for (const s of span.tracks[0].stretches) {
+      for (const [end, t] of [[0, s.t0], [1, s.t1]] as const) {
+        const frame = end === 0 ? s.a : s.b;
+
+        frame.forEach((r, i) => r.points.forEach((p, j) => {
+          const v = s.opacity[end][i][j];
+
+          // On the bottom wall, away from the corners: the wall is at the
+          // erosion's own depth, and a tooth stands off it by the amplitude
+          // it has room for.
+          if (!(v > 0) || v >= 1 || p.x < 30 || p.x > 130) return;
+
+          const height = Math.abs(p.y - 30 * t);
+
+          if (height > 6) return;
+
+          seen++;
+          expect(height).toBeCloseTo(5 * v, 0);
+        }));
+      }
+    }
+
+    expect(seen).toBeGreaterThan(0);
   });
 
   test('a union edge cut in two lays its teeth from the middles of the two', () => {
