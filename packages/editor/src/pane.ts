@@ -73,7 +73,7 @@ const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDES: Sides[] = ['both', 'out', 'in'];
 
 /** The most jitter, in percent: see `Effecting.jitter`. */
-const JITTER = 100;
+const JITTER = 200;
 
 /** The finest precision a round is asked for: past it, `FINEST` segments
  * cap it anyway. */

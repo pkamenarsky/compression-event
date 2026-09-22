@@ -2122,7 +2122,7 @@ describe('round and deform', () => {
   test('without a jitter a tooth is a whole number of spacings off the middle', () => {
     const run = patternRun(zigzag, 5, 1, 40);
 
-    run.teeth.forEach((j, k) => expect(run.along[k] * 40).toBe(20 + j * 3));
+    run.teeth.forEach((j, k) => expect(run.along[k] * 40).toBeCloseTo(20 + j * 3, 9));
     expect(run.teeth).toEqual(Array.from({ length: 13 }, (_, k) => k - 6));
   });
 

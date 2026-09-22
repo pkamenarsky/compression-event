@@ -2601,9 +2601,10 @@ export interface Effecting {
   pattern: Pattern
   seed: number
   sides: Sides
-  /** How far the gaps between teeth may stray from the spacing, from nought
-   * to one: at one a gap is anywhere from a `GAPS`th of the spacing to `GAPS`
-   * times it, evenly on a log scale, and at nought every gap is the spacing.
+  /** How far the gaps between teeth may stray from the spacing: at one a gap
+   * is anywhere from a `GAPS`th of the spacing to `GAPS` times it, evenly on a
+   * log scale, at two the square of that, and at nought every gap is the
+   * spacing.
    * A gap is never nothing, so no two teeth pass each other. */
   jitter: number
 }
@@ -2641,7 +2642,7 @@ export interface EdgeRun {
  * (see `Effecting.jitter`), and a tooth is where the gaps between it and the
  * middle add up to. Its gaps are its own and so is its place, the same however
  * long the edge is, so the pattern stays continuous. With none, every gap is
- * the spacing and tooth `j` is `j` spacings off the middle.
+ * the spacing.
  *
  * `clear` and `clearTo` are how much of each end is kept free of teeth, for
  * the round of the corner there: a tooth inside a bevel would be a corner the
@@ -2656,13 +2657,9 @@ export function patternRun(e: Effecting, key: number, amplitude: number, length:
   if (!(e.spacing > 0) || !(length > 0)) return { along, across, teeth };
 
   // Tooth `j`'s gap is the one between it and its neighbour towards the
-  // middle, so the middle tooth has none. Without a jitter a place is
-  // multiplied out rather than added up, so that it is exactly `j` spacings
-  // off the middle and nothing has built up by the ends.
+  // middle, so the middle tooth has none.
   const gap = (j: number): number => e.spacing * Math.pow(GAPS, e.jitter * (2 * hashed(e.seed, ~key, j) - 1));
-  const next = (j: number, at: number): number => (e.jitter > 0
-    ? at + Math.sign(j) * gap(j)
-    : anchor + j * e.spacing);
+  const next = (j: number, at: number): number => at + Math.sign(j) * gap(j);
 
   // Outward from the middle both ways, as far as the edge goes, then laid
   // end to end in order along it.
