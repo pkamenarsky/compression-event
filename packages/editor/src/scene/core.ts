@@ -63,11 +63,15 @@ import {
   Clipping,
   Effects,
   Eye,
+  FloorPart,
   GroupId,
   Options,
   IconType,
   Id,
+  KINDS,
+  LevelPart,
   PathId,
+  SetName,
   Vertex,
   Polygon,
   PolygonId,
@@ -80,11 +84,13 @@ import {
   enclosing,
   inside,
   kindOf,
+  unkinded,
   kindKey,
   opened,
   parentOf,
   ringsOf,
   inverted,
+  sameKind,
   standing,
   within,
 } from '../types';
@@ -2808,7 +2814,7 @@ export function retypable(world: World, ids: readonly Id[]): PolygonId[] {
 }
 
 /** Every kind among `ids`, deduplicated. One entry says the selection agrees
- * about what it is; more than one is what the type buttons draw as mixed. */
+ * about what it is; more than one is what the inspector shows as mixed. */
 export function kindsOf(world: World, ids: readonly PolygonId[]): PolygonKind[] {
   const out = new Map<string, PolygonKind>();
 
@@ -2832,10 +2838,47 @@ export function retypedPolygons(
   for (const id of ids) {
     const p = world.polygons.get(id);
 
-    if (p !== undefined) polygons.set(id, { ...p, ...kind });
+    if (p !== undefined) polygons.set(id, { ...unkinded(p), ...kind });
   }
 
   return { ...world, polygons };
+}
+
+/**
+ * `ids` given `part` in `set`, or no part there where it is nothing, each
+ * keeping what it plays in the other set where it can.
+ *
+ * Where it cannot — a solid over a floor, which says nothing a solid does not —
+ * the other set's part goes, and the polygon is what was asked for alone. A
+ * polygon left in neither set is not a kind, so taking a part away from one
+ * with nothing in the other leaves it as it was.
+ */
+export function repartedPolygons(
+  world: World,
+  ids: readonly PolygonId[],
+  set: SetName,
+  part: LevelPart | FloorPart | null,
+): World {
+  const polygons = new Map(world.polygons);
+
+  for (const id of ids) {
+    const p = world.polygons.get(id);
+
+    if (p === undefined) continue;
+
+    const { [set]: _was, ...other } = kindOf(p);
+    const kind: PolygonKind = part === null ? other : { ...other, [set]: part };
+    const settled = offered(kind) ? kind : part === null ? kindOf(p) : { [set]: part };
+
+    polygons.set(id, { ...unkinded(p), ...settled });
+  }
+
+  return { ...world, polygons };
+}
+
+/** Whether the editor offers this kind: see `KINDS`. */
+export function offered(kind: PolygonKind): boolean {
+  return KINDS.some(k => sameKind(k, kind));
 }
 
 /** The same, for artefacts: what a gesture over a selection actually moves,

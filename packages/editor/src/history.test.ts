@@ -17,7 +17,6 @@ import { erode, move, turned, wrote } from './testing';
 import {
   EMPTY_SELECTION,
   EditorState,
-  FLOOR,
   PolygonKind,
   World,
   emptyWorld,
@@ -37,7 +36,7 @@ import {
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function square(world: World, x: number): { world: World, id: number } {
   return addPolygon(

@@ -24,7 +24,7 @@ import {
   kindOf,
 } from './rig';
 import { artefactsAt, bornAt, hitPolygons, keyRigOf, pathsAt, resolveAt } from './scene';
-import { EditorState, Flags, Id, Selection, VertexId, World, enclosing, flagsOf } from './types';
+import { EditorState, Flags, Id, Selection, VertexId, World, enclosing, flagsOf, kindName } from './types';
 
 export type Kind = Op['kind'] | 'corners';
 
@@ -142,7 +142,7 @@ export function rowsOf(world: World, roots: readonly Id[], corners = false): Row
 export function labelOf(world: World, id: Id): string {
   const p = world.polygons.get(id);
 
-  if (p !== undefined) return `${p.type} ${id}`;
+  if (p !== undefined) return `${kindName(p)} ${id}`;
   if (world.groups.has(id)) return `group ${id}`;
 
   const a = world.artefacts.get(id);

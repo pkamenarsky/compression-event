@@ -13,7 +13,7 @@ function built(rooms: number, group: boolean, inner = false, seal = false): Worl
   const ids: number[] = [];
 
   for (let i = 0; i < rooms; i++) {
-    const a = addPolygon(w, { type: 'level' }, rect(i * 90, 0, 100, 100), 0, TOP);
+    const a = addPolygon(w, { level: 'level' }, rect(i * 90, 0, 100, 100), 0, TOP);
     w = a.world;
     ids.push(a.id);
   }

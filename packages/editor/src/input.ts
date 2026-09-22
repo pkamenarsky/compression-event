@@ -132,7 +132,7 @@ export function createInput(): Input {
   const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
-    // Typed into a field, it is the field's: a digit in the effects pane is
+    // Typed into a field, it is the field's: a digit in the inspector is
     // a number, not a retype.
     if (typing(e.target)) return;
 

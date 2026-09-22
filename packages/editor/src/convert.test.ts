@@ -8,19 +8,19 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Old, OldEntry, OldRig, converted, relative } from './convert';
+import { Old, OldEntry, OldRig, converted, relative, unmasked } from './convert';
 import { Saved, restored, restoredKeyRig, saved } from './save';
 import { Entry, KeyframeId, Op, Rig, entriesOf, keysOf } from './rig';
 import { TOP, addPolygon, grouped, handed, keyed, resolveAt, rigOf, scaleAt, withRig } from './scene';
 import { withEffect } from './effects';
 import { cornerRounded, once } from './rig';
-import { EditorState, FLOOR, Id, PolygonKind, REMEMBERED, VertexId, World, emptyWorld, initialState } from './types';
+import { EditorState, Id, PolygonKind, REMEMBERED, VertexId, World, emptyWorld, initialState } from './types';
 import { scaled, wrote } from './testing';
 
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -209,6 +209,37 @@ function through(file: Old): EditorState {
         expect(p.y).toBeCloseTo(want[i].y, 6);
       });
     }
+  });
+
+  test('a 25 made a 26 has each kind as the parts it played', () => {
+    const file = saved(world());
+    const old: [string, number | undefined][] = [
+      ['level', undefined],
+      ['solid', undefined],
+      ['floor', undefined],
+      ['void', 1],
+      ['void', 2],
+      ['void', 3],
+    ];
+    const [first] = file.world.polygons;
+    const polygons = old.map(([type, from], i) => [
+      i + 1000,
+      { ...first[1], level: undefined, floor: undefined, type, ...(from === undefined ? {} : { from }) },
+    ]);
+    const out = unmasked({ ...file, format: 25, world: { ...file.world, polygons } } as unknown as Saved);
+
+    if ('refused' in out) throw new Error(out.refused);
+
+    expect(out.format).toBe(26);
+    expect(out.world.polygons.map(([, p]) => ({ level: p.level, floor: p.floor, type: 'type' in p }))).toEqual([
+      { level: 'level', floor: undefined, type: false },
+      { level: 'solid', floor: undefined, type: false },
+      { level: undefined, floor: 'floor', type: false },
+      { level: 'void', floor: undefined, type: false },
+      { level: undefined, floor: 'void', type: false },
+      { level: 'void', floor: 'void', type: false },
+    ]);
+    expect(unmasked({ ...file, format: 24 })).toEqual({ refused: expect.stringContaining('format 24') });
   });
 
   test('a format this does not take is refused rather than half-read', () => {

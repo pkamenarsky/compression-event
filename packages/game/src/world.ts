@@ -85,54 +85,36 @@ export type SetName = 'level' | 'floor';
 export const SETS: readonly SetName[] = ['level', 'floor'];
 
 /**
- * What a polygon is, as it was drawn.
- *
- * Four names rather than a set crossed with a direction, because the product
- * is not real: a subtraction from the level and an addition to the solids
- * would be two spellings of one thing, and there is no sense to be made of a
- * polygon that is a level and a floor at once. These are the states that
- * exist.
+ * What a polygon is, as it was drawn: the part it plays in each set, if any.
  *
  * `level` is somewhere to stand. `solid` is what stands in it — a pillar, a
  * wall, a block. `floor` is somewhere to look at. `void` is the one that took
- * a restructure to say: it cuts, and what it cuts is the solids and the
- * floors rather than the level. A pillar with a void across its edge is a
- * U-shaped pillar, which is a hole in a hole and a thing no flat sum of adds
- * and subtracts can express.
- */
-export type PolygonType = 'level' | 'solid' | 'floor' | 'void';
-
-/** What a `void` may cut, as flags, because it may cut both at once. */
-export const SOLID = 1, FLOOR = 2;
-
-/**
- * A polygon's type and, for the one type that has more than one thing to say,
- * what it says.
+ * a restructure to say: it cuts, and what it cuts is the solids or the floors
+ * rather than the level. A pillar with a void across its edge is a U-shaped
+ * pillar, which is a hole in a hole and a thing no flat sum of adds and
+ * subtracts can express.
  *
- * A union rather than an interface with an optional mask, so that the
- * invariant is the type's rather than a convention: `from` exists exactly
- * where it means something. Nothing but a `void` has a choice of what to act
- * on — `level`, `solid` and `floor` each name one thing outright — and a mask
- * on those would be inventing options nobody can use.
+ * One field per set rather than one name for the whole, because what a polygon
+ * does in one set has nothing to do with what it does in the other: a room
+ * with ground laid in it is a level and a floor, and a void that cuts the
+ * solids is free to be a floor at the same time. What a field cannot say is
+ * two parts in one set — a solid with a void of its own — and that is the
+ * point of the shape: a polygon fills at most one slot of each set, which is
+ * what everything downstream of `slotOf` is built on.
+ *
+ * At least one of the two is present. Nothing checks it but the editor, which
+ * offers no kind without one.
  */
-export type PolygonKind =
-  | { type: 'level' }
-  | { type: 'solid' }
-  | { type: 'floor' }
-  | { type: 'void', from: number }
+export interface PolygonKind {
+  level?: LevelPart
+  floor?: FloorPart
+}
 
-/** The kinds the editor offers, in the order the number keys pick them. */
-export const KINDS: readonly PolygonKind[] = [
-  { type: 'level' },
-  { type: 'solid' },
-  { type: 'floor' },
-  { type: 'void', from: SOLID },
-  { type: 'void', from: FLOOR },
-  { type: 'void', from: SOLID | FLOOR },
-];
+export type LevelPart = 'level' | 'solid' | 'void';
+export type FloorPart = 'floor' | 'void';
 
 /**
- * Which kind fills each slot of each set, and so how many slots there are.
+ * Which part fills each slot of each set, and so how many slots there are.
  *
  * A slot is one side of one set — the polygons playing one part in it — and a
  * point is in the set or not according to which slots cover it. The level has
@@ -142,45 +124,92 @@ export const KINDS: readonly PolygonKind[] = [
  * The count is here rather than inferred because `ground` has to lay out one
  * tree per slot before it has seen a single member, and a set with nothing in
  * one of its slots still has that slot.
+ */
+export const SLOT_PARTS: { level: readonly LevelPart[], floor: readonly FloorPart[] } = {
+  level: ['level', 'solid', 'void'],
+  floor: ['floor', 'void'],
+};
+
+/**
+ * The kinds that are in one set only, in the order a group's sides are
+ * numbered. Every contribution is one of these: a polygon in both sets is
+ * split into two before anything downstream sees it. See `parts`.
+ */
+export const PARTS: readonly PolygonKind[] = [
+  { level: 'level' },
+  { level: 'solid' },
+  { floor: 'floor' },
+  { level: 'void' },
+  { floor: 'void' },
+];
+
+/**
+ * The kinds the editor offers, in the order the number keys pick them: the
+ * five that are in one set, then the ones that are in both and mean something.
+ *
+ * Not every pair. A solid over a floor, or a solid with a void in the floor
+ * under it, is sound — each is one slot in each set — but a solid covers
+ * whatever floor is under it, so neither draws differently from the solid
+ * alone. A file holding one reads as what it says.
+ */
+export const KINDS: readonly PolygonKind[] = [
+  ...PARTS,
+  { level: 'void', floor: 'void' },
+  { level: 'level', floor: 'floor' },
+  { level: 'level', floor: 'void' },
+  { level: 'void', floor: 'floor' },
+];
+
+/**
+ * Which kind fills each slot of each set: `SLOT_PARTS` as kinds.
  *
  * The kinds are the way back: `slotOf` says which slot a kind fills, and this
  * says which kind a slot is for. Two things want that — a scope's erosion,
  * which offsets each slot the way its depth in the rule means, and a scope's
- * own contribution, which is the outermost slot it holds anything in. A
- * void over both sets appears here as the void of whichever set the slot
- * belongs to; the two halves erode alike, being at the same depth in their own
- * set's rule.
+ * own contribution, which is the outermost slot it holds anything in.
  */
 export const SLOT_KINDS: Record<SetName, readonly PolygonKind[]> = {
-  level: [{ type: 'level' }, { type: 'solid' }, { type: 'void', from: SOLID }],
-  floor: [{ type: 'floor' }, { type: 'void', from: FLOOR }],
+  level: SLOT_PARTS.level.map(level => ({ level })),
+  floor: SLOT_PARTS.floor.map(floor => ({ floor })),
 };
 
 export const SLOTS: Record<SetName, number> = {
-  level: SLOT_KINDS.level.length,
-  floor: SLOT_KINDS.floor.length,
+  level: SLOT_PARTS.level.length,
+  floor: SLOT_PARTS.floor.length,
 };
 
 /**
  * Which slot of `set` a polygon of this kind fills, or nothing where it has no
  * part in that set at all.
  *
- * The one place the authored names and the resolution's slots are related, so
+ * The one place the authored parts and the resolution's slots are related, so
  * that `inside` below can be read against it and nothing else has to know.
  */
 export function slotOf(kind: PolygonKind, set: SetName): number | null {
-  if (set === 'level') {
-    if (kind.type === 'level') return 0;
-    if (kind.type === 'solid') return 1;
-    if (kind.type === 'void' && (kind.from & SOLID) !== 0) return 2;
+  const part = kind[set];
 
-    return null;
-  }
+  if (part === undefined) return null;
 
-  if (kind.type === 'floor') return 0;
-  if (kind.type === 'void' && (kind.from & FLOOR) !== 0) return 1;
+  return set === 'level'
+    ? SLOT_PARTS.level.indexOf(part as LevelPart)
+    : SLOT_PARTS.floor.indexOf(part as FloorPart);
+}
 
-  return null;
+/** A kind as a person would name it: its parts, a void saying what it cuts
+ * unless it cuts both. */
+export function kindName(kind: PolygonKind): string {
+  if (kind.level === 'void' && kind.floor === 'void') return 'void';
+
+  const level = kind.level === 'void' ? 'void solid' : kind.level;
+  const floor = kind.floor === 'void' ? 'void floor' : kind.floor;
+
+  return [level, floor].filter(p => p !== undefined).join(' + ');
+}
+
+/** Whether every part a kind plays is a void: a thing that only cuts. */
+export function voidOnly(kind: PolygonKind): boolean {
+  return (kind.level === undefined || kind.level === 'void')
+    && (kind.floor === undefined || kind.floor === 'void');
 }
 
 /**
@@ -225,13 +254,13 @@ export function inside(set: SetName, on: readonly boolean[]): boolean {
  * void, being a hole in a hole, comes back round to eroding with it.
  */
 export function inverted(kind: PolygonKind): boolean {
-  return kind.type === 'solid';
+  return kind.level === 'solid';
 }
 
 /** One kind as a string, for the maps and sets that have to key by one.
  * Nothing but a key: it is never parsed back and never written to a file. */
 export function kindKey(k: PolygonKind): string {
-  return k.type === 'void' ? `void_${k.from}` : k.type;
+  return `${k.level ?? ''}/${k.floor ?? ''}`;
 }
 
 /** Whether two kinds are the one kind. */

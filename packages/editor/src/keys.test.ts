@@ -12,7 +12,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld(), birth: KeyframeId = 0): { world: World, id: Id } {
-  return addPolygon(world, { type: 'level' }, rect(0, 0, 100, 60), birth, TOP);
+  return addPolygon(world, { level: 'level' }, rect(0, 0, 100, 60), birth, TOP);
 }
 
 function ok(out: World | Refused): World {
@@ -150,7 +150,7 @@ describe('keyframes', () => {
 
   test('ungrouping keeps a skip on the repeats it carries, and everything where it was', () => {
     const one = room();
-    const two = addPolygon(one.world, { type: 'level' }, rect(300, 0, 50, 50), 0, TOP);
+    const two = addPolygon(one.world, { level: 'level' }, rect(300, 0, 50, 50), 0, TOP);
     const made = grouped(two.world, 0, [one.id, two.id], TOP)!;
     let w = repeated(made.world, 1, one.id, spun(0.3), null);
 

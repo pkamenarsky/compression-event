@@ -27,7 +27,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld(), at: Point[] = rect(0, 0, 100, 100)): { world: World, id: PolygonId } {
-  return addPolygon(world, { type: 'level' }, at, 0, TOP);
+  return addPolygon(world, { level: 'level' }, at, 0, TOP);
 }
 
 function withEffects(world: World, id: Id, fx: Effects): World {
@@ -190,7 +190,7 @@ describe('a group\'s effects', () => {
 
   test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
-    const s = addPolygon(a.world, { type: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
+    const s = addPolygon(a.world, { level: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
     const g = grouped(s.world, 0, [a.id, s.id], TOP)!;
     const w = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 5) }), 0, g.id, round(5));
     const vertices = new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));

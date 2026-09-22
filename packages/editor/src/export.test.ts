@@ -63,7 +63,7 @@ import {
   unchained,
   ungrouped,
 } from './scene';
-import { ArtefactId, FLOOR, Id, SOLID, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
+import { ArtefactId, Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
@@ -76,10 +76,10 @@ import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrot
 type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void' | 'both';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR }
-    : k === 'void' ? { type: 'void', from: SOLID }
-      : k === 'both' ? { type: 'void', from: SOLID | FLOOR }
-        : { type: k };
+  k === 'hole' ? { floor: 'void' }
+    : k === 'void' ? { level: 'void' }
+      : k === 'both' ? { level: 'void', floor: 'void' }
+        : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

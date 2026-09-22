@@ -30,7 +30,7 @@ import {
   withKeys,
 } from './rig';
 import { NOTHING, entriesOf, keysOf, walkedBy } from './rig';
-import { EditorState, FLOOR, Id, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
+import { EditorState, Id, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
 import { erode, move, scaled, spun, wrote } from './testing';
 
 /**
@@ -43,7 +43,7 @@ import { erode, move, scaled, spun, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 /** A world with something of every kind written about it: moves, a turn, a
  * stretch, depths, a repeat with a skip in it, a nudge and a corner depth,

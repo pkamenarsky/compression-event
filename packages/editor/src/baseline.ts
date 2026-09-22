@@ -61,12 +61,12 @@ import {
   withRig,
 } from './scene';
 import { erode, move, repeated, scaled, spun, turned, wrote } from './testing';
-import { FLOOR, Id, PolygonKind, World, emptyWorld } from './types';
+import { Id, PolygonKind, World, emptyWorld } from './types';
 
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

@@ -40,13 +40,12 @@ import {
 } from '../geometry';
 import {
   GroupId,
-  FLOOR,
   Id,
-  KINDS,
+  PARTS,
   SETS,
   SLOT_KINDS,
+  SLOT_PARTS,
   SLOTS,
-  SOLID,
   PolygonId,
   PolygonKind,
   SetName,
@@ -64,6 +63,7 @@ import {
   sameKind,
   slotOf,
   standing,
+  voidOnly,
   within,
 } from '../types';
 import {
@@ -225,7 +225,7 @@ export function contributing(
  */
 /** The kinds a group can contribute as, in the order `sideOf` numbers them.
  * The first keeps the group's own id; the rest are given one. */
-const SIDES: readonly PolygonKind[] = KINDS;
+const SIDES: readonly PolygonKind[] = PARTS;
 
 /**
  * The id one side of a group goes by.
@@ -256,22 +256,23 @@ export function sidedWith(id: Id): Id | null {
  * One kind as the parts it plays, one per set it takes part in, each narrowed
  * to that set.
  *
- * All but one kind is in a single set and comes back as itself. The exception
- * is a void cutting the solids and the floors at once, which is two members of
- * two sets that happen to have been drawn once — and everything downstream is
- * built on a contributor belonging to one set, because for every other kind
- * that is simply true. So the split happens here, where the contribution is
- * made, rather than being carried the whole way down.
+ * A kind in a single set comes back as itself. One in both — a room with
+ * ground laid in it, a void cutting the solids and the floors at once — is two
+ * members of two sets that happen to have been drawn once, and everything
+ * downstream is built on a contributor belonging to one set. So the split
+ * happens here, where the contribution is made, rather than being carried the
+ * whole way down.
  *
  * The first part keeps the thing's own id; a second is minted by `sideOf` the
- * way a group's sides are. Which means only the floor half of a void that cuts
- * both is ever renamed, and a polygon's own id still names the polygon
+ * way a group's sides are. Which means only the floor half of a polygon in
+ * both sets is ever renamed, and a polygon's own id still names the polygon
  * everywhere it did before.
  */
 export function parts(kind: PolygonKind): PolygonKind[] {
-  return kind.type === 'void' && kind.from === (SOLID | FLOOR)
-    ? [{ type: 'void', from: SOLID }, { type: 'void', from: FLOOR }]
-    : [kind];
+  return [
+    ...(kind.level === undefined ? [] : [{ level: kind.level }]),
+    ...(kind.floor === undefined ? [] : [{ floor: kind.floor }]),
+  ];
 }
 
 /**
@@ -363,10 +364,13 @@ export interface Standing {
  * An author wanting the solid to outlive the room nests it: a sealed solid in
  * a sealed level has been a solid all along.
  *
- * A void is the outermost thing only in a scope of nothing but voids. Anywhere
- * else it came to cut something in the scope, and is spent there: a floor with
- * a hole through both sets is a floor with a hole in it, and not a floor and a
- * hole left over in the level for whatever solid it lands on.
+ * A void is the outermost thing only in a scope where nothing but voids play
+ * a part other than it. Anywhere else it came to cut something in the scope,
+ * and is spent there: a floor with a hole through both sets is a floor with a
+ * hole in it, and not a floor and a hole left over in the level for whatever
+ * solid it lands on. A polygon that is a floor and a void in the level is not
+ * that: its void is not cutting its own floor, which is in the other set, and
+ * a scope of it alone is what it is loose.
  *
  * Descending through sealed groups as much as loose ones, because a sealed one
  * publishes into its own outermost slot and the least of the least is the
@@ -387,7 +391,7 @@ export function outermostOf(kinds: readonly PolygonKind[], set: SetName): number
     if (k !== null && (out === null || k < out)) out = k;
   }
 
-  if (out !== null && SLOT_KINDS[set][out].type === 'void' && kinds.some(k => k.type !== 'void')) {
+  if (out !== null && SLOT_PARTS[set][out] === 'void' && kinds.some(k => k[set] !== 'void' && !voidOnly(k))) {
     return null;
   }
 
@@ -938,7 +942,7 @@ export function occupiedShape(o: Occupied): Shape {
 /** Whether a shut group's floor lies inside its outline: only where the
  * outline is a room, which is the only thing a floor is cut to. */
 export function floorsIn(o: Occupied): boolean {
-  return o.shape.length !== 0 && o.kind.type === 'level';
+  return o.shape.length !== 0 && o.kind.level === 'level';
 }
 
 /**
@@ -1034,7 +1038,7 @@ function withExtents(
 
     shown.push({
       id,
-      kind: { type: 'level' },
+      kind: { level: 'level' },
       shape,
       floor: [],
       gone: world.groups.get(id)?.sealed === true ? 'empty' : 'loose',
@@ -1095,13 +1099,9 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
     // one shape per set, its solids and voids already spent inside it and its
     // floor already cut to it — because that is what it hands the CSG too, and
     // the two must not be two answers. See `resolves` in `contributed`.
-    const floor = at({ type: 'floor' });
+    const floor = at({ floor: 'floor' });
 
-    for (const kind of [
-      { type: 'level' } as const,
-      { type: 'solid' } as const,
-      { type: 'void', from: SOLID } as const,
-    ]) {
+    for (const kind of SLOT_KINDS.level) {
       const shape = at(kind);
 
       if (shape.length !== 0) {
@@ -1115,7 +1115,7 @@ function occupied(world: World, shown: readonly Contributed[]): Occupied[] {
     // pillars is drawn as pillars. `shape` empty is what says so on top of
     // `kind`, and it is what stops the drawing clipping the floor to an outline
     // that is not there.
-    if (!out.some(o => o.id === id)) out.push({ id, kind: { type: 'floor' }, shape: [], floor });
+    if (!out.some(o => o.id === id)) out.push({ id, kind: { floor: 'floor' }, shape: [], floor });
   }
 
   return out;

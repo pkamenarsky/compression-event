@@ -28,7 +28,7 @@ import {
   swallowed,
   ungrouped,
 } from './scene';
-import { ARTEFACTS, Clipping, FLOOR, World, emptyWorld, within, PolygonKind } from './types';
+import { ARTEFACTS, Clipping, World, emptyWorld, within, PolygonKind } from './types';
 import { move, moved as step, scaled, turned, wrote } from './testing';
 
 /** One artefact, put down at `v` and nowhere else. */
@@ -42,7 +42,7 @@ import { move, moved as step, scaled, turned, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function dropped(v = 0, x = 10, y = 20): { world: World, id: number } {
   return addArtefact(emptyWorld(), 'key', { x, y }, v, TOP);

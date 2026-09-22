@@ -2391,9 +2391,9 @@ export function worldCanvas(
                 yield* transforming(e.code, mode);
               }
               else {
-                // In the order `KINDS` names them: room, pillar, floor, and
-                // then the three voids — over the solids, over the floors,
-                // and over both.
+                // In the order `KINDS` names them: room, pillar, floor, the
+                // voids over the solids, over the floors and over both, and
+                // then the rest of what is in both sets.
                 const n = Number(e.code.match(/^Digit([1-9])$/)?.[1] ?? NaN);
 
                 if (n >= 1 && n <= KINDS.length) retype(KINDS[n - 1]);

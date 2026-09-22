@@ -202,7 +202,7 @@ import {
   ArtefactId,
   GroupId,
   Id,
-  KINDS,
+  PARTS,
   PolygonId,
   PolygonKind,
   SLOTS,
@@ -1878,8 +1878,8 @@ interface Subject {
   slot: number
 }
 
-/** Which set a kind is in. Every contributor is in exactly one: a void that
- * cuts both was split into two before it got here. See `parts` in `scene.ts`. */
+/** Which set a kind is in. Every contributor is in exactly one: a polygon in
+ * both was split into two before it got here. See `parts` in `scene.ts`. */
 function setOf(kind: PolygonKind): SetName {
   return slotOf(kind, 'level') !== null ? 'level' : 'floor';
 }
@@ -1923,7 +1923,7 @@ function subjects(cast: Cast): Subject[] {
     // and each side is its own boundary and its own track. They are cut over
     // the same members and ride the same frame; only the classification
     // differs.
-    for (const kind of KINDS) {
+    for (const kind of PARTS) {
       if (kinds.get(id)?.has(kindKey(kind)) === true) {
         all.push(subject(sideOf(id, kind), mine, kind));
       }

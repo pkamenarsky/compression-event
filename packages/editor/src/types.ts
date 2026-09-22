@@ -1,23 +1,26 @@
 import {
   ArtefactType,
-  FLOOR,
-  SOLID,
+  FloorPart,
   IconType,
   KINDS,
+  LevelPart,
+  PARTS,
   Point,
   SETS,
   PolygonKind,
-  PolygonType,
   SetName,
   SCALE,
   TILE_SIZE,
   SLOTS,
   SLOT_KINDS,
+  SLOT_PARTS,
   inside,
   inverted,
   kindKey,
+  kindName,
   sameKind,
   slotOf,
+  voidOnly,
 } from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Place } from './keys';
@@ -28,9 +31,9 @@ import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } fr
 // `cornermaps.ts`.
 import { CORNER_MAPS, eachCornerMap } from './cornermaps';
 
-export type { ArtefactType, IconType, Point, PolygonKind, PolygonType, SetName };
+export type { ArtefactType, FloorPart, IconType, LevelPart, Point, PolygonKind, SetName };
 export type { Keyframe, KeyframeId };
-export { FLOOR, KINDS, SETS, SLOTS, SLOT_KINDS, SOLID, inside, inverted, kindKey, sameKind, slotOf };
+export { KINDS, PARTS, SETS, SLOTS, SLOT_KINDS, SLOT_PARTS, inside, inverted, kindKey, kindName, sameKind, slotOf, voidOnly };
 
 /** The kinds, in the order the number keys pick them. */
 export const ARTEFACTS: ArtefactType[] = [
@@ -369,7 +372,18 @@ export type Polygon = PolygonKind & {
 /** A polygon's kind on its own, for the places that hold one without the
  * geometry it belongs to. A polygon *is* a kind — this only narrows it. */
 export function kindOf(p: PolygonKind): PolygonKind {
-  return p.type === 'void' ? { type: 'void', from: p.from } : { type: p.type };
+  return {
+    ...(p.level === undefined ? {} : { level: p.level }),
+    ...(p.floor === undefined ? {} : { floor: p.floor }),
+  };
+}
+
+/** A polygon with its kind taken off, so that another can be put on without
+ * a part of the old one surviving underneath where the new one is silent. */
+export function unkinded<P extends PolygonKind>(p: P): Omit<P, 'level' | 'floor'> {
+  const { level: _level, floor: _floor, ...rest } = p;
+
+  return rest;
 }
 
 /**
@@ -1298,7 +1312,7 @@ export interface EditorState {
   figure: Figure
   /**
    * The effect options last used: what `b` and `d` give a thing that has
-   * none, and what the effects pane shows for an effect nothing picked has.
+   * none, and what the inspector shows for an effect nothing picked has.
    * About this sitting, so not in the file.
    */
   remembered: Options

@@ -27,7 +27,6 @@ import { Writing, erode, move, turned as turning, wrote } from './testing';
 import {
   ArtefactId,
   PolygonId,
-  FLOOR,
   PolygonKind,
   KeyframeId,
   World,
@@ -47,7 +46,7 @@ import { Frame, bakeSpan, sample } from './bake';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

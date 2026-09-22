@@ -4,12 +4,14 @@
 //
 //   pnpm convert <world.json>...
 //
-// Writes `<world>.v25.json` beside each. What it reads is a 20, a 21, a 22 or
+// Writes `<world>.v26.json` beside each. What it reads is a 20, a 21, a 22 or
 // a 23 — the formats whose timelines are lists of operations — which it makes
-// a 24, whose timelines are keys (`converted`); and a 24, whose amounts are
-// lengths in the world, which it makes a 25, whose amounts are lengths at the
-// thing's own scale (`relative`). See `FORMAT` in `save.ts` for what
-// each of those said, and `convert-19-20.ts` for what takes a 19 to a 21.
+// a 24, whose timelines are keys (`converted`); a 24, whose amounts are
+// lengths in the world, which it makes a 26, whose amounts are lengths at the
+// thing's own scale (`relative`); and a 25, whose kinds are a type and a mask,
+// which it makes a 26, whose kinds are a part per set (`unmasked`). See
+// `FORMAT` in `save.ts` for what each of those said, and `convert-19-20.ts`
+// for what takes a 19 to a 21.
 //
 // Its own file, and not a branch inside `save.ts`, because a format is a thing
 // a file *is* rather than a thing the editor carries a reading of. `save.ts`
@@ -21,7 +23,7 @@
 // the walk to check that it kept its word.
 // -----------------------------------------------------------------------------
 
-import { Point } from '@ce/game/world';
+import { Point, PolygonKind } from '@ce/game/world';
 import {
   Amount,
   Entry,
@@ -37,7 +39,7 @@ import {
 import { FORMAT, Saved, SavedKey, restored, saved, savedKeyRig } from './save';
 import { chain, scaleAt, standingIn } from './scene';
 import { Key } from './rig';
-import { Effects, Id, Options, REMEMBERED, VertexId, World } from './types';
+import { Effects, Id, Options, Polygon, PolygonId, REMEMBERED, VertexId, World } from './types';
 
 /** A timeline as a 23 and older wrote it: its lists, and a map per corner. */
 export interface OldRig {
@@ -217,8 +219,57 @@ function rounding(round: Effects['round'] & object): Options['round'] {
 
 export type { SavedKey };
 
+/** A polygon's kind as a 25 and older wrote it. */
+interface OldKind {
+  type: 'level' | 'solid' | 'floor' | 'void'
+  /** What a void cut: 1 the solids, 2 the floors, 3 both. */
+  from?: number
+}
+
 /**
- * A 24 as a 25: every amount — depths, bevels, a deform's spacing and its
+ * Every polygon's kind as the part it plays in each set, the rest of the file
+ * as it was — whatever its format, which is left for the caller to move on.
+ *
+ * Every old kind is a new one: the plain three are one part each, and a void
+ * is a void in each set its mask named. A polygon without a `type` is taken
+ * to be one already.
+ */
+export function kinded(file: Saved): Saved {
+  const kind = (old: OldKind): PolygonKind => {
+    if (old.type === 'void') {
+      const from = old.from ?? 1;
+
+      return {
+        ...((from & 1) === 0 ? {} : { level: 'void' as const }),
+        ...((from & 2) === 0 ? {} : { floor: 'void' as const }),
+      };
+    }
+
+    return old.type === 'floor' ? { floor: 'floor' } : { level: old.type };
+  };
+
+  const polygons = file.world.polygons.map(([id, p]): [PolygonId, Polygon] => {
+    // One already a 26's, which a file handed on from `converted` is where the
+    // format it was made from had nothing to say about kinds.
+    if (!('type' in p)) return [id, p];
+
+    const { type: _type, from: _from, ...rest } = p as unknown as Polygon & OldKind;
+
+    return [id, { ...rest, ...kind(p as unknown as OldKind) }];
+  });
+
+  return { ...file, world: { ...file.world, polygons } };
+}
+
+/** A 25 as a 26: see `kinded`. */
+export function unmasked(file: Saved): Saved | { refused: string } {
+  if (file.format !== 25) return { refused: `format ${file.format}, and this takes 25` };
+
+  return { ...kinded(file), format: 26 };
+}
+
+/**
+ * A 24 as a 26: every amount — depths, bevels, a deform's spacing and its
  * amplitudes — which was a length in the world, as a length at the thing's
  * own scale, which the world multiplies by `scaleAt`.
  *
@@ -232,7 +283,9 @@ export type { SavedKey };
 export function relative(file: Saved): Saved | { refused: string } {
   if (file.format !== 24) return { refused: `format ${file.format}, and this takes 24` };
 
-  const state = restored({ ...file, format: FORMAT });
+  // Its kinds made a 26's first, since what reads it is the editor, and the
+  // editor reads nothing else. What comes out is a 26 whole.
+  const state = restored({ ...kinded(file), format: FORMAT });
   const world = state.world;
   const effects = new Map(world.effects);
   const rigs = new Map(world.rigs);

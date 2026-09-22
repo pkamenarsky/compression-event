@@ -59,9 +59,13 @@ import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
  * `scaleAt`, rather than a length in the world. The shape is a 24's;
  * `convert.ts` takes a 24 across.
  *
+ * 26: a polygon's kind is the part it plays in each set — `level` and
+ * `floor` fields, either absent — rather than a `type` with a `from` mask on
+ * its voids. See `PolygonKind`; `convert.ts` takes a 25 across.
+ *
  * A file is one shape, and this is the shape.
  */
-export const FORMAT = 25;
+export const FORMAT = 26;
 
 /**
  * The oldest this reads, which is the one it writes.

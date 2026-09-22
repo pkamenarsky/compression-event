@@ -13,7 +13,7 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
 }
 
 function room(world: World = emptyWorld(), birth: KeyframeId = 0): { world: World, id: Id } {
-  return addPolygon(world, { type: 'level' }, rect(0, 0, 100, 60), birth, TOP);
+  return addPolygon(world, { level: 'level' }, rect(0, 0, 100, 60), birth, TOP);
 }
 
 function ok(out: World | Refused): World {
@@ -255,7 +255,7 @@ describe('flags', () => {
   test('what is under a point is found whatever it is flagged, in its groups', () => {
     const a = room();
     const b = room(a.world);
-    const far = addPolygon(b.world, { type: 'solid' }, rect(500, 500, 10, 10), 0, TOP);
+    const far = addPolygon(b.world, { level: 'solid' }, rect(500, 500, 10, 10), 0, TOP);
     const made = grouped(far.world, 0, [a.id, far.id], TOP)!;
     const w = flagged(flagged(made.world, made.id, 'locked', true), b.id, 'hidden', true);
 

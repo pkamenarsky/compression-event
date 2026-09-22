@@ -20,7 +20,7 @@ import { bakedSpan, floorsAt } from './export';
 import { TOP, addPolygon, resolveAt, rigOf, withRig } from './scene';
 import { nudged } from './rig';
 import { erode, move, turned as turning, wrote } from './testing';
-import { FLOOR, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
+import { PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -32,7 +32,7 @@ import { FLOOR, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

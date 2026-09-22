@@ -12,6 +12,7 @@ import {
   placeAt,
   EMPTY_LIVE,
   contributing,
+  outermostOf,
   outermostSlot,
   live,
   centroid,
@@ -31,6 +32,7 @@ import {
   showing,
   sidedWith,
   swallowed,
+  repartedPolygons,
   sideOf,
   polygonsIn,
   removeAt,
@@ -71,14 +73,15 @@ import {
   Id,
   PathId,
   PolygonId,
-  FLOOR,
-  SOLID,
   PolygonKind,
   KeyframeId,
   Vertex,
   World,
   emptyWorld,
   opened,
+  kindName,
+  kindOf,
+  unkinded,
 } from './types';
 
 /** Corners for a synthetic `Resolved`: one ring of them, index for index with
@@ -97,7 +100,7 @@ function oneRing(ring: Point[]): Vertex[] {
 type Named = 'level' | 'solid' | 'floor' | 'hole' | 'void';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : k === 'void' ? { type: 'void', from: SOLID } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'void' ? { level: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -170,8 +173,8 @@ const runLength = (runs: Point[][]) =>
 
 /** The perimeter the outline ought to have, taken the ring way round. */
 function outlineOf(items: Resolved[]): number {
-  const level = items.filter(i => i.polygon.type === 'level').flatMap(i => i.shape);
-  const solid = items.filter(i => i.polygon.type === 'solid').flatMap(i => i.shape);
+  const level = items.filter(i => i.polygon.level === 'level').flatMap(i => i.shape);
+  const solid = items.filter(i => i.polygon.level === 'solid').flatMap(i => i.shape);
   const shape: Shape = solid.length === 0
     ? simplify(level)
     : combine(level, solid, OpSubtract);
@@ -1852,7 +1855,7 @@ describe('making and taking apart', () => {
 
   test('a group\'s spin begun before a member was born stays one on it', () => {
     const { world, ids, group } = pair();
-    const late = addPolygon(world, { type: 'level' }, rect(40, 40, 10, 10), 1, landing(world, 1, group));
+    const late = addPolygon(world, { level: 'level' }, rect(40, 40, 10, 10), 1, landing(world, 1, group));
     const w = repeated(late.world, 0, group, spun(0.4));
 
     const done = ungrouping(w, group)!;
@@ -2188,7 +2191,7 @@ describe('a group erodes as one shape', () => {
     const out = contributing(w, 0, resolveAt(w, 0));
 
     // One contribution, and it is a level: nothing that cuts leaves a scope.
-    expect(out.map(c => c.kind.type)).toEqual(['level']);
+    expect(out.map(c => kindName(c.kind))).toEqual(['level']);
 
     // The room pulls in and the pillar pushes out. Eroding the group as one
     // shape pulls in the boundary of `level - solid`, and the boundary of a
@@ -2588,9 +2591,9 @@ describe('going inside a group', () => {
     const ids: PolygonId[] = [];
 
     for (const [k, r] of [
-      [{ type: 'solid' }, rect(0, 0, 20, 20)],
-      [{ type: 'floor' }, rect(0, 0, 100, 100)],
-      [{ type: 'void', from: SOLID | FLOOR }, rect(40, 40, 20, 20)],
+      [{ level: 'solid' }, rect(0, 0, 20, 20)],
+      [{ floor: 'floor' }, rect(0, 0, 100, 100)],
+      [{ level: 'void', floor: 'void' }, rect(40, 40, 20, 20)],
     ] as [PolygonKind, Point[]][]) {
       const made = addPolygon(world, k, r, 0, TOP);
 
@@ -2714,7 +2717,7 @@ describe('going inside a group', () => {
     // One contributor under one group, and it is a level: the room with the
     // hole in it. There used to be two, kept apart so that the pillar could
     // cut the rooms outside the group as well as its own.
-    expect(shown.map(c => c.kind.type)).toEqual(['level']);
+    expect(shown.map(c => kindName(c.kind))).toEqual(['level']);
     expect(shown.map(c => sidedWith(c.id) ?? c.id)).toEqual([made.id]);
     expect(shapeArea(shown[0].shape)).toBeCloseTo(100 * 100 - 20 * 20, 6);
   });
@@ -2841,7 +2844,7 @@ describe('a floor takes no part in the set', () => {
   function retyped(world: World, id: PolygonId, to: Named): World {
     const polygons = new Map(world.polygons);
 
-    polygons.set(id, { ...polygons.get(id)!, ...kind(to) });
+    polygons.set(id, { ...unkinded(polygons.get(id)!), ...kind(to) });
 
     return { ...world, polygons };
   }
@@ -2895,6 +2898,64 @@ describe('a floor takes no part in the set', () => {
     const after = retyped(world, ids[1], 'floor');
 
     expect(resolveAt(after, 0).map(it => it.id)).toEqual(ids);
+  });
+});
+
+/**
+ * A polygon in both sets is the two polygons it could have been drawn as: one
+ * contribution to each set, the first under its own id.
+ */
+describe('a polygon in both sets', () => {
+  function both(k: PolygonKind): { world: World, id: PolygonId } {
+    return addPolygon(emptyWorld(), k, rect(0, 0, 100, 100), 0, TOP);
+  }
+
+  test('contributes to each set, the floor under an id of its own', () => {
+    const { world, id } = both({ level: 'level', floor: 'floor' });
+    const out = contributing(world, 0, resolveAt(world, 0));
+
+    expect(out.map(c => [c.id, c.kind])).toEqual([
+      [id, { level: 'level' }],
+      [sideOf(id, { floor: 'floor' }), { floor: 'floor' }],
+    ]);
+    expect(csg(world, 0)).toEqual(csg(drawn(['level', rect(0, 0, 100, 100)]).world, 0));
+  });
+
+  test('a scope of a floor that cuts the solids is what it is loose', () => {
+    // Its void is not there to cut its own floor, which is in the other set,
+    // so it is not spent inside the scope.
+    const k: PolygonKind = { level: 'void', floor: 'floor' };
+
+    expect(outermostOf([k, k], 'level')).toBe(2);
+    expect(outermostOf([k, k], 'floor')).toBe(0);
+
+    // Beside a floor that is only a floor, it came to cut something, and is
+    // spent there as any void would be.
+    expect(outermostOf([k, { floor: 'floor' }], 'level')).toBeNull();
+  });
+
+  test('a floor and a void over both in one scope is a floor with a hole', () => {
+    const { world, ids } = drawn(['floor', rect(0, 0, 100, 100)]);
+    const hole = addPolygon(world, { level: 'void', floor: 'void' }, rect(40, 40, 20, 20), 0, TOP);
+    const made = sealed(hole.world, 0, [...ids, hole.id], TOP)!;
+
+    expect(outermostSlot(made.world, made.id, 'level')).toBeNull();
+  });
+
+  test('a part given keeps the other set where the pair is offered', () => {
+    const { world, id } = both({ level: 'level' });
+    const kindAfter = (w: World) => kindOf(w.polygons.get(id)!);
+
+    const ground = repartedPolygons(world, [id], 'floor', 'floor');
+
+    expect(kindAfter(ground)).toEqual({ level: 'level', floor: 'floor' });
+
+    // A solid over a floor is not offered, so the floor goes.
+    expect(kindAfter(repartedPolygons(ground, [id], 'level', 'solid'))).toEqual({ level: 'solid' });
+
+    // Nothing in either set is not a kind: taking the last part away is nothing.
+    expect(kindAfter(repartedPolygons(world, [id], 'level', null))).toEqual({ level: 'level' });
+    expect(kindAfter(repartedPolygons(ground, [id], 'level', null))).toEqual({ floor: 'floor' });
   });
 });
 

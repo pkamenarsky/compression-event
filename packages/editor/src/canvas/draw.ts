@@ -50,9 +50,6 @@ import { edgeRun } from '../effects';
 import {
   ArtefactId,
   Eye,
-  FLOOR,
-  SOLID,
-  KINDS,
   inverted,
   Id,
   PathId,
@@ -786,7 +783,7 @@ function groups(
     // Picked only where the floor is the whole of the group: then this pass is
     // the group's own outline and has to carry the selection, there being no
     // other line on screen to carry it.
-    outlined(ctx, view, g.floor, KINDS[2], !shut && picking.has(g.id), here, theme.groupFill);
+    outlined(ctx, view, g.floor, { floor: 'floor' }, !shut && picking.has(g.id), here, theme.groupFill);
 
     if (shut) ctx.restore();
   }
@@ -852,12 +849,12 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
   // a void's own rules over those. So a void is drawn as what it takes away —
   // hatched where it cuts the solids, stippled where it cuts the floors, both
   // where it cuts both — and the rules through it are what say it is the
-  // taking-away rather than the thing. Three masks, three pictures, and none
-  // of them the picture of a plain solid or a plain floor.
+  // taking-away rather than the thing. None of them is the picture of a plain
+  // solid or a plain floor.
   //
   // Direction before colour, which is what survives one being drawn inside
   // another: a void is nearly always sitting inside the very shape it cuts.
-  if (kind.type === 'solid' || (kind.type === 'void' && (kind.from & SOLID) !== 0)) {
+  if (kind.level === 'solid' || kind.level === 'void') {
     on.strokeStyle = theme.solidHatch;
     on.lineWidth = 1;
 
@@ -874,7 +871,7 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
     on.stroke();
   }
 
-  if (kind.type === 'floor' || (kind.type === 'void' && (kind.from & FLOOR) !== 0)) {
+  if (kind.floor !== undefined) {
     // One dot a tile, in the middle of it, so nothing lands on a seam and the
     // grid stays even however the pattern falls on the shape.
     on.fillStyle = theme.floorDots;
@@ -883,15 +880,29 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
     on.fill();
   }
 
-  if (kind.type === 'void') {
+  // A void's rule runs one way per set it cuts: across for the solids, down
+  // for the floors. A polygon can be a void in one set and something else in
+  // the other, and the hatch and the dots alone would not say which of its
+  // textures the void is — a floor cutting the solids would read as a void
+  // cutting both.
+  if (kind.level === 'void' || kind.floor === 'void') {
     on.strokeStyle = theme.voidLines;
     on.lineWidth = 1;
 
     // Half a pixel off the middle, so the rule lands on a pixel row rather
     // than between two of them and comes out one line instead of two grey.
     on.beginPath();
-    on.moveTo(0, step / 2 + 0.5);
-    on.lineTo(step, step / 2 + 0.5);
+
+    if (kind.level === 'void') {
+      on.moveTo(0, step / 2 + 0.5);
+      on.lineTo(step, step / 2 + 0.5);
+    }
+
+    if (kind.floor === 'void') {
+      on.moveTo(step / 2 + 0.5, 0);
+      on.lineTo(step / 2 + 0.5, step);
+    }
+
     on.stroke();
   }
 
@@ -908,7 +919,7 @@ function patterned(kind: PolygonKind): CanvasPattern | null {
 function shaded(ctx: CanvasRenderingContext2D, kind: PolygonKind): void {
   // A room is the plain case and is left unfilled. Everything else carries a
   // texture, and which texture it is says which way it goes.
-  if (kind.type === 'level') return;
+  if (kind.level === 'level' && kind.floor === undefined) return;
 
   const pattern = patterned(kind);
 
@@ -967,7 +978,7 @@ function outlined(
     ? theme.outside
     : picked
       ? theme.picked
-      : kind.type === 'floor' ? theme.floor : theme.level;
+      : kind.level === undefined ? theme.floor : theme.level;
   ctx.lineWidth = picked ? 2 : 0.5;
   ctx.stroke();
 }

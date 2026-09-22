@@ -22,7 +22,7 @@ import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { EXACT_GAP, Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
 import { TOP, addPolygon, addVertex, deepen, depths, grouped, removeVertices, sealing, resolveAt, rigOf, withRig } from './scene';
-import { FLOOR, Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
+import { Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 import { nudged } from './rig';
 import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
 
@@ -36,7 +36,7 @@ import { Writing, erode, move, scaled, turned as turning, wrote } from './testin
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];

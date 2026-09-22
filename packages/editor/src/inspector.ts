@@ -1,8 +1,16 @@
 // -----------------------------------------------------------------------------
-// The effects pane
+// The inspector
 //
-// On the left, under the tools, while something is picked: which of the three
-// effects apply to the picked things, and each one's options. A box ticked is
+// On the left, under the tools, while something is picked: what the picked
+// polygons are, which of the three effects apply to the picked things, and
+// each one's options.
+//
+// What a polygon is comes first, under the transform tool and nowhere else,
+// as the part it plays in each set: see `PolygonKind`. The digits already
+// retype — this is the answer to the question they leave unasked, what is it
+// now. A level with a hundred shapes in it says which kind each one is by
+// texture alone, and a texture read through a selection fill is not something
+// to be sure about. The effects follow. A box ticked is
 // an effect switched on, one fact over every keyframe; how much is in its
 // timeline, written by `d`, `e` and `b` on the canvas. Unticking switches it
 // off and takes nothing away: its options and amounts apply again when it is
@@ -36,9 +44,25 @@ import {
   withEffect,
 } from './effects';
 import { Pattern, Sides } from './geometry';
-import { owning } from './scene';
+import { kindsOf, owning, repartedPolygons, retypable } from './scene';
 import { theme } from './theme';
-import { Id, KeyframeId, Options, Selection, Tool, Update, VertexId, World, marked, picks } from './types';
+import {
+  FloorPart,
+  Id,
+  KeyframeId,
+  LevelPart,
+  Options,
+  PolygonId,
+  PolygonKind,
+  Selection,
+  SetName,
+  Tool,
+  Update,
+  VertexId,
+  World,
+  marked,
+  picks,
+} from './types';
 
 type Some = 'all' | 'some' | 'none';
 
@@ -52,6 +76,16 @@ type Some = 'all' | 'some' | 'none';
  * how many of them have options of their own.
  */
 interface Model {
+  /** Whether there are polygons to say the kind of. */
+  kinds: boolean
+  /** The part every one of them plays in each set, `NONE` where none plays
+   * any, or `MIXED` where they disagree. */
+  level: string
+  floor: string
+  /** Whether every one of them is in the other set, so that taking this one's
+   * part away leaves each still something. */
+  bareLevel: boolean
+  bareFloor: boolean
   deform: Some
   spacing: number
   /** How big the first of them is at its own scale, which the spacing is
@@ -72,6 +106,11 @@ interface Model {
   corners: boolean
   own: Some
 }
+
+const NONE = '—', MIXED = 'mixed';
+
+const LEVEL_PARTS: readonly string[] = [NONE, 'level', 'solid', 'void'];
+const FLOOR_PARTS: readonly string[] = [NONE, 'floor', 'void'];
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
 const SIDES: Sides[] = ['both', 'out', 'in'];
@@ -98,7 +137,7 @@ export function effectTargets(world: World, selection: Selection, tool: Tool): I
   return selection.polygons.filter(id => world.polygons.has(id) || world.groups.has(id));
 }
 
-export function effectsPane(
+export function inspector(
   world: Value<World>,
   selection: Value<Selection>,
   tool: Value<Tool>,
@@ -112,7 +151,12 @@ export function effectsPane(
   // A round under the corner tool is about the corners picked.
   const corners = () => (tool() === 'point' ? selection().vertices : []);
 
-  const model = (): Model => modelOf(world(), keyframe(), targets(), corners(), remembered());
+  // What a retype would land on, which is also what the kind reports: a
+  // sealed group is a scope stating its own rule and the descent stops at it.
+  // See `retypable`.
+  const reached = () => (tool() === 'polygon' ? retypable(world(), selection().polygons) : []);
+
+  const model = (): Model => modelOf(world(), keyframe(), targets(), corners(), reached(), remembered());
 
   return show(
     () => targets().length > 0,
@@ -136,7 +180,7 @@ export function effectsPane(
           gap: '6px',
         },
       },
-      [object(model, m => body(m, targets, corners, update))],
+      [object(model, m => body(m, targets, corners, reached, update))],
     ),
   );
 }
@@ -155,7 +199,23 @@ function bare<O extends { off?: boolean }>(o: O): O {
   return rest as O;
 }
 
-function modelOf(world: World, v: KeyframeId, ids: readonly Id[], corners: readonly VertexId[], remembered: Options): Model {
+/** What every one of `kinds` plays in `set`, as the kind rows show it. */
+function partOf(kinds: readonly PolygonKind[], set: SetName): string {
+  const parts = new Set(kinds.map(k => k[set] ?? NONE));
+
+  return parts.size === 1 ? [...parts][0] : MIXED;
+}
+
+function modelOf(
+  world: World,
+  v: KeyframeId,
+  ids: readonly Id[],
+  corners: readonly VertexId[],
+  reached: readonly PolygonId[],
+  remembered: Options,
+): Model {
+  const kinds = kindsOf(world, reached);
+
   // The first picked thing's that has one, switched on or not, and otherwise
   // what is remembered.
   const shown = <N extends EffectName>(name: N): Options[N] => {
@@ -169,6 +229,11 @@ function modelOf(world: World, v: KeyframeId, ids: readonly Id[], corners: reado
   const r = mine ? cornerRound(world, corners[0]) ?? remembered.round : shown('round');
 
   return {
+    kinds: kinds.length > 0,
+    level: partOf(kinds, 'level'),
+    floor: partOf(kinds, 'floor'),
+    bareLevel: kinds.every(k => k.floor !== undefined),
+    bareFloor: kinds.every(k => k.level !== undefined),
     deform: some(ids, id => applies(world, id, 'deform')),
     spacing: d.spacing,
     size: ids.length === 0 ? 0 : sizeOf(world, v, ids[0]),
@@ -188,7 +253,27 @@ function modelOf(world: World, v: KeyframeId, ids: readonly Id[], corners: reado
   };
 }
 
-function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexId[], update: Update): VNode {
+function body(
+  m: ObjectValue<Model>,
+  targets: () => Id[],
+  corners: () => VertexId[],
+  reached: () => PolygonId[],
+  update: Update,
+): VNode {
+  /** One set's part given to every polygon the kind is about. */
+  const reparted = (set: SetName, part: string) => update(s => marked(
+    {
+      ...s,
+      world: repartedPolygons(
+        s.world,
+        reached(),
+        set,
+        part === NONE ? null : part as LevelPart | FloorPart,
+      ),
+    },
+    s.world,
+  ));
+
   /** Switched on for every one of them, or off where every one had it on. */
   const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
@@ -235,6 +320,24 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   const inherited = () => update(s => marked({ ...s, world: cornersInheriting(s.world, corners()) }, s.world));
 
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
+    show(() => m.kinds(), fragment([
+      div({ style: { color: theme.muted } }, [text('Kind')]),
+      div({
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0, 1fr)',
+          alignItems: 'center',
+          gap: '4px 8px',
+          paddingLeft: '22px',
+          paddingBottom: '4px',
+          borderBottom: `1px solid ${theme.border}`,
+        },
+      }, [
+        ...field('level', part(LEVEL_PARTS, m.level, m.bareLevel, v => reparted('level', v))),
+        ...field('floor', part(FLOOR_PARTS, m.floor, m.bareFloor, v => reparted('floor', v))),
+      ]),
+    ])),
+
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
       // A length, shown as a percentage of the thing's size so that the
@@ -391,6 +494,32 @@ function choice<T extends string>(all: readonly T[], value: Value<T>, onchange: 
       onchange(el.value as T);
     },
   }, all.map(v => option({ value: v, selected: () => v === value() }, [text(v)])));
+}
+
+/**
+ * One set's part: a choice of the ones it has, and none.
+ *
+ * None is there only where every polygon it is about plays a part in the other
+ * set, because a polygon in neither is not a kind. Where they disagree, it says
+ * so and offers nothing to pick until one of the others is.
+ */
+function part(all: readonly string[], value: Value<string>, bare: Value<boolean>, onchange: (v: string) => void): VNode {
+  return select({
+    style: CONTROL,
+    onchange: (e: Event) => {
+      const el = e.target as HTMLSelectElement;
+
+      el.blur();
+      onchange(el.value);
+    },
+  }, [
+    option({ value: MIXED, disabled: true, hidden: () => value() !== MIXED, selected: () => value() === MIXED }, [text(MIXED)]),
+    ...all.map(v => option({
+      value: v,
+      disabled: () => v === NONE && !bare(),
+      selected: () => v === value(),
+    }, [text(v)])),
+  ]);
 }
 
 function tick(value: Value<boolean>, onchange: (v: boolean) => void, enabled: Value<boolean> = () => true): VNode {

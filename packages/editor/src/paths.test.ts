@@ -21,7 +21,7 @@ import {
   pathsIn,
   removeAt,
 } from './scene';
-import { FLOOR, PathId, Point, KeyframeId, World, emptyWorld, PolygonKind } from './types';
+import { PathId, Point, KeyframeId, World, emptyWorld, PolygonKind } from './types';
 import { move, scaled, turned as turning, wrote } from './testing';
 
 /**
@@ -34,7 +34,7 @@ import { move, scaled, turned as turning, wrote } from './testing';
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
 const kind = (k: Named): PolygonKind =>
-  k === 'hole' ? { type: 'void', from: FLOOR } : { type: k };
+  k === 'hole' ? { floor: 'void' } : k === 'floor' ? { floor: 'floor' } : { level: k };
 
 describe('timings', () => {
   test('start at zero and add up along the legs', () => {
