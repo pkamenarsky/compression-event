@@ -3865,6 +3865,41 @@ export function toothedRing(
 }
 
 /**
+ * Where the points a drawn outline runs straight through land once it is
+ * eroded: a tooth the ramp laid flat, a corner standing in its wall, an arc
+ * of no bevel.
+ *
+ * They are points of the outline like any other, and the arrangement would
+ * drop them for not turning — so they are asked back by position, and a
+ * point that is flat here and turns a moment later is in the ring at both,
+ * with a line that comes up as it turns rather than appearing whole. See
+ * `keeping`.
+ */
+export function flatOf(ring: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Point[] {
+  const n = ring.length;
+  let extent = 1;
+
+  for (const p of ring) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = extent * 1e-9;
+  const out: Point[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    if (reach === 0 || Math.abs(ux * vy - uy * vx) / reach > snap) continue;
+
+    const p = mitred(ring, rings, i, depths?.[i] ?? erosion);
+
+    if (p !== null) out.push(p);
+  }
+
+  return out;
+}
+
+/**
  * A sealed group's fold as its own effects draw it: what `outlineOf` does to
  * a polygon, done to the union of its members at depth nought — every corner
  * rounded, the group's deform laid along its straights and its arcs — and
@@ -3967,7 +4002,10 @@ export function foldShaped(
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
 
   const simple = simplify(sliced(o.ring, o.rings));
-  const shape = depth === 0 ? simple : erode(simple, depth);
+
+  // The points it runs straight through — a tooth the ramp laid flat — asked
+  // back after the arrangement, so a scope's teeth rise as a polygon's do.
+  const shape = keeping(depth === 0 ? simple : erode(simple, depth), flatOf(o.ring, o.rings, depth, null));
   const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
 
   const squared = [

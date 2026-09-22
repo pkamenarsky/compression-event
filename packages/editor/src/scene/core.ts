@@ -51,6 +51,7 @@ import {
   diameter,
   mitred,
   nextOf,
+  flatOf,
   keeping,
   outlineOf,
   Straights,
@@ -1113,41 +1114,6 @@ const imagedBy = remembered((
     restSquare: [],
   };
 });
-
-/**
- * Where the points a drawn outline runs straight through land once it is
- * eroded: a tooth the ramp laid flat, a corner standing in its wall, an arc
- * of no bevel.
- *
- * They are points of the outline like any other, and the arrangement would
- * drop them for not turning — so they are asked back by position, and a
- * point that is flat here and turns a moment later is in the ring at both,
- * with a line that comes up as it turns rather than appearing whole. See
- * `keeping`.
- */
-function flatOf(ring: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Point[] {
-  const n = ring.length;
-  let extent = 1;
-
-  for (const p of ring) extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
-
-  const snap = extent * 1e-9;
-  const out: Point[] = [];
-
-  for (let i = 0; i < n; i++) {
-    const a = ring[prevOf(rings, n, i)], b = ring[i], c = ring[nextOf(rings, n, i)];
-    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
-    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
-
-    if (reach === 0 || Math.abs(ux * vy - uy * vx) / reach > snap) continue;
-
-    const p = mitred(ring, rings, i, depths?.[i] ?? erosion);
-
-    if (p !== null) out.push(p);
-  }
-
-  return out;
-}
 
 /** The noise's name for a corner's arc: its own, told apart from the edge it
  * starts, which has the same id. */
