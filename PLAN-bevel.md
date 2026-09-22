@@ -490,7 +490,14 @@ Left, and known:
 - A member's teeth next to a straight make that straight untoothed: the
   group does not tooth its members' deformed geometry again.
 
-### 2.9 Scoped: naming the union's straights
+### 2.9 Scoped: naming the union's straights and arcs
+
+**What it is for.** A sealed group that is rounded, deformed and eroded should
+resolve to what a polygon of the same outline resolves to: the same shape in
+the editor and the same walls in the game, with the group's deform running
+along its members' arcs as it runs along a polygon's. The morph may fade a
+vertical in where it cannot carry a tooth across a span, where that is what
+keeps the code simple; the still may not differ at all.
 
 What 2.8 left. A union straight is anonymous today, so its teeth are keyed
 nought and the bake cannot tell one of its teeth at the near end from one at
@@ -525,7 +532,28 @@ scope, which a line does for nothing.
    keys its teeth by that corner id — the noise, the jitter and the offset
    then belong to the edge, as a polygon's do. A straight over no line keeps
    nought, which is what a straight made of two members' crossings is.
-4. **The bake seeds the teeth it is missing.** `Cast.shapes` already holds
+4. **The group's deform runs along a member's arc**, as it runs along one of
+   a polygon's own corners, rather than being laid per facet as though each
+   were a wall. `arcsWith` already builds a curve and lays teeth on it in two
+   steps — `arc` hands back `{ points, us, on, normal, bend }` and `withTeeth`
+   lays the teeth — so the second half comes out as a function over a curve
+   that arrives as points rather than one it has just built. Then:
+   - a member publishes its arcs beside its lines, keyed by the corner id
+     they round; `imagesOf` has them already;
+   - a run of the fold is matched to a published arc by position, whole or
+     cut, the union having kept the member's points where nothing crosses
+     them;
+   - the teeth are laid in the whole arc's own length and kept where they
+     fall on the surviving piece, so a crossing eating part of the curve
+     moves none of them — the same clip the straights have at their ends;
+   - and the group stops rounding those facet corners: a run that is a
+     member's arc is a curve already, not a string of corners to bevel.
+
+   `bend` on a curve that arrives as points is an estimate off three
+   neighbours rather than the curve's own, which the tent's fold limit leans
+   on; and an arc may be cut at both ends. Those are the two unknowns.
+
+5. **The bake seeds the teeth it is missing.** `Cast.shapes` already holds
    what each end of the span asks for; the fold is evaluated at each end, and
    a tooth on a straight at one end only is laid flat at the other — at the
    place the pattern gives it, at nought amplitude — and faded in through
@@ -537,10 +565,10 @@ pattern, and still does it where the arrangement already has an event (2.3).
 
 **Where a straight has no name.** Not at a crossing: a crossing is a corner,
 and every piece of the union's boundary is a piece of some member's edge. What
-has no name is a piece of a line that is not a *source* edge — a facet of a
-member's own arc, a flank of its teeth, or either of those from a nested
-scope's fold. The first two are beside a member's deformed geometry and are
-left untoothed anyway.
+has no name is a piece of a line that is not a *source* edge — a flank of a
+member's teeth, or a fold's own teeth from a nested scope, both of which are
+left untoothed anyway. A member's arc facets are named by the arc they belong
+to, which is what piece 4 is for.
 
 **Which member names a shared run.** Two members' collinear edges along one
 wall are one run, and the name is whichever edge lies under the run's middle —
@@ -549,7 +577,9 @@ pattern, with no event to hide it. So the run takes the lowest-ranked member
 edge along it rather than the one under its middle: rank is already what
 settles a shared edge in the union, and it changes only when the run does.
 
-**Tests.** Two rooms along one wall: each straight's teeth keyed by its own
+**Tests.** A sealed group of one rounded, deformed, eroded room, against the
+same room on its own: the same shape, point for point. Two rooms along one
+wall: each straight's teeth keyed by its own
 member edge, and the noise on one wall different from the noise on another; a
 group eroding with a round, whose clear eats a tooth: no jump, and the
 tooth's vertical fades over exactly the stretch it goes in; the bake still
