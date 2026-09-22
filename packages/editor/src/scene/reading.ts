@@ -94,6 +94,8 @@ import {
   polygonsIn,
   reaching,
   resolveAt,
+  scaleAt,
+  scaledState,
   segmentsOf,
   standingIn,
   under,
@@ -152,7 +154,7 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   for (const id of world.groups.keys()) {
     if (!standingIn(world, id, from)) continue;
 
-    const d = eroding(world, id) ? stateAt(world, id, v).erosion : 0;
+    const d = eroding(world, id) ? scaledState(world, id, v).erosion : 0;
 
     if (d !== 0) out.set(id, d);
   }
@@ -166,9 +168,9 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
 
   if (round === undefined) return undefined;
 
-  const bevel = stateAt(world, id, v).bevel;
+  const bevel = scaledState(world, id, v).bevel;
 
-  return { facets: facetsOf(segmentsOf(round, bevel), round.tension), bevel };
+  return { facets: facetsOf(segmentsOf(round, bevel, scaleAt(world, id, v)), round.tension), bevel };
 }
 
 /**

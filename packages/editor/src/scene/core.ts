@@ -262,8 +262,11 @@ export interface Effected {
 }
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
-export function segmentsOf(round: Options['round'], bevel: number): number {
-  return round.chamfer ? 1 : segmentsFor(bevel, round.precision, round.tension);
+/** `bevel` is in the world and `scale` is what took it there (`scaleAt`):
+ * the precision is a length at the thing's own scale, as the bevel was, so a
+ * thing scaled keeps the facets it had. */
+export function segmentsOf(round: Options['round'], bevel: number, scale = 1): number {
+  return round.chamfer ? 1 : segmentsFor(bevel, round.precision * scale, round.tension);
 }
 
 /**
@@ -317,6 +320,8 @@ export function effectedOf(
   id: Id,
   corners: readonly Vertex[],
   amounts: Pick<State, 'bevel' | 'bevels'>,
+  /** What took the amounts into the world: see `segmentsOf`. */
+  scale = 1,
 ): Effected | null {
   const fx = world.effects.get(id);
 
@@ -324,7 +329,7 @@ export function effectedOf(
 
   const bevels = corners.map(c => amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
-    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel), round.tension));
+    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel, scale), round.tension));
   const flat = unrounded(corners, optionOf(fx, 'deform')?.clear === true);
 
   return shaping({
@@ -1133,6 +1138,47 @@ function varying(
  * starts at: the thing's own amplitude, and for a polygon's own deform the
  * edge's on top.
  */
+/**
+ * How much a thing is scaled at `v`, as one number: the square root of how
+ * much its frame, and every frame holding it, scales area.
+ *
+ * What every amount is multiplied by — an erosion's depth, a bevel, a
+ * deform's spacing and amplitude — so that a thing scaled is the same thing
+ * bigger, eroded, rounded and toothed in proportion. At scale one, which is
+ * where nearly everything stands, an amount is a length in the world, on the
+ * grid and alike from room to room. See `scaledState`.
+ */
+export function scaleAt(world: World, id: Id, v: KeyframeId): number {
+  const f = worldFrame(world, id, v);
+
+  return Math.sqrt(Math.abs(f.a * f.d - f.b * f.c));
+}
+
+/**
+ * A thing's state at `v` with its amounts taken into the world: every depth,
+ * bevel and amplitude multiplied by `scaleAt`. What anything turning the
+ * amounts into geometry reads; `stateAt` is the timeline's own numbers, which
+ * is what anything writing keys reads.
+ */
+export function scaledState(world: World, id: Id, v: KeyframeId): State {
+  const state = stateAt(world, id, v);
+  const k = scaleAt(world, id, v);
+
+  if (k === 1) return state;
+
+  const by = (m: ReadonlyMap<VertexId, number>) => (m.size === 0 ? m : new Map([...m].map(([c, d]) => [c, d * k])));
+
+  return {
+    ...state,
+    erosion: state.erosion * k,
+    depths: by(state.depths),
+    bevel: state.bevel * k,
+    bevels: by(state.bevels),
+    amplitude: state.amplitude * k,
+    amplitudes: by(state.amplitudes),
+  };
+}
+
 export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
   const out: Deforming[] = [];
 
@@ -1141,13 +1187,14 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
 
     if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
 
-    const state = stateAt(world, owner, v);
+    const state = scaledState(world, owner, v);
     const ever = everDeformed(keyRigOf(world, owner));
     const own = owner === id;
+    const e = effecting(fx);
 
     out.push({
       owner,
-      e: effecting(fx),
+      e: { ...e, spacing: e.spacing * scaleAt(world, owner, v) },
       amplitude: own ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
       toothed: own ? from => ever.all || ever.edges.has(from) : () => ever.all,
       clear: own && fx.deform.clear,
@@ -1161,11 +1208,10 @@ export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
 const diameters = new WeakMap<World, Map<string, number>>();
 
 /**
- * How big a thing is at `v`, for its deform: the diameter of every corner it
- * stands on, in the world, before any deform or erosion. A deform's spacing
- * and amplitude are fractions of it, so that the teeth are the same teeth
- * however the thing is moved, turned or scaled, and evenly spaced whichever
- * way it is stretched.
+ * How big a thing is at `v`: the diameter of every corner it stands on, in
+ * the world, before any deform or erosion. What a deform's spacing is first
+ * set from and shown against — see `sizedFor` and the pane — and nothing a
+ * deform is laid by.
  *
  * A group's is of all its members together, which is the diameter of their
  * union: the union covers every corner, and nothing of it reaches past their
@@ -1272,12 +1318,7 @@ function deformedAt(
   let pts: Point[] = place(frame, local);
   let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
 
-  for (const { owner, e: relative, amplitude: relativeTo, toothed, clear: clearing } of chain) {
-    // Out of fractions of the owner's size into the world, where the rings are.
-    const size = diameterAt(world, v, owner);
-    const e = { ...relative, spacing: relative.spacing * size };
-    const amplitude = (from: VertexId) => relativeTo(from) * size;
-
+  for (const { owner, e, amplitude, toothed, clear: clearing } of chain) {
     const rings = ringsOf(cs);
     const slices = sliced(pts, rings);
 
@@ -1423,7 +1464,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     .sort(([, p], [, q]) => born(p) - born(q));
 
   for (const [id, polygon] of here) {
-    const state = erodingOnly(world, id, stateAt(world, id, v));
+    const state = erodingOnly(world, id, scaledState(world, id, v));
     const corners = surviving(polygon.points, c => state.corners.has(c.id));
 
     // A polygon whose outline has gone is not geometry any more. It cannot
@@ -1446,7 +1487,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
       erosion: state.erosion,
       over: drawn.over,
       depths: varying(drawn.corners, state.erosion, drawn.over),
-      effected: effectedOf(world, id, drawn.corners, state),
+      effected: effectedOf(world, id, drawn.corners, state, scaleAt(world, id, v)),
     }));
   }
 

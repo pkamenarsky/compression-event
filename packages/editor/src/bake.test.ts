@@ -30,7 +30,7 @@ import {
   sideOf,
   withRig,
 } from './scene';
-import { nudged } from './rig';
+import { nudged, stateAt } from './rig';
 import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
 import {
   EMPTY_BAKE,
@@ -2196,12 +2196,7 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 
 describe('effects', () => {
   const ROUND: Effects = { round: inSegments(4, 20) };
-  // A deform's spacing and amplitude are fractions of the thing's diameter
-  // (see `diameterAt`): these are the room's below, and two rooms' side by
-  // side, so that the numbers read as lengths.
-  const ROOM = Math.hypot(200, 200);
-  const PAIR = Math.hypot(200, 100);
-  const ZIGZAG: Effects = { deform: { spacing: 66 / ROOM, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
+  const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
   const round = (by: number): Writing => ({ kind: 'round', by });
   const deform = (by: number): Writing => ({ kind: 'deform', by });
 
@@ -2341,7 +2336,7 @@ describe('effects', () => {
     // At the near end the floor is one edge with one pattern; at the far end
     // it is two, each with its own. The teeth are corners, so the ones the
     // halves gain arrive as corners do, and the ones the floor loses go.
-    const w = arriving(ZIGZAG, deform(5 / ROOM));
+    const w = arriving(ZIGZAG, deform(5));
     const span = run(bakeSpan(w, 0));
 
     expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
@@ -2355,7 +2350,7 @@ describe('effects', () => {
     // Where a rounded tooth goes through straight on its way, its arc lies on
     // a line for an instant and the arrangement drops it there, and the bake
     // pins that instant; nothing moves either side of it.
-    const w = arriving({ ...ROUND, ...ZIGZAG }, round(10), deform(5 / ROOM));
+    const w = arriving({ ...ROUND, ...ZIGZAG }, round(10), deform(5));
     const span = run(bakeSpan(w, 0));
 
     expect(steadiest(w)).toBeLessThan(0.5);
@@ -2365,10 +2360,10 @@ describe('effects', () => {
   });
 
   test('an edge growing longer gets more points, and they fade in', () => {
-    // The right wall pulled out to twice its length, which grows the room's
-    // diameter by less: three teeth at the near end, five at the far.
-    const { world, id } = room({ deform: { ...ZIGZAG.deform!, spacing: 0.2 } });
-    const w0 = wrote(world, 0, id, deform(5 / ROOM));
+    // The right wall pulled out to twice its length: three teeth at the near
+    // end, five at the far.
+    const { world, id } = room(ZIGZAG);
+    const w0 = wrote(world, 0, id, deform(5));
     const w = nudging(w0, 1, id, w0.polygons.get(id)!.points[2].id, { x: 0, y: 200 });
 
     const span = run(bakeSpan(w, 0));
@@ -2413,7 +2408,7 @@ describe('effects', () => {
 
   test('a deform starting from nought fades its verticals in', () => {
     const { world, id } = room(ZIGZAG);
-    const w = wrote(world, 1, id, deform(10 / ROOM));
+    const w = wrote(world, 1, id, deform(10));
     const span = run(bakeSpan(w, 0));
     const s = span.tracks[0].stretches[0];
 
@@ -2438,14 +2433,33 @@ describe('effects', () => {
     }
   });
 
+  test('a room scaled and eroded in one span is eroded in proportion, and nothing jumps', () => {
+    // Its depth is a length at its own scale, so doubled it is twice as deep
+    // at the far end, and the bake and the editor agree all the way across.
+    const { world, id } = room({});
+    let w = wrote(world, 0, id, erode(10));
+
+    w = wrote(w, 1, id, scaled(2, 2, { x: 0, y: 0 }), erode(10));
+
+    const span = run(bakeSpan(w, 0));
+
+    expect(stateAt(w, id, 1).erosion).toBe(20);
+    expect(resolveAt(w, 1).find(r => r.id === id)!.erosion).toBeCloseTo(40, 9);
+    expect(span.tracks.every(t => t.jumps.length === 0)).toBe(true);
+
+    // Exactly: in its own frame the depth is a lerp, and so is where the
+    // shader puts each corner. A depth in the world could only be chased.
+    expect(drift(w)).toBeLessThan(1e-6);
+    expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
   test('a group growing keeps the teeth on its rooms, and nothing jumps', () => {
-    // Its deform is its rooms': each has teeth of its own, spaced by the
-    // group's size, so scaled they are the same teeth further apart.
-    const size = Math.hypot(260, 100);
+    // Its deform is its rooms': each has teeth of its own, spaced in the
+    // group's scale, so scaled they are the same teeth further apart.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(160, 0, 100, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    const fx: Effects = { deform: { ...ZIGZAG.deform!, spacing: 66 / size } };
-    let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5 / size));
+    let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
 
     w = wrote(w, 1, g.id, scaled(1.8, 1.8, { x: 130, y: 50 }));
 
@@ -2469,7 +2483,7 @@ describe('effects', () => {
     // passes another, a crossing comes or goes, which the bake pins.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    let w = wrote({ ...g.world, effects: new Map([[g.id, { deform: { ...ZIGZAG.deform!, spacing: 66 / PAIR } }]]) }, 0, g.id, deform(5 / PAIR));
+    let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
 
     w = wrote(w, 1, g.id, scaled(1.8, 1.8, { x: 100, y: 50 }));
 
@@ -2483,7 +2497,7 @@ describe('effects', () => {
   test('a group eroding loses teeth that fade out, and nothing jumps', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, deform: { ...ZIGZAG.deform!, spacing: 66 / PAIR } }]]) }, 0, g.id, round(10), deform(5 / PAIR));
+    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
 
     w = wrote(w, 1, g.id, erode(30));
 
@@ -2507,8 +2521,8 @@ describe('effects', () => {
     const diamond = [{ x: 104, y: 20 }, { x: 124, y: 40 }, { x: 104, y: 60 }, { x: 84, y: 40 }];
     const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
     const g = sealed(world, 0, ids, TOP)!;
-    const fx: Effects = { deform: { spacing: 20 / PAIR, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
-    let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5 / PAIR));
+    const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0, clear: false } };
+    let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5));
 
     w = wrote(w, 1, ids[1], move(0, 60));
 

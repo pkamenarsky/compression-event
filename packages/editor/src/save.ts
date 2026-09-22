@@ -54,8 +54,9 @@ import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
  * those said is written down there rather than here, where a reading of it
  * would have to be carried for ever.
  *
- * 25: a deform's spacing and amplitudes are fractions of the thing's size —
- * see `diameterAt` — rather than lengths in the world. The shape is a 24's;
+ * 25: every amount — a depth, a bevel, a deform's spacing and amplitude —
+ * is a length at the thing's own scale, which the world multiplies by
+ * `scaleAt`, rather than a length in the world. The shape is a 24's;
  * `convert.ts` takes a 24 across.
  *
  * A file is one shape, and this is the shape.

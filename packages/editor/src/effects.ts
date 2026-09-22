@@ -19,7 +19,7 @@
 
 import { nextOf } from './geometry';
 import { Amount, AmountKind, amountedBy, nextKey } from './rig';
-import { Resolved, keyRigOf, optionOf, withKeyRig } from './scene';
+import { Resolved, diameterAt, keyRigOf, optionOf, scaleAt, withKeyRig } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
@@ -47,6 +47,37 @@ export function withEffect<N extends EffectName>(world: World, id: Id, name: N, 
   effects.set(id, { ...world.effects.get(id), [name]: options });
 
   return { ...world, effects };
+}
+
+/** A deform's first spacing, as a share of the size of what it goes on:
+ * see `sizedFor`. */
+export const FIRST_SPACING = 0.2;
+
+/**
+ * How big `id` is at `v` at its own scale: its diameter (`diameterAt`) taken
+ * out of its scale (`scaleAt`), which is what a spacing is a length in. What
+ * the pane shows a spacing against, and a first spacing is a share of.
+ */
+export function sizeOf(world: World, v: KeyframeId, id: Id): number {
+  const k = scaleAt(world, id, v);
+
+  return k > 0 ? diameterAt(world, v, id) / k : 0;
+}
+
+/**
+ * `options` with the deform's spacing made to fit `ids` as they stand at `v`:
+ * `FIRST_SPACING` of the biggest of them, whole. What a deform is given the
+ * first time it goes on something, so that its teeth come out a size the
+ * thing can carry however big it is drawn — the spacing last used was chosen
+ * for something else. From there the spacing is a length, and a scale takes
+ * the teeth along with it. Left alone where nothing stands.
+ */
+export function sizedFor(world: World, v: KeyframeId, ids: readonly Id[], options: Options): Options {
+  const size = Math.max(0, ...ids.map(id => sizeOf(world, v, id)));
+
+  if (!(size > 0)) return options;
+
+  return { ...options, deform: { ...options.deform, spacing: Math.max(1, Math.round(FIRST_SPACING * size)) } };
 }
 
 /**

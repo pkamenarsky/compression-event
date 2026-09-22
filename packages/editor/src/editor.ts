@@ -155,7 +155,7 @@ export function editor(initial: World): VNode {
           toolbar(s.tool, update),
           figureBar(s.tool, s.figure, update),
           pickBar(s.tool, update),
-          effectsPane(s.world, s.selection, s.tool, s.remembered, 12 + TOOLBAR + 8, update),
+          effectsPane(s.world, s.selection, s.tool, s.remembered, s.keyframe, 12 + TOOLBAR + 8, update),
           typeBar(s.world, s.selection, s.tool, update),
           bakeButton(state, s.world, s.bake, update),
           previewButton(s.preview, update),

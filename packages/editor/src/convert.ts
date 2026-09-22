@@ -6,8 +6,9 @@
 //
 // Writes `<world>.v25.json` beside each. What it reads is a 20, a 21, a 22 or
 // a 23 — the formats whose timelines are lists of operations — which it makes
-// a 24, whose timelines are keys (`converted`); and a 24, whose deforms are
-// lengths, which it makes a 25, whose deforms are fractions (`relative`). See `FORMAT` in `save.ts` for what
+// a 24, whose timelines are keys (`converted`); and a 24, whose amounts are
+// lengths in the world, which it makes a 25, whose amounts are lengths at the
+// thing's own scale (`relative`). See `FORMAT` in `save.ts` for what
 // each of those said, and `convert-19-20.ts` for what takes a 19 to a 21.
 //
 // Its own file, and not a branch inside `save.ts`, because a format is a thing
@@ -34,7 +35,7 @@ import {
   stateAt,
 } from './rig';
 import { FORMAT, Saved, SavedKey, restored, saved, savedKeyRig } from './save';
-import { diameterAt } from './scene';
+import { chain, scaleAt, standingIn } from './scene';
 import { Key } from './rig';
 import { Effects, Id, Options, REMEMBERED, VertexId, World } from './types';
 
@@ -217,14 +218,16 @@ function rounding(round: Effects['round'] & object): Options['round'] {
 export type { SavedKey };
 
 /**
- * A 24 as a 25: every deform's spacing and amplitudes, which were lengths in
- * the world, as fractions of the size of the thing it is on (`diameterAt`).
+ * A 24 as a 25: every amount — depths, bevels, a deform's spacing and its
+ * amplitudes — which was a length in the world, as a length at the thing's
+ * own scale, which the world multiplies by `scaleAt`.
  *
  * Taken at the first keyframe the thing stands at, which is where it was
  * made. The amounts add up, so dividing every one of them divides what they
- * come to, and the thing is deformed there exactly as it was. Where it grows
- * or shrinks afterwards its teeth now grow and shrink with it, which is the
- * point of the change.
+ * come to, and the thing is eroded, rounded and deformed there exactly as it
+ * was. Where it is scaled afterwards its amounts now scale with it, which is
+ * the point of the change. At scale one, which is nearly everything, nothing
+ * changes at all.
  */
 export function relative(file: Saved): Saved | { refused: string } {
   if (file.format !== 24) return { refused: `format ${file.format}, and this takes 24` };
@@ -234,27 +237,38 @@ export function relative(file: Saved): Saved | { refused: string } {
   const effects = new Map(world.effects);
   const rigs = new Map(world.rigs);
 
-  for (const [id, fx] of world.effects) {
-    if (fx.deform === undefined) continue;
+  for (const [id, rig] of world.rigs) {
+    const from = world.keyframes.find(k => standingIn(world, id, new Set(chain(world, k.id))));
+    const k = from === undefined ? 1 : scaleAt(world, id, from.id);
 
-    const size = world.keyframes.map(k => diameterAt(world, k.id, id)).find(d => d > 0);
+    if (k === 1 || !(k > 0)) continue;
 
-    if (size === undefined) continue;
+    const fx = world.effects.get(id);
 
-    effects.set(id, { ...fx, deform: { ...fx.deform, spacing: fx.deform.spacing / size } });
+    if (fx?.deform !== undefined) effects.set(id, { ...fx, deform: { ...fx.deform, spacing: fx.deform.spacing / k } });
 
-    const rig = world.rigs.get(id);
-
-    if (rig === undefined) continue;
-
-    const shrunk = (m: ReadonlyMap<number, number>) => new Map([...m].map(([c, a]) => [c, a / size]));
-    const key = (k: Key): Key => ({
-      ...k,
-      ...(k.by === undefined ? {} : { by: { ...k.by, deform: k.by.deform / size } }),
-      ...(k.deforms === undefined ? {} : { deforms: shrunk(k.deforms) }),
-      ...(k.stand === undefined
+    const shrunk = (m: ReadonlyMap<number, number>) => new Map([...m].map(([c, a]) => [c, a / k]));
+    const key = (key: Key): Key => ({
+      ...key,
+      ...(key.by === undefined
         ? {}
-        : { stand: { ...k.stand, amplitude: k.stand.amplitude / size, amplitudes: shrunk(k.stand.amplitudes) } }),
+        : { by: { ...key.by, erode: key.by.erode / k, round: key.by.round / k, deform: key.by.deform / k } }),
+      ...(key.depths === undefined ? {} : { depths: shrunk(key.depths) }),
+      ...(key.rounds === undefined ? {} : { rounds: shrunk(key.rounds) }),
+      ...(key.deforms === undefined ? {} : { deforms: shrunk(key.deforms) }),
+      ...(key.stand === undefined
+        ? {}
+        : {
+          stand: {
+            ...key.stand,
+            erosion: key.stand.erosion / k,
+            depths: shrunk(key.stand.depths),
+            bevel: key.stand.bevel / k,
+            bevels: shrunk(key.stand.bevels),
+            amplitude: key.stand.amplitude / k,
+            amplitudes: shrunk(key.stand.amplitudes),
+          },
+        }),
     });
 
     rigs.set(id, { ...rig, keys: new Map([...rig.keys].map(([at, keys]) => [at, keys.map(key)])) });
@@ -262,8 +276,8 @@ export function relative(file: Saved): Saved | { refused: string } {
 
   return {
     ...saved({ ...state, world: { ...world, effects, rigs } }),
-    // Baked against teeth that are where they were, but cheap to make again,
-    // and a bake is the last place to find out a conversion was wrong.
+    // Baked against the same geometry, but cheap to make again, and a bake is
+    // the last place to find out a conversion was wrong.
     baked: undefined,
   };
 }

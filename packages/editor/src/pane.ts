@@ -30,13 +30,15 @@ import {
   cornersSwitched,
   ownRound,
   switchedOff,
+  sizeOf,
+  sizedFor,
   switchedOn,
   withEffect,
 } from './effects';
 import { Pattern, Sides } from './geometry';
 import { owning } from './scene';
 import { theme } from './theme';
-import { Id, Options, Selection, Tool, Update, VertexId, World, marked, picks } from './types';
+import { Id, KeyframeId, Options, Selection, Tool, Update, VertexId, World, marked, picks } from './types';
 
 type Some = 'all' | 'some' | 'none';
 
@@ -52,6 +54,9 @@ type Some = 'all' | 'some' | 'none';
 interface Model {
   deform: Some
   spacing: number
+  /** How big the first of them is at its own scale, which the spacing is
+   * shown as a share of: see `sizeOf`. */
+  size: number
   pattern: Pattern
   sides: Sides
   seed: number
@@ -98,6 +103,7 @@ export function effectsPane(
   selection: Value<Selection>,
   tool: Value<Tool>,
   remembered: Value<Options>,
+  keyframe: Value<KeyframeId>,
   top: number,
   update: Update,
 ): VNode {
@@ -106,7 +112,7 @@ export function effectsPane(
   // A round under the corner tool is about the corners picked.
   const corners = () => (tool() === 'point' ? selection().vertices : []);
 
-  const model = (): Model => modelOf(world(), targets(), corners(), remembered());
+  const model = (): Model => modelOf(world(), keyframe(), targets(), corners(), remembered());
 
   return show(
     () => targets().length > 0,
@@ -149,7 +155,7 @@ function bare<O extends { off?: boolean }>(o: O): O {
   return rest as O;
 }
 
-function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[], remembered: Options): Model {
+function modelOf(world: World, v: KeyframeId, ids: readonly Id[], corners: readonly VertexId[], remembered: Options): Model {
   // The first picked thing's that has one, switched on or not, and otherwise
   // what is remembered.
   const shown = <N extends EffectName>(name: N): Options[N] => {
@@ -165,6 +171,7 @@ function modelOf(world: World, ids: readonly Id[], corners: readonly VertexId[],
   return {
     deform: some(ids, id => applies(world, id, 'deform')),
     spacing: d.spacing,
+    size: ids.length === 0 ? 0 : sizeOf(world, v, ids[0]),
     pattern: d.pattern,
     sides: d.sides,
     seed: d.seed,
@@ -185,7 +192,8 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   /** Switched on for every one of them, or off where every one had it on. */
   const toggled = (name: Switch, on: Some) => update(s => {
     const ids = targets();
-    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, s.remembered);
+    const first = name === 'deform' ? sizedFor(s.world, s.keyframe, ids, s.remembered) : s.remembered;
+    const world = on === 'all' ? switchedOff(s.world, ids, name) : switchedOn(s.world, ids, name, first);
 
     return marked({ ...s, world }, s.world);
   });
@@ -229,8 +237,16 @@ function body(m: ObjectValue<Model>, targets: () => Id[], corners: () => VertexI
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
-      // A percentage of the thing's size: see `diameterAt`.
-      field('spacing %', slider(() => Math.round(m.spacing() * 1000) / 10, 1, SPACING, (v, further) => changed('deform', { spacing: v / 100 }, further), Infinity, 'any')),
+      // A length, shown as a percentage of the thing's size so that the
+      // slider has somewhere to stop: see `sizeOf`.
+      field('spacing %', slider(
+        () => (m.size() > 0 ? Math.round(m.spacing() / m.size() * 1000) / 10 : m.spacing()),
+        1,
+        SPACING,
+        (v, further) => changed('deform', { spacing: m.size() > 0 ? v / 100 * m.size() : v }, further),
+        Infinity,
+        'any',
+      )),
       field('pattern', choice(PATTERNS, m.pattern, v => changed('deform', { pattern: v }))),
       field('sides', choice(SIDES, m.sides, v => changed('deform', { sides: v }))),
       // How far the gaps stray from the spacing, as a percentage.

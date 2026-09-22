@@ -194,6 +194,8 @@ import {
   unplace,
   resolveAt,
   optionOf,
+  scaleAt,
+  scaledState,
   segmentsOf,
 } from './scene';
 import {
@@ -760,6 +762,13 @@ interface Moving extends Rider {
    * the uniform road is the one whose arithmetic has not moved. */
   varying: boolean
   /**
+   * What took the depths at each end into the world: the thing's `scaleAt`
+   * there. Part way, a depth is its own length lerped and taken out by the
+   * scale the frame has then — see `deepAt` — which for a room scaled evenly
+   * is a corner going in a line in its own frame, where the shader lerps it.
+   */
+  scales: [number, number]
+  /**
    * Its rounds and deforms at the two ends, over `corners`, or nothing where
    * it has no effects. The options are the same at both ends; the amounts are
    * lerped. See `effectsOver`.
@@ -1187,8 +1196,9 @@ function moving(world: World, from: number): Moving[] {
         depth: [0, it.erosion] as [number, number],
         depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
         varying: it.depths !== null,
+        scales: [scaleAt(world, it.id, far), scaleAt(world, it.id, far)] as [number, number],
         holders: holders(world, from, it.id),
-        ...effectsOver(world, it.id, it.corners, [null, stateAt(world, it.id, far)]),
+        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)]),
       };
     }
 
@@ -1203,8 +1213,9 @@ function moving(world: World, from: number): Moving[] {
       depth: [was.erosion, it.erosion] as [number, number],
       depths: over.depths,
       varying: was.depths !== null || it.depths !== null,
+      scales: [scaleAt(world, it.id, near), scaleAt(world, it.id, far)] as [number, number],
       holders: holders(world, from, it.id),
-      ...effectsOver(world, it.id, over.corners, [stateAt(world, it.id, near), stateAt(world, it.id, far)]),
+      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)]),
     };
   });
 
@@ -1228,8 +1239,9 @@ function moving(world: World, from: number): Moving[] {
       depth: [was.erosion, 0] as [number, number],
       depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
       varying: was.depths !== null,
+      scales: [scaleAt(world, id, near), scaleAt(world, id, near)] as [number, number],
       holders: holders(world, from, id),
-      ...effectsOver(world, id, was.corners, [stateAt(world, id, near), null]),
+      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1]),
     });
   }
 
@@ -1265,9 +1277,11 @@ function effectsOver(
   id: Id,
   corners: readonly Vertex[],
   ends: [State | null, State | null],
+  /** What took each end's amounts into the world: see `segmentsOf`. */
+  scales: [number, number],
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
-  const two = ends.map(e => effectedOf(world, id, corners, e ?? NOTHING)) as [Effected | null, Effected | null];
+  const two = ends.map((e, i) => effectedOf(world, id, corners, e ?? NOTHING, scales[i])) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
@@ -1429,6 +1443,20 @@ function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead:
   return out;
 }
 
+/**
+ * A depth `t` of the way across the span, from `a` at the near end to `b` at
+ * the far: each end taken back to the thing's own scale, lerped there, and
+ * taken into the world by the scale `frame` has at `t`. Both ends as they
+ * were, and in between a depth that grows with the thing as it grows.
+ */
+function deepAt(m: Moving, a: number, b: number, frame: Affine, t: number): number {
+  const [k0, k1] = m.scales;
+
+  if (!(k0 > 0 && k1 > 0) || (k0 === 1 && k1 === 1)) return mix(a, b, t);
+
+  return mix(a / k0, b / k1, t) * Math.sqrt(Math.abs(frame.a * frame.d - frame.b * frame.c));
+}
+
 /** A polygon `t` of the way across the span, without the corners it keeps. */
 function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
   const local = between(m.local[0], m.local[1], t);
@@ -1443,8 +1471,8 @@ function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
     local,
     frame,
     source: place(frame, local),
-    erosion: mix(m.depth[0], m.depth[1], t),
-    depths: m.varying ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t)) : null,
+    erosion: deepAt(m, m.depth[0], m.depth[1], frame, t),
+    depths: m.varying ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t)) : null,
     effected: m.effected === null ? null : effectedAt(m.effected, t),
   };
 }
@@ -1752,10 +1780,10 @@ function casting(world: World, from: number): Cast {
 
     if (round === undefined) continue;
 
-    const was = stateAt(world, id, near), now = stateAt(world, id, far);
+    const was = scaledState(world, id, near), now = scaledState(world, id, far);
 
     // Laid as a polygon's corners are across a span: see `effectsOver`.
-    const from = segmentsOf(round, was.bevel), to = segmentsOf(round, now.bevel);
+    const from = segmentsOf(round, was.bevel, scaleAt(world, id, near)), to = segmentsOf(round, now.bevel, scaleAt(world, id, far));
 
     shapes.set(id, {
       facets: { n: Math.max(from, to), from, to, at: 0, tension: round.tension },
@@ -2083,9 +2111,17 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, placed
     if (d !== undefined) groups += Math.abs(mix(d[0], d[1], t));
   }
 
+  // Part way a depth is its own length lerped times the scale then
+  // (`deepAt`), which the frame here does not say. So the deepest own length
+  // of the two ends at the bigger of their scales: a bound too big is only a
+  // little work, where one too small is wrong.
+  const [k0, k1] = m.scales;
+  const bound = (a: number, b: number): number => (!(k0 > 0 && k1 > 0) || (k0 === 1 && k1 === 1)
+    ? mix(a, b, t)
+    : Math.min(a / k0, b / k1) * Math.max(k0, k1));
   const own = m.varying
-    ? m.depths[0].map((d, i) => mix(d, m.depths[1][i], t))
-    : m.corners.map(() => mix(m.depth[0], m.depth[1], t));
+    ? m.depths[0].map((d, i) => bound(d, m.depths[1][i]))
+    : m.corners.map(() => bound(m.depth[0], m.depth[1]));
 
   const out = own.map(d => Math.max(0, -d) + groups);
 

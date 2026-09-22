@@ -11,11 +11,11 @@ import { Point } from '@ce/game/world';
 import { Old, OldEntry, OldRig, converted, relative } from './convert';
 import { Saved, restored, restoredKeyRig, saved } from './save';
 import { Entry, KeyframeId, Op, Rig, entriesOf, keysOf } from './rig';
-import { TOP, addPolygon, diameterAt, grouped, handed, keyed, resolveAt, rigOf, withRig } from './scene';
+import { TOP, addPolygon, grouped, handed, keyed, resolveAt, rigOf, scaleAt, withRig } from './scene';
 import { withEffect } from './effects';
 import { cornerRounded, once } from './rig';
 import { EditorState, FLOOR, Id, PolygonKind, REMEMBERED, VertexId, World, emptyWorld, initialState } from './types';
-import { wrote } from './testing';
+import { scaled, wrote } from './testing';
 
 type Named = 'level' | 'solid' | 'floor' | 'hole';
 
@@ -166,41 +166,47 @@ function through(file: Old): EditorState {
 
     const w = through(file).world;
 
-    // The spacing a fraction of the polygon's size, as a 25 keeps it.
     expect(w.effects.get(id)).toEqual({
       round: { precision: 0.5, tension: 0.5, chamfer: false },
-      deform: { spacing: 12 / Math.hypot(100, 60), pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
+      deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0, clear: false },
     });
     expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
   });
 
-  test('a 24 made a 25 has its teeth where they were', () => {
+  test('a 24 made a 25 is eroded, rounded and deformed where it was', () => {
     const [id] = [...world().world.polygons.keys()];
-    const size = diameterAt(world().world, 0, id);
 
-    // The same deform twice: in proportion, as this opens it, and in the
-    // world, as a 24 held it.
-    const deformed = (spacing: number, amplitude: number) => {
-      const w = withEffect(world().world, id, 'deform', { ...REMEMBERED.deform, spacing, jitter: 0.5, seed: 4 });
+    // Scaled where it is made, so that its amounts are in the world at one
+    // scale and in its own at another; eroded, rounded and deformed after.
+    const made = (by: number) => {
+      let w = wrote(world().world, 0, id, scaled(1.5, 1.5, { x: 50, y: 30 }));
 
-      return initialState(wrote(w, 1, id, { kind: 'deform', by: amplitude }));
+      w = withEffect(w, id, 'deform', { ...REMEMBERED.deform, spacing: 12 * by, jitter: 0.5, seed: 4 });
+      w = withEffect(w, id, 'round', REMEMBERED.round);
+
+      return initialState(wrote(w, 1, id, { kind: 'deform', by: 2 * by }, { kind: 'erode', by: 3 * by }, { kind: 'round', by: 4 * by }));
     };
 
-    const now = deformed(0.1, 0.02);
-    const out = relative({ ...saved(deformed(0.1 * size, 0.02 * size)), format: 24 });
+    const k = scaleAt(made(1).world, id, 0);
+
+    expect(k).toBeCloseTo(1.5, 9);
+
+    // A 24 held them in the world: its own lengths, `k` times over.
+    const now = made(1);
+    const out = relative({ ...saved(made(k)), format: 24 });
 
     if ('refused' in out) throw new Error(out.refused);
 
     const opened = restored(JSON.parse(JSON.stringify(out)) as Saved).world;
-    const ring = (w: World, v: KeyframeId) => resolveAt(w, v).find(it => it.id === id)!.source;
+    const ring = (w: World, v: KeyframeId) => resolveAt(w, v).find(it => it.id === id)!.shape.flat();
 
     for (const v of [0, 1, 2]) {
       const want = ring(now.world, v), got = ring(opened, v);
 
       expect(got.length).toBe(want.length);
       got.forEach((p, i) => {
-        expect(p.x).toBeCloseTo(want[i].x, 9);
-        expect(p.y).toBeCloseTo(want[i].y, 9);
+        expect(p.x).toBeCloseTo(want[i].x, 6);
+        expect(p.y).toBeCloseTo(want[i].y, 6);
       });
     }
   });

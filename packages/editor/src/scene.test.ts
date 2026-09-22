@@ -301,12 +301,14 @@ describe('transforms', () => {
 
   test('a squashed room erodes to a constant width, not a squashed one', () => {
     // Erosion is the projection and comes last, so it offsets whatever the
-    // transform chain produced. A 10x10 room scaled to 40x10 and eroded by 2 is
-    // 36x6 — the offset does not get stretched along with the room.
+    // transform chain produced. A 10x10 room scaled to 40x10 is scaled by 2 as
+    // far as an amount goes — the root of what it does to area — so eroded by 2
+    // it is 4 in from every wall, 32x2: the offset is not stretched along
+    // with the room.
     const { world, ids } = drawn(['level', rect(0, 0, 10, 10)]);
     const squashed = transformed(world, 0, ids[0], { scale: { x: 4, y: 1 }, erosion: 2 });
 
-    expect(shapeArea(csg(squashed, 0))).toBeCloseTo(36 * 6, 6);
+    expect(shapeArea(csg(squashed, 0))).toBeCloseTo(32 * 2, 6);
   });
 });
 
@@ -387,21 +389,20 @@ describe('a depth per corner', () => {
     expect(shapeArea(csg(again, 2))).toBeCloseTo(shapeArea(csg(bent, 1)), 6);
   });
 
-  test('a scale at a later version scales the polygon and not the depth', () => {
-    // Which is what a depth on a layer has always meant: the transform makes
-    // the source and the offset is taken after it, in the units the layer
-    // states. So a room made twice the size with the same corner depth restated
-    // is twice the room with the same bite out of the corner — not twice the
-    // bite. The same reading as `transform.erosion`, because it is one.
+  test('a scale at a later version scales the polygon and the depth with it', () => {
+    // A depth is a length at the thing's own scale, which the world takes by
+    // `scaleAt`. So a room made twice the size is twice the room with twice the
+    // bite out of the corner. The same reading as `transform.erosion`, because
+    // it is one.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
     const bent = deepened(world, 1, ids[0], [0], 20);
     const big = transformed(bent, 2, ids[0], { scale: { x: 2, y: 2 } });
 
     const alone = drawn(['level', rect(0, 0, 200, 200)]);
 
-    expect(only(big, 2, ids[0]).depths).toEqual([20, 0, 0, 0]);
+    expect(only(big, 2, ids[0]).depths).toEqual([40, 0, 0, 0]);
     expect(shapeArea(csg(big, 2)))
-      .toBeCloseTo(shapeArea(csg(deepened(alone.world, 0, alone.ids[0], [0], 20), 0)), 6);
+      .toBeCloseTo(shapeArea(csg(deepened(alone.world, 0, alone.ids[0], [0], 40), 0)), 6);
   });
 
   test('a squash takes the world frame, where a corner depth means the same thing', () => {
@@ -414,7 +415,8 @@ describe('a depth per corner', () => {
 
     const it = only(squashed, 2, ids[0]);
 
-    expect(it.depths).toEqual([20, 0, 0, 0]);
+    expect(it.depths![0]).toBeCloseTo(20 * Math.SQRT2, 9);
+    expect(it.depths!.slice(1)).toEqual([0, 0, 0]);
     expect(shapeArea(csg(squashed, 2))).toBeGreaterThan(0);
     expect(shapeArea(csg(squashed, 2))).toBeLessThan(20000);
   });
