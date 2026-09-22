@@ -2622,6 +2622,11 @@ export interface Effecting {
   offset: boolean
 }
 
+/** The most of the seen arc's teeth an arc drawn shorter may be asked to
+ * hold, as a multiple of its own length: see `ArcTeeth.seen`. A cap rather
+ * than a cut-off, so what it does is continuous in the depth. */
+export const CRAMMED = 4;
+
 /** The falloff a deform starts with: spikes on the curve. */
 export const FALLOFF = 0.15;
 
@@ -2738,25 +2743,14 @@ export function patternRun(
   const next = (j: number, at: number): number => at + Math.sign(j) * gap(j);
 
   // Outward from the anchor both ways, as far as the edge goes, then laid
-  // end to end in order along it.
+  // end to end in order along it. An anchor off the run — a straight of a
+  // fold, centred on the member edge that names it — is walked from all the
+  // same: the way out that reaches the run lays the teeth that land on it,
+  // and the other stops at once.
   const before: [number, number][] = [], after: [number, number][] = [];
 
   for (let j = 0, at = anchor; at <= length; j++, at = next(j, at)) after.push([j, at]);
   for (let j = -1, at = next(-1, anchor); at >= 0; j--, at = next(j, at)) before.push([j, at]);
-
-  // An anchor off the run's own end: the teeth that fall on it are still
-  // laid, counted out from where the anchor is.
-  if (anchor < 0) {
-    for (let j = 1, at = next(1, anchor); at <= length && j < RUNAWAY; j++, at = next(j, at)) {
-      if (at >= 0) after.push([j, at]);
-    }
-  }
-
-  if (anchor > length) {
-    for (let j = -2, at = next(-2, next(-1, anchor)); at >= 0 && -j < RUNAWAY; j--, at = next(j, at)) {
-      if (at <= length) before.push([j, at]);
-    }
-  }
 
   const places = [...before.reverse(), ...after];
 
@@ -2807,10 +2801,6 @@ export function patterned(e: Effecting, key: number, j: number): number {
 
   return v;
 }
-
-/** How many teeth `patternRun` counts past an anchor off the run before
- * giving up: a run whose naming edge is a long way off it. */
-const RUNAWAY = 4096;
 
 /** What an edge's key is told apart by, for its offset: see `patternRun`. */
 const OFFSET = 0x2545f491;
@@ -3174,12 +3164,12 @@ export interface ArcTeeth {
   key: number
   /** The arc as it is seen against the arc as it is drawn: other than one
    * where a round is held, and the erosion takes the drawn one back to the
-   * seen. The teeth are laid along the arc as seen, and carried onto the
-   * drawn one where they fall on its curve, so the erosion growing the drawn
-   * arc does not slide them along it. Never more than one: an arc drawn
-   * shorter than it is seen — down to nought, eroded out of the material —
-   * keeps the teeth its own length has, rather than the seen arc's crammed
-   * into it. See `drawnBevels`. */
+   * seen — more where the corner turns out of the material, less where it
+   * turns in. The teeth are laid along the arc as seen, and carried onto the
+   * drawn one where they fall on its curve, so the erosion changing the drawn
+   * arc does not slide them along it. Held to `CRAMMED` either way: an arc
+   * eroded to almost nothing would otherwise be asked to hold the whole of
+   * the seen arc's teeth in what is left of it. See `drawnBevels`. */
   seen: number
 }
 
@@ -4126,9 +4116,13 @@ export function foldShaped(
     }
   });
 
-  const arcTeeth = (i: number): ArcTeeth | null => (deform === null || deform.amplitude === 0 || !(drawn[i] > 0)
+  // Laid at nought amplitude too, as the straights' are: an arc's teeth take
+  // its own points off it — the ones under a flank are left out — so an arc
+  // that gains them at the first instant of a span changes what it is made
+  // of, all at once. See `teethAlong`.
+  const arcTeeth = (i: number): ArcTeeth | null => (deform === null || !(drawn[i] > 0)
     ? null
-    : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: 0, seen: Math.min(1, bevel / drawn[i]) });
+    : { e: deform.e, before: deform.amplitude, after: deform.amplitude, key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
 
   const simple = simplify(sliced(o.ring, o.rings));

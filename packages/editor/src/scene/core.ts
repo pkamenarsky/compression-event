@@ -34,6 +34,7 @@ import { Point } from '@ce/game/world';
 import {
   fraction,
   Effecting,
+  CRAMMED,
   FALLOFF,
   Facets,
   ArcTeeth,
@@ -1023,7 +1024,7 @@ const imagedBy = remembered((
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: true };
   const teeth = (i: number): ArcTeeth | null => (e === null || (before[i] === 0 && after[i] === 0)
     ? null
-    : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(1, seen[i] / bevels[i]) : 1 });
+    : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
 
   const o = outlineOf(source, rings, i => flat[i] === 1, i => each[i], i => bevels[i], teeth, i => apart[i] === 1);
   const deep = depths === null ? null : o.owner.map(i => depths[i]);

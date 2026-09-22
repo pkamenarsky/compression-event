@@ -2601,14 +2601,13 @@ describe('effects', () => {
     teeth.forEach(t => expect(t.v).toBe(1));
   });
 
-  test('a union edge cut in two lays its teeth from the middles of the two', () => {
+  test('a union edge cut in two keeps its teeth, both halves being one edge\'s', () => {
     // A room rising through the top wall of the room it is sealed in with,
     // point first: part way, the wall's union edge becomes two, either side
-    // of it. The teeth are counted from the wall's own middle, so the two
-    // pieces show the teeth it had. Only within a spacing of the cut does
-    // anything change at that instant: the teeth there shrink to the new
-    // ends, which are on the wall's line where the pattern was not — a jump
-    // the union makes, being cut before it is deformed.
+    // of it. Both lie on the same edge of the same room, and that edge names
+    // them and lays their teeth from its own middle — so the wall's pattern
+    // is the one it had, on both halves, and only within a spacing of the cut
+    // does anything change: the teeth there shrink to the new ends.
     const diamond = [{ x: 104, y: 20 }, { x: 124, y: 40 }, { x: 104, y: 60 }, { x: 84, y: 40 }];
     const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
     const g = sealed(world, 0, ids, TOP)!;
@@ -2624,9 +2623,10 @@ describe('effects', () => {
     const key = (f: Frame) => new Set(wall(f));
 
     // Before the tip reaches the wall at two thirds of the span, and after:
-    // a straight is laid from its own middle, so cut in two its pattern
-    // starts again from each half's. The event is the arrangement's own.
-    expect(key(truth(w, 0, 0.66))).not.toEqual(key(truth(w, 0, 0.67)));
+    // both halves lie on the room's own top edge, which names them and lays
+    // their teeth from its middle, so the wall keeps every tooth it had. The
+    // arrangement still has its event there; the pattern does not.
+    expect(key(truth(w, 0, 0.66))).toEqual(key(truth(w, 0, 0.67)));
     expect(key(truth(w, 0, 0)).size).toBeGreaterThanOrEqual(8);
     expect(drift(w)).toBeLessThan(TOLERANCE);
   });
