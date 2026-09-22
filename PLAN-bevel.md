@@ -966,21 +966,30 @@ of each against its still.
 
 1. **Done** — the experiment of *3.7*, which says what this is worth before
    the pipeline is disturbed.
-2. `deformedAt` stops making teeth into corners, and `imagedBy` gains the
-   `foldShaped` call above. This is the whole of it, and where it will be won
+2. **Done in part** — `foldShaped` now takes an amplitude per name, since a
+   polygon's is its edge's own, and P7 confirms the call works on a polygon's
+   eroded outline in shipped code: one ring, untouched at nought amplitude,
+   toothed at four, at every depth. What is left is that `deformedAt` stops
+   making teeth into corners and `imagedBy` makes the call. This is the whole of it, and where it will be won
    or lost: `Resolved.corners` becomes drawn corners only, which is what the
    eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
    teeth" and go; `merged` in the bake says so itself — "without teeth that is
    the polygon's list, filtered". Commit.
-3. The bake meets the teeth in the projection rather than in the corners. A
-   tooth that one end of a span has and the other does not is `room` ramping
-   to nought, as it is for the fold (*2.9* piece 5), not a corner to seed.
+3. **`patternRun` lays a tooth of nought rather than dropping it**, where the
+   caller asks. Today a tooth whose `room` has run out is skipped, so a run
+   that shortens loses points — measured through the real call, a polygon's
+   ring goes from 42 points to 36 over a depth of 0 to 8, held, which is not
+   the round collapsing but the teeth going. A span cannot interpolate across
+   that. Laid flat they stand in the ring as the fold's do, and
+   `FoldShaped.fades` already says what to do with them (*2.9* piece 5).
    Commit.
-4. `reach`, and the rest of the bake notes of *3.3*. Commit.
-5. The pinch of *3.2*, on by default. Commit.
-6. The group, which by then is the same call with a depth and a bevel in it.
+4. The bake meets the teeth in the projection rather than in the corners,
+   which piece 3 is most of. Commit.
+5. `reach`, and the rest of the bake notes of *3.3*. Commit.
+6. The pinch of *3.2*, on by default. Commit.
+7. The group, which by then is the same call with a depth and a bevel in it.
    Commit.
-7. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
+8. The removals of *3.4*, once nothing reads them. `baseline.golden.json`
    regenerated once at the end. Commit.
 
 ### 3.7 What the experiment found
