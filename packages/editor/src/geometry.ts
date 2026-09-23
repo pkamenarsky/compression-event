@@ -2870,6 +2870,16 @@ export interface Subdivision {
  * keeps the teeth: see `patternRun`. An edge that is not `toothed` is left
  * as it is.
  */
+/** One pattern to lay along an edge: what `patternRun` is asked for. */
+export interface Laying {
+  key: number
+  amplitude: number
+  /** Where along the edge it is centred, or nothing for the edge's middle. */
+  from: number | undefined
+  /** How far either way from that it runs, or nothing for the edge's ends. */
+  reach: number | undefined
+}
+
 export function subdivided(
   ring: Ring,
   e: Effecting,
@@ -2884,6 +2894,10 @@ export function subdivided(
   /** How far either way from its anchor edge `i`'s pattern runs, or nothing
    * for the edge's own ends: see `patternRun`. */
   reach: (i: number) => number | undefined = () => undefined,
+  /** Any further patterns edge `i` carries besides its own, laid along it
+   * with it. Nothing but where a wall is splitting or joining over a span and
+   * the naming either side of it differs: see PLAN-bevel's step 4. */
+  also: (i: number) => readonly Laying[] = () => [],
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2897,14 +2911,25 @@ export function subdivided(
     if (l === 0 || !toothed(i)) return;
 
     const nx = dy / l * out, ny = -dx / l * out;
-    const run = patternRun(e, key(i), amplitude(i), l, clear(i), clear((i + 1) % n), e.spacing, from(i) ?? l / 2, reach(i));
 
-    run.along.forEach((u, k) => done.push({
-      at: { x: a.x + dx * u + nx * run.across[k], y: a.y + dy * u + ny * run.across[k] },
+    // One pattern an edge, but for a wall splitting or joining across a span,
+    // where the naming either side of the event puts two on it: see
+    // `Naming` and PLAN-bevel's step 4. Laid in order along the edge, so the
+    // points come out in ring order however many there are.
+    const laid = also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }])
+      .flatMap(one => {
+        const run = patternRun(e, one.key, one.amplitude, l, clear(i), clear((i + 1) % n), e.spacing, one.from ?? l / 2, one.reach);
+
+        return run.along.map((u, k) => ({ u, j: run.teeth[k], room: run.room[k], across: run.across[k] }));
+      })
+      .sort((p, q) => p.u - q.u);
+
+    laid.forEach(t => done.push({
+      at: { x: a.x + dx * t.u + nx * t.across, y: a.y + dy * t.u + ny * t.across },
       from: i,
-      j: run.teeth[k],
-      along: u,
-      room: run.room[k],
+      j: t.j,
+      along: t.u,
+      room: t.room,
     }));
   });
 
