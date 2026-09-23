@@ -485,9 +485,8 @@ const shapedFold = remembered((
   /** The members' lines, three entries each — the corner that names it, and
    * its two ends — since what is remembered is named by plain geometry. */
   lines: readonly (number | Point)[],
-  /** The members' arcs: the corner that names each, how many points it has,
-   * and then the points. */
-  arcs: readonly (number | Point)[],
+  /** The members' corners: the corner that names each, and where it is. */
+  corners: readonly (number | Point)[],
   key: readonly number[],
   depth: number,
 ) => {
@@ -497,18 +496,24 @@ const shapedFold = remembered((
     : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: () => d[6] };
   const named = [];
 
-  for (let i = 0; i + 2 < lines.length; i += 3) {
-    named.push({ id: lines[i] as number, a: lines[i + 1] as Point, b: lines[i + 2] as Point });
+  for (let i = 0; i + 3 < lines.length; i += 4) {
+    named.push({
+      id: lines[i] as number,
+      a: lines[i + 1] as Point,
+      b: lines[i + 2] as Point,
+      amplitude: lines[i + 3] as number,
+    });
   }
 
-  const curves = [];
+  const ends: Named['corners'] = [];
 
-  for (let i = 0; i + 1 < arcs.length;) {
-    const id = arcs[i] as number, count = arcs[i + 1] as number;
-
-    curves.push({ id, points: arcs.slice(i + 2, i + 2 + count) as Point[] });
-    i += 2 + count;
+  for (let i = 0; i + 1 < corners.length; i += 2) {
+    ends.push({ id: corners[i] as number, at: corners[i + 1] as Point, bevel: 0, facets: SQUARE });
   }
+
+  // Nothing yet: a member publishes the round it asks for and the fold does
+  // not lay it. Step 3 is where the fold takes them. See PLAN-bevel.
+  const curves: { id: number, points: Point[] }[] = [];
 
   const facets = { n, from, to, at, tension };
 
@@ -532,10 +537,10 @@ const shapedFold = remembered((
   const first = order === 'red'
     ? foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, null, depth)
     : foldShaped(fold, square, keep, named, curves, SQUARE, 0, false, null, depth);
-  const moved = movedIn({ lines: named, arcs: curves }, depth);
+  const moved = movedIn({ lines: named, corners: ends }, depth);
   const then = order === 'red'
-    ? foldShaped(first.shape, first.square, first.keep, moved.lines, moved.arcs, SQUARE, 0, false, deform, 0)
-    : foldShaped(first.shape, first.square, first.keep, moved.lines, moved.arcs, facets, bevel, held === 1, deform, 0);
+    ? foldShaped(first.shape, first.square, first.keep, moved.lines, curves, SQUARE, 0, false, deform, 0)
+    : foldShaped(first.shape, first.square, first.keep, moved.lines, curves, facets, bevel, held === 1, deform, 0);
 
   return { ...then, fades: [...first.fades, ...then.fades] };
 });
@@ -648,7 +653,7 @@ export function contributed(
   const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[], named: Named } => {
     const group = world.groups.get(id);
 
-    if (group === undefined) return { shape: [], keep: [], square: [], named: { lines: [], arcs: [] } };
+    if (group === undefined) return { shape: [], keep: [], square: [], named: { lines: [], corners: [] } };
 
     // Flat, at depth nought: for a scope whose effects are laid on its fold
     // before its depth. See `foldShaped`.
@@ -686,7 +691,7 @@ export function contributed(
     // names its straights and its arcs by these. See `namesOf`.
     const named = group.members
       .map(m => namedFrom(m, set, k))
-      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], arcs: [...all.arcs, ...n.arcs] }), { lines: [], arcs: [] } as Named);
+      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], corners: [...all.corners, ...n.corners] }), { lines: [], corners: [] } as Named);
 
     return { shape: keep.length === 0 ? union : keeping(union, keep), keep, square, named: movedIn(named, depth) };
   };
@@ -695,7 +700,7 @@ export function contributed(
    * own, and a scope's what its own fold came to. See `Named`. */
   const namedFrom = (id: Id, set: SetName, k: number): Named => {
     const it = mine.get(id);
-    const none: Named = { lines: [], arcs: [] };
+    const none: Named = { lines: [], corners: [] };
 
     if (it !== undefined) return slotOf(kindOf(it.polygon), set) === k ? namesOf(it) : none;
 
@@ -714,7 +719,7 @@ export function contributed(
     }
 
     return group.members.flatMap(m => [namedFrom(m, set, k)])
-      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], arcs: [...all.arcs, ...n.arcs] }), none);
+      .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], corners: [...all.corners, ...n.corners] }), none);
   };
 
   /** The points of what one member puts into slot `k` of `set` that are
@@ -828,8 +833,8 @@ export function contributed(
         settles,
         inside,
         slots.flatMap(u => u.keep),
-        slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b])),
-        slots.flatMap(u => u.named.arcs.flatMap(a => [a.id, a.points.length, ...a.points])),
+        slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b, l.amplitude])),
+        slots.flatMap(u => u.named.corners.flatMap(c => [c.id, c.at])),
         shapedBy,
         here!.depth,
       );
@@ -858,10 +863,10 @@ export function contributed(
     const square = rounded.square;
 
     // Its own, for a scope holding it: what its members published, moved in
-    // by its own depth. Its arcs are its own and have no ids to be named by.
+    // by its own depth. Its own round is its own and names nothing.
     named.set(key, movedIn(slots.reduce(
-      (all, u) => ({ lines: [...all.lines, ...u.named.lines], arcs: [...all.arcs, ...u.named.arcs] }),
-      { lines: [], arcs: [] } as Named,
+      (all, u) => ({ lines: [...all.lines, ...u.named.lines], corners: [...all.corners, ...u.named.corners] }),
+      { lines: [], corners: [] } as Named,
     ), here?.depth ?? 0));
 
     kept.set(key, keep);

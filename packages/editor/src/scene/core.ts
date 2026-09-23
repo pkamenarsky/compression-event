@@ -1314,54 +1314,62 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
  *
  * A straight of the fold lies on the line of exactly one member edge — the
  * arrangement cuts edges up and drops the pieces inside, but it never moves
- * one off its line — and a run of the fold that is a member's arc is that
- * arc's own points. So each comes up named by the corner it belongs to, and
- * the group's teeth are keyed and anchored by that name rather than by where
- * the piece happens to lie today.
+ * one off its line — and a corner of the fold that is a member's corner is
+ * that corner. So each comes up named by the corner it belongs to, and the
+ * group's teeth are keyed and anchored by that name rather than by where the
+ * piece happens to lie today.
+ *
+ * Amounts, not geometry: the round a corner asks for and the height the
+ * deform stands at along an edge, so that whoever holds the member can lay
+ * them once on the fold rather than finding them already drawn into it. See
+ * PLAN-bevel's step 1.
  *
  * In world units, as the member's projection is, and after its erosion: a
  * line is where the edge *is*, not where it was drawn.
  */
 export interface Named {
   /** A source edge, named by the corner it leaves: two points on its line,
-   * being where its ends are once its corners are rounded and eroded. */
-  lines: { id: VertexId, a: Point, b: Point }[]
-  /** A rounded corner's arc, named by that corner: its points in ring
-   * order. Nothing for a corner that is not rounded, or whose arc has no
-   * length. */
-  arcs: { id: VertexId, points: Point[] }[]
+   * being where its ends are once its corners are eroded, and how high the
+   * member's own deform stands along it. */
+  lines: { id: VertexId, a: Point, b: Point, amplitude: number }[]
+  /** A source corner, named by itself: where the erosion puts it, and the
+   * round it asks for. One point, not an arc — the member no longer rounds
+   * it, and whoever holds it rounds it once. Nothing for a corner that does
+   * not reach the projection. */
+  corners: { id: VertexId, at: Point, bevel: number, facets: Facets }[]
 }
 
 /**
- * `Named` for one resolved polygon: an entry per edge that reaches the
- * projection and per arc that has any length.
+ * `Named` for one resolved polygon: an entry per corner of the source that
+ * reaches the projection, and per edge between two of them.
  *
  * A tooth is not a corner of the source and names nothing; it belongs to the
- * edge its `root` names, and that edge's line runs from the arc at one end of
- * it to the arc at the other, which the teeth stand off but do not move.
+ * edge its `root` names, and that edge's line runs from the corner at one end
+ * of it to the corner at the other, which the teeth stand off but do not
+ * move.
  */
 export function namesOf(at: Omit<Resolved, 'shape'>): Named {
-  const lines: Named['lines'] = [], arcs: Named['arcs'] = [];
+  const lines: Named['lines'] = [], corners: Named['corners'] = [];
   const n = at.corners.length;
   const drawn = (i: number) => at.corners[i].root === undefined;
-  const im = imagesOf(at);
+  const fx = at.effected ?? null;
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
 
-  // Where each corner's arc lies, or the corner's own image where it has
-  // none: what an edge's ends are.
-  const run = (i: number): Point[] | null => {
-    if (im !== null) return im.corners[i];
+  // Where the erosion puts each corner of the source. Not what the effects
+  // draw there: the round is an amount now, published beside the point and
+  // laid by whoever holds it. See PLAN-bevel's step 1.
+  const ats = at.corners.map((_c, i) =>
+    (drawn(i) ? mitred(at.source, at.rings, i, at.depths?.[i] ?? at.erosion) : null));
 
-    const p = mitred(at.source, at.rings, i, at.depths?.[i] ?? at.erosion);
+  ats.forEach((p, i) => {
+    if (p === null) return;
 
-    return p === null ? null : [p];
-  };
-  const runs = at.corners.map((_c, i) => (drawn(i) ? run(i) : null));
-
-  runs.forEach((points, i) => {
-    if (points === null || points.length < 2 || points.every(p => same(p, points[0]))) return;
-
-    arcs.push({ id: at.corners[i].id, points });
+    corners.push({
+      id: at.corners[i].id,
+      at: p,
+      bevel: fx?.bevels[i] ?? 0,
+      facets: fx?.facets[i] ?? SQUARE,
+    });
   });
 
   for (let i = 0; i < n; i++) {
@@ -1372,26 +1380,21 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
 
     while (!drawn(j) && j !== i) j = nextOf(at.rings, n, j);
 
-    const mine = runs[i], theirs = runs[j];
+    const a = ats[i], b = ats[j];
 
-    if (mine === null || theirs === null) continue;
+    if (a === null || b === null || same(a, b)) continue;
 
-    const a = mine[mine.length - 1], b = theirs[0];
-
-    if (same(a, b)) continue;
-
-    lines.push({ id: at.corners[i].id, a, b });
+    lines.push({ id: at.corners[i].id, a, b, amplitude: fx?.deform?.after[i] ?? 0 });
   }
 
-  return { lines, arcs };
+  return { lines, corners };
 }
 
 /**
  * `Named` moved in by `depth`, the way the erosion moves what it names: a
  * line along its own normal, which is exactly where the erosion puts it, and
- * an arc's points each on the mitre of the two segments at it — the two
- * inside the run, and at its ends the line that leaves it, which is why the
- * lines and the arcs are moved together.
+ * a corner along the mitre of the two lines at it — which is why the lines
+ * and the corners are moved together.
  *
  * Out of the material is to the right of the way round, so in is to the left.
  */
@@ -1407,63 +1410,45 @@ export function movedIn(named: Named, depth: number): Named {
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
   const key = (p: Point) => `${p.x},${p.y}`;
 
-  // What leaves and arrives at an arc's ends: the lines `namesOf` laid from
-  // them, which share their points exactly.
+  // What leaves and arrives at a corner: the lines `namesOf` laid from it,
+  // which share its point exactly.
   const before = (p: Point) => named.lines.find(l => same(l.b, p)) ?? null;
   const after = (p: Point) => named.lines.find(l => same(l.a, p)) ?? null;
 
-  const arcs = named.arcs.map(arc => {
-    const ends = [before(arc.points[0]), after(arc.points[arc.points.length - 1])];
-    const ways = arc.points.map((p, i) => {
-      const a = i === 0 ? (ends[0] === null ? null : left(ends[0].a, ends[0].b)) : left(arc.points[i - 1], p);
-      const b = i === arc.points.length - 1
-        ? (ends[1] === null ? null : left(ends[1].a, ends[1].b))
-        : left(p, arc.points[i + 1]);
+  const corners = named.corners.map(c => {
+    const ends = [before(c.at), after(c.at)];
+    const ways = ends.map(l => (l === null ? null : left(l.a, l.b)));
+    const a = ways[0] ?? ways[1], b = ways[1] ?? ways[0];
 
-      return { a: a ?? b, b: b ?? a };
-    });
+    if (a === null || b === null) return c;
 
-    return {
-      id: arc.id,
-      points: arc.points.map((p, i) => {
-        const { a, b } = ways[i];
+    // The two offset lines meet on the bisector, as far out along it as the
+    // half angle between them makes it: `mitred`, for a point whose two ways
+    // are already normals.
+    const x = a.x + b.x, y = a.y + b.y, l = Math.hypot(x, y);
 
-        if (a === null || b === null) return p;
+    if (l === 0) return c;
 
-        // The two offset lines meet on the bisector, as far out along it as
-        // the half angle between them makes it: `mitred`, for a point whose
-        // two ways are already normals.
-        const x = a.x + b.x, y = a.y + b.y, l = Math.hypot(x, y);
+    const cos = Math.max(1e-6, l / 2);
 
-        if (l === 0) return p;
-
-        const cos = Math.max(1e-6, l / 2);
-
-        return { x: p.x + x / l * depth / cos, y: p.y + y / l * depth / cos };
-      }),
-    };
+    return { ...c, at: { x: c.at.x + x / l * depth / cos, y: c.at.y + y / l * depth / cos } };
   });
 
-  // A line ends where an arc does, and goes on doing: both are moved by the
+  // A line ends where a corner is, and goes on doing: both are moved by the
   // same mitre there, so a scope holding this one still finds its lines and
-  // its arcs by the points they share. Elsewhere a line moves by its own
+  // its corners by the points they share. Elsewhere a line moves by its own
   // normal, which is exactly where the erosion puts it.
   const ends = new Map<string, Point>();
 
-  named.arcs.forEach((arc, i) => {
-    const mine = arcs[i].points;
-
-    ends.set(key(arc.points[0]), mine[0]);
-    ends.set(key(arc.points[arc.points.length - 1]), mine[mine.length - 1]);
-  });
+  named.corners.forEach((c, i) => ends.set(key(c.at), corners[i].at));
 
   const lines = named.lines.flatMap(l => {
     const n = left(l.a, l.b);
 
-    return n === null ? [] : [{ id: l.id, a: ends.get(key(l.a)) ?? by(l.a, n), b: ends.get(key(l.b)) ?? by(l.b, n) }];
+    return n === null ? [] : [{ ...l, a: ends.get(key(l.a)) ?? by(l.a, n), b: ends.get(key(l.b)) ?? by(l.b, n) }];
   });
 
-  return { lines, arcs };
+  return { lines, corners };
 }
 
 /** The erosion alone: the first of the three, and all of it for a polygon

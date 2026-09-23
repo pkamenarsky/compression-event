@@ -207,6 +207,13 @@ function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points:
   const at = resolveAt(w, 0)[0];
   const names = namesOf(at);
 
+  // The arcs `namesOf` used to report, which a member no longer publishes:
+  // see PLAN-bevel's step 1. This route is about handing the fold arcs it
+  // must leave alone, so it asks the projection for them itself.
+  const im = imagesOf(at);
+  const curves = (im?.corners ?? [])
+    .flatMap((run, i) => (run === null || run.length < 2 ? [] : [{ id: at.corners[i].id, points: run }]));
+
   // Each source edge's half length, by the corner that names it.
   const halves = new Map<number, number>();
 
@@ -220,7 +227,7 @@ function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points:
     [],
     [],
     names.lines,
-    names.arcs,
+    curves,
     SQUARE,
     0,
     false,

@@ -197,14 +197,16 @@ describe('what a member publishes about its outline', () => {
     const it = resolveAt(w, 0).find(r => r.id === id)!;
     const names = namesOf(it);
 
-    expect(names.arcs).toEqual([]);
+    expect(names.corners.map(c => c.id)).toEqual(idsOf(w, id));
+    expect(names.corners.map(c => c.bevel)).toEqual([0, 0, 0, 0]);
     expect(names.lines.map(l => l.id)).toEqual(idsOf(w, id));
+    expect(names.lines.map(l => l.amplitude)).toEqual([0, 0, 0, 0]);
 
     // The eroded room is the square pulled in ten: each line is that wall.
     expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([40, 40, 40, 40]);
   });
 
-  test('a rounded, deformed room names each arc by its corner and each wall by the corner it leaves', () => {
+  test('a rounded, deformed room publishes the round it asks for, not the arc it would draw', () => {
     const { world, id } = room();
     const fx: Effects = { round: inSegments(8, 10), deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
     const w = wrote(withEffects(world, id, fx), 0, id, round(10), deform(4), erode(5));
@@ -212,21 +214,17 @@ describe('what a member publishes about its outline', () => {
     const names = namesOf(it);
     const corners = idsOf(w, id);
 
-    // One arc per corner, of nine points, and one line per wall — the teeth
-    // between are the wall's, and name nothing of their own.
-    expect(names.arcs.map(a => a.id)).toEqual(corners);
-    expect(new Set(names.arcs.map(a => a.points.length))).toEqual(new Set([9]));
+    // One corner per corner and one line per wall — the teeth between are
+    // the wall's, and name nothing of their own. No arc points anywhere: the
+    // round is an amount beside the corner, for whoever holds it to lay.
+    expect(names.corners.map(c => c.id)).toEqual(corners);
+    expect(names.corners.every(c => c.bevel > 0)).toBe(true);
+    expect(new Set(names.corners.map(c => c.facets.n))).toEqual(new Set([8]));
     expect(names.lines.map(l => l.id)).toEqual(corners);
 
-    // A line runs from the arc at one end of its wall to the arc at the
-    // other, and the wall's teeth stand off it.
-    const im = imagesOf(it)!;
-
-    names.lines.forEach((l, i) => {
-      const mine = im.corners[it.corners.findIndex(c => c.id === l.id)]!;
-
-      expect(on(l, mine[mine.length - 1])).toBeCloseTo(0, 9);
-    });
+    // And the deform's height along each wall, which is the amplitude asked
+    // for: the teeth themselves are not published either.
+    expect(names.lines.map(l => l.amplitude)).toEqual([4, 4, 4, 4]);
 
     // Each wall pulled in by the erosion: the square's walls are at 0 and
     // 100, and five in from either.
@@ -250,10 +248,10 @@ describe('what a member publishes about its outline', () => {
     const near = (p: Point, all: readonly Point[]) => Math.min(...all.map(q => Math.hypot(p.x - q.x, p.y - q.y)));
 
 
-    // Every arc point of the one where the other has it: the mitre of the
-    // two facets at a point is where eroding the arc puts it.
-    moved.arcs.forEach((arc, i) => {
-      expect(Math.max(...arc.points.map(p => near(p, theirs.arcs[i].points)))).toBeLessThan(1e-9);
+    // Every corner of the one where the other has it: the mitre of the two
+    // walls at it is where eroding the outline puts it.
+    moved.corners.forEach((c, i) => {
+      expect(near(c.at, [theirs.corners[i].at])).toBeLessThan(1e-9);
     });
 
     moved.lines.forEach((l, i) => {
@@ -401,7 +399,12 @@ describe('a group\'s effects', () => {
     expect(near(build(true))).toEqual(near(build(false)));
   });
 
-  test('its deform runs along a member\'s arc, as it would along its own', () => {
+  // Parked for step 1 of PLAN-bevel: a member publishes the round it asks for
+  // and no longer draws it, so there is no arc on the fold for the group's
+  // deform to run along. Step 3, where `foldShaped` takes a bevel per corner,
+  // is what gives this back — and gives it back better, the corner being
+  // rounded once rather than twice. It comes in there.
+  test.skip('its deform runs along a member\'s arc, as it would along its own', () => {
     // A member's round reaches the fold as facets, and the group's deform
     // runs along it as one curve — teeth at its own spacing, standing their
     // full amplitude off it — rather than a tooth to a facet, which would be

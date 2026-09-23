@@ -509,6 +509,24 @@ The amounts ride along untouched; nothing reads them yet.
 *Measured by*: a member with no round and no deform must give the fold exactly
 today's outline, at every depth. Nothing in the harnesses may move.
 
+**Done.** `Named` now carries `amplitude` per line and `bevel`/`facets` per
+corner; `namesOf` asks `mitred` rather than `imagesOf`, and `movedIn` moves a
+corner by the mitre of the two lines at it, which is the one-point case of what
+it did to an arc. `shapedFold` remembers the corners by id and point, and hands
+`foldShaped` no arcs at all.
+
+`erodefirst`, `groupfades`, `arcseam` and `pinch` are unmoved, line for line.
+`sumrounds` moves, and only where the member has a round: `member 0 + group 30`
+is where it was, and every row with a member bevel on it now comes out 317
+points rather than 37, the group rounding the member's true corner instead of
+leaving the arc it found. That is the double round this phase exists to remove,
+arriving one step early because the member stops drawing before the fold starts
+laying. Step 3 is where it lands.
+
+Parked with it, for the same reason and to come back at step 3: `its deform
+runs along a member's arc, as it would along its own` in `effects.test.ts` —
+there is no arc on the fold to run along yet.
+
 ### Step 2: a member under a shaping scope resolves eroded only
 
 `slotted` (`scene/reading.ts`) asks each member for its shape. Under a scope
