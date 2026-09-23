@@ -581,6 +581,42 @@ export function onBoundary(shape: Shape): (p: Point) => boolean {
 interface Band {
   inward: Shape
   outward: Shape
+  /** Where each point of each ring of `inward` came of, point for point. */
+  inwardFrom: Sweptfrom[][]
+  outwardFrom: Sweptfrom[][]
+  /** Which source wall the piece of band leaving each of those points is of. */
+  inwardAlong: Sweptfrom[][]
+  outwardAlong: Sweptfrom[][]
+}
+
+/**
+ * Which corner of the source a point of the band is, and the whole of what the
+ * sweep knows about provenance.
+ *
+ * There is nothing to match here and nothing to look up. A quad of the band is
+ * built out of two corners of one wall and the two places they moved to, so
+ * every point of it *is* one of those corners — where it started or where it
+ * went, which for identity is the same corner either way. Only the cut where a
+ * changing depth crosses zero is neither, and that one sits at a known `t`
+ * along a known wall.
+ *
+ * A point and the edge leaving it are two different questions, which is why the
+ * band answers them separately. The quad of a wall runs corner, corner, moved
+ * corner, moved corner — so its second point is the far corner of the wall
+ * while the edge leaving that point is the moved wall itself, which belongs to
+ * the near one. Naming an edge by the point it leaves is right for a ring that
+ * came out of an arrangement and wrong for a band, and the difference is the
+ * difference between a crossing on the moved wall having the same name as a
+ * crossing on the wall it moved from, and not.
+ *
+ * Nothing reads it but `sweptBand`'s caller; `offset` throws it away.
+ */
+export interface Sweptfrom {
+  ring: number
+  index: number
+  /** How far along the wall leaving `index`, where the point is not the corner
+   * itself. */
+  t?: number
 }
 
 /** Where each corner goes: `depth` from both of the walls meeting there. */
@@ -632,7 +668,14 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
  * at the crossing first, because the two halves are not the same operation.
  */
 function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
-  const out: Band = { inward: [], outward: [] };
+  const out: Band = {
+    inward: [],
+    outward: [],
+    inwardFrom: [],
+    outwardFrom: [],
+    inwardAlong: [],
+    outwardAlong: [],
+  };
 
   // A depth this side of the arrangement's own snap is no depth at all, and
   // saying so here is what keeps the answer from depending on the frame it was
@@ -656,19 +699,44 @@ function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
     return Math.abs(d) <= eps ? 0 : d;
   };
 
-  for (let r = 0; r < shape.length; r++) sweep(shape[r], i => at(r, i), out);
+  for (let r = 0; r < shape.length; r++) sweep(shape[r], r, i => at(r, i), out);
 
   return out;
 }
 
 /** One ring's worth of it, into `out`. */
-function sweep(ring: Ring, depth: (i: number) => number, out: Band): void {
+function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): void {
   const moved = corners(ring, depth);
   const n = ring.length;
 
-  const emit = (ring: Ring, side: number): void => {
-    if (side > 0) out.inward.push(ccw(ring));
-    else if (side < 0) out.outward.push(ccw(ring));
+  /**
+   * A piece of band, wound the way the fill wants it and with its provenance
+   * turned with it.
+   *
+   * Turning a ring round moves every point along by nothing and every *edge*
+   * along by one: the edge leaving the last point of the reversed ring is the
+   * one that arrived at the first point of the ring it came from. So the
+   * points reverse and the edges reverse and then step round by one, which is
+   * what the shift is.
+   */
+  const emit = (piece: Ring, from: Sweptfrom[], along: Sweptfrom[], side: number): void => {
+    const turn = !isCCW(piece);
+    const ring = turn ? [...piece].reverse() : piece;
+    const whence = turn ? [...from].reverse() : from;
+    const walls = turn ? [...along].reverse() : along;
+
+    if (turn) walls.push(walls.shift()!);
+
+    if (side > 0) {
+      out.inward.push(ring);
+      out.inwardFrom.push(whence);
+      out.inwardAlong.push(walls);
+    }
+    else if (side < 0) {
+      out.outward.push(ring);
+      out.outwardFrom.push(whence);
+      out.outwardAlong.push(walls);
+    }
   };
 
   /**
@@ -683,19 +751,31 @@ function sweep(ring: Ring, depth: (i: number) => number, out: Band): void {
    * supposed to open up disappears instead. Only a fold needs the diagonal,
    * because a bowtie filled as one ring cancels a lobe against the other.
    */
-  const put3 = (a: Point, b: Point, c: Point, side: number): void => {
-    emit([a, b, c], side);
+  const put3 = (
+    a: Point, b: Point, c: Point,
+    from: Sweptfrom[],
+    along: Sweptfrom[],
+    side: number,
+  ): void => {
+    emit([a, b, c], from, along, side);
   };
 
-  const put = (a: Point, b: Point, c: Point, d: Point, side: number): void => {
+  const put = (
+    a: Point, b: Point, c: Point, d: Point,
+    from: Sweptfrom[],
+    along: Sweptfrom[],
+    side: number,
+  ): void => {
     if (crossing(a, b, c, d) || crossing(b, c, d, a)) {
-      emit([a, b, c], side);
-      emit([a, c, d], side);
+      // The diagonal is the band's own and belongs to no wall; it takes the
+      // wall of the point it leaves, which is the one it is inside of.
+      emit([a, b, c], [from[0], from[1], from[2]], [along[0], along[1], along[2]], side);
+      emit([a, c, d], [from[0], from[2], from[3]], [along[0], along[2], along[3]], side);
 
       return;
     }
 
-    emit([a, b, c, d], side);
+    emit([a, b, c, d], from, along, side);
   };
 
   for (let i = 0; i < n; i++) {
@@ -704,6 +784,9 @@ function sweep(ring: Ring, depth: (i: number) => number, out: Band): void {
     const da = depth(i), db = depth(j);
 
     if (da === 0 && db === 0) continue;
+
+    const near: Sweptfrom = { ring: r, index: i };
+    const far: Sweptfrom = { ring: r, index: j };
 
     if (da * db < 0) {
       // Where the moved wall crosses the wall it came from — the one place
@@ -715,15 +798,24 @@ function sweep(ring: Ring, depth: (i: number) => number, out: Band): void {
       const x = met(a, b, moved[i], moved[j]);
 
       if (x !== null) {
-        put3(a, x, moved[i], da);
-        put3(x, b, moved[j], db);
+        const at: Sweptfrom = { ring: r, index: i, t: fraction(a, b, x) };
+
+        put3(a, x, moved[i], [near, at, near], [near, near, near], da);
+        put3(x, b, moved[j], [at, far, far], [near, far, near], db);
         continue;
       }
     }
 
     const side = da !== 0 ? da : db;
 
-    put(a, b, moved[j], moved[i], side);
+    // The wall, its far corner, and the two places they went. Every edge of it
+    // is the wall itself but for the one capping the far corner.
+    put(
+      a, b, moved[j], moved[i],
+      [near, far, far, near],
+      [near, far, near, near],
+      side,
+    );
   }
 }
 
@@ -757,6 +849,18 @@ function crossing(a: Point, b: Point, c: Point, d: Point): boolean {
 
 /** The material left when the boundary has swept `swept`: what it covered on
  * the way in is gone, what it covered on the way out is ground. */
+/**
+ * The band a uniform depth sweeps, and where each of its points came of: what
+ * `erode` builds and throws away, handed over whole instead.
+ *
+ * `erode` is an arrangement between the shape and this, so a caller that wants
+ * identity through an erosion wants exactly these two operands and their names.
+ * See `eroding` in `effect.ts`, which is the only caller.
+ */
+export function sweptBand(shape: Cut, depth: number): Band {
+  return swept(shape, () => depth);
+}
+
 function offset(shape: Cut, swept: Band): Cut {
   let out: Cut = shape;
 

@@ -73,7 +73,8 @@ describe('names', () => {
 describe('the arrangement carries them', () => {
   const a: Shape = [rect(0, 0, 100, 100)];
   const b = (dx: number): Shape => [rect(50 + dx, 50, 100, 100)];
-  const union = (dx: number) => combineIdentified(a, identify(a, 0), b(dx), identify(b(dx), 1), OpUnion);
+  const drawn = (shape: Shape, member: number) => ({ shape, ids: identify(shape, member) });
+  const union = (dx: number) => combineIdentified(drawn(a, 0), drawn(b(dx), 1), OpUnion);
 
   test('every point of the answer has exactly one name', () => {
     const r = union(0);
@@ -109,7 +110,7 @@ describe('the arrangement carries them', () => {
     const far: Shape = [rect(9000, -4000, 250, 250)];
     const over: Shape = [rect(9125, -3875, 250, 250)];
 
-    expect(names(combineIdentified(far, identify(far, 0), over, identify(over, 1), OpUnion)))
+    expect(names(combineIdentified(drawn(far, 0), drawn(over, 1), OpUnion)))
       .toEqual(names(union(0)));
   });
 
@@ -120,7 +121,7 @@ describe('the arrangement carries them', () => {
   test('a subtraction names its points the same way', () => {
     const room: Shape = [rect(0, 0, 200, 100)];
     const bite: Shape = [rect(80, -20, 40, 60)];
-    const r = combineIdentified(room, identify(room, 0), bite, identify(bite, 1), OpSubtract);
+    const r = combineIdentified(drawn(room, 0), drawn(bite, 1), OpSubtract);
     const said = names(r).flat();
 
     expect(said).toContain('(0.0×1.1)');
@@ -134,7 +135,7 @@ describe('the arrangement carries them', () => {
     // deep, which is what lets a corner be followed through a group.
     const first = union(0);
     const c: Shape = [rect(120, 30, 12, 200)];
-    const r = combineIdentified(first.shape, first.ids, c, identify(c, 2), OpSubtract);
+    const r = combineIdentified(first, drawn(c, 2), OpSubtract);
     const said = names(r).flat();
 
     expect(said).toContain('((0.1×1.0)×2.1)');

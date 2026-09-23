@@ -123,6 +123,22 @@ export function identify(shape: Shape, member: number): Ids {
 }
 
 /**
+ * A shape and a name for each of its points.
+ *
+ * `edges` is there because a point and the edge leaving it are two different
+ * questions, and for everything an arrangement hands back they have the same
+ * answer — a walked ring's edge `i` runs from its vertex `i`. Only a shape
+ * somebody constructed, the band of an offset being the one so far, has an
+ * edge belonging to a corner other than the one it starts at. Left out, it is
+ * the names.
+ */
+export interface Drawn {
+  shape: Shape
+  ids: Ids
+  edges?: Ids
+}
+
+/**
  * `combine`, carrying identity through the arrangement — which is Law 2 of
  * `PLAN-effect` at the level it actually lives at.
  *
@@ -131,20 +147,14 @@ export function identify(shape: Shape, member: number): Ids {
  * of. All this does is read those names as identities: a vertex keeps the one
  * it arrived with, and a crossing is `born` of the two edges that made it.
  *
- * An edge is named by the point it leaves, edges and vertices sharing a
- * numbering throughout the arrangement.
+ * What comes back is walked, so its own edges leave its own points and it needs
+ * no `edges` of its own.
  */
-export function combineIdentified(
-  a: Shape,
-  ai: Ids,
-  b: Shape,
-  bi: Ids,
-  op: Op,
-): { shape: Cut, ids: Ids } {
-  const tagged = combineTagged(a, b, op);
+export function combineIdentified(a: Drawn, b: Drawn, op: Op): Drawn {
+  const tagged = combineTagged(a.shape, b.shape, op);
 
-  const of = (ref: SourceRef): Ident => {
-    const got = (ref.shape === 0 ? ai : bi)[ref.ring]?.[ref.index];
+  const at = (ref: SourceRef): Ident => {
+    const got = (ref.shape === 0 ? a : b).ids[ref.ring]?.[ref.index];
 
     if (got === undefined) {
       throw new Error(`no identity for ${ref.shape}.${ref.ring}.${ref.index}`);
@@ -153,8 +163,14 @@ export function combineIdentified(
     return got;
   };
 
+  const leaving = (ref: SourceRef): Ident => {
+    const it = ref.shape === 0 ? a : b;
+
+    return it.edges === undefined ? at(ref) : it.edges[ref.ring][ref.index];
+  };
+
   const named = (tag: Tag): Ident =>
-    (tag.kind === 'vertex' ? of(tag.at) : born(of(tag.a), of(tag.b)));
+    (tag.kind === 'vertex' ? at(tag.at) : born(leaving(tag.a), leaving(tag.b)));
 
   return {
     shape: tagged.rings as Cut,
