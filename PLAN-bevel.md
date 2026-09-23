@@ -1059,11 +1059,45 @@ of each against its still.
    The third is worse because the far end's whole pattern then arrives at
    once; holding it apart also puts the baked far end at odds with the
    editor's. Wherever it is put, it is the same event, and the only question
-   is what happens across it. What fixes it is what the fold already does for
-   a flat tooth (*2.9* piece 5): lay both patterns and fade one into the
-   other, so a wall splitting is a span and not an instant. That is a look
-   decision as much as a bake one — teeth double up in the middle of it — and
-   is the next thing to settle.
+   is what happens across it.
+
+   **Both ends are already right, and it is the middle that is wrong.** With
+   an invented corner naming nothing, the near end is one wall with one
+   pattern, which is the editor's v0, and the far end is two walls with two,
+   which is the editor's v1. What the span has no answer for is `t` between
+   them: `effectsOver` drops `apart` when it blends, so the far naming is in
+   force from the first instant.
+
+   **What the old order did, exactly.** Not a fade — a *slide* and a fade
+   together. A tooth was a corner, so `merged` took the union of the two
+   ends' ids and `budding` gave each end the ones it lacked, seeded between
+   their neighbours, which for a tooth is on the wall and therefore flat and
+   invisible. Then the span lerped every one: the teeth both ends share slide
+   from their whole-wall places to their half-wall places, the ones the wall
+   loses sink into it, and the ones it gains grow out. The still at either end
+   is untouched, because a seeded tooth is flat.
+
+   So a wall splitting was a cross-fade in the old order too. It has to be:
+   the author's pattern on one wall and the author's two patterns on its
+   halves are different geometry, and any continuous morph between them shows
+   both for a while. This is not a look question after all, and not something
+   *C* introduced — what *C* loses is only that teeth are no longer corners,
+   so nothing does it for them.
+
+   **The mechanism, then**, is to lay both namings and weight each by where
+   the span is: the near naming at `1 - t`, the far at `t`. At the ends one
+   set stands full and the other at nought, so each still is the editor's; in
+   between both are there, each at its own height. It is worth writing down
+   why this is the same thing as budding and not merely like it — a lerp of
+   the two ends gives every tooth a linear ramp, full to nought or nought to
+   full, which is exactly that weighting. So the derived middle agrees with
+   the lerp of the ends, which is the one thing `drift` asks for and the whole
+   reason the stretch cannot be cut fine enough today.
+
+   The work: `effectsOver` keeps both ends' `apart` rather than dropping it,
+   and `foldShaped` lays a second pattern where the two namings differ. Where
+   they agree — everything but a corner arriving or leaving — nothing changes
+   and nothing is laid twice.
 
    The invented corner naming nothing is right on its own terms and is in:
    it sits wherever its neighbours put it, and the arcs beside it are already
