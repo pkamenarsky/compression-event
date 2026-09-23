@@ -542,6 +542,19 @@ cases the group's outline is the polygon rounded by the *member's* amount alone,
 to 3e-14. The group's bevel is not diminished, not averaged and not clipped: it
 is gone.
 
+**And it is one line.** `foldShaped`, in `geometry.ts`:
+
+```ts
+const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
+```
+
+`mine[i]` is the member arc the ring point lies on, and a point on one takes a
+bevel of nought. So a corner a member has rounded is not rounded again — the
+group's round reaches only the corners no member published an arc for, which in
+a group whose members round themselves is the joins and nothing else. It is not
+a law that loses an argument; it is a rule that says the second round does not
+apply, and at every amount, every angle and every facet count it holds exactly.
+
 **And it goes at the first hundredth of a unit.** Group 30, and the room
 rounded by nought draws R(30); by 0.01 it draws R(0.01), which is 7.95 away.
 There is no ramp between them.
