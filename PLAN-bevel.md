@@ -1234,6 +1234,53 @@ what it replaces: today's arc teeth carry `CRAMMED`, `ArcTeeth.seen` and the
 drawn-against-seen handling to get where they are, and come out worse on five
 spans of seven. Whether the residual is worth chasing is a question for when
 the pipeline is moved and there is a real bake to count.
+### 3.8 Where phase 3 stands
+
+On `phase3-deform-last`, which is green — 1065 pass, 7 more skipped than on
+master — with `tsc` and `pnpm build` clean. Off master because one thing pops
+that did not before, and it is visible in the editor.
+
+**In, and working.**
+
+- `deformedAt` no longer subdivides. A polygon's standing corners are the ones
+  it was drawn with, and `imagedBy` rounds them, erodes that, and lays the
+  teeth on what comes out. `Vertex.root` is dead in every path a polygon takes.
+- The step is `foldShaped`, which phase 2 already wrote: a shape out of an
+  arrangement, cleaned to its corners, each run named and toothed. Its round
+  and its erosion switch off by their own arguments, so the polygon's call is
+  the same one with nought in those two places.
+- `Effected` is kept for a deform with no round, which before had nowhere to
+  be because the teeth were already corners.
+- A pattern runs along the line that names it, not between two ring points
+  (`Laying.at`, `Laying.of`), so a run bending in the middle neither shortens
+  it nor moves a tooth.
+- A polygon names its runs from `owner` rather than by matching lines. A
+  corner the bake invented names no wall, and the sliver arc it is rounded
+  into does not break the run through it.
+- `patternRun` has `reach`; an edge can carry more than one pattern; both
+  namings of a splitting wall are laid and weighted by where the span is.
+
+**The one thing wrong.** `rounded as well, its outline never pops` stands at a
+worst step of 6.21 against a bar of 0.5. Measured to the nearest segment it is
+a single instant: 4.36 from `t` nought to a fortieth, and 2.0 at every step
+after, which is the rate the arriving corner itself moves. At that instant the
+ring goes from 62 points to 101 as the second naming's teeth arrive. It is not
+the naming, the runs, or the weights — each of those was suspected, fixed, and
+left the number where it was.
+
+**Parked, with what replaces them written at each.** Three in `effects.test.ts`
+that go with the machinery *3.4* takes out, one of them false by design now
+since a straight and an arc are one kind of run. Four in `bake.test.ts` that
+are this defect and its neighbours.
+
+**Not started.** *3.2*'s pinch, the `reach` note in *3.3*, the group (*3.6*
+piece 7), and the removals of *3.4*.
+
+**What to do next.** Find the first instant's 62-to-101 and nothing else.
+Four passes have each found something real — `apart` dropped by the blend, the
+run being the wrong unit, the naming being matched rather than known, an
+apart corner's sliver breaking a run — and none of them was this. So confirm
+against that point count before building anything on a theory of it.
 
 ## Open questions
 
