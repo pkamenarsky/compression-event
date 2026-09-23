@@ -210,12 +210,40 @@ the module graph, see `CLAUDE.md`.
 **0. The laws, red.** Done: `laws.test.ts`, nine red and two green controls.
 The number that goes green is how every step below is measured.
 
-**1. Settle the bake's linearity, on paper and in a test.** Whether a span
-stretches under a fold of maps each linear in its own amount. Write it as a
-property: a world at two keyframes, the ring at an instant between them taken
-by stretching against the ring taken by resolving there. If this does not hold
-the design changes here, before anything is built on it, and nothing below is
-worth starting until it is answered.
+**1. Settle the bake's linearity, on paper and in a test.** Done, and the
+answer is yes: `linearity.test.ts`.
+
+Not by pairing points — two instants hand back different rings with different
+numbers of points, and pairing them is what the design is getting rid of. The
+boundary is read as a *field* instead, signed distance at a probe, and the
+number taken is the second difference across a stretch, which is twice the
+error a lerp makes in the middle of it. Nought is affine, `h²` is smooth, `h`
+is a kink, and not shrinking is a jump. The probes are the middles of the
+facets and not the corners: an offset slides a corner along its own bisector,
+so a probe sitting on one reads a `|t|` where the boundary is doing nothing of
+the kind, and probing corners puts a first-order floor under everything and
+measures only itself.
+
+What it found:
+
+- **Each step is affine in its own amount, to machine precision.** Not nearly:
+  a point of a dilated boundary lies either on a translate of an edge, whose
+  line moves by exactly `b` along its normal, or on an arc of radius `b` about
+  a corner, whose distance from a fixed probe is `|p - v| - b`. So dilation
+  moves the field by `-b` outright and erosion by `+b`, whatever the shape.
+- **The opening is affine too**, which it had no right to be, wherever no
+  feature changes across the stretch.
+- **The fold of them is smooth**, and it is non-smooth only where the nearest
+  feature changes — a notch closing, a ring going. Which is to say only at
+  events, which is what a stretch boundary already is.
+- **`round(max(a, b))` kinks where the two amounts cross**, and stays first
+  order however far the ladder is run. The bisection still converges; the
+  crossing is one instant per pair of rounds per span, and it is known from the
+  keyframes outright rather than having to be hunted for. **Nothing in the
+  design changes for it.**
+
+So the proof `PLAN-bevel` had from summed amounts is re-made in the fold's own
+form, and the rest of the plan may be built.
 
 **2. `Ids`, interned, and the identity a shape carries.** The type, the
 interning, and `combine` carrying it through a boolean op — which is Law 2 on
