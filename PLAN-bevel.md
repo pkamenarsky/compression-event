@@ -455,7 +455,35 @@ today wherever `held` is on. `Options['round'].held` and the tick beside it go.
 *Measured by*: `deformlast`'s table must not regress, and `divergence` must hold
 its tolerance on every world in it.
 
-### Step 7: the pinch
+### Step 7: the pinch — optional, and measured
+
+**It is not necessary.** `experiments/pinch.test.ts` erodes a room with teeth
+and without, a polygon already laying its teeth last:
+
+| depth | amplitude | stretches | jumps | points, 0 → ½ → 0.9 → 1 |
+|---|---|---|---|---|
+| 40 | 0 | 157 | 36 | 84 → 38 → 21 → 45 |
+| 40 | 6 | 430 | 83 | 91 → 85 → 63 → 62 |
+| 80 | 0 | 166 | 40 | 84 → 21 → 13 → **29** |
+| 80 | 6 | 566 | 118 | 91 → 62 → 28 → **29** |
+| 80 | 14 | 595 | 124 | 91 → 61 → 28 → **29** |
+
+**The arrangement eats the teeth on its own.** At the end of a deep span the
+outline has the same points with teeth as without — 29 at a depth of 80, 21 at
+95 — because a wall thin enough loses its teeth to the crossing whether they
+were eroded or not. 3.2's 38 → 38 → 38 → 42 was the geometry `imagedBy` makes,
+not the outline the arrangement returns. So nothing runs away, and doubling the
+amplitude costs five per cent.
+
+**What it would buy is the middle and the bill.** Halfway into a depth of 80 the
+toothed outline holds 62 points against 21, which is the look question; and
+teeth cost about three times the stretches and the jumps for the whole span,
+which a fade to nothing would quiet over its second half.
+
+So this is an economy and a look, to be taken when the rest is in and judged in
+the browser — not a correctness step, and nothing above depends on it.
+
+### How it would be done
 
 Teeth laid after the erosion are not eroded, so nothing makes a tooth vanish as
 the walls thicken. Three things this is *not*, each checked rather than assumed:
