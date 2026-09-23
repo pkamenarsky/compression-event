@@ -1458,6 +1458,12 @@ function invented(
     return [
       ...slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : [])),
       ...facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p),
+
+      // And its teeth lying flat at this end — a pattern still at nought
+      // amplitude, or a tooth at a run's end with no room left. They do not
+      // turn, so the arrangement drops them unless asked, and the ring would
+      // be shorter at the end than it is in between.
+      ...(imagesOf({ ...at, rings })?.flat ?? []),
     ];
   }
 
@@ -1583,7 +1589,32 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
  * `groupFading`.
  */
 function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
-  return m.effected === null ? fadingCorners(m, it, t) : [...fadingSlots(m, it, t), ...facetsFading(it)];
+  return m.effected === null
+    ? fadingCorners(m, it, t)
+    : [...fadingSlots(m, it, t), ...facetsFading(it), ...teethFading(it)];
+}
+
+/**
+ * Its teeth lying flat at this instant, each with nothing standing on it.
+ *
+ * A tooth at nought amplitude, or at a run's end with no room left, is a
+ * point of the ring that does not turn — so the wall stands no vertical there
+ * and `faded` reads it as nothing anyway. What this adds is the *reason*:
+ * without a fade behind it, a point that turns at one end of a stretch and
+ * not at the other is a corner `explained` cannot account for, and the bake
+ * cuts an event rather than letting the line fade in. A deform coming up out
+ * of nothing is the whole span of that, and it was pinning two jumps at the
+ * first instant and cutting the span into twelve.
+ *
+ * Only where they are flat, which is an end of the span: `explained` asks
+ * only that one of a stretch's two ends knows about the point, and in between
+ * the teeth turn and need no excuse. The same points `invented` keeps, for
+ * the same reason and at the same instants. See `FoldShaped.fades`.
+ */
+function teethFading(it: Omit<Resolved, 'shape'>): Fade[] {
+  const flat = imagesOf(it)?.flat;
+
+  return flat === undefined ? [] : flat.map(p => ({ p, v: 0 }));
 }
 
 /** Where its arcs' points are on their facets at one end of the span or the

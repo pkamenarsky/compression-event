@@ -1212,7 +1212,14 @@ const imagedBy = remembered((
     over: other === null ? undefined : { ...other, naming: namingBy(far, other.lines) },
   }, 0);
 
-  return { shape: laid.shape, ...rest };
+  // The teeth lying flat in it, which `simplify` takes out of the shape for
+  // not turning: put back, so the ring keeps its points while a pattern comes
+  // up out of nothing or a run's end takes one away. The fold does the same
+  // with what its slots published. See `FoldShaped.fades`.
+  const lying = laid.fades.filter(f => f.v === 0).map(f => f.p);
+
+
+  return { shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying), ...rest, flat: lying };
 });
 
 /** The noise's name for a corner's arc: its own, told apart from the edge it
@@ -1245,6 +1252,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
     shape: im.shape.map(ring => place(at.frame, ring)),
     corners: im.corners.map(run),
     teeth: place(at.frame, im.teeth ?? []),
+    flat: place(at.frame, im.flat ?? []),
     drawn: (im.drawn ?? []).map(r => place(at.frame, r)),
     rest: im.rest.map(r => place(at.frame, r)),
     restSquare: im.restSquare,

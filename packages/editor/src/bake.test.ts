@@ -2422,13 +2422,12 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  // PHASE 3: parked until the bake meets the teeth in the projection rather
-  // than among the corners — the order of work's pieces 3 and 4. The teeth are
-  // laid after the erosion now, so `spanning` writes the two ends over corners
-  // that no longer have them, and a span cannot carry a tooth across. What
-  // "done" looks like is these four passing again, and in particular this
-  // one's worst step back under 0.5 from the 3.97 it stands at.
-  test.skip('a deform starting from nought fades its verticals in', () => {
+  test('a deform starting from nought fades its verticals in', () => {
+    // Its teeth stand in the ring from the start, flat on the walls where the
+    // amplitude is nought, exactly as a group's do — and each carries a fade
+    // saying so, without which a point that turns at one end of a stretch and
+    // not at the other is a corner `explained` cannot account for.
+
     const { world, id } = room(ZIGZAG);
     const w = wrote(world, 1, id, deform(10));
     const span = run(bakeSpan(w, 0));
@@ -2567,8 +2566,7 @@ describe('effects', () => {
     // nothing complains and the events between them are simply never looked
     // for. See PLAN-bevel 3.3.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(112, -22, 100, 100)]);
-    const fx = new Map(ids.map(id => [id, ZIGZAG] as const));
-    let w = { ...world, effects: fx };
+    let w: World = { ...world, effects: new Map(ids.map(id => [id, ZIGZAG] as const)) };
 
     // Nothing moves: the amplitude alone comes up, so the boxes are the two
     // rects and the probes' own step is nought.

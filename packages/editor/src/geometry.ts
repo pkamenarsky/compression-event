@@ -4559,6 +4559,14 @@ export interface Imaged {
   /** The teeth along the arcs, where a polygon's effects laid any: see
    * `outlineOf`. */
   teeth?: Point[]
+  /**
+   * Its teeth lying flat: standing at nought amplitude, or at a run's end
+   * with no room left. They are points of the ring that do not turn, so the
+   * shape is only theirs because `imagedBy` put them back, and the bake needs
+   * them by name to fade their lines in over the stretch they come up
+   * through. See `FoldShaped.fades`.
+   */
+  flat?: Point[]
   /** Each corner's arc as it is drawn, before the erosion, where a polygon's
    * effects drew one: see `outlineOf`. */
   drawn?: Point[][]
