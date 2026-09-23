@@ -352,11 +352,36 @@ characters. The handles stay integers and comparing two is still comparing two
 numbers; it is the interning that pays. Nothing in the editor nests that deep,
 but the bake is where it would show.
 
-**6. `deform` as an `Effect`.** Teeth laid along the ring by arc length from an
-anchor that is an identity and an offset, rather than by the per-edge parallel
-arrays. The pattern's anchoring rules from `PLAN-bevel.md` 2.1 and 2.4 carry
-over unchanged; what changes is that they are read off an identity instead of
-off a published line.
+**6. `deform` as an `Effect`.** Done: `deforming` in `effect.ts`. Teeth laid
+along the ring by arc length between the points a construction turned the
+boundary at — the same runs the resample calls anchors. `patternRun` carries
+over unchanged and does all the work it did; the per-edge parallel arrays do
+not come with it.
+
+2.1 carries over word for word, with the run's anchor standing in for the
+lowest-ranked member edge: one name to a run, teeth from that name's middle
+across the whole of it, two members side by side along one wall getting one
+pattern across the join. The name is an identity, so nothing about it can flip
+as members slide past one another — which is what rank was there to prevent,
+and the reason rank is no longer needed.
+
+2.4 is `tooth(run, j)`, **a fourth construction, and the one thing here the
+plan did not list**. `on(run, t)` would have slid every tooth the moment a
+neighbour moved; a number does not, and tooth `j` is tooth `j` whatever the
+run's ends do. `reach`, `clear`, and carrying a source length through an
+erosion go with it: a deform is a step of the fold, it lays its teeth on the
+ring in front of it, and whatever runs after carries them as points like any
+others rather than laying them again.
+
+An arc takes its teeth as a wall does, keeping its own facets between them. So
+`ArcTeeth`, `drawnBevels`, `CRAMMED` and `ArcTeeth.seen` answer a question that
+no longer exists — an arc is more of the ring — and they join the list at step
+8.
+
+Measured: a wall grown through forty units gains two teeth and each of them
+arrives standing flat on the wall, so nothing pops; teeth tall enough to cut a
+room in two come back as thirteen rings whose crossings are named of the walls
+that crossed.
 
 **7. The fold, behind the present signature.** `resolve` becomes the reduce
 above, with `project` kept as the door so the editor and the bake do not move
