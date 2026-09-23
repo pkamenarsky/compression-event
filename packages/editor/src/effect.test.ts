@@ -17,8 +17,8 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { OpSubtract, Shape, erode, shapeArea, simplify } from './geometry';
-import { eroding, resampled } from './effect';
+import { OpSubtract, Shape, along, erode, rounded, shapeArea, simplify } from './geometry';
+import { dilating, eroding, resampled, rounding } from './effect';
 import { Drawn, Ident, combineIdentified, corner, identify, on, shows } from './ids';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -264,6 +264,170 @@ describe('the canonical resample', () => {
 
   test('every point still has exactly one name', () => {
     const r = resampled(disc(128), 2);
+
+    expect(r.ids.length).toBe(r.shape.length);
+    r.shape.forEach((ring, i) => expect(r.ids[i].length).toBe(ring.length));
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The round, as the opening
+//
+// Held against two things. Against the circle it claims to be, which is what
+// `circled` is: a rounded square of true arcs, worked out rather than drawn.
+// And against `arcsWith`, which is what the editor draws today and is the look
+// that must not change — held, and found to differ, for a reason worth writing
+// down.
+// -----------------------------------------------------------------------------
+
+/** A square of side `w` with every corner a true arc of radius `b`. */
+function circled(w: number, b: number): Point[] {
+  const out: Point[] = [];
+  const about: [number, number, number][] = [
+    [w - b, w - b, 0], [b, w - b, Math.PI / 2], [b, b, Math.PI], [w - b, b, -Math.PI / 2],
+  ];
+
+  for (const [cx, cy, from] of about) {
+    for (let k = 0; k <= 64; k++) {
+      const a = from + (k / 64) * (Math.PI / 2);
+
+      out.push({ x: cx + Math.cos(a) * b, y: cy + Math.sin(a) * b });
+    }
+  }
+
+  return out;
+}
+
+/** How far the two outlines are from one another, either way about: the most
+ * any point of each is from the nearest wall of the other. */
+function apart(a: readonly Point[], b: readonly Point[]): number {
+  const to = (p: Point, ring: readonly Point[]) => Math.min(...ring.map((q, i) => {
+    const w = along(q, ring[(i + 1) % ring.length], p);
+
+    return Math.hypot(p.x - w.x, p.y - w.y);
+  }));
+
+  return Math.max(
+    Math.max(...a.map(p => to(p, b))),
+    Math.max(...b.map(p => to(p, a))),
+  );
+}
+
+const L: Shape = [[
+  { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 60 },
+  { x: 80, y: 60 }, { x: 80, y: 160 }, { x: 0, y: 160 },
+]];
+
+describe('the dilation', () => {
+  test('is the Minkowski sum, to the accuracy it was asked for', () => {
+    // A square grown by `by` is the square, four slabs and a disc.
+    for (const by of [5, 20]) {
+      const r = dilating(by, 0.2)(drawn([rect(0, 0, 200, 200)], 0));
+      const want = 200 * 200 + 4 * 200 * by + Math.PI * by * by;
+
+      expect(shapeArea(r.shape)).toBeGreaterThan(want * 0.999);
+      expect(shapeArea(r.shape)).toBeLessThan(want);
+    }
+  });
+
+  test('a wall keeps its name and a corner becomes its own arc', () => {
+    const said = dilating(20, 5)(drawn([rect(0, 0, 200, 200)], 0)).ids[0].map(shows);
+
+    // Every point of it is either an end of an arc or a point along one, and
+    // every arc is about the corner it was laid on.
+    expect(said.every(s => /^0\.[0-3]@/.test(s))).toBe(true);
+    expect(said).toContain('0.0@0');
+    expect(said).toContain('0.0@1');
+  });
+
+  test('and nothing is asked of it at nought', () => {
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+
+    expect(dilating(0, 1)(it)).toBe(it);
+  });
+});
+
+describe('the round', () => {
+  test('is the circle it says it is', () => {
+    for (const by of [10, 20, 50]) {
+      const r = rounding(by, 0.5)(drawn([rect(0, 0, 200, 200)], 0));
+
+      expect(apart(r.shape[0], circled(200, by))).toBeLessThan(0.5);
+    }
+  });
+
+  test('which is not quite what `arcsWith` draws, and that is `arcsWith`', () => {
+    // The old round is a tension curve and not an arc, and it sits further
+    // from a true circle the bigger the bevel gets — which is the whole of the
+    // difference between the two. A rounded square still reads as a rounded
+    // square; it reads as one more exactly than it did.
+    for (const by of [10, 20, 50]) {
+      const square = rect(0, 0, 200, 200);
+      const mine = rounding(by, 0.5)(drawn([square], 0)).shape[0];
+      const was = rounded(square, () => by, 24);
+      const truth = circled(200, by);
+
+      expect(apart(mine, truth)).toBeLessThan(apart(was, truth) / 3);
+    }
+  });
+
+  test('rounds every convex corner, whatever made it', () => {
+    const r = rounding(15, 0.5)(drawn(L, 1));
+
+    // Six corners in; the five that turn out come back as arcs about
+    // themselves, and the one that turns in is untouched.
+    for (const v of [0, 1, 2, 4, 5]) {
+      expect(r.ids[0].map(shows)).toEqual(expect.arrayContaining([`1.${v}@0`, `1.${v}@1`]));
+    }
+  });
+
+  test('and leaves a corner that turns in where it was', () => {
+    // An opening takes nothing off a concave corner, and the point that comes
+    // out of it is born of the two walls meeting there rather than found near
+    // where they do.
+    const r = rounding(15, 0.5)(drawn(L, 1));
+    const at = r.shape[0].findIndex(p => Math.hypot(p.x - 80, p.y - 60) < 1e-9);
+
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(shows(r.ids[0][at])).toBe('(1.2×1.3)');
+    expect(r.shape[0][at]).toEqual({ x: 80, y: 60 });
+  });
+
+  test('composes as round(max(a, b)) and not as round(a + b)', () => {
+    const square = drawn([rect(0, 0, 200, 200)], 0);
+    const big = rounding(30, 0.5)(square);
+    const after = rounding(30, 0.5)(rounding(10, 0.5)(square));
+
+    // The small round leaves nothing for the big one to find, and the big one
+    // is the answer outright — not a round of 40.
+    expect(after.shape[0].length).toBe(big.shape[0].length);
+    expect(apart(after.shape[0], big.shape[0])).toBeLessThan(1e-9);
+    expect(apart(big.shape[0], circled(200, 30))).toBeLessThan(0.5);
+  });
+
+  test('and an arc already round enough is left alone', () => {
+    const square = drawn([rect(0, 0, 200, 200)], 0);
+    const big = rounding(30, 0.5)(square);
+
+    expect(apart(rounding(10, 0.5)(big).shape[0], big.shape[0])).toBeLessThan(1);
+  });
+
+  test('a ring does not run away under a fold of them', () => {
+    // What it costs must be what one round costs, or nesting is unaffordable.
+    let it = drawn([rect(0, 0, 400, 400)], 0);
+    const counts: number[] = [];
+
+    for (let k = 0; k < 6; k++) {
+      it = rounding(20, 0.5)(it);
+      counts.push(it.shape[0].length);
+    }
+
+    expect(counts[0]).toBeLessThan(32);
+    expect(counts[5]).toBeLessThan(counts[0] * 3);
+  });
+
+  test('every point of it has exactly one name', () => {
+    const r = rounding(15, 0.5)(drawn(L, 1));
 
     expect(r.ids.length).toBe(r.shape.length);
     r.shape.forEach((ring, i) => expect(r.ids[i].length).toBe(ring.length));

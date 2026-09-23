@@ -86,6 +86,156 @@ function nameOf(ids: Ids, w: Sweptfrom): Ident {
 }
 
 // -----------------------------------------------------------------------------
+// The dilation, and the opening
+// -----------------------------------------------------------------------------
+
+/**
+ * The shape grown by `by` in every direction: the Minkowski sum with a disc of
+ * that radius, and the outward half of a round.
+ *
+ * Not the mitred offset grown backwards. A mitre run outwards puts a spike
+ * where a corner was and takes it straight back off again when it is run in,
+ * so a mitre out of a mitre in is the shape it started as and nothing has been
+ * rounded. The disc is what puts an arc there, and the arc is the whole point.
+ *
+ * It is built as the union of three things and every one of them is exactly
+ * the ground the boundary covers:
+ *
+ * - the shape;
+ * - a quad per wall, the wall and the wall pushed `by` along its outward
+ *   normal;
+ * - a fan per corner the boundary turns out at, from where the wall coming in
+ *   ends up to where the wall going out starts.
+ *
+ * **Identity falls out of that and is not looked for.** A point of the grown
+ * boundary lies either on a translate of a wall, and is that wall's, or on an
+ * arc about a corner, and is that corner's — `on(corner, t)` with `t` sweeping
+ * the turn, `0` where the arc leaves the wall coming in and `1` where it meets
+ * the wall going out. Nothing is matched within a tolerance, and the fan's
+ * ends are the quads' outer corners by construction rather than by landing in
+ * the same place.
+ *
+ * A corner the boundary turns *in* at gets no fan: the two walls' quads
+ * already cover the ground between them and there is no arc there to draw.
+ * Material is on the left of every ring, hole and outer alike, so a hole
+ * shrinks as the material round it grows with nothing said about it here.
+ */
+export function dilating(by: number, eps: number): Effect {
+  return it => {
+    if (by <= 0) return it;
+
+    const quads: Drawn = { shape: [], ids: [], edges: [] };
+    const fans: Drawn = { shape: [], ids: [], edges: [] };
+
+    it.shape.forEach((ring, r) => {
+      const names = it.ids[r];
+      const n = ring.length;
+      const out = ring.map((p, i) => outward(p, ring[(i + 1) % n]));
+
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+
+        if (out[i] === null) continue;
+
+        const away = out[i]!;
+        const here = { x: ring[i].x + away.x * by, y: ring[i].y + away.y * by };
+        const next = { x: ring[j].x + away.x * by, y: ring[j].y + away.y * by };
+
+        quads.shape.push([ring[i], here, next, ring[j]]);
+        quads.ids!.push([names[i], on(names[i], 1), on(names[j], 0), names[j]]);
+        quads.edges!.push([names[i], names[i], names[j], names[i]]);
+
+        // The turn at the far end of this wall, between it and the next wall
+        // there is one.
+        const after = turnOf(out, j);
+
+        if (after === null) continue;
+
+        const swept = Math.atan2(away.x * after.y - away.y * after.x, away.x * after.x + away.y * after.y);
+
+        if (swept <= 0) continue;
+
+        const m = facets(swept, by, eps);
+        const arc: Point[] = [ring[j]];
+        const said: Ident[] = [names[j]];
+
+        for (let k = 0; k <= m; k++) {
+          const a = (swept * k) / m;
+          const c = Math.cos(a), s = Math.sin(a);
+
+          arc.push({
+            x: ring[j].x + (away.x * c - away.y * s) * by,
+            y: ring[j].y + (away.x * s + away.y * c) * by,
+          });
+          said.push(on(names[j], k / m));
+        }
+
+        fans.shape.push(arc);
+        fans.ids!.push(said);
+        fans.edges!.push(said);
+      }
+    });
+
+    let grown = it;
+
+    if (quads.shape.length > 0) grown = combineIdentified(grown, quads, OpUnion);
+    if (fans.shape.length > 0) grown = combineIdentified(grown, fans, OpUnion);
+
+    return grown;
+  };
+}
+
+/** A wall's outward normal, or nothing where there is no wall. Material is on
+ * the left of the ring, so out is to the right of where it is going. */
+function outward(p: Point, q: Point): Point | null {
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const len = Math.hypot(dx, dy);
+
+  return len === 0 ? null : { x: dy / len, y: -dx / len };
+}
+
+/** The normal of the wall leaving `i`, looking past any that are not walls. */
+function turnOf(out: readonly (Point | null)[], i: number): Point | null {
+  for (let k = 0; k < out.length; k++) {
+    const at = out[(i + k) % out.length];
+
+    if (at !== null) return at;
+  }
+
+  return null;
+}
+
+/** How many facets an arc of `swept` radians at radius `by` wants, for its
+ * chords to stay within `eps` of it. */
+function facets(swept: number, by: number, eps: number): number {
+  const most = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - eps / by)));
+
+  return Math.max(1, Math.ceil(swept / Math.max(most, 1e-6)));
+}
+
+/**
+ * The round: in by `by` and out by `by`, the morphological opening.
+ *
+ * Every convex corner comes back at radius `by`, whatever made it — a drawn
+ * corner, a join between two members, a corner an erosion made, a corner where
+ * two arcs crossed. There is no asking what kind of corner it is, which is the
+ * case the design being replaced cannot say at all.
+ *
+ * It composes as `round(max(a, b))` rather than as `round(a + b)`: an arc
+ * already at curvature `1 / a` is untouched by an opening at `b` no bigger
+ * than it. That is the honest reading of Law 3 and the reason `effects.test`'s
+ * summing test is rewritten rather than kept. `linearity.test.ts` measured what
+ * it costs the bake — a kink where two amounts cross, first order, at an
+ * instant the keyframes already know.
+ *
+ * It finishes with the resample, which is what keeps the arcs from piling up:
+ * a round of a round costs what one round costs.
+ */
+export function rounding(by: number, eps: number): Effect {
+  return it => resampled(dilating(by, eps)(eroding(by)(it)), eps);
+}
+
+// -----------------------------------------------------------------------------
 // The canonical resample
 // -----------------------------------------------------------------------------
 
@@ -148,10 +298,11 @@ export function resampled(it: Drawn, eps: number): Drawn {
       said.push(names[from]);
 
       const n = steps(run, eps, run.length - 1);
+      const base = family(names[from]);
 
       for (let s = 1; s < n; s++) {
         out.push(stationOf(run, s / n));
-        said.push(on(names[from], s / n));
+        said.push(on(base, s / n));
       }
     }
 
@@ -166,13 +317,22 @@ export function resampled(it: Drawn, eps: number): Drawn {
  * Which points of a ring the resample may not move: the ones a construction
  * turned the boundary at.
  *
- * A ring that is all curve and has no such point — a round's answer to a circle
- * — still has to start its runs somewhere, and where it starts cannot be an
- * index, which says only how the walk went. So it starts at the least of its
- * names, which is the same point whatever the walk did.
+ * A `corner` and a `born` are two of them. The third is an `on` at either end
+ * of its run — `on(v, 0)` and `on(v, 1)`, where the arc about a corner leaves
+ * the wall coming in and meets the wall going out. Those are not samples: a
+ * construction put each of them at the one place it could go, and after a
+ * round they are the only features a rounded square has left, every drawn
+ * corner having become an arc. An `on` anywhere strictly between is the other
+ * thing — one of however many points somebody chose to describe a curve with —
+ * and it is the only kind that moves.
+ *
+ * A ring that is all curve even so — a round's answer to a circle — still has
+ * to start its runs somewhere, and where it starts cannot be an index, which
+ * says only how the walk went. So it starts at the least of its names, which
+ * is the same point whatever the walk did.
  */
 function anchorsOf(names: readonly Ident[]): number[] {
-  const held = names.flatMap((id, i) => (madeOf(id).kind === 'on' ? [] : [i]));
+  const held = names.flatMap((id, i) => (loose(id) ? [] : [i]));
 
   if (held.length > 0) return held;
 
@@ -183,6 +343,42 @@ function anchorsOf(names: readonly Ident[]): number[] {
   }
 
   return [least];
+}
+
+/**
+ * What a run's samples are named along.
+ *
+ * A run leaving `on(e, 0)` is the arc about `e` — that is what an arc's start
+ * is — so its samples are that arc's, `on(e, t)`, and a resample of it lays the
+ * same family of names again at another `t`. Named off the anchor instead they
+ * would be `on(on(e, 0), t)`, and a round of a round of a round would carry a
+ * name as long as the fold is deep.
+ *
+ * Anything else names off itself: a run leaving a corner is that corner's wall,
+ * and a run leaving an arc's far end is whatever comes after the arc.
+ */
+function family(anchor: Ident): Ident {
+  const what = madeOf(anchor);
+
+  return what.kind === 'on' && what.t === 0 ? what.edge : anchor;
+}
+
+/**
+ * Whether a name is one of a curve's own samples, which is the only kind the
+ * resample is free to move.
+ *
+ * Recursive, and it has to be. An arc's two ends are features of the boundary
+ * — but only where the corner the arc was laid about was one. A round lays a
+ * fan at *every* turn it finds, and a turn between two facets of an arc it
+ * rounded last time is not a corner, it is the curve carrying on; its fan's
+ * ends are no more a feature than the facet joint they came of. So an end is
+ * as much of a feature as the thing it is an end of, and the ring a round of a
+ * round hands back comes out the size a round hands back.
+ */
+function loose(id: Ident): boolean {
+  const what = madeOf(id);
+
+  return what.kind === 'on' && (loose(what.edge) || (what.t > 0 && what.t < 1));
 }
 
 /** The points from `from` round to `to`, both ends in. A single anchor asks for
