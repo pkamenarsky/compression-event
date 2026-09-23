@@ -1375,7 +1375,9 @@ diagnosed — see *3.9*.
 removals of *3.4* (piece 8), which now also take the geometric half of
 `Effected.apart` — see *3.3*.
 
-**What to do next.** *3.6* piece 6, the pinch, or either of the two in *3.9*.
+**What to do next.** *3.6* piece 7, the group, which *3.10* now has a measured
+case and a measured answer for — and which is the only one of these with a real
+world popping on it. Then piece 6, the pinch, or either of the two in *3.9*.
 
 **A deform from nought now fades in**, which was the third of those three and
 is the pattern the other two are missing pieces of. A group's teeth stood in
@@ -1464,6 +1466,101 @@ at 0.85 against the bar of 0.5, all of it at that instant. Whether a
 crossing of this kind should be pinned once and left — as the rounded
 sibling's degenerate instant is — or whether the two can be kept apart, is
 what to settle.
+
+### 3.10 The erosion amplifies a tooth coming up, and that is piece 7's case
+
+A real world — `scratch/world-2026-09-22T21-40-17Z.json`, a sealed group with a
+noise deform and a round — pops on span 3, and the pop is the group's half of
+what phase 3 has already done for the polygon. It is worth the space because
+every step of finding it was a lesson about measuring, and because it settles
+what piece 7 is for.
+
+**Measure the floor before the peak.** The pop reads 2.73 at four hundred
+steps, but the ambient step on that span is 0.23 and nobody had asked. Ranked
+rather than maxed, the span is median 0.232, 90th 0.415, and two outliers:
+2.87 at `t` 0.2427 and 1.68 at `t` 0.3514. Two events, not a stack — which is
+the opposite of what 3.6 piece 4's 6.21 turned out to be, and the reason to
+rank first either way.
+
+**Refine until the number stops moving.** At four hundred, sixteen hundred and
+sixty-four hundred steps the median falls 0.2322, 0.0580, 0.0145 — dividing by
+four each time, which is what smooth motion does — while the worst goes 2.7313,
+2.8434, 2.8714. A step that converges under refinement is a discontinuity; one
+that divides is a figure moving fast. This is the cheapest test there is for
+telling them apart, and it should come before any reading of the geometry.
+
+**It is not the naming, and it is not the erosion.** The fold's ring, its runs'
+names, anchors, reaches and amplitudes are identical either side of the
+instant, character for character; the only input that differs is the erosion
+depth, 136.8626 against 136.8817. And the erosion is smooth in it: the same
+ring swept from depth 136.5 to 137.5 moves its boundary by at most 0.0066.
+
+**It is the amplification.** Taking the two toothed rings either side of the
+instant and eroding each:
+
+| | apart |
+| --- | --- |
+| the two rings, before the erosion | 0.0273 |
+| each eroded at its own depth | 2.8621 |
+| both eroded at the *same* depth | 2.8812 |
+| the *same* ring at the two depths | 0.0251 |
+
+Two boundaries 0.027 apart become boundaries 2.86 apart — a hundredfold. The
+0.027 is one tooth coming up: at one instant it is a point of the ring sitting
+exactly on top of its neighbour, pinned at the round's clear line, and a step
+later it stands 0.375 off the wall and eleven along. Geometrically nothing.
+
+A tooth that shallow is a pair of nearly parallel walls, and `erode` says what
+that costs in its own doc: the wedge reaches where the two moved walls cross,
+which is off towards infinity as they close on parallel. At a depth of 137 the
+mitre runs away, and a tenth of a unit of tooth becomes three units of
+outline.
+
+**Which is why it wants both the deform and the round.** With the deform alone
+the span's worst is 0.23, with the round alone 0.20, and with both 2.73. The
+round's `clear` is what makes a tooth ramp in and out at a run's ends, and that
+is what manufactures a tooth standing at nearly no height.
+
+**And it is why `fades` and a deep erosion cannot both be last.**
+`FoldShaped.fades` keeps a flat tooth in the ring deliberately, so that the
+ring holds its points while a pattern comes up and the line on each fades in
+rather than arriving. A flat tooth is exactly the worst thing to hand a deep
+erosion. The two mechanisms are in direct conflict for as long as the erosion
+comes after the teeth — which for a polygon it no longer does, and for a
+group it still does.
+
+**The order, measured again.** The prototype is three lines in `shapedFold`,
+in place of its one call: `foldShaped` with no deform and the depth, for the
+fold rounded and eroded; `movedIn` on the members' lines and arcs by that same
+depth; and `foldShaped` again on what came out, `SQUARE`, no bevel, the deform,
+and a depth of nought. Which is `effectsOver`'s two steps for a polygon, with
+the fold's line-matching in place of the polygon's `owner`. Under it every
+span's worst step falls to its own median. At sixteen hundred steps:
+
+| span | round → deform → erode | round → erode → deform |
+| --- | --- | --- |
+| 0 | 0.0230 | 0.0230 |
+| 1 | 0.2138 | 0.0510 |
+| 2 | 0.0722 | 0.0510 |
+| 3 | **2.8434** | 0.0510 |
+| 4 | 0.3718 | 0.0509 |
+
+There is no outlier left anywhere: on every span the worst step equals the
+median, which is the figure moving and nothing else.
+
+It is the same figure. Its extent agrees to within two units in seventeen
+hundred and its area to within three to five percent. What differs is the
+teeth: 162 points against 46, because laid after the erosion they are the
+editor's pattern at every depth instead of what the erosion left of them — and
+the count holds at 162, 162, 163 across the span where today's decays 46, 43,
+40. A ring that keeps its points is the thing `spanning` wants most.
+
+**What this does not settle.** The prototype names its runs by matching the
+moved-in lines, which is the fold's way and not the polygon's `owner`; whether
+that matching holds where a member's edge is eroded past, or where two members
+share a wall, is piece 7's actual work. The second outlier, 1.68 at `t` 0.3514,
+was not looked at separately — it goes with the first under the new order, but
+that is not the same as knowing what it was.
 
 ## Open questions
 
