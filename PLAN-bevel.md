@@ -448,14 +448,8 @@ switch, and it will converge like a real one.
    same world, before building on it.
 3. **A scope's own arcs get names** (*2.3*), since a nested group needs its
    curves named and not only its straights.
-4. **The group's fades, if it wants any.** *3.1*'s fade work is the polygon's;
-   whether a scope is short of it is now an open question rather than a finding,
-   the run that said so having been the switch (*4.2*). The plumbing is there —
-   `shapedFold` keeps both passes' fades, `Contributed.faded` carries them and
-   `groupFading` puts them onto the side beside its members' — so the thing to
-   measure is the bake and not the outline: a group whose deform comes up from
-   nought under `erd`, counted in stretches and jumps against its still. Build
-   nothing until that count says something is missing.
+4. **Done, and there is nothing to build** — see *4.8*. A group already has its
+   fades, and measured, `erd` needs them less than what ships does.
 5. **The pinch** (*4.5*), on by default.
 6. **The removals** (*4.6*), once nothing reads them. `baseline.golden.json`
    regenerated once, at the end.
@@ -510,6 +504,30 @@ A member with a round and a deform of its own inside a group with both gets the
 sum at every corner and edge, and the same shape as a polygon drawn that way.
 With the pinch on, a wall eroded past the teeth is smooth; off, it is not. And
 the baked span of each against its still.
+
+### 4.8 A group's fades: measured, and already there
+
+`experiments/groupfades.test.ts`. Two rooms sealed with a round of their own
+and a span over which the group's deform comes up out of nothing, baked and
+then checked at nine hundred instants that are not the ones the bake checked
+itself at:
+
+| span | rde (ships) | erd |
+|---|---|---|
+| deform up from nothing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| the same, bevel 40 | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| deform there, growing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| **deform up while eroding** | 28 stretches, 2 jumps, drift **0.2933** | 18 stretches, 2 jumps, drift **0.0141** |
+
+A deform arriving on a group costs one stretch and nothing else — the fade
+machinery reaches a scope already: `shapedFold` keeps both passes' fades,
+`Contributed.faded` carries them and `groupFading` puts them onto the side
+beside its members'. So *3.1*'s work was not the polygon's half of anything.
+
+The one span that costs is the deform arriving *while* the group erodes, which
+is *3.4*'s case again, and it is the second measurement saying the same thing:
+`erd` pays 18 stretches where the shipped order pays 28, and stays twenty times
+nearer the truth between them.
 
 ## Method
 
