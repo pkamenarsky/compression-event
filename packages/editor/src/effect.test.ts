@@ -17,8 +17,8 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { OpSubtract, Shape, along, erode, rounded, shapeArea, simplify } from './geometry';
-import { dilating, eroding, resampled, rounding } from './effect';
+import { Effecting, OpSubtract, Shape, along, erode, rounded, shapeArea, simplify } from './geometry';
+import { deforming, dilating, eroding, resampled, rounding } from './effect';
 import { Drawn, Ident, combineIdentified, corner, identify, on, shows } from './ids';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -431,5 +431,158 @@ describe('the round', () => {
 
     expect(r.ids.length).toBe(r.shape.length);
     r.shape.forEach((ring, i) => expect(r.ids[i].length).toBe(ring.length));
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The deform
+//
+// The pattern's rules are PLAN-bevel's and are not restated here; what these
+// ask is that they are now read off an identity. A run takes one name and its
+// teeth are laid from that name's middle; a tooth is `tooth(run, j)` and stays
+// tooth `j` whatever the run's ends do; and an arc takes its teeth exactly as
+// a wall does, there being no such thing as an arc any more — only more ring.
+// -----------------------------------------------------------------------------
+
+const ZIGZAG: Effecting = {
+  spacing: 25,
+  pattern: 'zigzag',
+  seed: 1,
+  sides: 'both',
+  jitter: 0,
+  falloff: 0.15,
+  offset: false,
+};
+
+const NOISE: Effecting = { ...ZIGZAG, pattern: 'noise' };
+
+/** How far each named point stands off the outline it was laid on. */
+function standing(it: Drawn, was: readonly Point[]): Map<string, number> {
+  const out = new Map<string, number>();
+
+  it.shape[0].forEach((p, i) => {
+    const off = Math.min(...was.map((q, k) => {
+      const w = along(q, was[(k + 1) % was.length], p);
+
+      return Math.hypot(p.x - w.x, p.y - w.y);
+    }));
+
+    out.set(shows(it.ids[0][i]), off);
+  });
+
+  return out;
+}
+
+describe('the deform', () => {
+  test('lays its teeth along a run and leaves the run\'s ends alone', () => {
+    const square = rect(0, 0, 200, 200);
+    const r = deforming(8, ZIGZAG)(drawn([square], 0));
+    const said = r.ids[0].map(shows);
+
+    // Four corners, and seven teeth a wall counted out from its middle.
+    expect(said.filter(s => !s.includes('#'))).toEqual(['0.0', '0.1', '0.2', '0.3']);
+    expect(said.filter(s => s.startsWith('0.0#'))).toEqual(
+      [-3, -2, -1, 0, 1, 2, 3].map(j => `0.0#${j}`),
+    );
+    expect(r.shape[0].filter(p => square.some(q => q.x === p.x && q.y === p.y))).toHaveLength(4);
+  });
+
+  test('and stands each of them off the run by the amount it was given', () => {
+    const r = deforming(8, ZIGZAG)(drawn([rect(0, 0, 200, 200)], 0));
+    const off = standing(r, rect(0, 0, 200, 200));
+
+    for (const [name, d] of off) {
+      expect(d).toBeCloseTo(name.includes('#') ? 8 : 0, 9);
+    }
+  });
+
+  test('a run is named by its anchor, so the same wall is the same pattern', () => {
+    // The noise belongs to the name and to nothing else: the same name laid on
+    // a wall twice as long is the same teeth, as far as the wall reaches.
+    const wide = deforming(8, NOISE)(drawn([rect(0, 0, 400, 200)], 0));
+    const narrow = deforming(8, NOISE)(drawn([rect(0, 0, 200, 200)], 0));
+    const held = (it: Drawn) => new Map(
+      it.ids[0].map((id, i) => [shows(id), it.shape[0][i]] as const).filter(([s]) => s.startsWith('0.0#')),
+    );
+
+    const a = held(wide), b = held(narrow);
+
+    for (const [name, p] of b) {
+      const q = a.get(name);
+
+      if (q === undefined) continue;
+
+      // The same tooth, at the same height off the wall, its middle having
+      // moved with the wall.
+      expect(Math.abs(p.y)).toBeCloseTo(Math.abs(q.y), 9);
+    }
+
+    expect([...b.keys()].filter(k => a.has(k)).length).toBeGreaterThan(3);
+  });
+
+  test('and a different name is a different pattern', () => {
+    const one = deforming(8, NOISE)(drawn([rect(0, 0, 200, 200)], 0));
+    const two = deforming(8, NOISE)(drawn([rect(0, 0, 200, 200)], 1));
+    const at = (it: Drawn, k: number) => it.shape[0][k].y;
+
+    expect([1, 2, 3].map(k => at(one, k))).not.toEqual([1, 2, 3].map(k => at(two, k)));
+  });
+
+  test('an arc takes its teeth as a wall does', () => {
+    const square = drawn([rect(0, 0, 200, 200)], 0);
+    const round = rounding(30, 0.5)(square);
+    const r = deforming(6, ZIGZAG)(round);
+    const said = r.ids[0].map(shows);
+
+    // Teeth on the arc about corner 1, and the arc's own facets still there
+    // between them.
+    expect(said.some(s => /^0\.1@0#/.test(s))).toBe(true);
+    expect(said.some(s => /^0\.1@0\.\d/.test(s))).toBe(true);
+    expect(r.shape[0].length).toBeGreaterThan(round.shape[0].length);
+  });
+
+  test('a tooth comes and goes as the room for it does, and not at a step', () => {
+    // The wall grows a spacing's worth; every tooth that arrives over that
+    // arrives standing on the wall, and none of them appears at a height.
+    const was = (w: number) => rect(0, 0, w, 200);
+    const at = (w: number) => standing(deforming(8, ZIGZAG)(drawn([was(w)], 0)), was(w));
+
+    let before = at(180);
+
+    for (let w = 181; w <= 220; w++) {
+      const now = at(w);
+
+      for (const [name, d] of now) {
+        if (!name.startsWith('0.0#') || before.has(name)) continue;
+
+        expect([name, d]).toEqual([name, expect.closeTo(0, 0)]);
+      }
+
+      before = now;
+    }
+  });
+
+  test('teeth that cross are named of the walls that crossed', () => {
+    // A tall amplitude on a narrow room: the teeth of two facing walls cut
+    // each other, and the arrangement says so.
+    const r = deforming(70, ZIGZAG)(drawn([rect(0, 0, 200, 60)], 0));
+
+    expect(r.ids.flat().map(shows).some(s => s.includes('×'))).toBe(true);
+  });
+
+  test('nothing is asked of it at nought', () => {
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+
+    expect(deforming(0, ZIGZAG)(it)).toBe(it);
+    expect(deforming(8, { ...ZIGZAG, spacing: 0 })(it)).toBe(it);
+  });
+
+  test('every point of it has exactly one name, and no two share one', () => {
+    const r = deforming(8, ZIGZAG)(rounding(30, 0.5)(drawn([rect(0, 0, 200, 200)], 0)));
+    const said = r.ids.flat().map(shows);
+
+    expect(r.ids.length).toBe(r.shape.length);
+    r.shape.forEach((ring, i) => expect(r.ids[i].length).toBe(ring.length));
+    expect(new Set(said).size).toBe(said.length);
   });
 });

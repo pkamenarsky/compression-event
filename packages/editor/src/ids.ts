@@ -52,9 +52,11 @@ export type Made =
   | { kind: 'corner', member: number, vertex: number }
   | { kind: 'born', a: Ident, b: Ident }
   | { kind: 'on', edge: Ident, t: number }
+  | { kind: 'tooth', run: Ident, j: number }
 
 const table: Made[] = [];
 const written: string[] = [];
+const keys: number[] = [];
 const handles = new Map<string, Ident>();
 
 function intern(key: string, what: Made): Ident {
@@ -102,6 +104,43 @@ export function born(a: Ident, b: Ident): Ident {
  */
 export function on(edge: Ident, t: number): Ident {
   return intern(`${written[edge]}@${t}`, { kind: 'on', edge, t });
+}
+
+/**
+ * A tooth a pattern laid along an identified run, counted out from the run's
+ * middle the way `patternRun` counts them.
+ *
+ * By its number and not by where it falls, which is the whole of PLAN-bevel's
+ * *the tooth keeps its place*: the run's ends are free to move and its length
+ * with them, and tooth `j` is still tooth `j`. A fraction along would slide
+ * every one of them the moment a neighbour did anything.
+ */
+export function tooth(run: Ident, j: number): Ident {
+  return intern(`${written[run]}#${j}`, { kind: 'tooth', run, j });
+}
+
+/**
+ * A number to key a pattern by, the same for a given name in every run of the
+ * program and different for names that differ.
+ *
+ * The handle will not do: it is an allocation order, so the noise on a wall
+ * would depend on what else had been named before it. The name will, and this
+ * is it hashed down to the integer `patternRun` wants.
+ */
+export function keyOf(id: Ident): number {
+  const had = keys[id];
+
+  if (had !== undefined) return had;
+
+  const name = written[id];
+
+  let h = 0x811c9dc5;
+
+  for (let i = 0; i < name.length; i++) {
+    h = Math.imul(h ^ name.charCodeAt(i), 0x01000193);
+  }
+
+  return (keys[id] = h | 0);
 }
 
 /** What an identity was made of, one level down. */

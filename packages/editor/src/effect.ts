@@ -18,10 +18,10 @@
 // -----------------------------------------------------------------------------
 
 import type { Point } from '@ce/game/world';
-import type { Shape, Sweptfrom } from './geometry';
-import { OpSubtract, OpUnion, along, sweptBand } from './geometry';
+import type { Effecting, Shape, Sweptfrom } from './geometry';
+import { OpSubtract, OpUnion, along, patternRun, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
-import { combineIdentified, madeOf, on, shows } from './ids';
+import { combineIdentified, keyOf, madeOf, on, shows, tooth } from './ids';
 
 /** A shape to a shape, carrying identity. */
 export type Effect = (it: Drawn) => Drawn
@@ -466,4 +466,145 @@ function stationOf(run: readonly Point[], t: number): Point {
   }
 
   return run[run.length - 1];
+}
+
+// -----------------------------------------------------------------------------
+// The deform
+// -----------------------------------------------------------------------------
+
+/**
+ * The teeth, laid along the ring by arc length.
+ *
+ * What is gone is the per-edge parallel arrays and everything that went with
+ * them. A deform in the fold has only a ring in front of it, and it lays the
+ * pattern along the runs that ring is made of — a run being what lies between
+ * two of the points a construction turned the boundary at, which is exactly
+ * what the resample calls an anchor.
+ *
+ * **Where a pattern is anchored** (PLAN-bevel 2.1) carries over word for word,
+ * with the run's own anchor standing in for the lowest-ranked member edge: the
+ * run takes one name, its teeth are laid from that name's middle across the
+ * whole of it, and two members side by side along one wall are one run and get
+ * one pattern across the join. The name is the anchor's identity, which came
+ * of the construction, so nothing about it can flip as members slide past one
+ * another — which is the thing rank was there to prevent.
+ *
+ * **The tooth keeps its place** (2.4) is the identity again: a tooth is
+ * `tooth(run, j)`, counted out from the middle, and it is tooth `j` however the
+ * run's ends move. There is no `reach` and no `clear` here and nothing to
+ * carry a source length through an erosion — the deform is a step of the fold
+ * and lays its teeth on the ring in front of it, and whatever runs after it
+ * carries the teeth as points like any others rather than laying them again.
+ *
+ * An arc takes its teeth as a wall does, one every spacing by length out from
+ * the anchor, each pushed along the ring's own normal where it falls. That is
+ * `ArcTeeth` and `drawnBevels` and `CRAMMED`, and it is now nothing at all:
+ * an arc is more of the ring.
+ *
+ * Teeth cross each other and cross walls, so it finishes through the
+ * arrangement — which names what the crossings make, as it does anywhere else.
+ */
+export function deforming(by: number, e: Effecting): Effect {
+  return it => {
+    if (by === 0 || !(e.spacing > 0)) return it;
+
+    const shape: Shape = [];
+    const ids: Ids = [];
+
+    it.shape.forEach((ring, r) => {
+      const names = it.ids[r];
+      const held = ring.length < 3 ? [] : anchorsOf(names);
+
+      if (held.length === 0) {
+        shape.push(ring);
+        ids.push(names);
+
+        return;
+      }
+
+      const out: Point[] = [];
+      const said: Ident[] = [];
+
+      for (let k = 0; k < held.length; k++) {
+        const from = held[k], to = held[(k + 1) % held.length];
+        const run = between(ring, from, to);
+        const whose = names[from];
+        const lengths = walked(run);
+        const total = lengths[lengths.length - 1];
+        const lay = patternRun(e, keyOf(whose), by, total);
+
+        out.push(ring[from]);
+        said.push(whose);
+
+        // The run's own points and its teeth, laid end to end in the order
+        // their arc lengths put them: an arc keeps its facets and takes teeth
+        // between them.
+        let next = 1;
+
+        for (let j = 0; j < lay.along.length; j++) {
+          const at = lay.along[j] * total;
+
+          while (next + 1 < run.length && lengths[next] <= at) {
+            out.push(run[next]);
+            said.push(names[stepped(ring, from, next)]);
+            next++;
+          }
+
+          const ride = rideOf(run, lengths, at);
+
+          out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
+          said.push(tooth(whose, lay.teeth[j]));
+        }
+
+        for (; next + 1 < run.length; next++) {
+          out.push(run[next]);
+          said.push(names[stepped(ring, from, next)]);
+        }
+      }
+
+      shape.push(out);
+      ids.push(said);
+    });
+
+    return combineIdentified({ shape, ids }, { shape: [], ids: [] }, inA => inA);
+  };
+}
+
+/** Where `step` points on from `from` sits in the ring. */
+function stepped(ring: readonly Point[], from: number, step: number): number {
+  return (from + step) % ring.length;
+}
+
+/** How far along the run each of its points is. */
+function walked(run: readonly Point[]): number[] {
+  const out = [0];
+
+  for (let i = 0; i + 1 < run.length; i++) {
+    out.push(out[i] + Math.hypot(run[i + 1].x - run[i].x, run[i + 1].y - run[i].y));
+  }
+
+  return out;
+}
+
+/** The point `at` along the run, and the way off it: out is to the right of
+ * the way round, as a ring with material on its left has it. */
+function rideOf(run: readonly Point[], lengths: readonly number[], at: number): {
+  at: Point
+  nx: number
+  ny: number
+} {
+  let i = 0;
+
+  while (i + 2 < run.length && lengths[i + 1] < at) i++;
+
+  const a = run[i], b = run[i + 1];
+  const d = lengths[i + 1] - lengths[i];
+  const u = d === 0 ? 0 : Math.min(1, Math.max(0, (at - lengths[i]) / d));
+  const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+  return {
+    at: { x: a.x + dx * u, y: a.y + dy * u },
+    nx: l === 0 ? 0 : dy / l,
+    ny: l === 0 ? 0 : -dx / l,
+  };
 }
