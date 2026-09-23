@@ -1345,9 +1345,10 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
  */
 export interface Named {
   /** A source edge, named by the corner it leaves: two points on its line,
-   * being where its ends are once its corners are eroded, and how high the
-   * member's own deform stands along it. */
-  lines: { id: VertexId, a: Point, b: Point, amplitude: number }[]
+   * being where its ends are once its corners are eroded, how high the
+   * member's own deform stands along it, and the options it stands in —
+   * which is what lays it inside a scope that does not deform itself. */
+  lines: { id: VertexId, a: Point, b: Point, amplitude: number, deform: Effecting | null }[]
   /** A source corner, named by itself: where the erosion puts it, and the
    * round it asks for. One point, not an arc — the member no longer rounds
    * it, and whoever holds it rounds it once. Nothing for a corner that does
@@ -1400,7 +1401,7 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
 
     if (a === null || b === null || same(a, b)) continue;
 
-    lines.push({ id: at.corners[i].id, a, b, amplitude: fx?.deform?.after[i] ?? 0 });
+    lines.push({ id: at.corners[i].id, a, b, amplitude: fx?.deform?.after[i] ?? 0, deform: fx?.deform?.e ?? null });
   }
 
   return { lines, corners };

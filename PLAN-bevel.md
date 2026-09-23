@@ -34,6 +34,11 @@ breaks:
 1. **A sealed group draws what its members draw.** The same shape drawn as one
    polygon and drawn as members of a group is the same outline, however deep
    the nesting. Today it is not: *4.5*.
+
+   Stated against the gesture that settles it — **a scope draws what it
+   resolves to** — this is `effects.test.ts`'s *a scope draws what it resolves
+   to*, which builds a world two and three scopes deep, resolves it, and asks
+   for the same rings point for point. See *The resolve carries geometry*.
 2. **A vertical pops only where a corner is really made or lost** — by an
    erosion closing a notch, by a tooth crossing a wall — and never at a
    threshold in a classification.
@@ -626,7 +631,17 @@ Not this step, and not new: a member's *deform* is still lost inside a scope
 that rounds without deforming, because an amplitude with no options to lay it
 by is not a pattern. HEAD does the same — measured, 8.0 off the wall alone and
 0.0 inside such a scope, before and after — so nothing regressed here. It wants
-`Effecting` per line, which is step 5's business.
+`Effecting` per line.
+
+**Done, after step 6.** `Named.lines` carries the options each line stands in
+beside the amount, `Laying` carries them per run, and `foldShaped` lays each
+run by the scope's options where it has any and otherwise by those of whichever
+member named it — `laidBy`. A run no member named and no scope lays lays
+nothing. So the amounts add as they did and the options no longer have to come
+from the scope: 8.0 off the wall loose, inside a scope that rounds, and inside
+one that deforms alike, and two members at different spacings keep their own
+patterns under one rounding scope. The five harnesses are unmoved line for
+line.
 
 ### Step 4: the scope's erosion moves after the fold
 
@@ -1078,6 +1093,47 @@ before the geometry is.
 **Find the line.** Both of the surprises here — the vanishing bevel, the extra
 points — read as structural trades until the one line that caused each was
 found, and in both cases the line said something simpler than the story did.
+
+## The resolve carries geometry
+
+`resolveGroup` replaces a scope with the polygons its union comes to and
+carries its timeline onto them, so the two are one world said two ways and the
+outline must be one outline. Recorded as `a scope draws what it resolves to`,
+which is property 1 with the nesting in it.
+
+It holds where a member's only effect is its erosion — the one of the three the
+fold takes first, and so the one a ring can carry as an erosion of its own —
+two scopes deep as well as one. It holds nowhere else, and the reason is the
+same on every row: `readingAt` reads the members **drawn**, so their arcs and
+their teeth arrive at the new polygon as geometry, and the polygon's own round
+and deform are then laid over the top of them. Point counts, drawn against
+resolved:
+
+| | drawn | resolved |
+|---|---|---|
+| members eroded, scope rounding | 72 | 72 |
+| members eroded, three deep, each eroding | 12 | 12 |
+| nothing on the members, all three on the scope | 99 | 122 |
+| members deformed, scope deforming | 57 | 113 |
+| members rounded, scope rounding | 72 | 492 |
+| members deformed, scope rounding | 123 | 550 |
+| members eroded, two scopes rounding | 108 | 624 |
+| everything at all three levels | 175 | 1449 |
+
+**It is the resolve's own version of steps 1 to 5.** The scope lays each effect
+once, on amounts published by its members; the resolve has had no such step and
+hands the ring to a polygon that starts from geometry. What it wants is the
+fold's `named` written onto the ring it makes — the amplitude of each straight
+and the bevel of each corner, as `effects.amplitudes` and `cornerEffects` — and
+the members' effects then left off. The row with nothing on the members at all
+is the nearest and is the one to take first: there the ring is already right and
+only the scope's own three are re-run, a polygon anchoring and clearing a run
+its own way where the fold anchors it at the naming edge's middle.
+
+Per-edge deform *options* are the one thing a polygon cannot hold: it has one
+set for the whole of it, so two members deforming at different spacings under
+one scope has no polygon to resolve to. That is a gap in the representation and
+not in the gesture.
 
 ## Open questions
 

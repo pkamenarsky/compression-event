@@ -3036,6 +3036,10 @@ export type Naming = (a: Point, b: Point) => { key: number, from: number, reach:
 export interface Laying {
   key: number
   amplitude: number
+  /** The options this pattern is laid by, where the run carries its own —
+   * a member's deform inside a scope that does not deform, whose runs are
+   * each laid by whichever member named them. Nothing for the caller's. */
+  e?: Effecting
   /** Where along the run it is centred, or nothing for the middle. */
   from: number | undefined
   /** How far either way from that it runs, or nothing for the run's ends. */
@@ -3060,7 +3064,7 @@ export interface Laying {
  * is broken by a return to the wall. See PLAN-bevel's step 4.
  */
 function oneRun(a: Laying, b: Laying): boolean {
-  return a.key === b.key && a.from === b.from && a.reach === b.reach
+  return a.key === b.key && a.e === b.e && a.from === b.from && a.reach === b.reach
     && a.at === b.at && a.of === b.of && a.clear === b.clear && a.clearTo === b.clearTo;
 }
 
@@ -3209,18 +3213,19 @@ export function subdivided(
     // come out in ring order however many there are.
     const lays = onceEach(patterns(i) ?? also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }]));
     const each = lays.map(one => {
+      const es = one.e ?? e;
       const over = one.of ?? l;
       const start = one.at ?? 0;
       const kept = one.clear ?? clear(i);
       const keptTo = one.clearTo ?? clear((i + 1) % n);
       const run = patternRun(
-        e,
+        es,
         one.key,
         one.amplitude,
         over,
         kept,
         keptTo,
-        e.spacing,
+        es.spacing,
         one.from ?? over / 2,
         one.reach,
       );
@@ -4313,7 +4318,7 @@ export interface FoldShaped {
    * made, is named nowhere and so asks for nothing. See PLAN-bevel's step 5.
    */
   named: {
-    lines: { id: number, a: Point, b: Point, amplitude: number }[]
+    lines: { id: number, a: Point, b: Point, amplitude: number, deform: Effecting | null }[]
     corners: { id: number, at: Point, bevel: number, facets: Facets }[]
   }
 }
@@ -4326,7 +4331,7 @@ export function foldShaped(
    * unioned in: each straight of the fold takes the name of the first line
    * along it, and lays its teeth from that edge's own middle. See
    * `namesOf` and PLAN-bevel 2.3. */
-  lines: readonly { id: number, a: Point, b: Point }[],
+  lines: readonly { id: number, a: Point, b: Point, deform?: Effecting | null }[],
   /** The members' arcs, in the same order: a run of the fold that is one of
    * these is a curve, not a string of corners, so the group leaves it
    * unrounded and lays its teeth along it. */
@@ -4344,7 +4349,13 @@ export function foldShaped(
    * is the same everywhere and for a polygon is its edge's own: see
    * `ArcDeform`. A run with no name asks with nought. */
   deform: {
-    e: Effecting,
+    /**
+     * The options every run is laid by, or nothing where each run carries its
+     * own: a member's deform inside a scope that rounds and does not deform
+     * is laid by the member's options along the runs that member named, and a
+     * run no member named lays nothing. See PLAN-bevel's step 3.
+     */
+    e: Effecting | null,
     amplitude: (key: number) => number,
     /**
      * Whether a run's pattern is bounded by the naming line it lies on rather
@@ -4438,6 +4449,24 @@ export function foldShaped(
       reach: Math.hypot(mine.b.x - mine.a.x, mine.b.y - mine.a.y) / 2,
     };
   };
+
+  // What each run is laid by: the caller's options where it has any, and
+  // otherwise the options of the member whose line names the run — a member's
+  // deform inside a scope that does not deform itself. A run neither names is
+  // laid by nothing and gets no teeth. See PLAN-bevel's step 3.
+  const mineE = new Map<number, Effecting>();
+
+  for (const line of lines) {
+    if (line.deform !== undefined && line.deform !== null) mineE.set(line.id, line.deform);
+  }
+
+  const laidBy = (key: number): Effecting | null => deform?.e ?? mineE.get(key) ?? null;
+
+  // Some options to stand behind the ones each run carries: `subdivided`
+  // wants a pattern for an edge that names nothing, which lays nought
+  // whichever they are. Nothing here means nothing deforms at all.
+  const anyE: Effecting | null = deform === null ? null : deform.e ?? (mineE.values().next().value ?? null);
+
   const named = deform?.naming ?? namedBy(lines);
   const namedOver = deform?.over === undefined ? null : (deform.over.naming ?? namedBy(deform.over.lines));
 
@@ -4558,7 +4587,13 @@ export function foldShaped(
 
       if (it === null) return;
 
-      mineLines.push({ id: it.key, a: p, b: ring[(i + 1) % ring.length], amplitude: deform?.amplitude(it.key) ?? 0 });
+      mineLines.push({
+        id: it.key,
+        a: p,
+        b: ring[(i + 1) % ring.length],
+        amplitude: deform?.amplitude(it.key) ?? 0,
+        deform: laidBy(it.key),
+      });
     });
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
 
@@ -4597,11 +4632,16 @@ export function foldShaped(
         const of = holds.reduce((t, i) => t + lengths[i], 0);
         const last = holds[holds.length - 1];
 
+        const e = laidBy(mine);
+
+        if (e === null) continue;
+
         let at = 0;
 
         for (const i of holds) {
           out[i] = {
             key: mine,
+            e,
             amplitude: deform!.amplitude(mine) * scale_,
             from: ns[a]!.from,
             reach: deform!.reach === true ? ns[a]!.reach : undefined,
@@ -4617,23 +4657,23 @@ export function foldShaped(
       return out;
     };
 
-    const mine_ = deform === null ? null : runsOf(names, 1 - over);
-    const overs = deform === null || namesOver === null ? null : runsOf(namesOver, over);
+    const mine_ = anyE === null ? null : runsOf(names, 1 - over);
+    const overs = anyE === null || namesOver === null ? null : runsOf(namesOver, over);
     // An edge between two points of one arc is inside a curve, and the
     // curve's own teeth run along it: see `teethAlong`.
     const inside = (i: number) => mine[i] !== null && mine[(i + 1) % ring.length]?.arc === mine[i]!.arc;
-    const laid = deform === null
+    const laid = anyE === null
       ? ring.map((at, i) => ({ at, from: i, j: null as number | null, along: 0, room: 1 }))
       : subdivided(
         ring,
-        deform.e,
-        i => deform.amplitude(names[i]?.key ?? 0) * (1 - over),
+        anyE,
+        i => deform!.amplitude(names[i]?.key ?? 0) * (1 - over),
         i => names[i]?.key ?? 0,
         out,
         i => bevels[i],
         i => !sq[i] && !sq[(i + 1) % ring.length] && !inside(i),
         i => names[i]?.from,
-        i => (deform.reach === true ? names[i]?.reach : undefined),
+        i => (deform!.reach === true ? names[i]?.reach : undefined),
         () => [],
         i => {
           // Both namings at every weight, the one standing at nought
@@ -4660,9 +4700,10 @@ export function foldShaped(
       // arc takes its two edges' — see `ArcDeform`. The arc's own name where
       // there is no straight there.
       const before = names[(i - 1 + ring.length) % ring.length]?.key ?? whole.id;
-      const tt: ArcTeeth | null = deform === null
+      const arcE = deform === null ? null : laidBy(whole.id) ?? laidBy(before);
+      const tt: ArcTeeth | null = deform === null || arcE === null
         ? null
-        : { e: deform.e, before: deform.amplitude(before), after: deform.amplitude(whole.id), key: whole.id, seen: 1 };
+        : { e: arcE, before: deform.amplitude(before), after: deform.amplitude(whole.id), key: whole.id, seen: 1 };
       const on = teethAlong(curveThrough(whole.points), tt, out);
       const total = along[a][along[a].length - 1];
 
@@ -4764,9 +4805,15 @@ export function foldShaped(
   // its own points off it — the ones under a flank are left out — so an arc
   // that gains them at the first instant of a span changes what it is made
   // of, all at once. See `teethAlong`.
-  const arcTeeth = (i: number): ArcTeeth | null => (deform === null || !(drawn[i] > 0)
-    ? null
-    : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, wanted[i] / drawn[i]) });
+  // Its options are the run's it stands between, so an arc between two walls
+  // a member deforms takes that member's pattern round the corner.
+  const arcTeeth = (i: number): ArcTeeth | null => {
+    const e = deform === null ? null : laidBy(afterOf[i]) ?? laidBy(beforeOf[i]);
+
+    if (deform === null || e === null || !(drawn[i] > 0)) return null;
+
+    return { e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, wanted[i] / drawn[i]) };
+  };
 
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : face[i]), i => drawn[i], arcTeeth, i => apart[i]);
 

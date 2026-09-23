@@ -475,14 +475,39 @@ const squaredThrough = remembered((shapes: readonly Shape[], depth: number, squa
   return eroded.length === 0 ? [] : effectedSquare(shapes, all, eroded, depth, SQUARE, 0, square).square;
 });
 
+/**
+ * One of a member's lines as `shapedFold` is keyed by it: the corner that
+ * names it, its two ends, the height its member's deform stands at along it,
+ * and the options it stands in — a pattern of `-1` where the member has no
+ * deform. Numbers and points alone, because what is remembered is named by
+ * `JSON.stringify` and a pattern is a function.
+ */
+function linedKey(l: Named['lines'][number]): (number | Point)[] {
+  const e = l.deform;
+
+  return [
+    l.id, l.a, l.b, l.amplitude,
+    e?.spacing ?? 0,
+    e === null ? -1 : PATTERNS.indexOf(e.pattern),
+    e?.seed ?? 0,
+    e === null ? 0 : DEFORM_SIDES.indexOf(e.sides),
+    e?.jitter ?? 0,
+    e?.falloff ?? 0,
+    e?.offset === true ? 1 : 0,
+  ];
+}
+
 /** A scope's fold as its own effects draw it, by `shapeKey`: see
  * `foldShaped`. */
 const shapedFold = remembered((
   fold: Shape,
   square: readonly Point[],
   keep: readonly Point[],
-  /** The members' lines, three entries each — the corner that names it, and
-   * its two ends — since what is remembered is named by plain geometry. */
+  /** The members' lines, eleven entries each — the corner that names it, its
+   * two ends, the height its member's deform stands at along it, and the
+   * seven that are the options it stands in (`-1` for the pattern where the
+   * member has no deform) — since what is remembered is named by plain
+   * geometry. See `linedKey`. */
   lines: readonly (number | Point)[],
   /** The members' corners, seven entries each — the corner that names it,
    * where it is, the round it asks for, and the facets it asks for it in. */
@@ -491,26 +516,47 @@ const shapedFold = remembered((
   depth: number,
 ) => {
   const [n, from, to, at, tension, bevel, ...d] = key;
-  const deform = d.length === 0
-    ? null
-    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
 
   // What each member asked for along the edge its corner names, to add to the
   // scope's: two deforms on one run are one run standing as high as both, the
   // way two rounds at one corner are one round of both. See PLAN-bevel's
   // step 3.
   const mine = new Map<number, number>();
-  const named = [];
+  const named: Named['lines'] = [];
 
-  for (let i = 0; i + 3 < lines.length; i += 4) {
+  for (let i = 0; i + 10 < lines.length; i += 11) {
     named.push({
       id: lines[i] as number,
       a: lines[i + 1] as Point,
       b: lines[i + 2] as Point,
       amplitude: lines[i + 3] as number,
+      deform: lines[i + 5] === -1 ? null : {
+        spacing: lines[i + 4] as number,
+        pattern: PATTERNS[lines[i + 5] as number],
+        seed: lines[i + 6] as number,
+        sides: DEFORM_SIDES[lines[i + 7] as number],
+        jitter: lines[i + 8] as number,
+        falloff: lines[i + 9] as number,
+        offset: lines[i + 10] === 1,
+      },
     });
 
     if (lines[i + 3] !== 0) mine.set(lines[i] as number, lines[i + 3] as number);
+  }
+
+  // The scope's own deform, or — where it has none and a member has — the
+  // members' amounts alone, each run laid by the options of whichever member
+  // named it. An amplitude with nothing to lay it by is not a pattern, and
+  // before this it was simply lost. See PLAN-bevel's step 3.
+  let deform: { e: Effecting | null, amplitude: (key: number) => number } | null = null;
+
+  if (d.length !== 0) {
+    const e = { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false };
+
+    deform = { e, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
+  }
+  else if (mine.size > 0) {
+    deform = { e: null, amplitude: (key: number) => mine.get(key) ?? 0 };
   }
 
   const ends: Named['corners'] = [];
@@ -856,7 +902,7 @@ export function contributed(
         settles,
         inside,
         slots.flatMap(u => u.keep),
-        slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b, l.amplitude])),
+        slots.flatMap(u => u.named.lines.flatMap(l => linedKey(l))),
         slots.flatMap(u => u.named.corners.flatMap(c =>
           [c.id, c.at, c.bevel, c.facets.n, c.facets.from, c.facets.to, { x: c.facets.at, y: c.facets.tension }])),
         shapedBy,

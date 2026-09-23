@@ -19,7 +19,7 @@ import {
   switchedOff,
   switchedOn,
 } from './effects';
-import { erode, inSegments, move, scaled, turned, wrote } from './testing';
+import { Writing, erode, inSegments, move, scaled, turned, wrote } from './testing';
 import { Effects, Id, PolygonId, REMEMBERED, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -431,6 +431,58 @@ describe('a group\'s effects', () => {
     expect(heights.filter(h => h > 4).length).toBeLessThanOrEqual(3);
   });
 
+  test('a member\'s deform is laid by its own options, whether or not the scope deforms', () => {
+    // An amplitude is an amount, and a scope that rounds and does not deform
+    // has no pattern to lay its members' amounts by. It used to lose them
+    // altogether — the member resolves eroded only, so the teeth it drew for
+    // itself are not there either. Each run is laid by the options of
+    // whichever member named it. See PLAN-bevel's step 3.
+    const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const build = (fx: Effects) => {
+      const a = room(emptyWorld(), rect(0, 0, 200, 140));
+      const away = room(a.world, rect(600, 0, 60, 60));
+      const w = withEffects(away.world, a.id, { deform: zigzag });
+      const g = grouped(w, 0, [a.id, away.id], TOP)!;
+      const sealed = withEffects(sealing(g.world, g.id, true), g.id, fx);
+      const one = wrote(sealed, 0, a.id, deform(8));
+
+      return fx.round === undefined ? one : wrote(one, 0, g.id, round(10));
+    };
+
+    // How high the teeth stand off the member's top wall.
+    const off = (world: World) => Math.max(0, ...csg(world, 0).flat()
+      .filter(p => p.x > 10 && p.x < 190)
+      .map(p => p.y - 140));
+
+    // Loose in a scope with no effects, the member deforms itself; under one
+    // that rounds, or one that deforms, the fold lays the same teeth.
+    expect(off(build({}))).toBeCloseTo(8, 9);
+    expect(off(build({ round: inSegments(8, 10) }))).toBeCloseTo(8, 9);
+    expect(off(build({ deform: zigzag }))).toBeCloseTo(8, 9);
+  });
+
+  test('two members deformed differently keep their own patterns under one rounding scope', () => {
+    // One pattern for the whole fold would give both walls whichever member
+    // came first. Each run is laid by the member whose line names it.
+    const wide = { spacing: 60, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const tight = { spacing: 15, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    // Not on the same lines as the first: two collinear walls are one
+    // straight to the naming, whichever rooms they belong to.
+    const b = room(a.world, rect(400, 300, 200, 140));
+    const w = withEffects(withEffects(b.world, a.id, { deform: wide }), b.id, { deform: tight });
+    const g = grouped(w, 0, [a.id, b.id], TOP)!;
+    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) });
+    const world = wrote(wrote(wrote(sealed, 0, a.id, deform(8)), 0, b.id, deform(8)), 0, g.id, round(10));
+
+    // The teeth along each room's top wall: the tips, which stand off it.
+    const tips = (from: number, to: number, wall: number) => csg(world, 0).flat()
+      .filter(p => p.x > from && p.x < to && p.y > wall + 4).length;
+
+    expect(tips(10, 190, 140)).toBeGreaterThan(0);
+    expect(tips(410, 590, 440)).toBeGreaterThan(tips(10, 190, 140) * 2);
+  });
+
   test('its round is after its solids cut its level, so the corners they cut are rounded too', () => {
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const s = addPolygon(a.world, { level: 'solid' }, rect(80, 40, 40, 20), 0, TOP);
@@ -490,6 +542,168 @@ describe('a group\'s effects', () => {
     expect(out.world.effects.get(made)).toEqual({ round: inSegments(8, 10) });
     expect(stateAt(out.world, made, 0).bevel).toBe(10);
     expect(shapeArea(csg(out.world, 0))).toBeCloseTo(shapeArea(csg(world, 0)), 6);
+  });
+});
+
+/**
+ * Property 1 of PLAN-bevel, stated against the gesture that settles it: a
+ * scope draws what it resolves to. Resolving a group replaces it with the
+ * polygons its union comes to, carrying its timeline onto them, so the two
+ * are the same world said two ways — and the outline must be the same
+ * outline, ring for ring and point for point, however deep the nesting and
+ * whatever each level is doing.
+ *
+ * It holds where a member's only effect is its erosion, which is the one of
+ * the three that the fold takes first and so the one a ring can carry as an
+ * erosion of its own. It does not hold where a member rounds or deforms, nor
+ * where a scope does, and the reason is the same on every row: `readingAt`
+ * reads its members *drawn*, so their arcs and their teeth reach the new
+ * polygon as geometry — and the polygon then rounds and deforms that, arcs,
+ * tooth tips and all. The scope lays each once on amounts, which is what
+ * steps 1 to 5 are for; the resolve has had no such step, and wants the
+ * fold's `named` written onto the ring it makes.
+ *
+ * What each row comes to today is recorded beside it: the point counts are
+ * the size of the gap, not a tolerance to hold.
+ */
+describe('a scope draws what it resolves to', () => {
+  const zigzag = { spacing: 25, pattern: 'zigzag' as const, seed: 1, sides: 'both' as const, jitter: 0 };
+
+  /** A round, a deform and an erosion, any of which a thing may be without. */
+  interface Kit {
+    round?: number
+    deform?: number
+    erode?: number
+  }
+
+  const optionsOf = (k: Kit): Effects => ({
+    ...(k.round === undefined ? {} : { round: inSegments(8, k.round) }),
+    ...(k.deform === undefined ? {} : { deform: zigzag }),
+  });
+  const amountsOf = (k: Kit): Writing[] => [
+    ...(k.erode === undefined ? [] : [erode(k.erode)]),
+    ...(k.round === undefined ? [] : [round(k.round)]),
+    ...(k.deform === undefined ? [] : [deform(k.deform)]),
+  ];
+  const doing = (world: World, ids: readonly Id[], k: Kit): World => {
+    const amounts = amountsOf(k);
+
+    return ids.reduce((w, id) => {
+      const fx = withEffects(w, id, optionsOf(k));
+
+      return amounts.length === 0 ? fx : wrote(fx, 0, id, ...amounts);
+    }, world);
+  };
+
+  /** Two overlapping rooms sealed into a scope, and that scope sealed into
+   * another with a third room. `mid` is nothing for the two-deep case. */
+  function scopes(member: Kit, outer: Kit, mid?: Kit): { world: World, id: Id } {
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    const b = room(a.world, rect(160, 40, 260, 180));
+    const c = room(b.world, rect(60, 150, 120, 200));
+    const rooms = mid === undefined ? [a.id, b.id] : [a.id, b.id, c.id];
+    const one = doing(mid === undefined ? b.world : c.world, rooms, member);
+
+    if (mid === undefined) {
+      const g = grouped(one, 0, [a.id, b.id], TOP)!;
+
+      return { world: doing(sealing(g.world, g.id, true), [g.id], outer), id: g.id };
+    }
+
+    const g = grouped(one, 0, [a.id, b.id], TOP)!;
+    const inner = doing(sealing(g.world, g.id, true), [g.id], mid);
+    const h = grouped(inner, 0, [g.id, c.id], TOP)!;
+
+    return { world: doing(sealing(h.world, h.id, true), [h.id], outer), id: h.id };
+  }
+
+  /** Each ring from its own lowest point and the rings in one order, so that
+   * where an arrangement started a ring is not the difference. */
+  const rings = (shape: readonly (readonly Point[])[]) => shape.map(ring => {
+    const all = ring.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+
+    // A ring closes on its first point: the same point, not another one.
+    const pts = all.filter((p, i) => p !== all[(i + 1) % all.length]);
+    const first = pts.indexOf([...pts].sort()[0]);
+
+    return [...pts.slice(first), ...pts.slice(0, first)];
+  }).sort();
+
+  const same = (world: World, id: Id) => {
+    const drawn = rings(csg(world, 0));
+    const out = resolveGroup(world, 0, id)!;
+
+    // Something to compare: arcs at the corners, teeth off the walls.
+    expect(drawn.flat().length).toBeGreaterThan(6);
+    expect(rings(csg(out.world, 0))).toEqual(drawn);
+  };
+
+  test('members eroded, under a scope that rounds', () => {
+    const { world, id } = scopes({ erode: 8 }, { round: 12 });
+
+    same(world, id);
+  });
+
+  test('members eroded, under a scope that erodes', () => {
+    const { world, id } = scopes({ erode: 8 }, { erode: 6 });
+
+    same(world, id);
+  });
+
+  test('members eroded, three scopes deep, each eroding', () => {
+    const { world, id } = scopes({ erode: 8 }, { erode: 4 }, { erode: 6 });
+
+    same(world, id);
+  });
+
+  // 72 points drawn against 492: the member's arcs reach the new polygon as
+  // facets and its round rounds every one of them.
+  test.skip('members rounded, under a scope that rounds', () => {
+    const { world, id } = scopes({ round: 10 }, { round: 12 });
+
+    same(world, id);
+  });
+
+  // 123 against 550: the member's teeth reach it as corners, and are rounded.
+  test.skip('members deformed, under a scope that rounds', () => {
+    const { world, id } = scopes({ deform: 6 }, { round: 12 });
+
+    same(world, id);
+  });
+
+  // 57 against 113: the teeth are drawn in, and deformed again.
+  test.skip('members deformed, under a scope that deforms', () => {
+    const { world, id } = scopes({ deform: 6 }, { deform: 6 });
+
+    same(world, id);
+  });
+
+  // 99 against 122, with nothing on the members at all: the scope's own three
+  // are re-run on the ring, and a polygon anchors and clears a run its own
+  // way. The nearest row of the lot, and the one to take first.
+  test.skip('nothing on the members, everything on the scope', () => {
+    const { world, id } = scopes({}, { round: 12, deform: 6, erode: 6 });
+
+    same(world, id);
+  });
+
+  // 108 against 624: the inner scope's round is drawn before the outer reads
+  // it, so the outer rounds its arcs.
+  test.skip('members eroded, two scopes rounding', () => {
+    const { world, id } = scopes({ erode: 8 }, { round: 12 }, { round: 10 });
+
+    same(world, id);
+  });
+
+  // 175 against 1449: all three effects at all three levels.
+  test.skip('everything, everywhere', () => {
+    const { world, id } = scopes(
+      { round: 10, deform: 6, erode: 8 },
+      { round: 12, deform: 6, erode: 4 },
+      { round: 10, deform: 6, erode: 6 },
+    );
+
+    same(world, id);
   });
 });
 
