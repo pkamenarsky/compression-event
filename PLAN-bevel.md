@@ -606,6 +606,28 @@ on each other. Summing what a run inherits is the same arithmetic.
 draw R(40), to the same 3e-14 with which it draws R(10) today, and keep the same
 point count. Then the same for amplitudes, and then both at once.
 
+**Done.** `foldShaped` takes the members' `corners` beside their `lines`, and a
+point of the fold that is one of them is drawn at the scope's bevel plus that
+corner's own, in that corner's facets where it asked for any. A point that is
+not — a join, a corner an erosion made — takes the scope's own and nothing
+more. `drawn` gained `wanted` and `face` beside it, so `ArcTeeth.seen` is the
+ratio at *that* corner and `outlineOf` is handed the facets per corner. The
+amplitudes sum in `shapedFold`, where `deform.amplitude` became
+`key => scope + (member's line ?? 0)`.
+
+`sumrounds` is **3e-14 in every row, 37 points against 37** — a member rounded
+10 inside a group rounded 30 draws R(40) as exactly as a polygon draws R(10).
+`erodefirst`, `groupfades`, `arcseam` and `pinch` are unmoved, line for line,
+and `its deform runs along a member's arc, as it would along its own` comes
+back in: the member's round reaches the fold as facets again, the corner now
+rounded once rather than twice.
+
+Not this step, and not new: a member's *deform* is still lost inside a scope
+that rounds without deforming, because an amplitude with no options to lay it
+by is not a pattern. HEAD does the same — measured, 8.0 off the wall alone and
+0.0 inside such a scope, before and after — so nothing regressed here. It wants
+`Effecting` per line, which is step 5's business.
+
 ### Step 4: the scope's erosion moves after the fold
 
 `shapedFold`'s `erd` branch becomes the path and the `ORDER` switch goes: fold

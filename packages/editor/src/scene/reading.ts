@@ -486,7 +486,8 @@ const shapedFold = remembered((
   /** The members' lines, three entries each — the corner that names it, and
    * its two ends — since what is remembered is named by plain geometry. */
   lines: readonly (number | Point)[],
-  /** The members' corners: the corner that names each, and where it is. */
+  /** The members' corners, seven entries each — the corner that names it,
+   * where it is, the round it asks for, and the facets it asks for it in. */
   corners: readonly (number | Point)[],
   key: readonly number[],
   depth: number,
@@ -494,7 +495,13 @@ const shapedFold = remembered((
   const [n, from, to, at, tension, bevel, held, ...d] = key;
   const deform = d.length === 0
     ? null
-    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: () => d[6] };
+    : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
+
+  // What each member asked for along the edge its corner names, to add to the
+  // scope's: two deforms on one run are one run standing as high as both, the
+  // way two rounds at one corner are one round of both. See PLAN-bevel's
+  // step 3.
+  const mine = new Map<number, number>();
   const named = [];
 
   for (let i = 0; i + 3 < lines.length; i += 4) {
@@ -504,16 +511,30 @@ const shapedFold = remembered((
       b: lines[i + 2] as Point,
       amplitude: lines[i + 3] as number,
     });
+
+    if (lines[i + 3] !== 0) mine.set(lines[i] as number, lines[i + 3] as number);
   }
 
   const ends: Named['corners'] = [];
 
-  for (let i = 0; i + 1 < corners.length; i += 2) {
-    ends.push({ id: corners[i] as number, at: corners[i + 1] as Point, bevel: 0, facets: SQUARE });
+  for (let i = 0; i + 6 < corners.length; i += 7) {
+    ends.push({
+      id: corners[i] as number,
+      at: corners[i + 1] as Point,
+      bevel: corners[i + 2] as number,
+      facets: {
+        n: corners[i + 3] as number,
+        from: corners[i + 4] as number,
+        to: corners[i + 5] as number,
+        at: (corners[i + 6] as Point).x,
+        tension: (corners[i + 6] as Point).y,
+      },
+    });
   }
 
-  // Nothing yet: a member publishes the round it asks for and the fold does
-  // not lay it. Step 3 is where the fold takes them. See PLAN-bevel.
+  // A member publishes no arc any more: its corner reaches the fold as a
+  // corner and the fold rounds it, by its own amount over the scope's. See
+  // PLAN-bevel's steps 1 to 3.
   const curves: { id: number, points: Point[] }[] = [];
 
   const facets = { n, from, to, at, tension };
@@ -532,16 +553,16 @@ const shapedFold = remembered((
   const order = process.env.ORDER ?? 'rde';
 
   if (order === 'rde') {
-    return foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, deform, depth);
+    return foldShaped(fold, square, keep, named, curves, ends, facets, bevel, held === 1, deform, depth);
   }
 
   const first = order === 'red'
-    ? foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, null, depth)
-    : foldShaped(fold, square, keep, named, curves, SQUARE, 0, false, null, depth);
+    ? foldShaped(fold, square, keep, named, curves, ends, facets, bevel, held === 1, null, depth)
+    : foldShaped(fold, square, keep, named, curves, ends, SQUARE, 0, false, null, depth);
   const moved = movedIn({ lines: named, corners: ends }, depth);
   const then = order === 'red'
-    ? foldShaped(first.shape, first.square, first.keep, moved.lines, curves, SQUARE, 0, false, deform, 0)
-    : foldShaped(first.shape, first.square, first.keep, moved.lines, curves, facets, bevel, held === 1, deform, 0);
+    ? foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, SQUARE, 0, false, deform, 0)
+    : foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, facets, bevel, held === 1, deform, 0);
 
   return { ...then, fades: [...first.fades, ...then.fades] };
 });
@@ -846,7 +867,8 @@ export function contributed(
         inside,
         slots.flatMap(u => u.keep),
         slots.flatMap(u => u.named.lines.flatMap(l => [l.id, l.a, l.b, l.amplitude])),
-        slots.flatMap(u => u.named.corners.flatMap(c => [c.id, c.at])),
+        slots.flatMap(u => u.named.corners.flatMap(c =>
+          [c.id, c.at, c.bevel, c.facets.n, c.facets.from, c.facets.to, { x: c.facets.at, y: c.facets.tension }])),
         shapedBy,
         here!.depth,
       );

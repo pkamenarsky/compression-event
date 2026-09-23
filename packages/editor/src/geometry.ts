@@ -4256,6 +4256,13 @@ export function foldShaped(
    * these is a curve, not a string of corners, so the group leaves it
    * unrounded and lays its teeth along it. */
   arcs: readonly { id: number, points: Point[] }[],
+  /** What the members published about their corners, in the same order: a
+   * point of the fold that is one of these takes the scope's bevel *plus*
+   * that corner's own, and its facets where it asks for any. A point that is
+   * not — a join between two members, a corner an erosion made — is outline
+   * like the rest and takes the scope's own amount and nothing more. See
+   * `namesOf` and PLAN-bevel's step 3. */
+  corners: readonly { id: number, at: Point, bevel: number, facets: Facets }[],
   facets: Facets,
   bevel: number,
   held: boolean,
@@ -4382,12 +4389,16 @@ export function foldShaped(
 
     return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
   };
-  const drawnAt = (ring: Ring, i: number): number => {
-    if (!(bevel > 0) || facets.n <= 0) return 0;
+  const drawnAt = (ring: Ring, i: number, want: number, f: Facets): number => {
+    if (!(want > 0) || f.n <= 0) return 0;
 
     // Never quite to nothing where it is held: see `drawnBevels`.
-    return held ? Math.max(bevel * SEEDING, bevel + depth * Math.sign(turnAt(ring, i))) : Math.max(0, bevel);
+    return held ? Math.max(want * SEEDING, want + depth * Math.sign(turnAt(ring, i))) : Math.max(0, want);
   };
+
+  // What a point of the fold was published as, if it was: a member's corner
+  // arrives as itself — step 2 sees to that — so it is found by where it is.
+  const ownAt = (p: Point) => corners.find(c => same(p, c.at)) ?? null;
 
   // Which published arc each point of a ring belongs to, and where along
   // that arc it is: a run of the fold sharing one arc is that curve, whole or
@@ -4413,6 +4424,11 @@ export function foldShaped(
 
   const source: Point[] = [], starts: number[] = [], tooth: boolean[] = [], drawn: number[] = [];
 
+  // Beside `drawn`: what was asked for there, which is what its teeth are
+  // laid by, and the facets it is drawn in — a member's where it asked for
+  // them, since two of them may want different precision.
+  const wanted: number[] = [], face: Facets[] = [];
+
   // The names of the runs either side of each point of `source`, so that a
   // corner of the fold takes the amplitudes of its own two edges the way a
   // polygon's corner does: see `ArcDeform`.
@@ -4432,7 +4448,14 @@ export function foldShaped(
   cleaned.forEach((ring, r) => {
     const sq = ring.map(isSquare);
     const mine = ring.map(onArc);
-    const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
+    const own = ring.map(ownAt);
+
+    // The scope's and the corner's own, summed: two rounds at one corner are
+    // one round of both. `arcsWith` rations what there is no room for, which
+    // is a bend in the path and not a jump — see PLAN-bevel's step 3.
+    const wants = ring.map((_p, i) => bevel + (own[i]?.bevel ?? 0));
+    const faced = ring.map((_p, i) => ((own[i]?.bevel ?? 0) > 0 ? own[i]!.facets : facets));
+    const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i, wants[i], faced[i])));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
 
@@ -4594,6 +4617,8 @@ export function foldShaped(
           source.push(p);
           tooth.push(true);
           drawn.push(0);
+          wanted.push(0);
+          face.push(SQUARE);
         }
 
         continue;
@@ -4623,6 +4648,8 @@ export function foldShaped(
       afterOf.push(nameAfter);
       tooth.push(made.j !== null || sq[made.from] || mine[made.from] !== null);
       drawn.push(made.j === null ? bevels[made.from] : 0);
+      wanted.push(made.j === null ? wants[made.from] : 0);
+      face.push(made.j === null ? faced[made.from] : SQUARE);
     }
   });
 
@@ -4632,9 +4659,9 @@ export function foldShaped(
   // of, all at once. See `teethAlong`.
   const arcTeeth = (i: number): ArcTeeth | null => (deform === null || !(drawn[i] > 0)
     ? null
-    : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
+    : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, wanted[i] / drawn[i]) });
 
-  const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
+  const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : face[i]), i => drawn[i], arcTeeth);
 
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
@@ -4646,7 +4673,7 @@ export function foldShaped(
   ].map(image).filter((p): p is Point => p !== null);
 
   const runs = drawn.flatMap((b, i) => {
-    if (tooth[i] || !(b > 0) || facets.n <= 0) return [];
+    if (tooth[i] || !(b > 0) || face[i].n <= 0) return [];
 
     const run = o.arcs[i];
 

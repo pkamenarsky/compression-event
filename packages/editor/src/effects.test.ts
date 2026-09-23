@@ -399,12 +399,7 @@ describe('a group\'s effects', () => {
     expect(near(build(true))).toEqual(near(build(false)));
   });
 
-  // Parked for step 1 of PLAN-bevel: a member publishes the round it asks for
-  // and no longer draws it, so there is no arc on the fold for the group's
-  // deform to run along. Step 3, where `foldShaped` takes a bevel per corner,
-  // is what gives this back — and gives it back better, the corner being
-  // rounded once rather than twice. It comes in there.
-  test.skip('its deform runs along a member\'s arc, as it would along its own', () => {
+  test('its deform runs along a member\'s arc, as it would along its own', () => {
     // A member's round reaches the fold as facets, and the group's deform
     // runs along it as one curve — teeth at its own spacing, standing their
     // full amplitude off it — rather than a tooth to a facet, which would be

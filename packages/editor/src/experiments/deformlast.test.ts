@@ -228,6 +228,7 @@ function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points:
     [],
     names.lines,
     curves,
+    [],
     SQUARE,
     0,
     false,
