@@ -1054,9 +1054,25 @@ const imagedBy = remembered((
     ? null
     : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
 
+  // Which corners are set aside, at each end of a span and for the geometry.
+  //
+  // A corner is set aside where it is flat — where the bake invented it, so
+  // that it sits wherever its neighbours put it and the arcs beside it are
+  // laid as though it were not there. That is true at the end that invented
+  // it and nowhere else: one instant into the span it is off the wall and
+  // turns like any other corner, and holding it aside there would round its
+  // neighbours against a corner the outline no longer goes through. So the
+  // geometry sets aside only what both ends do, which at either end is that
+  // end's own list — `apartTo` being empty there — and across the span is a
+  // corner flat at both ends. The namings keep their own lists and their
+  // weight. See `Effected.apart` and PLAN-bevel's step 4.
+  const near = source.map((_p, i) => apart[i] === 1);
+  const far = apartTo.length === 0 ? near : source.map((_p, i) => apartTo[i] === 1);
+  const aside = near.map((x, i) => x && far[i]);
+
   // Rounded and nothing else: the teeth are laid on what the erosion leaves,
   // not on this. See PLAN-bevel 3.1.
-  const o = outlineOf(source, rings, () => false, i => each[i], i => bevels[i], () => null, i => apart[i] === 1);
+  const o = outlineOf(source, rings, () => false, i => each[i], i => bevels[i], () => null, i => aside[i]);
   const deep = depths === null ? null : o.owner.map(i => depths[i]);
   const at = (k: number) => deep?.[k] ?? erosion;
   const image = (k: number) => mitred(o.ring, o.rings, k, at(k));
@@ -1109,9 +1125,6 @@ const imagedBy = remembered((
 
     return out;
   };
-
-  const near = ids.map((_x, i) => apart[i] === 1);
-  const far = apartTo.length === 0 ? near : ids.map((_x, i) => apartTo[i] === 1);
 
   corners.forEach((run, i) => {
     if (run === null || run.length < 2 || near[i] || run.every(p => same(p, run[0]))) return;
