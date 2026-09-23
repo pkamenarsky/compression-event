@@ -785,13 +785,37 @@ floor on the turn, would keep the points.
 **The bake pop is a separate fault, and not about the order.** 'rounded as
 well, its outline never pops' has **no erosion in it** — it is a corner
 arriving into a rounded, deformed wall — so the order cannot be what breaks
-it. Probed, the worst step is at `t` 0.6950, and the outline there is *four
-rings*, of 11, 26, 2 and 3 points, closing back to one ring of 37; at HEAD it
-is one ring of 37 throughout and the worst step is 0.3140. So the fold route
-lets a tooth pinch the wall into pieces and leave two slivers, which is the
-same fault as `effects.test.ts`'s 'one edge deformed leaves the others
-straight' — teeth running onto the arcs at a run's corners — and wants fixing
-on its own, before any of the above is judged.
+it. The worst step is at `t` 0.6950, 1.6489 against HEAD's 0.3140.
+
+**And it is not a pinch.** `experiments/pinchpop.test.ts`. The four rings the
+first probe saw are `truth`'s *runs*, not rings — `Frame` is what the outline
+is drawn as, and a wall going out of sight splits it. The same spike drawn
+outright and resolved at rest is one ring at every size, 28 points through 34.
+Nothing comes apart. What moves is **one point**, the tooth standing past the
+spike's tip: (0.83, -156.70) at `t` 0.6925 and (-0.81, -156.90) at 0.6950,
+which is the whole of the 1.6489.
+
+**It is the parked event, unmasked.** Deform alone pops 0.8459 at that same
+`t` 0.6950, *the same figure on the branch and eroded first*: 3.9's 'a corner
+arriving on a deformed floor', parked at 0.85 against a bar of 0.5 — the
+arriving corner and a tooth of the far naming crossing, two ring points
+swapping order. The step scales with the amplitude, 0.4918 at one and 1.6489
+at five. What differs is the bevel. On the branch more of it **quiets** the
+event — bevel 2 gives 0.4096 and bevel 10 gives 0.3140, the worst step moving
+off to a benign 0.7075 — and eroded first more of it **amplifies**: 1.0114 and
+1.6489.
+
+`clear` is not the reason, which is worth saying because it was the first
+guess. Instrumented at that instant, `foldShaped` owns all five corners and
+clears 10 either side of every run: the teeth are off the arcs, and 'teeth run
+onto the arcs' is not what is happening. What the round adds is the arc
+endpoints moving with the two points that swap.
+
+So there is nothing here to fix before the rest of step 6. The event is 3.9's,
+it is on the branch already, and what cures it is the parked work — the bake
+meeting the teeth in the projection rather than among the corners, the order of
+work's pieces 3 and 4. Until that is in, 'rounded as well' passes on the branch
+by luck: a bevel large enough to drown an event it does not know about.
 
 The work is stashed (`git stash list`: *step 6 attempt*), and nothing of it is
 on the branch. `sparam.test.ts` is, and reports nought until that stash is
