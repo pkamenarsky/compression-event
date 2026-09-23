@@ -1071,14 +1071,27 @@ const imagedBy = remembered((
   const curves: { id: number, points: Point[] }[] = [];
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
 
+  // A corner the bake invented names nothing: it sits wherever its neighbours
+  // put it, and a wall that took its name would lose its pattern the instant
+  // the corner arrived. The line runs through it to the next real corner, as
+  // the arcs beside it are laid as though it were not there. See
+  // `effectsOver`.
+  const names = (i: number) => apart[i] !== 1;
+
   corners.forEach((run, i) => {
-    if (run === null || run.length < 2 || run.every(p => same(p, run[0]))) return;
+    if (run === null || run.length < 2 || !names(i) || run.every(p => same(p, run[0]))) return;
 
     curves.push({ id: ids[i], points: run });
   });
 
   for (let i = 0; i < n; i++) {
-    const mine = corners[i], theirs = corners[nextOf(rings, n, i)];
+    if (!names(i)) continue;
+
+    let j = nextOf(rings, n, i);
+
+    while (!names(j) && j !== i) j = nextOf(rings, n, j);
+
+    const mine = corners[i], theirs = corners[j];
 
     if (mine === null || theirs === null) continue;
 
