@@ -2903,6 +2903,39 @@ export interface Laying {
   clearTo?: number
 }
 
+/**
+ * Two layings of one edge that are the same pattern along the same run, and so
+ * differ only in how high they stand.
+ *
+ * Where a wall is splitting or joining the two namings of a span disagree
+ * about one run and agree about every other, and the ones they agree about
+ * must be laid once. Laid twice they come out as each other's neighbours —
+ * the near one at `1 - t` and the far one at `t` — so every tooth gets a
+ * nearly flat twin at its own station and the pattern's apex-to-apex segment
+ * is broken by a return to the wall. See PLAN-bevel's step 4.
+ */
+function oneRun(a: Laying, b: Laying): boolean {
+  return a.key === b.key && a.from === b.from && a.reach === b.reach
+    && a.at === b.at && a.of === b.of && a.clear === b.clear && a.clearTo === b.clearTo;
+}
+
+/** The layings of one edge with the alike ones put together, each standing as
+ * high as the ones it was made of stood in total. */
+function onceEach(lays: readonly Laying[]): readonly Laying[] {
+  if (lays.length < 2) return lays;
+
+  const out: Laying[] = [];
+
+  for (const lay of lays) {
+    const was = out.findIndex(o => oneRun(o, lay));
+
+    if (was < 0) out.push(lay);
+    else out[was] = { ...out[was], amplitude: out[was].amplitude + lay.amplitude };
+  }
+
+  return out;
+}
+
 export function subdivided(
   ring: Ring,
   e: Effecting,
@@ -2944,7 +2977,7 @@ export function subdivided(
     // where the naming either side of the event puts two on it: see `Laying`
     // and PLAN-bevel's step 4. Laid in order along the edge, so the points
     // come out in ring order however many there are.
-    const lays = patterns(i) ?? also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }]);
+    const lays = onceEach(patterns(i) ?? also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }]));
     const laid = lays
       .flatMap(one => {
         const over = one.of ?? l;
