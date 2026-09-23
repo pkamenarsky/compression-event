@@ -2204,10 +2204,43 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, frame:
   return [...erodedRingCorners(shape, out), ...erodedRingCorners(shape, out.map(d => -d))];
 }
 
+/**
+ * The most a tooth stands off the outline, in the world units the end it was
+ * taken at was measured in.
+ *
+ * The teeth used to ride inside `placed` for free, the deform running on the
+ * source before anything else. Laid after the erosion they are in neither
+ * `placed` nor `grown`, so the box has to be told about them — and nothing
+ * fails loudly if it is not: an undersized box drops a polygon from a
+ * neighbour's neighbourhood and the events between them are never looked for.
+ * See PLAN-bevel 3.3.
+ *
+ * The round needs no such allowance. An arc is drawn inside the corner it
+ * rounds, whichever way the corner turns, so it never reaches past what the
+ * corners already bound.
+ */
+function toothy(e: Effected | null): number {
+  if (e?.deform == null) return 0;
+
+  let most = 0;
+
+  for (const x of e.deform.before) most = Math.max(most, Math.abs(x));
+  for (const x of e.deform.after) most = Math.max(most, Math.abs(x));
+
+  return most;
+}
+
 function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB {
   let all: AABB | null = null;
   let step = 0;
+  let stands = 0;
   let was: Ring | null = null;
+
+  // Both ways, since a pattern with `sides` of `both` has teeth either side of
+  // the wall and a box has no use for which way out is.
+  const teeth: [number, number] = m.effected === null
+    ? [0, 0]
+    : [toothy(m.effected[0]), toothy(m.effected[1])];
 
   for (let k = 0; k <= PROBES; k++) {
     const t = k / PROBES;
@@ -2218,6 +2251,10 @@ function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB 
 
     all = all === null ? box : merge(all, box);
 
+    // Taken out by the frame the same way a depth is, so a thing growing
+    // carries its teeth out with it.
+    if (teeth[0] > 0 || teeth[1] > 0) stands = Math.max(stands, deepAt(m, teeth[0], teeth[1], frame, t));
+
     if (was !== null) {
       for (let i = 0; i < now.length && i < was.length; i++) {
         step = Math.max(step, Math.hypot(now[i].x - was[i].x, now[i].y - was[i].y));
@@ -2227,7 +2264,7 @@ function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB 
     was = now;
   }
 
-  return expandBox(all ?? ofRings([m.at.source]), step / 2);
+  return expandBox(all ?? ofRings([m.at.source]), step / 2 + stands);
 }
 
 function expandBox(a: AABB, m: number): AABB {

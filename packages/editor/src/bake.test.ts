@@ -2555,6 +2555,31 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
+  test('two rooms whose teeth reach across the gap between them are neighbours', () => {
+    // Twelve apart, so nothing either of them was drawn with ever touches the
+    // other: their source rings are what `reach` boxes, and the boxes miss.
+    // The teeth of the two facing walls stand out far enough to meet, and the
+    // second room is dropped twenty-two so that they meet rather than pass.
+    //
+    // The teeth used to ride in the source and so in the box for free. Laid
+    // after the erosion they do not, and a box that has not been told about
+    // them drops the other room out of the neighbourhood — at which point
+    // nothing complains and the events between them are simply never looked
+    // for. See PLAN-bevel 3.3.
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(112, -22, 100, 100)]);
+    const fx = new Map(ids.map(id => [id, ZIGZAG] as const));
+    let w = { ...world, effects: fx };
+
+    // Nothing moves: the amplitude alone comes up, so the boxes are the two
+    // rects and the probes' own step is nought.
+    for (const id of ids) w = wrote(w, 1, id, deform(20));
+
+    const span = run(bakeSpan(w, 0));
+
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
   test('a group eroding loses teeth, and nothing moves at the pops', () => {
     // Its teeth are laid on its fold, whose straights have no names yet: a
     // tooth that comes or goes as the clear by an arc grows is a jump, at
