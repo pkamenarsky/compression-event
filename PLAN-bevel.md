@@ -1134,11 +1134,32 @@ of each against its still.
    Reusing `foldShaped` whole brought its geometric naming along with it, and
    that is the part that does not fit.
 
-   So the last piece is for `imagedBy` to name its runs from `owner` rather
-   than by line, which is both exact and cheaper, and leaves `foldShaped`'s
-   matching to the fold that needs it. Everything else built for this — the
-   two namings and their weights, the runs, `reach` — stands, and is what the
-   naming feeds.
+   **Done.** `imagedBy` hands `foldShaped` a `Naming` of its own, and nothing
+   is matched within a tolerance of anything. Two things it has to know that a
+   line does not tell it: an edge whose two ends are points of one corner's
+   curve is inside an arc and no run's — *unless* that corner is one set
+   aside, whose sliver the run goes straight through, or a wall loses its
+   pattern the moment such a corner lifts off it. With both, the naming claims
+   the whole of a splitting wall where matching claimed neither half: five
+   edges against three, one run of 180 with the anchor and the reach the
+   line's.
+
+   **And the case is still 6.21.** Everything the analysis asked for is now
+   there and correct — the runs are right, the naming is right, both patterns
+   are laid and weighted — and the number has not moved. What the measuring
+   does say, now that it is taken to the nearest segment rather than the
+   nearest point, is that it is *one instant*: the step is 4.36 from nought to
+   a fortieth and 2.0 everywhere after, which is the rate the corner itself
+   moves. So whatever is left is at `t` nought plus, where the ring goes from
+   62 points to 101 as the second naming's teeth arrive, and it is not the
+   naming, the runs, or the weights.
+
+   A note on method, since it cost four passes: the first three diagnoses each
+   found something real — `apart` dropped by the blend, the run being the
+   wrong unit, the naming being matched rather than known — and none of them
+   was the pop. Each was worth fixing and none was the thing. Whatever is
+   found next should be confirmed against the 62-to-101 point count at the
+   first instant before anything is built on it.
 
    It is worth saying plainly why the old order never met this: it never
    derived a tooth from the geometry at `t`. A tooth was a corner, its two
