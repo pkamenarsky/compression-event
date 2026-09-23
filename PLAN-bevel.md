@@ -1368,21 +1368,33 @@ of them nowhere near where the figure was — see *3.6* piece 4.
 
 **Parked, with what replaces them written at each.** Three in `effects.test.ts`
 that go with the machinery *3.4* takes out, one of them false by design now
-since a straight and an arc are one kind of run. Three in `bake.test.ts`: a
-corner arriving on a deformed floor with nothing jumping, an edge growing
-longer gaining points that fade in, and a deform from nought fading its
-verticals in. These are the neighbours of the defect rather than the defect —
-they are about the bake's jumps, its point counts at the two ends and its
-opacity ramps, not about the outline's continuity, which now holds.
+since a straight and an arc are one kind of run. Two in `bake.test.ts`, both
+diagnosed — see *3.9*.
 
 **Not started.** *3.2*'s pinch (*3.6* piece 6), the group (piece 7), and the
 removals of *3.4* (piece 8), which now also take the geometric half of
 `Effected.apart` — see *3.3*.
 
-**What to do next.** *3.6* piece 6, the pinch. The three parked
-`bake.test.ts` tests are the other open ground: a span has to carry a tooth
-across, and the fades have to come from somewhere now that a tooth is not a
-corner.
+**What to do next.** *3.6* piece 6, the pinch, or either of the two in *3.9*.
+
+**A deform from nought now fades in**, which was the third of those three and
+is the pattern the other two are missing pieces of. A group's teeth stood in
+its fold from the start and a polygon's did not, and it took three things,
+each the polygon's half of something the fold already had: `imagedBy` keeps
+`foldShaped`'s `fades` in the shape rather than dropping them, and reports
+them as `Imaged.flat`, which `imagesOf` carries through the frame; `invented`
+keeps them through the bake's own arrangement, at the span's two ends, where
+the slots and the facet fades are already kept; and `teethFading` gives each
+one a fade.
+
+That last is the part worth remembering, because it changes no opacity at
+all. `faded` reads a point that does not turn as nothing whether or not
+anything says so. What the fade changes is `explained`, which accepts a
+corner that comes or goes only where something is fading behind it and calls
+it an event otherwise. A tooth standing up out of a flat wall was a corner
+arriving with nothing to account for it, so the bake cut instead of letting
+the line fade in — two jumps at the first instant and twelve stretches where
+there should be one.
 
 **A note on measuring, which cost four of the five passes on the pop.** Take
 the whole step profile, not the worst number. Three unrelated defects were
@@ -1390,6 +1402,54 @@ stacked on 6.21, and the one that owned the figure was at the opposite end of
 the span from where forty steps made it look. Forty steps is too coarse to see
 a defect that lives in the last fortieth of a span; four hundred separated
 them at once.
+
+### 3.9 The two parked bake tests
+
+Both are about a span carrying a tooth across, and neither is the outline's
+continuity, which holds. Diagnosed, not done.
+
+**`an edge growing longer gets more points, and they fade in`** — the right
+wall pulled out to twice its length. 17 points at the near end against 21 at
+the far.
+
+It is not that the wall gains teeth at its ends. The pattern *re-phases*: a
+tooth is anchored at the run's middle and marches out by the spacing, and the
+middle moves from `y` nought to `y` 100 as the wall grows. Tooth `j` runs −1
+to 1 at the near end and −2 to 3 at the far, with the same sub-spacing offset
+at both, so the far end has six teeth where the near has three and each of
+the three has slid.
+
+The sliding is fine — tooth `j` is the same tooth and its place is a lerp of
+its two ends, which is what `patternRun` is for. What has no answer is `j` of
+−2 at the near end: it would stand at −137.7 on a wall running −100 to 100,
+which is off the end, with nowhere to be. `reach` clamps such a tooth onto
+the corner and it is then dropped as a duplicate.
+
+So this wants the pattern laid over the union of the two ends' reaches rather
+than each end's own — the same shape of answer as step 4's two namings, and
+the same objection to answering it with a clamp: a point at a corner is a
+point that does not turn, and the arrangement takes it. Whether a tooth with
+no wall to stand on should be kept at all, or whether the count is allowed to
+change here the way *3.3* found it allowed to change under an erosion, is the
+question to settle first.
+
+**`a corner arriving on a deformed floor starts from the editor's pattern,
+and nothing jumps`** — the floor splitting, without the round. The count is
+right, 17 at both ends, and the outline is right. What is left is seven
+jumps, in two groups.
+
+At `t` of nought and one and an instant either side: the same `explained`
+gap the verticals test had, and not fixed by the same change. `foldShaped`
+records a tooth as flat when `deform.amplitude(key)` is nought or its room
+has run out — the *base* amplitude, not the weighted one. Where a wall
+splits, both namings carry their full amplitude and it is the weight that is
+nought at an end, so the far naming's teeth are flat there and nothing says
+so. The fix is to ask the geometry rather than the amplitude: a tooth is flat
+when it does not turn, which is what `simplify` decides, and `foldShaped`
+could compare its ring either side of that rather than predicting it.
+
+And three together at `t` of 0.6939, which is a separate thing and has not
+been looked at.
 
 ## Open questions
 
