@@ -1094,31 +1094,52 @@ before the geometry is.
 points — read as structural trades until the one line that caused each was
 found, and in both cases the line said something simpler than the story did.
 
-## The resolve carries geometry
+## The resolve carries amounts
 
 `resolveGroup` replaces a scope with the polygons its union comes to and
 carries its timeline onto them, so the two are one world said two ways and the
 outline must be one outline. Recorded as `a scope draws what it resolves to`,
 which is property 1 with the nesting in it.
 
-It holds where a member's only effect is its erosion — the one of the three the
-fold takes first, and so the one a ring can carry as an erosion of its own —
-two scopes deep as well as one. It holds nowhere else, and the reason is the
-same on every row: `readingAt` reads the members **drawn**, so their arcs and
-their teeth arrive at the new polygon as geometry, and the polygon's own round
-and deform are then laid over the top of them. Point counts, drawn against
-resolved:
+Thirteen of its fourteen rows hold. The one that does not is not about the
+resolve at all — see *A rationed bevel is the bevel*.
 
-| | drawn | resolved |
-|---|---|---|
-| members eroded, scope rounding | 72 | 72 |
-| members eroded, three deep, each eroding | 12 | 12 |
-| nothing on the members, all three on the scope | 99 | 98 |
-| members deformed, scope deforming | 57 | 113 |
-| members rounded, scope rounding | 72 | 492 |
-| members deformed, scope rounding | 123 | 550 |
-| members eroded, two scopes rounding | 108 | 624 |
-| everything at all three levels | 175 | 1449 |
+**Why it took a field in the world.** The fold's `Named` was a channel of its
+own, and almost everything in it was already something a world can hold: a
+corner's bevel and an edge's amplitude are the rig's, per corner and
+animatable; the round and deform options are `Effects`, with `cornerEffects`
+under it; the anchor, the reach and the run's key went onto
+`Effects['deform']`. One field had nowhere to go — the facet count — and the
+resolve had to invert it into a precision at a bevel it was never worked out
+for, which is not something a count survives.
+
+So `Effects['round']` has `facets` now: a count written down rather than asked
+for, winning over the precision where it is there. The precision stays the knob
+and stays the better one, being bevel-independent — a corner handed on to a
+bigger bevel gains segments for it, which is what makes two rounds two deep one
+round of their sum. The count is for what a precision cannot say: a fade
+between two counts, and the count a fold settled on for a corner whose member
+gave it no options of its own. The two are not the same thing and do not go the
+same way, so a fold publishes both and says which is which — a scope above
+reads `round`, adds its bevel and facets the sum for itself; a resolve, which
+has no scope above and must draw this very ring, reads `facets`. `roundOf`,
+which was the inversion, is gone.
+
+**A rationed bevel is the bevel.** The row left over has room c's top wall ten
+units under room a's bottom one, so the corner between them has an edge of ten
+to round a bevel of twelve into, and `arcsWith` rations it to five. The fold
+clears its teeth for the arc it drew, so the run ends where that five-unit arc
+starts; the same ring drawn as a polygon clears for the twelve it asked for,
+ends its run seven units early and walks flat to the arc. Widen the gap past
+two bevels and the row passes with the rest.
+
+That is the same defect as a rounded member whose corner arcs intersect and
+straighten the edge between them. Rationing is where a bevel stops being what
+was asked for and becomes what is drawn, and everything downstream of the
+rounding — the clearance above all — should be reading the drawn one. Its own
+fix, and it belongs with *Step 4*.
+
+Point counts as they stood before this, drawn against resolved:
 
 **The offset is settled.** A polygon's teeth start off each run's middle by a
 share of the spacing its seed gives it and a fold's start at it, which put every
@@ -1140,15 +1161,11 @@ the split. Not taken: the anchor is the one thing here the resolve destroys, and
 the step that writes the fold's `Named` onto the ring is the step that has to
 write it down anyway.
 
-**It is the resolve's own version of steps 1 to 5.** The scope lays each effect
-once, on amounts published by its members; the resolve has had no such step and
-hands the ring to a polygon that starts from geometry. What it wants is the
-fold's `named` written onto the ring it makes — the amplitude of each straight
-and the bevel of each corner, as `effects.amplitudes` and `cornerEffects` — and
-the members' effects then left off. The row with nothing on the members at all
-is the nearest and is the one to take first: there the ring is already right and
-only the scope's own three are re-run, a polygon anchoring and clearing a run
-its own way where the fold anchors it at the naming edge's middle.
+**It was the resolve's own version of steps 1 to 5**, and it is done. The scope
+lays each effect once, on amounts published by its members; the resolve now
+does the same, writing the fold's `named` onto the ring it makes — each
+straight's amplitude and each corner's bevel as rig amounts, the options and
+the count as `cornerEffects` — and leaving the members' effects off.
 
 **Per-edge deform options are in.** They were the one thing a polygon could not
 hold — one set for the whole of it, so two members deforming at different
