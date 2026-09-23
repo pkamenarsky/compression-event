@@ -980,12 +980,21 @@ of each against its still.
    with no round, which before had nowhere to be because the teeth were
    already corners.
 
-   1063 of 1072 pass. The five that fail are the old contract written down,
-   not regressions: four ask `edgeRun` to walk a polygon's corners through its
-   teeth and read `imagesOf().teeth`, and one asks a member to publish its
-   teeth as square geometry for its group's round — all of it what *3.4*
-   takes out. Rewriting them against the shape rather than the corners is the
-   next piece, and the branch stays off master until they are. This is the whole of it, and where it will be won
+   The suite is green on the branch. Two of the five that broke meant
+   something still and were rewritten against the shape instead of the ring —
+   an edge is its two ends and its teeth are in the outline, and a deform on
+   one edge alone is told by which wall the moved points stand nearest. Three
+   went with the machinery *3.4* takes out, parked with what replaces them;
+   one of those is false by design now, a straight and an arc being one kind
+   of run, so teeth no longer stop short of an arc but run along it.
+
+   **It stays off master because the bake pops.** Four of its tests are parked
+   as well, and those are the work of pieces 3 and 4 rather than stale
+   contract: the teeth are laid after the erosion, so `spanning` writes a
+   span's two ends over corners that no longer hold them and nothing carries a
+   tooth across. "Rounded as well, its outline never pops" stands at a worst
+   step of 3.97 against a bar of 0.5, and that number is what done looks
+   like. This is the whole of it, and where it will be won
    or lost: `Resolved.corners` becomes drawn corners only, which is what the
    eighteen readers of `Vertex.root` are for. Nearly all of them are "skip the
    teeth" and go; `merged` in the bake says so itself — "without teeth that is
