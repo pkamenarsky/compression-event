@@ -245,10 +245,26 @@ What it found:
 So the proof `PLAN-bevel` had from summed amounts is re-made in the fold's own
 form, and the rest of the plan may be built.
 
-**2. `Ids`, interned, and the identity a shape carries.** The type, the
-interning, and `combine` carrying it through a boolean op — which is Law 2 on
-its own, and the one law that is genuinely about the arrangement. Law 2 goes
-green.
+**2. `Ids`, interned, and the identity a shape carries.** Done: `ids.ts`, and
+`ids.test.ts` for it. The type, the three constructions, and
+`combineIdentified` — `combineTagged`'s provenance read as identity, a vertex
+keeping the name it came in with and a crossing `born` of the two edges that
+made it, nesting as deep as the arrangements do. Nothing in a name comes off a
+coordinate, which is what the tests are mostly about: slide an operand, carry
+the whole arrangement thousands of units off, and the names come back the same
+list to the character.
+
+They are interned under their own rendering rather than under their handles.
+The handles are an allocation order and mean nothing across two runs, and a
+crossing has to be written one way round — so the order that settles it is
+structural, and `shows` is then a lookup rather than a walk.
+
+**Law 2 does not go green here**, which this step expected it to. The break is
+not in the arrangement: sealing moves the outline with any of a member's own
+effects under it, an erosion or a round as much as a deform, because every one
+of them is re-derived from the published lines of a run that sealing has
+changed. So Law 2 is not, after all, a law about the boolean op on its own — it
+waits on the fold, at steps 6 and 7, with Laws 1 and 3.
 
 **3. `erode` as an `Effect`.** The existing offset, wrapped to take and return
 identity, with births named `born(a, b)`. Nothing else moves yet.
