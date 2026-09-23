@@ -266,8 +266,29 @@ of them is re-derived from the published lines of a run that sealing has
 changed. So Law 2 is not, after all, a law about the boolean op on its own — it
 waits on the fold, at steps 6 and 7, with Laws 1 and 3.
 
-**3. `erode` as an `Effect`.** The existing offset, wrapped to take and return
-identity, with births named `born(a, b)`. Nothing else moves yet.
+**3. `erode` as an `Effect`.** Done: `effect.ts`, with `Effect`, `Drawn` and
+`eroding`, and `effect.test.ts` for it. The existing offset wrapped and not a
+second one — it draws what `erode` draws point for point, and half the tests
+are about nothing else.
+
+The names come out of the band rather than out of anything that looks at the
+result. Every point of the band is a corner of the source or the place that
+corner moved to, which for identity is the same corner, so the arrangement
+between shape and band names its own output: a corner that survives keeps its
+name, one pushed inwards keeps it, and a corner the erosion made is `born` of
+the two walls whose bands crossed. A notch closing and parting a room in two
+says so outright, and says the same however far the geometry has travelled.
+
+Two things the step turned up that were not in the plan. The band has to report
+where its points came of, so `swept` carries that and `sweptBand` hands it
+over. And a point and the edge leaving it are two different questions: a quad's
+second point is the far corner of the wall while the edge leaving it is the
+moved wall, which belongs to the near one. Naming an edge by the point it
+leaves is right for a walked ring and wrong for a band, so `Drawn` carries an
+optional `edges` and `combineIdentified` asks the two questions separately.
+Without it a crossing on a moved wall gets a different name from the same
+crossing on the wall it moved from, which is the kind of thing that only shows
+up as a vertical in the bake a long way downstream.
 
 **4. The canonical resample.** On its own, tested on its own: identified points
 survive, ring length depends on geometry and `ε` alone.
