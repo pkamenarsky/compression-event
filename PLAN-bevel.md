@@ -1034,8 +1034,40 @@ of each against its still.
    `reach` is what says so. In this diagnostic it changes nothing, because a
    flat tooth past the end clamps onto the corner and is dropped as a
    duplicate.
-4. The bake meets the teeth in the projection rather than in the corners,
-   which piece 3 is most of. Commit.
+4. The bake meets the teeth in the projection rather than in the corners.
+   **Diagnosed, not done.** The pop is one thing and it is not what it looked
+   like: a wall splitting re-phases its pattern, and nothing fades it any
+   more.
+
+   The case is a room whose floor gains a corner over a span. At the near end
+   it is one wall with one pattern and at the far end two, each named by its
+   own corner — so half the teeth change identity. In the old order that cost
+   nothing, because a tooth *was* a corner: the ones the halves gained arrived
+   through `budding` and the ones the floor lost went the same way, and the
+   outline moved continuously across it. Laid in the projection they are not
+   corners, so nothing carries them.
+
+   Measured both ways round, which is what says it is the re-phase and not
+   something at one end of it. Against a bar of 0.5:
+
+   | where the split is put | worst step |
+   |---|---|
+   | at the first instant (a corner the bake invented names its own wall) | 3.97 |
+   | at the first instant, the invented corner naming nothing | 3.82 |
+   | at the last (the corner held apart across the whole span) | 6.82 |
+
+   The third is worse because the far end's whole pattern then arrives at
+   once; holding it apart also puts the baked far end at odds with the
+   editor's. Wherever it is put, it is the same event, and the only question
+   is what happens across it. What fixes it is what the fold already does for
+   a flat tooth (*2.9* piece 5): lay both patterns and fade one into the
+   other, so a wall splitting is a span and not an instant. That is a look
+   decision as much as a bake one — teeth double up in the middle of it — and
+   is the next thing to settle.
+
+   The invented corner naming nothing is right on its own terms and is in:
+   it sits wherever its neighbours put it, and the arcs beside it are already
+   laid as though it were not there. Commit.
 5. `reach`, and the rest of the bake notes of *3.3*. Commit.
 6. The pinch of *3.2*, on by default. Commit.
 7. The group, which by then is the same call with a depth and a bevel in it.
