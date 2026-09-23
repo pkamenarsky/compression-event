@@ -290,8 +290,25 @@ Without it a crossing on a moved wall gets a different name from the same
 crossing on the wall it moved from, which is the kind of thing that only shows
 up as a vertical in the bake a long way downstream.
 
-**4. The canonical resample.** On its own, tested on its own: identified points
-survive, ring length depends on geometry and `ε` alone.
+**4. The canonical resample.** Done: `resampled` in `effect.ts`. The same
+circle handed in at 64, 128 and 256 facets comes back at the same count and
+with the same names for those points, and handing the answer back in changes
+nothing but the last few digits.
+
+The reading it settles, which the plan left open: **what may move is read off
+the identity, not off an angle.** A `corner` or a `born` is a feature — the
+boundary turns there because a construction turned it — and it stays where it
+is; an `on` is a sample something laid to describe a curve, and where it sits
+is an accident of the effect that laid it. So "no identified point is
+resampled away" means the anchors, and the samples between two of them are
+laid again at `n` equal steps of arc length, `n` the least power of two whose
+chords stay within `ε`. Powers of two so that `n` changes rarely and visibly
+rather than creeping by one as a run grows. A straight run takes `n` of 1 and
+keeps nothing between its ends.
+
+It never emits more points than it was handed, so a ring cannot grow under a
+fold however deep the nesting goes. Nothing wires it into `eroding`: an erosion
+lays no samples, and the caller that needs it is the round.
 
 **5. `round` as the opening.** Built on 3 and 4. A polygon only, held against
 `arcsWith` for the look — a rounded square must still read as a rounded square,
