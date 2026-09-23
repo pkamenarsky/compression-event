@@ -655,34 +655,34 @@ function squareIn(it: Resolved): Point[] {
   });
 }
 
-/** A group's round and deform as `shapedFold` takes them, or nothing where
- * they do nothing. */
 /**
- * Whether a scope lays anything on its fold — which is a question about its
- * *amounts*, not about which effects are switched on. A round with no bevel
- * and a deform with no amplitude draw nothing, so the fold does not happen
- * and the members reach the level drawn as themselves.
+ * A scope's round and deform as `shapedFold` takes them.
  *
- * Asked here and by `resolveGroup`, which must take the same branch: reading
- * the members bare and publishing amounts where the fold lays them, and
- * reading them drawn where it does not. Asking it of the options instead —
- * which it did — parts the two the moment a round is on at a bevel of
- * nought. See PLAN-bevel's *The resolve carries amounts*.
+ * Always, for a scope that is standing — even one laying nothing of its own,
+ * whose key is a square corner at a bevel of nought and no deform at all.
+ * There is one pipeline and a scope is the whole of it: its members are read
+ * bare, what they had is published as amounts, and the fold lays those amounts
+ * on the union once. A scope adding nothing adds nothing to them.
+ *
+ * It did have two, and took the other whenever nothing was laid: the members
+ * reached the level drawn as themselves and the union merely clipped them.
+ * Which drew a different thing on either side of a bevel of nought — a tooth
+ * running past another member's wall was cut off there rather than fading, and
+ * the first unit of bevel put the fade back — and left `resolveGroup` with a
+ * ring whose teeth were geometry rather than amounts, so that a round put on
+ * that ring afterwards rounded every tooth. Both laws wanted the one pipeline,
+ * and the one pipeline is less to hold in the head. See PLAN-bevel's *An
+ * effect on a scope, and on what it resolves to*.
  */
-export function shapes(fx: Standing['effects'] | undefined): boolean {
-  return fx !== undefined && ((fx.facets.n > 0 && fx.bevel > 0) || fx.deform !== undefined);
-}
-
 function shapeKey(s: Standing | null): number[] | null {
-  const fx = s?.effects;
+  if (s === null) return null;
 
-  if (!shapes(fx) || fx === undefined) return null;
-
-  const round = fx.facets.n > 0 && fx.bevel > 0;
-  const d = fx.deform;
+  const fx = s.effects;
+  const round = fx !== undefined && fx.facets.n > 0 && fx.bevel > 0;
+  const d = fx?.deform;
 
   return [
-    ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0,
+    ...facetKey(round ? fx!.facets : SQUARE), round ? fx!.bevel : 0,
     ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude, Number(d.e.offset)]),
   ];
 }
@@ -822,7 +822,7 @@ export function contributed(
     // is an arrangement, and would drop them — see `Resolved.keep`. A member
     // eroded only invented nothing and lies flat nowhere; what this fold keeps
     // is its own.
-    const keep = bare ? [] : group.members.flatMap(m => keptFrom(m, set, k))
+    const keep = group.members.flatMap(m => keptFrom(m, set, k, bare))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
     // What its members' outlines are made of, moved in with them: the fold
@@ -890,11 +890,24 @@ export function contributed(
    * inward normal of the edge it lies on: a polygon's own, and a scope's
    * inside, which kept its members'.
    */
-  const keptFrom = (id: Id, set: SetName, k: number): { p: Point, n: Point }[] => {
+  /**
+   * The points one member of slot `k` keeps, which a union would otherwise
+   * drop: see `Resolved.keep`.
+   *
+   * Read bare, a member's teeth are not there to keep — the fold lays them
+   * itself, from the amplitude the member published — and a `Fade` is a
+   * tooth. What is not a tooth is outline: a corner the bake invented, lying
+   * flat on a wall while it arrives, and which the fold must keep however it
+   * reads the member, or the wall is a point short at the near end of the
+   * span and the corner's vertical stands all at once. See `groupFading`.
+   */
+  const keptFrom = (id: Id, set: SetName, k: number, bare = false): { p: Point, n: Point }[] => {
     const it = mine.get(id);
 
     if (it !== undefined) {
-      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, (it.keep ?? []).map(p => ('p' in p ? p.p : p))) : [];
+      const ours = (it.keep ?? []).filter(p => !bare || !('p' in p)).map(p => ('p' in p ? p.p : p));
+
+      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, ours) : [];
     }
 
     const group = world.groups.get(id);
@@ -902,10 +915,12 @@ export function contributed(
     if (group === undefined) return [];
 
     if (group.sealed && standing(id) !== null) {
-      return k === top(id, set) ? inwards(resolves(id, set), kept.get(`${id}:${set}`) ?? []) : [];
+      const key = `${id}:${set}${bare ? ':bare' : ''}`;
+
+      return k === top(id, set) ? inwards(resolves(id, set, bare), kept.get(key) ?? []) : [];
     }
 
-    return group.members.flatMap(m => keptFrom(m, set, k));
+    return group.members.flatMap(m => keptFrom(m, set, k, bare));
   };
 
   const kept = new Map<string, Point[]>();

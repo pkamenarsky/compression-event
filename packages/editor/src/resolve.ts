@@ -104,7 +104,6 @@ import {
   depths,
   groupEffects,
   groupFrame,
-  shapes,
   joined,
   keyAt,
   order,
@@ -431,7 +430,7 @@ function lineAlong(lines: Published['lines'], a: Point, b: Point, scale: number)
  * Which ring is a hole is decided here, in the frame the corners are written
  * down in, because that is the frame `project` will read their winding in.
  */
-function readingAt(world: World, v: KeyframeId, id: GroupId, bare: boolean): Reading[] {
+function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   const inside = new Set(within(world, id).filter(m => m !== id));
   const depth = depths(world, v);
 
@@ -461,7 +460,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId, bare: boolean): Rea
       return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0, effects: groupEffects(world, v, g) } : null;
     },
     undefined,
-    bare,
+    true,
   );
 
   const frame = groupFrame(world, v, id);
@@ -584,23 +583,11 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  // Bare only where the scope shapes. A scope that rounds or deforms lays one
-  // round and one deform on the *union*, so the ring can carry those as
-  // amounts and draw them itself — which is what `publishing` writes down.
-  //
-  // A scope with neither lays nothing: what it puts into the level is its
-  // members drawn, each with its own arcs and its own teeth, and a tooth of
-  // one member running past another's wall is clipped by the union rather
-  // than faded at its end. There is no fold there to take amounts from, and
-  // laying the members' amounts on the ring instead would fade exactly those
-  // teeth. So it is read as it draws.
-  //
-  // Asked of the amounts, not of the options, and asked by the very predicate
-  // the draw asks it by: a round switched on at a bevel of nought lays
-  // nothing, so the fold does not happen and the members arrive drawn. See
-  // `shapes`.
-  const shaping = shapes(groupEffects(world, v, id));
-  const readings = readingAt(world, v, id, shaping);
+  // Bare, always. A scope lays one round and one deform on the *union*, so
+  // the ring carries those as amounts and draws them itself — which is what
+  // `publishing` writes down. A scope laying nothing of its own still folds,
+  // and still hands its members' amounts on; see `shapeKey`.
+  const readings = readingAt(world, v, id);
 
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.

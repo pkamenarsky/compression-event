@@ -1142,9 +1142,7 @@ describe('an effect on a scope, and on what it resolves to', () => {
     both(20, 40);
   });
 
-  // See above: a scope laying nothing resolves to teeth as geometry, and the
-  // round then rounds each tooth.
-  test.fails('a scope that lays nothing, then rounded', () => {
+  test('a scope that lays nothing, then rounded', () => {
     both(0, 40);
   });
 });
