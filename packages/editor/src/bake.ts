@@ -1353,6 +1353,20 @@ function effectsOver(
     facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
   });
 
+  // How much longer each wall is at the other end of the span than at this
+  // one, halved: what the pattern on it has to run past its own end so that
+  // both ends lay the same teeth. See `Effected.spare`.
+  const ring = ringsOf(corners);
+  const wall = (end: 0 | 1, i: number): number => {
+    const p = local[end][i], q = local[end][nextOf(ring, corners.length, i)];
+
+    return Math.hypot(q.x - p.x, q.y - p.y) * scales[end];
+  };
+  const spare = ([0, 1] as const).map(end => corners.map((_c, i) =>
+    Math.max(0, wall(end === 0 ? 1 : 0, i) - wall(end, i)) / 2));
+  const changes = spare.some(xs => xs.some(x => x > 0));
+  const spared = (e: Effected, end: 0 | 1): Effected => (changes ? { ...e, spare: spare[end] } : e);
+
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
@@ -1360,7 +1374,7 @@ function effectsOver(
   });
 
   return {
-    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
+    effected: [spared(ended(seeded(a, b), 0), 0), spared(ended(seeded(b, a), 1), 1)],
   };
 }
 
@@ -1393,6 +1407,11 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     apart,
     apartTo,
     apartAt: t,
+
+    // Mixed, as the wall it is measured off is: a spare and the half wall it
+    // is added to sum to the span's longest wall at either end, so mixing the
+    // one tracks the other and the reach holds still. See `Effected.spare`.
+    spare: e[0].spare?.map((x, i) => mix(x, e[1].spare?.[i] ?? 0, t)),
     deform: d0 === null || d1 === null
       ? d0 ?? d1
       : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },
@@ -1457,24 +1476,33 @@ function invented(
   m: Moving,
   at: Omit<Resolved, 'shape' | 'rings'>,
   t: number,
-): Point[] {
+): (Point | Fade)[] {
   const end = t === 0 ? 0 : t === 1 ? 1 : null;
-  if (end === null) return [];
-
   const rings = ringsOf(m.corners);
 
   if (m.effected !== null) {
     return [
-      ...slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : [])),
-      ...facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p),
+      ...(end === null ? [] : slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : []))),
+      ...(end === null ? [] : facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p)),
 
-      // And its teeth lying flat at this end — a pattern still at nought
-      // amplitude, or a tooth at a run's end with no room left. They do not
-      // turn, so the arrangement drops them unless asked, and the ring would
-      // be shorter at the end than it is in between.
-      ...(imagesOf({ ...at, rings })?.flat ?? []),
+      // And its teeth lying flat — a pattern still at nought amplitude, or a
+      // tooth at a run's end with no room left. They do not turn, so the
+      // arrangement drops them unless asked, and the ring would be shorter
+      // wherever one of them was than it is where they all stand.
+      //
+      // At every instant, not just at the ends, which is what tells them from
+      // an invented corner: a corner is flat at one end of the span and out of
+      // the wall ever after, but a wall growing over a span takes its teeth
+      // back one at a time, and each is flat until the instant it turns.
+      //
+      // Asked for as fades rather than as points: a pile of them stands on
+      // one corner, where the arrangement gives the pile one point and where
+      // it lies says nothing about which wall each came off. See `Fade.to`.
+      ...(imagesOf({ ...at, rings })?.kept ?? []),
     ];
   }
+
+  if (end === null) return [];
 
   const dead = m.dead[end];
   const out: Point[] = [];

@@ -142,7 +142,7 @@ export interface Contributed {
   simple: boolean
   /** The bake's invented corners, carried through the arrangement. A group's
    * union has none: nothing invents a corner on it. See `Resolved.keep`. */
-  keep?: readonly Point[]
+  keep?: readonly (Point | Fade)[]
   /** A group's arc points on their facets part way through a span, with how
    * solid each stands. See `facetFades`. */
   faded?: readonly Fade[]
@@ -751,7 +751,7 @@ export function contributed(
     const it = mine.get(id);
 
     if (it !== undefined) {
-      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, it.keep ?? []) : [];
+      return slotOf(kindOf(it.polygon), set) === k ? inwards(it.shape, (it.keep ?? []).map(p => ('p' in p ? p.p : p))) : [];
     }
 
     const group = world.groups.get(id);

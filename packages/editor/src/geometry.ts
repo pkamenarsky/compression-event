@@ -2471,7 +2471,7 @@ function cornersOnly(
  * Anything that does not land on an edge is not put anywhere: an eroded ring
  * that has swallowed the edge a corner sat on genuinely does not have it.
  */
-export function keeping(shape: Shape, points: readonly Point[]): Shape {
+export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape {
   if (points.length === 0) return shape;
 
   // The same tolerance the arrangement works to, taken off the same geometry.
@@ -2484,7 +2484,15 @@ export function keeping(shape: Shape, points: readonly Point[]): Shape {
   const snap = scale * 1e-9;
   const out = shape.map(ring => [...ring]);
 
-  for (const p of points) {
+  for (const q of points) {
+    const p = 'p' in q ? q.p : q;
+
+    // A point standing on a corner takes the wall it came off instead of the
+    // one it lies on, which is neither: the edge leaving that corner the way
+    // `to` goes. Then a pile of them ends up on the right side of the corner,
+    // however many there are, and in whatever order — coincident points are
+    // the same ring whichever way round they are read. See `Fade.to`.
+    const to = 'to' in q ? q.to : undefined;
     let best: { ring: number, index: number, off: number } | null = null;
 
     for (let r = 0; r < out.length; r++) {
@@ -2500,12 +2508,25 @@ export function keeping(shape: Shape, points: readonly Point[]): Shape {
         const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
         const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
 
+        if (to !== undefined) {
+          if (Math.hypot(p.x - a.x, p.y - a.y) > snap) continue;
+
+          const turn = Math.abs((to.x - a.x) * dy - (to.y - a.y) * dx) / l;
+
+          if ((to.x - a.x) * dx + (to.y - a.y) * dy < 0) continue;
+          if (best === null || turn < best.off) best = { ring: r, index: i, off: turn };
+
+          continue;
+        }
+
         if (along <= snap || along >= l - snap) continue;
         if (best === null || off < best.off) best = { ring: r, index: i, off };
       }
     }
 
-    if (best !== null && best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
+    if (best === null) continue;
+    if (to !== undefined) out[best.ring].splice(best.index + 1, 0, p);
+    else if (best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
   }
 
   return out;
@@ -3864,6 +3885,17 @@ export function arcRuns(shape: Shape, facets: Facets, bevel: number): Point[][] 
 export interface Fade {
   p: Point
   v: number
+  /**
+   * The point after it in the ring it was laid in, where it stands on a
+   * corner rather than on a wall of its own.
+   *
+   * A tooth past the end of its run is clamped onto that end, so several can
+   * stand on one corner and the arrangement gives the pile one point. Put
+   * back, they are a pile again, and where on the corner says nothing about
+   * which of the two walls meeting there each belongs to. This does. See
+   * `keeping`.
+   */
+  to?: Point
 }
 
 /** Which of `n + 1` points an arc laid in `s` segments turns at: the rest
@@ -4314,6 +4346,12 @@ export function foldShaped(
   // Where the teeth are in `source`. Which of them lie flat is read off the
   // ring once it is built, not predicted here: see `flat` below.
   const teethAt: number[] = [];
+
+  // How solid each of them stands. A tooth of no room is flat by
+  // construction — its run has none left for it — which is the one kind the
+  // ring cannot be asked about, because several of them stand on one corner
+  // and the corner turns. See `fades`.
+  const teethRoom: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
@@ -4500,7 +4538,10 @@ export function foldShaped(
       // is read for flatness the same way: at the end that invented it the
       // pattern lifts it off the wall onto its own line, where it does not
       // turn. Its laid place, not the one it was kept at. See `aside`.
-      if (deform !== null && (made.j !== null || (made.j === null && isAside(ring[made.from])))) teethAt.push(source.length);
+      if (deform !== null && (made.j !== null || (made.j === null && isAside(ring[made.from])))) {
+        teethAt.push(source.length);
+        teethRoom.push(made.room);
+      }
 
       source.push(made.at);
       beforeOf.push(made.j === null ? nameBefore : nameAfter);
@@ -4589,11 +4630,16 @@ export function foldShaped(
   // See PLAN-bevel 3.9.
   const stands = (p: Point): boolean => shape.some(r => r.some(q => same(p, q)));
 
+  // Except for a tooth of no room, which is flat whatever the ring says:
+  // clamped onto the end of its run, it stands on a corner that turns, so
+  // `stands` would answer for the corner and the pile would be dropped. The
+  // point after it says which wall of the corner it came off. See `keeping`.
+  //
   // A tooth lying flat is not a corner, and stands at nought until it turns.
   const fades: Fade[] = teethAt
-    .map(i => image(o.arcs[i][0]))
-    .filter((p): p is Point => p !== null && !stands(p))
-    .map(p => ({ p, v: 0 }));
+    .map((i, k) => ({ p: image(o.arcs[i][0]), to: image(o.arcs[(i + 1) % source.length][0]), piled: teethRoom[k] === 0 }))
+    .filter(f => f.p !== null && (f.piled || !stands(f.p)))
+    .map(f => ({ p: f.p!, v: 0, ...(f.piled && f.to !== null ? { to: f.to } : {}) }));
 
   return { shape, runs, square: squared, keep: kept, fades };
 }
@@ -4630,6 +4676,9 @@ export interface Imaged {
    * through. See `FoldShaped.fades`.
    */
   flat?: Point[]
+  /** The same, as the arrangement has to be asked to keep them: a pile on a
+   * corner needs the side each came off. See `keeping` and `project`. */
+  kept?: readonly Fade[]
   /** Each corner's arc as it is drawn, before the erosion, where a polygon's
    * effects drew one: see `outlineOf`. */
   drawn?: Point[][]

@@ -37,6 +37,7 @@ import {
   CRAMMED,
   FALLOFF,
   Facets,
+  Fade,
   SEEDING,
   ArcTeeth,
   Imaged,
@@ -245,7 +246,7 @@ export interface Resolved {
    * event the invention exists to prevent. Nothing else sets this, and an empty
    * one costs nothing.
    */
-  keep?: readonly Point[]
+  keep?: readonly (Point | Fade)[]
   /**
    * Its rounds and deforms, as the projection takes them: nothing where it has
    * none, or none of them comes to anything. See `effectedOf`.
@@ -284,6 +285,19 @@ export interface Effected {
   apart?: readonly boolean[]
   apartTo?: readonly boolean[]
   apartAt?: number
+  /**
+   * How much further than this end's own wall the pattern on it has to run,
+   * corner by corner and as a half-length, like the reach it is added to.
+   *
+   * A wall names a run whose pattern reaches half its length either way from
+   * its middle, so a wall that is longer at the other end of a span lays more
+   * teeth there, and the ring changes length part way through — the one event
+   * `spanning` exists to prevent. Given the span's longest here, both ends lay
+   * the same teeth, and the ones a shorter wall has no room for stand flat at
+   * its end and come up as it grows. See `patternRun`'s `reach` and
+   * PLAN-bevel's step 0.
+   */
+  spare?: readonly number[]
 }
 
 export interface ArcDeform {
@@ -511,7 +525,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
     ? []
     : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids]];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.spare ?? []).map(r => r / s)];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1032,7 +1046,16 @@ export const project = remembered((
   if (effects === null) return offsetOf(source, rings, erosion, depths);
 
   // Rounded, deformed along its arcs, and then eroded: see `outlineOf`.
-  return simplify(imagedBy(source, rings, erosion, depths, effects).shape);
+  //
+  // The arrangement drops the teeth lying flat in it, as it drops any point
+  // in line with its neighbours, so they are put back after it the way
+  // `imagedBy` puts them back after its own. The outline is the same shape
+  // either way; what it keeps is its points, so that a span's two ends have
+  // the same ring and a tooth coming up is not a point arriving. See
+  // `FoldShaped.fades`.
+  const im = imagedBy(source, rings, erosion, depths, effects);
+
+  return simplify(im.shape);
 });
 
 /** Where each of a polygon's features lands: the construction `project`
@@ -1044,7 +1067,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Memo[],
 ): Imaged => {
-  const [facets, bevels, flat, deform, apart, apartTo, apartAt] = effects as [Memo[], number[], number[], Memo[], number[], number[], number];
+  const [facets, bevels, flat, deform, apart, apartTo, apartAt, spare] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
   const each = facets.map(facetsFrom);
   const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
@@ -1196,7 +1219,11 @@ const imagedBy = remembered((
       return {
         key: ids[k],
         from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len,
-        reach: Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) / 2,
+
+        // Half the wall, and half again of whatever it gains over the span:
+        // the teeth this end lays are then the ones the other end lays too.
+        // See `Effected.spare`.
+        reach: Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) / 2 + (spare?.[k] ?? 0),
       };
     };
   };
@@ -1230,11 +1257,16 @@ const imagedBy = remembered((
   // not turning: put back, so the ring keeps its points while a pattern comes
   // up out of nothing or a run's end takes one away. The fold does the same
   // with what its slots published. See `FoldShaped.fades`.
-  const lying = laid.fades.filter(f => f.v === 0).map(f => f.p);
+  const lying = laid.fades.filter(f => f.v === 0);
 
 
 
-  return { shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying), ...rest, flat: lying };
+  return {
+    shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying),
+    ...rest,
+    flat: lying.map(f => f.p),
+    kept: lying,
+  };
 });
 
 /** The noise's name for a corner's arc: its own, told apart from the edge it
@@ -1260,6 +1292,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
 
   if (s === null) return imagedBy(at.source, at.rings, at.erosion, at.depths, effectKey(fx));
 
+
   const im = imagedBy(at.local, at.rings, at.erosion / s, scaled(at.depths, s), effectKey(fx, s));
   const run = (r: Point[] | null) => (r === null ? null : place(at.frame, r));
 
@@ -1268,6 +1301,7 @@ export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
     corners: im.corners.map(run),
     teeth: place(at.frame, im.teeth ?? []),
     flat: place(at.frame, im.flat ?? []),
+    kept: (im.kept ?? []).map(f => ({ ...f, p: place(at.frame, [f.p])[0], ...(f.to === undefined ? {} : { to: place(at.frame, [f.to])[0] }) })),
     drawn: (im.drawn ?? []).map(r => place(at.frame, r)),
     rest: im.rest.map(r => place(at.frame, r)),
     restSquare: im.restSquare,
