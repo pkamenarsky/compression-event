@@ -525,7 +525,7 @@ const shapedFold = remembered((
   // are laid on what comes out at a depth of nought.
   const order = process.env.ORDER ?? 'rde';
 
-  if (order === 'rde' || depth === 0) {
+  if (order === 'rde') {
     return foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, deform, depth);
   }
 

@@ -384,7 +384,7 @@ Worst step per span, 1600 steps:
 | span | rde (ships) | red | **erd** |
 |---|---|---|---|
 | 0 | 0.0230 | 0.0230 | 0.0230 |
-| 1 | 0.2138 | **21.3069** | 0.0539 |
+| 1 | 0.2138 | 0.0510 | 0.0539 |
 | 2 | 0.0722 | 0.0510 | 0.0539 |
 | 3 | **2.8434** | 0.0510 | 0.0539 |
 | 4 | 0.3718 | 0.0509 | 0.0539 |
@@ -393,31 +393,28 @@ Refined to 6400, `erd` has **one** outlier in the whole world: 3.28 at `t`
 0.1303, two adjacent steps, ring 50 → 49 → 51. That is a point leaving and two
 arriving — one topology event, which is a stretch boundary the bake cuts at.
 `rde` has two, at 2.87 and 1.68, tied to no event at all. Everything else in
-`erd` is median = worst = the figure moving.
+`erd`, and everything in `red`, is median = worst = the figure moving.
 
-**It is the same figure.** All three agree to sixteen digits at the first two
-keyframes. Extents agree within three units in 1900 at the deepest; areas are
-722k, 786k and 739k for `rde`, `red` and `erd`, and `erd` is 35 apart from
-today's outline where `red` is 87.
+**Wherever the depth is nought, `erd` is today's figure exactly** — nought
+apart at the first two keyframes, the same 55 points — and from there it parts
+smoothly: 5.9, 20.8, 38.0, 35.1 at the later keyframes. That is the erosion
+alone talking, which is the one step that moved.
 
-**Two things the run found that the case did not predict.**
+**`red` draws a different figure from the start.** 14.8 apart at zero depth,
+where nothing has been eroded at all, and 167 points against 55. Its second
+pass lays the teeth from the names with `reach` instead of onto the ring the
+round came to, so it is toothier everywhere, not just at depth. By the last
+keyframe it is 87 from today's outline where `erd` is 35.
 
-1. **`red` has a discontinuity of its own, and it converges.** Span 1, worth
-   21.34 at every refinement, ring 55 → 165: the group's deform arriving all at
-   once with nothing fading it. *3.1*'s fade work is the polygon's half and the
-   group never got it. So giving a group the polygon's order — which is what
-   this plan said to do next — moves the pop off span 3 and puts a bigger one
-   on span 1. Worth knowing before anything is written against it.
-2. **`erd` keeps far fewer points than `red`** — 50 against 162. *3.2* counted
-   the 162 as the win, and `erd` gives it up. The reason is structural: the
-   group's bevel of 180 is laid on the *eroded* ring, whose walls are shorter,
-   so the round's clear eats most of the room the teeth would stand in. Under
-   `red` the round ran on the long un-eroded walls and the teeth were laid
-   afterwards with `reach` from the line.
-
-So the trade is real and it is the one the ordering implies: `erd` is smoother
-and nearer today's look, `red` is toothier. What is not in question is which
-fixes the thing that was broken.
+**A finding that was the prototype's own.** An earlier run had `red` popping
+21.34 on span 1 and read it as the group's deform arriving with nothing fading
+it. It was the switch: `shapedFold` took the shipped single-pass path whenever
+the depth was nought, so the first step of an erosion crossed between two
+different constructions — ring 55 → 165 at `t` 0.00016, the first step of the
+span. With the shortcut gone both orders are smooth at every refinement. The
+thing to take from it is the method rule and not the number: a prototype that
+switches on the quantity being swept will manufacture a discontinuity at the
+switch, and it will converge like a real one.
 
 ### 4.3 What it costs
 
@@ -451,9 +448,14 @@ fixes the thing that was broken.
    same world, before building on it.
 3. **A scope's own arcs get names** (*2.3*), since a nested group needs its
    curves named and not only its straights.
-4. **The group's fades** — *3.1*'s fade work, which `red` showed the group has
-   never had. Under `erd` the teeth are laid last at every level, so this is the
-   same mechanism the polygon already uses rather than a second one.
+4. **The group's fades, if it wants any.** *3.1*'s fade work is the polygon's;
+   whether a scope is short of it is now an open question rather than a finding,
+   the run that said so having been the switch (*4.2*). The plumbing is there —
+   `shapedFold` keeps both passes' fades, `Contributed.faded` carries them and
+   `groupFading` puts them onto the side beside its members' — so the thing to
+   measure is the bake and not the outline: a group whose deform comes up from
+   nought under `erd`, counted in stretches and jumps against its still. Build
+   nothing until that count says something is missing.
 5. **The pinch** (*4.5*), on by default.
 6. **The removals** (*4.6*), once nothing reads them. `baseline.golden.json`
    regenerated once, at the end.
@@ -511,7 +513,7 @@ the baked span of each against its still.
 
 ## Method
 
-Two rules, each of which cost several passes to learn.
+Three rules, each of which cost several passes to learn.
 
 **Rank the steps, do not max them.** *3.4*'s pop reads 2.73 at four hundred
 steps and the ambient step on that span is 0.23 — a figure nobody had asked for
@@ -525,6 +527,12 @@ reading of the geometry. It is also why the whole step profile matters rather
 than the single worst number: the pop of *3.1* was three unrelated defects
 stacked on one figure, and the one that owned it was at the opposite end of the
 span from where forty steps made it look.
+
+**A prototype must not switch on what is being swept.** The `ORDER` rig took
+the shipped path whenever the depth was nought, and so manufactured a
+discontinuity at the first step of every erosion — one that ranked, converged
+and read exactly like a real one (*4.2*). Sweep a quantity and every branch on
+it is a suspect before the geometry is.
 
 ## Open questions
 
