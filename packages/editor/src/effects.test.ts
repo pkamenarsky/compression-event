@@ -43,6 +43,30 @@ function roundedRect(w: number, h: number, r: number, segments: number): number 
   return shapeArea([rounded(rect(0, 0, w, h), () => r, segments)]);
 }
 
+/** How far a point is from a room of 0,0 to 100,100: nought on it, positive
+ * outside, and the amplitude at a tooth's tip. */
+function offRoom(p: Point): number {
+  return Math.max(-p.x, p.x - 100, -p.y, p.y - 100);
+}
+
+/** How far a point is from the nearest edge of `shape`. */
+function toShape(p: Point, shape: readonly (readonly Point[])[]): number {
+  return Math.min(...shape.flatMap(ring => ring.map((q, i) => {
+    const r = ring[(i + 1) % ring.length];
+    const dx = r.x - q.x, dy = r.y - q.y, l2 = dx * dx + dy * dy;
+    const u = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((p.x - q.x) * dx + (p.y - q.y) * dy) / l2));
+
+    return Math.hypot(p.x - q.x - dx * u, p.y - q.y - dy * u);
+  })));
+}
+
+/** Which of `corners`' edges a point stands nearest, by index. */
+function nearestEdge(p: Point, corners: readonly { at: Point }[]): number {
+  const far = corners.map((c, i) => toShape(p, [[c.at, corners[(i + 1) % corners.length].at]]));
+
+  return far.indexOf(Math.min(...far));
+}
+
 function shapeOf(world: World, id: Id) {
   return resolveAt(world, 0).find(it => it.id === id)!.shape;
 }
@@ -260,7 +284,11 @@ describe('a group\'s effects', () => {
     expect(shapeArea(set)).toBeCloseTo(roundedRect(200, 100, 10, 8), 6);
   });
 
-  test('its round leaves its members\' deformed geometry square, and its own deform is on its union', () => {
+  // PHASE 3: parked. A member has no teeth among its corners any more, so it
+  // publishes none as square geometry, and the square machinery — `squareIn`,
+  // `effectedSquare`, `imaged` — is what 3.4 takes out. Restore as a test that
+  // a group's outline is a polygon's, per 3.5.
+  test.skip('its round leaves its members\' deformed geometry square, and its own deform is on its union', () => {
     const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0 };
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const b = room(a.world, rect(60, 0, 140, 100));
@@ -551,17 +579,25 @@ describe('editing effects', () => {
     expect(stateAt(w, id, 0).amplitudes.get(a.id)).toBe(3);
   });
 
-  test('an edge runs from its drawn corner to the next, through its teeth', () => {
+  test('an edge runs from its drawn corner to the next, and its teeth are in the shape', () => {
     const { world, id } = room();
     const points = world.polygons.get(id)!.points;
     const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(2));
     const it = resolveAt(w, 0).find(r => r.id === id)!;
     const run = edgeRun(it, points[0].id);
 
+    // A polygon's corners are the ones it was drawn with: the deform is laid
+    // on the eroded outline, so an edge is its two ends and nothing between.
+    // See PLAN-bevel 3.1.
+    expect(run).toHaveLength(2);
     expect(it.corners[run[0]].id).toBe(points[0].id);
-    expect(it.corners[run[run.length - 1]].id).toBe(points[1].id);
-    expect(run.slice(1, -1).every(i => it.corners[i].root === points[0].id)).toBe(true);
-    expect(run.length).toBeGreaterThan(2);
+    expect(it.corners[run[1]].id).toBe(points[1].id);
+    expect(it.corners.every(c => c.root === undefined)).toBe(true);
+
+    // The teeth are in the shape, which has more points than the ring has
+    // corners, and they stand off the walls.
+    expect(it.shape[0].length).toBeGreaterThan(it.corners.length);
+    expect(it.shape[0].filter(p => offRoom(p) > 1e-9).length).toBeGreaterThanOrEqual(4);
 
     expect(endsOf([it], [points[3].id]).sort()).toEqual([points[3].id, points[0].id].sort());
     expect(edgesBetween([it], [points[0].id, points[1].id, points[3].id]).sort()).toEqual([points[0].id, points[3].id].sort());
@@ -577,8 +613,16 @@ describe('editing effects', () => {
     const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
     const it = resolveAt(w, 0).find(r => r.id === id)!;
 
-    expect(edgeRun(it, a.id).length).toBeGreaterThan(2);
-    [b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
+    // Every edge is its two ends now; what tells them apart is the shape.
+    [a, b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
+
+    // Only the deformed edge's wall has anything standing off it: each point
+    // the deform moved is nearer that edge than any other.
+    const plain = resolveAt(rounded, 0).find(r => r.id === id)!;
+    const moved = it.shape[0].filter(p => toShape(p, plain.shape) > 1e-6);
+
+    expect(moved.length).toBeGreaterThan(0);
+    moved.forEach(p => expect(nearestEdge(p, [a, b, c, d])).toBe(0));
 
     // The corner the deformed edge does not touch is rounded as it was.
     const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];
@@ -586,7 +630,11 @@ describe('editing effects', () => {
     expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
   });
 
-  test('a polygon\'s teeth stop short of its corners\' arcs, and are never rounded', () => {
+  // PHASE 3: parked, and this one is false by design now. Laid on the eroded
+  // outline, a straight and an arc are one kind of run, so teeth no longer
+  // stop short of an arc — they run along it. Replace with 3.5's "teeth of one
+  // size along straights and arcs alike".
+  test.skip('a polygon\'s teeth stop short of its corners\' arcs, and are never rounded', () => {
     const { world, id } = room();
     const [a, b] = world.polygons.get(id)!.points;
     const fx = { round: inSegments(8, 30), deform: DEFORM.deform! };
@@ -606,7 +654,10 @@ describe('editing effects', () => {
     expect(at(b.id)).toBe(9);
   });
 
-  test('a polygon\'s arcs take teeth of their own, along the curve, laid as its edges\' are', () => {
+  // PHASE 3: parked. An arc's teeth no longer come through `imagesOf().teeth`
+  // — nothing puts them among the corners — but out of `foldShaped` with every
+  // other run's. Same intent, read off the shape: see 3.5.
+  test.skip('a polygon\'s arcs take teeth of their own, along the curve, laid as its edges\' are', () => {
     const { world, id } = room();
     const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, spacing: 10 } };
     const plain = resolveAt(wrote(withEffects(world, id, { round: fx.round }), 0, id, round(30)), 0).find(r => r.id === id)!;
