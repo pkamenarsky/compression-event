@@ -1357,8 +1357,17 @@ function effectsOver(
   // one, halved: what the pattern on it has to run past its own end so that
   // both ends lay the same teeth. See `Effected.spare`.
   const ring = ringsOf(corners);
+
+  // The run corner `i` names at that end, not the wall to the next corner:
+  // one it invented there names nothing and the run goes through it, so the
+  // two ends' runs are what have to be compared. See `imagedBy`'s `halvesBy`.
   const wall = (end: 0 | 1, i: number): number => {
-    const p = local[end][i], q = local[end][nextOf(ring, corners.length, i)];
+    const aside = (k: number) => dead !== null && dead[end][k];
+    let j = nextOf(ring, corners.length, i);
+
+    while (aside(j) && j !== i) j = nextOf(ring, corners.length, j);
+
+    const p = local[end][i], q = local[end][j];
 
     return Math.hypot(q.x - p.x, q.y - p.y) * scales[end];
   };

@@ -852,6 +852,48 @@ The work is stashed (`git stash list`: *step 6 attempt*), and nothing of it is
 on the branch. `sparam.test.ts` is, and reports nought until that stash is
 applied: its header says so.
 
+**The last test it left red was not about the bake at all.** With the order in,
+'rounded as well' failed on its two outline assertions — 791.42 against the
+editor's 797.11 at the near end — and `drift` passed at the same time, which
+says what it is: the bake reproduces `truth` exactly, and `truth` and the
+editor's `csg` disagree. A round and a deform on one wall is enough; no span
+and no erosion are needed. Three faults, each the same mistake in a different
+place — **a pattern is laid along the wall's whole line, and the outline it has
+to land on is the line less what each end keeps clear for its arc.**
+
+1. **A flat tooth was put back inside a bevel.** `patternRun` keeps a tooth
+   with no room where a `reach` is given, and clamped it onto the *run*'s ends
+   rather than onto the room it had. A wall of 200 with bevels of 10 lays its
+   third tooth at 192.94, which is 2.94 past the arc's tangent point: the ring
+   went out along the line the arc has already left and came back, a spike of
+   5.88 — the whole of the 5.68. Clamped into `[clear, length − clearTo]` it
+   stands *at* the tangent point, which is where a tooth with no room belongs,
+   and it is continuous either way: the clamp lets go exactly as the tooth
+   gains room. Visible in plain `csg(w, 0)` on one room, with no bake in sight.
+2. **A naming's reach was measured to the next corner, and its run goes
+   further.** A corner the bake invented names nothing, so `linesBy` runs the
+   line through it to the next real corner — but `walls[k]`, which `reach` is
+   read off, stopped at it. So the near end's run was 200 long with a reach of
+   64, its last tooth fell outside the walk, and the outline ramped to nothing
+   from the wrong station. Both halves of the law now measure the same run:
+   `halvesBy` in `imagedBy` skips corners set aside, and `effectsOver`'s
+   `spare` compares the two ends' runs rather than their walls.
+3. **`acrossAt` ramped to the edge's ends rather than the cleared window.**
+   A pattern's outline is the straight from its first tooth back to where the
+   ring's straight begins, and with a bevel that is the tangent point, not the
+   corner. Every station of the *other* naming read between the corner and the
+   first tooth therefore sat off the chord the editor draws — 0.19 of it. Each
+   laying now carries the window it runs between, and the two ramps are taken
+   against that.
+
+`bake.test.ts` is green, `divergence` holds, the golden baseline is untouched,
+and nothing in the parked work moved: 'a corner arriving on a deformed floor'
+still cuts at the same crossing, deform alone still pops 0.8459 at `t` 0.6950,
+and 'rounded as well' still pops 1.6474. The pop bar stays parked on the same
+argument as before — it is 3.9's event, and it wants the bake meeting the teeth
+in the projection. What has gone is the reason the test was red, which was
+never the event: the two pipelines drawing different outlines at a keyframe.
+
 ### Step 7: the pinch — optional, and measured
 
 **It is not necessary.** `experiments/pinch.test.ts` erodes a room with teeth

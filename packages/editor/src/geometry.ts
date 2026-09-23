@@ -2882,9 +2882,16 @@ export function patternRun(
 
     if (had <= 0 && reach === undefined) continue;
 
-    // Flat, a tooth past the run's end stands at the end: it is a point of
-    // the ring that does not turn, which is what `FoldShaped.fades` is for.
-    const on = Math.min(1, Math.max(0, at / length));
+    // Flat, a tooth with no room stands at the near edge of the room it had:
+    // it is a point of the ring that does not turn, which is what
+    // `FoldShaped.fades` is for. The room is the run less what each end keeps
+    // clear for its arc, not the run itself — a tooth put back inside a bevel
+    // stands on the line the arc has already left, and the ring goes out to
+    // it and back. It is continuous either way: the clamp lets go exactly as
+    // the tooth gains room, and the line it is pinned to is the arc's own
+    // tangent point.
+    const hi = Math.max(0, length - clearTo), lo = Math.min(Math.max(0, clear), hi);
+    const on = Math.min(hi, Math.max(lo, at)) / length;
     const room_ = Math.max(0, had);
 
     along.push(on);
@@ -3049,17 +3056,27 @@ function onceEach(lays: readonly Laying[]): readonly Laying[] {
  * itself where it has none: what lets two patterns on one edge be added
  * rather than interleaved. Off either end of what it reaches it is nothing.
  */
-function acrossAt(pts: readonly { u: number, across: number }[], u: number): number {
+function acrossAt(
+  pts: readonly { u: number, across: number }[],
+  u: number,
+  /** Where along the edge the pattern's outline leaves the ring and comes
+   * back to it: the cleared window, which is the edge itself where neither
+   * end keeps room for an arc. Beyond a bevel the ring is the arc and not
+   * this edge, so a pattern that ramped to the edge's own end would put its
+   * first station off the straight the outline actually draws there. */
+  lo = 0,
+  hi = 1,
+): number {
   if (pts.length === 0) return 0;
 
   // Off either end of the run the pattern is over: the first and last teeth
-  // ramp to nothing at the run's ends, so the straight from the tooth to the
-  // end of the edge is the rest of it. Stations of the run beyond this edge
-  // are in the list, so this is only ever reached at the run's own ends.
+  // ramp to nothing at the window's ends, so the straight from the tooth to
+  // there is the rest of it. Stations of the run beyond this edge are in the
+  // list, so this is only ever reached at the run's own ends.
   const first = pts[0], last = pts[pts.length - 1];
 
-  if (u <= first.u) return first.u <= 0 ? first.across : first.across * Math.max(0, u / first.u);
-  if (u >= last.u) return last.u >= 1 ? last.across : last.across * Math.max(0, (1 - u) / (1 - last.u));
+  if (u <= first.u) return first.u <= lo ? first.across : first.across * Math.max(0, (u - lo) / (first.u - lo));
+  if (u >= last.u) return last.u >= hi ? last.across : last.across * Math.max(0, (hi - u) / (hi - last.u));
 
   let k = 0;
 
@@ -3088,13 +3105,19 @@ function acrossAt(pts: readonly { u: number, across: number }[], u: number): num
  * lerp of the two ends, and so is what `drift` asks for. Each station keeps
  * the tooth of whichever pattern put it there.
  */
-function summed(
-  each: readonly (readonly { u: number, j: number, room: number, across: number }[])[],
-): { u: number, j: number, room: number, across: number }[] {
+/** One pattern as it falls on one edge: its stations, and the window its
+ * outline runs between. See `acrossAt`. */
+interface Standing {
+  pts: readonly { u: number, j: number, room: number, across: number }[]
+  lo: number
+  hi: number
+}
+
+function summed(each: readonly Standing[]): { u: number, j: number, room: number, across: number }[] {
   const out: { u: number, j: number, room: number, across: number }[] = [];
 
-  for (const pts of each) {
-    for (const p of pts) {
+  for (const one of each) {
+    for (const p of one.pts) {
       // Only the stations of this edge are laid on it; the rest of the run's
       // are here to be read from, not drawn.
       if (p.u < -1e-9 || p.u > 1 + 1e-9) continue;
@@ -3102,7 +3125,7 @@ function summed(
       const u = Math.min(1, Math.max(0, p.u));
       const across = each.length === 1
         ? p.across
-        : each.reduce((x, other) => x + (other === pts ? p.across : acrossAt(other, u)), 0);
+        : each.reduce((x, other) => x + (other === one ? p.across : acrossAt(other.pts, u, other.lo, other.hi)), 0);
 
       out.push({ ...p, u, across });
     }
@@ -3157,29 +3180,36 @@ export function subdivided(
     const each = lays.map(one => {
       const over = one.of ?? l;
       const start = one.at ?? 0;
+      const kept = one.clear ?? clear(i);
+      const keptTo = one.clearTo ?? clear((i + 1) % n);
       const run = patternRun(
         e,
         one.key,
         one.amplitude,
         over,
-        one.clear ?? clear(i),
-        one.clearTo ?? clear((i + 1) % n),
+        kept,
+        keptTo,
         e.spacing,
         one.from ?? over / 2,
         one.reach,
       );
+      const on = (at: number) => (at - start) / l;
 
       // Where each tooth falls along this edge, the run being longer than it.
       // The ones outside belong to the run's other edges and are not laid
       // here, but they are kept: they are what says where the pattern stands
       // at this edge's own ends, which is not nought where the run carries on
       // past them. See `acrossAt`.
-      return run.along.map((u, k) => ({
-        u: (u * over - start) / l,
-        j: run.teeth[k],
-        room: run.room[k],
-        across: run.across[k],
-      })).sort((p, q) => p.u - q.u);
+      return {
+        lo: on(Math.min(kept, Math.max(0, over - keptTo))),
+        hi: on(Math.max(0, over - keptTo)),
+        pts: run.along.map((u, k) => ({
+          u: on(u * over),
+          j: run.teeth[k],
+          room: run.room[k],
+          across: run.across[k],
+        })).sort((p, q) => p.u - q.u),
+      };
     });
 
 
@@ -3188,7 +3218,7 @@ export function subdivided(
     // run carries straight on through — a corner arriving into a wall whose
     // pattern runs across it, which would otherwise pull the outline off the
     // pattern and back to the wall.
-    const lift = each.reduce((x, pts) => x + acrossAt(pts, 0), 0);
+    const lift = each.reduce((x, one) => x + acrossAt(one.pts, 0, one.lo, one.hi), 0);
 
     done.push({
       at: lift === 0 ? a : { x: a.x + nx * lift, y: a.y + ny * lift },

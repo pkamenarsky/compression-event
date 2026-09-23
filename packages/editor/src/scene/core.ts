@@ -1152,10 +1152,25 @@ const imagedBy = remembered((
   for (const ring of eroded) for (const p of ring) big = Math.max(big, Math.abs(p.x), Math.abs(p.y));
 
   const tol = big * 1e-9;
-  // Each source wall's half-length, which is what its pattern runs over: see
-  // `namingBy`'s reach.
-  const walls = source.map((p, i) => {
-    const q = source[nextOf(rings, n, i)];
+  /**
+   * Each naming's source run, halved: what its pattern runs over, and what
+   * `namingBy`'s reach is read off.
+   *
+   * To the next corner that names something, not to the next corner — a
+   * corner set aside names nothing and the run goes straight through it, so
+   * measuring to it would cut the pattern off half way along its own line
+   * and drop the teeth past that. A wall carrying an arriving corner is
+   * exactly that case: one run of two walls at the end that invented it.
+   *
+   * The source's, which the erosion does not change, so the same teeth are
+   * laid at every depth.
+   */
+  const halvesBy = (aside: readonly boolean[]): number[] => source.map((p, i) => {
+    let j = nextOf(rings, n, i);
+
+    while (aside[j] && j !== i) j = nextOf(rings, n, j);
+
+    const q = source[j];
 
     return Math.hypot(q.x - p.x, q.y - p.y) / 2;
   });
@@ -1169,6 +1184,7 @@ const imagedBy = remembered((
    * one before it keeps the whole of what it had. */
   const namingBy = (aside: readonly boolean[], of: readonly { id: number, a: Point, b: Point }[]): Naming => {
     const line = new Map(of.map(l => [l.id, l]));
+    const walls = halvesBy(aside);
 
     return (a: Point, b: Point) => {
       const mine = owner(a);
