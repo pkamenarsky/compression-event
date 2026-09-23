@@ -449,12 +449,24 @@ a pile a position is not a name. Three answers went in for that:
 The projection now holds its ring across the whole span: twenty points at every
 instant of the parked test's, where it ran 16, 17, 18, 19, 20 as the wall grew.
 
-What is left is the last arrangement. The outline the bake fits is not the
+The fourth place was the last arrangement. The outline the bake fits is not the
 projection but what the world set makes of every contributor together, and that
 one identifies its nodes by position before it ever asks which of them turn —
-so a pile is one node going in, and there is no `keeping` after it to put the
-rest back. The count is still 17 against 21, and it will be until a run coming
-out of `boundaryRuns` can be handed the points its subject kept.
+so a pile is one node going in, and there was no `keeping` after it. `Member`
+now carries what its subject kept and `boundaryRuns` puts them back into the
+runs, each named by its own index in the subject's ring, the lowest index at a
+place left to the point already standing there. `paintedOn` counts rather than
+asks, for the same reason: which of several points on one place a fade lands on
+has no answer, so it takes as many from the back as there are fades there, and
+the corner keeps its vertical while the teeth come up.
+
+**Both yardsticks are met.** `arcseam`'s 4.09 is the round's own 0.70, and `an
+edge growing longer gets more points, and they fade in` is back in: 21 points at
+both ends, and the four the wall gains come up one at a time across the span —
+4 flat, then 3, 2, 1, none. Its last assertion reads the span rather than its
+first stretch, because each tooth's line fades over the one stretch it emerges
+through and which stretch that is is a fact about how the span was cut; and it
+gains the other half of its own claim, that no tooth goes the other way.
 
 **A parked test belongs to this step.** `an edge growing longer gets more
 points, and they fade in` (*3.3*) is the same defect seen from the other side:
@@ -468,7 +480,7 @@ wall in *3.1*, and that one is in and works.
 
 So the step has two yardsticks, not one: `arcseam`'s 4.09 must come down to the
 figure moving — **done**, it is the round's own 0.70 — and the parked test must
-come back in, which it has not.
+come back in — **done**.
 
 **It comes first.** Not because anything below depends on it, but because it is
 the plan's own property 2 failing in the code the rest is to be built on. Building steps
