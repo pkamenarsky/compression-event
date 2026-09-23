@@ -722,6 +722,66 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
+  // The reported one: a round switched on at a bevel of nought lays nothing,
+  // so no fold happens and the members reach the level drawn as themselves.
+  // The resolve used to ask whether the option was there rather than whether
+  // anything was laid, and published amounts for a fold that never ran. See
+  // `shapes`.
+  test('members deformed, under a scope whose round rounds by nothing', () => {
+    const { world, id } = scopes({ deform: 6 }, { round: 0 });
+
+    same(world, id);
+  });
+
+  test('members deformed, under a scope that rounds a little', () => {
+    const { world, id } = scopes({ deform: 6 }, { round: 2 });
+
+    same(world, id);
+  });
+
+  test('two members deformed at different spacings, under a scope that rounds', () => {
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    const b = room(a.world, rect(400, 300, 200, 140));
+    let w = withEffects(b.world, a.id, optionsOf({ deform: 6 }));
+
+    w = wrote(w, 0, a.id, deform(6));
+    w = withEffects(w, b.id, { deform: { ...zigzag, spacing: 40 } });
+    w = wrote(w, 0, b.id, deform(10));
+
+    const g = grouped(w, 0, [a.id, b.id], TOP)!;
+    const sealed = withEffects(sealing(g.world, g.id, true), g.id, optionsOf({ round: 12 }));
+
+    same(wrote(sealed, 0, g.id, round(12)), g.id);
+  });
+
+  test('members deformed, under a scope rounding half a wall', () => {
+    const { world, id } = scopes({ deform: 6 }, { round: 60 });
+
+    same(world, id);
+  });
+
+  test('nothing on the members, under a scope rounding past a whole wall', () => {
+    const { world, id } = scopes({}, { round: 120 });
+
+    same(world, id);
+  });
+
+  // The one row that does not hold, and it wants a bevel `arcsWith` has to
+  // ration: at 120 the corner at (200, 0) takes the whole of the wall into
+  // it, and the tooth at its tangent point has no room left. The fold keeps
+  // that tooth, flat, as a point of the ring the line on it can fade in over;
+  // the same ring drawn as a polygon drops it, and comes out one point short
+  // at each such corner. At 60, where nothing is rationed, the row passes.
+  //
+  // So it is the flat tooth again, at the other end: `reach` made a group
+  // keep one where it had not, and this is a polygon losing one where the
+  // fold keeps it. See `FoldShaped.fades` and PLAN-bevel 3.9.
+  test.fails('members deformed, under a scope rounding past a whole wall', () => {
+    const { world, id } = scopes({ deform: 6 }, { round: 120 });
+
+    same(world, id);
+  });
+
   test('everything, everywhere', () => {
     const { world, id } = scopes(
       { round: 10, deform: 6, erode: 8 },

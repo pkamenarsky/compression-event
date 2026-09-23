@@ -1124,6 +1124,24 @@ reads `round`, adds its bevel and facets the sum for itself; a resolve, which
 has no scope above and must draw this very ring, reads `facets`. `roundOf`,
 which was the inversion, is gone.
 
+**A scope shapes by its amounts, not by its switches.** Reported from a saved
+world: a sealed group of two deformed rooms, rounded, drew one thing and
+resolved to another. The group's round was switched on at a bevel of nought,
+and that is the whole of it. `shapeKey` asks whether anything is actually laid
+— `fx.facets.n > 0 && fx.bevel > 0` — and answers no, so no fold happens and
+the members reach the level drawn as themselves, each with its own teeth. The
+resolve asked whether the option was there at all, answered yes, and read them
+bare and published amounts for a fold that never ran. `shapes` is that question
+now, asked once, and both ask it.
+
+**What is left is a flat tooth, at the far end.** A bevel `arcsWith` has to
+ration takes a whole wall into a corner, and the tooth at the arc's tangent
+point has no room left. A fold keeps it, flat, as a point of the ring the line
+on it can fade in over; the same ring drawn as a polygon drops it, and comes
+out a point short at each such corner. Where nothing is rationed the row
+passes. It is the same `fades` law as above, failing the other way round, and
+it is recorded as `members deformed, under a scope rounding past a whole wall`.
+
 **A group bounds a run by its naming line, as a polygon does.** The row that
 held out longest looked like a rationed bevel and was not: the clearance is
 twelve on both sides. What differed was `reach`. A polygon bounds a run by the
