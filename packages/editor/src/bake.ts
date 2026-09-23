@@ -1375,6 +1375,15 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
     flat: e[0].flat,
+
+    // Both namings, and where the span has got to between them: a wall the
+    // two ends name differently carries both patterns, the near one going and
+    // the far one coming. At either end the blend is not taken at all — `t`
+    // of nought and one answer with that end's own — so each still is the
+    // editor's. See `Effected.apart`.
+    apart: e[0].apart ?? e[1].apart?.map(() => false),
+    apartTo: e[1].apart ?? e[0].apart?.map(() => false),
+    apartAt: t,
     deform: d0 === null || d1 === null
       ? d0 ?? d1
       : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },

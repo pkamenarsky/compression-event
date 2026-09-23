@@ -273,8 +273,16 @@ export interface Effected {
    * thing has no deform of its own, or no arc could take one. */
   deform: ArcDeform | null
   /** Which corners are rounded apart from the rest: see `outlineOf`. Only
-   * the bake's, for a corner it invented. */
+   * the bake's, for a corner it invented. A corner apart names no wall, so
+   * the wall it stands on keeps the pattern it had without it.
+   *
+   * With `apartTo`, the naming at the far end of the span, and `apartAt` how
+   * far across it is: a wall splitting or joining then carries both patterns,
+   * each at its own height, so that either end is the editor's still and the
+   * middle shows the one going and the one coming. See PLAN-bevel's step 4. */
   apart?: readonly boolean[]
+  apartTo?: readonly boolean[]
+  apartAt?: number
 }
 
 export interface ArcDeform {
@@ -502,7 +510,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
     ? []
     : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids]];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number)];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1035,7 +1043,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Memo[],
 ): Imaged => {
-  const [facets, bevels, flat, deform, apart] = effects as [Memo[], number[], number[], Memo[], number[]];
+  const [facets, bevels, flat, deform, apart, apartTo, apartAt] = effects as [Memo[], number[], number[], Memo[], number[], number[], number];
   const each = facets.map(facetsFrom);
   const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
@@ -1076,45 +1084,57 @@ const imagedBy = remembered((
   // the corner arrived. The line runs through it to the next real corner, as
   // the arcs beside it are laid as though it were not there. See
   // `effectsOver`.
-  const names = (i: number) => apart[i] !== 1;
+  const linesBy = (aside: readonly boolean[]): { id: number, a: Point, b: Point }[] => {
+    const names = (i: number) => !aside[i];
+    const out: { id: number, a: Point, b: Point }[] = [];
+
+    for (let i = 0; i < n; i++) {
+      if (!names(i)) continue;
+
+      let j = nextOf(rings, n, i);
+
+      while (!names(j) && j !== i) j = nextOf(rings, n, j);
+
+      const mine = corners[i], theirs = corners[j];
+
+      if (mine === null || theirs === null) continue;
+
+      const a = mine[mine.length - 1], b = theirs[0];
+
+      if (same(a, b)) continue;
+
+      out.push({ id: ids[i], a, b });
+    }
+
+    return out;
+  };
+
+  const near = ids.map((_x, i) => apart[i] === 1);
+  const far = apartTo.length === 0 ? near : ids.map((_x, i) => apartTo[i] === 1);
 
   corners.forEach((run, i) => {
-    if (run === null || run.length < 2 || !names(i) || run.every(p => same(p, run[0]))) return;
+    if (run === null || run.length < 2 || near[i] || run.every(p => same(p, run[0]))) return;
 
     curves.push({ id: ids[i], points: run });
   });
 
-  for (let i = 0; i < n; i++) {
-    if (!names(i)) continue;
+  lines.push(...linesBy(near));
 
-    let j = nextOf(rings, n, i);
+  // The far end's naming, where a corner arriving or leaving makes it differ:
+  // the wall it splits carries both patterns across the span.
+  const other = far.every((x, i) => x === near[i]) ? null : { lines: linesBy(far), weight: apartAt };
 
-    while (!names(j) && j !== i) j = nextOf(rings, n, j);
-
-    const mine = corners[i], theirs = corners[j];
-
-    if (mine === null || theirs === null) continue;
-
-    const a = mine[mine.length - 1], b = theirs[0];
-
-    if (same(a, b)) continue;
-
-    lines.push({ id: ids[i], a, b });
-  }
-
-  // The teeth belong to the source edge, which the erosion does not change,
-  // so they are laid over its length wherever the eroded run's ends are.
   const amplitude = new Map(ids.map((id, i) => [id, after[i]]));
-  const reach = new Map(ids.map((id, i) => {
-    const q = source[nextOf(rings, n, i)];
-
-    return [id, Math.hypot(q.x - source[i].x, q.y - source[i].y) / 2];
-  }));
 
   const laid = foldShaped(eroded, [], [], lines, curves, SQUARE, 0, false, {
     e,
     amplitude: (key: number) => amplitude.get(key) ?? 0,
-    reach: (key: number) => reach.get(key),
+
+    // The teeth are the edge's, laid over its length wherever the erosion has
+    // put the run's ends — and it is the line, not the key, that tells the
+    // two namings of a splitting wall apart.
+    reach: true,
+    over: other ?? undefined,
   }, 0);
 
   return { shape: laid.shape, ...rest };

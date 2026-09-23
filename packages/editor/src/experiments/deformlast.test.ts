@@ -232,7 +232,7 @@ function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points:
       // change — so the same teeth are laid at every depth: PLAN-bevel 3.6
       // piece 3. Read off the ring rather than off `namesOf`, which reports a
       // line where the erosion put it.
-      reach: reach ? key => halves.get(key) : undefined,
+      reach,
     },
     0,
   );

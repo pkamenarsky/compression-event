@@ -3960,10 +3960,25 @@ export function foldShaped(
   deform: {
     e: Effecting,
     amplitude: (key: number) => number,
-    /** How far either way from its anchor a run of the given name lays teeth,
-     * or nothing to let its own ends say: see `patternRun`. A polygon gives
-     * its source edge's half, so the same teeth are laid at every depth. */
-    reach?: (key: number) => number | undefined,
+    /**
+     * Whether a run's pattern is bounded by the naming line it lies on rather
+     * than by the run's own ends: see `patternRun`'s `reach`. A polygon asks
+     * for it, so the teeth are the edge's wherever the erosion has put the
+     * run's ends — and so that a wall named two ways at once is told apart by
+     * the line each naming gives it, which a key cannot do, both namings
+     * having the same one. A group does not: two members' collinear edges are
+     * one run with one pattern along the whole of it.
+     */
+    reach?: boolean,
+    /**
+     * The other naming of the same outline, and how much of the pattern
+     * stands on it — the naming at the far end of a span where a wall is
+     * splitting or joining, which names the same geometry differently. Each
+     * run then carries both patterns, this one at `weight` and the one from
+     * `lines` at the rest, so that each end of the span is the editor's still
+     * and the middle shows both. See PLAN-bevel's step 4.
+     */
+    over?: { lines: readonly { id: number, a: Point, b: Point }[], weight: number },
   } | null,
   depth: number,
 ): FoldShaped {
@@ -3983,21 +3998,32 @@ export function foldShaped(
   // way. With it, where the naming edge's middle falls along the straight,
   // which is where its pattern is centred.
   const onLine = scale * 1e-6;
-  const named = (a: Point, b: Point): { key: number, from: number } | null => {
+  const namedBy = (from: readonly { id: number, a: Point, b: Point }[]) => (a: Point, b: Point): { key: number, from: number, reach: number } | null => {
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
 
     if (l === 0) return null;
 
     const off = (line: { a: Point, b: Point }, p: Point) => Math.abs((p.x - line.a.x) * (line.b.y - line.a.y) - (p.y - line.a.y) * (line.b.x - line.a.x))
       / Math.max(Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y), 1e-300);
-    const mine = lines.find(line => off(line, a) <= onLine && off(line, b) <= onLine);
+    const mine = from.find(line => off(line, a) <= onLine && off(line, b) <= onLine);
 
     if (mine === undefined) return null;
 
     const mid = { x: (mine.a.x + mine.b.x) / 2, y: (mine.a.y + mine.b.y) / 2 };
 
-    return { key: mine.id, from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / l };
+    return {
+      key: mine.id,
+      from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / l,
+      reach: Math.hypot(mine.b.x - mine.a.x, mine.b.y - mine.a.y) / 2,
+    };
   };
+  const named = namedBy(lines);
+  const namedOver = deform?.over === undefined ? null : namedBy(deform.over.lines);
+
+  // How much of the pattern stands on each naming. One naming and it is all
+  // on it; two, and a wall is splitting or joining over a span, so each
+  // stands at where the span has got to. See PLAN-bevel's step 4.
+  const over = deform?.over?.weight ?? 0;
 
   // An arrangement's rings all have their material to the left: an outline
   // counter-clockwise and its holes the other way. See `deformedAt`.
@@ -4079,6 +4105,7 @@ export function foldShaped(
     const mine = ring.map(onArc);
     const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
+    const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
     // An edge between two points of one arc is inside a curve, and the
     // curve's own teeth run along it: see `teethAlong`.
     const inside = (i: number) => mine[i] !== null && mine[(i + 1) % ring.length]?.arc === mine[i]!.arc;
@@ -4087,13 +4114,25 @@ export function foldShaped(
       : subdivided(
         ring,
         deform.e,
-        i => deform.amplitude(names[i]?.key ?? 0),
+        i => deform.amplitude(names[i]?.key ?? 0) * (1 - over),
         i => names[i]?.key ?? 0,
         out,
         i => bevels[i],
         i => !sq[i] && !sq[(i + 1) % ring.length] && !inside(i),
         i => names[i]?.from,
-        i => (names[i] === null || names[i] === undefined ? undefined : deform.reach?.(names[i]!.key)),
+        i => (deform.reach === true ? names[i]?.reach : undefined),
+        i => {
+          const other = namesOver?.[i];
+
+          if (other === null || other === undefined || over === 0) return [];
+
+          return [{
+            key: other.key,
+            amplitude: deform.amplitude(other.key) * over,
+            from: other.from,
+            reach: deform.reach === true ? other.reach : undefined,
+          }];
+        },
       );
 
     starts.push(source.length);
