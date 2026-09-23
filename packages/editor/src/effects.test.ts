@@ -710,3 +710,61 @@ describe('the bake hears of effects', () => {
     expect(spanAt(bake, switchedOff(w, [id], 'round'), 0)).toBeNull();
   });
 });
+
+describe('a scope inside a scope', () => {
+  /**
+   * A room under `scopes`, innermost first: each seals what came before it
+   * along with a room of its own out of the way, since a group wants two
+   * members, and takes its own depth and round. What it all comes to around
+   * the room itself, which is the only part the far ones can be held against.
+   */
+  const nested = (scopes: { depth: number, bevel: number }[]): Point[][] => {
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    let w = a.world, held: Id[] = [a.id];
+
+    scopes.forEach(({ depth, bevel }, i) => {
+      const away = room(w, rect(600 + i * 300, 0, 60, 60));
+      const g = grouped(away.world, 0, [...held, away.id], TOP)!;
+
+      w = sealing(g.world, g.id, true);
+      if (bevel > 0) w = withEffects(w, g.id, { round: inSegments(8, bevel) });
+      w = wrote(w, 0, g.id, erode(depth), round(bevel));
+      held = [g.id];
+    });
+
+    return csg(w, 0).map(ring => ring.filter(p => p.x < 300)).filter(ring => ring.length > 0);
+  };
+
+  /** How far the two stray from one another, each way. */
+  const apart = (a: Point[][], b: Point[][]): number => Math.max(
+    ...a.flat().map(p => toShape(p, b)),
+    ...b.flat().map(p => toShape(p, a)),
+  );
+
+  test('two scopes erode as one of their sum does', () => {
+    const one = nested([{ depth: 30, bevel: 0 }]);
+    const two = nested([{ depth: 10, bevel: 0 }, { depth: 20, bevel: 0 }]);
+
+    expect(apart(one, two)).toBeLessThan(1e-9);
+    expect(two.flat().length).toBe(one.flat().length);
+  });
+
+  test('two rounds two deep are one round of their sum', () => {
+    // The whole of the nesting: an inner scope publishes what its fold came
+    // to, so the outer adds its own amount to a sum and rounds the corner
+    // once. See PLAN-bevel's step 5.
+    const one = nested([{ depth: 0, bevel: 30 }]);
+    const two = nested([{ depth: 0, bevel: 10 }, { depth: 0, bevel: 20 }]);
+
+    expect(apart(one, two)).toBeLessThan(1e-9);
+    expect(two.flat().length).toBe(one.flat().length);
+  });
+
+  test('a depth and a round at each scope come to the same as both at one', () => {
+    const one = nested([{ depth: 30, bevel: 30 }]);
+    const two = nested([{ depth: 10, bevel: 10 }, { depth: 20, bevel: 20 }]);
+
+    expect(apart(one, two)).toBeLessThan(1e-9);
+    expect(two.flat().length).toBe(one.flat().length);
+  });
+});

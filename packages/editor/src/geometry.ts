@@ -4241,6 +4241,18 @@ export interface FoldShaped {
    * bake.
    */
   fades: Fade[]
+  /**
+   * What the fold itself is made of, for a scope holding this one: the ring
+   * this pass drew from — eroded already, and rounded nowhere — named the way
+   * it named it. Each straight carries the amount its run inherits and each
+   * corner that was a member's its summed bevel, so a scope above adds its own
+   * to a sum and rounds the corner once. A join, and a corner the erosion
+   * made, is named nowhere and so asks for nothing. See PLAN-bevel's step 5.
+   */
+  named: {
+    lines: { id: number, a: Point, b: Point, amplitude: number }[]
+    corners: { id: number, at: Point, bevel: number, facets: Facets }[]
+  }
 }
 
 export function foldShaped(
@@ -4313,7 +4325,7 @@ export function foldShaped(
   } | null,
   depth: number,
 ): FoldShaped {
-  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [] };
+  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [], named: { lines: [], corners: [] } };
 
   let scale = 1;
 
@@ -4436,6 +4448,9 @@ export function foldShaped(
   const teethRoom: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
+  // What this fold is, for whoever holds it: see `FoldShaped.named`.
+  const mineLines: FoldShaped['named']['lines'] = [], mineCorners: FoldShaped['named']['corners'] = [];
+
   cleaned.forEach((ring, r) => {
     const sq = ring.map(isSquare);
     const mine = ring.map(onArc);
@@ -4448,6 +4463,19 @@ export function foldShaped(
     const faced = ring.map((_p, i) => ((own[i]?.bevel ?? 0) > 0 ? own[i]!.facets : facets));
     const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(wants[i], faced[i])));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
+
+    ring.forEach((p, i) => {
+      if (own[i] === null || sq[i] || mine[i] !== null) return;
+
+      mineCorners.push({ id: own[i]!.id, at: p, bevel: wants[i], facets: faced[i] });
+    });
+    ring.forEach((p, i) => {
+      const it = names[i];
+
+      if (it === null) return;
+
+      mineLines.push({ id: it.key, a: p, b: ring[(i + 1) % ring.length], amplitude: deform?.amplitude(it.key) ?? 0 });
+    });
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
 
     /**
@@ -4734,7 +4762,7 @@ export function foldShaped(
     .filter(f => f.p !== null && (f.piled || !stands(f.p)))
     .map(f => ({ p: f.p!, v: 0, ...(f.piled && f.to !== null ? { to: f.to } : {}) }));
 
-  return { shape, runs, square: squared, keep: kept, fades };
+  return { shape, runs, square: squared, keep: kept, fades, named: { lines: mineLines, corners: mineCorners } };
 }
 
 /**

@@ -688,6 +688,32 @@ nesting is what wants proving first.
 depth for each scope. This is the first step that can break composition, so it
 is the first that must test it.
 
+**Done.** `foldShaped` hands back `named`: the ring it drew from — eroded
+already, rounded nowhere — with each straight carrying the amount its run
+inherits and each corner that was a member's its summed bevel, a join and a
+corner the erosion made carrying nothing. `resolves` publishes that instead of
+its members' names, and no `movedIn` goes with it: the erosion pass has already
+put the depth in.
+
+**The names alone are not enough.** A nested scope was handing its *drawn*
+shape up, so the outer rounded a corner that was rounded already. So `resolves`
+takes `bare`, cached under its own key, and a scope under a holder that shapes
+hands up the fold before its own round and deform — `shapedFold`'s first pass,
+which it now returns beside the second as `bare`. `slotted`'s one flag splits
+in two: `flat` still defers the depth to the fold, and `bare` is what the
+members go up as, and gates the square points and the kept points, since a bare
+fold invented nothing and lies flat nowhere. `from` and `namedFrom` carry it
+down the same path the shape took.
+
+*Property 3, in `effects.test.ts`'s 'a scope inside a scope'*: a room in a
+scope in a scope against the same room in one scope of the sums. Two rounds,
+10 inside 20, draw what one of 30 draws — to 1e-9, with the same point count —
+and so do a depth and a round at each scope, 10/10 inside 20/20 against 30/30.
+Both fail on step 4's commit, by 5.27 and 2.65, which is the larger of the two
+rounds and not their sum. Erosion composed already and still does.
+
+The five harnesses are unmoved from step 4, line for line.
+
 ### Step 6: the polygon takes the same order
 
 `imagedBy` becomes erode → round → deform, which by 4.1 draws what it draws

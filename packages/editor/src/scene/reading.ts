@@ -549,7 +549,10 @@ const shapedFold = remembered((
   const moved = movedIn({ lines: named, corners: ends }, depth);
   const then = foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, facets, bevel, deform, 0);
 
-  return { ...then, fades: [...first.fades, ...then.fades] };
+  // Beside what it drew: what it drew *from*, for a scope holding this one,
+  // which takes this fold's corners as its own members' and rounds them once.
+  // Its names come with it, on `then`. See PLAN-bevel's step 5.
+  return { ...then, bare: first.shape, fades: [...first.fades, ...then.fades] };
 });
 
 /**
@@ -654,7 +657,7 @@ export function contributed(
     // back. A loose group, or one standing open, has no scope of its own and
     // hands its members up into this one.
     if (group.sealed && standing(id) !== null) {
-      return k === top(id, set) ? [resolves(id, set)] : [];
+      return k === top(id, set) ? [resolves(id, set, bare)] : [];
     }
 
     return group.members.flatMap(m => from(m, set, k, bare));
@@ -662,7 +665,7 @@ export function contributed(
 
   /** One slot of one scope, offset by that scope's own depth the way the
    * slot's place in the rule means. */
-  const slotted = (id: Id, set: SetName, k: number, flat = false): { shape: Shape, keep: Point[], square: Point[], named: Named } => {
+  const slotted = (id: Id, set: SetName, k: number, flat = false, bare = false): { shape: Shape, keep: Point[], square: Point[], named: Named } => {
     const group = world.groups.get(id);
 
     if (group === undefined) return { shape: [], keep: [], square: [], named: { lines: [], corners: [] } };
@@ -686,7 +689,7 @@ export function contributed(
     // its voids grow against it.
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
-    const shapes = group.members.flatMap(m => from(m, set, k, flat));
+    const shapes = group.members.flatMap(m => from(m, set, k, bare));
     const union = offsetUnion(shapes, depth);
 
     // What its members' deforms made, which a round leaves square — its own,
@@ -695,20 +698,20 @@ export function contributed(
     // Nothing at all where the scope shapes: with the members eroded only
     // there is no effect geometry on the union for its round to protect, and
     // the teeth it wants are the ones it lays itself. See PLAN-bevel's step 2.
-    const inside = flat ? [] : group.members.flatMap(m => squareFrom(m, set, k));
+    const inside = bare ? [] : group.members.flatMap(m => squareFrom(m, set, k));
     const square = inside.length === 0 ? [] : depth === 0 ? inside : squaredThrough(shapes, depth, inside);
 
     // What its members keep for the bake, moved in with their edges: a union
     // is an arrangement, and would drop them — see `Resolved.keep`. A member
     // eroded only invented nothing and lies flat nowhere; what this fold keeps
     // is its own.
-    const keep = flat ? [] : group.members.flatMap(m => keptFrom(m, set, k))
+    const keep = bare ? [] : group.members.flatMap(m => keptFrom(m, set, k))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
     // What its members' outlines are made of, moved in with them: the fold
     // names its straights and its arcs by these. See `namesOf`.
     const named = group.members
-      .map(m => namedFrom(m, set, k))
+      .map(m => namedFrom(m, set, k, bare))
       .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], corners: [...all.corners, ...n.corners] }), { lines: [], corners: [] } as Named);
 
     return { shape: keep.length === 0 ? union : keeping(union, keep), keep, square, named: movedIn(named, depth) };
@@ -716,7 +719,7 @@ export function contributed(
 
   /** What one member of slot `k` publishes about its outline: a polygon's
    * own, and a scope's what its own fold came to. See `Named`. */
-  const namedFrom = (id: Id, set: SetName, k: number): Named => {
+  const namedFrom = (id: Id, set: SetName, k: number, bare = false): Named => {
     const it = mine.get(id);
     const none: Named = { lines: [], corners: [] };
 
@@ -729,14 +732,14 @@ export function contributed(
     if (group.sealed && standing(id) !== null) {
       if (k !== top(id, set)) return none;
 
-      const key = `${id}:${set}`;
+      const key = `${id}:${set}${bare ? ':bare' : ''}`;
 
-      if (!named.has(key)) resolves(id, set);
+      if (!named.has(key)) resolves(id, set, bare);
 
       return named.get(key) ?? none;
     }
 
-    return group.members.flatMap(m => [namedFrom(m, set, k)])
+    return group.members.flatMap(m => [namedFrom(m, set, k, bare)])
       .reduce((all, n) => ({ lines: [...all.lines, ...n.lines], corners: [...all.corners, ...n.corners] }), none);
   };
 
@@ -812,8 +815,8 @@ export function contributed(
    * The fold starts at the scope's outermost slot rather than the first, so a
    * solid with voids in it is `solid - void` and not `nothing - (solid - void)`.
    */
-  const resolves = (id: Id, set: SetName): Shape => {
-    const key = `${id}:${set}`;
+  const resolves = (id: Id, set: SetName, bare = false): Shape => {
+    const key = `${id}:${set}${bare ? ':bare' : ''}`;
     const known = held?.get(key);
 
     if (known !== undefined) {
@@ -834,7 +837,9 @@ export function contributed(
     const shapedBy = shapeKey(here);
     const slots: { shape: Shape, keep: Point[], square: Point[], named: Named }[] = [];
 
-    for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) slots.push(slotted(id, set, k, shapedBy !== null));
+    for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) {
+      slots.push(slotted(id, set, k, shapedBy !== null, bare || shapedBy !== null));
+    }
 
     const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
 
@@ -858,13 +863,19 @@ export function contributed(
         here!.depth,
       );
     const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep), fades: [] };
+
+    // Taken bare by a scope above: the fold before its own round and deform,
+    // which are published instead of drawn — `shaped.bare`, or the union
+    // itself where there are none. Its corners have to reach that fold as
+    // corners for it to round them once, exactly as a polygon's do at step 2.
+    const drew = bare ? shaped?.bare ?? settles : rounded.shape;
     const cut = set === 'floor' && top(id, 'level') === 0
-      ? underfoot(rounded.shape, resolves(id, 'level'))
-      : rounded.shape;
+      ? underfoot(drew, resolves(id, 'level', bare))
+      : drew;
 
     // Where the bake has its arcs on their facets, fading: see `facetFades`.
     const fx = here?.effects;
-    const faded = [
+    const faded = bare ? [] : [
       ...(fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
         ? []
         : rounded.runs.flatMap(run => facetFades(run, fx.facets))),
@@ -876,14 +887,20 @@ export function contributed(
     // Folding the slots is an arrangement again, and would drop them again.
     // And the points its arcs have on their facets, at the end they lie
     // straight.
-    const keep = [...rounded.keep, ...faded.filter(f => f.v === 0).map(f => f.p)];
+    // A bare fold invented nothing and lies flat nowhere: what it keeps and
+    // what it leaves square are the holder's business, as a bare member's are.
+    const keep = bare ? [] : [...rounded.keep, ...faded.filter(f => f.v === 0).map(f => f.p)];
     const out = keep.length === 0 ? cut : keeping(cut, keep);
 
-    const square = rounded.square;
+    const square = bare ? [] : rounded.square;
 
-    // Its own, for a scope holding it: what its members published, moved in
-    // by its own depth. Its own round is its own and names nothing.
-    named.set(key, movedIn(slots.reduce(
+    // Its own, for a scope holding it: what its fold came to, which is where
+    // its own amounts are — each straight with the amount its run inherits and
+    // each corner with its summed bevel, a join with nothing, the depth
+    // already in them. With no effects there is nothing of its own to add, and
+    // what its members published, moved in by its depth, is that fold. See
+    // PLAN-bevel's step 5.
+    named.set(key, shaped?.named ?? movedIn(slots.reduce(
       (all, u) => ({ lines: [...all.lines, ...u.named.lines], corners: [...all.corners, ...u.named.corners] }),
       { lines: [], corners: [] } as Named,
     ), here?.depth ?? 0));
