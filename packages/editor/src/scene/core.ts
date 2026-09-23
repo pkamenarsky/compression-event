@@ -1241,7 +1241,7 @@ const imagedBy = remembered((
   });
   const ring = flatCorners.length === 0 ? eroded : keeping(eroded, flatCorners);
 
-  const laid = foldShaped(ring, [], [], lines, curves, [], SQUARE, 0, false, {
+  const laid = foldShaped(ring, [], [], lines, curves, [], SQUARE, 0, {
     e,
     amplitude: (key: number) => amplitude.get(key) ?? 0,
 

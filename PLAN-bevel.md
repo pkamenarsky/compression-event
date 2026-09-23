@@ -638,6 +638,27 @@ at depth nought. The `held` argument goes with it.
 *Measured by*: `erodefirst` with no switch set must print what `ORDER=erd`
 prints today, and `groupfades` must keep its 18 stretches and 0.0141.
 
+**Done.** `shapedFold` erodes at the scope's depth in a first pass and rounds
+and deforms in a second at nought; `ORDER` is gone, and with it `foldShaped`'s
+`held` argument, `drawnAt`'s cut-back and the dead `held` a scope carried
+through `Standing.effects` and the bake.
+
+The first pass takes **no corners**. A member's corner carries its own round
+since step 3, so handing them to the erosion pass drew those rounds before the
+erosion — the ring the erosion ran on was not the square one — and the second
+pass then found arc points where its corners should be and laid a tooth to each
+facet instead of running along the curve. `effects.test.ts`'s *its deform runs
+along a member's arc* is what catches it; it fails at `ORDER=erd` on step 3's
+commit too, so it is the order's own defect and not this step's edit.
+
+Measured: `erodefirst` with no switch prints exactly what `ORDER=erd` printed
+(0.0230 / 0.0539 ×4; refined 0.2158 / 0.0539 / 0.0135, worst 3.2847), and
+`groupfades` its 18 stretches and 0.0141. `arcseam` and `pinch` unmoved.
+`sumrounds` improves on step 3: `sum` still nought, and now **37 points against
+37 in every row**, where step 3 still drew 277 and 317 wherever the member's
+amount was small — the member's round is no longer drawn once by the erosion
+pass and again by the fold.
+
 ### Step 5: a scope publishes its own names
 
 For nesting, `resolves` must publish what the *fold* came to and not what its

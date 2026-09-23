@@ -1880,7 +1880,6 @@ export interface Cast {
   shapes: Map<GroupId, {
     facets: Facets
     bevel: [number, number]
-    held: boolean
     deform: { e: Effecting, spacing: [number, number], amplitude: [number, number] } | null
   }>
   /**
@@ -1951,7 +1950,6 @@ function casting(world: World, from: number): Cast {
     shapes.set(id, {
       facets: { n: Math.max(from, to), from, to, at: 0, tension: round?.tension ?? 0.5 },
       bevel: round === undefined ? [0, 0] : [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
-      held: round?.held !== false,
       deform: d === null ? null : { e: d.e, spacing: [d.e.spacing, dTo?.e.spacing ?? d.e.spacing], amplitude: [was.amplitude, now.amplitude] },
     });
   }
@@ -2010,7 +2008,6 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
           effects: {
             facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) },
             bevel: mix(fx.bevel[0], fx.bevel[1], t),
-            held: fx.held,
             ...(fx.deform === null ? {} : {
               deform: {
                 e: { ...fx.deform.e, spacing: mix(fx.deform.spacing[0], fx.deform.spacing[1], t) },

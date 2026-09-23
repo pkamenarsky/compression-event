@@ -82,7 +82,7 @@ const at = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, M
 const points = (from: number, t: number) => truth(world(), from, t).reduce((n, r) => n + r.points.length, 0);
 
 describe.skipIf(!process.env.EXPERIMENT)('experiment: the erosion first', () => {
-  const order = process.env.ORDER ?? 'rde';
+  const order = 'erd';
   const SPANS = [0, 1, 2, 3, 4];
 
   it(`the step profile of each span, order ${order}`, () => {
@@ -128,7 +128,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: the erosion first', () => 
  */
 describe.skipIf(!process.env.DUMP)('the figure each order draws', () => {
   it('written', () => {
-    const order = process.env.ORDER ?? 'rde';
+    const order = 'erd';
     const out = [0, 1, 2, 3, 4, 5].map(k => truth(world(), Math.min(k, 4), k === 5 ? 1 : 0)
       .map(r => r.points.map(p => [p.x, p.y])));
 

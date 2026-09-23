@@ -231,7 +231,6 @@ function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points:
     [],
     SQUARE,
     0,
-    false,
     {
       e: E,
       amplitude: () => a.amplitude,

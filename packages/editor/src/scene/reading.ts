@@ -184,7 +184,6 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
   return {
     facets: round === undefined ? SQUARE : facetsOf(segmentsOf(round, state.bevel, scale), round.tension),
     bevel: round === undefined ? 0 : state.bevel,
-    held: round?.held !== false,
     ...(deform === null ? {} : { deform }),
   };
 }
@@ -338,10 +337,9 @@ export function underfoot(floor: Shape, level: Shape): Shape {
 
 export interface Standing {
   depth: number
-  /** Its round and its deform, on its fold before the depth: see
-   * `foldShaped`. Absent is neither. `bevel` is the round as it is seen,
-   * which a held one is drawn out from. */
-  effects?: { facets: Facets, bevel: number, held?: boolean, deform?: { e: Effecting, amplitude: number } }
+  /** Its round and its deform, on its fold after the depth: see
+   * `foldShaped`. Absent is neither. */
+  effects?: { facets: Facets, bevel: number, deform?: { e: Effecting, amplitude: number } }
   /**
    * The frame to keep the union's points in.
    *
@@ -492,7 +490,7 @@ const shapedFold = remembered((
   key: readonly number[],
   depth: number,
 ) => {
-  const [n, from, to, at, tension, bevel, held, ...d] = key;
+  const [n, from, to, at, tension, bevel, ...d] = key;
   const deform = d.length === 0
     ? null
     : { e: { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false }, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
@@ -539,30 +537,17 @@ const shapedFold = remembered((
 
   const facets = { n, from, to, at, tension };
 
-  // PLAN-bevel 3.10 and the ordering experiment beside it. `ORDER` picks which
-  // of the three a group's fold takes; unset is what ships.
-  //
-  //   rde — round, deform, erode, as phase 2 left it;
-  //   red — round, erode, deform, which is 3.10's prototype and the polygon's;
-  //   erd — erode, round, deform, where the only step that cannot be lifted
-  //         onto the union goes first and one pass does the rest.
-  //
-  // In both of the last two the erosion runs on a ring with no teeth in it,
-  // the members' lines and arcs are moved in by the same depth, and the teeth
-  // are laid on what comes out at a depth of nought.
-  const order = process.env.ORDER ?? 'rde';
-
-  if (order === 'rde') {
-    return foldShaped(fold, square, keep, named, curves, ends, facets, bevel, held === 1, deform, depth);
-  }
-
-  const first = order === 'red'
-    ? foldShaped(fold, square, keep, named, curves, ends, facets, bevel, held === 1, null, depth)
-    : foldShaped(fold, square, keep, named, curves, ends, SQUARE, 0, false, null, depth);
+  // Erode, then round and deform — PLAN-bevel's step 4. The one step that
+  // cannot be lifted onto the union goes first, on a ring with no teeth in it
+  // and nothing rounded to cut back; the members' lines and corners are moved
+  // in by the same depth, and one pass lays the rest on what comes out, at a
+  // depth of nought.
+  // No corners in the first pass: a member's corner carries its own round —
+  // step 3 — and the erosion is meant to run on a ring with nothing rounded
+  // in it. They go in the second, where the scope's amount is added to them.
+  const first = foldShaped(fold, square, keep, named, curves, [], SQUARE, 0, null, depth);
   const moved = movedIn({ lines: named, corners: ends }, depth);
-  const then = order === 'red'
-    ? foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, SQUARE, 0, false, deform, 0)
-    : foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, facets, bevel, held === 1, deform, 0);
+  const then = foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, facets, bevel, deform, 0);
 
   return { ...then, fades: [...first.fades, ...then.fades] };
 });
@@ -603,7 +588,7 @@ function shapeKey(s: Standing | null): number[] | null {
   if (!round && d === undefined) return null;
 
   return [
-    ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0, fx.held === false ? 0 : 1,
+    ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0,
     ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude]),
   ];
 }

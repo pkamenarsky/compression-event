@@ -4265,7 +4265,6 @@ export function foldShaped(
   corners: readonly { id: number, at: Point, bevel: number, facets: Facets }[],
   facets: Facets,
   bevel: number,
-  held: boolean,
   /** How high the teeth stand on a run of the given name, which for a group
    * is the same everywhere and for a polygon is its edge's own: see
    * `ArcDeform`. A run with no name asks with nought. */
@@ -4384,17 +4383,9 @@ export function foldShaped(
     return pts;
   }).filter(ring => ring.length >= 3);
 
-  const turnAt = (ring: Ring, i: number): number => {
-    const a = ring[(i - 1 + ring.length) % ring.length], b = ring[i], c = ring[(i + 1) % ring.length];
-
-    return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-  };
-  const drawnAt = (ring: Ring, i: number, want: number, f: Facets): number => {
-    if (!(want > 0) || f.n <= 0) return 0;
-
-    // Never quite to nothing where it is held: see `drawnBevels`.
-    return held ? Math.max(want * SEEDING, want + depth * Math.sign(turnAt(ring, i))) : Math.max(0, want);
-  };
+  // The round as it is asked for. The erosion has already run — see
+  // PLAN-bevel's step 4 — so there is no depth left to hold it out against.
+  const drawnAt = (want: number, f: Facets): number => (want > 0 && f.n > 0 ? want : 0);
 
   // What a point of the fold was published as, if it was: a member's corner
   // arrives as itself — step 2 sees to that — so it is found by where it is.
@@ -4455,7 +4446,7 @@ export function foldShaped(
     // is a bend in the path and not a jump — see PLAN-bevel's step 3.
     const wants = ring.map((_p, i) => bevel + (own[i]?.bevel ?? 0));
     const faced = ring.map((_p, i) => ((own[i]?.bevel ?? 0) > 0 ? own[i]!.facets : facets));
-    const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i, wants[i], faced[i])));
+    const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(wants[i], faced[i])));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
 

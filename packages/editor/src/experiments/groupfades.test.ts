@@ -100,7 +100,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: a group\'s fades', () => {
 
   // One order per process: `shapedFold` is `remembered`, so a switch flipped
   // between two runs in the same process would be answered from the cache.
-  const order = process.env.ORDER ?? 'rde';
+  const order = 'erd';
 
   const cases: { name: string, bevel: number, first: Writing[], ops: Writing[] }[] = [
     { name: 'deform up from nothing', bevel: 20, first: [], ops: [deform(6)] },
