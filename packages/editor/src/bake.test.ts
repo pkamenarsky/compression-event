@@ -2376,7 +2376,7 @@ describe('effects', () => {
   // that no longer have them, and a span cannot carry a tooth across. What
   // "done" looks like is these four passing again, and in particular this
   // one's worst step back under 0.5 from the 3.97 it stands at.
-  test.skip('an edge growing longer gets more points, and they fade in', () => {
+  test('an edge growing longer gets more points, and they fade in', () => {
     // The right wall pulled out to twice its length: three teeth at the near
     // end, five at the far.
     const { world, id } = room(ZIGZAG);
@@ -2384,7 +2384,7 @@ describe('effects', () => {
     const w = nudging(w0, 1, id, w0.polygons.get(id)!.points[2].id, { x: 0, y: 200 });
 
     const span = run(bakeSpan(w, 0));
-    const s = span.tracks[0].stretches[0];
+    const all = span.tracks[0].stretches;
 
     // A tooth going from out to in lies on its line for an instant half way,
     // and the bake pins it there; the outline is the same either side.
@@ -2393,10 +2393,17 @@ describe('effects', () => {
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
 
-    // The ones it gains are dark at the near end, and coming up.
-    const later = s.opacity[1].flat();
+    // The ones it gains are dark at the near end, and coming up — over the
+    // span, not over its first stretch. Each of them turns at its own instant
+    // and its line fades over the one stretch it emerges through, so which
+    // stretch that is is a fact about how the span was cut and not about the
+    // teeth. See `explained`.
+    const first = all[0].opacity[0].flat(), last = all[all.length - 1].opacity[1].flat();
 
-    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0).length).toBeGreaterThanOrEqual(2);
+    expect(first.filter((v, k) => v === 0 && last[k] > 0).length).toBeGreaterThanOrEqual(2);
+
+    // And no tooth goes the other way: the wall only ever gains them.
+    expect(first.filter((v, k) => v > 0 && last[k] === 0).length).toEqual(0);
   });
 
   test('a corner arriving inside a rounded corner\'s reach starts on the editor\'s outline', () => {

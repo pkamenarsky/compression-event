@@ -93,6 +93,9 @@ export interface Entry {
   shape: Shape
   /** Of `source`, so it covers `shape` too. */
   box: AABB
+  /** Points of `shape` the boundary is to keep although they do not turn:
+   * see `Member.keep`. */
+  keep?: readonly Point[]
 }
 
 /**
@@ -158,8 +161,8 @@ export interface WorldSet {
  * is the same work over again on every polygon of every frame the bake takes.
  */
 export type Edit =
-  | { op: 'insert', id: Id, slot: Slot, shape: Shape, simple?: boolean }
-  | { op: 'update', id: Id, shape: Shape, simple?: boolean }
+  | { op: 'insert', id: Id, slot: Slot, shape: Shape, simple?: boolean, keep?: readonly Point[] }
+  | { op: 'update', id: Id, shape: Shape, simple?: boolean, keep?: readonly Point[] }
   | { op: 'remove', id: Id };
 
 /** An empty set of the shape `slots` and `rule` describe. A function rather
@@ -284,7 +287,7 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
     // cannot supply — so a polygon eroded away to nothing could never be
     // eroded back, and the caller had no way to know it had to insert instead.
     // A version scrubbing a depth past a collapse and back does exactly that.
-    entries.set(e.id, { id: e.id, slot, source: e.shape, shape, box });
+    entries.set(e.id, { id: e.id, slot, source: e.shape, shape, box, keep: e.keep });
 
     // The tree is about what can bury something, so nothing goes in it. An
     // empty box would be unfindable by the search that removes it, too.
@@ -306,7 +309,7 @@ export function apply(set: WorldSet, edits: readonly Edit[]): Change {
 // -----------------------------------------------------------------------------
 
 function member(e: Entry): Member {
-  return { id: e.id, slot: e.slot, shape: e.shape };
+  return { id: e.id, slot: e.slot, shape: e.shape, keep: e.keep };
 }
 
 /**

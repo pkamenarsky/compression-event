@@ -1677,6 +1677,19 @@ export interface Member {
   id: number
   slot: number
   shape: Shape
+  /**
+   * Points of `shape` the boundary is to keep although they do not turn: the
+   * teeth lying flat in it, which `keeping` put back into the ring and which
+   * the arrangement would take out again.
+   *
+   * Only the ones that stand on a corner need saying. A flat tooth of its own
+   * on a wall is a node like any other and comes through the arrangement
+   * unasked — it is only marked as no corner. A tooth with no room left is
+   * clamped onto the end of its run, so several of them stand on one point:
+   * zero-length edges, which the arrangement never sees, and one node once it
+   * snaps. See `boundaryRuns` and `FoldShaped.fades`.
+   */
+  keep?: readonly Point[]
 }
 
 /**
@@ -1921,13 +1934,75 @@ export function boundaryRuns(
     return named(settled.get(`${whose[ref.shape][ref.ring].id}|${at.x}|${at.y}`) ?? ref);
   };
 
-  return made.map((run, i) => ({
-    points: run.points,
-    corner: turning[i],
+  const out: BoundaryRun[] = made.map((run, i) => ({
+    points: [...run.points],
+    corner: [...turning[i]],
     whence: run.tags.map(tag => tag.kind === 'vertex'
       ? { kind: 'vertex' as const, at: naming(tag.at) }
       : { kind: 'cross' as const, a: named(tag.a), b: named(tag.b) }),
   }));
+
+  return subject.keep === undefined || subject.keep.length === 0 ? out : withKept(out, subject);
+}
+
+/**
+ * The subject's flat teeth put back into its runs: the last place they are
+ * lost.
+ *
+ * Several of them stand on one corner, so they are zero-length edges going in
+ * and one node coming out, and no tolerance tells that from a point the
+ * boundary simply passes through. What the ring has over what the boundary
+ * came back with is exactly the pile, so the pile is what goes back.
+ *
+ * Each takes its own index in the subject's ring for a name, and the lowest
+ * index at a place is left alone because that is the one `settled` gave the
+ * point already there. So the instant a tooth turns and becomes an ordinary
+ * vertex it is the same name it was while it lay flat, and the bake reads one
+ * point coming up rather than an event. See `Whither`.
+ */
+function withKept(runs: BoundaryRun[], subject: Member): BoundaryRun[] {
+  const key = (p: Point): string => `${p.x}|${p.y}`;
+
+  // Every index of the ring at each place, in ring order, with the first —
+  // the boundary's own — taken out.
+  const spare = new Map<string, Whence[]>();
+
+  subject.shape.forEach((ring, r) => ring.forEach((p, i) => {
+    const k = key(p);
+    const was = spare.get(k);
+
+    if (was === undefined) spare.set(k, []);
+    else was.push({ id: subject.id, ring: r, index: i });
+  }));
+
+  for (const p of subject.keep ?? []) {
+    const names = spare.get(key(p));
+    const name = names === undefined ? undefined : names.shift();
+
+    if (name === undefined) continue;
+
+    // Inside a run rather than at either end of one, where there is such a
+    // place: an end is where the boundary carries on into somebody else's
+    // run, and a tooth of this polygon's belongs on this polygon's side of
+    // that. Where the only place is an end, it is still the right run.
+    let best: { run: BoundaryRun, at: number } | null = null;
+
+    for (const run of runs) {
+      for (let i = 0; i < run.points.length; i++) {
+        if (key(run.points[i]) !== key(p)) continue;
+        if (best === null || (i > 0 && i < run.points.length - 1)) best = { run, at: i };
+        if (best.at > 0 && best.at < best.run.points.length - 1) break;
+      }
+    }
+
+    if (best === null) continue;
+
+    best.run.points.splice(best.at + 1, 0, p);
+    best.run.corner.splice(best.at + 1, 0, false);
+    best.run.whence.splice(best.at + 1, 0, { kind: 'vertex', at: name });
+  }
+
+  return runs;
 }
 
 /**

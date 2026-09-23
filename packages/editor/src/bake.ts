@@ -1696,6 +1696,30 @@ function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): nu
 
   const snap = near(new Map([[0, shape]]));
   const out = shape.map(ring => ring.map(() => 1));
+
+  // Several points of the ring can stand on one place: a tooth with no room
+  // left is clamped onto the end of its run, and the corner there is a point
+  // of the ring too. Asking which one a fade lands on has no answer, so it is
+  // counted instead — as many of them as there are fades here, taken from the
+  // back, which is the order `keeping` put them in behind the corner already
+  // standing there. The corner keeps its vertical; the teeth come up. See
+  // `keeping` and `boundaryRuns`.
+  const mine = new Map<string, { ring: number, index: number }[]>();
+
+  for (const { p } of points) {
+    const at = corner(shape, p, snap);
+
+    if (at === null) continue;
+
+    const here = shape[at.ring][at.index];
+    const key = `${at.ring}|${here.x}|${here.y}`;
+
+    if (!mine.has(key)) {
+      mine.set(key, shape[at.ring].flatMap((q, index) =>
+        (Math.hypot(q.x - here.x, q.y - here.y) <= snap ? [{ ring: at.ring, index }] : [])));
+    }
+  }
+
   let any = false;
 
   for (const { p, v } of points) {
@@ -1703,7 +1727,11 @@ function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): nu
 
     if (at === null) continue;
 
-    out[at.ring][at.index] = Math.min(out[at.ring][at.index], v);
+    const here = shape[at.ring][at.index];
+    const all = mine.get(`${at.ring}|${here.x}|${here.y}`) ?? [at];
+    const slot = all.pop() ?? at;
+
+    out[slot.ring][slot.index] = Math.min(out[slot.ring][slot.index], v);
     any = true;
   }
 
@@ -2097,7 +2125,7 @@ function memberOf(it: Contributed, set: SetName): Member | null {
   // at, this one included. Anything already simple is spared it.
   const shape = it.simple ? it.shape : keeping(simplify(it.shape), it.keep ?? []);
 
-  return shape.length === 0 ? null : { id: it.id, slot, shape };
+  return shape.length === 0 ? null : { id: it.id, slot, shape, keep: (it.keep ?? []).map(p => ('p' in p ? p.p : p)) };
 }
 
 /**

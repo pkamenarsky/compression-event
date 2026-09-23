@@ -1577,10 +1577,15 @@ export function live(previous: Live, items: readonly Contributed[]): Live {
 
       // A slot it did not have has to go in as an insert: an update keeps the
       // slot it had.
+      // What it keeps through the arrangement goes with it: a pile of flat
+      // teeth on one corner is the one thing the boundary cannot find again
+      // for itself. See `Member.keep`.
+      const keep = it.keep === undefined ? undefined : it.keep.map(p => ('p' in p ? p.p : p));
+
       edits.get(set)!.push(
         before === null || slot !== before
-          ? { op: 'insert', id: it.id, slot, shape: it.shape, simple: it.simple }
-          : { op: 'update', id: it.id, shape: it.shape, simple: it.simple },
+          ? { op: 'insert', id: it.id, slot, shape: it.shape, simple: it.simple, keep }
+          : { op: 'update', id: it.id, shape: it.shape, simple: it.simple, keep },
       );
     }
   }
