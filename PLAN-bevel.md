@@ -184,17 +184,20 @@ Points carried, at amplitude 6 — what the pinch has to buy back:
 
 ### The two parked bake tests (3.3)
 
-**`an edge growing longer gets more points, and they fade in`.** The pattern
-re-phases as the wall grows: tooth `j` runs −1 to 1 at the near end and −2 to 3
-at the far. The sliding is fine. What has no answer is `j` of −2 at the near
-end, which would stand off the end of the wall; `reach` clamps it onto the
-corner and it is dropped as a duplicate. Wants the pattern laid over the *union*
-of the two ends' reaches — the same shape of answer as the two namings.
+**`an edge growing longer gets more points, and they fade in`** is the same
+defect as *Step 0* and is parked there with it. The pattern re-phases as the
+wall grows: tooth `j` runs −1 to 1 at the near end and −2 to 3 at the far. The
+sliding is fine. What has no answer is `j` of −2 at the near end, which would
+stand off the end of the wall; `reach` clamps it onto the corner and it is
+dropped as a duplicate.
 
-**`a corner arriving on a deformed floor starts from the editor's pattern`.**
-Four of seven jumps gone. The three left are together at `t` 0.6939, where the
-arriving corner and a tooth of the far naming cross: two ring points swapping
-order, which is an event and not a fade, and one crossing costs three cuts.
+**`a corner arriving on a deformed floor starts from the editor's pattern`** is
+not. Four of seven jumps are gone; the three left are together at `t` 0.6939,
+where the arriving corner and a tooth of the far naming cross — two ring points
+swapping order, which is an event and not a fade, and one crossing costs three
+cuts. That is a real crossing with a real cause, so it is a cost and not a
+discontinuity, and nothing in phase 4 stands on it. It does want re-running
+after *Step 6*, which changes the order the polygon under it takes.
 
 ### Why the group popped (3.4)
 
@@ -390,10 +393,21 @@ run takes no `reach`, so a tooth with no room is dropped where an edge's is
 kept flat; and the arc's run is keyed by the arc, so a tooth that crosses is a
 different tooth with a different `j`, which no fade can join up.
 
+**A parked test belongs to this step.** `an edge growing longer gets more
+points, and they fade in` (*3.3*) is the same defect seen from the other side:
+there a wall grows and tooth `j` of −2 has nowhere to stand at the near end, so
+`reach` clamps it onto the corner and it is dropped as a duplicate; here a
+bevel grows and a tooth crosses from one run to another and is dropped at full
+height. Both are a tooth whose place is defined per piece of a run rather than
+over the run, and both want the pattern laid over the **union of the two ends'
+reaches** — which is the same shape of answer as the two namings of a splitting
+wall in *3.1*, and that one is in and works.
+
+So the step has two yardsticks, not one: `arcseam`'s 4.09 must come down to the
+figure moving, and the parked test must come back in.
+
 **It comes first.** Not because anything below depends on it, but because it is
-the plan's own property 2 failing in the code the rest is to be built on, and
-because the answer is likely the one the two parked bake tests want as well — a
-pattern laid over a run's ends rather than per classified piece. Building steps
+the plan's own property 2 failing in the code the rest is to be built on. Building steps
 1 to 6 on top of it would mean measuring every one of them against a yardstick
 that is itself four units out wherever a bevel crosses a tooth.
 
@@ -661,5 +675,6 @@ found, and in both cases the line said something simpler than the story did.
   the angle while the spacing stays a world length — or it may be a term to pay,
   as today's teeth pay one.
 - **What the pinch's law should be exactly**, if it is wanted at all (*Step 7*).
-- **The two parked bake tests**, both of which want a pattern laid over the
-  union of two ends' reaches.
+- **`a corner arriving on a deformed floor`** (*3.3*), whose three remaining
+  jumps are a real crossing and so a cost rather than a fault. Re-run after
+  *Step 6*.
