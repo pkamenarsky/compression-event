@@ -770,12 +770,43 @@ span starts and P3 is nought for that reason alone — not because the teeth are
 anchored any better.
 
 So P3's nought was `held`'s artefact, and P1 and P3 are not a tooth yardstick
-at all. What the step actually owes is either an instant the bake cuts at —
-`want(i) + want(other) = length(i, d)` is in closed form, and the bake already
-cuts stretches at events — or a cut-back that is smooth in the depth by
-construction. The first keeps the look exactly and costs at most one stretch
-boundary a corner; the second is a line of arithmetic and moves every bevel
-that is near its wall's limit.
+at all.
+
+**The instant is in closed form, and it checks out.** A wall's eroded length
+is linear in the depth — `L(d) = L₀ − d·(cot(α/2) + cot(β/2))` for the
+interior angles at its two ends — and the `min` changes hands when the wall no
+longer holds both its bevels, `L(d) = w + w'`. On the room `deformlast` uses,
+bevel 12 at every corner, that is `L(d) = 24`:
+
+| wall | L₀ | rate | changeover |
+|---|---|---|---|
+| (0,0)→(120,0) | 120.000 | 1.8673 | 51.411 |
+| (120,0)→(130,70) | 70.711 | 2.1139 | **22.097** |
+| (130,70)→(0,60) | 130.384 | 2.1726 | 48.965 |
+| (0,60)→(0,0) | 60.000 | 1.9260 | **18.691** |
+
+`sparam`'s D5 measured the bends at 18.7 and 22.2, and each arc bends once and
+once only. The two short walls are what bite, and their two corners each.
+
+**But the bake does not care.** `experiments/kinkcost.test.ts` bakes spans
+that clear both changeovers, cross the first, and cross both. Nothing is
+strained, on either pipeline, at any depth to hand, and every `worst` is
+inside `TOLERANCE`. The bake does not interpolate a span from its two ends — it
+bisects until the chord is inside the tolerance, and a kink is continuous, so
+bisection converges on it. P1 and P3 measure the lerp of two ends, which no
+kink can survive and which nothing downstream asks for.
+
+Eroded first costs more stretches wherever it keeps more points — toothed, 111
+/ 147 / 245 / 330 against the branch's 73 / 126 / 174 / 245 — and that is the
+outline being kept, not the kink. The one figure worth watching is the deepest
+toothed span, 0.0476 against a bar of 0.05, carrying 83 points where the branch
+carries 24.
+
+So **neither cure is owed**. If the deep span wants headroom later, the two on
+the table are an instant the bake cuts at, which is the table above and keeps
+the look exactly, or a cut-back smooth in the depth, which is a line of
+arithmetic and moves every bevel near its wall's limit. Neither is needed for
+step 6 to go in.
 
 **And P4 is the same clamp at its end.** Twenty points to four at a depth of
 40 is the arcs cut back to nothing, `foldShaped` then reporting no run for a
