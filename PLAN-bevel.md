@@ -1,47 +1,58 @@
-# Plan: bevel first, erosion next, deform last
+# Plan: erode first, round next, deform last
 
-Before this plan a thing went **deform → erode → round**: its edges got teeth
-as though drawn by hand, the teeth were eroded with everything else, and the
-round was laid on what the erosion left. So a round ran into the teeth, and
-everything between the two — `clear`, `unrounded`, the `flat` flags,
-`squareIn`, `restSquare` — existed to keep them out of each other's way.
+Before this plan a thing went **deform → erode → round**: its edges got teeth as
+though drawn by hand, the teeth were eroded with everything else, and the round
+was laid on what the erosion left. Everything between the two — `clear`,
+`unrounded`, the `flat` flags, `squareIn`, `restSquare` — existed to keep them
+out of each other's way.
 
 Phase 1 turned it to **round → deform → erode** for a polygon, phase 2 gave a
 sealed group the same pipeline over the fold of its members, and phase 3 moved
-the deform past the erosion to **round → erode → deform** — done for a polygon,
-not for a group.
+the deform past the erosion to **round → erode → deform**, for a polygon.
 
-Phase 4 takes the last step, to **erode → round → deform**. The reason is not
-the look, which barely moves: it is that the depth is the only one of the three
-that cannot be lifted onto a union, so putting it first is what collapses a
-group's two pipelines into one. *Phase 4* has the case and the measurements.
+Phase 4 takes the last step, to **erode → round → deform**, at every level. The
+reason is not the look, which barely moves: the depth is the only one of the
+three that cannot be lifted onto a union, so putting it first is what collapses
+a group's two pipelines into one.
 
-So, at every level:
+```
+members eroded by their own depths → fold → eroded by the scope's depth
+  → rounded once → deformed once, each run taking the amounts it inherits
+```
 
-- a polygon is eroded at its drawn corners, the round is laid on what comes
-  out, and the deform lays its teeth along that — straights and curves alike,
-  one kind of run;
-- a sealed group erodes its members by their own depths, folds them, erodes the
-  union by its own depth, and then rounds and deforms once, each run taking the
-  amounts it inherits;
-- a member's round and deform are laid there too, with everything else. There
-  is nothing to push down and nothing to delay.
+So a member no longer rounds or deforms itself. It publishes what it is owed —
+a bevel per corner, an amplitude per edge — and the scope that folds it lays
+both, once, on the union. A member's amounts and the scope's **add**.
 
 Teeth stay corners in the output. They go through the arrangement, change
-topology, and get their vertical lines exactly as they do now — detecting slope
+topology, and get their vertical lines exactly as they do now; detecting slope
 at runtime is not an option. Nothing about the playback design changes.
+
+**Three properties this is for.** Nothing below is worth having if one of them
+breaks:
+
+1. **A sealed group draws what its members draw.** The same shape drawn as one
+   polygon and drawn as members of a group is the same outline, however deep
+   the nesting. Today it is not: *4.5*.
+2. **A vertical pops only where a corner is really made or lost** — by an
+   erosion closing a notch, by a tooth crossing a wall — and never at a
+   threshold in a classification.
+3. **A scope composes.** A group of groups resolves as the flattened thing
+   would, so nothing in the pipeline may depend on being at the top.
 
 ## What changes in the look
 
 - **A corner the erosion makes is square.** Where two walls grow into each
-  other, or a tooth pinches off, nothing rounds the result: such a corner has
-  no name, so it inherits no bevel and no amplitude.
+  other, or a tooth pinches off, nothing rounds the result: such a corner has no
+  name, so it inherits no bevel and no amplitude.
 - **A group looks like a polygon.** One pattern along the union's outline, none
   on the joins inside it, teeth on the group's arcs.
+- **A member's bevel starts working inside a group.** Today it silently
+  replaces the group's (*4.5*); summed, both are drawn. Every existing level
+  that rounds a member inside a rounded group changes.
 - **Teeth do not erode.** They are laid on the eroded outline, so nothing is
-  self-limiting; the pinch comes back as a law of its own (*4.5*).
-- Every deformed or rounded level changes. `baseline.golden.json` is
-  regenerated once, at the end.
+  self-limiting; the pinch comes back as a law of its own (*Step 7*).
+- `baseline.golden.json` is regenerated once, at the end.
 
 ## Why it bakes
 
@@ -54,317 +65,169 @@ Each step is linear in its own amount, in the frame it is taken in:
 - a tooth is a point of the path plus the amplitude along the path's normal
   there, times the pattern.
 
-So a stretch holds wherever the combinatorics hold, and the round and the
-deform are, to the bake, what drawn corners and today's teeth are to it:
-corners with ids, carried by `budding` and `effectsOver` across a span.
+So a stretch holds wherever the combinatorics hold, and the round and the deform
+are, to the bake, what drawn corners and today's teeth are to it: corners with
+ids, carried by `budding` and `effectsOver` across a span.
 
 The deform being last is what buys the exactness. A tooth's apex sits on an
 edge, not at a corner: the offset line, linear in the depth, plus the amplitude
-along a normal that does not turn. No mitre, no `1/sin`. Today's order walks
+along a normal that does not turn. No mitre, no `1/sin`. The old order walks
 each apex along its own mitre by `d / sin(θ/2)`, and a deform whose amplitude
 moves is a deform whose every θ moves — a curve per tooth.
 
-**A tooth on an arc is laid as any other tooth**: a tooth every spacing by
-length out from the anchor, fading within a spacing of either end through
-`room`, at full height everywhere else. `patternRun` does not care whether a
-run came from an edge or an arc. Teeth may cross each other and other walls,
-and the arrangement settles that as it does for any tooth.
+**A tooth on an arc is laid as any other tooth**: one every spacing by length
+out from the anchor, fading within a spacing of either end through `room`, at
+full height between. `patternRun` does not care whether a run came from an edge
+or an arc, and the fold's `curved` lays them along the curve as `arcRun` does
+for a polygon.
 
-## Phase 1: a polygon — done
+# What the earlier phases established
 
-**The round is drawn in the projection, not as corners.** Arcs that were
-corners of the polygon would take the drawn corner out of its ring, and the
-editor's handles, edges and `addVertex` all stand on it. So `Resolved` keeps
-its corners as they were and `project` draws the outline from them.
+Everything here is in and is load-bearing for phase 4.
 
-**An arc's teeth push the whole arc**, each of its points off the curve by what
-the teeth either side say, in proportion. Laid only as points among the facets,
-a tooth sliding past a facet point swapped places with it in the ring and the
-bake cut every such instant to its narrowest width.
+### The round is drawn in the projection, not as corners
 
-**A falloff and an offset.** Each tooth adds its height to the arc falling away
-with distance along it — a triangle standing on the curve, its feet `falloff`
-of the spacing away, never less than `NARROWEST`. Each edge's teeth start off
-its middle by a share of the spacing its seed gives it (`Effecting.offset`), so
-a short edge may have none.
+Arcs that were corners of the polygon would take the drawn corner out of its
+ring, and the editor's handles, edges and `addVertex` all stand on it. So
+`Resolved` keeps its corners as they were and `project` draws the outline.
 
-**`held`.** `Options['round']` carries it, on by default. Held, a corner's
-bevel is drawn as `bevel ± depth` so that what the erosion leaves is the arc
-asked for at any depth. Phase 4 ends its usefulness — see *4.3*.
+### An arc's teeth push the whole arc
 
-**A corner the bake invents is rounded apart** (`Effected.apart`), its arc a
-sliver along the points either side, with no teeth. The geometric half of this
-is now inert and goes with the removals; the naming half is load-bearing.
+Each of its points goes off the curve by what the teeth either side say, in
+proportion — a tooth is a triangle standing on the curve, its feet `falloff` of
+the spacing away, never less than `NARROWEST`. Laid only as points among the
+facets, a tooth sliding past a facet point swapped places with it in the ring
+and the bake cut every such instant to its narrowest width.
 
-**What phase 1 found the hard way**, on `world-2026-09-22T14-17-44Z` (a room
-with inward teeth of 294 on held arcs of some 465, jumping by up to 130):
+Each edge's teeth start off its middle by a share of the spacing its seed gives
+it (`Effecting.offset`), so a short edge may have none.
 
-1. *An arc's point beside a tooth's tip.* Arc points under a flank are now left
-   out and the flank runs straight to a foot; otherwise the mitre between a
-   point and a tip flips as the point comes and goes.
-2. *An island born* — specks pinched off by the erosion, read as a jump. Not a
-   fault.
-3. *Walls starting to cross.* Where two teeth begin to cross there is a notch
-   of some 160°, and `erode` mitres it: five times the depth, whole, the
-   instant the corner exists. This is `erode`'s own.
-4. *The teeth held still* (the fix for 3): a held arc's teeth are laid along
-   the arc as it is *seen* and carried onto the drawn arc, so they keep their
-   places while the erosion grows it.
-
-## Phase 2: a sealed group — done
-
-A sealed group with a round or a deform folds its slots at depth nought and
-`foldShaped` rounds, deforms and erodes the fold as one shape. The group's
-deform is no longer pushed onto its members. Two pieces of it are what phase 3
-and phase 4 stand on.
-
-### 2.1 Where a pattern is anchored
+### Where a pattern is anchored (2.1)
 
 A union edge is a run of member edges. The run takes one name — the
 lowest-ranked member edge lying along it — and its teeth are laid from **that
-edge's own middle**, across the whole run. So two members side by side along
-one wall get one pattern across the join; nothing at either end of the run
-moves a tooth; and a run split in two leaves the piece that keeps the naming
-edge untouched.
+edge's own middle**, across the whole run. So two members side by side along one
+wall get one pattern across the join, nothing at either end of the run moves a
+tooth, and a run split in two leaves the piece that keeps the naming edge
+untouched.
 
-Rank rather than the edge under the run's middle, because members sliding until
-the join passes the middle would otherwise flip the name and jump the pattern
-with no event to hide it.
+Rank rather than the edge under the run's middle: members sliding until the join
+passes the middle would otherwise flip the name and jump the pattern with no
+event to hide it.
 
-### 2.2 Naming the union's straights and arcs
+### Naming the union's straights (2.2)
 
-A union straight lies on the line of exactly one member edge: the arrangement
+A union straight lies on the line of exactly one member edge — the arrangement
 cuts edges up and drops the pieces inside, but never moves one off its line. So
-a member publishes its eroded edges as lines, and the fold names each straight
-by the line along it.
-
-- **`namesOf(resolved)` → `Named`.** Per source edge that reaches the
-  projection, the line it lies on *after* the erosion, named by the corner it
-  leaves; per rounded corner with any length, its arc as points. A tooth names
-  nothing: it belongs to the edge its `root` names.
-- **`movedIn(named, depth)`.** A line goes along its own normal; an arc's
-  points each on the mitre of the two segments at them, which is why lines and
-  arcs move together. `slotted` moves what its members publish by the slot's
-  signed depth.
-- **An arc is a curve, not a string of corners.** `teethAlong` works over a
-  `Curved` — `{ points, us, on, normal, bend }` — and `curveThrough` reads one
-  back off a point run, so a fold's arc takes the group's teeth along the whole
-  curve. Measured in `experiments/curve.test.ts`: same tips, same folds, the
-  tips 0.24 to 4.72 off the analytic ones, which is the polyline sitting inside
-  the curve it was laid as.
-- **Teeth stand in the fold before they turn.** `FoldShaped.fades` reports each
-  flat tooth with nought beside it and `Contributed.faded` keeps it in the ring,
-  so a pattern comes up rather than arriving. Without it a fold went from nine
-  points to twenty-six between the keyframe and the next instant.
+a member publishes its eroded edges as lines and the fold names each straight by
+the line along it. `namesOf` publishes, `movedIn` carries a published line
+through an enclosing scope's erosion.
 
 Tagging the union was rejected: a tag names a *shape* point, so it would still
 have to be taken back to an edge, and it would have to survive `erode` on the
 way up through a nested scope, which a line does for nothing.
 
-### 2.3 What phase 2 left standing
+### The tooth keeps its place
 
-- A run splitting or merging re-anchors the piece that loses the naming edge,
-  at an event the arrangement already has. Unchanged, and acceptable.
-- **A scope's own arcs have no names**, its corners having no ids, so a group
-  nested in another names its straights but not its curves. Phase 4 needs the
-  naming for everything, so this is work rather than a known gap.
-- A member's teeth next to a straight make that straight untoothed.
+`patternRun` takes an anchor and allows it outside the run, and a mitred offset
+keeps an edge's identity: the eroded edge is the source edge translated along
+its normal and re-trimmed. So the anchor is the source edge's middle pushed out
+by the depth, its coordinate along the edge does not move with the depth at all,
+and teeth only enter and leave at the ends, through the `room` fade.
 
-### 2.4 What the one-pipeline experiment found
+`reach` is how: given the length the teeth belong to, the same teeth are laid at
+every depth and one whose room has run out stands flat rather than going.
 
-`experiments/onepipe.test.ts` folded the members *before* any erosion and ran
-one pass over that ring, each corner carrying whichever effects it inherits.
+### What phase 3 put in for a polygon (3.1)
 
-| case | apart | points |
-|---|---|---|
-| group round, plain members | 0.00 | 37 vs 37 |
-| group round + erode, no deform | 0.00 | 37 vs 37 |
-| group round + deform | 5.73 | 77 vs 85 |
-| the same, amplitude 12 | 10.27 | 77 vs 85 |
-| member rounds, group deforms | 4.74 | 83 vs 71 |
-| member erodes, group rounds | 5.65 | 69 vs 37 |
+- `deformedAt` no longer subdivides; `Vertex.root` is dead in every path a
+  polygon takes.
+- A polygon names its runs from `owner` rather than by matching lines.
+- An edge can carry more than one pattern: both namings of a splitting wall are
+  laid and **added**, each read at every station with the offsets standing on
+  each other. Interleaving them put a return to the wall between every pair of
+  apexes. This is the arithmetic a member's amplitude and a scope's will use.
+- A corner is set aside for the geometry only where it is flat, which is the end
+  that invented it — `near[i] && far[i]`, needing no knowledge of `t`.
+- `reach` boxes a polygon with its teeth's amplitude. This is the one that fails
+  quietly: an undersized box drops a polygon from a neighbour's neighbourhood
+  and the events between them are never looked for.
+- **A deform from nought fades in.** `foldShaped.fades` keeps a flat tooth in
+  the ring, `Imaged.flat` and `Contributed.faded` carry it, `teethFading` gives
+  it a fade. It changes no opacity: it changes `explained`, which called a tooth
+  standing out of a flat wall an unaccounted corner and cut instead of letting
+  the line fade in.
 
-- **Where only the group has effects the two already agree exactly.**
-- **The deform gaps are the pattern's phase, not the pipeline**: they double
-  with the amplitude and the point counts do not move.
-- **The one real difference is a member's own depth**, and one pipeline cannot
-  express it: a polygon's depth is per corner and interpolates along its edges,
-  a member's is per shape, so a corner where two members meet would carry two
-  depths and slant the edge between them.
+### What the deform-last experiment found (3.2)
 
-That last line is the whole of phase 4's case, read three phases early. It says
-the depth is the one thing that has to happen before the fold — which is an
-argument for putting it *first*, not for keeping two pipelines.
+`experiments/deformlast.test.ts`, on a room with no two corners alike. A span
+that moves the amplitude is exact, and so is one with no teeth; every mixed span
+is two to five times better. The one thing not better is a tooth on an arc, and
+it is the geometry rather than the prototype: at 2, 4, 8, 16 and 32 segments the
+figure converges on 1.19, because a tooth marched out by the spacing sits at an
+angle of its length over the radius and the erosion moves the radius. Anchoring
+by `u` instead holds the angle and is worse everywhere.
 
-## Phase 3: the deform moves past the erosion — done for a polygon
-
-**Why it ends the jumps.** Every jump this plan has fought is a
-*classification* flipping: straight against arc, `unrounded`, `clear`, `flat`,
-`restSquare`, `squareIn`, and the seen arc against the drawn one. Each exists
-because the deform runs while it still matters what kind of thing it is
-standing on, and a classification flips at a threshold — that is what the jump
-*is*. Laid last there is one curve.
-
-**The tooth keeps its place.** Teeth laid on the eroded outline do not slide,
-because the pattern is not keyed by arc length. `patternRun` takes an anchor and
-allows it outside the run, and a mitred offset keeps an edge's identity: the
-eroded edge is the source edge translated along its normal and re-trimmed. So
-the anchor is the source edge's middle pushed out by the depth, its coordinate
-along the edge does not move with the depth at all, and teeth only enter and
-leave at the ends, through the `room` fade.
-
-### 3.1 What is in, on a polygon
-
-- `deformedAt` no longer subdivides. `imagedBy` rounds the drawn corners,
-  erodes that, and lays the teeth on what comes out. `Vertex.root` is dead in
-  every path a polygon takes.
-- The step is `foldShaped`, which phase 2 already wrote. Its round and its
-  erosion switch off by their own arguments, so a polygon's call is the same
-  one with nought in those two places.
-- A polygon names its runs from `owner` rather than by matching lines. A corner
-  the bake invented names no wall, and the sliver arc it is rounded into does
-  not break the run through it.
-- `patternRun` has `reach`; an edge can carry more than one pattern; both
-  namings of a splitting wall are laid and **added**, each read at every station
-  with the offsets standing on each other — interleaving them put a return to
-  the wall between every pair of apexes. A pattern is read across an edge's
-  ends, and a ring point interior to a run is lifted onto it.
-- A corner is set aside for the geometry only where it is flat, which is the
-  end that invented it — `near[i] && far[i]`, needing no knowledge of `t`.
-- `reach` boxes a polygon with its teeth's amplitude, which they no longer
-  bring along inside `placed`. This is the one that fails quietly: an undersized
-  box drops a polygon from a neighbour's neighbourhood and the events between
-  them are never looked for. The case had to be built to fail before the fix
-  meant anything — two rooms twelve apart whose teeth meet, drifting 96.7.
-- **A deform from nought fades in.** `imagedBy` keeps `foldShaped`'s `fades`
-  and reports them as `Imaged.flat`; `invented` keeps them through the bake's
-  own arrangement; `teethFading` gives each one a fade. That last changes no
-  opacity at all — what it changes is `explained`, which called a tooth
-  standing up out of a flat wall an unaccounted corner and cut instead of
-  letting the line fade in.
-
-**The pop is gone.** `rounded as well, its outline never pops` passes at a
-worst step of 0.31 against a bar of 0.5, both ends the editor's outline to six
-places.
-
-### 3.2 What the experiment found
-
-`experiments/deformlast.test.ts`, on a room with no two corners alike, against
-a tolerance of 0.05. Each figure is the worst a point is from the lerp of the
-span's two ends.
-
-| span | today | last |
-|---|---|---|
-| amplitude 0 → 3 | 1.34 | **0** |
-| amplitude 1 → 6 | 0.16 | **0** |
-| bevel and depth, no teeth | 0.89 | **0** |
-| bevel 4 → 14 | 2.00 | **0.71** |
-| all three | 2.04 | **0.38** |
-| depth 0 → 20 | 1.98 | **1.36** |
-| depth 0 → 5 | **0.25** | 0.56 |
-| a corner moving 30 | **0.44** | 0.60 |
-
-- **A span that moves the amplitude is exact**, and so is one with no teeth.
-- **Every mixed span is better**, by two to five times.
-- **The one thing not better is a tooth on an arc**, which is every remaining
-  worst point — and it is the geometry, not the prototype: at 2, 4, 8, 16 and
-  32 segments an arc the figure converges on 1.19. A tooth marched out by the
-  spacing sits at an angle of its length over the radius, and the erosion moves
-  the radius. Anchoring by `u` instead holds the angle and is worse everywhere
-  (0.93, 2.04, 1.18 against 0.56, 1.36, 0.71), because the spacing then drifts
-  with the radius.
-
-**Points carried, at amplitude 6:**
+Points carried, at amplitude 6 — what the pinch has to buy back:
 
 | depth | 0 | 6 | 20 | 40 |
 |---|---|---|---|---|
 | today | 34 | 31 | 16 | 1 |
-| last | 38 | 38 | 38 | 42 |
+| deform last | 38 | 38 | 38 | 42 |
 
-Eroded, today's outline thins out and at the end is gone; laid last it never
-does. This is what the pinch (*4.5*) buys back.
-
-### 3.3 The two parked bake tests
+### The two parked bake tests (3.3)
 
 **`an edge growing longer gets more points, and they fade in`.** The pattern
-*re-phases*: a tooth is anchored at the run's middle and marches out by the
-spacing, and the middle moves as the wall grows. Tooth `j` runs −1 to 1 at the
-near end and −2 to 3 at the far. The sliding is fine — tooth `j` is the same
-tooth and its place is a lerp of its two ends. What has no answer is `j` of −2
-at the near end, which would stand off the end of the wall with nowhere to be;
-`reach` clamps it onto the corner and it is dropped as a duplicate. This wants
-the pattern laid over the *union* of the two ends' reaches, which is the same
-shape of answer as the two namings.
+re-phases as the wall grows: tooth `j` runs −1 to 1 at the near end and −2 to 3
+at the far. The sliding is fine. What has no answer is `j` of −2 at the near
+end, which would stand off the end of the wall; `reach` clamps it onto the
+corner and it is dropped as a duplicate. Wants the pattern laid over the *union*
+of the two ends' reaches — the same shape of answer as the two namings.
 
 **`a corner arriving on a deformed floor starts from the editor's pattern`.**
-Four of seven jumps are gone. `effectedAt` now carries both namings at either
-end, the far one at nought, while `apartAt` of nought or one keeps the geometry
-that end's own; a corner set aside is kept through the cleaning by
-`deform.aside`, not by `square`, which would have left the edges either side
-untoothed; and which points lie flat is read back off what `simplify` returned
-rather than predicted from the amplitude. The three left are together at `t` of
-0.6939, where the arriving corner and a tooth of the far naming cross: two ring
-points swapping order, which is an event and not a fade, and one crossing costs
-three cuts. Worst step 0.85 against a bar of 0.5.
+Four of seven jumps gone. The three left are together at `t` 0.6939, where the
+arriving corner and a tooth of the far naming cross: two ring points swapping
+order, which is an event and not a fade, and one crossing costs three cuts.
 
-### 3.4 Why a group still pops: the erosion amplifies a tooth coming up
+### Why the group popped (3.4)
 
 `world-2026-09-22T21-40-17Z` — two overlapping rooms sealed, rounded 180 with a
-noise deform, eroded 61 four times — pops on span 3 at 2.84.
-
-It is not the naming and it is not the erosion. The fold's ring, its runs'
-names, anchors, reaches and amplitudes are identical either side of the
-instant; the only input that differs is the depth, 136.8626 against 136.8817,
-and the same ring swept from 136.5 to 137.5 moves by at most 0.0066.
-
-**It is the amplification.** Taking the two toothed rings either side and
-eroding each:
+noise deform, eroded 61 four times — pops on span 3 at 2.84. Not the naming and
+not the erosion: the ring, its names, anchors, reaches and amplitudes are
+identical either side, and the same ring swept over the whole depth range moves
+by 0.0066.
 
 | | apart |
-| --- | --- |
+|---|---|
 | the two rings, before the erosion | 0.0273 |
 | each eroded at its own depth | 2.8621 |
 | both eroded at the *same* depth | 2.8812 |
 | the *same* ring at the two depths | 0.0251 |
 
-A tooth that shallow is a pair of nearly parallel walls, and the wedge `erode`
-makes reaches where the two moved walls cross — off towards infinity as they
-close on parallel. A tenth of a unit of tooth becomes three units of outline.
+**It is amplification.** A tooth that shallow is a pair of nearly parallel
+walls, and the wedge `erode` makes reaches where the two moved walls cross — off
+towards infinity as they close on parallel. A tenth of a unit of tooth becomes
+three units of outline. It wants both effects: deform alone 0.23, round alone
+0.20, both 2.73 — the round's `clear` is what ramps a tooth in and out, and that
+is what manufactures a tooth standing at nearly no height.
 
-**It wants both the deform and the round**: with the deform alone the span's
-worst is 0.23, with the round alone 0.20, with both 2.73. The round's `clear`
-is what makes a tooth ramp in and out at a run's ends, and that is what
-manufactures a tooth standing at nearly no height.
+**So `fades` and a deep erosion cannot both be last**, and that is the whole
+argument for moving the erosion to the front.
 
-**So `fades` and a deep erosion cannot both be last.** `FoldShaped.fades` keeps
-a flat tooth in the ring deliberately, and a flat tooth is exactly the worst
-thing to hand a deep erosion. The two are in direct conflict for as long as the
-erosion comes after the teeth — which for a polygon it no longer does, and for
-a group it still does.
+# Phase 4: the erosion first
 
-## Phase 4: the erosion first
+## 4.1 The property
 
-### 4.1 The property
+Of a scope's three effects, **only the depth cannot be lifted onto the union**.
+A bevel is per corner and an amplitude is per edge, and 2.2's naming carries
+both onto a union run. A member's depth is per shape, so a corner where two
+members meet would carry two of them and slant the edge between.
 
-Of a group's three effects, **only the depth cannot be lifted onto the union**.
-A bevel is per corner and an amplitude is per edge, and *2.2*'s naming carries
-both onto a union run — that is what the naming is for. A member's depth is per
-shape, and *2.4* measured what a corner carrying two of them would cost.
-
-So the erosion is the one step that has to run before the fold, and every order
-that does not put it first leaves a liftable step in front of the fold — which
-forces the members to run it and then forces the group to run it again over the
-top. That is the two pipelines, and it is where `squareIn`, `restSquare`,
-`squaredThrough` and "hold a member's deform back and find it again on the
-union edge its edge became" all come from.
-
-Erosion first is the only order where the un-liftable step is alone in front of
-the fold and everything after it is one pass:
-
-```
-members eroded by their own depths → fold → eroded by the group's depth
-  → rounded once → deformed once, each run taking the amounts it inherits
-```
+Every order that does not put the erosion first leaves a liftable step in front
+of the fold, which forces the members to run it and then forces the scope to run
+it again over the top. That is the two pipelines, and it is where `squareIn`,
+`restSquare`, `squaredThrough` and "hold a member's deform back and find it
+again on the union edge its edge became" all come from.
 
 **For a polygon, held, it is not a change at all.** Held draws a corner at
 `bevel ± depth` so that what the erosion leaves is the arc asked for, which
@@ -372,14 +235,11 @@ makes round-then-erode give `centre(bevel) + (r ± d)·u(φ)` and erode-then-rou
 give `(corner + d·mitre) + bevel·u(φ)` — the same point. The whole value is at
 the group.
 
-### 4.2 What was measured
+## 4.2 What was measured
 
-`experiments/erodefirst.test.ts`, on *3.4*'s world by *3.4*'s method.
-`shapedFold` carries an `ORDER` switch over the three orders, unset being what
-ships. The harness reproduces *3.4*'s figures exactly, so it is measuring the
-same thing.
-
-Worst step per span, 1600 steps:
+`experiments/erodefirst.test.ts`, on 3.4's world: the worst step over 1600, and
+refinement at 400 / 1600 / 6400 to tell a discontinuity from a figure moving.
+`shapedFold` carries an `ORDER` switch over the three orders.
 
 | span | rde (ships) | red | **erd** |
 |---|---|---|---|
@@ -389,73 +249,199 @@ Worst step per span, 1600 steps:
 | 3 | **2.8434** | 0.0510 | 0.0539 |
 | 4 | 0.3718 | 0.0509 | 0.0539 |
 
-Refined to 6400, `erd` has **one** outlier in the whole world: 3.28 at `t`
-0.1303, two adjacent steps, ring 50 → 49 → 51. That is a point leaving and two
-arriving — one topology event, which is a stretch boundary the bake cuts at.
-`rde` has two, at 2.87 and 1.68, tied to no event at all. Everything else in
-`erd`, and everything in `red`, is median = worst = the figure moving.
+Refined, `erd` has **one** outlier in the whole world: 3.28 at `t` 0.1303, two
+adjacent steps, ring 50 → 49 → 51 — a point leaving and two arriving, which is
+one topology event and a stretch boundary the bake cuts at. `rde` has two, at
+2.87 and 1.68, tied to no event. Everything else is median = worst.
 
-**Wherever the depth is nought, `erd` is today's figure exactly** — nought
-apart at the first two keyframes, the same 55 points — and from there it parts
-smoothly: 5.9, 20.8, 38.0, 35.1 at the later keyframes. That is the erosion
-alone talking, which is the one step that moved.
-
-**`red` draws a different figure from the start.** 14.8 apart at zero depth,
-where nothing has been eroded at all, and 167 points against 55. Its second
-pass lays the teeth from the names with `reach` instead of onto the ring the
-round came to, so it is toothier everywhere, not just at depth. By the last
-keyframe it is 87 from today's outline where `erd` is 35.
+**Wherever the depth is nought, `erd` is today's figure exactly** — nought apart
+at the first two keyframes, the same 55 points — and parts from it smoothly as
+the erosion runs: 5.9, 20.8, 38.0, 35.1.
 
 **A finding that was the prototype's own.** An earlier run had `red` popping
-21.34 on span 1 and read it as the group's deform arriving with nothing fading
-it. It was the switch: `shapedFold` took the shipped single-pass path whenever
-the depth was nought, so the first step of an erosion crossed between two
-different constructions — ring 55 → 165 at `t` 0.00016, the first step of the
-span. With the shortcut gone both orders are smooth at every refinement. The
-thing to take from it is the method rule and not the number: a prototype that
-switches on the quantity being swept will manufacture a discontinuity at the
-switch, and it will converge like a real one.
+21.34 on span 1 and read it as a missing fade. It was the switch: `shapedFold`
+took the shipped single-pass path whenever the depth was nought, so the first
+step of an erosion crossed between two constructions. With the shortcut gone
+both orders are smooth at every refinement.
 
-### 4.3 What it costs
+**And the point counts are not a trade.** `red` keeps 162 points to `erd`'s 50,
+and *3.2* read that as a win. It is not: `patternRun`'s `clear` keeps teeth out
+of a bevel — a tooth inside one is a corner the bevel cannot reach past — and
+the `red` prototype hands its deform pass a bevel of nought, so it has no
+`clear` and lays teeth straight through every arc. `erd` passes the real bevel
+and keeps 50 against the 55 that ship.
+
+## 4.3 What it costs
 
 - **`held: false` goes.** With the round laid after the erosion there is no
-  drawn-against-seen left, so every round is the seen one. Held is the default
-  and is what a round looks like today, and unheld eroded past its radius costs
-  the bake 18 stretches against 1 — but it is a capability removed, not a
-  refactor.
-- **The group's depth is a second erosion.** It cannot go with the members, the
-  union not existing yet, and it cannot go after the round. So it is
-  E(members) → fold → E(union) → R → D, and "one pipeline" is really one
-  *post-fold* pipeline. A nested group still erodes once per scope.
-- **The rounds have to add**, and *4.9* now measures what they do instead:
-  today a member's own round replaces the group's outright. The deform's half is already answered: *3.1*
-  makes two namings' patterns add as offsets standing on each other, and group
-  amplitude plus member amplitude is the same arithmetic. The round has no such
-  answer today, the group's round being laid over a member's already-rounded
-  corner by construction rather than by a sum.
-- **Fewer teeth at depth**, per *4.2*. Whether that is the right look is a look
-  question, and the one thing here numbers cannot settle.
+  drawn-against-seen left, so every round is the seen one. A capability removed,
+  not a refactor.
+- **The scope's depth is a second erosion.** It cannot go with the members, the
+  union not existing yet, and it cannot go after the round. So "one pipeline" is
+  one *post-fold* pipeline, and a nested group still erodes once per scope.
+- **Every level with a rounded member inside a rounded group changes**, because
+  that bevel draws nothing today.
 
-### 4.4 The work
+## 4.4 A group's fades: already there
 
-1. **Done** — the measurement of *4.2*, and the `ORDER` switch it rides on.
-2. **The rounds add, and so do the amplitudes.** *4.9* measures what stands in
-   its place today, and it is nothing: a member's round replaces the group's. Members stop applying their own
-   round and deform and publish them per edge and per corner instead, beside the
-   lines and arcs *2.2* already has them publishing. A run of the fold sums what
-   it inherits. This is the piece the ordering is *for*, and nothing in *4.2*
-   tests it: that prototype still has members rounding themselves before the
-   fold, so no corner ever carries two bevels. Measure it the same way, on the
-   same world, before building on it.
-3. **A scope's own arcs get names** (*2.3*), since a nested group needs its
-   curves named and not only its straights.
-4. **Done, and there is nothing to build** — see *4.8*. A group already has its
-   fades, and measured, `erd` needs them less than what ships does.
-5. **The pinch** (*4.5*), on by default.
-6. **The removals** (*4.6*), once nothing reads them. `baseline.golden.json`
-   regenerated once, at the end.
+`experiments/groupfades.test.ts`. Two rooms sealed, a span over which the
+group's deform comes up out of nothing, baked and checked at nine hundred
+instants that are not the ones the bake checked itself at.
 
-### 4.5 The pinch, reproduced
+| span | rde (ships) | erd |
+|---|---|---|
+| deform up from nothing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| the same, bevel 40 | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| deform there, growing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
+| **deform up while eroding** | 28 stretches, 2 jumps, drift **0.2933** | 18 stretches, 2 jumps, drift **0.0141** |
+
+The fade machinery reaches a scope already: `shapedFold` keeps both passes'
+fades, `Contributed.faded` carries them, `groupFading` puts them onto the side
+beside its members'. The one span that costs is 3.4's case again, and `erd` pays
+18 stretches where the shipped order pays 28 and stays twenty times nearer.
+
+## 4.5 Two rounds at one corner: today there is no law
+
+`experiments/sumrounds.test.ts`. A room inside a sealed group, the room rounded
+by `member` and the group by `group`, against a plain polygon rounded outright.
+
+**A member's round replaces the group's, exactly** — in fifteen of eighteen
+cases the outline is the polygon rounded by the member's amount alone, to 3e-14,
+and it goes at the first hundredth of a unit:
+
+| member | group | draws | from R(group) |
+|---|---|---|---|
+| 0 | 30 | R(30) | 0 |
+| 0.01 | 30 | R(0.01) | 7.952 |
+| 1 | 30 | R(1) | 7.690 |
+| 10 | 30 | R(10) | 5.303 |
+
+**It is one line**, in `foldShaped`:
+
+```ts
+const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
+```
+
+`mine[i]` is the member arc the ring point lies on, and a point on one takes a
+bevel of nought — a corner a member has rounded is not rounded again. The
+scope's round reaches only corners no member published an arc for, which in a
+group whose members round themselves is the joins and nothing else.
+
+**The three that do not vanish are worse**: sharp corners with a member bevel of
+30 or 40 keep something of both and blow the ring from 36 points to 168, the
+scope's round re-rounding the facets of the member's arc.
+
+**It never pops, which is why nobody saw it.** A span over which a member's
+round comes up from nought inside a group's 30 bakes to one stretch, no jumps
+and no drift: the outline is R(m(t)) the whole way, with the group's bevel
+absent at both ends and everywhere between. A silently missing effect.
+
+So summing is not a change of law. It is a law where there is none, and it costs
+nothing to draw: R(member + group) keeps the same 37 points.
+
+# The work
+
+Each step stands on its own, is committable, and has something to measure. The
+existing harnesses — `erodefirst`, `groupfades`, `sumrounds` — are the yardstick
+throughout, and each step must leave them where the step before did.
+
+### Step 1: a member publishes amounts, not geometry
+
+`Named` (`scene/core.ts`) loses its arc points and gains the amounts:
+
+```ts
+interface Named {
+  lines: { id: VertexId, a: Point, b: Point, amplitude: number }[]
+  corners: { id: VertexId, at: Point, bevel: number, facets: Facets }[]
+}
+```
+
+`namesOf` stops asking `imagesOf` for arc runs. With the member no longer
+rounding, a drawn corner's image is `mitred(source, rings, i, depth)` — one
+point — and each edge's line runs from one corner's image to the next.
+`movedIn` keeps working unchanged: a line goes along its normal, a corner along
+its mitre, which is the one-point case of what it already does to an arc.
+
+The amounts ride along untouched; nothing reads them yet.
+
+*Measured by*: a member with no round and no deform must give the fold exactly
+today's outline, at every depth. Nothing in the harnesses may move.
+
+### Step 2: a member under a shaping scope resolves eroded only
+
+`slotted` (`scene/reading.ts`) asks each member for its shape. Under a scope
+with `shapedBy !== null` that shape must be the member **eroded at its own
+depth, with its round and its deform not applied** — `resolveAt` / `imagedBy`
+gain the mode, `Effected` contributing its depth and nothing else.
+
+This is the step that makes a corner available to be rounded once, and it is
+what takes `squareIn`, `squaredThrough`, `restSquare` and `effectedSquare` out
+of the path: with no member effect geometry on the union there is nothing on it
+to protect from the scope's round.
+
+*Measured by*: the fold's ring now has the members' true corners in it. With the
+scope's own effects only, `erodefirst` must be unchanged; with a member's
+effects on, the outline loses them — which is expected and is what step 3 gives
+back.
+
+### Step 3: `foldShaped` takes a bevel and facets per corner
+
+`bevel: number` becomes a function of the name, beside `deform.amplitude(key)`,
+and 4.5's line stops zeroing:
+
+```ts
+const bevels = ring.map((_p, i) => (sq[i] ? 0 : bevelAt(names[i], ring, i)));
+```
+
+A ring point that is a named corner's image takes **the scope's bevel plus that
+corner's own**. A point that names nothing — a join between two members, or a
+corner the erosion made — takes nought, which is *What changes in the look*'s
+first line. `facets` resolves the same way, per corner, since two members may
+ask for different precision.
+
+The amplitude's half needs no new machinery: `deform.amplitude(key)` already
+takes a name, and 3.1 already adds two patterns on one edge as offsets standing
+on each other. Summing what a run inherits is the same arithmetic.
+
+*Measured by*: `sumrounds` — a member rounded 10 inside a group rounded 30 must
+draw R(40), to the same 3e-14 with which it draws R(10) today, and keep the same
+point count. Then the same for amplitudes, and then both at once.
+
+### Step 4: the scope's erosion moves after the fold
+
+`shapedFold`'s `erd` branch becomes the path and the `ORDER` switch goes: fold
+the members — already eroded by their own depths — at depth nought, erode the
+union by the scope's depth, then one `foldShaped` pass that rounds and deforms
+at depth nought. The `held` argument goes with it.
+
+*Measured by*: `erodefirst` with no switch set must print what `ORDER=erd`
+prints today, and `groupfades` must keep its 18 stretches and 0.0141.
+
+### Step 5: a scope publishes its own names
+
+For nesting, `resolves` must publish what the *fold* came to and not what its
+members published: each union straight with the amount its run inherits, each
+union corner with its summed bevel, each join nought, the lot moved in by the
+scope's depth. This answers 2.3's "a scope's own arcs have no names" by removing
+the question — there are no arcs to name, only corners and amounts.
+
+The open piece is what names a corner of the fold, `VertexId` being a polygon's.
+A join has no member corner behind it and wants none; a corner that is a
+member's wants that member's id, and two scopes deep it wants the same one.
+
+*Measured by*: property 3 — a group of groups against the flattened thing, at a
+depth for each scope. This is the first step that can break composition, so it
+is the first that must test it.
+
+### Step 6: the polygon takes the same order
+
+`imagedBy` becomes erode → round → deform, which by 4.1 draws what it draws
+today wherever `held` is on. `Options['round'].held` and the tick beside it go.
+
+*Measured by*: `deformlast`'s table must not regress, and `divergence` must hold
+its tolerance on every world in it.
+
+### Step 7: the pinch
 
 Teeth laid after the erosion are not eroded, so nothing makes a tooth vanish as
 the walls thicken. Three things this is *not*, each checked rather than assumed:
@@ -470,159 +456,77 @@ the walls thicken. Three things this is *not*, each checked rather than assumed:
   `BakedSpan.depth` is the nesting depth, the game is handed outlines and never
   sees an erosion, and no connectivity is taken anywhere.
 
-So the look and the vertex count are had back by reproducing the pinch rather
-than measuring the clearance: today's pinch is a function of the amplitude, the
-spacing, the depth and the tooth's own angle — all local, all in hand — so the
-amplitude is faded by that same law. Measuring the true clearance is the thing
-to avoid: it is a medial-axis query, so the deform would depend on the whole
-outline and would jump wherever the nearest opposite wall changes identity, a
-discontinuity tied to no event the arrangement has.
+So the look and the vertex count are had back by **reproducing** the pinch:
+today's is a function of the amplitude, the spacing, the depth and the tooth's
+own angle — all local, all in hand — so the amplitude is faded by that same law.
+Measuring the true clearance is the thing to avoid: it is a medial-axis query,
+so the deform would depend on the whole outline and would jump wherever the
+nearest opposite wall changes identity, a discontinuity tied to no event the
+arrangement has.
 
 It costs some exactness — the amplitude regains a dependence on the depth — but
 it is a smooth scalar on the height and the apex still does not walk a mitre.
 
-### 4.6 What goes
+*Measured by*: with the pinch on, a wall eroded past its teeth is smooth; off,
+it is not. Point counts against 3.2's table.
+
+### Step 8: the removals
 
 `CRAMMED` and `ArcTeeth.seen`, with the whole of the drawn-arc-against-seen-arc
 handling; `ArcTeeth` itself, and `arcRun`'s merging of a tooth with a facet; the
 curvature limit of phase 1; whatever is left of `squareIn`, `restSquare` and the
-`flat` flags; `effectedSquare` and `imaged`; `Options['round'].held` and the
-tick beside it; the geometric half of `Effected.apart`, which is inert — counted
-over `bake.test.ts` the naming's list is consulted 972 times and the geometry's
-aside is true twice, at the two ends of a span where it changes the outline by
-nothing to sixteen digits.
+`flat` flags; `effectedSquare` and `imaged`; the geometric half of
+`Effected.apart`, which is inert — over `bake.test.ts` the naming's list is
+consulted 972 times and the geometry's aside is true twice, at the two ends of a
+span where it changes the outline by nothing to sixteen digits.
 
-What stays: the arcs and their ids, the fold at depth nought, the naming of
-*2.2*, and `patternRun` unchanged but for the arguments it is given.
+What stays: the arcs and their ids, the fold at depth nought, the naming of 2.2,
+and `patternRun` unchanged but for the arguments it is given.
 
-### 4.7 Tests
+`baseline.golden.json` regenerated once, here and not before.
+
+## Tests
 
 A polygon eroded, rounded and deformed has teeth of one size along straights and
 arcs alike, with none on a corner the erosion made. A tooth stays put along its
 edge as the depth runs, and the ends fade in and out. A sealed group's outline
 is a polygon's: one pattern, no seam where two members meet, teeth on the arcs.
 A member with a round and a deform of its own inside a group with both gets the
-sum at every corner and edge, and the same shape as a polygon drawn that way.
-With the pinch on, a wall eroded past the teeth is smooth; off, it is not. And
-the baked span of each against its still.
-
-### 4.8 A group's fades: measured, and already there
-
-`experiments/groupfades.test.ts`. Two rooms sealed with a round of their own
-and a span over which the group's deform comes up out of nothing, baked and
-then checked at nine hundred instants that are not the ones the bake checked
-itself at:
-
-| span | rde (ships) | erd |
-|---|---|---|
-| deform up from nothing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
-| the same, bevel 40 | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
-| deform there, growing | 1 stretch, 0 jumps, drift 0 | 1 stretch, 0 jumps, drift 0 |
-| **deform up while eroding** | 28 stretches, 2 jumps, drift **0.2933** | 18 stretches, 2 jumps, drift **0.0141** |
-
-A deform arriving on a group costs one stretch and nothing else — the fade
-machinery reaches a scope already: `shapedFold` keeps both passes' fades,
-`Contributed.faded` carries them and `groupFading` puts them onto the side
-beside its members'. So *3.1*'s work was not the polygon's half of anything.
-
-The one span that costs is the deform arriving *while* the group erodes, which
-is *3.4*'s case again, and it is the second measurement saying the same thing:
-`erd` pays 18 stretches where the shipped order pays 28, and stays twenty times
-nearer the truth between them.
-
-### 4.9 Two rounds at one corner: today there is no law
-
-`experiments/sumrounds.test.ts`. A room inside a sealed group, the room rounded
-by `member` and the group by `group`, against a plain polygon rounded outright
-by one amount. Three rooms — a square corner, a shallow one and a sharp one —
-and the amounts crossed.
-
-**A member's round replaces the group's, exactly.** In fifteen of eighteen
-cases the group's outline is the polygon rounded by the *member's* amount alone,
-to 3e-14. The group's bevel is not diminished, not averaged and not clipped: it
-is gone.
-
-**And it is one line.** `foldShaped`, in `geometry.ts`:
-
-```ts
-const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
-```
-
-`mine[i]` is the member arc the ring point lies on, and a point on one takes a
-bevel of nought. So a corner a member has rounded is not rounded again — the
-group's round reaches only the corners no member published an arc for, which in
-a group whose members round themselves is the joins and nothing else. It is not
-a law that loses an argument; it is a rule that says the second round does not
-apply, and at every amount, every angle and every facet count it holds exactly.
-
-**And it goes at the first hundredth of a unit.** Group 30, and the room
-rounded by nought draws R(30); by 0.01 it draws R(0.01), which is 7.95 away.
-There is no ramp between them.
-
-| member | group | what it draws | from R(group) |
-|---|---|---|---|
-| 0 | 30 | R(30) | 0 |
-| 0.01 | 30 | R(0.01) | 7.952 |
-| 1 | 30 | R(1) | 7.690 |
-| 10 | 30 | R(10) | 5.303 |
-
-**The three that do not vanish are worse.** Sharp corners with a member bevel
-of 30 or 40 keep something of both — and blow the ring from 36 points to 168,
-the group's round re-rounding the facets of the member's arc.
-
-**It does not pop, which is why nobody saw it.** A span over which a member's
-round comes up from nought inside a group's 30 bakes to one stretch, no jumps
-and no drift at nine hundred instants: the outline is R(m(t)) the whole way,
-with the group's 30 absent at both ends and everywhere between. A silently
-missing effect, not a discontinuity.
-
-So step 2 is not a change of law. It is a law where there is none, and the sum
-costs nothing to draw: R(member + group) keeps the same 37 points today's
-composition does.
-
-What *4.9* does not settle is the sum where the two together exceed the edge
-they stand on — the clamp, and what a corner does when its neighbours' bevels
-meet. That wants the prototype.
+sum at every corner and edge, and the same shape as a polygon drawn that way. A
+group of groups is the flattened thing. With the pinch on, a wall eroded past
+the teeth is smooth. And the baked span of each against its still.
 
 ## Method
 
-Three rules, each of which cost several passes to learn.
+Four rules, each of which cost several passes to learn.
 
-**Rank the steps, do not max them.** *3.4*'s pop reads 2.73 at four hundred
-steps and the ambient step on that span is 0.23 — a figure nobody had asked for
-until late. Ranked, the span is median 0.232, 90th 0.415, and two outliers.
-Measure the floor before the peak.
+**Rank the steps, do not max them.** 3.4's pop reads 2.73 at four hundred steps
+and the ambient step on that span is 0.23 — a figure nobody had asked for until
+late. Ranked, the span is median 0.232, 90th 0.415, and two outliers. Measure
+the floor before the peak.
 
 **Refine until the number stops moving.** At 400, 1600 and 6400 steps a smooth
-figure's worst divides by four each time; a discontinuity converges. This is the
-cheapest test there is for telling them apart and it should come before any
-reading of the geometry. It is also why the whole step profile matters rather
-than the single worst number: the pop of *3.1* was three unrelated defects
-stacked on one figure, and the one that owned it was at the opposite end of the
-span from where forty steps made it look.
+figure's worst divides by four each time; a discontinuity converges. The
+cheapest test there is for telling them apart, and it comes before any reading
+of the geometry.
 
-**A prototype must not switch on what is being swept.** The `ORDER` rig took
-the shipped path whenever the depth was nought, and so manufactured a
-discontinuity at the first step of every erosion — one that ranked, converged
-and read exactly like a real one (*4.2*). Sweep a quantity and every branch on
-it is a suspect before the geometry is.
+**A prototype must not switch on what is being swept.** The `ORDER` rig took the
+shipped path whenever the depth was nought and so manufactured a discontinuity
+at the first step of every erosion — one that ranked, converged and read exactly
+like a real one (*4.2*). Sweep a quantity and every branch on it is a suspect
+before the geometry is.
+
+**Find the line.** Both of the surprises here — the vanishing bevel, the extra
+points — read as structural trades until the one line that caused each was
+found, and in both cases the line said something simpler than the story did.
 
 ## Open questions
 
-- **How two rounds add at one corner.** *4.4* step 2. *4.9* settles what today
-  does — the member's round wins outright — but not what the sum should look
-  like where the two together exceed the edge they stand on.
-- **Seams at the middle of an arc** between two differently deformed edges, or
-  one deform carried round the corner, which gives up the middle anchor on one
-  side. Making the arc an ordinary run does not answer this; it makes it the
-  same question a straight already asks.
-- **The arc tooth's angle** (*3.2*): marched by length it is not linear in the
-  depth, and by `u` it is worse. There may be a third way — an anchor that holds
-  the angle while the spacing stays a world length — or it may be a term to pay,
-  as today's teeth pay one.
-- **What the pinch's law should be exactly** — the depth at which a tooth of a
-  given amplitude, spacing and angle would have pinched is arithmetic, but
-  whether the fade should reach nought there or short of it is a look question.
-- **A tooth with no wall to stand on** (*3.3*): whether to lay the pattern over
-  the union of a span's two reaches, and whether a tooth off the end of its wall
-  should be kept at all.
+- **What names a corner of the fold** (*Step 5*), a `VertexId` being a
+  polygon's, and what a join publishes to the scope above.
+- **The sum where two bevels exceed the edge they stand on**, and what a corner
+  does when its neighbours' bevels meet. 4.5 settles what today does, not what
+  the clamp should be.
+- **Seams at the middle of an arc** between two differently deformed edges.
+- **The two parked bake tests**, both of which want a pattern laid over the
+  union of two ends' reaches.
