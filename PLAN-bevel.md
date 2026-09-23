@@ -427,8 +427,8 @@ switch, and it will converge like a real one.
   union not existing yet, and it cannot go after the round. So it is
   E(members) → fold → E(union) → R → D, and "one pipeline" is really one
   *post-fold* pipeline. A nested group still erodes once per scope.
-- **The rounds have to add**, and that is the piece with no measurement behind
-  it yet — see *4.4*, step 2. The deform's half is already answered: *3.1*
+- **The rounds have to add**, and *4.9* now measures what they do instead:
+  today a member's own round replaces the group's outright. The deform's half is already answered: *3.1*
   makes two namings' patterns add as offsets standing on each other, and group
   amplitude plus member amplitude is the same arithmetic. The round has no such
   answer today, the group's round being laid over a member's already-rounded
@@ -439,7 +439,8 @@ switch, and it will converge like a real one.
 ### 4.4 The work
 
 1. **Done** — the measurement of *4.2*, and the `ORDER` switch it rides on.
-2. **The rounds add, and so do the amplitudes.** Members stop applying their own
+2. **The rounds add, and so do the amplitudes.** *4.9* measures what stands in
+   its place today, and it is nothing: a member's round replaces the group's. Members stop applying their own
    round and deform and publish them per edge and per corner instead, beside the
    lines and arcs *2.2* already has them publishing. A run of the fold sums what
    it inherits. This is the piece the ordering is *for*, and nothing in *4.2*
@@ -529,6 +530,47 @@ is *3.4*'s case again, and it is the second measurement saying the same thing:
 `erd` pays 18 stretches where the shipped order pays 28, and stays twenty times
 nearer the truth between them.
 
+### 4.9 Two rounds at one corner: today there is no law
+
+`experiments/sumrounds.test.ts`. A room inside a sealed group, the room rounded
+by `member` and the group by `group`, against a plain polygon rounded outright
+by one amount. Three rooms — a square corner, a shallow one and a sharp one —
+and the amounts crossed.
+
+**A member's round replaces the group's, exactly.** In fifteen of eighteen
+cases the group's outline is the polygon rounded by the *member's* amount alone,
+to 3e-14. The group's bevel is not diminished, not averaged and not clipped: it
+is gone.
+
+**And it goes at the first hundredth of a unit.** Group 30, and the room
+rounded by nought draws R(30); by 0.01 it draws R(0.01), which is 7.95 away.
+There is no ramp between them.
+
+| member | group | what it draws | from R(group) |
+|---|---|---|---|
+| 0 | 30 | R(30) | 0 |
+| 0.01 | 30 | R(0.01) | 7.952 |
+| 1 | 30 | R(1) | 7.690 |
+| 10 | 30 | R(10) | 5.303 |
+
+**The three that do not vanish are worse.** Sharp corners with a member bevel
+of 30 or 40 keep something of both — and blow the ring from 36 points to 168,
+the group's round re-rounding the facets of the member's arc.
+
+**It does not pop, which is why nobody saw it.** A span over which a member's
+round comes up from nought inside a group's 30 bakes to one stretch, no jumps
+and no drift at nine hundred instants: the outline is R(m(t)) the whole way,
+with the group's 30 absent at both ends and everywhere between. A silently
+missing effect, not a discontinuity.
+
+So step 2 is not a change of law. It is a law where there is none, and the sum
+costs nothing to draw: R(member + group) keeps the same 37 points today's
+composition does.
+
+What *4.9* does not settle is the sum where the two together exceed the edge
+they stand on — the clamp, and what a corner does when its neighbours' bevels
+meet. That wants the prototype.
+
 ## Method
 
 Three rules, each of which cost several passes to learn.
@@ -554,8 +596,9 @@ it is a suspect before the geometry is.
 
 ## Open questions
 
-- **How two rounds add at one corner.** *4.4* step 2, and the only part of phase
-  4's case with no measurement behind it.
+- **How two rounds add at one corner.** *4.4* step 2. *4.9* settles what today
+  does — the member's round wins outright — but not what the sum should look
+  like where the two together exceed the edge they stand on.
 - **Seams at the middle of an arc** between two differently deformed edges, or
   one deform carried round the corner, which gives up the middle anchor on one
   side. Making the arc an ordinary run does not answer this; it makes it the
