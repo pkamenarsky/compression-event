@@ -1150,10 +1150,17 @@ is the nearest and is the one to take first: there the ring is already right and
 only the scope's own three are re-run, a polygon anchoring and clearing a run
 its own way where the fold anchors it at the naming edge's middle.
 
-Per-edge deform *options* are the one thing a polygon cannot hold: it has one
-set for the whole of it, so two members deforming at different spacings under
-one scope has no polygon to resolve to. That is a gap in the representation and
-not in the gesture.
+**Per-edge deform options are in.** They were the one thing a polygon could not
+hold — one set for the whole of it, so two members deforming at different
+spacings had no polygon to resolve to. `cornerEffects` already stored a
+`Partial<Effects>` per vertex and only the `round` half was ever read; the
+`deform` half is now read too, an edge being named by the corner it leaves as
+its amplitude already is. `ArcDeform.es` carries them through the projection,
+`namesOf` publishes them per line, and `foldShaped`'s `laidBy` takes the line's
+over the caller's — amounts add, options do not, and the nearest wins. A scope
+that deforms publishes no line options at all, so a group still looks like a
+polygon: one pattern along its union. The pane's Deform box is about the picked
+edges' own, exactly as its Round box is about the picked corners'.
 
 ## Open questions
 

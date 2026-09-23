@@ -550,6 +550,12 @@ const shapedFold = remembered((
   // before this it was simply lost. See PLAN-bevel's step 3.
   let deform: { e: Effecting | null, amplitude: (key: number) => number } | null = null;
 
+  // A scope that deforms lays one pattern along the whole of its union — a
+  // group looks like a polygon — so its members' options are not carried onto
+  // the runs they name. Their amounts still add. Where it does not deform,
+  // each run keeps the options of whoever named it.
+  const lay = d.length === 0 ? named : named.map(l => ({ ...l, deform: null }));
+
   if (d.length !== 0) {
     const e = { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: d[7] === 1 };
 
@@ -591,8 +597,8 @@ const shapedFold = remembered((
   // No corners in the first pass: a member's corner carries its own round —
   // step 3 — and the erosion is meant to run on a ring with nothing rounded
   // in it. They go in the second, where the scope's amount is added to them.
-  const first = foldShaped(fold, square, keep, named, curves, [], SQUARE, 0, null, depth);
-  const moved = movedIn({ lines: named, corners: ends }, depth);
+  const first = foldShaped(fold, square, keep, lay, curves, [], SQUARE, 0, null, depth);
+  const moved = movedIn({ lines: lay, corners: ends }, depth);
   const then = foldShaped(first.shape, first.square, first.keep, moved.lines, curves, moved.corners, facets, bevel, deform, 0);
 
   // Beside what it drew: what it drew *from*, for a scope holding this one,

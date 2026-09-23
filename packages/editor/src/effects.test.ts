@@ -12,7 +12,11 @@ import {
   cornersInheriting,
   cornersOptioned,
   cornersSwitched,
+  edgeDeform,
   edgeRun,
+  edgesInheriting,
+  edgesOptioned,
+  ownDeform,
   edgesBetween,
   edgesWithinBox,
   endsOf,
@@ -847,6 +851,54 @@ describe('editing effects', () => {
     const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];
 
     expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
+  });
+
+  test('an edge\'s deform options are its own, over its polygon\'s', () => {
+    // An amount adds and options do not: one set lays a run, and the nearest
+    // wins. An edge is named by the corner it leaves, as its amplitude is.
+    const { world, id } = room();
+    const points = world.polygons.get(id)!.points;
+    const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(4));
+    const tight = edgesOptioned(w, [points[0].id], { spacing: 5 }, REMEMBERED);
+
+    expect(edgeDeform(tight, points[0].id)!.spacing).toBe(5);
+    expect(edgeDeform(tight, points[1].id)!.spacing).toBe(DEFORM.deform!.spacing);
+    expect(ownDeform(tight, points[0].id)).toBe(true);
+    expect(ownDeform(tight, points[1].id)).toBe(false);
+
+    // The bottom wall, at its own spacing of five, against the left wall at
+    // the polygon's twenty.
+    const teeth = (at: World, wall: (p: Point) => boolean) =>
+      shapeOf(at, id)[0].filter(p => wall(p) && offRoom(p) > 1e-9).length;
+    const bottom = (p: Point) => p.y < 0 && p.x > 1 && p.x < 99;
+    const left = (p: Point) => p.x < 0 && p.y > 1 && p.y < 99;
+
+    expect(teeth(w, bottom)).toBe(teeth(w, left));
+    expect(teeth(tight, left)).toBe(teeth(w, left));
+    expect(teeth(tight, bottom)).toBeGreaterThan(teeth(w, bottom) * 3);
+
+    // And dropped again, it is its polygon's edge like any other.
+    expect(teeth(edgesInheriting(tight, [points[0].id]), bottom)).toBe(teeth(w, bottom));
+  });
+
+  test('an edge\'s own options reach the fold it is a member of', () => {
+    // A member publishes the options each of its edges stands in, so a scope
+    // that rounds and does not deform lays each run by whichever member edge
+    // named it — at that edge's own spacing where it has one.
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    const away = room(a.world, rect(600, 0, 60, 60));
+    const points = a.world.polygons.get(a.id)!.points;
+    const w = wrote(withEffects(away.world, a.id, DEFORM), 0, a.id, deform(6));
+    const g = grouped(w, 0, [a.id, away.id], TOP)!;
+    const sealed = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) }), 0, g.id, round(10));
+
+    // The first room's bottom wall, which is the edge leaving its first
+    // corner: its teeth, and then four times as many at a fifth the spacing.
+    const bottom = (at: World) => csg(at, 0).flat().filter(p => p.y < -1e-9 && p.x > 20 && p.x < 180).length;
+    const tight = edgesOptioned(sealed, [points[0].id], { spacing: 5 }, REMEMBERED);
+
+    expect(bottom(sealed)).toBeGreaterThan(0);
+    expect(bottom(tight)).toBeGreaterThan(bottom(sealed) * 3);
   });
 
   // PHASE 3: parked, and this one is false by design now. Laid on the eroded

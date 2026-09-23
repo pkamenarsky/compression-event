@@ -313,6 +313,16 @@ export interface Effected {
 
 export interface ArcDeform {
   e: Effecting
+  /**
+   * The options the edge leaving each corner stands in, where that edge has
+   * its own — `cornerEffects`, which names an edge by the corner it leaves,
+   * as the amplitudes do. Nothing where it stands in the polygon's, which is
+   * every edge of a polygon nobody has given one options of its own.
+   *
+   * Amounts add and options do not: one set lays a run, and the nearest wins.
+   * See `foldShaped`'s `laidBy`.
+   */
+  es: readonly (Effecting | null)[]
   before: readonly number[]
   after: readonly number[]
   /** Each corner's arc's name to the noise and the offset: its id. */
@@ -497,8 +507,21 @@ function arcDeform(
   const edge = (c: Vertex) => c.root ?? c.id;
   const amplitude = (from: VertexId) => (ever.all || ever.edges.has(from) ? amounts.amplitude + (amounts.amplitudes.get(from) ?? 0) : 0);
 
+  // The edge leaving each corner, where it asks for options of its own. A
+  // tooth is not a corner and asks for nothing: its edge's are its root's.
+  const own = (c: Vertex): Effecting | null => {
+    const mine = world.cornerEffects.get(edge(c));
+
+    if (mine?.deform === undefined) return null;
+
+    const theirs = effecting(fx, mine);
+
+    return { ...theirs, spacing: theirs.spacing * scale };
+  };
+
   return {
     e: { ...e, spacing: e.spacing * scale },
+    es: corners.map(own),
     before: corners.map((_c, i) => amplitude(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitude(edge(c))),
     keys: corners.map(c => arcKey(c.id)),
@@ -529,13 +552,36 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset)];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s))];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.reach ?? []).map(r => r / s)];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
 export const SIDES: readonly Effecting['sides'][] = ['in', 'out', 'both'];
+
+/** One edge's options as a memo, seven numbers with a pattern of `-1` where
+ * it has none of its own: see `ArcDeform.es`. */
+function effectingKey(e: Effecting | null, s = 1): number[] {
+  if (e === null) return [0, -1, 0, 0, 0, 0, 0];
+
+  return [e.spacing / s, PATTERNS.indexOf(e.pattern), e.seed, SIDES.indexOf(e.sides), e.jitter, e.falloff, Number(e.offset)];
+}
+
+/** And back, for `imagedBy`. */
+function effectingFrom(k: readonly number[], at: number): Effecting | null {
+  if (k[at + 1] === -1) return null;
+
+  return {
+    spacing: k[at],
+    pattern: PATTERNS[k[at + 1]],
+    seed: k[at + 2],
+    sides: SIDES[k[at + 3]],
+    jitter: k[at + 4],
+    falloff: k[at + 5],
+    offset: k[at + 6] === 1,
+  };
+}
 
 export function facetKey(f: Facets): number[] {
   return [f.n, f.from, f.to, f.at, f.tension];
@@ -1075,13 +1121,23 @@ const imagedBy = remembered((
 ): Imaged => {
   const [facets, bevels, flat, deform, apart, apartTo, apartAt, reach] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset, own] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[]];
   const e: Effecting | null = deform.length === 0
     ? null
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
-  const teeth = (i: number): ArcTeeth | null => (e === null || (before[i] === 0 && after[i] === 0)
-    ? null
-    : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
+  // The options the edge leaving each corner stands in, its own over the
+  // polygon's: see `ArcDeform.es`.
+  const es = (i: number): Effecting | null => (deform.length === 0 ? null : effectingFrom(own, i * 7));
+
+  // An arc's teeth are its two edges', as its amplitudes are: the edge
+  // leaving it names the arc, so its options lay it.
+  const teeth = (i: number): ArcTeeth | null => {
+    const mine = e === null ? null : es(i) ?? e;
+
+    if (mine === null || (before[i] === 0 && after[i] === 0)) return null;
+
+    return { e: mine, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 };
+  };
 
   // The corner names and the amplitudes, which come with the deform and so
   // are not there without one: the round is drawn either way, and names its
@@ -1116,7 +1172,7 @@ const imagedBy = remembered((
   const ours = ats.flatMap((p, i) => (p === null
     ? []
     : [{ id: i, at: p, bevel: bevels[i], facets: each[i] }]));
-  const lines: { id: number, a: Point, b: Point }[] = [];
+  const lines: { id: number, a: Point, b: Point, deform: Effecting | null }[] = [];
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
 
   // A corner the bake invented names nothing: it sits wherever its neighbours
@@ -1124,9 +1180,9 @@ const imagedBy = remembered((
   // the corner arrived. The line runs through it to the next real corner, as
   // the arcs beside it are laid as though it were not there. See
   // `effectsOver`.
-  const linesBy = (aside: readonly boolean[]): { id: number, a: Point, b: Point }[] => {
+  const linesBy = (aside: readonly boolean[]): { id: number, a: Point, b: Point, deform: Effecting | null }[] => {
     const names = (i: number) => !aside[i];
-    const out: { id: number, a: Point, b: Point }[] = [];
+    const out: { id: number, a: Point, b: Point, deform: Effecting | null }[] = [];
 
     for (let i = 0; i < n; i++) {
       if (!names(i)) continue;
@@ -1139,7 +1195,7 @@ const imagedBy = remembered((
 
       if (a === null || b === null || same(a, b)) continue;
 
-      out.push({ id: name[i], a, b });
+      out.push({ id: name[i], a, b, deform: es(i) });
     }
 
     return out;
@@ -1404,7 +1460,16 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
 
     if (a === null || b === null || same(a, b)) continue;
 
-    lines.push({ id: at.corners[i].id, a, b, amplitude: fx?.deform?.after[i] ?? 0, deform: fx?.deform?.e ?? null });
+    lines.push({
+      id: at.corners[i].id,
+      a,
+      b,
+      amplitude: fx?.deform?.after[i] ?? 0,
+
+      // The edge's own options where it has them, and its polygon's where it
+      // does not: whoever lays this line lays it in those. See `ArcDeform.es`.
+      deform: fx?.deform?.es[i] ?? fx?.deform?.e ?? null,
+    });
   }
 
   return { lines, corners };

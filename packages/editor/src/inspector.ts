@@ -17,10 +17,12 @@
 // ticked. Erosion has no options, so its box is only the switch.
 //
 // With corners or edges picked, the pane is about the polygons they are on —
-// except the round under the corner tool, which is about the corners' own:
-// ticked, unticked and optioned apart from their polygon's, and put back to
-// it by the link under it. An option changed is changed on every picked thing
-// that has the effect, and is what the next thing given it starts with.
+// except the round and the deform, which are about the picked ids' own: the
+// round of each as a corner and the deform of the edge leaving it, as
+// `cornersAmounted` reads them. Either is ticked, unticked and optioned apart
+// from its polygon's, and put back to it by the link under it. An option
+// changed is changed on every picked thing that has the effect, and is what
+// the next thing given it starts with.
 // -----------------------------------------------------------------------------
 
 import { ObjectValue, Value } from '@incpt/kontinuum';
@@ -36,6 +38,12 @@ import {
   cornersInheriting,
   cornersOptioned,
   cornersSwitched,
+  edgeDeform,
+  edgeDeforming,
+  edgesInheriting,
+  edgesOptioned,
+  edgesSwitched,
+  ownDeform,
   ownRound,
   switchedOff,
   sizeOf,
@@ -129,6 +137,9 @@ interface Model {
   chamfer: boolean
   corners: boolean
   own: Some
+  /** Whether the picked edges have deform options of their own, as `own` is
+   * for the picked corners' rounds. */
+  ownEdge: Some
 }
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
@@ -263,7 +274,7 @@ function modelOf(
   };
 
   const mine = corners.length > 0;
-  const d = shown('deform');
+  const d = mine ? edgeDeform(world, corners[0]) ?? remembered.deform : shown('deform');
   const r = mine ? cornerRound(world, corners[0]) ?? remembered.round : shown('round');
 
   return {
@@ -288,7 +299,7 @@ function modelOf(
     voidFloor: some(kinds, k => k.floor === 'void'),
     bareLevel: kinds.every(k => k.floor !== undefined),
     bareFloor: kinds.every(k => k.level !== undefined),
-    deform: some(ids, id => applies(world, id, 'deform')),
+    deform: mine ? some(corners, c => edgeDeforming(world, c)) : some(ids, id => applies(world, id, 'deform')),
     spacing: d.spacing,
     size: ids.length === 0 ? 0 : sizeOf(world, v, ids[0]),
     pattern: d.pattern,
@@ -303,6 +314,7 @@ function modelOf(
     chamfer: r.chamfer,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
+    ownEdge: mine ? some(corners, c => ownDeform(world, c)) : 'none',
   };
 }
 
@@ -368,6 +380,9 @@ function body(
     if (name === 'round' && m.corners()) {
       world = cornersOptioned(world, corners(), patch, s.remembered);
     }
+    else if (name === 'deform' && m.corners()) {
+      world = edgesOptioned(world, corners(), patch as Partial<Options['deform']>, s.remembered);
+    }
     else {
       for (const id of targets()) {
         const was = world.effects.get(id)?.[name];
@@ -393,6 +408,16 @@ function body(
   };
 
   const inherited = () => update(s => marked({ ...s, world: cornersInheriting(s.world, corners()) }, s.world));
+
+  const deformed = () => {
+    if (!m.corners()) return toggled('deform', m.deform());
+
+    const on = m.deform() !== 'all';
+
+    update(s => marked({ ...s, world: edgesSwitched(s.world, corners(), on, s.remembered) }, s.world));
+  };
+
+  const inheritedEdge = () => update(s => marked({ ...s, world: edgesInheriting(s.world, corners()) }, s.world));
 
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     show(() => m.kinds(), fragment([
@@ -453,7 +478,7 @@ function body(
       ]),
     ])),
 
-    heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
+    heading(() => (m.corners() ? 'Deform edges' : 'Deform'), 'd', m.deform, deformed),
     options(m.deform, [
       // A length, shown as a percentage of the thing's size so that the
       // slider has somewhere to stop: see `sizeOf`. Along the slider by its
@@ -479,6 +504,7 @@ function body(
       // A seed is the noise's, the jitter's, and where each edge's teeth
       // start.
       field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)),
+      show(() => m.ownEdge() !== 'none', fragment(field('', link('as the polygon', inheritedEdge)))),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),

@@ -106,6 +106,7 @@ import {
   edgesWithinBox,
   endsOf,
   cornersSwitched,
+  edgesSwitched,
   sizedFor,
   switchedOn,
   withEffect,
@@ -694,8 +695,15 @@ export function worldCanvas(
       const first = kind === 'deform' ? sizedFor(was, v, targets, remembered()) : remembered();
       const on = kind === undefined ? was : switchedOn(was, targets, kind, first);
 
-      // Corners left square on their own are rounded again by a round on them.
-      const base = kind === 'round' && corners.size > 0 ? cornersSwitched(on, [...corners], true, remembered()) : on;
+      // Corners left square on their own are rounded again by a round on
+      // them, and edges left straight are deformed again by a deform: the
+      // same gesture, and a picked id is a corner to one and the edge leaving
+      // it to the other. See `cornersAmounted`.
+      const base = corners.size === 0 || (kind !== 'round' && kind !== 'deform')
+        ? on
+        : kind === 'round'
+          ? cornersSwitched(on, [...corners], true, remembered())
+          : edgesSwitched(on, [...corners], true, remembered());
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));

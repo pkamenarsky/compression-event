@@ -182,14 +182,91 @@ export function ownRound(world: World, corner: VertexId): boolean {
 }
 
 function withCornerRound(world: World, corner: VertexId, round: Options['round'] | undefined): World {
+  return withCornerOption(world, corner, 'round', round);
+}
+
+/**
+ * One corner's own options for one effect, or none.
+ *
+ * One function for both: a corner names itself for a round and the edge
+ * leaving it for a deform, which is a difference in what the id means and in
+ * nothing this does. See `optionOf`.
+ */
+function withCornerOption<N extends keyof Options>(world: World, corner: VertexId, name: N, option: Options[N] | undefined): World {
   const cornerEffects = new Map(world.cornerEffects);
-  const { round: _was, ...rest } = cornerEffects.get(corner) ?? {};
-  const now: Partial<Effects> = round === undefined ? rest : { ...rest, round };
+  const { [name]: _was, ...rest } = cornerEffects.get(corner) ?? {};
+  const now: Partial<Effects> = option === undefined ? rest : { ...rest, [name]: option };
 
   if (Object.keys(now).length === 0) cornerEffects.delete(corner);
   else cornerEffects.set(corner, now);
 
   return { ...world, cornerEffects };
+}
+
+/**
+ * The deform an edge would have were everything switched on: its own options,
+ * or its polygon's. Nothing where neither has one.
+ *
+ * An edge is named by the corner it leaves, as its amplitude is — so this
+ * takes that corner's id and the corner's *round* is a different entry under
+ * the same key. See `cornersAmounted` and `ArcDeform.es`.
+ */
+export function edgeDeform(world: World, edge: VertexId): Options['deform'] | undefined {
+  const owner = ownersOf(world, [edge]).get(edge);
+  const own = world.cornerEffects.get(edge)?.deform;
+
+  return own ?? (owner === undefined ? undefined : world.effects.get(owner)?.deform);
+}
+
+/** Whether an edge is deformed: its deform applies, switched off neither on
+ * it nor on its polygon. */
+export function edgeDeforming(world: World, edge: VertexId): boolean {
+  const owner = ownersOf(world, [edge]).get(edge);
+
+  return owner !== undefined && optionOf(world.effects.get(owner), 'deform', world.cornerEffects.get(edge)) !== undefined;
+}
+
+/** Whether an edge has options of its own. */
+export function ownDeform(world: World, edge: VertexId): boolean {
+  return world.cornerEffects.get(edge)?.deform !== undefined;
+}
+
+/**
+ * Edges deformed, or left straight. The twin of `cornersSwitched`, and the
+ * same law: on switches their polygons' deform on and their own back on where
+ * it was off, off switches their own off and keeps what it was.
+ */
+export function edgesSwitched(world: World, edges: readonly VertexId[], on: boolean, options: Options): World {
+  const owners = ownersOf(world, edges);
+  let w = on ? switchedOn(world, [...new Set(owners.values())], 'deform', options) : world;
+
+  for (const c of owners.keys()) {
+    const deform = edgeDeform(w, c) ?? options.deform;
+
+    if (on) {
+      if (ownDeform(w, c) && deform.off === true) w = withCornerOption(w, c, 'deform', { ...deform, off: false });
+    }
+    else {
+      w = withCornerOption(w, c, 'deform', { ...deform, off: true });
+    }
+  }
+
+  return w;
+}
+
+/** An option of edges' own deforms changed, starting from what each has now:
+ * its own, its polygon's, or `options`. */
+export function edgesOptioned(world: World, edges: readonly VertexId[], patch: Partial<Options['deform']>, options: Options): World {
+  let w = world;
+
+  for (const c of ownersOf(world, edges).keys()) w = withCornerOption(w, c, 'deform', { ...(edgeDeform(w, c) ?? options.deform), ...patch });
+
+  return w;
+}
+
+/** Edges back to their polygon's deform, their own options dropped. */
+export function edgesInheriting(world: World, edges: readonly VertexId[]): World {
+  return edges.reduce((w, c) => (ownDeform(w, c) ? withCornerOption(w, c, 'deform', undefined) : w), world);
 }
 
 /**

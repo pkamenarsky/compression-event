@@ -4450,22 +4450,26 @@ export function foldShaped(
     };
   };
 
-  // What each run is laid by: the caller's options where it has any, and
-  // otherwise the options of the member whose line names the run — a member's
-  // deform inside a scope that does not deform itself. A run neither names is
-  // laid by nothing and gets no teeth. See PLAN-bevel's step 3.
+  // What each run is laid by: the options the line naming it carries, and
+  // otherwise the caller's. Amounts add and options do not, so one set lays a
+  // run and the nearest wins — an edge's own over its polygon's, a member's
+  // over nothing where the scope does not deform. A scope that does deform
+  // publishes no line options at all, so one pattern runs along its union.
+  // A run neither names is laid by nothing and gets no teeth. See
+  // PLAN-bevel's step 3.
   const mineE = new Map<number, Effecting>();
 
   for (const line of lines) {
     if (line.deform !== undefined && line.deform !== null) mineE.set(line.id, line.deform);
   }
 
-  const laidBy = (key: number): Effecting | null => deform?.e ?? mineE.get(key) ?? null;
+  const laidBy = (key: number): Effecting | null => mineE.get(key) ?? deform?.e ?? null;
 
   // Some options to stand behind the ones each run carries: `subdivided`
   // wants a pattern for an edge that names nothing, which lays nought
   // whichever they are. Nothing here means nothing deforms at all.
   const anyE: Effecting | null = deform === null ? null : deform.e ?? (mineE.values().next().value ?? null);
+
 
   const named = deform?.naming ?? namedBy(lines);
   const namedOver = deform?.over === undefined ? null : (deform.over.naming ?? namedBy(deform.over.lines));
