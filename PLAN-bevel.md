@@ -544,6 +544,17 @@ scope's own effects only, `erodefirst` must be unchanged; with a member's
 effects on, the outline loses them — which is expected and is what step 3 gives
 back.
 
+**Done.** `erodedOf` (`scene/core.ts`) is the projection with the effects left
+off, and `from` takes a `bare` flag that `slotted` sets from `shapedBy`. With no
+member effect geometry on the union, `squareIn`/`squaredThrough` and the
+members' `keep` are both out of the shaping path — a member eroded only
+invented nothing and lies flat nowhere, and what the fold keeps is its own.
+
+`erodefirst`, `groupfades`, `arcseam` and `pinch` are unmoved, line for line.
+`sumrounds` is now 37 points against 37 in every row: the members' true corners
+are in the fold's ring and the scope rounds them, the member's own amount not
+being read yet.
+
 ### Step 3: `foldShaped` takes a bevel and facets per corner
 
 `bevel: number` becomes a function of the name, beside `deform.amplitude(key)`,

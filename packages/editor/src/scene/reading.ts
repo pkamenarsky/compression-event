@@ -84,6 +84,7 @@ import { once, placed, stateAt, worldFrame } from '../rig';
 import {
   facetKey,
   groupDeform,
+  erodedOf,
   movedIn,
   namesOf,
   Named,
@@ -625,11 +626,16 @@ export function contributed(
    * group that is open has no scope of its own for the moment and hands its
    * members up into this one.
    */
-  const from = (id: Id, set: SetName, k: number): Shape[] => {
+  const from = (id: Id, set: SetName, k: number, bare = false): Shape[] => {
     const it = mine.get(id);
 
     if (it !== undefined) {
-      return slotOf(kindOf(it.polygon), set) === k ? [it.shape] : [];
+      if (slotOf(kindOf(it.polygon), set) !== k) return [];
+
+      // Under a scope that shapes, eroded and nothing else: its corners have
+      // to reach the fold as corners for the fold to round them once. What it
+      // asked for comes with `namesOf`, beside them. See PLAN-bevel's step 2.
+      return [bare ? erodedOf(it) : it.shape];
     }
 
     const group = world.groups.get(id);
@@ -645,7 +651,7 @@ export function contributed(
       return k === top(id, set) ? [resolves(id, set)] : [];
     }
 
-    return group.members.flatMap(m => from(m, set, k));
+    return group.members.flatMap(m => from(m, set, k, bare));
   };
 
   /** One slot of one scope, offset by that scope's own depth the way the
@@ -674,17 +680,23 @@ export function contributed(
     // its voids grow against it.
     const kinds = SLOT_KINDS[set];
     const depth = inverted(kinds[k]) !== inverted(kinds[top(id, set) ?? 0]) ? -d : d;
-    const shapes = group.members.flatMap(m => from(m, set, k));
+    const shapes = group.members.flatMap(m => from(m, set, k, flat));
     const union = offsetUnion(shapes, depth);
 
     // What its members' deforms made, which a round leaves square — its own,
     // after the fold, or a scope's holding it — where the erosion moved it.
-    const inside = group.members.flatMap(m => squareFrom(m, set, k));
+    //
+    // Nothing at all where the scope shapes: with the members eroded only
+    // there is no effect geometry on the union for its round to protect, and
+    // the teeth it wants are the ones it lays itself. See PLAN-bevel's step 2.
+    const inside = flat ? [] : group.members.flatMap(m => squareFrom(m, set, k));
     const square = inside.length === 0 ? [] : depth === 0 ? inside : squaredThrough(shapes, depth, inside);
 
     // What its members keep for the bake, moved in with their edges: a union
-    // is an arrangement, and would drop them — see `Resolved.keep`.
-    const keep = group.members.flatMap(m => keptFrom(m, set, k))
+    // is an arrangement, and would drop them — see `Resolved.keep`. A member
+    // eroded only invented nothing and lies flat nowhere; what this fold keeps
+    // is its own.
+    const keep = flat ? [] : group.members.flatMap(m => keptFrom(m, set, k))
       .map(({ p, n }) => ({ x: p.x + n.x * depth, y: p.y + n.y * depth }));
 
     // What its members' outlines are made of, moved in with them: the fold

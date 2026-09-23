@@ -1541,6 +1541,28 @@ function projection(at: Omit<Resolved, 'shape'>): Shape {
 }
 
 /**
+ * A member's projection with its round and its deform left off: the source
+ * eroded at its own depth, and nothing else.
+ *
+ * What a member of a *shaping* scope contributes, so that its corners reach
+ * the fold as corners rather than as arcs already drawn. The scope rounds
+ * them once, by the amounts `namesOf` publishes beside them. See PLAN-bevel's
+ * step 2.
+ *
+ * The teeth lying flat along its edges go with the deform, being collinear
+ * points the arrangement drops: the scope lays the member's teeth itself, at
+ * the amplitude the member's line carries.
+ */
+export function erodedOf(at: Omit<Resolved, 'shape'>): Shape {
+  const s = similarity(at.frame);
+
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, null);
+
+  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), null)
+    .map(ring => place(at.frame, ring));
+}
+
+/**
  * A `Resolved` whose projection has not been taken yet.
  *
  * The ring split comes off the corners rather than being handed in. It is a
