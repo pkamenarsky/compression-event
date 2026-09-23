@@ -743,20 +743,59 @@ is the parked test's design change one level up), and three of `bake.test.ts`'s
 span tests, of which 'rounded as well, its outline never pops' is the one that
 matters — 2.19 against a bar of 0.5.
 
-**Why.** 4.1's "for a polygon, held, it is not a change at all" is true of the
-*corner*, and not of the *teeth on the wall it leaves*. Held, the arc shrinks
-with the wall, so the run's straight and its two arcs keep their shares and a
-tooth laid at a share of the run stays put as the depth goes — which is what P3
-measures as nought. Eroded first, the arc is drawn at the radius asked for on a
-wall that has lost `2d`, so the arc's share of the run grows with the depth and
-every tooth on it slides. Naming the reach off the source wall rather than the
-drawn one was tried and changes nothing: it is the run's own make-up that
-moves, not its length.
+**Why, read off the first explanation.** It was that the teeth slide: held,
+the arc shrinks with the wall and the run's straight and its two arcs keep
+their shares, so a tooth laid at a share of the run stays put; eroded first,
+the arc is drawn at the radius asked for on a wall that has lost `2d`, its
+share grows, and the teeth on it move. Naming the reach off the source wall
+rather than the drawn one was tried and changed nothing, which was read as
+confirming it.
 
-So the step needs something 4.1 does not give it — a tooth anchored to the
-source wall's parameterisation rather than to the drawn run's — and that is a
-piece of design, not a reordering. The work is stashed (`git stash list`:
-*step 6 attempt*), and nothing of it is on the branch.
+**It is not the teeth.** `experiments/sparam.test.ts` measures the same span
+with the amplitude at nought and at four, and gets *the same figure to the
+last digit*: 1.1250 either way. Nothing strays at all to a depth of 15, and
+every arc holds its length and its chord that far — the eroded ring is the
+source ring translated wall by wall, so an arc of the radius asked for is
+translated rigidly and is linear in the depth, teeth and all. What strays are
+the arcs' own ends, the tangent points; a bevel of 4 or 8 strays nought over
+the same span where 12 does not; and each arc's chord bends **once**, at 18.7
+for two corners and 22.2 for the other two.
+
+It is `arcsWith`'s cut-back. A corner takes `min(want, room either side)`, and
+the room is the *eroded* wall's length. Eroded first that length runs with the
+depth, so the `min` changes hands partway down a span: one kink a corner,
+linear either side of it and not linear across it. Held, the round is drawn on
+the source ring, whose walls do not move, so the `min` is settled before the
+span starts and P3 is nought for that reason alone — not because the teeth are
+anchored any better.
+
+So P3's nought was `held`'s artefact, and P1 and P3 are not a tooth yardstick
+at all. What the step actually owes is either an instant the bake cuts at —
+`want(i) + want(other) = length(i, d)` is in closed form, and the bake already
+cuts stretches at events — or a cut-back that is smooth in the depth by
+construction. The first keeps the look exactly and costs at most one stretch
+boundary a corner; the second is a line of arithmetic and moves every bevel
+that is near its wall's limit.
+
+**And P4 is the same clamp at its end.** Twenty points to four at a depth of
+40 is the arcs cut back to nothing, `foldShaped` then reporting no run for a
+corner whose arc is a single point. A floor on the cut-back, as `SEEDING` is a
+floor on the turn, would keep the points.
+
+**The bake pop is a separate fault, and not about the order.** 'rounded as
+well, its outline never pops' has **no erosion in it** — it is a corner
+arriving into a rounded, deformed wall — so the order cannot be what breaks
+it. Probed, the worst step is at `t` 0.6950, and the outline there is *four
+rings*, of 11, 26, 2 and 3 points, closing back to one ring of 37; at HEAD it
+is one ring of 37 throughout and the worst step is 0.3140. So the fold route
+lets a tooth pinch the wall into pieces and leave two slivers, which is the
+same fault as `effects.test.ts`'s 'one edge deformed leaves the others
+straight' — teeth running onto the arcs at a run's corners — and wants fixing
+on its own, before any of the above is judged.
+
+The work is stashed (`git stash list`: *step 6 attempt*), and nothing of it is
+on the branch. `sparam.test.ts` is, and reports nought until that stash is
+applied: its header says so.
 
 ### Step 7: the pinch — optional, and measured
 
