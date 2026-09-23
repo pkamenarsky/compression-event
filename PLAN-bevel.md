@@ -439,9 +439,22 @@ union corner with its summed bevel, each join nought, the lot moved in by the
 scope's depth. This answers 2.3's "a scope's own arcs have no names" by removing
 the question — there are no arcs to name, only corners and amounts.
 
-The open piece is what names a corner of the fold, `VertexId` being a polygon's.
-A join has no member corner behind it and wants none; a corner that is a
-member's wants that member's id, and two scopes deep it wants the same one.
+**The naming needs nothing new.** Ids are counted out of one `world.nextId`, so
+a `VertexId` is unique across the world and not merely within its polygon. Once
+step 2 has the members' real corners in the fold's ring, every corner of the
+fold is one of two things: a member corner's image, which keeps that member's
+id at any nesting depth, or a join — or a corner the erosion made — which takes
+no name, and so no bevel and no amplitude, which is what *What changes in the
+look* already says. `movedIn` carries the id up with the point.
+
+What is left to settle is not the id but the arithmetic above it: a scope two
+deep publishes a corner whose bevel is already a sum, and the scope above adds
+its own to that. Associative on the face of it, and to be tested rather than
+assumed.
+
+**Where it can go.** This step needs 1 for the amounts, 2 for the corners and 3
+for the sum, but it does not need 4 — it can be taken directly after 3 if the
+nesting is what wants proving first.
 
 *Measured by*: property 3 — a group of groups against the flattened thing, at a
 depth for each scope. This is the first step that can break composition, so it
@@ -566,6 +579,21 @@ found, and in both cases the line said something simpler than the story did.
 
 - **What names a corner of the fold** (*Step 5*), a `VertexId` being a
   polygon's, and what a join publishes to the scope above.
-- **Seams at the middle of an arc** between two differently deformed edges.
+- **Seams at the middle of an arc** between two differently deformed edges, or
+  one deform carried round the corner, which gives up the middle anchor on one
+  side. An arc is its own run, anchored at its own middle and keyed by its own
+  id, so where it meets an edge's run the two phases have nothing to do with
+  each other and the gap across the join is whatever it happens to be. Carrying
+  one edge's pattern round instead buys the phase and spends the anchor — and
+  the anchor is what stops teeth sliding when the run's ends move (*2.1*). A
+  tooth's height already crosses the arc as `mix(before, after, u)`, so the
+  amplitude is a ramp and not a seam; it is the spacing that breaks. Making the
+  arc an ordinary run does not answer this; it makes it the same question a
+  straight already asks.
+- **The arc tooth's angle** (*3.2*): marched by length it is not linear in the
+  depth, and by `u` it is worse. There may be a third way — an anchor that holds
+  the angle while the spacing stays a world length — or it may be a term to pay,
+  as today's teeth pay one.
+- **What the pinch's law should be exactly**, if it is wanted at all (*Step 7*).
 - **The two parked bake tests**, both of which want a pattern laid over the
   union of two ends' reaches.
