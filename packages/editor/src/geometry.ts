@@ -4548,30 +4548,20 @@ export function foldShaped(
   // out of nothing and the lines on them come up with it. The arrangement
   // drops a point in line with its neighbours, so these are kept by hand.
   //
-  // Which ones they are is asked of the geometry rather than predicted from
-  // the amplitude. Where a wall is splitting, both namings carry their full
+  // Which ones they are is asked of the arrangement rather than predicted
+  // from the amplitude. Where a wall splits, both namings carry their full
   // amplitude and it is the weight that is nought at an end, so a naming's
-  // teeth are flat there with the amplitude saying otherwise. A tooth is
-  // flat when it does not turn, which is what the arrangement decides, so
-  // read it off the ring the arrangement is about to be given. See
-  // PLAN-bevel 3.9.
-  const turns = (k: number): boolean => {
-    const r = o.rings.findLastIndex(lo => lo <= k);
-    const lo = o.rings[r], n = (r + 1 < o.rings.length ? o.rings[r + 1] : o.ring.length) - lo;
-
-    if (n < 3) return false;
-
-    const a = o.ring[lo + (k - lo - 1 + n) % n], b = o.ring[k], c = o.ring[lo + (k - lo + 1) % n];
-    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
-
-    return Math.abs(ux * vy - uy * vx) > 1e-9 * Math.hypot(ux, uy) * Math.hypot(vx, vy);
-  };
+  // teeth are flat there with the amplitude saying otherwise; and a tooth
+  // whose two patterns cancel is flat for the instant they do, which no
+  // amplitude sees at all. Flat is what `simplify` decided, so read it back
+  // off what came out: a point it kept turns, and one it dropped does not.
+  // See PLAN-bevel 3.9.
+  const stands = (p: Point): boolean => shape.some(r => r.some(q => same(p, q)));
 
   // A tooth lying flat is not a corner, and stands at nought until it turns.
   const fades: Fade[] = teethAt
-    .filter(i => !turns(o.arcs[i][0]))
     .map(i => image(o.arcs[i][0]))
-    .filter((p): p is Point => p !== null)
+    .filter((p): p is Point => p !== null && !stands(p))
     .map(p => ({ p, v: 0 }));
 
   return { shape, runs, square: squared, keep: kept, fades };

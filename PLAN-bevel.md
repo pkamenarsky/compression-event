@@ -1434,22 +1434,36 @@ change here the way *3.3* found it allowed to change under an erosion, is the
 question to settle first.
 
 **`a corner arriving on a deformed floor starts from the editor's pattern,
-and nothing jumps`** — the floor splitting, without the round. The count is
-right, 17 at both ends, and the outline is right. What is left is seven
-jumps, in two groups.
+and nothing jumps`** — the floor splitting, without the round. Four of its
+seven jumps are gone; three are left, and they are the separate thing.
 
-At `t` of nought and one and an instant either side: the same `explained`
-gap the verticals test had, and not fixed by the same change. `foldShaped`
-records a tooth as flat when `deform.amplitude(key)` is nought or its room
-has run out — the *base* amplitude, not the weighted one. Where a wall
-splits, both namings carry their full amplitude and it is the weight that is
-nought at an end, so the far naming's teeth are flat there and nothing says
-so. The fix is to ask the geometry rather than the amplitude: a tooth is flat
-when it does not turn, which is what `simplify` decides, and `foldShaped`
-could compare its ring either side of that rather than predicting it.
+The four were one defect seen four times, and it was not the `explained` gap
+it looked like. The count was 17 at both ends and 20 at every instant
+between them: three points arriving at the first instant and leaving at the
+last. `effectedAt` answered an end with that end's list alone, so the far
+naming was not there to be laid at all — and the diagnosis above, that the
+fix is to ask the geometry rather than the amplitude, was a quarter of it.
 
-And three together at `t` of 0.6939, which is a separate thing and has not
-been looked at.
+It took four pieces, each an end's half of something the middle already had.
+`effectedAt` now carries both namings at either end, the far one at nought,
+while `apartAt` of nought or one keeps the geometry that end's own, so the
+outline is still the editor's. A corner set aside is kept in the ring by
+`keeping`, and through `foldShaped`'s cleaning by the new `deform.aside` —
+not by `square`, which would have left the edges either side of it untoothed
+— because a wall the far naming splits is one edge without it, and one edge
+can carry only one name. And which points lie flat is read back off what
+`simplify` returned, rather than predicted from the amplitude at all: a
+point it kept turns, and one it dropped does not. A corner set aside is read
+the same way, at its laid place rather than the one it was kept at.
+
+The three left are together at `t` of 0.6939, where the arriving corner and
+a tooth of the far naming cross: two ring points swapping order, which is an
+event and not a fade. The count wobbles 20, 19, 20 as they coincide for an
+instant, which is why one crossing costs three cuts. The worst step stands
+at 0.85 against the bar of 0.5, all of it at that instant. Whether a
+crossing of this kind should be pinned once and left — as the rounded
+sibling's degenerate instant is — or whether the two can be kept apart, is
+what to settle.
 
 ## Open questions
 
