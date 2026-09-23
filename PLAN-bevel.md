@@ -42,9 +42,13 @@ breaks:
 
 ## What changes in the look
 
-- **A corner the erosion makes is square.** Where two walls grow into each
-  other, or a tooth pinches off, nothing rounds the result: such a corner has no
-  name, so it inherits no bevel and no amplitude.
+- **A corner the erosion makes is square**, and only that kind. Where two walls
+  grow into each other, or a tooth pinches off, nothing rounds the result: such
+  a corner has no name, and it comes and goes with the depth, so there is
+  nothing for it to inherit. **A join is not one of these.** Where two members'
+  outlines cross, the union has a corner that is there at depth nought and
+  stays, and it takes the scope's own bevel and amplitude as any corner of the
+  scope's outline does — it is rounded today and must go on being rounded.
 - **A group looks like a polygon.** One pattern along the union's outline, none
   on the joins inside it, teeth on the group's arcs.
 - **A member's bevel starts working inside a group.** Today it silently
@@ -394,10 +398,21 @@ const bevels = ring.map((_p, i) => (sq[i] ? 0 : bevelAt(names[i], ring, i)));
 ```
 
 A ring point that is a named corner's image takes **the scope's bevel plus that
-corner's own**. A point that names nothing — a join between two members, or a
-corner the erosion made — takes nought, which is *What changes in the look*'s
-first line. `facets` resolves the same way, per corner, since two members may
-ask for different precision.
+corner's own**. `facets` resolves the same way, per corner, since two members
+may ask for different precision.
+
+A ring point that names nothing is one of two things and they are not alike:
+
+- **a join** — two members' outlines crossing — which is in the fold at depth
+  nought and takes the scope's own bevel and amplitude, as it does today;
+- **a corner an erosion made**, which appears only once the scope's erosion has
+  run and takes nought.
+
+The two are told apart by construction, and cheaply: the fold happens at depth
+nought on members already eroded, so every corner of *that* ring is either a
+member's or a join, and anything the scope's erosion adds after it is the other
+kind. Where a cheaper test is wanted, a join is an unnamed corner with a named
+run on both sides of it, and an erosion's corner has a nameless run beside it.
 
 **The clamp is the one there is now, unchanged.** `arcsWith` already rations a
 corner's bevel: `t = min(wants[i], room(before), room(after))`, where a
@@ -539,6 +554,44 @@ What stays: the arcs and their ids, the fold at depth nought, the naming of 2.2,
 and `patternRun` unchanged but for the arguments it is given.
 
 `baseline.golden.json` regenerated once, here and not before.
+
+## The edge-to-arc handover pops, today
+
+`experiments/arcseam.test.ts`. An edge's teeth stop short of its corners'
+bevels (`patternRun`'s `clear`) and an arc's teeth are a run of their own,
+keyed by the arc and anchored at its middle. So as a bevel grows the edge
+shortens, the arc lengthens, and a tooth is handed from one run to the other —
+at a threshold, not at an event. Sweeping the bevel with teeth on, ranked and
+refined:
+
+| span | 400 steps | 1600 steps | worst at |
+|---|---|---|---|
+| bevel 4 → 14, no teeth | median 0.0067, worst 0.0513 | 0.0017 / 0.0500 | ring 35 → 36 |
+| bevel 4 → 14, amplitude 6 | 0.0075 / **4.0924** | 0.0019 / **4.0953** | `t` 0.6006, ring 87 → 85 |
+| bevel 0 → 60, amplitude 6 | 0.0486 / **4.1268** | 0.0121 / **4.0961** | `t` 0.1663, ring 87 → 85 |
+| bevel 0 → 60, amplitude 14 | 0.1049 / **8.8147** | 0.0262 / **8.7493** | `t` 0.1663, ring 87 → 85 |
+
+**It is a discontinuity and it scales with the amplitude.** The median divides
+by four with the steps, so the figure is smooth; the worst does not move at all
+between refinements, and it goes 4.10 to 8.75 as the amplitude goes 6 to 14 —
+a tooth of full height leaving the ring rather than fading out of it. Same `t`
+for both amplitudes, same two points.
+
+This is today's polygon, so it is not the ordering's doing and phase 4 inherits
+it. It is also exactly the shape property 2 forbids: a threshold in a
+classification, with no corner made or lost to hang an event on.
+
+It is not yet diagnosed. Both runs fade at their ends — the edge's through
+`clear`'s ramp, the arc's through `room` — so the fault is in the handover
+between them and not in either fade. The likely suspects, in order: the arc's
+run takes no `reach`, so a tooth with no room is dropped where an edge's is
+kept flat; and the arc's run is keyed by the arc, so a tooth that crosses is a
+different tooth with a different `j`, which no fade can join up.
+
+**Where it goes in the work.** It blocks nothing in steps 1 to 6 — it is there
+now — but it must be answered before the plan can claim property 2, and the
+answer probably lives in the same place as the two parked bake tests: a pattern
+laid over a run's ends rather than per classified piece.
 
 ## Tests
 
