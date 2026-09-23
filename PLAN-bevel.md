@@ -926,18 +926,49 @@ split absorbs it.
 
 ### 3.3 The bake
 
-- **`reach` wants the amplitude**, since the teeth no longer ride inside
-  `placed`: into `grown`'s `out` or into `expandBox`'s margin. See the note
-  above for why this is the one thing that fails quietly.
-- **`effectsOver` keeps lerping the amounts.** The deform's spacing and
-  amplitude are carried across a span as they are now; what changes is when
-  they are read, not how.
-- **`straightOf` and the seeding** are simpler: a corner the bake invents sits
-  on the eroded outline, which has no teeth on it when the corners are made.
-  `Effected.apart` may not be needed at all — worth checking before removing.
-- **Re-measure.** `experiments/bevel.test.ts` and the tables in *Why it bakes*
-  and *Fading and groups* were taken against round → deform → erode. They are
-  the baseline to beat, not the record of what is there.
+**Done.** One change; the other three notes turned out to be confirmations.
+
+- **`reach` wants the amplitude** — done, into `expandBox`'s margin, taken out
+  by the frame the way a depth is and both ways, a pattern with `sides` of
+  `both` having teeth either side of the wall.
+
+  This was the one that fails quietly, and it needed a case built to make it
+  fail at all: two rooms twelve apart, so nothing either was drawn with ever
+  touches the other, whose facing walls grow teeth long enough to meet. Their
+  drift is 96.7 with the box as it was and inside tolerance with the teeth in
+  it. The first attempt at the case did not fail — the two rooms' teeth both
+  reached into the gap but at different heights and so passed each other —
+  which is worth remembering: for this defect, a case that passes proves
+  nothing until it has been shown to fail without the fix.
+
+  The round needs no such allowance. An arc is drawn inside the corner it
+  rounds, whichever way the corner turns, so it never reaches past what the
+  corners already bound.
+- **`effectsOver` keeps lerping the amounts.** Confirmed; it does, and nothing
+  about when they are read asked it to stop.
+- **`straightOf` and the seeding** are already simple, and needed nothing.
+  `straightOf` reads `imagesOf().drawn`, which is the rounded outline before
+  the teeth, so it was never looking at one. The seeding is about a bevel with
+  no other end, and has nothing to do with teeth.
+
+  **`Effected.apart` is still needed, but only for the naming.** The check the
+  note asked for: counted over `bake.test.ts`, the naming's list is consulted
+  972 times and the geometry's aside is true twice — the two ends of a span,
+  where `apartTo` is empty so the far list is the near one. Setting it aside
+  there changes the outline by nothing, to sixteen digits, because a corner
+  invented there is exactly flat; and with the geometry's aside forced off the
+  whole suite passes and the case's worst step is identical. Forcing the
+  *naming's* off fails `rounded as well, its outline never pops` at once.
+
+  So the geometric half of `apart` is inert and can go with the removals of
+  *3.4*; the naming half is load-bearing and stays.
+- **Re-measure.** `experiments/bevel.test.ts` is a prototype baseline — its
+  "today" against "planned" is round → deform → erode against the plan's
+  order, and not a record of what is shipped. The record is *3.7*'s table,
+  re-taken after pieces 4 and 5: **every figure is unchanged** to four places,
+  and the arc convergence still lands on 1.19 at 2, 4, 8, 16 and 32 segments.
+  Which is what it should be — none of those spans splits a wall, so nothing
+  piece 4 touched is in them.
 
 ### 3.4 What goes
 
@@ -1230,7 +1261,9 @@ of each against its still.
    The invented corner naming nothing is right on its own terms and is in:
    it sits wherever its neighbours put it, and the arcs beside it are already
    laid as though it were not there. Commit.
-5. `reach`, and the rest of the bake notes of *3.3*. Commit.
+5. **Done.** `reach`, and the rest of the bake notes of *3.3* — where only
+   `reach` wanted code, and it wanted a case built before it would fail. See
+   *3.3*. Commit.
 6. The pinch of *3.2*, on by default. Commit.
 7. The group, which by then is the same call with a depth and a bevel in it.
    Commit.
@@ -1296,9 +1329,9 @@ spans of seven. Whether the residual is worth chasing is a question for when
 the pipeline is moved and there is a real bake to count.
 ### 3.8 Where phase 3 stands
 
-On `phase3-deform-last`, which is green — 1066 pass, 6 more skipped than on
+On `phase3-deform-last`, which is green — 1067 pass, 6 more skipped than on
 master — with `tsc` and `pnpm build` clean. The pop that kept it off master is
-gone; pieces 1 to 4 of *3.6* are done.
+gone; pieces 1 to 5 of *3.6* are done.
 
 **In, and working.**
 
@@ -1325,6 +1358,8 @@ gone; pieces 1 to 4 of *3.6* are done.
   across an edge's ends, and a ring point interior to a run is lifted onto it.
 - A corner is set aside for the geometry only where it is flat, which is the
   end that invented it — `near[i] && far[i]`.
+- `reach` boxes a polygon with its teeth's amplitude, which they no longer
+  bring along inside `placed`.
 
 **The pop is gone.** `rounded as well, its outline never pops` passes: worst
 step 0.31 against the bar of 0.5, drift inside tolerance, both ends the
@@ -1340,13 +1375,14 @@ verticals in. These are the neighbours of the defect rather than the defect —
 they are about the bake's jumps, its point counts at the two ends and its
 opacity ramps, not about the outline's continuity, which now holds.
 
-**Not started.** *3.2*'s pinch, the `reach` note in *3.3*, the group (*3.6*
-piece 7), and the removals of *3.4*.
+**Not started.** *3.2*'s pinch (*3.6* piece 6), the group (piece 7), and the
+removals of *3.4* (piece 8), which now also take the geometric half of
+`Effected.apart` — see *3.3*.
 
-**What to do next.** *3.6* piece 5 — `reach` and the rest of the bake notes of
-*3.3* — and with it the three parked `bake.test.ts` tests, which are the same
-ground: a span has to carry a tooth across, and the fades have to come from
-somewhere now that a tooth is not a corner.
+**What to do next.** *3.6* piece 6, the pinch. The three parked
+`bake.test.ts` tests are the other open ground: a span has to carry a tooth
+across, and the fades have to come from somewhere now that a tooth is not a
+corner.
 
 **A note on measuring, which cost four of the five passes on the pop.** Take
 the whole step profile, not the worst number. Three unrelated defects were
