@@ -2342,7 +2342,7 @@ describe('effects', () => {
   // that no longer have them, and a span cannot carry a tooth across. What
   // "done" looks like is these four passing again, and in particular this
   // one's worst step back under 0.5 from the 3.97 it stands at.
-  test.skip('a corner arriving on a deformed floor starts from the editor\'s pattern, and nothing jumps', () => {
+  test('a corner arriving on a deformed floor starts from the editor\'s pattern, and nothing jumps', () => {
     // At the near end the floor is one edge with one pattern; at the far end
     // it is two, each with its own. The teeth are corners, so the ones the
     // halves gain arrive as corners do, and the ones the floor loses go.

@@ -1366,8 +1366,17 @@ function effectsOver(
 
 /** A polygon's effects `t` of the way across a span. */
 function effectedAt(e: [Effected, Effected], t: number): Effected {
-  if (t === 0) return e[0];
-  if (t === 1) return e[1];
+  const apart = e[0].apart ?? e[1].apart?.map(() => false);
+  const apartTo = e[1].apart ?? e[0].apart?.map(() => false);
+
+  // Both namings at either end too, the far one at nought and the near one
+  // whole: its teeth lie flat on the wall there rather than being absent, so
+  // the ring keeps its points across the whole span and each line fades in
+  // instead of arriving. The geometry is still that end's own — `apartAt` of
+  // nought or one sets aside that end's list alone — so the outline is the
+  // editor's. See PLAN-bevel 3.9.
+  if (t === 0) return { ...e[0], apart, apartTo, apartAt: 0 };
+  if (t === 1) return { ...e[1], apart, apartTo, apartAt: 1 };
 
   const [d0, d1] = [e[0].deform, e[1].deform];
 
@@ -1381,8 +1390,8 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     // the far one coming. At either end the blend is not taken at all — `t`
     // of nought and one answer with that end's own — so each still is the
     // editor's. See `Effected.apart`.
-    apart: e[0].apart ?? e[1].apart?.map(() => false),
-    apartTo: e[1].apart ?? e[0].apart?.map(() => false),
+    apart,
+    apartTo,
     apartAt: t,
     deform: d0 === null || d1 === null
       ? d0 ?? d1

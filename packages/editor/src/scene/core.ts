@@ -1068,7 +1068,7 @@ const imagedBy = remembered((
   // weight. See `Effected.apart` and PLAN-bevel's step 4.
   const near = source.map((_p, i) => apart[i] === 1);
   const far = apartTo.length === 0 ? near : source.map((_p, i) => apartTo[i] === 1);
-  const aside = near.map((x, i) => x && far[i]);
+  const aside = apartAt === 0 ? near : apartAt === 1 ? far : near.map((x, i) => x && far[i]);
 
   // Rounded and nothing else: the teeth are laid on what the erosion leaves,
   // not on this. See PLAN-bevel 3.1.
@@ -1201,7 +1201,20 @@ const imagedBy = remembered((
     };
   };
 
-  const laid = foldShaped(eroded, [], [], lines, curves, SQUARE, 0, false, {
+  // A corner set aside is flat — it lies on the edge between its neighbours,
+  // so the arrangement drops it — and then the wall it stands on is one run,
+  // and the naming that splits there cannot see its two halves. Kept, so that
+  // both namings read the same ring at either end of a span. It fades with
+  // the teeth below, the line on it coming up rather than arriving. See
+  // `keeping` and PLAN-bevel 3.9.
+  const flatCorners = aside.flatMap((x, i) => {
+    const run = corners[i];
+
+    return x && run !== null && run.length > 0 ? [run[0]] : [];
+  });
+  const ring = flatCorners.length === 0 ? eroded : keeping(eroded, flatCorners);
+
+  const laid = foldShaped(ring, [], [], lines, curves, SQUARE, 0, false, {
     e,
     amplitude: (key: number) => amplitude.get(key) ?? 0,
 
@@ -1210,6 +1223,7 @@ const imagedBy = remembered((
     reach: true,
     naming: namingBy(near, lines),
     over: other === null ? undefined : { ...other, naming: namingBy(far, other.lines) },
+    aside: flatCorners,
   }, 0);
 
   // The teeth lying flat in it, which `simplify` takes out of the shape for
@@ -1217,6 +1231,7 @@ const imagedBy = remembered((
   // up out of nothing or a run's end takes one away. The fold does the same
   // with what its slots published. See `FoldShaped.fades`.
   const lying = laid.fades.filter(f => f.v === 0).map(f => f.p);
+
 
 
   return { shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying), ...rest, flat: lying };

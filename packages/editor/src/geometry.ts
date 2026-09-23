@@ -3075,6 +3075,7 @@ export function subdivided(
       })).sort((p, q) => p.u - q.u);
     });
 
+
     // Where the edge's own start stands: nought at a run's end, where every
     // pattern ramps to nothing, and the pattern's own height at a corner the
     // run carries straight on through — a corner arriving into a wall whose
@@ -4155,6 +4156,16 @@ export function foldShaped(
      * step 4.
      */
     naming?: Naming,
+    /**
+     * Points of the ring that are corners though they do not turn, and so
+     * must survive the cleaning below: a corner the bake invented, flat on
+     * the wall at the end that invented it. Without it the wall is one edge,
+     * and the naming that splits there cannot see its two halves — so a
+     * pattern would arrive whole at the first instant instead of standing
+     * flat from the start. Not `square`, which would leave the edges either
+     * side of it untoothed. See PLAN-bevel 3.9.
+     */
+    aside?: readonly Point[],
   } | null,
   depth: number,
 ): FoldShaped {
@@ -4167,6 +4178,7 @@ export function foldShaped(
   const tol = scale * 1e-9;
   const same = (p: Point, q: Point) => Math.abs(p.x - q.x) <= tol && Math.abs(p.y - q.y) <= tol;
   const isSquare = (p: Point) => square.some(q => same(p, q));
+  const isAside = (p: Point) => deform?.aside?.some(q => same(p, q)) ?? false;
 
   // Which member edge a straight of the fold lies on: the first along it, so
   // that a wall two members share takes one of them and keeps it while
@@ -4216,7 +4228,7 @@ export function foldShaped(
         const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
         const cross = ux * vy - uy * vx, dot = ux * vx + uy * vy;
 
-        return !isSquare(b) && dot > 0 && Math.abs(cross) <= 1e-9 * Math.hypot(ux, uy) * Math.hypot(vx, vy);
+        return !isSquare(b) && !isAside(b) && dot > 0 && Math.abs(cross) <= 1e-9 * Math.hypot(ux, uy) * Math.hypot(vx, vy);
       });
 
       if (at < 0) break;
@@ -4268,12 +4280,9 @@ export function foldShaped(
   // polygon's corner does: see `ArcDeform`.
   const beforeOf: number[] = [], afterOf: number[] = [];
 
-  // Teeth of no height, on a wall an amplitude of nought leaves straight:
-  // they stand in the ring as a polygon's do, so that the ring keeps its
-  // points while the deform comes up out of nothing and the lines on them
-  // come up with it. The arrangement drops a point in line with its
-  // neighbours, so these are kept by hand.
-  const flat: number[] = [];
+  // Where the teeth are in `source`. Which of them lie flat is read off the
+  // ring once it is built, not predicted here: see `flat` below.
+  const teethAt: number[] = [];
   const edges: { ring: number, a: Point, b: Point, laid: { at: Point, along: number }[] }[] = [];
 
   cleaned.forEach((ring, r) => {
@@ -4357,7 +4366,12 @@ export function foldShaped(
         i => (deform.reach === true ? names[i]?.reach : undefined),
         () => [],
         i => {
-          const one = mine_?.[i], two = over === 0 ? undefined : overs?.[i];
+          // Both namings at every weight, the one standing at nought
+          // included: its teeth lie flat there rather than being absent, so
+          // the ring keeps its points across the whole span and the line on
+          // each fades in instead of arriving. See `fades`, and PLAN-bevel
+          // 3.9.
+          const one = mine_?.[i], two = overs?.[i];
 
           return one === undefined && two === undefined ? undefined : [one, two].filter((x): x is Laying => x !== undefined);
         },
@@ -4451,10 +4465,11 @@ export function foldShaped(
       const nameAfter = names[made.from]?.key ?? 0;
       const nameBefore = names[(made.from - 1 + ring.length) % ring.length]?.key ?? nameAfter;
 
-      // A tooth with no room left is as flat as one with no amplitude, and
-      // is kept for the same reason: the ring keeps its points while the
-      // pattern comes and goes at a run's ends. See `patternRun`'s `reach`.
-      if (made.j !== null && deform !== null && (deform.amplitude(nameAfter) === 0 || made.room === 0)) flat.push(source.length);
+      // A corner set aside stands in the ring the same way a tooth does, and
+      // is read for flatness the same way: at the end that invented it the
+      // pattern lifts it off the wall onto its own line, where it does not
+      // turn. Its laid place, not the one it was kept at. See `aside`.
+      if (deform !== null && (made.j !== null || (made.j === null && isAside(ring[made.from])))) teethAt.push(source.length);
 
       source.push(made.at);
       beforeOf.push(made.j === null ? nameBefore : nameAfter);
@@ -4471,6 +4486,7 @@ export function foldShaped(
   const arcTeeth = (i: number): ArcTeeth | null => (deform === null || !(drawn[i] > 0)
     ? null
     : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, bevel / drawn[i]) });
+
   const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : facets), i => drawn[i], arcTeeth);
 
   const simple = simplify(sliced(o.ring, o.rings));
@@ -4526,8 +4542,34 @@ export function foldShaped(
     }),
   ];
 
+  // Teeth of no height, on a wall an amplitude of nought leaves straight, or
+  // one whose pattern has run out of room: they stand in the ring as a
+  // polygon's do, so that the ring keeps its points while the deform comes up
+  // out of nothing and the lines on them come up with it. The arrangement
+  // drops a point in line with its neighbours, so these are kept by hand.
+  //
+  // Which ones they are is asked of the geometry rather than predicted from
+  // the amplitude. Where a wall is splitting, both namings carry their full
+  // amplitude and it is the weight that is nought at an end, so a naming's
+  // teeth are flat there with the amplitude saying otherwise. A tooth is
+  // flat when it does not turn, which is what the arrangement decides, so
+  // read it off the ring the arrangement is about to be given. See
+  // PLAN-bevel 3.9.
+  const turns = (k: number): boolean => {
+    const r = o.rings.findLastIndex(lo => lo <= k);
+    const lo = o.rings[r], n = (r + 1 < o.rings.length ? o.rings[r + 1] : o.ring.length) - lo;
+
+    if (n < 3) return false;
+
+    const a = o.ring[lo + (k - lo - 1 + n) % n], b = o.ring[k], c = o.ring[lo + (k - lo + 1) % n];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+
+    return Math.abs(ux * vy - uy * vx) > 1e-9 * Math.hypot(ux, uy) * Math.hypot(vx, vy);
+  };
+
   // A tooth lying flat is not a corner, and stands at nought until it turns.
-  const fades: Fade[] = flat
+  const fades: Fade[] = teethAt
+    .filter(i => !turns(o.arcs[i][0]))
     .map(i => image(o.arcs[i][0]))
     .filter((p): p is Point => p !== null)
     .map(p => ({ p, v: 0 }));
