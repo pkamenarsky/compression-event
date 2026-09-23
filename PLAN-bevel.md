@@ -722,6 +722,42 @@ today wherever `held` is on. `Options['round'].held` and the tick beside it go.
 *Measured by*: `deformlast`'s table must not regress, and `divergence` must hold
 its tolerance on every world in it.
 
+**Tried, and it does not hold.** `imagedBy` was rewritten to erode first and
+then hand one `foldShaped` pass its own corners — the polygon as a one-member
+fold, exactly as a scope's — with `held` and `Options['round'].held` gone and
+`drawnBevels` returning the amount asked for. It typechecks, `divergence` holds
+its tolerance, and `a rounded room is its arcs` gets *better*: R(80,5) exactly,
+where rounding first and eroding after was square units off it. But the
+step's own yardstick fails:
+
+| | HEAD | erd |
+|---|---|---|
+| P1 depth 0 → 20 | 0.0000 | **0.6302** |
+| P3 every instant, depth 0 → 20 | 0.0000 | **1.1250** |
+| P4 points at depth 40 | 20 | **4** |
+| P7 points, depth 0 / 6 / 20 | 47 / 36 / 16 | 58 / 56 / 51 |
+
+and four tests go red with it: `effects.test.ts`'s 'one edge deformed leaves
+the others straight' (teeth now run onto the arcs at that edge's corners, which
+is the parked test's design change one level up), and three of `bake.test.ts`'s
+span tests, of which 'rounded as well, its outline never pops' is the one that
+matters — 2.19 against a bar of 0.5.
+
+**Why.** 4.1's "for a polygon, held, it is not a change at all" is true of the
+*corner*, and not of the *teeth on the wall it leaves*. Held, the arc shrinks
+with the wall, so the run's straight and its two arcs keep their shares and a
+tooth laid at a share of the run stays put as the depth goes — which is what P3
+measures as nought. Eroded first, the arc is drawn at the radius asked for on a
+wall that has lost `2d`, so the arc's share of the run grows with the depth and
+every tooth on it slides. Naming the reach off the source wall rather than the
+drawn one was tried and changes nothing: it is the run's own make-up that
+moves, not its length.
+
+So the step needs something 4.1 does not give it — a tooth anchored to the
+source wall's parameterisation rather than to the drawn run's — and that is a
+piece of design, not a reordering. The work is stashed (`git stash list`:
+*step 6 attempt*), and nothing of it is on the branch.
+
 ### Step 7: the pinch — optional, and measured
 
 **It is not necessary.** `experiments/pinch.test.ts` erodes a room with teeth
