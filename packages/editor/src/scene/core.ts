@@ -371,7 +371,10 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
     sides: deform?.sides ?? PLAIN.sides,
     jitter: deform?.jitter ?? 0,
     falloff: deform?.falloff ?? FALLOFF,
-    offset: true,
+
+    // A polygon's teeth start off each edge's middle unless it says otherwise:
+    // see `Effects['deform'].offset`.
+    offset: deform?.offset ?? true,
   };
 }
 
@@ -526,7 +529,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids]];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset)];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.reach ?? []).map(r => r / s)];
 }
@@ -1072,10 +1075,10 @@ const imagedBy = remembered((
 ): Imaged => {
   const [facets, bevels, flat, deform, apart, apartTo, apartAt, reach] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number];
   const e: Effecting | null = deform.length === 0
     ? null
-    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: true };
+    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
   const teeth = (i: number): ArcTeeth | null => (e === null || (before[i] === 0 && after[i] === 0)
     ? null
     : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
@@ -1788,7 +1791,9 @@ export function groupDeform(world: World, id: Id, amplitude: number, scale: numb
 
   const e = effecting(fx);
 
-  return { e: { ...e, spacing: e.spacing * scale, offset: false }, amplitude };
+  // A fold's teeth start at the run's middle unless it says otherwise: two
+  // members' teeth along one wall would otherwise fall wherever they fall.
+  return { e: { ...e, spacing: e.spacing * scale, offset: fx.deform.offset ?? false }, amplitude };
 }
 
 /** What `diameterAt` has answered, for each world it was asked about. */

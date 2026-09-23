@@ -642,7 +642,11 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     const rig: Rig = { ...EMPTY_RIG, keys: eroding };
 
     if (eroding.size > 0) rigs.set(m, keysOf(rig));
-    if (fx !== undefined) effects.set(m, fx);
+    // The ring's teeth are a fold's: they start at each run's middle, where a
+    // polygon's start off it by a share of the spacing. Written down here
+    // because the ring is a polygon from now on and nothing else would say
+    // so. See `Effects['deform'].offset`.
+    if (fx !== undefined) effects.set(m, fx.deform === undefined ? fx : { ...fx, deform: { ...fx.deform, offset: false } });
   }
 
   // The rings go in where the members were, and the group comes apart round

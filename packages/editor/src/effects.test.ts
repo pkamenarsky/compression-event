@@ -678,9 +678,12 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // 99 against 122, with nothing on the members at all: the scope's own three
-  // are re-run on the ring, and a polygon anchors and clears a run its own
-  // way. The nearest row of the lot, and the one to take first.
+  // 99 against 98, with nothing on the members at all, and one wall apart:
+  // the fold centres a run's pattern on the naming member edge's middle and
+  // the ring has no member edge to centre on, so the teeth on a wall the
+  // union cut sit a way along from the scope's. The offset half of this is
+  // settled — `Effects['deform'].offset`, which the resolve writes false —
+  // and the anchor is what is left. See *The resolve carries geometry*.
   test.skip('nothing on the members, everything on the scope', () => {
     const { world, id } = scopes({}, { round: 12, deform: 6, erode: 6 });
 

@@ -1113,12 +1113,32 @@ resolved:
 |---|---|---|
 | members eroded, scope rounding | 72 | 72 |
 | members eroded, three deep, each eroding | 12 | 12 |
-| nothing on the members, all three on the scope | 99 | 122 |
+| nothing on the members, all three on the scope | 99 | 98 |
 | members deformed, scope deforming | 57 | 113 |
 | members rounded, scope rounding | 72 | 492 |
 | members deformed, scope rounding | 123 | 550 |
 | members eroded, two scopes rounding | 108 | 624 |
 | everything at all three levels | 175 | 1449 |
+
+**The offset is settled.** A polygon's teeth start off each run's middle by a
+share of the spacing its seed gives it and a fold's start at it, which put every
+tooth of a resolved ring somewhere else. It is `offset` on `Effects['deform']`
+now — absent, each path does what it always did; written, it is what it says —
+and `resolveGroup` writes it false onto the ring it makes, because that ring's
+teeth were a fold's. Nothing existing changes look, and the scope-only row goes
+from 122 points to 98 against 99.
+
+**What is left of that row is the anchor.** The fold centres a run's pattern on
+the naming member edge's middle (*2.1*), so that a member growing at the far end
+moves no tooth over the near half; a ring has no member edge, so a wall the
+union cut carries its teeth a way along from where the scope drew them. Measured
+against the alternative — anchoring every run at its own middle — that costs
+2.1 outright: `erodefirst` and `groupfades` do not move at all (0.0230 / 0.0539,
+18 stretches, 0.0141), the scope-only row passes exactly at 98, and three tests
+go, a wall split by an arriving pillar re-centring both halves at the instant of
+the split. Not taken: the anchor is the one thing here the resolve destroys, and
+the step that writes the fold's `Named` onto the ring is the step that has to
+write it down anyway.
 
 **It is the resolve's own version of steps 1 to 5.** The scope lays each effect
 once, on amounts published by its members; the resolve has had no such step and

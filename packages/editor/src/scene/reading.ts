@@ -551,7 +551,7 @@ const shapedFold = remembered((
   let deform: { e: Effecting | null, amplitude: (key: number) => number } | null = null;
 
   if (d.length !== 0) {
-    const e = { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: false };
+    const e = { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: d[7] === 1 };
 
     deform = { e, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
   }
@@ -638,7 +638,7 @@ function shapeKey(s: Standing | null): number[] | null {
 
   return [
     ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0,
-    ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude]),
+    ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude, Number(d.e.offset)]),
   ];
 }
 
