@@ -399,6 +399,20 @@ corner the erosion made — takes nought, which is *What changes in the look*'s
 first line. `facets` resolves the same way, per corner, since two members may
 ask for different precision.
 
+**The clamp is the one there is now, unchanged.** `arcsWith` already rations a
+corner's bevel: `t = min(wants[i], room(before), room(after))`, where a
+neighbour's room is `length - min(wants[other], length / 2)` — each corner takes
+at most half an edge where its neighbour wants half too, and all of what is left
+where the neighbour wants less. Summing changes `wants[i]` and nothing else, so
+two bevels that together exceed the edge they stand on are rationed exactly as
+one too-large bevel is today. Symmetric, order-independent, and continuous in
+both amounts.
+
+Continuous, but bent: the crossover from *what was asked* to *what there is room
+for* is a kink in an otherwise linear path, not a jump. No corner is made or
+lost there, so it wants no event — the chase re-cuts the stretch if the bend
+costs more than the tolerance, which is what the chase is for.
+
 The amplitude's half needs no new machinery: `deform.amplitude(key)` already
 takes a name, and 3.1 already adds two patterns on one edge as offsets standing
 on each other. Summing what a run inherits is the same arithmetic.
@@ -524,9 +538,6 @@ found, and in both cases the line said something simpler than the story did.
 
 - **What names a corner of the fold** (*Step 5*), a `VertexId` being a
   polygon's, and what a join publishes to the scope above.
-- **The sum where two bevels exceed the edge they stand on**, and what a corner
-  does when its neighbours' bevels meet. 4.5 settles what today does, not what
-  the clamp should be.
 - **Seams at the middle of an arc** between two differently deformed edges.
 - **The two parked bake tests**, both of which want a pattern laid over the
   union of two ends' reaches.
