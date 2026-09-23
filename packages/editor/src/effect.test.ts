@@ -25,7 +25,11 @@ function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 }
 
-const drawn = (shape: Shape, member: number): Drawn => ({ shape, ids: identify(shape, member) });
+function drawn(shape: Shape, member: number): Drawn {
+  const cut = simplify(shape);
+
+  return { shape: cut, ids: identify(cut, member) };
+}
 const names = (it: Drawn) => it.ids.map(ring => ring.map(shows));
 
 /** A room with a slot cut into it from above, and the slot narrow enough that

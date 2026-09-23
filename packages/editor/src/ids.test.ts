@@ -16,7 +16,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { OpSubtract, OpUnion, Shape } from './geometry';
+import { OpSubtract, OpUnion, Shape, simplify } from './geometry';
 import { born, combineIdentified, corner, identify, madeOf, on, shows } from './ids';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -61,7 +61,9 @@ describe('names', () => {
   });
 
   test('a polygon with a hole numbers its corners across the whole of it', () => {
-    const ids = identify([rect(0, 0, 10, 10), rect(3, 3, 4, 4)], 5);
+    // Wound the other way, or the arrangement reads it as a second room and
+    // swallows it rather than as a hole.
+    const ids = identify(simplify([rect(0, 0, 10, 10), rect(3, 3, 4, 4).reverse()]), 5);
 
     expect(ids.map(ring => ring.map(shows))).toEqual([
       ['5.0', '5.1', '5.2', '5.3'],
@@ -73,7 +75,11 @@ describe('names', () => {
 describe('the arrangement carries them', () => {
   const a: Shape = [rect(0, 0, 100, 100)];
   const b = (dx: number): Shape => [rect(50 + dx, 50, 100, 100)];
-  const drawn = (shape: Shape, member: number) => ({ shape, ids: identify(shape, member) });
+  const drawn = (shape: Shape, member: number) => {
+    const cut = simplify(shape);
+
+    return { shape: cut, ids: identify(cut, member) };
+  };
   const union = (dx: number) => combineIdentified(drawn(a, 0), drawn(b(dx), 1), OpUnion);
 
   test('every point of the answer has exactly one name', () => {

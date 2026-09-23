@@ -115,8 +115,14 @@ export function shows(id: Ident): string {
   return written[id];
 }
 
-/** A drawn polygon's own identities: its member, and a corner apiece. */
-export function identify(shape: Shape, member: number): Ids {
+/**
+ * A drawn polygon's own identities: its member, and a corner apiece.
+ *
+ * Of a walked shape, and that is not a formality — an arrangement is free to
+ * start a ring where it likes, and naming the points of a shape that has not
+ * been through one gives names that move when it does.
+ */
+export function identify(shape: Cut, member: number): Ids {
   let vertex = 0;
 
   return shape.map(ring => ring.map(() => corner(member, vertex++)));
@@ -124,6 +130,11 @@ export function identify(shape: Shape, member: number): Ids {
 
 /**
  * A shape and a name for each of its points.
+ *
+ * A `Shape` and not a `Cut`: what an effect hands on is walked, but a band or
+ * a fan an effect builds to combine against is not, and those carry names too.
+ * Where it matters — `identify`, which numbers a ring's corners — it is asked
+ * for outright.
  *
  * `edges` is there because a point and the edge leaving it are two different
  * questions, and for everything an arrangement hands back they have the same

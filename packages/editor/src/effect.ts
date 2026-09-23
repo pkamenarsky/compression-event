@@ -19,7 +19,7 @@
 
 import type { Point } from '@ce/game/world';
 import type { Shape, Sweptfrom } from './geometry';
-import { OpSubtract, OpUnion, along, simplify, sweptBand } from './geometry';
+import { OpSubtract, OpUnion, along, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
 import { combineIdentified, madeOf, on, shows } from './ids';
 
@@ -53,8 +53,7 @@ export function eroding(depth: number): Effect {
   return it => {
     if (depth === 0) return it;
 
-    const shape = simplify(it.shape);
-    const band = sweptBand(shape, depth);
+    const band = sweptBand(it.shape, depth);
 
     const side = (shape: Shape, from: Sweptfrom[][], along: Sweptfrom[][]): Drawn => ({
       shape,
@@ -62,7 +61,7 @@ export function eroding(depth: number): Effect {
       edges: along.map(ring => ring.map(w => nameOf(it.ids, w))),
     });
 
-    let out: Drawn = { shape, ids: it.ids };
+    let out: Drawn = it;
 
     if (band.inward.length > 0) {
       out = combineIdentified(out, side(band.inward, band.inwardFrom, band.inwardAlong), OpSubtract);

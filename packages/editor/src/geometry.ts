@@ -856,8 +856,14 @@ function crossing(a: Point, b: Point, c: Point, d: Point): boolean {
  * `erode` is an arrangement between the shape and this, so a caller that wants
  * identity through an erosion wants exactly these two operands and their names.
  * See `eroding` in `effect.ts`, which is the only caller.
+ *
+ * A `Shape`, unlike `erode`, and the walk is the caller's word: an effect is
+ * handed what the fold below it produced, which is an arrangement's output and
+ * so has material on the left of every ring. Nothing here writes back, and a
+ * ring wound the other way sweeps its band the other way and says so in what
+ * it draws.
  */
-export function sweptBand(shape: Cut, depth: number): Band {
+export function sweptBand(shape: Shape, depth: number): Band {
   return swept(shape, () => depth);
 }
 
