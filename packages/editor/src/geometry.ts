@@ -2936,6 +2936,74 @@ function onceEach(lays: readonly Laying[]): readonly Laying[] {
   return out;
 }
 
+/**
+ * Where a pattern stands at a station of the edge it was laid along, its
+ * outline being the straight from one of its teeth to the next and the edge
+ * itself where it has none: what lets two patterns on one edge be added
+ * rather than interleaved. Off either end of what it reaches it is nothing.
+ */
+function acrossAt(pts: readonly { u: number, across: number }[], u: number): number {
+  if (pts.length === 0) return 0;
+
+  // Off either end of the run the pattern is over: the first and last teeth
+  // ramp to nothing at the run's ends, so the straight from the tooth to the
+  // end of the edge is the rest of it. Stations of the run beyond this edge
+  // are in the list, so this is only ever reached at the run's own ends.
+  const first = pts[0], last = pts[pts.length - 1];
+
+  if (u <= first.u) return first.u <= 0 ? first.across : first.across * Math.max(0, u / first.u);
+  if (u >= last.u) return last.u >= 1 ? last.across : last.across * Math.max(0, (1 - u) / (1 - last.u));
+
+  let k = 0;
+
+  while (k + 1 < pts.length && pts[k + 1].u < u) k++;
+
+  const a = pts[k], b = pts[k + 1];
+
+  return b.u === a.u ? a.across : a.across + (b.across - a.across) * ((u - a.u) / (b.u - a.u));
+}
+
+/**
+ * Two patterns on one edge, put together into one outline.
+ *
+ * Where a wall is splitting or joining, a run carries the near naming's
+ * pattern and the far one's, each at its own weight, and the two name the
+ * edge differently — so their teeth are at different stations and neither is
+ * the other's. Laid side by side they interleave, and a tooth of the one at
+ * nought height then lands on the edge rather than on the other's outline,
+ * pulling it back to the wall between two of its apexes. The near end of a
+ * span is worth about a tooth's amplitude of that.
+ *
+ * Added instead, each pattern is read at every station and the offsets stand
+ * on each other. At either end of the span one of them is at nought
+ * everywhere and adds nothing, so each still is the editor's, and across the
+ * span the outline is the sum — which for two weights of one geometry is the
+ * lerp of the two ends, and so is what `drift` asks for. Each station keeps
+ * the tooth of whichever pattern put it there.
+ */
+function summed(
+  each: readonly (readonly { u: number, j: number, room: number, across: number }[])[],
+): { u: number, j: number, room: number, across: number }[] {
+  const out: { u: number, j: number, room: number, across: number }[] = [];
+
+  for (const pts of each) {
+    for (const p of pts) {
+      // Only the stations of this edge are laid on it; the rest of the run's
+      // are here to be read from, not drawn.
+      if (p.u < -1e-9 || p.u > 1 + 1e-9) continue;
+
+      const u = Math.min(1, Math.max(0, p.u));
+      const across = each.length === 1
+        ? p.across
+        : each.reduce((x, other) => x + (other === pts ? p.across : acrossAt(other, u)), 0);
+
+      out.push({ ...p, u, across });
+    }
+  }
+
+  return out.sort((p, q) => p.u - q.u);
+}
+
 export function subdivided(
   ring: Ring,
   e: Effecting,
@@ -2964,12 +3032,13 @@ export function subdivided(
   const done: Subdivision[] = [];
 
   ring.forEach((a, i) => {
-    done.push({ at: a, from: i, j: null, along: 0, room: 1 });
-
     const b = ring[(i + 1) % n];
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
 
-    if (l === 0 || !toothed(i)) return;
+    if (l === 0 || !toothed(i)) {
+      done.push({ at: a, from: i, j: null, along: 0, room: 1 });
+      return;
+    }
 
     const nx = dy / l * out, ny = -dx / l * out;
 
@@ -2978,35 +3047,50 @@ export function subdivided(
     // and PLAN-bevel's step 4. Laid in order along the edge, so the points
     // come out in ring order however many there are.
     const lays = onceEach(patterns(i) ?? also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }]));
-    const laid = lays
-      .flatMap(one => {
-        const over = one.of ?? l;
-        const start = one.at ?? 0;
-        const run = patternRun(
-          e,
-          one.key,
-          one.amplitude,
-          over,
-          one.clear ?? clear(i),
-          one.clearTo ?? clear((i + 1) % n),
-          e.spacing,
-          one.from ?? over / 2,
-          one.reach,
-        );
+    const each = lays.map(one => {
+      const over = one.of ?? l;
+      const start = one.at ?? 0;
+      const run = patternRun(
+        e,
+        one.key,
+        one.amplitude,
+        over,
+        one.clear ?? clear(i),
+        one.clearTo ?? clear((i + 1) % n),
+        e.spacing,
+        one.from ?? over / 2,
+        one.reach,
+      );
 
-        return run.along.flatMap((u, k) => {
-          // Where the tooth falls along this edge, the run being longer than
-          // it: outside, it belongs to one of the run's other edges.
-          const along = u * over - start;
+      // Where each tooth falls along this edge, the run being longer than it.
+      // The ones outside belong to the run's other edges and are not laid
+      // here, but they are kept: they are what says where the pattern stands
+      // at this edge's own ends, which is not nought where the run carries on
+      // past them. See `acrossAt`.
+      return run.along.map((u, k) => ({
+        u: (u * over - start) / l,
+        j: run.teeth[k],
+        room: run.room[k],
+        across: run.across[k],
+      })).sort((p, q) => p.u - q.u);
+    });
 
-          if (along < -1e-9 || along > l + 1e-9) return [];
+    // Where the edge's own start stands: nought at a run's end, where every
+    // pattern ramps to nothing, and the pattern's own height at a corner the
+    // run carries straight on through — a corner arriving into a wall whose
+    // pattern runs across it, which would otherwise pull the outline off the
+    // pattern and back to the wall.
+    const lift = each.reduce((x, pts) => x + acrossAt(pts, 0), 0);
 
-          return [{ u: Math.min(1, Math.max(0, along / l)), j: run.teeth[k], room: run.room[k], across: run.across[k] }];
-        });
-      })
-      .sort((p, q) => p.u - q.u);
+    done.push({
+      at: lift === 0 ? a : { x: a.x + nx * lift, y: a.y + ny * lift },
+      from: i,
+      j: null,
+      along: 0,
+      room: 1,
+    });
 
-    laid.forEach(t => done.push({
+    summed(each).forEach(t => done.push({
       at: { x: a.x + dx * t.u + nx * t.across, y: a.y + dy * t.u + ny * t.across },
       from: i,
       j: t.j,

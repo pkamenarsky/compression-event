@@ -2356,13 +2356,7 @@ describe('effects', () => {
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 
-  // PHASE 3: parked until the bake meets the teeth in the projection rather
-  // than among the corners — the order of work's pieces 3 and 4. The teeth are
-  // laid after the erosion now, so `spanning` writes the two ends over corners
-  // that no longer have them, and a span cannot carry a tooth across. What
-  // "done" looks like is these four passing again, and in particular this
-  // one's worst step back under 0.5 from the 3.97 it stands at.
-  test.skip('rounded as well, its outline never pops', () => {
+  test('rounded as well, its outline never pops', () => {
     // Where a rounded tooth goes through straight on its way, its arc lies on
     // a line for an instant and the arrangement drops it there, and the bake
     // pins that instant; nothing moves either side of it.
