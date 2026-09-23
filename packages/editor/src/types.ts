@@ -620,8 +620,14 @@ export interface Effects {
    * here because a *fade* — two counts and how far between them — is what a
    * precision cannot say, and a resolve has to hand on the fade a fold had in
    * flight. See `Round.facets` and `publishing` in `resolve.ts`.
+   *
+   * `facetsAt` is the bevel that count was taken at, and the count only holds
+   * there. A bevel is an amount and an author may add to it; a count taken at
+   * the smaller one would then be drawn at the bigger, and the corner would
+   * come out coarser than the precision asks — which is the round a scope
+   * would have laid on the same ring. Past it the precision takes over again.
    */
-  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean, facets?: Facets }
+  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean, facets?: Facets, facetsAt?: number }
   /**
    * `falloff` is how far a tooth reaches along an arc: see
    * `Effecting.falloff`.

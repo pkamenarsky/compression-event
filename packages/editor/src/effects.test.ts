@@ -1063,6 +1063,92 @@ describe('the bake hears of effects', () => {
   });
 });
 
+/**
+ * Property 1's other half: an effect laid on a scope draws what the same
+ * effect laid on what that scope resolves to draws. One is a round on the
+ * group; the other is the group flattened first and the round put on the ring
+ * it came to. If a resolve is the same world said another way, the two cannot
+ * part.
+ *
+ * It holds where the scope already lays something, because there the ring it
+ * resolves to carries the members' teeth and arcs as *amounts*, and a round
+ * put on afterwards adds its bevel to the ring's corners exactly as a scope
+ * would.
+ *
+ * It fails where the scope lays nothing. There is no fold to take amounts
+ * from — `shapes` says so, and the members reach the level drawn as
+ * themselves, a tooth of one running past another's wall clipped by the union
+ * rather than faded at its end — so the ring resolves with its teeth as
+ * *geometry*, every tooth tip a corner of the polygon. Round that and every
+ * tooth is rounded: a ring of 116 points comes to 370 where the scope's own
+ * round gives 116.
+ *
+ * Folding whatever the amounts is the shape of the answer and is not free:
+ * measured, it stops the teeth being rounded (370 points become 51) and it
+ * loses the teeth at the crossings, two rows of `a scope draws what it
+ * resolves to` going with them. What has to be settled first is the crossing
+ * itself — whether a tooth standing where two members cross is clipped by the
+ * union, as it is today, or faded at the end of its run, as a fold does it.
+ * That is a question about the look, not about the code.
+ */
+describe('an effect on a scope, and on what it resolves to', () => {
+  const zigzag = { spacing: 25, pattern: 'zigzag' as const, seed: 1, sides: 'both' as const, jitter: 0 };
+
+  /** Two overlapping rooms, deformed, sealed into a scope that lays `bevel`. */
+  const scope = (bevel: number): { world: World, id: Id } => {
+    const a = room(emptyWorld(), rect(0, 0, 200, 140));
+    const b = room(a.world, rect(160, 40, 260, 180));
+    const one = [a.id, b.id].reduce(
+      (w, id) => wrote(withEffects(w, id, { deform: zigzag }), 0, id, deform(6)),
+      b.world,
+    );
+    const g = grouped(one, 0, [a.id, b.id], TOP)!;
+    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 40) });
+
+    return { world: bevel === 0 ? sealed : wrote(sealed, 0, g.id, round(bevel)), id: g.id };
+  };
+
+  const rings = (shape: readonly (readonly Point[])[]) => shape.map(ring => {
+    const all = ring.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+    const pts = all.filter((p, i) => p !== all[(i + 1) % all.length]);
+    const first = pts.indexOf([...pts].sort()[0]);
+
+    return [...pts.slice(first), ...pts.slice(0, first)];
+  }).sort();
+
+  /** The same round added, once to the scope and once to what the scope
+   * resolves to: a bevel is an amount and amounts add, so a scope already
+   * rounding `was` and rounded `by` more is a scope rounding the sum. */
+  const both = (was: number, by: number) => {
+    const onScope = rings(csg(scope(was + by).world, 0));
+    const flat = resolveGroup(scope(was).world, 0, scope(was).id)!.world;
+    const after = [...flat.polygons.keys()].reduce(
+      (w, p) => wrote(withEffects(w, p, { ...w.effects.get(p), round: inSegments(8, 40) }), 0, p, round(by)),
+      flat,
+    );
+
+    expect(rings(csg(after, 0))).toEqual(onScope);
+  };
+
+  test('a scope rounding a little, rounded twice as much again', () => {
+    both(5, 10);
+  });
+
+  test('the same, further out', () => {
+    both(10, 20);
+  });
+
+  test('and further, past what the walls have room for', () => {
+    both(20, 40);
+  });
+
+  // See above: a scope laying nothing resolves to teeth as geometry, and the
+  // round then rounds each tooth.
+  test.fails('a scope that lays nothing, then rounded', () => {
+    both(0, 40);
+  });
+});
+
 describe('a scope inside a scope', () => {
   /**
    * A room under `scopes`, innermost first: each seals what came before it

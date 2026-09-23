@@ -1196,6 +1196,46 @@ that deforms publishes no line options at all, so a group still looks like a
 polygon: one pattern along its union. The pane's Deform box is about the picked
 edges' own, exactly as its Round box is about the picked corners'.
 
+## An effect on a scope, and on what it resolves to
+
+Property 1's other half, and the one an author actually feels: a round put on
+a sealed group must draw what the same round put on what that group resolves
+to draws. Recorded as `an effect on a scope, and on what it resolves to`. A
+bevel is an amount and amounts add, so the comparison is a scope already
+rounding `was` and rounded `by` more against a scope rounding the sum.
+
+**Where the scope lays something, it holds** — but it took `facetsAt`. The
+count a resolve writes down is right for the bevel it was taken at and wrong
+for any other: added to, the corner came out at the bigger bevel in the
+smaller bevel's count, coarser than the precision asks and coarser than a
+scope would have drawn it. So the count carries the bevel it was for and holds
+only there; past it the precision takes over, which is the whole reason the
+precision is the knob. A corner whose member published no options of its own
+falls back on the ring's own — the scope's, which is what faceted it — rather
+than on a precision of nought, which would have chamfered it.
+
+**Where the scope lays nothing, it does not hold, and the reason is
+structural.** `shapes` says no fold happens there: the members reach the level
+drawn as themselves, a tooth of one running past another's wall clipped by the
+union rather than faded at its end. So the ring resolves with its teeth as
+*geometry*, every tooth tip a corner of the polygon, and a round put on it
+afterwards rounds every tooth — 116 points come to 370 where the scope's own
+round gives 116.
+
+Folding whatever the amounts is the shape of the answer and is not free.
+Measured: it stops the teeth being rounded (370 points become 51) and it loses
+the teeth at the crossings, taking two rows of `a scope draws what it resolves
+to` with them — a tooth standing where two members cross is drawn at full
+height today and fades to nothing through a fold. Measuring the fade against
+the naming line rather than the run, which is the same fix as `reach` and the
+obvious candidate, breaks `a group's deform starting from nought fades its
+verticals in` and does not recover the rows.
+
+So what has to be settled first is the crossing itself: whether a tooth
+standing where two members cross is clipped by the union, as it is today, or
+faded at the end of its run, as a fold does it. That is a question about the
+look, and it is not the code's to answer.
+
 ## Open questions
 
 - **Whether the sums associate up through nesting** (*Step 5*): the naming

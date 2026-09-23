@@ -441,8 +441,17 @@ export function effectedOf(
   // drew this very corner in it and a resolve wrote it back, and the whole
   // point of writing it was that the precision would not say the same. See
   // `Effects['round']`.
-  const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
-    (round === undefined ? SQUARE : round.facets ?? facetsOf(segmentsOf(round, bevel, scale), round.tension));
+  const faceted = (round: Options['round'] | undefined, bevel: number): Facets => {
+    if (round === undefined) return SQUARE;
+
+    // The count only where the bevel is still the one it was taken at: see
+    // `Effects['round']`.
+    const kept = round.facets !== undefined
+      && round.facetsAt !== undefined
+      && Math.abs(round.facetsAt - bevel) < 1e-9 * Math.max(1, Math.abs(bevel));
+
+    return kept ? round.facets! : facetsOf(segmentsOf(round, bevel, scale), round.tension);
+  };
   const flat = corners.map(c => c.root !== undefined);
 
   // Faceted as the arc is seen, not as it is drawn: a held round the erosion

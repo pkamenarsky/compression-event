@@ -861,11 +861,18 @@ function publishing(
       // facets a corner its member gave no options for in the scope's own
       // count, whatever the sum comes to. A count is what says that, which is
       // the whole of why `Effects['round'].facets` is there.
+      // The count, and something to fall back on past the bevel it was taken
+      // at: the options the member published where it published any, and the
+      // ring's own — the scope's, which is what faceted this corner — where
+      // it did not. A precision of nought would chamfer.
+      const mine = held.effects.get(id)?.round;
+
       optioned(id, corner, 'round', was.facets === undefined ? undefined : {
-        precision: was.round?.precision ?? 0,
-        tension: was.facets.tension,
-        chamfer: was.facets.n === 1,
+        precision: was.round?.precision ?? mine?.precision ?? 0,
+        tension: was.round?.tension ?? mine?.tension ?? was.facets.tension,
+        chamfer: was.round?.chamfer ?? mine?.chamfer ?? false,
         facets: was.facets,
+        facetsAt: was.bevel,
       });
     }
 
