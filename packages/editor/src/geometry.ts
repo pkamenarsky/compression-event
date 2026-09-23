@@ -2762,8 +2762,19 @@ export function patternRun(
   // and the other stops at once.
   const before: [number, number][] = [], after: [number, number][] = [];
 
-  const last = reach === undefined ? length : anchor + reach;
-  const first = reach === undefined ? 0 : anchor - reach;
+  // How far out the teeth are walked. Bounded by the run itself, or — given a
+  // reach — by the line the pattern belongs to: a reach either way from
+  // `from`, which is that line's middle, and not from the anchor, which the
+  // seed's offset has already moved along it. Then widened to take in
+  // everything the fade leaves standing, so that the walk can only ever stop
+  // short of a tooth of no height.
+  //
+  // Stopping on one that still has height is the pop PLAN-bevel's step 0
+  // measured: the offset made the window a half spacing short at one end, the
+  // growing bevel shortened the line the reach is read off, and the tooth at
+  // that end fell out of the window at whatever height the fade had left it.
+  const last = Math.max(reach === undefined ? length : from + reach, length - clearTo);
+  const first = Math.min(reach === undefined ? 0 : from - reach, clear);
 
   for (let j = 0, at = anchor; at <= last; j++, at = next(j, at)) after.push([j, at]);
   for (let j = -1, at = next(-1, anchor); at >= first; j--, at = next(j, at)) before.push([j, at]);
@@ -3503,11 +3514,31 @@ export function curveThrough(points: readonly Point[]): Curved {
 
     return { x: points[k].x + (points[k + 1].x - points[k].x) * f, y: points[k].y + (points[k + 1].y - points[k].y) * f };
   };
-  const normal = (u: number): Point => {
-    const { k } = at(u);
+  const facet = (k: number): Point => {
     const x = points[k + 1].x - points[k].x, y = points[k + 1].y - points[k].y, l = Math.hypot(x, y);
 
     return l === 0 ? { x: 0, y: 0 } : { x: y / l, y: -x / l };
+  };
+
+  // A vertex takes both its facets' normals, and a point along a facet mixes
+  // its two ends': so the normal is continuous in `u`, and the curve's rather
+  // than the facet's. A tooth is pushed along it, and the facet's own would
+  // swing by the whole turn at a vertex as the tooth slid over it — which is
+  // the second half of the pop PLAN-bevel's step 0 measured, and the one a
+  // growing bevel walks a tooth straight into.
+  const corners = n < 1 ? [] : points.map((_p, k) => {
+    const a = facet(Math.max(0, k - 1)), b = facet(Math.min(n - 1, k));
+    const x = a.x + b.x, y = a.y + b.y, l = Math.hypot(x, y);
+
+    return l === 0 ? b : { x: x / l, y: y / l };
+  });
+  const normal = (u: number): Point => {
+    if (n < 1) return { x: 0, y: 0 };
+
+    const { k, f } = at(u);
+    const x = mix(corners[k].x, corners[k + 1].x, f), y = mix(corners[k].y, corners[k + 1].y, f), l = Math.hypot(x, y);
+
+    return l === 0 ? facet(k) : { x: x / l, y: y / l };
   };
 
   // Twice the area three points a step apart make, over their three sides:
