@@ -310,9 +310,47 @@ It never emits more points than it was handed, so a ring cannot grow under a
 fold however deep the nesting goes. Nothing wires it into `eroding`: an erosion
 lays no samples, and the caller that needs it is the round.
 
-**5. `round` as the opening.** Built on 3 and 4. A polygon only, held against
-`arcsWith` for the look — a rounded square must still read as a rounded square,
-and a deviation is allowed where it is small.
+**5. `round` as the opening.** Done: `dilating` and `rounding` in `effect.ts`.
+In by `by` with step 3's offset, out by `by` with the Minkowski sum of a disc —
+the shape, a quad per wall, a fan at every corner the boundary turns out at —
+and step 4's resample on the end.
+
+Not the mitred offset run backwards, which was worth finding out early: a mitre
+out of a mitre in is the shape it started as and nothing has been rounded. The
+disc is what puts an arc there, and identity falls out of it exactly as this
+plan said it would — a point is on a translate of a wall and is that wall's, or
+on an arc about a corner and is `on(corner, t)` with `t` sweeping the turn.
+
+Held against the look, on a 200 square at `ε` of 0.5:
+
+- against a **true circular fillet** it is within 0.43 at bevels of 10, 20 and
+  50 — the faceting, and nothing else;
+- **`arcsWith` is 1.5, 3.0 and 7.5 from that same circle**, growing with the
+  bevel, because it draws a tension curve and never did draw an arc. The whole
+  of the difference between the two is that. A rounded square still reads as a
+  rounded square and reads as one *more* exactly than it did;
+- `round(10)` then `round(30)` is `round(30)` to a billionth and at the same
+  point count. `round(max(a, b))`, measured;
+- **a concave corner comes out exactly where it was**, named of the two walls
+  that meet there. An opening takes nothing off one, which is a real difference
+  from `arcsWith` and leaves the closing where this plan left it: an open
+  question, not built.
+
+Two things the resample had to learn, which step 4 could not have known. An
+arc's two ends are features — but only where the corner it was laid about was
+one, since a round lays a fan at *every* turn and a turn between two facets of
+an arc it rounded last time is the curve carrying on. And a run leaving
+`on(e, 0)` is the arc about `e`, so its samples are named in that family rather
+than nested on the anchor, or a round of a round of a round would carry a name
+as long as the fold is deep. With both, six rounds of 20 on a square go 20, 32,
+44, 48, 48, 56 points and stop.
+
+What it costs that is worth knowing: the erosion's band crosses a faceted arc
+at every facet, so each round makes a crop of `born` points, and a `born` name
+holds both its parents' names. Six rounds deep the longest name is about 300
+characters. The handles stay integers and comparing two is still comparing two
+numbers; it is the interning that pays. Nothing in the editor nests that deep,
+but the bake is where it would show.
 
 **6. `deform` as an `Effect`.** Teeth laid along the ring by arc length from an
 anchor that is an identity and an offset, rather than by the per-edge parallel
