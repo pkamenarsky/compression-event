@@ -127,7 +127,6 @@ interface Model {
   precision: number
   tension: number
   chamfer: boolean
-  held: boolean
   corners: boolean
   own: Some
 }
@@ -302,7 +301,6 @@ function modelOf(
     precision: r.precision,
     tension: r.tension,
     chamfer: r.chamfer,
-    held: r.held !== false,
     corners: mine,
     own: mine ? some(corners, c => ownRound(world, c)) : 'none',
   };
@@ -379,7 +377,7 @@ function body(
     }
 
     const shown = name === 'round'
-      ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer(), held: m.held() }
+      ? { precision: m.precision(), tension: m.tension(), chamfer: m.chamfer() }
       : { spacing: m.spacing(), pattern: m.pattern(), sides: m.sides(), seed: m.seed(), jitter: m.jitter(), falloff: m.falloff() };
     const remembered = { ...s.remembered, [name]: { ...shown, ...patch } };
 
@@ -493,9 +491,6 @@ function body(
       // From about a circle at nought to tight in the corner at one.
       show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
-      // The bevel as it is seen, however deep the erosion; unticked, the round
-      // is drawn and eroded with the rest, and tightens as the walls grow.
-      field('held', tick(m.held, v => changed('round', { held: v }))),
       show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);

@@ -878,7 +878,7 @@ export function contributed(
     const faded = bare ? [] : [
       ...(fx === undefined || shapedBy === null || (fx.facets.from === fx.facets.to && fx.facets.from >= fx.facets.n)
         ? []
-        : rounded.runs.flatMap(run => facetFades(run, fx.facets))),
+        : rounded.runs.flatMap(run => facetFades(run.points, fx.facets))),
 
       // And its teeth still lying flat in it: see `FoldShaped.fades`.
       ...(shaped?.fades ?? []),

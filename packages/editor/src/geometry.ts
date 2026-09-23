@@ -4225,7 +4225,9 @@ export function outlineOf(
  */
 export interface FoldShaped {
   shape: Shape
-  runs: Point[][]
+  /** Each arc it drew, by the corner that asked for it: nought where the
+   * corner was nobody's. See `Imaged.corners`. */
+  runs: { id: number, points: Point[] }[]
   square: Point[]
   keep: Point[]
   /**
@@ -4312,20 +4314,34 @@ export function foldShaped(
      * step 4.
      */
     naming?: Naming,
-    /**
-     * Points of the ring that are corners though they do not turn, and so
-     * must survive the cleaning below: a corner the bake invented, flat on
-     * the wall at the end that invented it. Without it the wall is one edge,
-     * and the naming that splits there cannot see its two halves — so a
-     * pattern would arrive whole at the first instant instead of standing
-     * flat from the start. Not `square`, which would leave the edges either
-     * side of it untoothed. See PLAN-bevel 3.9.
-     */
-    aside?: readonly Point[],
   } | null,
   depth: number,
+  /**
+   * Points of the ring that are corners though they do not turn: a corner the
+   * bake invented, flat on the wall at the end that invented it.
+   *
+   * Two things hang on it, and a round with no deform on it needs the second,
+   * which is why it is here and not among the deform's amounts.
+   *
+   * It must survive the cleaning below. Without it the wall is one edge, and
+   * the naming that splits there cannot see its two halves — so a pattern
+   * would arrive whole at the first instant instead of standing flat from the
+   * start. Not `square`, which would leave the edges either side of it
+   * untoothed. See PLAN-bevel 3.9.
+   *
+   * And it is rounded on its own, from the points either side of it, with the
+   * arcs around it laid as though it were not there — `outlineOf`'s `apart`.
+   * It sits wherever its neighbours put it, which may be a hair from a corner
+   * that has a whole bevel of its own, and rationed against that corner it
+   * would be cut back to nothing and lose its points. A span whose two ends
+   * differ in whether such a corner had room is two rings of different
+   * lengths, which is the one thing `spanning` exists to prevent.
+   */
+  aside: readonly Point[] = [],
 ): FoldShaped {
-  if (fold.length === 0) return { shape: [], runs: [], square: [], keep: [], fades: [], named: { lines: [], corners: [] } };
+  if (fold.length === 0) {
+    return { shape: [], runs: [], square: [], keep: [], fades: [], named: { lines: [], corners: [] } };
+  }
 
   let scale = 1;
 
@@ -4334,7 +4350,7 @@ export function foldShaped(
   const tol = scale * 1e-9;
   const same = (p: Point, q: Point) => Math.abs(p.x - q.x) <= tol && Math.abs(p.y - q.y) <= tol;
   const isSquare = (p: Point) => square.some(q => same(p, q));
-  const isAside = (p: Point) => deform?.aside?.some(q => same(p, q)) ?? false;
+  const isAside = (p: Point) => aside.some(q => same(p, q));
 
   // Which member edge a straight of the fold lies on: the first along it, so
   // that a wall two members share takes one of them and keeps it while
@@ -4431,6 +4447,13 @@ export function foldShaped(
   // laid by, and the facets it is drawn in — a member's where it asked for
   // them, since two of them may want different precision.
   const wanted: number[] = [], face: Facets[] = [];
+
+  // And which published corner it was, so the arc drawn there is handed back
+  // under that corner's own name: see `FoldShaped.runs`.
+  const whose: number[] = [];
+
+  // And which of them are set aside, to be rounded on their own: see `aside`.
+  const apart: boolean[] = [];
 
   // The names of the runs either side of each point of `source`, so that a
   // corner of the fold takes the amplitudes of its own two edges the way a
@@ -4638,6 +4661,8 @@ export function foldShaped(
           drawn.push(0);
           wanted.push(0);
           face.push(SQUARE);
+          whose.push(0);
+          apart.push(false);
         }
 
         continue;
@@ -4669,6 +4694,8 @@ export function foldShaped(
       drawn.push(made.j === null ? bevels[made.from] : 0);
       wanted.push(made.j === null ? wants[made.from] : 0);
       face.push(made.j === null ? faced[made.from] : SQUARE);
+      whose.push(made.j === null ? own[made.from]?.id ?? 0 : 0);
+      apart.push(made.j === null && isAside(ring[made.from]));
     }
   });
 
@@ -4680,7 +4707,7 @@ export function foldShaped(
     ? null
     : { e: deform.e, before: deform.amplitude(beforeOf[i]), after: deform.amplitude(afterOf[i]), key: 0, seen: Math.min(CRAMMED, wanted[i] / drawn[i]) });
 
-  const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : face[i]), i => drawn[i], arcTeeth);
+  const o = outlineOf(source, starts, i => tooth[i], i => (tooth[i] ? SQUARE : face[i]), i => drawn[i], arcTeeth, i => apart[i]);
 
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
@@ -4700,7 +4727,7 @@ export function foldShaped(
 
     const images = run.map(image);
 
-    return images.some(p => p === null) ? [] : [images as Point[]];
+    return images.some(p => p === null) ? [] : [{ id: whose[i], points: images as Point[] }];
   });
 
   // A kept point is on a straight of the fold: carried to the same share of

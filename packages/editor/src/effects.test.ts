@@ -74,30 +74,25 @@ function shapeOf(world: World, id: Id) {
 const ROUND: Effects = { round: inSegments(8, 5) };
 
 describe('a polygon\'s effects', () => {
-  test('a rounded room is its arcs, eroded: held, the bevel it asked for', () => {
+  test('a rounded room is its arcs, drawn on what the erosion leaves', () => {
     const { world, id } = room();
-    const held = wrote(withEffects(world, id, ROUND), 0, id, erode(10), round(5));
+    const deep = wrote(withEffects(world, id, ROUND), 0, id, erode(10), round(5));
 
-    // Drawn fifteen deep and eroded ten: a round five deep, near enough — an
-    // offset curve is not the curve again at a smaller size, and is some two
-    // square units off it a corner.
-    expect(shapeOf(held, id)).toHaveLength(1);
-    expect(Math.abs(shapeArea(shapeOf(held, id)) - roundedRect(80, 80, 5, 8))).toBeLessThan(16);
+    // The round is drawn after the erosion — PLAN-bevel's step 6 — so it is
+    // the eroded room's own arcs and nothing else: exactly `R(80, 5)`, where
+    // rounding first and eroding after was some square units off it, an
+    // offset curve not being the curve again at a smaller size.
+    expect(shapeOf(deep, id)).toHaveLength(1);
+    expect(shapeArea(shapeOf(deep, id))).toBeCloseTo(roundedRect(80, 80, 5, 8), 6);
 
-    // And not held, the same round drawn five deep: eroded past it, it is
-    // square again.
-    const unheld = wrote(withEffects(world, id, { round: { ...ROUND.round!, held: false } }), 0, id, erode(10), round(5));
-
-    expect(shapeArea(shapeOf(unheld, id))).toBeCloseTo(80 * 80, 6);
-
-    // With no erosion, held or not, it is its arcs.
+    // With no erosion, its arcs as they are asked for.
     const plain = wrote(withEffects(world, id, ROUND), 0, id, round(5));
 
     expect(shapeOf(plain, id)[0]).toHaveLength(4 * 9);
     expect(shapeArea(shapeOf(plain, id))).toBeCloseTo(roundedRect(100, 100, 5, 8), 6);
   });
 
-  test('a held round is faceted as it is seen, however deep it is drawn', () => {
+  test('a round is faceted as it is seen, however deep the erosion', () => {
     const { world, id } = room(emptyWorld(), rect(0, 0, 1000, 1000));
     const fx: Effects = { round: { precision: 2, tension: 0.5, chamfer: false } };
     const facets = (depth: number) => resolveAt(wrote(withEffects(world, id, fx), 0, id, erode(depth), round(300)), 0)
@@ -235,10 +230,8 @@ describe('what a member publishes about its outline', () => {
     // What a scope does to what its members published: the same erosion the
     // fold itself goes through, so the names still lie on it. Against the
     // room resolved at that depth, which is the answer.
-    // Not held, so the erosion offsets the arc it drew rather than drawing a
-    // bigger one: what a scope's depth does to a member's arc.
     const { world, id } = room();
-    const fx: Effects = { round: { ...inSegments(8, 10)!, held: false } };
+    const fx: Effects = { round: inSegments(8, 10) };
     const w = withEffects(world, id, fx);
     const shallow = wrote(w, 0, id, round(10));
     const deep = wrote(w, 0, id, round(10), erode(7));
@@ -614,13 +607,24 @@ describe('editing effects', () => {
     // Every edge is its two ends now; what tells them apart is the shape.
     [a, b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
 
-    // Only the deformed edge's wall has anything standing off it: each point
-    // the deform moved is nearer that edge than any other.
+    // Only the deformed edge's *run* has anything standing off it — and its
+    // run is the wall and the two arcs at its ends. Laid on the eroded
+    // outline, a straight and an arc are one kind of run, so a tooth carries
+    // on round the corner rather than stopping short of it, going over from
+    // this edge's amplitude to its neighbour's as it goes: PLAN-bevel 3.5 and
+    // the parked test below. So a point the deform moved is nearer that edge
+    // than any other, or else on one of its two corners' arcs.
     const plain = resolveAt(rounded, 0).find(r => r.id === id)!;
     const moved = it.shape[0].filter(p => toShape(p, plain.shape) > 1e-6);
+    const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
 
     expect(moved.length).toBeGreaterThan(0);
-    moved.forEach(p => expect(nearestEdge(p, [a, b, c, d])).toBe(0));
+    moved.forEach(p => expect(
+      nearestEdge(p, [a, b, c, d]) === 0 || from(p, a.at) <= 30 || from(p, b.at) <= 30,
+    ).toBe(true));
+
+    // And nothing stands off the two walls that edge does not touch.
+    moved.forEach(p => expect(from(p, c.at)).toBeGreaterThan(30));
 
     // The corner the deformed edge does not touch is rounded as it was.
     const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];

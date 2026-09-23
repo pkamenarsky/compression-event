@@ -194,6 +194,31 @@ describe.skipIf(!process.env.EXPERIMENT)('diagnostic: the fold route pinches', (
     }
   });
 
+  it('Q8: does the span start on the editor\'s outline?', () => {
+    // The assertion `steadiest` was hiding: at the near end the wall is one
+    // edge with one pattern, and the outline there should be the editor's.
+    const lengthOf = (f: ReturnType<typeof truth>) => f.reduce((s, r) =>
+      s + r.points.slice(1).reduce((t, q, i) => t + Math.hypot(q.x - r.points[i].x, q.y - r.points[i].y), 0), 0);
+    const cases: [string, Effects, Writing[]][] = [
+      ['round alone', ROUND, [round(10)]],
+      ['deform alone', { deform: ZIGZAG }, [deform(5)]],
+      ['both', { ...ROUND, deform: ZIGZAG }, [round(10), deform(5)]],
+    ];
+
+    for (const [name, fx, ops] of cases) {
+      const w = arriving(fx, ...ops);
+
+      for (const t of [0, 1]) {
+        const bake = lengthOf(truth(w, 0, t));
+        const at = resolveAt(w, t).find(r => r !== undefined);
+        const editor = at === undefined ? NaN : (imagesOf(at)?.shape ?? []).reduce((s, r) =>
+          s + r.reduce((u, q, i) => u + Math.hypot(q.x - r[(i + 1) % r.length].x, q.y - r[(i + 1) % r.length].y), 0), 0);
+
+        log(`Q8 ${name}, t ${t}: bake ${bake.toFixed(4)}, editor ${editor.toFixed(4)}, apart ${Math.abs(bake - editor).toFixed(4)}`);
+      }
+    }
+  });
+
   it('prints', () => {
     console.log(`\n${report.join('\n')}\n`);
     expect(report.length).toBeGreaterThan(0);

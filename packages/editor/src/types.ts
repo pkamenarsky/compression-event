@@ -613,9 +613,7 @@ export interface World {
  *   `outlineOf`.
  */
 export interface Effects {
-  /** `held` keeps a round the bevel it is asked for however deep the thing is
-   * eroded, which it is unless it says otherwise: see `drawnBevels`. */
-  round?: { precision: number, tension: number, chamfer: boolean, held?: boolean, off?: boolean }
+  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean }
   /** `falloff` is how far a tooth reaches along an arc: see
    * `Effecting.falloff`. */
   deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, falloff?: number, off?: boolean }

@@ -52,10 +52,10 @@ function room(nudge = 0): Ring {
 // -----------------------------------------------------------------------------
 
 /** The room with its effects written, at one set of amounts. */
-function world(ring: Ring, a: Amounts, held = false): World {
+function world(ring: Ring, a: Amounts): World {
   const added = addPolygon(emptyWorld(), { level: 'hollow' }, ring, 0, TOP);
   const fx: Effects = {
-    round: { ...inSegments(SEGMENTS, 20), held },
+    round: inSegments(SEGMENTS, 20),
     deform: { spacing: SPACING, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
   };
   const w: World = { ...added.world, effects: new Map([[added.id, fx]]) };
@@ -68,8 +68,8 @@ function world(ring: Ring, a: Amounts, held = false): World {
  * — drawn corners and the teeth the deform made of them — named by its id and
  * which point of its arc it is, which is exactly what the bake carries.
  */
-function today(ring: Ring, a: Amounts, held = false): Named {
-  const at = resolveAt(world(ring, a, held), 0)[0];
+function today(ring: Ring, a: Amounts): Named {
+  const at = resolveAt(world(ring, a), 0)[0];
   const im = imagesOf(at);
   const out: Named = new Map();
 
@@ -202,8 +202,8 @@ function last(ring: Ring, a: Amounts, arcs_: ArcMode = 'length', seg = SEGMENTS,
  * gives it, no bevel and no depth — so all it does is name the runs and lay
  * the teeth.
  */
-function viaFold(ring: Ring, a: Amounts, held = false, reach = false): { points: number, rings: number, ring: Point[] } {
-  const w = world(ring, { ...a, amplitude: 0 }, held);
+function viaFold(ring: Ring, a: Amounts, reach = false): { points: number, rings: number, ring: Point[] } {
+  const w = world(ring, { ...a, amplitude: 0 });
   const at = resolveAt(w, 0)[0];
   const names = namesOf(at);
 
@@ -359,12 +359,12 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: round → erode → deform
     }
   });
 
-  it('P6: held, so the arc is never eroded past its radius', () => {
+  it('P6: the arc is never eroded past its radius', () => {
     for (const [name, amounts] of cases) {
-      const a = midError(t => today(room(), amounts(t), true));
+      const a = midError(t => today(room(), amounts(t)));
       const b = midError(t => last(room(), amounts(t), 'length', SEGMENTS, true));
 
-      log(`P6 ${name}, held: today ${a.worst.toFixed(4)} (${a.name}), last ${b.worst.toFixed(4)} (${b.name})`);
+      log(`P6 ${name}: today ${a.worst.toFixed(4)} (${a.name}), last ${b.worst.toFixed(4)} (${b.name})`);
     }
   });
 
@@ -388,19 +388,17 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: round → erode → deform
     // Where the outline keeps its point count, index is identity, so the two
     // ends can be compared point for point.
     const amounts = (t: number): Amounts => ({ bevel: 12, amplitude: 4, depth: mix(0, 8, t) });
-    const held = true;
-
     for (const reach of [false, true]) {
-      const ends = [viaFold(room(), amounts(0), held, reach), viaFold(room(), amounts(1), held, reach)];
+      const ends = [viaFold(room(), amounts(0), reach), viaFold(room(), amounts(1), reach)];
 
-      log(`P8 depth 0 → 8, held, reach ${reach}: ${ends[0].points} points at one end, ${ends[1].points} at the other`);
+      log(`P8 depth 0 → 8, reach ${reach}: ${ends[0].points} points at one end, ${ends[1].points} at the other`);
 
       if (ends[0].points !== ends[1].points) continue;
 
       let worst = 0, moved = false;
 
       for (let k = 1; k < 16 && !moved; k++) {
-        const t = k / 16, now = viaFold(room(), amounts(t), held, reach);
+        const t = k / 16, now = viaFold(room(), amounts(t), reach);
 
         if (now.points !== ends[0].points) {
           log(`P8   the count moves to ${now.points} at t ${t.toFixed(2)}`);
@@ -420,13 +418,11 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: round → erode → deform
   });
 
   it('P9: where the points go as the depth runs', () => {
-    for (const held of [false, true]) {
-      for (const depth of [0, 2, 4, 6, 8]) {
-        const plain = viaFold(room(), { bevel: 12, amplitude: 0, depth }, held, true);
-        const toothed = viaFold(room(), { bevel: 12, amplitude: 4, depth }, held, true);
+    for (const depth of [0, 2, 4, 6, 8]) {
+      const plain = viaFold(room(), { bevel: 12, amplitude: 0, depth }, true);
+      const toothed = viaFold(room(), { bevel: 12, amplitude: 4, depth }, true);
 
-        log(`P9 held ${held}, depth ${depth}: undeformed ${plain.points}, deformed ${toothed.points} (teeth ${toothed.points - plain.points})`);
-      }
+      log(`P9 depth ${depth}: undeformed ${plain.points}, deformed ${toothed.points} (teeth ${toothed.points - plain.points})`);
     }
   });
 

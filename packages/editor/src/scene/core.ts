@@ -452,18 +452,10 @@ export function drawnBevels(
 
     if (round === undefined || !drawn(i)) return 0;
 
-    const seen = amounts.bevel + (amounts.bevels.get(c.id) ?? 0);
-
-    if (!(seen > 0) || round.held === false) return Math.max(0, seen);
-
-    // Down to a sliver of itself, never to nothing: an erosion deep enough to
-    // take a corner that turns into the material back past its own bevel
-    // would leave it square, and a square corner eroded mitres to a point
-    // where a rounded one — however little — fans out at the depth. The two
-    // are not near each other, so the corner keeps a hair of its round and
-    // the fan is there throughout. `SEEDING` is what a corner barely turning
-    // keeps of its bevel, for the same reason. See `arcs`.
-    return Math.max(seen * SEEDING, seen + depth(i) * convex(i));
+    // The bevel as it is asked for. The round is drawn after the erosion — see
+    // PLAN-bevel's step 6 — so there is no depth left to draw it out against,
+    // which is what `held` used to do and why it is gone.
+    return Math.max(0, amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
   });
 }
 
@@ -1077,6 +1069,12 @@ const imagedBy = remembered((
     ? null
     : { e, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 });
 
+  // The corner names and the amplitudes, which come with the deform and so
+  // are not there without one: the round is drawn either way, and names its
+  // own arcs by where the corner is in the ring.
+  const name = ids ?? source.map((_p, i) => i);
+  const amp = after ?? source.map(() => 0);
+
   // Which corners are set aside, at each end of a span and for the geometry.
   //
   // A corner is set aside where it is flat — where the bake invented it, so
@@ -1093,30 +1091,18 @@ const imagedBy = remembered((
   const far = apartTo.length === 0 ? near : source.map((_p, i) => apartTo[i] === 1);
   const aside = apartAt === 0 ? near : apartAt === 1 ? far : near.map((x, i) => x && far[i]);
 
-  // Rounded and nothing else: the teeth are laid on what the erosion leaves,
-  // not on this. See PLAN-bevel 3.1.
-  const o = outlineOf(source, rings, () => false, i => each[i], i => bevels[i], () => null, i => aside[i]);
-  const deep = depths === null ? null : o.owner.map(i => depths[i]);
-  const at = (k: number) => deep?.[k] ?? erosion;
-  const image = (k: number) => mitred(o.ring, o.rings, k, at(k));
-  const corners = o.arcs.map(run => {
-    const images = run.map(image);
-
-    return images.some(p => p === null) ? null : images as Point[];
-  });
-  const eroded = offsetOf(o.ring, o.rings, erosion, deep);
-  const drawn = o.arcs.map(run => run.map(k => o.ring[k]));
-  const rest = { corners, teeth: [] as Point[], drawn, rest: [], restSquare: [] };
-
-  if (e === null) return { shape: eroded, ...rest };
-
-  // What each run of the eroded outline is: a source edge's line, named by
-  // the corner it leaves, and a rounded corner's arc, named by that corner.
-  // The same thing `namesOf` reports, built from the inside so that nothing
-  // has to resolve to ask. See PLAN-bevel 2.9.
+  // Eroded first, and the round and the teeth in one pass on what that
+  // leaves: a polygon takes the order a scope's fold takes, and publishes its
+  // corners to that fold exactly as `namesOf` publishes them to a scope. See
+  // PLAN-bevel's step 6.
   const n = source.length;
+  const at = (i: number) => depths?.[i] ?? erosion;
+  const ats = source.map((_p, i) => mitred(source, rings, i, at(i)));
+  const eroded = offsetOf(source, rings, erosion, depths);
+  const ours = ats.flatMap((p, i) => (p === null
+    ? []
+    : [{ id: i, at: p, bevel: bevels[i], facets: each[i] }]));
   const lines: { id: number, a: Point, b: Point }[] = [];
-  const curves: { id: number, points: Point[] }[] = [];
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
 
   // A corner the bake invented names nothing: it sits wherever its neighbours
@@ -1135,25 +1121,15 @@ const imagedBy = remembered((
 
       while (!names(j) && j !== i) j = nextOf(rings, n, j);
 
-      const mine = corners[i], theirs = corners[j];
+      const a = ats[i], b = ats[j];
 
-      if (mine === null || theirs === null) continue;
+      if (a === null || b === null || same(a, b)) continue;
 
-      const a = mine[mine.length - 1], b = theirs[0];
-
-      if (same(a, b)) continue;
-
-      out.push({ id: ids[i], a, b });
+      out.push({ id: name[i], a, b });
     }
 
     return out;
   };
-
-  corners.forEach((run, i) => {
-    if (run === null || run.length < 2 || near[i] || run.every(p => same(p, run[0]))) return;
-
-    curves.push({ id: ids[i], points: run });
-  });
 
   lines.push(...linesBy(near));
 
@@ -1161,25 +1137,33 @@ const imagedBy = remembered((
   // the wall it splits carries both patterns across the span.
   const other = far.every((x, i) => x === near[i]) ? null : { lines: linesBy(far), weight: apartAt };
 
-  const amplitude = new Map(ids.map((id, i) => [id, after[i]]));
+  const amplitude = new Map(name.map((id, i) => [id, amp[i]]));
 
-  // Which source corner each point of the eroded outline came of: the arcs
-  // report it, so a run is named outright and nothing is matched to a line
-  // within a tolerance. A point a crossing made is in no arc and names
-  // nothing. See `Naming`.
+  // Which source corner each point of the eroded outline came of: its own
+  // corners, where the erosion put them, so a run is named outright and
+  // nothing is matched to a line within a tolerance. A point a crossing made
+  // is nobody's and names nothing. See `Naming`.
+  //
   // Matched with a tolerance, not by equality: the arrangement the erosion
   // runs may hand a point back a hair from where `mitred` put it, as
-  // `foldShaped`'s own `onArc` allows for.
+  // `foldShaped`'s own `ownAt` allows for.
   let big = 1;
 
   for (const ring of eroded) for (const p of ring) big = Math.max(big, Math.abs(p.x), Math.abs(p.y));
 
   const tol = big * 1e-9;
-  const from: { p: Point, of: number }[] = [];
+  // Each source wall's half-length, which is what its pattern runs over: see
+  // `namingBy`'s reach.
+  const walls = source.map((p, i) => {
+    const q = source[nextOf(rings, n, i)];
 
-  corners.forEach((run, i) => run?.forEach(p => from.push({ p, of: i })));
+    return Math.hypot(q.x - p.x, q.y - p.y) / 2;
+  });
+  const owner = (p: Point): number | undefined => {
+    const k = ats.findIndex(q => q !== null && Math.abs(q.x - p.x) <= tol && Math.abs(q.y - p.y) <= tol);
 
-  const owner = (p: Point): number | undefined => from.find(q => Math.abs(q.p.x - p.x) <= tol && Math.abs(q.p.y - p.y) <= tol)?.of;
+    return k < 0 ? undefined : k;
+  };
 
   /** The naming that `aside` gives: a corner set aside names no run, so the
    * one before it keeps the whole of what it had. */
@@ -1189,12 +1173,9 @@ const imagedBy = remembered((
     return (a: Point, b: Point) => {
       const mine = owner(a);
 
-      // Inside an arc, both ends being points of the same corner's curve:
-      // that is the arc's own to tooth, not a run's — unless the corner is
-      // one set aside, whose arc is a sliver the run goes straight through.
-      // Break the run there and a wall would lose its pattern the moment such
-      // a corner lifted off it.
-      if (mine === undefined || (mine === owner(b) && !aside[mine])) return null;
+      // Nobody's corner names nothing. There is no arc to be inside of here:
+      // the round is drawn after this, on the ring these names are read off.
+      if (mine === undefined) return null;
 
       let k = mine;
 
@@ -1206,7 +1187,7 @@ const imagedBy = remembered((
         k = back;
       }
 
-      const l = line.get(ids[k]);
+      const l = line.get(name[k]);
 
       if (l === undefined) return null;
 
@@ -1217,13 +1198,14 @@ const imagedBy = remembered((
       const mid = { x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 };
 
       return {
-        key: ids[k],
+        key: name[k],
         from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len,
 
-        // Half the wall, and half again of whatever it gains over the span:
-        // the teeth this end lays are then the ones the other end lays too.
-        // See `Effected.spare`.
-        reach: Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) / 2 + (spare?.[k] ?? 0),
+        // Half the wall as it is *drawn* — the source's, which the erosion
+        // does not change — so the same teeth are laid at every depth. And
+        // half again of whatever it gains over the span, so the teeth this
+        // end lays are the ones the other end lays too. See `Effected.spare`.
+        reach: walls[k] + (spare?.[k] ?? 0),
       };
     };
   };
@@ -1235,13 +1217,13 @@ const imagedBy = remembered((
   // the teeth below, the line on it coming up rather than arriving. See
   // `keeping` and PLAN-bevel 3.9.
   const flatCorners = aside.flatMap((x, i) => {
-    const run = corners[i];
+    const p = ats[i];
 
-    return x && run !== null && run.length > 0 ? [run[0]] : [];
+    return x && p !== null ? [p] : [];
   });
   const ring = flatCorners.length === 0 ? eroded : keeping(eroded, flatCorners);
 
-  const laid = foldShaped(ring, [], [], lines, curves, [], SQUARE, 0, {
+  const laid = foldShaped(ring, [], [], lines, [], ours, SQUARE, 0, e === null ? null : {
     e,
     amplitude: (key: number) => amplitude.get(key) ?? 0,
 
@@ -1250,8 +1232,7 @@ const imagedBy = remembered((
     reach: true,
     naming: namingBy(near, lines),
     over: other === null ? undefined : { ...other, naming: namingBy(far, other.lines) },
-    aside: flatCorners,
-  }, 0);
+  }, 0, flatCorners);
 
   // The teeth lying flat in it, which `simplify` takes out of the shape for
   // not turning: put back, so the ring keeps its points while a pattern comes
@@ -1259,11 +1240,18 @@ const imagedBy = remembered((
   // with what its slots published. See `FoldShaped.fades`.
   const lying = laid.fades.filter(f => f.v === 0);
 
-
+  // Each source corner's arc, as the fold drew it: a single point where it
+  // asked for no round, and nothing where the erosion took the corner away.
+  const runs = new Map(laid.runs.map(run => [run.id, run.points]));
+  const corners = ats.map((p, i) => runs.get(i) ?? (p === null ? null : [p]));
 
   return {
     shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying),
-    ...rest,
+    corners,
+    teeth: [],
+    drawn: corners.map(run => run ?? []),
+    rest: [],
+    restSquare: [],
     flat: lying.map(f => f.p),
     kept: lying,
   };
