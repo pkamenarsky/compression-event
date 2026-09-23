@@ -286,18 +286,29 @@ export interface Effected {
   apartTo?: readonly boolean[]
   apartAt?: number
   /**
-   * How much further than this end's own wall the pattern on it has to run,
-   * corner by corner and as a half-length, like the reach it is added to.
+   * How far the pattern on each wall runs either way from its middle,
+   * corner by corner and as a half-length: `patternRun`'s `reach`, given
+   * outright rather than read off the wall in front of it.
    *
    * A wall names a run whose pattern reaches half its length either way from
    * its middle, so a wall that is longer at the other end of a span lays more
    * teeth there, and the ring changes length part way through — the one event
-   * `spanning` exists to prevent. Given the span's longest here, both ends lay
-   * the same teeth, and the ones a shorter wall has no room for stand flat at
-   * its end and come up as it grows. See `patternRun`'s `reach` and
-   * PLAN-bevel's step 0.
+   * `spanning` exists to prevent. The span's longest, at both ends and so at
+   * every instant between them, and the teeth a shorter wall has no room for
+   * stand flat at its end and come up as it grows.
+   *
+   * Outright because the half-wall it used to be a correction to is not
+   * linear in `t` — a corner nudged across a span moves in a straight line
+   * and the length of the wall it ends is a hypotenuse of that, so a reach
+   * built as half-wall plus a lerped remainder holds only at the two ends and
+   * bows by a fraction of a unit in between. That is enough: a station
+   * crossing the walk's own bound puts a flat tooth into the ring or takes it
+   * out, which is a point appearing, which is an event. Five hundred and
+   * sixty-two of them on one span. A reach that is the same number at both
+   * ends lerps to itself. See `patternRun`'s `reach` and PLAN-bevel's
+   * step 0.
    */
-  spare?: readonly number[]
+  reach?: readonly number[]
 }
 
 export interface ArcDeform {
@@ -517,7 +528,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
     ? []
     : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids]];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.spare ?? []).map(r => r / s)];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.reach ?? []).map(r => r / s)];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1059,7 +1070,7 @@ const imagedBy = remembered((
   depths: readonly number[] | null,
   effects: readonly Memo[],
 ): Imaged => {
-  const [facets, bevels, flat, deform, apart, apartTo, apartAt, spare] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
+  const [facets, bevels, flat, deform, apart, apartTo, apartAt, reach] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
   const each = facets.map(facetsFrom);
   const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
@@ -1218,10 +1229,11 @@ const imagedBy = remembered((
         from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len,
 
         // Half the wall as it is *drawn* — the source's, which the erosion
-        // does not change — so the same teeth are laid at every depth. And
-        // half again of whatever it gains over the span, so the teeth this
-        // end lays are the ones the other end lays too. See `Effected.spare`.
-        reach: walls[k] + (spare?.[k] ?? 0),
+        // does not change — so the same teeth are laid at every depth. Across
+        // a span the span's own, which is the longer of its two ends' and the
+        // same number at both, so the teeth this end lays are the ones the
+        // other end lays too. See `Effected.reach`.
+        reach: reach?.[k] ?? walls[k],
       };
     };
   };

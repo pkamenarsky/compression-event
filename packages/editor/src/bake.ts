@@ -1353,14 +1353,20 @@ function effectsOver(
     facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
   });
 
-  // How much longer each wall is at the other end of the span than at this
-  // one, halved: what the pattern on it has to run past its own end so that
-  // both ends lay the same teeth. See `Effected.spare`.
+  // The longer of each wall's two ends, halved: how far the pattern on it
+  // runs either way from its middle, so that both ends lay the same teeth.
+  // One number for the span rather than a correction to the wall in front of
+  // it, because the wall is not linear in `t` and the reach has to be. See
+  // `Effected.reach`.
   const ring = ringsOf(corners);
 
-  // The run corner `i` names at that end, not the wall to the next corner:
-  // one it invented there names nothing and the run goes through it, so the
-  // two ends' runs are what have to be compared. See `imagedBy`'s `halvesBy`.
+  // The run corner `i` names, not the wall to the next corner: a corner an end
+  // invented names nothing and the run goes through it, so the run is what has
+  // to be measured. See `imagedBy`'s `halvesBy`.
+  //
+  // Each end measured with its own corners set aside, and the longer of the
+  // two taken: one number for the span, so that the reach holds still across
+  // it. Half of it is how far the pattern runs either way from its middle.
   const wall = (end: 0 | 1, i: number): number => {
     const aside = (k: number) => dead !== null && dead[end][k];
     let j = nextOf(ring, corners.length, i);
@@ -1371,10 +1377,9 @@ function effectsOver(
 
     return Math.hypot(q.x - p.x, q.y - p.y) * scales[end];
   };
-  const spare = ([0, 1] as const).map(end => corners.map((_c, i) =>
-    Math.max(0, wall(end === 0 ? 1 : 0, i) - wall(end, i)) / 2));
-  const changes = spare.some(xs => xs.some(x => x > 0));
-  const spared = (e: Effected, end: 0 | 1): Effected => (changes ? { ...e, spare: spare[end] } : e);
+  const reach = corners.map((_c, i) => Math.max(wall(0, i), wall(1, i)) / 2);
+  const changes = corners.some((_c, i) => wall(0, i) !== wall(1, i));
+  const spared = (e: Effected): Effected => (changes ? { ...e, reach } : e);
 
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
@@ -1383,7 +1388,7 @@ function effectsOver(
   });
 
   return {
-    effected: [spared(ended(seeded(a, b), 0), 0), spared(ended(seeded(b, a), 1), 1)],
+    effected: [spared(ended(seeded(a, b), 0)), spared(ended(seeded(b, a), 1))],
   };
 }
 
@@ -1417,10 +1422,10 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     apartTo,
     apartAt: t,
 
-    // Mixed, as the wall it is measured off is: a spare and the half wall it
-    // is added to sum to the span's longest wall at either end, so mixing the
-    // one tracks the other and the reach holds still. See `Effected.spare`.
-    spare: e[0].spare?.map((x, i) => mix(x, e[1].spare?.[i] ?? 0, t)),
+    // The same at both ends, so there is nothing to mix: the reach holds
+    // still across the span and the walk lays the same teeth at every
+    // instant of it. See `Effected.reach`.
+    reach: e[0].reach ?? e[1].reach,
     deform: d0 === null || d1 === null
       ? d0 ?? d1
       : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },

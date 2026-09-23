@@ -894,6 +894,84 @@ argument as before — it is 3.9's event, and it wants the bake meeting the teet
 in the projection. What has gone is the reason the test was red, which was
 never the event: the two pipelines drawing different outlines at a keyframe.
 
+### Unparking 3.9: three laws, and what is left
+
+*3.3* parked `a corner arriving on a deformed floor` at three jumps together at
+one crossing and said to re-run it after *Step 6*. Re-run, it read **562 jumps
+and a worst of 0.743**, and none of that was the crossing. The order had put a
+degeneracy under it that the old order never reached: flat teeth coming and
+going in the ring, each one a point appearing and so an event. Three laws, each
+found by measurement and each verified on its own:
+
+1. **A reach must be the same number at both ends of a span, not a correction
+   to a wall.** `Effected.spare` was how much longer the wall is at the other
+   end, halved, added to the half-wall in front of it — and the sum is the
+   span's longest wall only where the half-wall is linear in `t`, which it is
+   not: a corner nudged across a span travels in a straight line and the wall
+   it ends is a hypotenuse of that. The reach bowed by a fraction of a unit in
+   between, a station crossed the walk's own bound, and a flat tooth went into
+   the ring or came out of it. It is now `Effected.reach`, the longer of the two
+   ends' runs halved, computed at the ends and identical at both — so the lerp
+   is the identity and the walk lays the same teeth at every instant.
+
+2. **Whether a tooth is in the ring is a count over the place, not a question
+   about the point.** `foldShaped` asked *is there a point where this one was*
+   and put back the ones there were not. Where a tooth has run out of room it is
+   clamped onto the end of its run, which is a corner, and the two go into the
+   arrangement as one node: the answer came back yes and no pile went in, so the
+   ring was a point short of what the other end had. And whether they welded at
+   all turned on how the two routes to the same coordinate rounded — which made
+   it a point coming and going. That is the whole of the 562 and of the 3,776 the
+   first fix exposed. Now: how many points does this place want, how many did it
+   get, and is this tooth inside the shortfall. The tolerance is the
+   arrangement's own, so what counts as one place here is what welds there.
+
+3. **A pile whose corner is not in the ring is not a pile.** `keeping` places a
+   piled point by the wall it came off — `Fade.to` — which needs the corner it
+   stands on to be in the ring. `simplify` takes a corner out wherever it has
+   stopped turning, and a tooth is clamped onto one at exactly the instants a
+   corner beside it is coming straight, so the vertex the pile was to stand on
+   is the one that may not be there. It now falls back to the ordinary
+   along-the-edge placement, and the point is kept either way.
+
+| | jumps | worst | drift | count |
+|---|---|---|---|---|
+| after step 6 | 562 | 0.7429 | — | — |
+| reach constant | 3776 | 0.3347 | — | — |
+| + counted, + fallback | **5** | **0.0227** | **0.0026** | 23 → 24 |
+
+Both ends' outlines are the editor's exactly. `bake.test.ts` is otherwise
+green, `divergence` holds, the golden baseline is untouched, and the build is
+clean.
+
+**What is left is two things, and one of them is the parked crossing itself.**
+Three of the five jumps are at `t` 0.69385, where the two ring points at
+±0.7429 swap order: 3.3's crossing, unchanged, a real event and a cost. The
+other two are at `t` 0.8479 and 0.8481, and they are the count: a tooth enters
+near the corner at (100, −100) and the ring goes from 23 points to 24 for the
+last sixth of the span.
+
+That last one is a reach that does not cover its run. The near naming is laid
+over the whole floor at both ends — the run goes through the corner the far end
+invented — so its run grows from 200 to 256, while its reach is half of
+max(200, 128.06). `patternRun`'s walk widens to `length - clearTo` to avoid
+*Step 0*'s pop, and that bound moves with the run, so a station crosses it and a
+tooth arrives. Three cures were measured and none works yet:
+
+- **Bounding the walk by the reach alone** (dropping the widening): no change,
+  and it gives back step 0's pop.
+- **Emitting only what the stable window holds, walking wider**: no change.
+- **A reach per naming**, each measured with its own end's corners set aside
+  over both ends' geometry: jumps 4 but worst back to 0.7429 and the count down
+  to 22. Measured and reverted; the widest reach over all four combinations is
+  the same number as the shared one, so the run/reach mismatch is not in which
+  corners are skipped.
+
+So the question is what a naming's reach should be when the run it is laid over
+is longer than either end's wall — which is the case a wall splitting
+manufactures, and which *2.1*'s anchor law does not yet answer. The test stays
+skipped on that and on the crossing.
+
 ### Step 7: the pinch — optional, and measured
 
 **It is not necessary.** `experiments/pinch.test.ts` erodes a room with teeth
@@ -1021,6 +1099,9 @@ found, and in both cases the line said something simpler than the story did.
   the angle while the spacing stays a world length — or it may be a term to pay,
   as today's teeth pay one.
 - **What the pinch's law should be exactly**, if it is wanted at all (*Step 7*).
-- **`a corner arriving on a deformed floor`** (*3.3*), whose three remaining
-  jumps are a real crossing and so a cost rather than a fault. Re-run after
-  *Step 6*.
+- **`a corner arriving on a deformed floor`** (*3.3*), re-run after *Step 6* and
+  taken from 562 jumps to five — three of them the crossing, which is a cost
+  rather than a fault, and two of them a count. See *Unparking 3.9*.
+- **What a naming's reach should be when its run is longer than either end's
+  wall**, which a wall splitting manufactures and which *2.1* does not answer.
+  That is the last two jumps above.

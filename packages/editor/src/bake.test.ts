@@ -2336,13 +2336,14 @@ describe('effects', () => {
     return nudging(grown, 1, id, now.corners[where].id, { x: 0, y: -80 });
   }
 
-  // PHASE 3: parked on one event, not on the ends. The count now holds at 20
-  // across the whole span, the outline is the editor's at both ends, and the
-  // four jumps that were the ends' doing are gone. What is left is three
-  // together at `t` of 0.6939, where the arriving corner and a tooth of the
-  // far naming cross: two ring points swapping order, which is an event and
-  // not a fade, and the worst step stands at 0.85 against the bar of 0.5.
-  // See PLAN-bevel 3.9.
+  // PHASE 4: parked on one event and one count. The outline is the editor's at
+  // both ends and the drift is 0.0026; the worst step is 0.0227, from the
+  // 0.7429 the order left it at. Five jumps remain. Three are together at `t`
+  // 0.69385, where the arriving corner and a tooth of the far naming cross:
+  // two ring points swapping order, which is an event and not a fade. Two are
+  // at 0.8479 and 0.8481, where the count goes 23 to 24 — a naming laid over a
+  // run longer than either end's wall, whose reach does not cover it. See
+  // PLAN-bevel's `Unparking 3.9`.
   test.skip('a corner arriving on a deformed floor starts from the editor\'s pattern, and nothing jumps', () => {
     // At the near end the floor is one edge with one pattern; at the far end
     // it is two, each with its own. The teeth are corners, so the ones the

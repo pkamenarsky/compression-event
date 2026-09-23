@@ -2568,40 +2568,71 @@ export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape 
     // however many there are, and in whatever order — coincident points are
     // the same ring whichever way round they are read. See `Fade.to`.
     const to = 'to' in q ? q.to : undefined;
-    let best: { ring: number, index: number, off: number } | null = null;
 
-    for (let r = 0; r < out.length; r++) {
-      const ring = out[r];
+    // On a corner, the edge leaving it the way `to` goes; otherwise the edge
+    // it lies in the middle of.
+    const piled = (to: Point): { ring: number, index: number, off: number } | null => {
+      let best: { ring: number, index: number, off: number } | null = null;
 
-      for (let i = 0; i < ring.length; i++) {
-        const a = ring[i], b = ring[(i + 1) % ring.length];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const l = Math.hypot(dx, dy);
+      for (let r = 0; r < out.length; r++) {
+        const ring = out[r];
 
-        if (l === 0) continue;
+        for (let i = 0; i < ring.length; i++) {
+          const a = ring[i], b = ring[(i + 1) % ring.length];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const l = Math.hypot(dx, dy);
 
-        const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
-        const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
-
-        if (to !== undefined) {
+          if (l === 0) continue;
           if (Math.hypot(p.x - a.x, p.y - a.y) > snap) continue;
 
           const turn = Math.abs((to.x - a.x) * dy - (to.y - a.y) * dx) / l;
 
           if ((to.x - a.x) * dx + (to.y - a.y) * dy < 0) continue;
           if (best === null || turn < best.off) best = { ring: r, index: i, off: turn };
-
-          continue;
         }
-
-        if (along <= snap || along >= l - snap) continue;
-        if (best === null || off < best.off) best = { ring: r, index: i, off };
       }
-    }
+
+      return best;
+    };
+
+    const along = (): { ring: number, index: number, off: number } | null => {
+      let best: { ring: number, index: number, off: number } | null = null;
+
+      for (let r = 0; r < out.length; r++) {
+        const ring = out[r];
+
+        for (let i = 0; i < ring.length; i++) {
+          const a = ring[i], b = ring[(i + 1) % ring.length];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const l = Math.hypot(dx, dy);
+
+          if (l === 0) continue;
+
+          const off = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / l;
+          const at = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
+
+          if (at <= snap || at >= l - snap) continue;
+          if (best === null || off < best.off) best = { ring: r, index: i, off };
+        }
+      }
+
+      return best === null || best.off > snap ? null : best;
+    };
+
+    // A pile whose corner is not in the ring is not a pile. `simplify` takes
+    // a corner out wherever it has stopped turning, and a tooth clamped onto
+    // one is asked for at the same instants a corner beside it is coming
+    // straight — so the vertex the pile was to stand on is exactly the vertex
+    // that may not be there. Looked for on the corner first and along the
+    // edge after, the point is kept either way; looked for only on the corner,
+    // it comes and goes with whether `simplify` happened to keep that vertex,
+    // which is a ring point appearing and an event for the bake. See
+    // PLAN-bevel 3.9.
+    const best = to === undefined ? along() : piled(to) ?? along();
 
     if (best === null) continue;
-    if (to !== undefined) out[best.ring].splice(best.index + 1, 0, p);
-    else if (best.off <= snap) out[best.ring].splice(best.index + 1, 0, p);
+
+    out[best.ring].splice(best.index + 1, 0, p);
   }
 
   return out;
@@ -4741,6 +4772,12 @@ export function foldShaped(
 
   const simple = simplify(sliced(o.ring, o.rings));
   const shape = depth === 0 ? simple : erode(simple, depth);
+
+  /** The arrangement's own tolerance, taken off the same geometry. */
+  const weld = o.ring.reduce((x, p) => Math.max(x, Math.abs(p.x), Math.abs(p.y)), 1) * 1e-9;
+
+  /** Which points of the outline the teeth stand at. */
+  const teeth = new Set(teethAt.map(i => o.arcs[i][0]));
   const image = (k: number): Point | null => (depth === 0 ? o.ring[k] : mitred(o.ring, o.rings, k, depth));
 
   const squared = [
@@ -4806,18 +4843,65 @@ export function foldShaped(
   // amplitude sees at all. Flat is what `simplify` decided, so read it back
   // off what came out: a point it kept turns, and one it dropped does not.
   // See PLAN-bevel 3.9.
-  const stands = (p: Point): boolean => shape.some(r => r.some(q => same(p, q)));
+  /**
+   * Whether the tooth at point `k` of the outline is in the ring already.
+   *
+   * A count over the place rather than a question about the point. Asked as
+   * *is there a point where this one was*, it cannot tell a tooth that
+   * survived from a corner standing in the same place — and the two are in
+   * the same place exactly where a tooth has run out of room and is clamped
+   * onto the end of its run. The arrangement welds the pair into one node, so
+   * the answer came back yes, no pile went in, and the ring was a point short
+   * of what the other end of the span had. Whether it welded at all turned on
+   * how the two routes to the same coordinate rounded, which made it a point
+   * coming and going: three and a half thousand cuts on one span.
+   *
+   * So: how many points does this place want, how many did it get, and is
+   * this tooth inside the shortfall. The teeth standing there take the
+   * shortfall in the order they lie in the outline, one each, and the
+   * tolerance is the arrangement's own so that what counts as one place here
+   * is what welds there.
+   */
+  const placed = (k: number): { needed: number, rank: number, have: number } => {
+    const p = o.ring[k], at = image(k);
+    let needed = 0, rank = 0, have = 0;
 
-  // Except for a tooth of no room, which is flat whatever the ring says:
-  // clamped onto the end of its run, it stands on a corner that turns, so
-  // `stands` would answer for the corner and the pile would be dropped. The
-  // point after it says which wall of the corner it came off. See `keeping`.
+    for (let j = 0; j < o.ring.length; j++) {
+      const q = o.ring[j];
+
+      if (Math.abs(q.x - p.x) > weld || Math.abs(q.y - p.y) > weld) continue;
+
+      needed++;
+      if (j < k && teeth.has(j)) rank++;
+    }
+
+    if (at !== null) {
+      for (const ring of shape) {
+        for (const q of ring) {
+          if (Math.abs(q.x - at.x) <= weld && Math.abs(q.y - at.y) <= weld) have++;
+        }
+      }
+    }
+
+    return { needed, rank, have };
+  };
+
+  // A tooth of no room is clamped onto the end of its run, where it stands on
+  // a corner that turns — so it goes back by the wall it came off rather than
+  // by the edge it lies in the middle of, which is neither. The point after
+  // it says which wall that is. See `keeping`.
+  //
+  // Whether it is there already is still asked, and asked by name: a pile put
+  // on a point the arrangement kept is a second copy of it, welded away or
+  // not according to how the two routes to the same place rounded — which is
+  // a ring point coming and going, and an event for each. Three thousand
+  // seven hundred of them on one span. See PLAN-bevel 3.9.
   //
   // A tooth lying flat is not a corner, and stands at nought until it turns.
   const fades: Fade[] = teethAt
-    .map((i, k) => ({ p: image(o.arcs[i][0]), to: image(o.arcs[(i + 1) % source.length][0]), piled: teethRoom[k] === 0 }))
-    .filter(f => f.p !== null && (f.piled || !stands(f.p)))
-    .map(f => ({ p: f.p!, v: 0, ...(f.piled && f.to !== null ? { to: f.to } : {}) }));
+    .map(i => ({ ...placed(o.arcs[i][0]), p: image(o.arcs[i][0]), to: image(o.arcs[(i + 1) % source.length][0]) }))
+    .filter(f => f.p !== null && f.rank < f.needed - f.have)
+    .map(f => ({ p: f.p!, v: 0, ...(f.needed > 1 && f.to !== null ? { to: f.to } : {}) }));
 
   return { shape, runs, square: squared, keep: kept, fades, named: { lines: mineLines, corners: mineCorners } };
 }
