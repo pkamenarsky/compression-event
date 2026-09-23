@@ -1094,10 +1094,37 @@ of each against its still.
    the lerp of the ends, which is the one thing `drift` asks for and the whole
    reason the stretch cannot be cut fine enough today.
 
-   The work: `effectsOver` keeps both ends' `apart` rather than dropping it,
-   and `foldShaped` lays a second pattern where the two namings differ. Where
-   they agree — everything but a corner arriving or leaving — nothing changes
-   and nothing is laid twice.
+   **Built, and it is not enough.** `effectsOver` keeps both ends' `apart` and
+   where the span has got to; `foldShaped` takes the far naming beside the
+   near one and lays both, each at its weight; a run's reach comes from the
+   line it was named by rather than from a key, since both namings give a wall
+   the same key and only the line tells them apart. Where the two namings
+   agree — everything but a corner arriving or leaving — nothing is laid
+   twice.
+
+   It does not fix the case, and measuring why is the useful part. **The still
+   itself jumps**, before any bake: at `t` nought the arriving corner lies on
+   the wall, so `cleaned` drops it as collinear, the wall is one run and takes
+   one pattern whole. A fortieth of the span later it is two units off, is
+   kept, and the wall is two ring edges — so the near naming's pattern is cut
+   in half by the geometry it is laid on, whatever weight it stands at. 62
+   points to 100, and a step of 9.84: teeth of five replaced by teeth of two
+   and less.
+
+   **So the run is the wrong unit.** `subdivided` lays a pattern per ring
+   edge, and `patternRun`'s `room` is measured against that edge's length. It
+   has to be the stretch along the *naming line* instead, with the ring's
+   points projected onto it — then a corner rising out of a wall shortens
+   nothing, because the near naming's line is still the whole wall and the
+   pattern on it is still the whole pattern. That is the last piece, and it is
+   a change to what `foldShaped` calls a run rather than to any of the
+   machinery above it.
+
+   It is worth saying plainly why the old order never met this: it never
+   derived a tooth from the geometry at `t`. A tooth was a corner, its two
+   ends' positions were written down, and the span lerped them — so no amount
+   of qualitative change in the ring could reach it. Deriving is what buys the
+   exactness of *3.7*, and this is the bill for it.
 
    The invented corner naming nothing is right on its own terms and is in:
    it sits wherever its neighbours put it, and the arcs beside it are already
