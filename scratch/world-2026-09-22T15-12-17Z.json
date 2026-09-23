@@ -1,0 +1,219 @@
+{
+  "format": 26,
+  "tool": "polygon",
+  "figure": "rect",
+  "keyframe": 0,
+  "selection": [
+    0
+  ],
+  "artefacts": [],
+  "paths": [],
+  "settings": {
+    "gridSize": 100,
+    "showGrid": true
+  },
+  "view": {
+    "x": -2597.3125,
+    "y": -1300.046875,
+    "zoom": 0.25
+  },
+  "world": {
+    "nextId": 10,
+    "polygons": [
+      [
+        0,
+        {
+          "level": "hollow",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -1300,
+                "y": -500
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 800,
+                "y": -500
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": 800,
+                "y": 400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -1300,
+                "y": 400
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [],
+    "artefacts": [],
+    "paths": [],
+    "start": {
+      "at": {
+        "x": 0,
+        "y": 0
+      },
+      "facing": 0
+    },
+    "keyframes": [
+      {
+        "id": 0,
+        "name": "v0",
+        "visible": true
+      },
+      {
+        "id": 1,
+        "name": "v1",
+        "visible": true
+      },
+      {
+        "id": 2,
+        "name": "v2",
+        "visible": true
+      },
+      {
+        "id": 3,
+        "name": "v3",
+        "visible": true
+      },
+      {
+        "id": 4,
+        "name": "v4",
+        "visible": true
+      },
+      {
+        "id": 5,
+        "name": "v5",
+        "visible": true
+      },
+      {
+        "id": 6,
+        "name": "v6",
+        "visible": true
+      },
+      {
+        "id": 7,
+        "name": "v7",
+        "visible": true
+      },
+      {
+        "id": 8,
+        "name": "v8",
+        "visible": true
+      }
+    ],
+    "rigs": [
+      [
+        0,
+        {
+          "keys": [
+            [
+              0,
+              [
+                {
+                  "id": 0,
+                  "ref": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "by": {
+                    "move": {
+                      "x": 0,
+                      "y": 0
+                    },
+                    "angle": 0,
+                    "skew": 0,
+                    "scale": {
+                      "x": 1,
+                      "y": 1
+                    },
+                    "along": 0,
+                    "lean": 0,
+                    "erode": 0,
+                    "round": 229.765625,
+                    "deform": -164.515625
+                  },
+                  "times": 1,
+                  "group": 7
+                },
+                {
+                  "id": 1,
+                  "ref": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "by": {
+                    "move": {
+                      "x": 0,
+                      "y": 0
+                    },
+                    "angle": 0,
+                    "skew": 0,
+                    "scale": {
+                      "x": 1,
+                      "y": 1
+                    },
+                    "along": 0,
+                    "lean": 0,
+                    "erode": -229.484375,
+                    "round": 0,
+                    "deform": 0
+                  },
+                  "times": 1,
+                  "group": 9
+                }
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    "flags": [],
+    "effects": [
+      [
+        0,
+        {
+          "round": {
+            "precision": 0.5,
+            "tension": 0.5,
+            "chamfer": false
+          },
+          "deform": {
+            "spacing": 473.423612987509,
+            "pattern": "zigzag",
+            "seed": 0,
+            "sides": "both",
+            "jitter": 0
+          }
+        }
+      ]
+    ],
+    "cornerEffects": []
+  }
+}
