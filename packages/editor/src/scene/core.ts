@@ -54,6 +54,7 @@ import {
   diameter,
   mitred,
   nextOf,
+  Naming,
   foldShaped,
   outlineOf,
   prevOf,
@@ -1126,15 +1127,76 @@ const imagedBy = remembered((
 
   const amplitude = new Map(ids.map((id, i) => [id, after[i]]));
 
+  // Which source corner each point of the eroded outline came of: the arcs
+  // report it, so a run is named outright and nothing is matched to a line
+  // within a tolerance. A point a crossing made is in no arc and names
+  // nothing. See `Naming`.
+  // Matched with a tolerance, not by equality: the arrangement the erosion
+  // runs may hand a point back a hair from where `mitred` put it, as
+  // `foldShaped`'s own `onArc` allows for.
+  let big = 1;
+
+  for (const ring of eroded) for (const p of ring) big = Math.max(big, Math.abs(p.x), Math.abs(p.y));
+
+  const tol = big * 1e-9;
+  const from: { p: Point, of: number }[] = [];
+
+  corners.forEach((run, i) => run?.forEach(p => from.push({ p, of: i })));
+
+  const owner = (p: Point): number | undefined => from.find(q => Math.abs(q.p.x - p.x) <= tol && Math.abs(q.p.y - p.y) <= tol)?.of;
+
+  /** The naming that `aside` gives: a corner set aside names no run, so the
+   * one before it keeps the whole of what it had. */
+  const namingBy = (aside: readonly boolean[], of: readonly { id: number, a: Point, b: Point }[]): Naming => {
+    const line = new Map(of.map(l => [l.id, l]));
+
+    return (a: Point, b: Point) => {
+      const mine = owner(a);
+
+      // Inside an arc, both ends being points of the same corner's curve:
+      // that is the arc's own to tooth, not a run's — unless the corner is
+      // one set aside, whose arc is a sliver the run goes straight through.
+      // Break the run there and a wall would lose its pattern the moment such
+      // a corner lifted off it.
+      if (mine === undefined || (mine === owner(b) && !aside[mine])) return null;
+
+      let k = mine;
+
+      while (aside[k]) {
+        const back = prevOf(rings, n, k);
+
+        if (back === mine) return null;
+
+        k = back;
+      }
+
+      const l = line.get(ids[k]);
+
+      if (l === undefined) return null;
+
+      const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+
+      if (len === 0) return null;
+
+      const mid = { x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 };
+
+      return {
+        key: ids[k],
+        from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len,
+        reach: Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) / 2,
+      };
+    };
+  };
+
   const laid = foldShaped(eroded, [], [], lines, curves, SQUARE, 0, false, {
     e,
     amplitude: (key: number) => amplitude.get(key) ?? 0,
 
     // The teeth are the edge's, laid over its length wherever the erosion has
-    // put the run's ends — and it is the line, not the key, that tells the
-    // two namings of a splitting wall apart.
+    // put the run's ends.
     reach: true,
-    over: other ?? undefined,
+    naming: namingBy(near, lines),
+    over: other === null ? undefined : { ...other, naming: namingBy(far, other.lines) },
   }, 0);
 
   return { shape: laid.shape, ...rest };

@@ -2881,6 +2881,13 @@ export interface Subdivision {
  * tooth. Nothing for a pattern the edge has to itself. See PLAN-bevel's
  * step 4.
  */
+/**
+ * What names the run an edge belongs to: its key, where along the run the
+ * pattern is centred measured from that edge's start, and how far either way
+ * from there it runs. Nothing for an edge no run claims.
+ */
+export type Naming = (a: Point, b: Point) => { key: number, from: number, reach: number } | null;
+
 export interface Laying {
   key: number
   amplitude: number
@@ -4020,7 +4027,17 @@ export function foldShaped(
      * `lines` at the rest, so that each end of the span is the editor's still
      * and the middle shows both. See PLAN-bevel's step 4.
      */
-    over?: { lines: readonly { id: number, a: Point, b: Point }[], weight: number },
+    over?: { lines: readonly { id: number, a: Point, b: Point }[], weight: number, naming?: Naming },
+    /**
+     * What names the run an edge belongs to, where the caller knows outright
+     * and does not want it matched. A fold has to match — a union's edges
+     * have no ids, so the only way to know which member edge a straight lies
+     * on is to find the line it lies on — but a polygon's ring reports the
+     * source corner every point came of, so it names its runs from that and
+     * nothing has to lie within a tolerance of anything. See PLAN-bevel's
+     * step 4.
+     */
+    naming?: Naming,
   } | null,
   depth: number,
 ): FoldShaped {
@@ -4059,8 +4076,8 @@ export function foldShaped(
       reach: Math.hypot(mine.b.x - mine.a.x, mine.b.y - mine.a.y) / 2,
     };
   };
-  const named = namedBy(lines);
-  const namedOver = deform?.over === undefined ? null : namedBy(deform.over.lines);
+  const named = deform?.naming ?? namedBy(lines);
+  const namedOver = deform?.over === undefined ? null : (deform.over.naming ?? namedBy(deform.over.lines));
 
   // How much of the pattern stands on each naming. One naming and it is all
   // on it; two, and a wall is splitting or joining over a span, so each
