@@ -510,7 +510,34 @@ const shapedFold = remembered((
     i += 2 + count;
   }
 
-  return foldShaped(fold, square, keep, named, curves, { n, from, to, at, tension }, bevel, held === 1, deform, depth);
+  const facets = { n, from, to, at, tension };
+
+  // PLAN-bevel 3.10 and the ordering experiment beside it. `ORDER` picks which
+  // of the three a group's fold takes; unset is what ships.
+  //
+  //   rde — round, deform, erode, as phase 2 left it;
+  //   red — round, erode, deform, which is 3.10's prototype and the polygon's;
+  //   erd — erode, round, deform, where the only step that cannot be lifted
+  //         onto the union goes first and one pass does the rest.
+  //
+  // In both of the last two the erosion runs on a ring with no teeth in it,
+  // the members' lines and arcs are moved in by the same depth, and the teeth
+  // are laid on what comes out at a depth of nought.
+  const order = process.env.ORDER ?? 'rde';
+
+  if (order === 'rde' || depth === 0) {
+    return foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, deform, depth);
+  }
+
+  const first = order === 'red'
+    ? foldShaped(fold, square, keep, named, curves, facets, bevel, held === 1, null, depth)
+    : foldShaped(fold, square, keep, named, curves, SQUARE, 0, false, null, depth);
+  const moved = movedIn({ lines: named, arcs: curves }, depth);
+  const then = order === 'red'
+    ? foldShaped(first.shape, first.square, first.keep, moved.lines, moved.arcs, SQUARE, 0, false, deform, 0)
+    : foldShaped(first.shape, first.square, first.keep, moved.lines, moved.arcs, facets, bevel, held === 1, deform, 0);
+
+  return { ...then, fades: [...first.fades, ...then.fades] };
 });
 
 /**
