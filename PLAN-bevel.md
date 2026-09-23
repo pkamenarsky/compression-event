@@ -1144,22 +1144,82 @@ of each against its still.
    edges against three, one run of 180 with the anchor and the reach the
    line's.
 
-   **And the case is still 6.21.** Everything the analysis asked for is now
-   there and correct — the runs are right, the naming is right, both patterns
-   are laid and weighted — and the number has not moved. What the measuring
-   does say, now that it is taken to the nearest segment rather than the
-   nearest point, is that it is *one instant*: the step is 4.36 from nought to
-   a fortieth and 2.0 everywhere after, which is the rate the corner itself
-   moves. So whatever is left is at `t` nought plus, where the ring goes from
-   62 points to 101 as the second naming's teeth arrive, and it is not the
-   naming, the runs, or the weights.
+   **Done. 6.21 to 0.31, against the bar of 0.5.** `rounded as well, its
+   outline never pops` passes whole — the worst step, the drift, and both ends
+   the editor's outline to six places — and is unparked.
 
-   A note on method, since it cost four passes: the first three diagnoses each
-   found something real — `apart` dropped by the blend, the run being the
-   wrong unit, the naming being matched rather than known — and none of them
-   was the pop. Each was worth fixing and none was the thing. Whatever is
-   found next should be confirmed against the 62-to-101 point count at the
-   first instant before anything is built on it.
+   **The 6.21 was never at the first instant, and five passes were spent at
+   the wrong end of the span.** Taken at four hundred steps rather than forty,
+   the profile says so outright:
+
+   | step | worth | ring |
+   |---|---|---|
+   | 1 | 4.96 | 43 points |
+   | 210, 255, 281 | 0.53, 0.90, 0.76 | 44 |
+   | **400** | **6.21** | **32** |
+
+   The 62-to-101 at `t` nought plus is real and is worth 4.96. The 6.21 is the
+   *last* step. Read at forty steps the two are one number and the last step
+   hides inside "2.0 everywhere after"; read finely they are three separate
+   defects with three separate causes. The method note below stands, with the
+   correction that the count to confirm against is only ever as good as the
+   resolution the step was measured at.
+
+   **The 6.21 is `apart`, at `t` of one.** At `t` of 0.9999999 the ring has 35
+   points and at one it has 32: the blended path never reaches the keyframe,
+   so the far end was not the editor's still at all. `effectedAt` returns
+   `e[1]` outright at one, and `imagedBy` was taking the *near* end's aside
+   list for the whole of the open span — so with the apex fully out at
+   `(0,-177)`, the bottom corners were still being rounded along a flat floor,
+   their arcs laid against a corner the outline no longer goes through. Then
+   at one the list goes and they snap onto the real wall.
+
+   A corner is set aside because it is *flat*, and it is flat at the end that
+   invented it and nowhere else. So the geometry sets aside what both ends do
+   — `near[i] && far[i]`, which needs no knowledge of `t`: at either end
+   `apartTo` is empty and it is that end's own list, and across the span it is
+   a corner flat at both ends. The namings keep their own lists and their
+   weight. The flip then costs only how far off the wall the corner has come,
+   which at that end is nought. 6.21 to 1.85.
+
+   **The other two are one mistake made twice: a point at nought height lands
+   on the wall, not on the pattern.** "Both namings laid and weighted" was
+   built as two patterns' points sorted into one list, and interleaving is not
+   adding.
+
+   Where the two namings *agree* — every run but the splitting one — the same
+   pattern was laid twice, at `1 - t` and at `t`. Every tooth got a nearly
+   flat twin at its own station, so the zigzag's apex-to-apex segment was
+   broken by a return to the wall, on walls with nothing splitting about them.
+   `subdivided` now puts the alike layings of an edge together first, each
+   standing as high as the ones it was made of stood in total. 4.96 to 1.87.
+
+   Where they *differ* the runs are different, so merging cannot reach it, and
+   the fix is the real one: each pattern is read at every station — its
+   outline being the straight from one of its teeth to the next — and the
+   offsets stand on each other. At either end one of them is nought
+   everywhere and adds nothing, so each still is the editor's; between them
+   the outline is the sum, which for two weights of one geometry is the lerp
+   of the two ends, and so is what `drift` asks for. 1.87 to 1.06.
+
+   Two things fell out of doing that properly. **A pattern is now read across
+   an edge's ends**: the teeth of a run beyond the edge are kept rather than
+   dropped, because they are what says where the pattern stands at the edge's
+   own ends, which is not nought where the run carries on past them. That was
+   a latent bug of its own — any run of more than one edge was read as ramping
+   to nothing at every boundary. And **a ring point interior to a run is
+   lifted onto the pattern**: a corner arriving into a wall whose pattern runs
+   across it sat on the wall at `-100.2` where the pattern ran at `-101.25`,
+   and dragged the outline down to it. At a run's real end every pattern is
+   nought there and nothing moves. 1.06 to 0.31.
+
+   A note on method, since it cost five passes: each diagnosis found something
+   real — `apart` dropped by the blend, the run being the wrong unit, the
+   naming being matched rather than known, an apart corner's sliver breaking a
+   run — and none of the first four was the pop. Each was worth fixing and
+   none was the thing. What finally separated them was measuring the whole
+   step profile rather than the single worst number: three defects were
+   stacked on one figure, and two of them were not where the figure was.
 
    It is worth saying plainly why the old order never met this: it never
    derived a tooth from the geometry at `t`. A tooth was a corner, its two
@@ -1236,9 +1296,9 @@ spans of seven. Whether the residual is worth chasing is a question for when
 the pipeline is moved and there is a real bake to count.
 ### 3.8 Where phase 3 stands
 
-On `phase3-deform-last`, which is green — 1065 pass, 7 more skipped than on
-master — with `tsc` and `pnpm build` clean. Off master because one thing pops
-that did not before, and it is visible in the editor.
+On `phase3-deform-last`, which is green — 1066 pass, 6 more skipped than on
+master — with `tsc` and `pnpm build` clean. The pop that kept it off master is
+gone; pieces 1 to 4 of *3.6* are done.
 
 **In, and working.**
 
@@ -1259,28 +1319,41 @@ that did not before, and it is visible in the editor.
   into does not break the run through it.
 - `patternRun` has `reach`; an edge can carry more than one pattern; both
   namings of a splitting wall are laid and weighted by where the span is.
+- The two namings are *added*, not interleaved: each is read at every station
+  and the offsets stand on each other, so a pattern at nought height adds
+  nothing instead of pulling the outline back to the wall. A pattern is read
+  across an edge's ends, and a ring point interior to a run is lifted onto it.
+- A corner is set aside for the geometry only where it is flat, which is the
+  end that invented it — `near[i] && far[i]`.
 
-**The one thing wrong.** `rounded as well, its outline never pops` stands at a
-worst step of 6.21 against a bar of 0.5. Measured to the nearest segment it is
-a single instant: 4.36 from `t` nought to a fortieth, and 2.0 at every step
-after, which is the rate the arriving corner itself moves. At that instant the
-ring goes from 62 points to 101 as the second naming's teeth arrive. It is not
-the naming, the runs, or the weights — each of those was suspected, fixed, and
-left the number where it was.
+**The pop is gone.** `rounded as well, its outline never pops` passes: worst
+step 0.31 against the bar of 0.5, drift inside tolerance, both ends the
+editor's outline to six places. The 6.21 was three defects on one figure, two
+of them nowhere near where the figure was — see *3.6* piece 4.
 
 **Parked, with what replaces them written at each.** Three in `effects.test.ts`
 that go with the machinery *3.4* takes out, one of them false by design now
-since a straight and an arc are one kind of run. Four in `bake.test.ts` that
-are this defect and its neighbours.
+since a straight and an arc are one kind of run. Three in `bake.test.ts`: a
+corner arriving on a deformed floor with nothing jumping, an edge growing
+longer gaining points that fade in, and a deform from nought fading its
+verticals in. These are the neighbours of the defect rather than the defect —
+they are about the bake's jumps, its point counts at the two ends and its
+opacity ramps, not about the outline's continuity, which now holds.
 
 **Not started.** *3.2*'s pinch, the `reach` note in *3.3*, the group (*3.6*
 piece 7), and the removals of *3.4*.
 
-**What to do next.** Find the first instant's 62-to-101 and nothing else.
-Four passes have each found something real — `apart` dropped by the blend, the
-run being the wrong unit, the naming being matched rather than known, an
-apart corner's sliver breaking a run — and none of them was this. So confirm
-against that point count before building anything on a theory of it.
+**What to do next.** *3.6* piece 5 — `reach` and the rest of the bake notes of
+*3.3* — and with it the three parked `bake.test.ts` tests, which are the same
+ground: a span has to carry a tooth across, and the fades have to come from
+somewhere now that a tooth is not a corner.
+
+**A note on measuring, which cost four of the five passes on the pop.** Take
+the whole step profile, not the worst number. Three unrelated defects were
+stacked on 6.21, and the one that owned the figure was at the opposite end of
+the span from where forty steps made it look. Forty steps is too coarse to see
+a defect that lives in the last fortieth of a span; four hundred separated
+them at once.
 
 ## Open questions
 
