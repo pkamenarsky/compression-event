@@ -3296,7 +3296,37 @@ export interface Facets {
 /** The tension a round starts with. See `curveOf`. */
 export const TENSION = 0.5;
 
-/** A corner rounded in `n` segments, standing still. */
+/**
+ * A round's options with its precision in a length: see `Effected.rounds`.
+ *
+ * `facets` is a count written down instead of asked for, and it wins over the
+ * precision wherever it is there. A precision is the authorable thing and the
+ * better one — it is bevel-independent, so a round is as smooth to the eye
+ * wherever it is, and a corner drawn at a bigger bevel than it was faceted at
+ * *should* gain segments for it. What a precision cannot say is a fade:
+ * `Facets` carries two counts and how far between them the corner stands, so
+ * a vertical comes up smoothly as an arc gains its segments. That is the whole
+ * of why this field is here. See `Facets` and `Effects['round']`.
+ */
+export interface Round {
+  precision: number
+  tension: number
+  chamfer: boolean
+  facets?: Facets
+}
+
+/**
+ * A fade, or nothing: what a count says that its precision cannot.
+ *
+ * A count standing still is left to the precision, so a corner handed on to a
+ * bigger bevel is faceted for that bevel rather than kept at the count the
+ * smaller one took — which is what makes two rounds two deep one round of
+ * their sum. See `Round.facets`.
+ */
+export function fadingIn(f: Facets): Facets | undefined {
+  return f.from === f.to ? undefined : f;
+}
+
 export function facetsOf(n: number, tension = TENSION): Facets {
   return { n, from: n, to: n, at: 0, tension };
 }
@@ -4319,18 +4349,19 @@ export interface FoldShaped {
    */
   named: {
     /**
-     * Beside the amount and the options: where along this edge the pattern it
-     * carries is centred, from the edge's own start, and how far either way
-     * from there it runs — the naming line's middle and half its length, as
-     * `patternRun` takes them. A run is several edges and every one of them
-     * publishes the same pattern, so each carries its own offset to it.
+     * Beside the amount and the options: where the pattern this line carries
+     * is centred, as the point it is, and how far either way from there it
+     * runs. A run is several edges and every one of them publishes the same
+     * pattern, so each carries the same anchor.
      *
-     * What a resolve needs and nothing else does: a fold anchors a run on the
-     * member edge that names it, and a ring has no member edge. See
-     * `publishing` in `resolve.ts` and PLAN-bevel's 2.1.
+     * A point rather than a distance along the edge, because that is what
+     * survives: an erosion slides a line along its own normal, and the
+     * projection of a fixed point onto it is the same coordinate along it at
+     * every depth — where the middle of the *moved* line is not, its two ends
+     * going along their own mitres. See PLAN-bevel 2.4 and `movedIn`.
      */
-    lines: { id: number, a: Point, b: Point, amplitude: number, deform: Effecting | null, anchor: number, reach: number }[]
-    corners: { id: number, at: Point, bevel: number, facets: Facets }[]
+    lines: { id: number, a: Point, b: Point, amplitude: number, deform: Effecting | null, at: Point, reach: number }[]
+    corners: { id: number, at: Point, bevel: number, round: Round | null, facets: Facets }[]
   }
 }
 
@@ -4342,7 +4373,7 @@ export function foldShaped(
    * unioned in: each straight of the fold takes the name of the first line
    * along it, and lays its teeth from that edge's own middle. See
    * `namesOf` and PLAN-bevel 2.3. */
-  lines: readonly { id: number, a: Point, b: Point, deform?: Effecting | null }[],
+  lines: readonly { id: number, a: Point, b: Point, deform?: Effecting | null, at?: Point, reach?: number }[],
   /** The members' arcs, in the same order: a run of the fold that is one of
    * these is a curve, not a string of corners, so the group leaves it
    * unrounded and lays its teeth along it. */
@@ -4353,7 +4384,7 @@ export function foldShaped(
    * not — a join between two members, a corner an erosion made — is outline
    * like the rest and takes the scope's own amount and nothing more. See
    * `namesOf` and PLAN-bevel's step 3. */
-  corners: readonly { id: number, at: Point, bevel: number, facets: Facets }[],
+  corners: readonly { id: number, at: Point, bevel: number, round: Round | null }[],
   facets: Facets,
   bevel: number,
   /** How high the teeth stand on a run of the given name, which for a group
@@ -4441,7 +4472,7 @@ export function foldShaped(
   // way. With it, where the naming edge's middle falls along the straight,
   // which is where its pattern is centred.
   const onLine = scale * 1e-6;
-  const namedBy = (from: readonly { id: number, a: Point, b: Point }[]) => (a: Point, b: Point): { key: number, from: number, reach: number } | null => {
+  const namedBy = (from: readonly { id: number, a: Point, b: Point, at?: Point, reach?: number }[]) => (a: Point, b: Point): { key: number, from: number, reach: number } | null => {
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
 
     if (l === 0) return null;
@@ -4452,12 +4483,14 @@ export function foldShaped(
 
     if (mine === undefined) return null;
 
-    const mid = { x: (mine.a.x + mine.b.x) / 2, y: (mine.a.y + mine.b.y) / 2 };
+    // Where the line says its pattern sits, and otherwise its own middle: a
+    // member publishes the one and a plain line has only the other.
+    const mid = mine.at ?? { x: (mine.a.x + mine.b.x) / 2, y: (mine.a.y + mine.b.y) / 2 };
 
     return {
       key: mine.id,
       from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / l,
-      reach: Math.hypot(mine.b.x - mine.a.x, mine.b.y - mine.a.y) / 2,
+      reach: mine.reach ?? Math.hypot(mine.b.x - mine.a.x, mine.b.y - mine.a.y) / 2,
     };
   };
 
@@ -4588,19 +4621,57 @@ export function foldShaped(
     // one round of both. `arcsWith` rations what there is no room for, which
     // is a bend in the path and not a jump — see PLAN-bevel's step 3.
     const wants = ring.map((_p, i) => bevel + (own[i]?.bevel ?? 0));
-    const faced = ring.map((_p, i) => ((own[i]?.bevel ?? 0) > 0 ? own[i]!.facets : facets));
+
+    // A corner a member rounded is drawn at the sum, and a facet count is for
+    // one bevel — so it is faceted here, from the options that corner
+    // published, for the bevel it is actually drawn at. A corner no member
+    // rounded takes the scope's own facets, which are for the scope's own
+    // bevel and so are already right. See `Effected.rounds`.
+    const faced = ring.map((_p, i) => {
+      const mine = own[i];
+
+      if (mine === null || !(mine.bevel > 0)) return facets;
+
+      if (mine.round === null) return facets;
+
+      const round = mine.round;
+
+      // A fade is not a precision's to say, so it is taken as it stands: two
+      // counts and how far between them, drawn at whatever bevel this fold
+      // draws the corner at. A count standing still is *not* taken: it was
+      // for the bevel below, and a precision at the sum is what a round
+      // means. See `Round.facets` and `fadingIn`.
+      const fade = fadingIn(round.facets ?? SQUARE);
+
+      if (fade !== undefined) return fade;
+
+      return round.chamfer
+        ? facetsOf(1, round.tension)
+        : facetsOf(segmentsFor(wants[i], round.precision, round.tension), round.tension);
+    });
     const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(wants[i], faced[i])));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
 
     ring.forEach((p, i) => {
       if (own[i] === null || sq[i] || mine[i] !== null) return;
 
-      mineCorners.push({ id: own[i]!.id, at: p, bevel: wants[i], facets: faced[i] });
+      // What it asked for, and what this fold drew. The two are not the same
+      // thing and do not go the same way: a scope above takes `round` — it
+      // adds its bevel to this one's and facets the sum for itself, which is
+      // what makes two rounds two deep one round of their sum — while a
+      // resolve, which has no scope above and must draw this very ring, takes
+      // `facets`. Which is why this is published and not accepted: it says
+      // what happened here, not what to do next.
+      mineCorners.push({ id: own[i]!.id, at: p, bevel: wants[i], round: own[i]!.round, facets: faced[i] });
     });
     ring.forEach((p, i) => {
       const it = names[i];
 
       if (it === null) return;
+
+      const q = ring[(i + 1) % ring.length];
+      const l = Math.hypot(q.x - p.x, q.y - p.y);
+      const dx = l === 0 ? 0 : (q.x - p.x) / l, dy = l === 0 ? 0 : (q.y - p.y) / l;
 
       mineLines.push({
         id: it.key,
@@ -4608,7 +4679,7 @@ export function foldShaped(
         b: ring[(i + 1) % ring.length],
         amplitude: deform?.amplitude(it.key) ?? 0,
         deform: laidBy(it.key),
-        anchor: it.from,
+        at: { x: p.x + dx * it.from, y: p.y + dy * it.from },
         reach: it.reach,
       });
     });

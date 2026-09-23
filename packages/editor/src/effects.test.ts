@@ -218,7 +218,9 @@ describe('what a member publishes about its outline', () => {
     // round is an amount beside the corner, for whoever holds it to lay.
     expect(names.corners.map(c => c.id)).toEqual(corners);
     expect(names.corners.every(c => c.bevel > 0)).toBe(true);
-    expect(new Set(names.corners.map(c => c.facets.n))).toEqual(new Set([8]));
+    // The options it asks for its round in, not a facet count: it is drawn
+    // at this bevel plus whatever holds it, and a count is for one bevel.
+    expect(names.corners.every(c => c.round !== null && c.round.precision > 0)).toBe(true);
     expect(names.lines.map(l => l.id)).toEqual(corners);
 
     // And the deform's height along each wall, which is the amplitude asked
@@ -660,20 +662,44 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // 72 against 96: the facets, as above — the amounts are right and the
-  // precision the sum is drawn at is not.
-  test.skip('members rounded, under a scope that rounds', () => {
+  test('members rounded, under a scope that rounds', () => {
     const { world, id } = scopes({ round: 10 }, { round: 12 });
 
     same(world, id);
   });
 
-  // 123 against 123, and the teeth on one wall a way along: the member's
-  // round reaches the ring as amounts and its facets do not — a corner drawn
-  // at the sum is faceted for the sum here and for the member's own amount in
-  // the fold. See *The resolve carries geometry*.
-  test.skip('members deformed, under a scope that rounds', () => {
+  test('members deformed, under a scope that rounds', () => {
     const { world, id } = scopes({ deform: 6 }, { round: 12 });
+
+    same(world, id);
+  });
+
+  test('members deformed, under a scope with no effects at all', () => {
+    const { world, id } = scopes({ deform: 6 }, {});
+
+    same(world, id);
+  });
+
+  test('members rounded, under a scope with no effects at all', () => {
+    const { world, id } = scopes({ round: 10 }, {});
+
+    same(world, id);
+  });
+
+  test('members rounded past their walls, arcs into arcs, under a plain scope', () => {
+    const { world, id } = scopes({ round: 70 }, {});
+
+    same(world, id);
+  });
+
+  test('members rounded past their walls, arcs into arcs, under a scope that rounds', () => {
+    const { world, id } = scopes({ round: 70 }, { round: 12 });
+
+    same(world, id);
+  });
+
+  test('nothing on the members, a scope rounding past its walls', () => {
+    const { world, id } = scopes({}, { round: 70 });
 
     same(world, id);
   });
@@ -690,15 +716,13 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // 108 against 123: the facets again, at the inner scope's corners.
-  test.skip('members eroded, two scopes rounding', () => {
+  test('members eroded, two scopes rounding', () => {
     const { world, id } = scopes({ erode: 8 }, { round: 12 }, { round: 10 });
 
     same(world, id);
   });
 
-  // 175 against 219: the facets again, at three levels at once.
-  test.skip('everything, everywhere', () => {
+  test('everything, everywhere', () => {
     const { world, id } = scopes(
       { round: 10, deform: 6, erode: 8 },
       { round: 12, deform: 6, erode: 4 },

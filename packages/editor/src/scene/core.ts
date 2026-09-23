@@ -37,6 +37,8 @@ import {
   CRAMMED,
   FALLOFF,
   Facets,
+  Round,
+  precisionFor,
   Fade,
   SEEDING,
   ArcTeeth,
@@ -267,6 +269,15 @@ export interface Resolved {
  */
 export interface Effected {
   facets: readonly Facets[]
+  /**
+   * The options each corner's round is drawn in, with its precision taken
+   * into the world as its bevel is — nothing where it is not rounded.
+   *
+   * Beside the facets, because a facet count is for one bevel: a scope that
+   * rounds a corner its member rounded draws the *sum*, and a sum wants the
+   * facets of a sum. See `namesOf` and `foldShaped`.
+   */
+  rounds: readonly (Round | null)[]
   bevels: readonly number[]
   /** Which corners are teeth, which a round leaves square. */
   flat: readonly boolean[]
@@ -333,8 +344,10 @@ export interface ArcDeform {
   after: readonly number[]
   /** Each corner's arc's name to the noise and the offset: its id. */
   keys: readonly number[]
-  /** Each corner's own id, which is what names the edge leaving it: see
-   * `namesOf`. The teeth along that edge are keyed and anchored by it. */
+  /** What names the edge leaving each corner: its own id, or what the edge
+   * says names it — a resolved ring's runs are the member edges' and keep
+   * their names, so their patterns are the ones those edges had. See
+   * `namesOf` and `Effects['deform'].key`. */
   ids: readonly number[]
   /** Each corner's bevel as it is seen, which its arc's teeth are laid by:
    * see `ArcTeeth.seen`. */
@@ -424,15 +437,33 @@ export function effectedOf(
 
   const bevels = drawnBevels(world, id, corners, local, amounts, depth);
   const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
+  // A count written down wins over the precision: it is there because a fold
+  // drew this very corner in it and a resolve wrote it back, and the whole
+  // point of writing it was that the precision would not say the same. See
+  // `Effects['round']`.
   const faceted = (round: Options['round'] | undefined, bevel: number): Facets =>
-    (round === undefined ? SQUARE : facetsOf(segmentsOf(round, bevel, scale), round.tension));
+    (round === undefined ? SQUARE : round.facets ?? facetsOf(segmentsOf(round, bevel, scale), round.tension));
   const flat = corners.map(c => c.root !== undefined);
 
   // Faceted as the arc is seen, not as it is drawn: a held round the erosion
   // draws bigger is the same curve once eroded, and would otherwise gain a
   // facet — and a line fading in — for a change nobody sees.
+  const roundOf = (c: Vertex, i: number): Round | null => {
+    const round = optionOf(fx, 'round', world.cornerEffects.get(c.id));
+
+    return round === undefined || flat[i] || !(bevels[i] > 0)
+      ? null
+      : {
+          precision: round.precision * scale,
+          tension: round.tension,
+          chamfer: round.chamfer,
+          ...(round.facets === undefined ? {} : { facets: round.facets }),
+        };
+  };
+
   return shaping({
     facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0))),
+    rounds: corners.map(roundOf),
     bevels,
     flat,
     deform,
@@ -554,7 +585,7 @@ function arcDeform(
     before: corners.map((_c, i) => amplitudeOf(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitudeOf(edge(c))),
     keys: corners.map(c => arcKey(c.id)),
-    ids: corners.map(c => c.id),
+    ids: corners.map(c => at(c)?.key ?? c.id),
     seen,
   };
 }
@@ -1200,9 +1231,24 @@ const imagedBy = remembered((
   const at = (i: number) => depths?.[i] ?? erosion;
   const ats = source.map((_p, i) => mitred(source, rings, i, at(i)));
   const eroded = offsetOf(source, rings, erosion, depths);
+  // Its own corners, as a member's reach a fold: the bevel it asks for and
+  // the options it asks for it in. A polygon is a fold of one. Its facets are
+  // already for this bevel, so the options it hands over say exactly them.
   const ours = ats.flatMap((p, i) => (p === null
     ? []
-    : [{ id: i, at: p, bevel: bevels[i], facets: each[i] }]));
+    : [{
+        id: i,
+        at: p,
+        bevel: bevels[i],
+        round: each[i].n > 0
+          ? {
+              precision: precisionFor(each[i].n, bevels[i], each[i].tension),
+              tension: each[i].tension,
+              chamfer: each[i].n === 1,
+              facets: each[i],
+            }
+          : null,
+      }]));
   const lines: { id: number, a: Point, b: Point, deform: Effecting | null }[] = [];
   const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
 
@@ -1461,12 +1507,30 @@ export interface Named {
    * being where its ends are once its corners are eroded, how high the
    * member's own deform stands along it, and the options it stands in —
    * which is what lays it inside a scope that does not deform itself. */
-  lines: { id: VertexId, a: Point, b: Point, amplitude: number, deform: Effecting | null, anchor?: number, reach?: number }[]
-  /** A source corner, named by itself: where the erosion puts it, and the
-   * round it asks for. One point, not an arc — the member no longer rounds
-   * it, and whoever holds it rounds it once. Nothing for a corner that does
-   * not reach the projection. */
-  corners: { id: VertexId, at: Point, bevel: number, facets: Facets }[]
+  lines: {
+    id: VertexId
+    a: Point
+    b: Point
+    amplitude: number
+    deform: Effecting | null
+    /** Where the pattern along it is centred and how far either way it runs:
+     * the source edge's middle, projected onto the line the erosion left, and
+     * half the source edge's length. The source's, so neither moves with the
+     * depth. See `FoldShaped.named` and PLAN-bevel 2.4. */
+    at: Point
+    reach: number
+  }[]
+  /**
+   * A source corner, named by itself: where the erosion puts it, the round it
+   * asks for and the options to draw that round in. One point, not an arc —
+   * the member no longer rounds it, and whoever holds it rounds it once.
+   * Nothing for a corner that does not reach the projection.
+   *
+   * Options rather than facets, because the corner is drawn at this bevel
+   * *plus* whatever the scope adds, and a facet count is for one bevel. See
+   * `Effected.rounds`.
+   */
+  corners: { id: VertexId, at: Point, bevel: number, round: Round | null, facets?: Facets }[]
 }
 
 /**
@@ -1498,7 +1562,8 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
       id: at.corners[i].id,
       at: p,
       bevel: fx?.bevels[i] ?? 0,
-      facets: fx?.facets[i] ?? SQUARE,
+      round: fx?.rounds[i] ?? null,
+      ...(fx === undefined || fx === null ? {} : { facets: fx.facets[i] }),
     });
   });
 
@@ -1514,6 +1579,11 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
 
     if (a === null || b === null || same(a, b)) continue;
 
+    const p = at.source[i], q = at.source[j];
+    const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+    const along = ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / (l * l);
+
     lines.push({
       id: at.corners[i].id,
       a,
@@ -1523,6 +1593,11 @@ export function namesOf(at: Omit<Resolved, 'shape'>): Named {
       // The edge's own options where it has them, and its polygon's where it
       // does not: whoever lays this line lays it in those. See `ArcDeform.es`.
       deform: fx?.deform?.es[i] ?? fx?.deform?.e ?? null,
+
+      // Where this edge lays its own pattern: its middle in the source,
+      // brought onto the line the erosion left, and half its own length.
+      at: { x: a.x + dx * along, y: a.y + dy * along },
+      reach: Math.hypot(q.x - p.x, q.y - p.y) / 2,
     });
   }
 
@@ -1584,7 +1659,15 @@ export function movedIn(named: Named, depth: number): Named {
   const lines = named.lines.flatMap(l => {
     const n = left(l.a, l.b);
 
-    return n === null ? [] : [{ ...l, a: ends.get(key(l.a)) ?? by(l.a, n), b: ends.get(key(l.b)) ?? by(l.b, n) }];
+    // The anchor goes by the normal, always: it is a point on the line and
+    // the line moves along its normal, so its coordinate along the line does
+    // not change — which the ends', going by their mitres, does.
+    return n === null ? [] : [{
+      ...l,
+      a: ends.get(key(l.a)) ?? by(l.a, n),
+      b: ends.get(key(l.b)) ?? by(l.b, n),
+      at: by(l.at, n),
+    }];
   });
 
   return { lines, corners };

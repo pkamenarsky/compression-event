@@ -24,7 +24,7 @@ import {
 } from '@ce/game/world';
 import type { Bake } from './bake';
 import type { Place } from './keys';
-import type { Pattern, Sides } from './geometry';
+import type { Facets, Pattern, Sides } from './geometry';
 import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
 // From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
 // so importing a value back out of it would be a runtime cycle. See
@@ -613,7 +613,15 @@ export interface World {
  *   `outlineOf`.
  */
 export interface Effects {
-  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean }
+  /**
+   * `facets` is a count written down rather than asked for, and it wins over
+   * the precision where it is there. Nothing an author sets: the precision is
+   * the knob, and it is the better one, being bevel-independent. A count is
+   * here because a *fade* — two counts and how far between them — is what a
+   * precision cannot say, and a resolve has to hand on the fade a fold had in
+   * flight. See `Round.facets` and `publishing` in `resolve.ts`.
+   */
+  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean, facets?: Facets }
   /**
    * `falloff` is how far a tooth reaches along an arc: see
    * `Effecting.falloff`.
@@ -646,6 +654,16 @@ export interface Effects {
      */
     anchor?: number
     reach?: number
+    /**
+     * What names this edge's run to the pattern — the noise, the jitter and
+     * the share of the spacing a seeded start offsets by are all read off it.
+     * Its own corner, where it does not say otherwise.
+     *
+     * A resolve writes it, for the same reason it writes the anchor: the run
+     * was a member edge's and the pattern along it is that edge's, down to
+     * which way each tooth was nudged. See `ArcDeform.ids`.
+     */
+    key?: number
     off?: boolean
   }
   /** Erosion has no options, so it is here only to be switched off. */

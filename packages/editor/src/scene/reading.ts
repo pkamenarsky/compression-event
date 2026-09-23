@@ -503,6 +503,8 @@ function linedKey(l: Named['lines'][number]): (number | Point)[] {
     e?.jitter ?? 0,
     e?.falloff ?? 0,
     e?.offset === true ? 1 : 0,
+    l.at,
+    l.reach,
   ];
 }
 
@@ -512,14 +514,26 @@ const shapedFold = remembered((
   fold: Shape,
   square: readonly Point[],
   keep: readonly Point[],
-  /** The members' lines, eleven entries each — the corner that names it, its
-   * two ends, the height its member's deform stands at along it, and the
+  /** The members' lines, thirteen entries each — the corner that names it,
+   * its two ends, the height its member's deform stands at along it, the
    * seven that are the options it stands in (`-1` for the pattern where the
-   * member has no deform) — since what is remembered is named by plain
-   * geometry. See `linedKey`. */
+   * member has no deform), and where its pattern is centred and how far it
+   * reaches — since what is remembered is named by plain geometry. See
+   * `linedKey`. */
   lines: readonly (number | Point)[],
-  /** The members' corners, seven entries each — the corner that names it,
-   * where it is, the round it asks for, and the facets it asks for it in. */
+  /**
+   * The members' corners, eleven entries each — the corner that names it,
+   * where it is, the round it asks for, the three that are the options it
+   * asks for it in (a precision of `-1` where it asks for no round), and the
+   * five that are the facets it is drawn in already, if it is (`n` of `-1`
+   * where it is not).
+   *
+   * Both, because they answer different questions. A polygon publishes
+   * options, and the fold facets this bevel *plus* its own from them. A scope
+   * publishes the count it drew, and the fold above keeps it: a count is a
+   * count, and does not compose out of a precision and a bigger bevel. See
+   * `Effected.rounds`.
+   */
   corners: readonly (number | Point)[],
   key: readonly number[],
   depth: number,
@@ -533,12 +547,14 @@ const shapedFold = remembered((
   const mine = new Map<number, number>();
   const named: Named['lines'] = [];
 
-  for (let i = 0; i + 10 < lines.length; i += 11) {
+  for (let i = 0; i + 12 < lines.length; i += 13) {
     named.push({
       id: lines[i] as number,
       a: lines[i + 1] as Point,
       b: lines[i + 2] as Point,
       amplitude: lines[i + 3] as number,
+      at: lines[i + 11] as Point,
+      reach: lines[i + 12] as number,
       deform: lines[i + 5] === -1 ? null : {
         spacing: lines[i + 4] as number,
         pattern: PATTERNS[lines[i + 5] as number],
@@ -576,18 +592,18 @@ const shapedFold = remembered((
 
   const ends: Named['corners'] = [];
 
-  for (let i = 0; i + 6 < corners.length; i += 7) {
+  for (let i = 0; i + 13 < corners.length; i += 14) {
     ends.push({
       id: corners[i] as number,
       at: corners[i + 1] as Point,
       bevel: corners[i + 2] as number,
-      facets: {
-        n: corners[i + 3] as number,
-        from: corners[i + 4] as number,
-        to: corners[i + 5] as number,
-        at: (corners[i + 6] as Point).x,
-        tension: (corners[i + 6] as Point).y,
+      round: corners[i + 3] === -1 ? null : {
+        precision: corners[i + 3] as number,
+        tension: corners[i + 4] as number,
+        chamfer: corners[i + 5] === 1,
+        ...(corners[i + 6] === -1 ? {} : { facets: facetAt(corners, i + 6) }),
       },
+      ...(corners[i + 10] === -1 ? {} : { facets: facetAt(corners, i + 10) }),
     });
   }
 
@@ -655,6 +671,22 @@ function shapeKey(s: Standing | null): number[] | null {
     ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0,
     ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude, Number(d.e.offset)]),
   ];
+}
+
+/** A `Facets` as four of a key's numbers, or four that say there is none. */
+function facetKeyed(f: Facets | undefined): (number | Point)[] {
+  return [f?.n ?? -1, f?.from ?? 0, f?.to ?? 0, { x: f?.at ?? 0, y: f?.tension ?? 0 }];
+}
+
+/** The one those four say, read back. */
+function facetAt(key: readonly (number | Point)[], i: number): Facets {
+  return {
+    n: key[i] as number,
+    from: key[i + 1] as number,
+    to: key[i + 2] as number,
+    at: (key[i + 3] as Point).x,
+    tension: (key[i + 3] as Point).y,
+  };
 }
 
 export function contributed(
@@ -928,8 +960,11 @@ export function contributed(
         inside,
         slots.flatMap(u => u.keep),
         slots.flatMap(u => u.named.lines.flatMap(l => linedKey(l))),
-        slots.flatMap(u => u.named.corners.flatMap(c =>
-          [c.id, c.at, c.bevel, c.facets.n, c.facets.from, c.facets.to, { x: c.facets.at, y: c.facets.tension }])),
+        slots.flatMap(u => u.named.corners.flatMap(c => [
+          c.id, c.at, c.bevel,
+          c.round?.precision ?? -1, c.round?.tension ?? 0, c.round?.chamfer === true ? 1 : 0,
+          ...facetKeyed(c.round?.facets), ...facetKeyed(c.facets),
+        ])),
         shapedBy,
         here!.depth,
       );

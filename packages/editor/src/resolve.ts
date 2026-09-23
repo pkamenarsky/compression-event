@@ -389,10 +389,31 @@ function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }
   });
 }
 
-/** A point as a key: the fold's names are found by where they are, and a
- * fold's corner is a point of the fold, not a point near one. */
+/** A point as a key: a corner of the fold *is* the member's corner, so it is
+ * found by where it is and not by what is near it. */
 function key(p: Point): string {
   return `${p.x},${p.y}`;
+}
+
+/**
+ * Which published line a ring edge lies on: the first along it, as the fold
+ * itself names its straights.
+ *
+ * By the line and not by the ends, because the ends are where the union put
+ * them. A wall two rooms share starts at a crossing that is neither room's
+ * corner, and it is still that member edge's wall — the arrangement cuts
+ * edges up and drops the pieces inside, but it never moves one off its line.
+ * See `foldShaped`'s `namedBy` and PLAN-bevel 2.2.
+ */
+function lineAlong(lines: Published['lines'], a: Point, b: Point, scale: number): Published['lines'][number] | null {
+  const near = scale * 1e-6;
+  const off = (line: { a: Point, b: Point }, p: Point) =>
+    Math.abs((p.x - line.a.x) * (line.b.y - line.a.y) - (p.y - line.a.y) * (line.b.x - line.a.x))
+      / Math.max(Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y), 1e-300);
+
+  if (a.x === b.x && a.y === b.y) return null;
+
+  return lines.find(line => off(line, a) <= near && off(line, b) <= near) ?? null;
 }
 
 /**
@@ -409,7 +430,7 @@ function key(p: Point): string {
  * Which ring is a hole is decided here, in the frame the corners are written
  * down in, because that is the frame `project` will read their winding in.
  */
-function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
+function readingAt(world: World, v: KeyframeId, id: GroupId, bare: boolean): Reading[] {
   const inside = new Set(within(world, id).filter(m => m !== id));
   const depth = depths(world, v);
 
@@ -439,7 +460,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0, effects: groupEffects(world, v, g) } : null;
     },
     undefined,
-    true,
+    bare,
   );
 
   const frame = groupFrame(world, v, id);
@@ -485,7 +506,10 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
     // into the group's frame: a corner of the fold *is* the member's corner,
     // and a line runs from one to the next, so both are found by the point.
     const corner = new Map(names.corners.map(c => [key(c.at), c] as const));
-    const line = new Map(names.lines.map(l => [key(l.a), l] as const));
+
+    let scale = 1;
+
+    for (const ring of side) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
 
     // Into the group's frame first, since that is where the winding is read.
     const mine = side.map(ring => ring.map(p => unplace(frame, p)));
@@ -498,7 +522,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       owner: how[i].owner === null ? null : base + how[i].owner!,
       ring,
       corners: side[i].map(p => corner.get(key(p)) ?? null),
-      lines: side[i].map(p => line.get(key(p)) ?? null),
+      lines: side[i].map((p, k) => lineAlong(names.lines, p, side[i][(k + 1) % side[i].length], scale)),
     }));
   }
 
@@ -559,12 +583,19 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  // Read with everything on: the scope's fold, bare, publishes what its own
-  // round and deform would have laid — amounts per corner and per edge — and
-  // the ring carries those as its own. Stripping the deform first, as this
-  // did while the ring took it from the timeline alone, would leave the
-  // amounts unpublished and the runs unnamed. See `publishing`.
-  const readings = readingAt(world, v, id);
+  // Bare only where the scope shapes. A scope that rounds or deforms lays one
+  // round and one deform on the *union*, so the ring can carry those as
+  // amounts and draw them itself — which is what `publishing` writes down.
+  //
+  // A scope with neither lays nothing: what it puts into the level is its
+  // members drawn, each with its own arcs and its own teeth, and a tooth of
+  // one member running past another's wall is clipped by the union rather
+  // than faded at its end. There is no fold there to take amounts from, and
+  // laying the members' amounts on the ring instead would fade exactly those
+  // teeth. So it is read as it draws.
+  const own = world.effects.get(id);
+  const shaping = own !== undefined && (own.round !== undefined || own.deform !== undefined);
+  const readings = readingAt(world, v, id, shaping);
 
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.
@@ -638,9 +669,9 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     corner: VertexId
     was: Reading['corners'][number]
     line: Reading['lines'][number]
-    /** How long the edge leaving it is, which is what its own anchor and its
-     * own reach are read off. */
-    length: number
+    /** The edge leaving it, which is what its own anchor is read off. */
+    from: Point
+    to: Point
   }[] = [];
 
   for (const outer of readings.filter(r => !r.hole)) {
@@ -654,13 +685,7 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
         const to = part.ring[(i + 1) % part.ring.length];
 
         points.push({ id: corner, at, ring, birth: born, death });
-        told.push({
-          id: mine,
-          corner,
-          was: part.corners[i],
-          line: part.lines[i],
-          length: Math.hypot(to.x - at.x, to.y - at.y),
-        });
+        told.push({ id: mine, corner, was: part.corners[i], line: part.lines[i], from: at, to });
       });
     });
 
@@ -786,7 +811,8 @@ function publishing(
     corner: VertexId
     was: Reading['corners'][number]
     line: Reading['lines'][number]
-    length: number
+    from: Point
+    to: Point
   }[],
   scope: { bevel: number, amplitude: number },
 ): World {
@@ -813,10 +839,29 @@ function publishing(
     cornerEffects.set(corner, { ...cornerEffects.get(corner), [name]: option });
   };
 
-  for (const { id, corner, was, line, length } of told) {
+  /** How far along `from` → `to` a point sits, projected onto it. */
+  const along = (p: Point, from: Point, to: Point): number => {
+    const dx = to.x - from.x, dy = to.y - from.y, l = Math.hypot(dx, dy);
+
+    return l === 0 ? 0 : ((p.x - from.x) * dx + (p.y - from.y) * dy) / l;
+  };
+
+  for (const { id, corner, was, line, from, to } of told) {
     if (was !== null) {
       amounted(id, 'round', corner, was.bevel - scope.bevel);
-      optioned(id, corner, 'round', cornerRound(world, was.id));
+
+      // Not the options it asked for but the count the fold actually drew it
+      // in, written down as a count. The ring carries the summed bevel as an
+      // amount, and a precision at that sum is not what was drawn — the fold
+      // facets a corner its member gave no options for in the scope's own
+      // count, whatever the sum comes to. A count is what says that, which is
+      // the whole of why `Effects['round'].facets` is there.
+      optioned(id, corner, 'round', was.facets === undefined ? undefined : {
+        precision: was.round?.precision ?? 0,
+        tension: was.facets.tension,
+        chamfer: was.facets.n === 1,
+        facets: was.facets,
+      });
     }
 
     if (line === null) amounted(id, 'deform', corner, -scope.amplitude);
@@ -835,8 +880,13 @@ function publishing(
         jitter: line.deform.jitter,
         falloff: line.deform.falloff,
         offset: line.deform.offset,
-        anchor: (line.anchor ?? length / 2) - length / 2,
+        anchor: along(line.at, from, to) - Math.hypot(to.x - from.x, to.y - from.y) / 2,
         reach: line.reach,
+
+        // The run was this member edge's, so its pattern is that edge's: the
+        // same teeth nudged the same ways, which a seeded start, a jitter and
+        // the noise all read off the name.
+        key: line.id,
       });
     }
   }

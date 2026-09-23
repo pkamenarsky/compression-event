@@ -1340,6 +1340,7 @@ function effectsOver(
   // options are a fact about the thing, and the same at both.
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
     facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
+    rounds: other.rounds,
     bevels: other.bevels.map(() => 0),
     flat: other.flat,
     deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0), seen: other.deform.seen.map(() => 0) },
@@ -1410,6 +1411,10 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
 
   return {
     facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
+
+    // The options are a fact about the thing and the same at both ends: see
+    // `bare`.
+    rounds: e[0].rounds,
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
     flat: e[0].flat,
 
