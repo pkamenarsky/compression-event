@@ -660,49 +660,44 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // 72 points drawn against 492: the member's arcs reach the new polygon as
-  // facets and its round rounds every one of them.
+  // 72 against 96: the facets, as above — the amounts are right and the
+  // precision the sum is drawn at is not.
   test.skip('members rounded, under a scope that rounds', () => {
     const { world, id } = scopes({ round: 10 }, { round: 12 });
 
     same(world, id);
   });
 
-  // 123 against 550: the member's teeth reach it as corners, and are rounded.
+  // 123 against 123, and the teeth on one wall a way along: the member's
+  // round reaches the ring as amounts and its facets do not — a corner drawn
+  // at the sum is faceted for the sum here and for the member's own amount in
+  // the fold. See *The resolve carries geometry*.
   test.skip('members deformed, under a scope that rounds', () => {
     const { world, id } = scopes({ deform: 6 }, { round: 12 });
 
     same(world, id);
   });
 
-  // 57 against 113: the teeth are drawn in, and deformed again.
-  test.skip('members deformed, under a scope that deforms', () => {
+  test('members deformed, under a scope that deforms', () => {
     const { world, id } = scopes({ deform: 6 }, { deform: 6 });
 
     same(world, id);
   });
 
-  // 99 against 98, with nothing on the members at all, and one wall apart:
-  // the fold centres a run's pattern on the naming member edge's middle and
-  // the ring has no member edge to centre on, so the teeth on a wall the
-  // union cut sit a way along from the scope's. The offset half of this is
-  // settled — `Effects['deform'].offset`, which the resolve writes false —
-  // and the anchor is what is left. See *The resolve carries geometry*.
-  test.skip('nothing on the members, everything on the scope', () => {
+  test('nothing on the members, everything on the scope', () => {
     const { world, id } = scopes({}, { round: 12, deform: 6, erode: 6 });
 
     same(world, id);
   });
 
-  // 108 against 624: the inner scope's round is drawn before the outer reads
-  // it, so the outer rounds its arcs.
+  // 108 against 123: the facets again, at the inner scope's corners.
   test.skip('members eroded, two scopes rounding', () => {
     const { world, id } = scopes({ erode: 8 }, { round: 12 }, { round: 10 });
 
     same(world, id);
   });
 
-  // 175 against 1449: all three effects at all three levels.
+  // 175 against 219: the facets again, at three levels at once.
   test.skip('everything, everywhere', () => {
     const { world, id } = scopes(
       { round: 10, deform: 6, erode: 8 },

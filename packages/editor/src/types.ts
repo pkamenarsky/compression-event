@@ -624,7 +624,30 @@ export interface Effects {
    * done; written, it is what it says. A resolve writes it false onto the
    * ring it makes, because that ring's teeth were a fold's.
    */
-  deform?: { spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, falloff?: number, offset?: boolean, off?: boolean }
+  deform?: {
+    spacing: number
+    pattern: Pattern
+    seed: number
+    sides: Sides
+    jitter: number
+    falloff?: number
+    offset?: boolean
+    /**
+     * How far along the wall the pattern's middle sits from this edge's own
+     * middle, and how far either way from there it runs. Lengths, at the
+     * thing's own scale, and about one edge — they mean nothing written about
+     * a whole polygon, so they live in `cornerEffects`.
+     *
+     * A resolve writes them: a scope centres a run on the member edge that
+     * named it and reaches that edge's half length, and the ring it hands
+     * back has no member edge to centre on. Absent, an edge is centred on
+     * itself and reaches its own ends, which is what a polygon has always
+     * done. See PLAN-bevel's 2.1 and `publishing` in `resolve.ts`.
+     */
+    anchor?: number
+    reach?: number
+    off?: boolean
+  }
   /** Erosion has no options, so it is here only to be switched off. */
   erode?: { off: boolean }
 }

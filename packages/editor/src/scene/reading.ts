@@ -147,6 +147,15 @@ export interface Contributed {
   /** A group's arc points on their facets part way through a span, with how
    * solid each stands. See `facetFades`. */
   faded?: readonly Fade[]
+  /**
+   * What a scope's fold published about itself: each straight with the
+   * amount and the options its run inherits, each corner that was a
+   * member's with its summed bevel. Only where the caller asked for the fold
+   * bare — there is nothing for it to mean about a shape already drawn — and
+   * it is what a resolve writes onto the ring it makes. See `FoldShaped.named`
+   * and `resolveGroup`.
+   */
+  named?: Named
 }
 
 /**
@@ -662,6 +671,16 @@ export function contributed(
    * ask — for the bake, the same instant.
    */
   held?: Map<string, Shape>,
+  /**
+   * Whether a scope hands back its fold *bare* — eroded, rounded nowhere and
+   * deformed nowhere — with what it would have laid on it published beside it
+   * as `named`.
+   *
+   * What a resolve asks for: the ring it makes is a polygon from then on, and
+   * a polygon that started from arcs and teeth would round and deform them
+   * again. See PLAN-bevel's *The resolve carries geometry*.
+   */
+  bare = false,
 ): Contributed[] {
   const mine = new Map(items.map(it => [it.id as Id, it]));
   const out: Contributed[] = [];
@@ -1008,12 +1027,13 @@ export function contributed(
     // here and a floor there, and nothing that cuts either. Two ids, because
     // they are two boundaries. See `outermostSlot`.
     for (const set of SETS) {
-      const shape = resolves(id, set);
+      const shape = resolves(id, set, bare);
 
       if (shape.length === 0) continue;
 
       const kind = SLOT_KINDS[set][top(id, set)!];
       const faded = fading.get(`${id}:${set}`) ?? [];
+      const mine = named.get(`${id}:${set}${bare ? ':bare' : ''}`);
 
       out.push({
         id: sideOf(id, kind),
@@ -1022,6 +1042,7 @@ export function contributed(
         frame: how.frame ?? IDENTITY,
         simple: true,
         ...(faded.length === 0 ? {} : { faded }),
+        ...(bare && mine !== undefined ? { named: mine } : {}),
       });
     }
   };

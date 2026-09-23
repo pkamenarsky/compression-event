@@ -323,6 +323,12 @@ export interface ArcDeform {
    * See `foldShaped`'s `laidBy`.
    */
   es: readonly (Effecting | null)[]
+  /** How far along the wall each edge's pattern sits from that edge's own
+   * middle, and how far either way from there it runs — nothing where the
+   * edge is centred on itself, which is every edge but a resolved fold's.
+   * See `Effects['deform'].anchor`. */
+  anchors: readonly number[]
+  reaches: readonly (number | null)[]
   before: readonly number[]
   after: readonly number[]
   /** Each corner's arc's name to the noise and the offset: its id. */
@@ -498,13 +504,22 @@ function arcDeform(
   seen: readonly number[],
 ): ArcDeform | null {
   const fx = world.effects.get(id);
+  const rings = ringsOf(corners), n = corners.length;
+  const edge = (c: Vertex) => c.root ?? c.id;
+  const mineAt = (c: Vertex) => optionOf(fx, 'deform', world.cornerEffects.get(edge(c)));
+  const polygon = fx?.deform !== undefined && fx.deform.off !== true && fx.deform.spacing > 0;
 
-  if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) return null;
+  // A deform an edge asks for on its own is a deform, whatever its polygon
+  // asks for: the polygon's options are what an edge without its own stands
+  // in, and nothing more. See `ArcDeform.es`.
+  if (!polygon && !corners.some(c => {
+    const own = world.cornerEffects.get(edge(c))?.deform;
+
+    return own !== undefined && own.off !== true && own.spacing > 0 && mineAt(c) !== undefined;
+  })) return null;
 
   const ever = everDeformed(keyRigOf(world, id));
   const e = effecting(fx);
-  const rings = ringsOf(corners), n = corners.length;
-  const edge = (c: Vertex) => c.root ?? c.id;
   const amplitude = (from: VertexId) => (ever.all || ever.edges.has(from) ? amounts.amplitude + (amounts.amplitudes.get(from) ?? 0) : 0);
 
   // The edge leaving each corner, where it asks for options of its own. A
@@ -519,11 +534,25 @@ function arcDeform(
     return { ...theirs, spacing: theirs.spacing * scale };
   };
 
+  // Where the polygon has none of its own, an edge without options of its own
+  // is not deformed at all — its amplitude has nothing to lay it by.
+  const amplitudeOf = polygon
+    ? amplitude
+    : (from: VertexId) => (world.cornerEffects.get(from)?.deform === undefined ? 0 : amplitude(from));
+
+  const at = (c: Vertex) => world.cornerEffects.get(edge(c))?.deform;
+
   return {
     e: { ...e, spacing: e.spacing * scale },
     es: corners.map(own),
-    before: corners.map((_c, i) => amplitude(edge(corners[prevOf(rings, n, i)]))),
-    after: corners.map(c => amplitude(edge(c))),
+    anchors: corners.map(c => (at(c)?.anchor ?? 0) * scale),
+    reaches: corners.map(c => {
+      const mine = at(c)?.reach;
+
+      return mine === undefined ? null : mine * scale;
+    }),
+    before: corners.map((_c, i) => amplitudeOf(edge(corners[prevOf(rings, n, i)]))),
+    after: corners.map(c => amplitudeOf(edge(c))),
     keys: corners.map(c => arcKey(c.id)),
     ids: corners.map(c => c.id),
     seen,
@@ -552,7 +581,8 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s))];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s)),
+      d.anchors.map(a => a / s), d.reaches.map(r => (r === null ? -1 : r / s))];
 
   return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.reach ?? []).map(r => r / s)];
 }
@@ -1121,7 +1151,8 @@ const imagedBy = remembered((
 ): Imaged => {
   const [facets, bevels, flat, deform, apart, apartTo, apartAt, reach] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
   const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset, own] = deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset, own, anchors, reaches] =
+    deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[], number[], number[]];
   const e: Effecting | null = deform.length === 0
     ? null
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
@@ -1236,13 +1267,30 @@ const imagedBy = remembered((
    * laid at every depth.
    */
   const halvesBy = (aside: readonly boolean[]): number[] => source.map((p, i) => {
+    const q = source[runsTo(aside, i)];
+
+    return Math.hypot(q.x - p.x, q.y - p.y) / 2;
+  });
+
+  /** Where each naming's run ends in the source: the next corner that names
+   * something, a corner set aside naming nothing. */
+  function runsTo(aside: readonly boolean[], i: number): number {
     let j = nextOf(rings, n, i);
 
     while (aside[j] && j !== i) j = nextOf(rings, n, j);
 
-    const q = source[j];
+    return j;
+  }
 
-    return Math.hypot(q.x - p.x, q.y - p.y) / 2;
+  /** The middle of each naming's run in the source, which is where its
+   * pattern is centred. The source's, and not the middle of the eroded line,
+   * whose two ends move along their own mitres and so slide it along the wall
+   * where the corners turn differently: a pattern's coordinate along its edge
+   * does not move with the depth. See PLAN-bevel 2.4. */
+  const midsBy = (aside: readonly boolean[]): Point[] => source.map((p, i) => {
+    const q = source[runsTo(aside, i)];
+
+    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
   });
   const owner = (p: Point): number | undefined => {
     const k = ats.findIndex(q => q !== null && Math.abs(q.x - p.x) <= tol && Math.abs(q.y - p.y) <= tol);
@@ -1255,6 +1303,7 @@ const imagedBy = remembered((
   const namingBy = (aside: readonly boolean[], of: readonly { id: number, a: Point, b: Point }[]): Naming => {
     const line = new Map(of.map(l => [l.id, l]));
     const walls = halvesBy(aside);
+    const mids = midsBy(aside);
 
     return (a: Point, b: Point) => {
       const mine = owner(a);
@@ -1281,18 +1330,23 @@ const imagedBy = remembered((
 
       if (len === 0) return null;
 
-      const mid = { x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 };
+      const mid = mids[k];
+
+      // Its own middle, and then however far off it the edge says its pattern
+      // sits: a length along the wall, which the erosion does not change. See
+      // `Effects['deform'].anchor`.
+      const off = deform.length === 0 ? 0 : anchors[k] ?? 0;
 
       return {
         key: name[k],
-        from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len,
+        from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len + off,
 
         // Half the wall as it is *drawn* — the source's, which the erosion
         // does not change — so the same teeth are laid at every depth. Across
         // a span the span's own, which is the longer of its two ends' and the
         // same number at both, so the teeth this end lays are the ones the
         // other end lays too. See `Effected.reach`.
-        reach: reach?.[k] ?? walls[k],
+        reach: (deform.length === 0 ? undefined : reaches[k] >= 0 ? reaches[k] : undefined) ?? reach?.[k] ?? walls[k],
       };
     };
   };
@@ -1407,7 +1461,7 @@ export interface Named {
    * being where its ends are once its corners are eroded, how high the
    * member's own deform stands along it, and the options it stands in —
    * which is what lays it inside a scope that does not deform itself. */
-  lines: { id: VertexId, a: Point, b: Point, amplitude: number, deform: Effecting | null }[]
+  lines: { id: VertexId, a: Point, b: Point, amplitude: number, deform: Effecting | null, anchor?: number, reach?: number }[]
   /** A source corner, named by itself: where the erosion puts it, and the
    * round it asks for. One point, not an arc — the member no longer rounds
    * it, and whoever holds it rounds it once. Nothing for a corner that does

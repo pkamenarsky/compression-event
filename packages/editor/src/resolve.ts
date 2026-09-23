@@ -96,6 +96,9 @@ import {
 import {
   Contributed,
   Landing,
+  // This file has a `Named` of its own — a point of a boundary run — so the
+  // scope's is taken under a name that says whose it is.
+  Named as Published,
   chain,
   contributed,
   depths,
@@ -113,12 +116,15 @@ import {
   unplace,
   keyRigOf,
 } from './scene';
-import { EMPTY_RIG, Entry, KeyRig, Rig, keysOf, once, stateAt } from './rig';
+import { AmountKind, EMPTY_RIG, Entry, KeyRig, Rig, amountedBy, keysOf, nextKey, once, stateAt } from './rig';
+import { cornerRound } from './effects';
 import {
   GroupId,
   Id,
+  Options,
   PolygonId,
   KeyframeId,
+  VertexId,
   Unrolled,
   Vertex,
   World,
@@ -341,6 +347,14 @@ interface Reading {
   hole: boolean
   /** The reading it is a hole in, by index in this same list. */
   owner: number | null
+  /**
+   * What the fold published about each point of the ring: the corner it was,
+   * where it was one of a member's, and the line leaving it. Nothing for a
+   * join, or a corner an erosion made — which asks for nothing and takes the
+   * ring's own amounts. See `Contributed.named`.
+   */
+  corners: (Published['corners'][number] | null)[]
+  lines: (Published['lines'][number] | null)[]
   ring: Ring
 }
 
@@ -375,6 +389,12 @@ function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }
   });
 }
 
+/** A point as a key: the fold's names are found by where they are, and a
+ * fold's corner is a point of the fold, not a point near one. */
+function key(p: Point): string {
+  return `${p.x},${p.y}`;
+}
+
 /**
  * What the group's members come to, ring by ring, as one version sees them.
  *
@@ -396,20 +416,30 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   const items = contributed(
     world,
     resolveAt(world, v).filter(it => inside.has(it.id)),
-    // The group itself is transparent, sealed or not: what is being asked for
-    // is the union of what is under it, not the shape it already offers. Which
-    // is also why resolving works the same on a loose group as on a scope —
-    // the gesture is *make this one shape*, and whether it already was one is
-    // not the question.
+    // The group itself stands, at depth nought: what is asked for is its own
+    // fold, bare — its members eroded at their own depths, folded, and
+    // rounded and deformed nowhere — with what it would have laid on that
+    // fold published beside it. Anything drawn into the ring is geometry a
+    // polygon would round and deform all over again; anything published is an
+    // amount the ring can carry as its own. See PLAN-bevel's *The resolve
+    // carries geometry*.
+    //
+    // Nought rather than its depth, which the ring takes as an erosion of its
+    // own further down, so that the names come back on the points the ring
+    // actually has.
     //
     // A sealed group nested inside it stands for its members, exactly as it
     // does for the CSG: its shape is a real shape and pulling it apart here
-    // would resolve it too, which is not what was asked.
+    // would resolve it too, which is not what was asked. Bare reaches it too,
+    // so its own round and deform are published rather than drawn.
     g => {
-      if (g === id || !inside.has(g)) return null;
+      if (g === id) return { depth: 0, effects: groupEffects(world, v, g) };
+      if (!inside.has(g)) return null;
 
       return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0, effects: groupEffects(world, v, g) } : null;
     },
+    undefined,
+    true,
   );
 
   const frame = groupFrame(world, v, id);
@@ -433,12 +463,30 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   // The floor is clipped only to a level. A solid is something standing in a
   // room, not the room a floor is laid in, so a group that is one keeps its
   // floor whole, as the scope it resolves does. See `resolves` in `scene.ts`.
-  const sides: [PolygonKind, readonly Ring[]][] = [
-    [SLOT_KINDS.level[level ?? 0], walls],
-    [SLOT_KINDS.floor[floor ?? 0], level === 0 ? floors(items, walls) : rings(items, 'floor').map(ring => ring.map(p => p.at))],
+  /** What the contributions of one set published, together. */
+  const namesIn = (set: SetName): Published => items
+    .filter(it => slotOf(it.kind, set) !== null && it.named !== undefined)
+    .reduce(
+      (all, it) => ({ lines: [...all.lines, ...it.named!.lines], corners: [...all.corners, ...it.named!.corners] }),
+      { lines: [], corners: [] } as Published,
+    );
+
+  const sides: [PolygonKind, readonly Ring[], Published][] = [
+    [SLOT_KINDS.level[level ?? 0], walls, namesIn('level')],
+    [
+      SLOT_KINDS.floor[floor ?? 0],
+      level === 0 ? floors(items, walls) : rings(items, 'floor').map(ring => ring.map(p => p.at)),
+      namesIn('floor'),
+    ],
   ];
 
-  for (const [kind, side] of sides) {
+  for (const [kind, side, names] of sides) {
+    // Matched where the fold left them, in world units, before the ring goes
+    // into the group's frame: a corner of the fold *is* the member's corner,
+    // and a line runs from one to the next, so both are found by the point.
+    const corner = new Map(names.corners.map(c => [key(c.at), c] as const));
+    const line = new Map(names.lines.map(l => [key(l.a), l] as const));
+
     // Into the group's frame first, since that is where the winding is read.
     const mine = side.map(ring => ring.map(p => unplace(frame, p)));
     const how = nested(mine);
@@ -449,6 +497,8 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       hole: how[i].hole,
       owner: how[i].owner === null ? null : base + how[i].owner!,
       ring,
+      corners: side[i].map(p => corner.get(key(p)) ?? null),
+      lines: side[i].map(p => line.get(key(p)) ?? null),
     }));
   }
 
@@ -509,15 +559,12 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  // Read without its own deform: the rings it makes take the deform on,
-  // with its timeline, and would otherwise have it done to them twice. What
-  // is inside it — its members' own deforms, and those of groups within —
-  // comes into the rings as the shape they make.
-  const own = world.effects.get(id);
-  const bare = own?.deform === undefined
-    ? world
-    : { ...world, effects: new Map(world.effects).set(id, { ...own, deform: undefined }) };
-  const readings = readingAt(bare, v, id);
+  // Read with everything on: the scope's fold, bare, publishes what its own
+  // round and deform would have laid — amounts per corner and per edge — and
+  // the ring carries those as its own. Stripping the deform first, as this
+  // did while the ring took it from the timeline alone, would leave the
+  // amounts unpublished and the runs unnamed. See `publishing`.
+  const readings = readingAt(world, v, id);
 
   // Every version any of the geometry is there at, rather than every version
   // the *group* is there at.
@@ -584,13 +631,37 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // pillar standing in it makes no set, so what it resolves to is nothing, and
   // it goes. Anything else would be a gesture that did what it said on some
   // groups and quietly declined on others.
+  /** What each new corner was told about itself, to be written down once the
+   * polygons are in: see `publishing`. */
+  const told: {
+    id: PolygonId
+    corner: VertexId
+    was: Reading['corners'][number]
+    line: Reading['lines'][number]
+    /** How long the edge leaving it is, which is what its own anchor and its
+     * own reach are read off. */
+    length: number
+  }[] = [];
+
   for (const outer of readings.filter(r => !r.hole)) {
     const parts = [outer, ...readings.filter(r => r.hole && readings[r.owner!] === outer)];
     const mine = next;
     const points: Vertex[] = [];
 
     parts.forEach((part, ring) => {
-      for (const at of part.ring) points.push({ id: ++next, at, ring, birth: born, death });
+      part.ring.forEach((at, i) => {
+        const corner = ++next;
+        const to = part.ring[(i + 1) % part.ring.length];
+
+        points.push({ id: corner, at, ring, birth: born, death });
+        told.push({
+          id: mine,
+          corner,
+          was: part.corners[i],
+          line: part.lines[i],
+          length: Math.hypot(to.x - at.x, to.y - at.y),
+        });
+      });
     });
 
     polygons.set(mine, { ...outer.kind, birth: born, death, points });
@@ -655,7 +726,17 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // reason the group is used as scaffolding rather than dismantled by hand.
   groups.set(id, { ...group, members: [...made, ...kept] });
 
-  const held = { ...world, polygons, groups, rigs, effects, nextId: next };
+  // What the scope itself was asking for at the keyframe the ring was read
+  // at, which its rig carries: what a published amount is *over*.
+  const here = fx === undefined ? { bevel: 0, amplitude: 0 } : stateAt(world, id, v);
+
+  const held = publishing(
+    { ...world, polygons, groups, rigs, effects, nextId: next },
+    world,
+    born,
+    told,
+    { bevel: fx === undefined ? 0 : here.bevel, amplitude: fx === undefined ? 0 : here.amplitude },
+  );
 
   // Taken apart, so that what came out is pickable one ring at a time. It is
   // the whole reason to resolve: a union you cannot get at is the group you
@@ -675,6 +756,99 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
       .map(k => k.id)
       .filter(k => k !== v && [...gone].some(m => written(keyRigOf(world, m), k))),
   };
+}
+
+/**
+ * What the fold published, written onto the ring it became.
+ *
+ * A scope lays one round and one deform on amounts its members publish — a
+ * bevel per corner, an amplitude and options per edge — and the ring it hands
+ * back is bare, so the polygon that ring becomes has to be told the same
+ * amounts if it is to draw the same outline. What is written is what the
+ * member asked for *over* the scope's, since the scope's own is on the
+ * polygon already as its own amount: a corner both rounded draws the sum
+ * either way.
+ *
+ * A point the fold named nothing about — a join between two members, a corner
+ * an erosion made — is outline like the rest and takes the polygon's own. The
+ * one exception is a run no line named at all, which the fold gives no teeth:
+ * it is written down as the amplitude taken back off, so that the polygon
+ * lays none there either.
+ *
+ * See PLAN-bevel's *The resolve carries geometry*.
+ */
+function publishing(
+  held: World,
+  world: World,
+  born: KeyframeId,
+  told: readonly {
+    id: PolygonId
+    corner: VertexId
+    was: Reading['corners'][number]
+    line: Reading['lines'][number]
+    length: number
+  }[],
+  scope: { bevel: number, amplitude: number },
+): World {
+  const cornerEffects = new Map(held.cornerEffects);
+  const rigs = new Map(held.rigs);
+  const amounts = new Map<PolygonId, KeyRig>();
+
+  /** One corner's amount of one kind, added to what its polygon's rig says. */
+  const amounted = (id: PolygonId, kind: AmountKind, corner: VertexId, by: number) => {
+    if (by === 0) return;
+
+    const rig = amounts.get(id) ?? keyRigOf(held, id);
+
+    amounts.set(id, amountedBy(rig, nextKey(rig), kind, corner, born, by));
+  };
+
+  /** A corner's own options for an effect, where they are not what its
+   * polygon would have given it anyway. */
+  const optioned = <N extends keyof Options>(id: PolygonId, corner: VertexId, name: N, option: Options[N] | undefined) => {
+    const mine = held.effects.get(id)?.[name];
+
+    if (option === undefined || same(option, mine)) return;
+
+    cornerEffects.set(corner, { ...cornerEffects.get(corner), [name]: option });
+  };
+
+  for (const { id, corner, was, line, length } of told) {
+    if (was !== null) {
+      amounted(id, 'round', corner, was.bevel - scope.bevel);
+      optioned(id, corner, 'round', cornerRound(world, was.id));
+    }
+
+    if (line === null) amounted(id, 'deform', corner, -scope.amplitude);
+    else {
+      amounted(id, 'deform', corner, line.amplitude - scope.amplitude);
+
+      // Where the fold put this edge's pattern, as an offset from where the
+      // edge would put it itself, and how far the fold let it run. The fold
+      // centres a run on the member edge that named it; the ring has no
+      // member edge, so it is told. See `Effects['deform'].anchor`.
+      optioned(id, corner, 'deform', line.deform === null ? undefined : {
+        spacing: line.deform.spacing,
+        pattern: line.deform.pattern,
+        seed: line.deform.seed,
+        sides: line.deform.sides,
+        jitter: line.deform.jitter,
+        falloff: line.deform.falloff,
+        offset: line.deform.offset,
+        anchor: (line.anchor ?? length / 2) - length / 2,
+        reach: line.reach,
+      });
+    }
+  }
+
+  for (const [id, rig] of amounts) rigs.set(id, rig);
+
+  return { ...held, cornerEffects, rigs };
+}
+
+/** Two sets of options, field for field. */
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Whether anything is written about a thing at a keyframe. */

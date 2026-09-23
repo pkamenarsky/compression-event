@@ -1071,8 +1071,10 @@ describe('resolving does not move where a gesture turns about', () => {
 
   test('the same ground written another way turns about the same point', () => {
     // The small room sits inside the big one and shares its bottom edge, so
-    // the set is exactly the big room — but the union walks that edge through
-    // two extra corners, and the polygon comes out with six.
+    // the set is exactly the big room. The union walks that edge through two
+    // extra corners and the fold takes them straight back out — a point in
+    // line with its neighbours is not a corner — so the polygon comes out
+    // with the four the shape turns at. See `publishing`.
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(60, 0, 20, 20)],
@@ -1081,7 +1083,7 @@ describe('resolving does not move where a gesture turns about', () => {
     const before = pivotOf(world, 0);
     const out = resolveInto(world, 0, ids, TOP)!;
 
-    expect(resolveAt(out.world, 0)[0].corners.length).toBe(6);
+    expect(resolveAt(out.world, 0)[0].corners.length).toBe(4);
     expect(shapeArea(resolveAt(out.world, 0)[0].shape)).toBeCloseTo(100 * 100, 6);
 
     expect(before).toEqual({ x: 50, y: 50 });

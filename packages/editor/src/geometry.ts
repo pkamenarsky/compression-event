@@ -4318,7 +4318,18 @@ export interface FoldShaped {
    * made, is named nowhere and so asks for nothing. See PLAN-bevel's step 5.
    */
   named: {
-    lines: { id: number, a: Point, b: Point, amplitude: number, deform: Effecting | null }[]
+    /**
+     * Beside the amount and the options: where along this edge the pattern it
+     * carries is centred, from the edge's own start, and how far either way
+     * from there it runs — the naming line's middle and half its length, as
+     * `patternRun` takes them. A run is several edges and every one of them
+     * publishes the same pattern, so each carries its own offset to it.
+     *
+     * What a resolve needs and nothing else does: a fold anchors a run on the
+     * member edge that names it, and a ring has no member edge. See
+     * `publishing` in `resolve.ts` and PLAN-bevel's 2.1.
+     */
+    lines: { id: number, a: Point, b: Point, amplitude: number, deform: Effecting | null, anchor: number, reach: number }[]
     corners: { id: number, at: Point, bevel: number, facets: Facets }[]
   }
 }
@@ -4597,6 +4608,8 @@ export function foldShaped(
         b: ring[(i + 1) % ring.length],
         amplitude: deform?.amplitude(it.key) ?? 0,
         deform: laidBy(it.key),
+        anchor: it.from,
+        reach: it.reach,
       });
     });
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
