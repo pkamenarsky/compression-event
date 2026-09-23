@@ -1,4 +1,17 @@
+* Bugs
+* TODO copying something in a later version and pasting it should not change its shape
+
 * Low hanging fruit
+* TODO 3d view from upper right corner and resizable
+* TODO inspector view scrollable
+* TODO round tension of 0.2 is a good default i think
+* TODO offset in deform separate slider
+* TODO show amount in bothe deform and round in inspector view
+* TODO text in 3d view (replace up down arrows by left right)
+* TODO always draw first keyframe actually (also before any transform)
+* TODO precision higher -> more polys, not fewer
+* TODO insert a key before the current one + shortcut
+* TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
 
 * Before the final level file format
 ** TODO level history
@@ -37,7 +50,9 @@
 **** snap to grid
 **** autobake
 ** Look & layout
-*** TODO statusbar shows action + available modifier keys (it only shows messages now)
+*** TODO draw effects in order in the inspector pane with arrows pointing down between them
+*** TODO statusbar shows errors, action + available modifier keys (it only shows messages now)
+**** should be prominent so it can't be missed
 *** TODO make it more clear when drilled into group (breadcrumb exists)
 *** TODO better UI for unchained poly/groups (Cmd+U / Cmd+Shift+U exist)
 *** TODO show RenderConfig in the editor, not with \ + ~
@@ -74,5 +89,7 @@
 ** TODO recursive levels? somehow?
 
 * Later
+** discord
+*** easily share sky shaders and so on
 ** sound: dinosaurs? https://www.youtube.com/watch?v=Fqf8EYdCehw
 ** marketing: https://www.youtube.com/watch?v=90ImoX_e8nE
