@@ -4401,12 +4401,20 @@ export function foldShaped(
     amplitude: (key: number) => number,
     /**
      * Whether a run's pattern is bounded by the naming line it lies on rather
-     * than by the run's own ends: see `patternRun`'s `reach`. A polygon asks
-     * for it, so the teeth are the edge's wherever the erosion has put the
+     * than by the run's own ends: see `patternRun`'s `reach`. Both ask for
+     * it, so the teeth are the naming edge's wherever the erosion has put the
      * run's ends — and so that a wall named two ways at once is told apart by
      * the line each naming gives it, which a key cannot do, both namings
-     * having the same one. A group does not: two members' collinear edges are
-     * one run with one pattern along the whole of it.
+     * having the same one.
+     *
+     * A group did not, on the grounds that two members' collinear edges are
+     * one run with one pattern along the whole of it — which the per-line
+     * reach a fold publishes already says, and says better. What the run's
+     * own ends bounded instead was a tooth with no room left: bounded that
+     * way it falls out of the walk, and bounded by the line it stays, pinned
+     * flat at the arc's tangent point where the ring keeps its point and the
+     * line on it fades. A polygon has always kept it. See `FoldShaped.fades`
+     * and PLAN-bevel 3.9.
      */
     reach?: boolean,
     /**

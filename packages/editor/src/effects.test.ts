@@ -722,19 +722,7 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // The one row left, and it is not about nesting: room c's top wall stands
-  // ten units under room a's bottom one, so the corner between them has an
-  // edge of ten to round a bevel of twelve into and `arcsWith` rations it
-  // down to five. The fold then clears its teeth for the arc it drew — the
-  // run ends where the five-unit arc starts — and the ring drawn as a polygon
-  // clears for the twelve it asked for, ending its run seven units early and
-  // walking flat to the arc. Widen the gap past two bevels and this row
-  // passes with the rest.
-  //
-  // So it is the same defect as a rounded member whose arcs intersect: a
-  // rationed bevel is the bevel drawn, and everything downstream of the
-  // rounding should be using it. See PLAN-bevel's step 4.
-  test.fails('everything, everywhere', () => {
+  test('everything, everywhere', () => {
     const { world, id } = scopes(
       { round: 10, deform: 6, erode: 8 },
       { round: 12, deform: 6, erode: 4 },

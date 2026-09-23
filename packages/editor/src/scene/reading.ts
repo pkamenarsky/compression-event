@@ -573,7 +573,7 @@ const shapedFold = remembered((
   // members' amounts alone, each run laid by the options of whichever member
   // named it. An amplitude with nothing to lay it by is not a pattern, and
   // before this it was simply lost. See PLAN-bevel's step 3.
-  let deform: { e: Effecting | null, amplitude: (key: number) => number } | null = null;
+  let deform: { e: Effecting | null, amplitude: (key: number) => number, reach: boolean } | null = null;
 
   // A scope that deforms lays one pattern along the whole of its union — a
   // group looks like a polygon — so its members' options are not carried onto
@@ -584,10 +584,10 @@ const shapedFold = remembered((
   if (d.length !== 0) {
     const e = { spacing: d[0], pattern: PATTERNS[d[1]], seed: d[2], sides: DEFORM_SIDES[d[3]], jitter: d[4], falloff: d[5], offset: d[7] === 1 };
 
-    deform = { e, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0) };
+    deform = { e, amplitude: (key: number) => d[6] + (mine.get(key) ?? 0), reach: true };
   }
   else if (mine.size > 0) {
-    deform = { e: null, amplitude: (key: number) => mine.get(key) ?? 0 };
+    deform = { e: null, amplitude: (key: number) => mine.get(key) ?? 0, reach: true };
   }
 
   const ends: Named['corners'] = [];

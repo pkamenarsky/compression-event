@@ -1101,8 +1101,7 @@ carries its timeline onto them, so the two are one world said two ways and the
 outline must be one outline. Recorded as `a scope draws what it resolves to`,
 which is property 1 with the nesting in it.
 
-Thirteen of its fourteen rows hold. The one that does not is not about the
-resolve at all — see *A rationed bevel is the bevel*.
+All fourteen of its rows hold.
 
 **Why it took a field in the world.** The fold's `Named` was a channel of its
 own, and almost everything in it was already something a world can hold: a
@@ -1125,21 +1124,21 @@ reads `round`, adds its bevel and facets the sum for itself; a resolve, which
 has no scope above and must draw this very ring, reads `facets`. `roundOf`,
 which was the inversion, is gone.
 
-**A rationed bevel is the bevel.** The row left over has room c's top wall ten
-units under room a's bottom one, so the corner between them has an edge of ten
-to round a bevel of twelve into, and `arcsWith` rations it to five. The fold
-clears its teeth for the arc it drew, so the run ends where that five-unit arc
-starts; the same ring drawn as a polygon clears for the twelve it asked for,
-ends its run seven units early and walks flat to the arc. Widen the gap past
-two bevels and the row passes with the rest.
+**A group bounds a run by its naming line, as a polygon does.** The row that
+held out longest looked like a rationed bevel and was not: the clearance is
+twelve on both sides. What differed was `reach`. A polygon bounds a run by the
+wall it belongs to, so the same teeth are laid at every depth (*2.1*, *2.4*); a
+group bounded one by the run's own ends, on the grounds that two members'
+collinear edges are one run with one pattern along the whole of it — which the
+per-line reach a fold now publishes already says, and says better.
 
-That is the same defect as a rounded member whose corner arcs intersect and
-straighten the edge between them. Rationing is where a bevel stops being what
-was asked for and becomes what is drawn, and everything downstream of the
-rounding — the clearance above all — should be reading the drawn one. Its own
-fix, and it belongs with *Step 4*.
-
-Point counts as they stood before this, drawn against resolved:
+What the run's own ends really bounded was a tooth with no room left. Bounded
+that way it falls out of the walk and the ring runs straight into the arc;
+bounded by the line it stays, pinned flat at the arc's tangent point, where the
+ring keeps its point and the line on it fades in rather than arriving. A polygon
+has always kept it — it is `FoldShaped.fades` and *3.9* — and a group had not,
+which is the whole of the difference the last row was measuring. Now both do,
+and nothing else in the suite moves.
 
 **The offset is settled.** A polygon's teeth start off each run's middle by a
 share of the spacing its seed gives it and a fold's start at it, which put every
