@@ -1,3 +1,47 @@
+# The laws
+
+Three properties. They are not goals, not things to trade against cost or
+against the look: they are the definition of what a scope *is*. Any design
+that breaks one of them is wrong, however much else it buys, and the right
+response to a break is to change the design, never to weaken the law.
+
+**Law 1 — a scope draws what it resolves to.** Resolving a sealed group that
+has effects, whose members have effects, and whose members may themselves be
+groups with effects, does not change what is drawn. However deep the nesting,
+the outline before the resolve and the outline after it are the same outline,
+point for point.
+
+**Law 2 — sealing draws what was there.** Taking polygons and groups, effects
+and all, and sealing them into a group does not change what is drawn — sans
+what sealing is for: the inner edges the union swallows, the solids and floors
+the seal clips.
+
+**Law 3 — an effect on a scope is an effect on its resolution.** Putting an
+effect on a group draws the same as resolving that group first and putting
+that effect on the result.
+
+Together they say one thing: **a scope is a fold, and resolving is evaluating
+it.** A group is its members' outlines combined and then put through the
+group's own effects; nesting is composition of those steps from the innermost
+outwards. Nothing about a scope may depend on being at the top, on which
+member a piece of the outline came from, or on an amount being re-derivable
+from the source the member was drawn as.
+
+What the laws deliberately do *not* say is that amounts add across nesting.
+"Two rounds two deep are one round of their sum" is a property of one
+particular construction, not a law; under Law 3 a round on a round is a round
+laid on an already-rounded ring, and whatever that comes to is by definition
+correct. Where the two disagree, Law 3 wins and the summing test is rewritten.
+
+They are to be written down as tests before anything is built on them, as
+properties over generated worlds (`fast-check` is already a dependency) rather
+than as a handful of fixed cases: a random nesting of groups, random effects at
+each level, and the three equalities above asserted on the rings. The fixed
+cases that exist today — *a scope draws what it resolves to*, *an effect on a
+scope, and on what it resolves to*, *a scope inside a scope* in
+`effects.test.ts` — are those properties at one point each, and stay as
+regressions.
+
 # Plan: erode first, round next, deform last
 
 Before this plan a thing went **deform → erode → round**: its edges got teeth as
