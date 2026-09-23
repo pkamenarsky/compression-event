@@ -386,12 +386,56 @@ This is today's polygon, so it is not the ordering's doing and phase 4 inherits
 it. It is also exactly the shape property 2 forbids: a threshold in a
 classification, with no corner made or lost to hang an event on.
 
-It is not yet diagnosed. Both runs fade at their ends — the edge's through
-`clear`'s ramp, the arc's through `room` — so the fault is in the handover
-between them and not in either fade. The likely suspects, in order: the arc's
-run takes no `reach`, so a tooth with no room is dropped where an edge's is
-kept flat; and the arc's run is keyed by the arc, so a tooth that crosses is a
-different tooth with a different `j`, which no fade can join up.
+**Diagnosed, and it was not the handover at all.** Both runs fade at their
+ends, and both fades work; the arc's run keyed by the arc costs nothing here.
+It was two faults, each one a tooth being moved or dropped by something that is
+not the fade:
+
+1. **The reach window was hung on the anchor.** `patternRun` walked the teeth
+   over `anchor ± reach`, and `anchor` is `from` plus the share of the spacing
+   the seed's offset gives the edge. So the window sat off the line the teeth
+   belong to by that offset — half a spacing short at one end, half a spacing
+   long at the other. A tooth leaving by the short end is culled at
+   `amplitude * offset / ramp`, which is where the 4.09 came from and why it
+   went 4.10 to 8.75 with the amplitude. What walked the tooth into it is the
+   bevel: the reach is read off the member's published line, which is the
+   bevelled edge, so it shortens as the bevel grows.
+
+2. **`curveThrough`'s normal was the facet's.** A member's arc reaches the
+   fold as points, and a tooth on it is pushed along `normal(u)`, which was
+   piecewise constant and jumped by the whole turn at each of the arc's own
+   points. A tooth slides over one of those as the bevel grows, and swings.
+
+The fix for the first is to take the window from `from`, and to widen it either
+way to hold everything the fade leaves standing, so the walk can only ever stop
+short of a tooth of no height. For the second, a vertex takes both its facets'
+normals and a point along a facet mixes its two ends'.
+
+| span | 1600 steps, before | 1600 steps, after |
+|---|---|---|
+| bevel 4 → 14, no teeth | 0.0500 | 0.0500 |
+| bevel 4 → 14, amplitude 6 | **4.0953** | 0.0500 |
+| bevel 0 → 60, no teeth | 0.7039 | 0.7039 |
+| bevel 0 → 60, amplitude 6 | **4.0961** | 0.7034 |
+| bevel 0 → 60, amplitude 14 | **8.7493** | 0.7027 |
+
+The teeth no longer scale it: every case is now the round's own figure, and the
+0.70 left at `bevel 0 → 60` is there with the teeth off — the bevel coming up
+out of nought, which is not this step's and does not grow with the amplitude.
+
+**The parked test is not fixed, and wants more than a window.** Its two ends
+disagree about the reach because the wall itself grows, and the union of them
+can be carried across the span the way `apart`/`apartTo` already are — a per
+corner wall length on `Effected`, maxed over the two ends. That much was tried
+and works: both ends then agree on the stretch, and both lay the same teeth.
+What it does not fix is where the extra teeth stand. `patternRun` clamps a
+tooth past the run's end onto that end, so at the end that has not grown they
+all pile on one corner, and `simplify` and `keeping` between them give the
+pile one point. The count is still 17 against 21.
+
+So the rest of this step is not about the reach: it is about a ring carrying
+several flat teeth at one place and the arrangement giving them back. Until
+that is in, the union costs more teeth for no points, so it is not in either.
 
 **A parked test belongs to this step.** `an edge growing longer gets more
 points, and they fade in` (*3.3*) is the same defect seen from the other side:
@@ -404,7 +448,8 @@ reaches** — which is the same shape of answer as the two namings of a splittin
 wall in *3.1*, and that one is in and works.
 
 So the step has two yardsticks, not one: `arcseam`'s 4.09 must come down to the
-figure moving, and the parked test must come back in.
+figure moving — **done**, it is the round's own 0.70 — and the parked test must
+come back in, which it has not.
 
 **It comes first.** Not because anything below depends on it, but because it is
 the plan's own property 2 failing in the code the rest is to be built on. Building steps
