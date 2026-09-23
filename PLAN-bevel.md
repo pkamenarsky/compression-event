@@ -423,19 +423,38 @@ The teeth no longer scale it: every case is now the round's own figure, and the
 0.70 left at `bevel 0 → 60` is there with the teeth off — the bevel coming up
 out of nought, which is not this step's and does not grow with the amplitude.
 
-**The parked test is not fixed, and wants more than a window.** Its two ends
-disagree about the reach because the wall itself grows, and the union of them
-can be carried across the span the way `apart`/`apartTo` already are — a per
-corner wall length on `Effected`, maxed over the two ends. That much was tried
-and works: both ends then agree on the stretch, and both lay the same teeth.
-What it does not fix is where the extra teeth stand. `patternRun` clamps a
-tooth past the run's end onto that end, so at the end that has not grown they
-all pile on one corner, and `simplify` and `keeping` between them give the
-pile one point. The count is still 17 against 21.
+**The parked test is three quarters in, and the last quarter is the world
+set's.** The union of the two ends' reaches is in, as `Effected.spare`: how
+much longer each wall is at the other end of the span, halved, carried across
+the span the way `apart`/`apartTo` are and added to the reach the pattern is
+laid by. Both ends then lay the same teeth, and the ones a shorter wall has no
+room for stand flat at its end.
 
-So the rest of this step is not about the reach: it is about a ring carrying
-several flat teeth at one place and the arrangement giving them back. Until
-that is in, the union costs more teeth for no points, so it is not in either.
+`patternRun` clamps those onto that end, so several stand on one corner, and
+that is the case nothing in the pipeline could hold. Every mechanism for a
+point of the ring that does not turn was keyed by position — `stands` asks the
+arrangement whether a point came back, `Fade` is a point and a value, and
+`paintedOn` and `keeping` resolve one to a ring index by nearest point — and at
+a pile a position is not a name. Three answers went in for that:
+
+- a tooth of no room is **flat by construction** and says so, rather than being
+  asked of a ring whose answer at that place is the corner's;
+- `Fade` carries **the point after it**, which is the one thing its position
+  does not say — which of the two walls meeting on the corner it came off — and
+  `keeping` puts the pile on that side;
+- the flat ones are asked for at **every instant** rather than at the span's two
+  ends, because a wall takes its teeth back one at a time and each is flat until
+  the instant it turns, which an invented corner never does.
+
+The projection now holds its ring across the whole span: twenty points at every
+instant of the parked test's, where it ran 16, 17, 18, 19, 20 as the wall grew.
+
+What is left is the last arrangement. The outline the bake fits is not the
+projection but what the world set makes of every contributor together, and that
+one identifies its nodes by position before it ever asks which of them turn —
+so a pile is one node going in, and there is no `keeping` after it to put the
+rest back. The count is still 17 against 21, and it will be until a run coming
+out of `boundaryRuns` can be handed the points its subject kept.
 
 **A parked test belongs to this step.** `an edge growing longer gets more
 points, and they fade in` (*3.3*) is the same defect seen from the other side:
