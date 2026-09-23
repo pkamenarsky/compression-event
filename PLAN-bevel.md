@@ -1111,14 +1111,34 @@ of each against its still.
    points to 100, and a step of 9.84: teeth of five replaced by teeth of two
    and less.
 
-   **So the run is the wrong unit.** `subdivided` lays a pattern per ring
-   edge, and `patternRun`'s `room` is measured against that edge's length. It
-   has to be the stretch along the *naming line* instead, with the ring's
-   points projected onto it — then a corner rising out of a wall shortens
-   nothing, because the near naming's line is still the whole wall and the
-   pattern on it is still the whole pattern. That is the last piece, and it is
-   a change to what `foldShaped` calls a run rather than to any of the
-   machinery above it.
+   **The run was the wrong unit, and that is now fixed.** `Laying` carries
+   `at` and `of` — where an edge sits in the run one line names, and how long
+   the run is — `subdivided` lays the pattern over the run and keeps the teeth
+   landing on each edge, and `foldShaped` groups its edges into runs, taking
+   the anchor and the reach from the line and the clears from the corners at
+   the run's two ends. A run bending in the middle no longer shortens its
+   pattern or moves a tooth.
+
+   **And the case is still 6.21, for a reason that finally says where this
+   belongs.** `named` matches a run to a line by both its ends lying on it,
+   within `scale · 1e-6` — about two ten-thousandths here. A corner two units
+   off the wall is a thousand times that, so the near naming claims nothing at
+   all the instant the corner lifts, and no amount of run machinery above it
+   matters.
+
+   **`foldShaped` names by geometry because a fold has to.** A union's edges
+   have no ids: the only way to know which member edge a straight lies on is
+   to find the line it lies on. A polygon is not in that position — `outlineOf`
+   already reports `owner`, the source corner every point of the ring came
+   from, so which run is which is known outright and never has to be matched.
+   Reusing `foldShaped` whole brought its geometric naming along with it, and
+   that is the part that does not fit.
+
+   So the last piece is for `imagedBy` to name its runs from `owner` rather
+   than by line, which is both exact and cheaper, and leaves `foldShaped`'s
+   matching to the fold that needs it. Everything else built for this — the
+   two namings and their weights, the runs, `reach` — stands, and is what the
+   naming feeds.
 
    It is worth saying plainly why the old order never met this: it never
    derived a tooth from the geometry at `t`. A tooth was a corner, its two
