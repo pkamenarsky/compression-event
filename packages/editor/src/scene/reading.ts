@@ -657,15 +657,29 @@ function squareIn(it: Resolved): Point[] {
 
 /** A group's round and deform as `shapedFold` takes them, or nothing where
  * they do nothing. */
+/**
+ * Whether a scope lays anything on its fold — which is a question about its
+ * *amounts*, not about which effects are switched on. A round with no bevel
+ * and a deform with no amplitude draw nothing, so the fold does not happen
+ * and the members reach the level drawn as themselves.
+ *
+ * Asked here and by `resolveGroup`, which must take the same branch: reading
+ * the members bare and publishing amounts where the fold lays them, and
+ * reading them drawn where it does not. Asking it of the options instead —
+ * which it did — parts the two the moment a round is on at a bevel of
+ * nought. See PLAN-bevel's *The resolve carries amounts*.
+ */
+export function shapes(fx: Standing['effects'] | undefined): boolean {
+  return fx !== undefined && ((fx.facets.n > 0 && fx.bevel > 0) || fx.deform !== undefined);
+}
+
 function shapeKey(s: Standing | null): number[] | null {
   const fx = s?.effects;
 
-  if (fx === undefined) return null;
+  if (!shapes(fx) || fx === undefined) return null;
 
   const round = fx.facets.n > 0 && fx.bevel > 0;
   const d = fx.deform;
-
-  if (!round && d === undefined) return null;
 
   return [
     ...facetKey(round ? fx.facets : SQUARE), round ? fx.bevel : 0,

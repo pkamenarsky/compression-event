@@ -104,6 +104,7 @@ import {
   depths,
   groupEffects,
   groupFrame,
+  shapes,
   joined,
   keyAt,
   order,
@@ -593,8 +594,12 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // than faded at its end. There is no fold there to take amounts from, and
   // laying the members' amounts on the ring instead would fade exactly those
   // teeth. So it is read as it draws.
-  const own = world.effects.get(id);
-  const shaping = own !== undefined && (own.round !== undefined || own.deform !== undefined);
+  //
+  // Asked of the amounts, not of the options, and asked by the very predicate
+  // the draw asks it by: a round switched on at a bevel of nought lays
+  // nothing, so the fold does not happen and the members arrive drawn. See
+  // `shapes`.
+  const shaping = shapes(groupEffects(world, v, id));
   const readings = readingAt(world, v, id, shaping);
 
   // Every version any of the geometry is there at, rather than every version
