@@ -2870,14 +2870,30 @@ export interface Subdivision {
  * keeps the teeth: see `patternRun`. An edge that is not `toothed` is left
  * as it is.
  */
-/** One pattern to lay along an edge: what `patternRun` is asked for. */
+/**
+ * One pattern to lay along an edge: what `patternRun` is asked for.
+ *
+ * `at` and `of` are how the edge sits in a longer *run* — a stretch of the
+ * ring the pattern is laid over as one, because one line names the whole of
+ * it. The pattern is laid over `of` and only the teeth landing between `at`
+ * and `at` plus the edge's own length are kept, so a run bending in the
+ * middle — a corner rising out of a wall — neither shortens it nor moves a
+ * tooth. Nothing for a pattern the edge has to itself. See PLAN-bevel's
+ * step 4.
+ */
 export interface Laying {
   key: number
   amplitude: number
-  /** Where along the edge it is centred, or nothing for the edge's middle. */
+  /** Where along the run it is centred, or nothing for the middle. */
   from: number | undefined
-  /** How far either way from that it runs, or nothing for the edge's ends. */
+  /** How far either way from that it runs, or nothing for the run's ends. */
   reach: number | undefined
+  at?: number
+  of?: number
+  /** How far the run's own two ends keep the teeth off, for a run that is
+   * more than this edge. Nothing for the edge's own. */
+  clear?: number
+  clearTo?: number
 }
 
 export function subdivided(
@@ -2898,6 +2914,11 @@ export function subdivided(
    * with it. Nothing but where a wall is splitting or joining over a span and
    * the naming either side of it differs: see PLAN-bevel's step 4. */
   also: (i: number) => readonly Laying[] = () => [],
+  /** Everything edge `i` carries, where the caller works it out itself —
+   * which `foldShaped` does, a pattern there running along the line that
+   * names it rather than between two points of the ring. Given, it is what is
+   * laid and the arguments above are not asked. */
+  patterns: (i: number) => readonly Laying[] | undefined = () => undefined,
 ): Subdivision[] {
   const n = ring.length;
   const done: Subdivision[] = [];
@@ -2913,14 +2934,35 @@ export function subdivided(
     const nx = dy / l * out, ny = -dx / l * out;
 
     // One pattern an edge, but for a wall splitting or joining across a span,
-    // where the naming either side of the event puts two on it: see
-    // `Naming` and PLAN-bevel's step 4. Laid in order along the edge, so the
-    // points come out in ring order however many there are.
-    const laid = also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }])
+    // where the naming either side of the event puts two on it: see `Laying`
+    // and PLAN-bevel's step 4. Laid in order along the edge, so the points
+    // come out in ring order however many there are.
+    const lays = patterns(i) ?? also(i).concat([{ key: key(i), amplitude: amplitude(i), from: from(i), reach: reach(i) }]);
+    const laid = lays
       .flatMap(one => {
-        const run = patternRun(e, one.key, one.amplitude, l, clear(i), clear((i + 1) % n), e.spacing, one.from ?? l / 2, one.reach);
+        const over = one.of ?? l;
+        const start = one.at ?? 0;
+        const run = patternRun(
+          e,
+          one.key,
+          one.amplitude,
+          over,
+          one.clear ?? clear(i),
+          one.clearTo ?? clear((i + 1) % n),
+          e.spacing,
+          one.from ?? over / 2,
+          one.reach,
+        );
 
-        return run.along.map((u, k) => ({ u, j: run.teeth[k], room: run.room[k], across: run.across[k] }));
+        return run.along.flatMap((u, k) => {
+          // Where the tooth falls along this edge, the run being longer than
+          // it: outside, it belongs to one of the run's other edges.
+          const along = u * over - start;
+
+          if (along < -1e-9 || along > l + 1e-9) return [];
+
+          return [{ u: Math.min(1, Math.max(0, along / l)), j: run.teeth[k], room: run.room[k], across: run.across[k] }];
+        });
       })
       .sort((p, q) => p.u - q.u);
 
@@ -4106,6 +4148,64 @@ export function foldShaped(
     const bevels = ring.map((_p, i) => (sq[i] || mine[i] !== null ? 0 : drawnAt(ring, i)));
     const names = ring.map((p, i) => named(p, ring[(i + 1) % ring.length]));
     const namesOver = namedOver === null ? null : ring.map((p, i) => namedOver(p, ring[(i + 1) % ring.length]));
+
+    /**
+     * Each edge's pattern, laid over the whole run one line names rather than
+     * over the edge alone: so a corner rising out of a wall, which turns one
+     * edge into two, neither shortens the pattern nor moves a tooth. The
+     * anchor and the reach are the run's first edge's, being the line's, and
+     * the clears are the corners at the run's two ends.
+     */
+    const runsOf = (ns: readonly ({ key: number, from: number, reach: number } | null)[], scale_: number): (Laying | undefined)[] => {
+      const len = ring.length;
+      const lengths = ring.map((p, i) => {
+        const q = ring[(i + 1) % len];
+
+        return Math.hypot(q.x - p.x, q.y - p.y);
+      });
+      const out: (Laying | undefined)[] = ring.map(() => undefined);
+      const seen = ring.map(() => false);
+
+      for (let s = 0; s < len; s++) {
+        if (seen[s] || ns[s] === null) continue;
+
+        const mine = ns[s]!.key;
+        let a = s;
+
+        while (ns[(a - 1 + len) % len]?.key === mine && (a - 1 + len) % len !== s) a = (a - 1 + len) % len;
+
+        const holds: number[] = [];
+
+        for (let b = a; ns[b]?.key === mine && !seen[b]; b = (b + 1) % len) {
+          holds.push(b);
+          seen[b] = true;
+        }
+
+        const of = holds.reduce((t, i) => t + lengths[i], 0);
+        const last = holds[holds.length - 1];
+
+        let at = 0;
+
+        for (const i of holds) {
+          out[i] = {
+            key: mine,
+            amplitude: deform!.amplitude(mine) * scale_,
+            from: ns[a]!.from,
+            reach: deform!.reach === true ? ns[a]!.reach : undefined,
+            at,
+            of,
+            clear: bevels[a],
+            clearTo: bevels[(last + 1) % len],
+          };
+          at += lengths[i];
+        }
+      }
+
+      return out;
+    };
+
+    const mine_ = deform === null ? null : runsOf(names, 1 - over);
+    const overs = deform === null || namesOver === null ? null : runsOf(namesOver, over);
     // An edge between two points of one arc is inside a curve, and the
     // curve's own teeth run along it: see `teethAlong`.
     const inside = (i: number) => mine[i] !== null && mine[(i + 1) % ring.length]?.arc === mine[i]!.arc;
@@ -4121,17 +4221,11 @@ export function foldShaped(
         i => !sq[i] && !sq[(i + 1) % ring.length] && !inside(i),
         i => names[i]?.from,
         i => (deform.reach === true ? names[i]?.reach : undefined),
+        () => [],
         i => {
-          const other = namesOver?.[i];
+          const one = mine_?.[i], two = over === 0 ? undefined : overs?.[i];
 
-          if (other === null || other === undefined || over === 0) return [];
-
-          return [{
-            key: other.key,
-            amplitude: deform.amplitude(other.key) * over,
-            from: other.from,
-            reach: deform.reach === true ? other.reach : undefined,
-          }];
+          return one === undefined && two === undefined ? undefined : [one, two].filter((x): x is Laying => x !== undefined);
         },
       );
 
