@@ -588,9 +588,14 @@ describe('law 2: sealing draws what was there', () => {
  * each: sealed back into a scope of their own, which by law 1 draws what they
  * draw, and the kit put on that. A single polygon takes it outright, there
  * being no scope to make.
+ *
+ * The scope's own kit is left off on both sides. Laying `kit` on the scope
+ * *replaces* what it had, while on the other side the resolution has already
+ * baked it in and `kit` goes on top — two different worlds, and the property
+ * went red on exactly that with an empty `kit`, which is no effect at all.
  */
 function bothWays(spec: Spec, kit: Kit): void {
-  const { world, id } = built(emptyWorld(), spec);
+  const { world, id } = built(emptyWorld(), spec.kind === 'room' ? spec : { ...spec, kit: {} });
   const onScope = drawn(kitted(world, id, kit));
   const out = resolveGroup(world, 0, id);
 
