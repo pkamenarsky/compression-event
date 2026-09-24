@@ -18,7 +18,7 @@
 // -----------------------------------------------------------------------------
 
 import type { Point } from '@ce/game/world';
-import type { Effecting, Shape, Sweptfrom } from './geometry';
+import type { EdgeRun, Effecting, Shape, Sweptfrom } from './geometry';
 import { OpSubtract, OpUnion, along, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
 import { combineIdentified, keyOf, madeOf, on, shows, tooth } from './ids';
@@ -938,8 +938,22 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
           ? { along: [], across: [], teeth: [], room: [] }
           : patternRun(how, keyOf(line?.root ?? whose), high, total, 0, 0, rampAt(how.spacing, line?.before), line?.middle ?? total / 2, undefined, rampAt(how.spacing, line?.after));
 
+        // The whole wall's pattern, where this is a piece of a wall that was
+        // cut: what a piece ends on at the cut. See `wallAt`.
+        const whole = line === undefined || (line.before === undefined && line.after === undefined) || how === null || !(how.spacing > 0) || (high === 0 && !flat)
+          ? null
+          : patternRun(how, keyOf(line.root), high, line.span, 0, 0, how.spacing, line.middle + line.at);
+        const leg = (at: number, s: number, t: number) => {
+          const ride = rideOf(run, lengths, at), off = wallAt(whole!, line!.span, s);
+
+          out.push({ x: ride.at.x + ride.nx * off, y: ride.at.y + ride.ny * off });
+          said.push(on(names[from], t));
+        };
+
         out.push(ring[from]);
         said.push(names[from]);
+
+        if (whole !== null && line!.before !== undefined) leg(0, line!.at, 0);
 
         // A run that takes teeth is its teeth and nothing else: each stands on
         // the run where its arc length puts it, a facet of an arc included,
@@ -963,6 +977,8 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
           out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
           said.push(tooth(line?.root ?? whose, lay.teeth[j]));
         }
+
+        if (whole !== null && line!.after !== undefined) leg(total, line!.at + total, 1);
       }
 
       shape.push(out);
@@ -1032,19 +1048,53 @@ interface Line {
   middle: number
   before?: number
   after?: number
+  /** How long the whole wall is, from the first of its pieces to the end of
+   * the last: what its pattern is laid along as though it were not cut. */
+  span: number
+  /** Where along the whole wall this piece starts. */
+  at: number
 }
 
 /**
- * How far from the end of a run its teeth come up over: a spacing, or where
- * the run ends at a cut in its wall, no more than the cut is wide.
+ * How far from the end of a run its teeth come up over: a spacing, or nothing
+ * where the run ends at a cut in its wall.
  *
- * A cut opens from nothing. Ramped over a whole spacing the moment it opened,
- * every tooth within a spacing of it dropped at once — nineteen units, on a
- * room pinched in two by its erosion. Ramped over the width of the cut, a
- * cut of nothing shrinks nothing, and the teeth go down as it opens.
+ * A cut is not an end of the wall. The piece ends on the whole wall's pattern
+ * (see `wallAt`), so the teeth either side of a cut stand as they stood before
+ * it opened, and one the cut reaches is passed over by the piece's end rather
+ * than shrunk.
  */
 function rampAt(spacing: number, cut: number | undefined): number {
-  return cut === undefined ? spacing : Math.max(1e-9, Math.min(spacing, cut));
+  return cut === undefined ? spacing : 1e-9;
+}
+
+/**
+ * How far off its line the whole of a cut wall is drawn at `s` along it: its
+ * pattern laid as though nothing cut it, and read between the teeth either
+ * side, as the drawn wall runs straight from one tooth to the next.
+ *
+ * Where a wall is cut, the crossing is where the wall's *line* was cut, and
+ * the drawn wall stands off that line by as much as the pattern has there. So
+ * a piece ends in two points: the crossing, where whatever cut the wall ends,
+ * and this one, where the wall was drawn, with a short edge between them.
+ * Ending on the crossing alone, the wall under a corner that pinched it
+ * closed jumped onto the corner in one frame — sixteen units in a scratch
+ * world, the corner having met the line and not the teeth.
+ */
+function wallAt(lay: EdgeRun, span: number, s: number): number {
+  let x0 = 0, y0 = 0;
+
+  for (let k = 0; k <= lay.along.length; k++) {
+    const x1 = k < lay.along.length ? lay.along[k] * span : span;
+    const y1 = k < lay.along.length ? lay.across[k] : 0;
+
+    if (s <= x1) return x1 === x0 ? y1 : y0 + (y1 - y0) * (s - x0) / (x1 - x0);
+
+    x0 = x1;
+    y0 = y1;
+  }
+
+  return 0;
 }
 
 /** `linesOf`, keyed by the ring and index each piece starts at. */
@@ -1232,6 +1282,8 @@ function linesIn(it: Drawn, snap: number): Map<string, Line> {
       edge: head.name,
       root,
       middle: middle - from(p),
+      span: hi - lo,
+      at: from(p) - lo,
       ...(k === 0 ? {} : { before: Math.max(0, from(p) - from(mine[k - 1]) - mine[k - 1].total) }),
       ...(k + 1 === mine.length ? {} : { after: Math.max(0, from(mine[k + 1]) - from(p) - p.total) }),
     }));

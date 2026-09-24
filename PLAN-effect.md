@@ -623,11 +623,25 @@ both: in pieces on different rings. So pieces are gathered by the wall they
 come back to across every ring of the fold, not ring by ring. Per ring, a
 scratch world's step was 115; across rings, 19.
 
-What was left was the tooth beside a cut that was just opening. It went from
-whole to a spacing shorter in one step, because a run's ends ramp over a
-whole spacing and a cut is a new end. So a piece's ramp at a cut is as wide
-as the cut is: nothing at first, and a whole spacing once the cut is that
-wide (`patternRun`'s `rampTo`). That brought it to 1.4.
+What was left was at the cut itself. A crossing is where the wall's *line*
+was cut, but the drawn wall stands off that line by as much as the pattern
+has there. So when the wedge's tip closed the neck, it met the line while
+the drawn zigzag was still 16 units further out. Ending the piece on the
+crossing, the wall jumped onto the tip in one frame. Moving the crossing
+onto the zigzag would only move that jump to the tip, and untangling after
+the deform works only where nothing between the erosion and the deform
+untangles first (a round does).
+
+So a piece of a cut wall ends in two points: the crossing, where whatever
+cut the wall ends, and `on(piece, 0)` or `on(piece, 1)`, where the whole
+wall's pattern is drawn over the cut (`wallAt`: the pattern laid as though
+nothing cut it, read between the teeth either side). A short edge joins
+them. Nothing drawn moves at the split: what appears is a crack, from the
+tip to the wall, that widens as the cut opens. The teeth either side of a
+cut stand as they did before it (a cut has no ramp, `rampAt`), and one the
+cut reaches is passed over by the piece's end rather than shrunk. Measured
+along the edges, the old outline's furthest from the new at the split is
+0.75, the steady motion; the new crack is the only thing further than that.
 
 A piece alone on its wall is named by the wall too, when it carries on from
 one by another name. The wall through the neck is whole at v0 and named by
