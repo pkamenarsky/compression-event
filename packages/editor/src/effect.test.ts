@@ -543,16 +543,23 @@ describe('the deform', () => {
     const said = r.ids[0].map(shows);
     const teeth = said.flatMap((s, i) => (s.includes('#') ? [i] : []));
 
-    // The arc's own facets are still there, and the teeth are not them.
-    expect(said.some(s => /^0\.1@0\.\d/.test(s))).toBe(true);
-    expect(r.shape[0].length).toBeGreaterThan(round.shape[0].length);
+    // The arc's own facets are gone under the teeth, and the ring goes one
+    // spacing to a point round the arcs as it does along the walls: a facet
+    // joint left beside a tooth's foot is what made that tooth a hairpin.
+    const ring = r.shape[0];
+    const gaps = ring.map((p, i) => Math.hypot(ring[(i + 1) % ring.length].x - p.x, ring[(i + 1) % ring.length].y - p.y));
+
+    expect(said.some(s => /^0\.1@0\.\d/.test(s))).toBe(false);
+    expect(Math.min(...gaps)).toBeGreaterThan(ZIGZAG.spacing * 0.8);
 
     // One run: every tooth belongs to it, and no two of them to different ones.
     expect(new Set(teeth.map(i => said[i].split('#')[0])).size).toBe(1);
 
-    // At least one of them stands on an arc rather than on a wall, which is
-    // what `an arc is more of the ring` comes to.
-    const onArc = (i: number) => /@0?\.\d/.test(said[(i + said.length - 1) % said.length]);
+    // And some of them stand on an arc rather than on a wall, which is what
+    // `an arc is more of the ring` comes to: within the bevel of a corner on
+    // both axes at once, which no wall is.
+    const bent = (c: number) => (c > 0 && c < 30) || (c > 170 && c < 200);
+    const onArc = (i: number) => bent(ring[i].x) && bent(ring[i].y);
 
     expect(teeth.some(onArc)).toBe(true);
   });

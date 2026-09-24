@@ -655,36 +655,53 @@ counterexample should be. Two of law 1's three were in that state, and a red
 that says nothing about the code is worse than a slow suite. They have a timeout
 they can finish in.
 
-## Law 1 is red where the round meets the deform
+## Law 1 was red where the round meets the deform — found, and fixed
 
-**What is left of law 1, and the one thing here whose mechanism is not found.**
-All three of its properties are red, and the generator says what they need: with
-the kits cut down to erosion and round it is green, with erosion and deform it
-is green, and with round and deform it is red. Neither effect alone does it.
+**Two causes, and neither was the deform's shape.**
 
-What the drawings differ by is not a missing arc or a moved corner. It is the
-same zigzag, **shifted along the wall**: teeth at `239,1` `239,51` `239,101`
-`239,151` against teeth at `239,4` `239,54` `239,104` `239,154`, and elsewhere
-`4.862393` against `4.000000`. The pattern is the pattern; the phase the run
-starts laying it at is not.
+The first was in the property. Law 3 laid its kit on the scope with
+`withEffects`, which *replaces* the scope's options, while on the other side
+the resolution had already baked the scope's own kit in and the kit went on
+top. Two different worlds, and it showed with an empty kit — no effect at all —
+where the scope lost its zigzag on one side only. `bothWays` now leaves the top
+scope's own kit off on both sides.
 
-So the question is where a run begins on a ring a round has handed up, which is
-the same question the entry above answers for identity and does not answer for
-phase: the stretch fallback picks a start consistently, but nothing shown says
-it picks the one the scope's own deform started from. **It is not to be guessed
-at while the deform's shape is still being worked on** — a phase chosen to make
-this property green would be a guess about what the teeth are meant to look
-like, dressed as a fix.
+The second was the phase, and it was `runsOf`. A ring a round hands up is all
+samples, has no corner to start a run at, and fell back to the least of its
+names. Instrumented by hashing each deform's input ring and comparing across the
+two paths: the same ring arrived at both, a rounded square of forty samples,
+and started at `44.0@0` on the scope's side and `137.11@0` on the resolved one.
+The resolved polygon's corners are numbered in the order the arrangement walked
+it, and no ordering of names can agree across that. So a ring with nothing on it
+to start from starts at the point furthest along a fixed direction chosen to
+match no room's angle. It is the one place a run is started off the geometry.
+Preferring the arc ends among those points was tried and was red again: which
+points are arc ends is read off names too.
 
-**And the round alone is not quite settled either.** It is green over three
-seeds of all three properties, which is what *neither effect alone does it*
-above rests on, and it is *not* green always: one run of *nor does resolving a
-scope inside it*, round-only, failed with an entire arc — eight pieces and more
-— present in one drawing and absent in the other. That is a different shape of
-difference from the phase shift, it was not chased, and a seed that finds it
-again is the place to start. The properties take their seed from the runner, so
-a rare break comes and goes between runs; `fc.assert` prints the seed it used
-and that is what to pin when one turns up.
+With these, and the two changes below, law 3 is green throughout, and law 1's
+first and third properties are.
+
+**What is not settled: a rare break in _nor does resolving a scope inside
+it_.** It went green on one full run and red on the next, with sixteen pieces
+differing near one corner. It has not been chased. The seed is the runner's, so
+pin the one `fc.assert` prints when it turns up. It may be the round-only break
+this entry used to describe: an entire arc present on one side and absent on the
+other.
+
+**A round never rounds a polygon out of existence.** An opening at a radius
+wider than the polygon is empty, since no disc that size fits. So a square
+rounded past the point where its arcs meet went. `opened` now does the round one
+polygon at a time, and where the erosion would leave nothing it halves its way
+to the most of the round that leaves something, so the square comes back the
+circle or stadium it tends to. This is continuous in the amount. A polygon that
+*splits* under the erosion can still lose one part; only the case where all of
+it goes is caught.
+
+**A deform lays nothing between its teeth.** A run that takes teeth is its teeth
+and nothing else, so an arc's facets finer than the spacing go under them, and
+a deformed bevel is spaced like a deformed straight. Keeping the facets made a
+hairpin wherever a tooth's foot fell a fraction of a unit from a facet joint.
+A run too short for a tooth keeps its own points.
 
 ## Law 2 is green, and was not expected to be
 

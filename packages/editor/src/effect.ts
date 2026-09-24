@@ -328,7 +328,66 @@ function facets(swept: number, by: number, eps: number): number {
  * erode and dilate each doing nothing.
  */
 export function rounding(by: Amount, eps: number): Effect {
-  return it => (asks(by) ? resampled(dilating(by, eps)(eroding(by)(it)), eps) : it);
+  return it => {
+    if (!asks(by)) return it;
+
+    // One polygon at a time, as the erosion is, and for a reason of its own:
+    // how far a polygon may be rounded is a question about that polygon. An
+    // opening only ever takes material away, so what each gives back lies
+    // inside it and the parts are laid side by side without an arrangement.
+    const groups = polygonsOf(it.shape);
+
+    if (groups.length < 2) return resampled(opened(it, by, eps), eps);
+
+    const parts = groups.map(group => opened({ shape: group.map(r => it.shape[r]), ids: group.map(r => it.ids[r]) }, by, eps));
+
+    return resampled({ shape: parts.flatMap(p => p.shape), ids: parts.flatMap(p => p.ids) }, eps);
+  };
+}
+
+/**
+ * The opening of one polygon, never rounded out of existence.
+ *
+ * Taken literally an opening at a radius wider than the polygon is nothing at
+ * all: no disc that size fits inside, so a square rounded past the point where
+ * its arcs meet goes. That is right as morphology and wrong as a round — the
+ * arcs meeting is where a round should *stop*, a square at half its width
+ * being a circle. So where the erosion would leave nothing, the round is taken
+ * down to the most of it that leaves something, found by halving, and a
+ * square asked for more than it can take comes back the circle or the stadium
+ * it tends to. Continuous in the amount, which the bake needs of it: at the
+ * amount where the arcs meet, both answers are the same shape.
+ */
+function opened(it: Drawn, by: Amount, eps: number): Drawn {
+  const inner = eroding(by)(it);
+
+  if (inner.shape.length > 0) return dilating(by, eps)(inner);
+
+  let lo = 0, hi = 1, kept: Drawn | null = null;
+
+  for (let k = 0; k < SHRINKS; k++) {
+    const mid = (lo + hi) / 2;
+    const tried = eroding(scaled(by, mid))(it);
+
+    if (tried.shape.length > 0) {
+      lo = mid;
+      kept = tried;
+    }
+    else {
+      hi = mid;
+    }
+  }
+
+  return kept === null ? it : dilating(scaled(by, lo), eps)(kept);
+}
+
+/** How many halvings the most a polygon can be rounded is found to: a part in
+ * four thousand of what was asked. */
+const SHRINKS = 12;
+
+/** An amount taken down by a share, whether one number or one per identity. */
+function scaled(by: Amount, share: number): Amount {
+  return typeof by === 'number' ? by * share : new Map([...by].map(([id, a]) => [id, a * share]));
 }
 
 // -----------------------------------------------------------------------------
@@ -451,13 +510,36 @@ function anchorsOf(names: readonly Ident[]): number[] {
  * rhythms and four spikes instead of one rhythm all the way round.
  *
  * So: an `on` is never a run's start. A rounded ring has no corners left at
- * all, falls through to the least of its names, and takes its teeth as one run
- * the whole way round — which is what `an arc is more of the ring` was always
- * meant to say.
+ * all and takes its teeth as one run the whole way round — which is what `an
+ * arc is more of the ring` was always meant to say.
+ *
+ * **Where that one run starts is read off the geometry**, and it is the one
+ * place here that is. It was the least of the ring's names, and a name is not
+ * something two paths to the same ring agree on: a resolved polygon's corners
+ * are numbered in the order the arrangement walked it, a scope's in the order
+ * its members were drawn, and the least of one set is a different point from
+ * the least of the other. Same zigzag, started at another phase, which is
+ * the whole of what law 1 was red for where the round met the deform. Nothing
+ * about a ring's names says where a circle begins, so it begins at the point
+ * furthest along `LEAD`, whichever point that is. Not preferring the arc ends
+ * the resample holds, tempting as they are: which points are those is itself
+ * read off names, and a resolved ring calls some of them samples. The
+ * direction is nothing any room is drawn square to, so two points are never
+ * tied on it short of a shape built to tie them.
  */
-function runsOf(names: readonly Ident[]): number[] {
-  return startedAt(names, id => madeOf(id).kind !== 'on');
+function runsOf(ring: readonly Point[], names: readonly Ident[]): number[] {
+  const turns = names.flatMap((id, i) => (madeOf(id).kind !== 'on' ? [i] : []));
+
+  if (turns.length > 0) return turns;
+
+  const lead = (i: number) => ring[i].x * LEAD.x + ring[i].y * LEAD.y;
+
+  return [names.reduce((best, _id, i) => (lead(i) > lead(best) ? i : best), 0)];
 }
+
+/** Which way a ring with nothing on it to start from starts: towards the top
+ * left, off any angle a room is drawn at. */
+const LEAD = { x: -Math.cos(0.3183), y: -Math.sin(0.3183) };
 
 /** The indices `holds` picks out, or — where it picks out none — the one least
  * name, so that a ring with no feature on it still starts somewhere that is
@@ -628,9 +710,11 @@ function stationOf(run: readonly Point[], t: number): Point {
  * carries the teeth as points like any others rather than laying them again.
  *
  * An arc takes its teeth as a wall does, one every spacing by length out from
- * the anchor, each pushed along the ring's own normal where it falls. That is
- * `ArcTeeth` and `drawnBevels` and `CRAMMED`, and it is now nothing at all:
- * an arc is more of the ring.
+ * the anchor, each pushed along the ring's own normal where it falls, and
+ * like a wall it keeps nothing between them: its facets go under the teeth,
+ * so a deformed bevel is spaced as a deformed straight is. That is `ArcTeeth`
+ * and `drawnBevels` and `CRAMMED`, and it is now nothing at all: an arc is
+ * more of the ring.
  *
  * Teeth cross each other and cross walls, so it finishes through the
  * arrangement — which names what the crossings make, as it does anywhere else.
@@ -646,7 +730,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
 
     it.shape.forEach((ring, r) => {
       const names = it.ids[r];
-      const held = ring.length < 3 ? [] : runsOf(names);
+      const held = ring.length < 3 ? [] : runsOf(ring, names);
 
       if (held.length === 0) {
         shape.push(ring);
@@ -673,29 +757,27 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
         out.push(ring[from]);
         said.push(whose);
 
-        // The run's own points and its teeth, laid end to end in the order
-        // their arc lengths put them: an arc keeps its facets and takes teeth
-        // between them.
-        let next = 1;
-
-        for (let j = 0; j < lay.along.length; j++) {
-          const at = lay.along[j] * total;
-
-          while (next + 1 < run.length && lengths[next] <= at) {
+        // A run that takes teeth is its teeth and nothing else: each stands on
+        // the run where its arc length puts it, a facet of an arc included,
+        // and the points between are the ones the pattern lays. So the ring
+        // goes one spacing to a point as it does along a straight, and an
+        // arc's facets finer than the spacing go under it. Kept, a facet
+        // joint a fraction of a unit from a tooth's foot made that tooth a
+        // hairpin — the tooth pushed off one facet's normal and the joint
+        // left standing beside it. A run too short for a tooth keeps its own
+        // points, being drawn as it was.
+        if (lay.along.length === 0) {
+          for (let next = 1; next + 1 < run.length; next++) {
             out.push(run[next]);
             said.push(names[stepped(ring, from, next)]);
-            next++;
           }
+        }
 
-          const ride = rideOf(run, lengths, at);
+        for (let j = 0; j < lay.along.length; j++) {
+          const ride = rideOf(run, lengths, lay.along[j] * total);
 
           out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
           said.push(tooth(whose, lay.teeth[j]));
-        }
-
-        for (; next + 1 < run.length; next++) {
-          out.push(run[next]);
-          said.push(names[stepped(ring, from, next)]);
         }
       }
 
