@@ -95,10 +95,10 @@ import {
 import { outline } from '../worldset';
 import type { Drawn, Ident, Ids } from '../ids';
 import { combineIdentified, identify, on } from '../ids';
-import type { Effect } from '../effect';
+import type { Laying } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
-import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
+import { effected } from '../effect';
 import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
@@ -366,14 +366,37 @@ export function shaping(e: Effected): Effected | null {
   return any || toothed ? e : null;
 }
 
-/** A round as numbers, lengths divided by `s`, for `project`. */
-function effectKey(e: Effected, s = 1): Memo[] {
-  const d = e.deform;
-  const deform: Memo[] = d === null
-    ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude / s, Number(d.e.offset)];
+/**
+ * A thing's effects as numbers, lengths divided by `s`: the effect part of
+ * both folds' memo keys, a polygon's (`project`) and a scope's (`foldedBy`),
+ * built by this one function so that the two cannot say different things
+ * about the same effects. `layingOf` reads it back.
+ *
+ * The facets and the bevel, zero where nothing is rounded; then the deform's
+ * options and amplitude where it has one.
+ */
+export function effectKey(e: Omit<Effected, 'deform'> & { deform?: ArcDeform | null } | undefined, s = 1): number[] {
+  const round = e !== undefined && e.facets.n > 0 && e.bevel > 0;
+  const d = e?.deform ?? null;
 
-  return [facetKey(e.facets), e.bevel / s, deform];
+  return [
+    ...facetKey(round ? e!.facets : SQUARE), round ? e!.bevel / s : 0,
+    ...(d === null ? [] : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude / s, Number(d.e.offset)]),
+  ];
+}
+
+/** What `effectKey` wrote, with an erosion in front: what `effected` lays. */
+export function layingOf(erosion: number, key: readonly number[]): Laying {
+  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
+
+  return {
+    erosion,
+    round: n > 0 && bevel > 0 ? { bevel, from, to, at } : null,
+    deform: spacing === undefined ? null : {
+      amplitude,
+      how: { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 },
+    },
+  };
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -888,7 +911,7 @@ export const project = remembered((
   source: Ring,
   rings: readonly number[],
   erosion: number,
-  effects: readonly Memo[] | null,
+  effects: readonly number[] | null,
   /**
    * Which member these names are minted in, so that two polygons in one scope
    * do not both call their first corner `0.0`. The polygon's own id.
@@ -931,7 +954,7 @@ export const project = remembered((
 
 /** No facets, no bevel and no deform: the fold with nothing to lay but the
  * erosion. */
-const UNEFFECTED: readonly Memo[] = [facetKey(SQUARE), 0, []];
+const UNEFFECTED: readonly number[] = effectKey(undefined);
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
@@ -952,11 +975,10 @@ function folding(
   source: Ring,
   rings: readonly number[],
   erosion: number,
-  effects: readonly Memo[],
+  effects: readonly number[],
   member: number,
   was: readonly number[] | null,
 ): Drawn {
-  const [facets, bevel, deform] = effects as [number[], number, number[]];
   // Named as it was drawn, point for point with `source`, and the names
   // carried through the clean-up rather than minted after it: `simplify`
   // re-walks a ring and drops what does not turn, and names read off its walk
@@ -967,28 +989,7 @@ function folding(
   const names = identify(cut, member, was);
   const { shape, ids } = combineIdentified({ shape: cut, ids: names }, { shape: [], ids: [] }, inA => inA);
 
-  const [spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = deform;
-  const whole: Effecting | null = deform.length === 0
-    ? null
-    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
-
-  const steps: Effect[] = [
-    offsetting(erosion),
-    roundingOf(bevel, facetsFrom(facets)),
-    ...(whole === null ? [] : [deforming(amplitude, whole)]),
-  ];
-
-  return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids });
-}
-
-/**
- * The round a polygon's facets ask for: at the accuracy their count stood at,
- * and — part way across a span whose count changes — laid at both ends'
- * counts and blended, so the ring keeps its points and each end is the
- * editor's. See `roundingAcross`.
- */
-function roundingOf(bevel: number, f: Facets): Effect {
-  return roundingAcross(bevel, sagitta(bevel, f.from), sagitta(bevel, f.to), f.at);
+  return effected({ shape, ids }, layingOf(erosion, effects));
 }
 
 /** The erosion alone: the first of the three, and all of it for a polygon

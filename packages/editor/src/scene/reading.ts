@@ -41,7 +41,7 @@ import { combineIdentified, on } from '../ids';
 import type { Effect } from '../effect';
 // `eroding` is taken here: the core's is the question of whether a scope
 // erodes at all, and this is the effect that does it.
-import { deforming, eroding as offsetting, foldEach, roundingAcross, sagitta } from '../effect';
+import { effected, eroding as offsetting } from '../effect';
 import {
   GroupId,
   Id,
@@ -81,10 +81,9 @@ import { Affine, IDENTITY, unplace } from '../affine';
 import { placed, stateAt, worldFrame } from '../rig';
 
 import {
-  facetKey,
+  effectKey,
   groupDeform,
-  PATTERNS,
-  SIDES as DEFORM_SIDES,
+  layingOf,
   Painted,
   Resolved,
   artefactsIn,
@@ -572,44 +571,14 @@ const foldedBy = remembered((
   key: readonly number[],
 ): Drawn => {
   const union: Drawn = { shape, ids: ids as Ids, ...(edges === null ? {} : { edges: edges as Ids }) };
-  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
-  const round = n > 0 && bevel > 0;
 
-  const steps: Effect[] = [
-    ...(depth === 0 ? [] : [offsetting(depth)]),
-    // Across a span whose count changes, laid at both ends' and blended: see
-    // `roundingAcross`.
-    ...(round ? [roundingAcross(bevel, sagitta(bevel, from), sagitta(bevel, to), at)] : []),
-    ...(spacing === undefined ? [] : [deforming(amplitude, {
-      spacing,
-      pattern: PATTERNS[pattern],
-      seed,
-      sides: DEFORM_SIDES[sides],
-      jitter,
-      falloff,
-      offset: offset === 1,
-    })]),
-  ];
-
-  return foldEach(union, steps);
+  return effected(union, layingOf(depth, key));
 });
 
-/**
- * A scope's round and deform as `foldedBy` is keyed by them: the facets and
- * the bevel, and the deform's options and amplitude where it has one. Nothing
- * for a scope that is not standing.
- */
+/** A scope's effects as `foldedBy` is keyed by them: `effectKey`, the one the
+ * polygon's fold is keyed by too. Nothing for a scope that is not standing. */
 function shapeKey(s: Standing | null): number[] | null {
-  if (s === null) return null;
-
-  const fx = s.effects;
-  const round = fx !== undefined && fx.facets.n > 0 && fx.bevel > 0;
-  const d = fx?.deform;
-
-  return [
-    ...facetKey(round ? fx!.facets : SQUARE), round ? fx!.bevel : 0,
-    ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude, Number(d.e.offset)]),
-  ];
+  return s === null ? null : effectKey(s.effects);
 }
 
 export function contributed(

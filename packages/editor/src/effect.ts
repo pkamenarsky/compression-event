@@ -61,6 +61,34 @@ export function foldEach(it: Drawn, steps: readonly Effect[]): Drawn {
 }
 
 /**
+ * A thing's effects as a fold lays them: an erosion, a round across a span of
+ * facet counts, a deform. Today's fixed three, in their fixed order; see
+ * PLAN-order, whose step 2 makes it a list.
+ */
+export interface Laying {
+  erosion: number
+  /** The round, with the sagitta counts at either end of a span and how far
+   * across it: see `roundingAcross`. Null where nothing is rounded. */
+  round: { bevel: number, from: number, to: number, at: number } | null
+  deform: { amplitude: number, how: Effecting } | null
+}
+
+/**
+ * A shape through its effects, first to last, each island on its own: the one
+ * pipeline a polygon's fold and a scope's both come down to, so the two can
+ * differ in their input and in nothing else.
+ */
+export function effected(it: Drawn, fx: Laying): Drawn {
+  const { erosion, round, deform } = fx;
+
+  return foldEach(it, [
+    ...(erosion === 0 ? [] : [eroding(erosion)]),
+    ...(round === null ? [] : [roundingAcross(round.bevel, sagitta(round.bevel, round.from), sagitta(round.bevel, round.to), round.at)]),
+    ...(deform === null ? [] : [deforming(deform.amplitude, deform.how)]),
+  ]);
+}
+
+/**
  * How much of an effect a shape is given: one number, over the whole of it.
  *
  * It used to be able to be a number per identity, which is what a round on
