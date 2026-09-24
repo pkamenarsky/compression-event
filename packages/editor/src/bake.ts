@@ -2802,6 +2802,17 @@ const MARGIN = 0.5;
  * step's does not come down at all, a bend's by about four. */
 const STEP = 0.75;
 
+/**
+ * Whether a step is cut at all. Off, a step is owned as error the way it always
+ * was, and chased; see PLAN-effect's *A step owned as error is chased for
+ * nothing*, which says why it is not on yet.
+ */
+let cuttingSteps = false;
+
+export function cutSteps(on: boolean): void {
+  cuttingSteps = on;
+}
+
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
   return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b) && named(a, b);
@@ -3670,7 +3681,7 @@ function* bisected(
     // times finer, and then a hundred, for an answer no width could improve —
     // a facet count stepping under a round, which is a jump of up to the
     // round's own accuracy wherever it happens.
-    if (!Number.isFinite(off) || (off > tol * MARGIN && off >= before * STEP)) {
+    if (!Number.isFinite(off) || (cuttingSteps && off > tol * MARGIN && off >= before * STEP)) {
       pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true, step: Number.isFinite(off) });
 
       yield b.t;
