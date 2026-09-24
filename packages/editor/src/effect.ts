@@ -805,8 +805,20 @@ function walked(run: readonly Point[]): number[] {
   return out;
 }
 
-/** The point `at` along the run, and the way off it: out is to the right of
- * the way round, as a ring with material on its left has it. */
+/**
+ * The point `at` along the run, and the way off it: out is to the right of the
+ * way round, as a ring with material on its left has it.
+ *
+ * The way off is eased along each facet from the bisector at one joint to the
+ * bisector at the next, and not the facet's own normal. On a straight it is
+ * the same thing. On an arc it is the difference between a tooth standing out
+ * of the curve and a tooth leaning with whichever facet it happened to land
+ * on — and at a joint *which* facet that is was decided by the last bit of a
+ * length. Two paths to one ring measure its runs in a different order, so a
+ * tooth centred on the apex of a rounded tip swung ten degrees one way on the
+ * scope and ten the other on its resolution, a unit apart at the tooth's tip.
+ * Eased, the direction is continuous in `at` and an ulp moves it by an ulp.
+ */
 function rideOf(run: readonly Point[], lengths: readonly number[], at: number): {
   at: Point
   nx: number
@@ -819,11 +831,25 @@ function rideOf(run: readonly Point[], lengths: readonly number[], at: number): 
   const a = run[i], b = run[i + 1];
   const d = lengths[i + 1] - lengths[i];
   const u = d === 0 ? 0 : Math.min(1, Math.max(0, (at - lengths[i]) / d));
-  const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+  const from = jointOf(run, i), to = jointOf(run, i + 1);
+  const nx = from.x * (1 - u) + to.x * u, ny = from.y * (1 - u) + to.y * u;
+  const l = Math.hypot(nx, ny);
 
   return {
-    at: { x: a.x + dx * u, y: a.y + dy * u },
-    nx: l === 0 ? 0 : dy / l,
-    ny: l === 0 ? 0 : -dx / l,
+    at: { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u },
+    nx: l === 0 ? 0 : nx / l,
+    ny: l === 0 ? 0 : ny / l,
   };
+}
+
+/** The way off the run at its point `i`: the bisector of the facets either
+ * side, or the one facet there is at either end. */
+function jointOf(run: readonly Point[], i: number): Point {
+  const before = i > 0 ? outward(run[i - 1], run[i]) : null;
+  const after = i + 1 < run.length ? outward(run[i], run[i + 1]) : null;
+
+  if (before === null) return after ?? { x: 0, y: 0 };
+  if (after === null) return before;
+
+  return { x: before.x + after.x, y: before.y + after.y };
 }

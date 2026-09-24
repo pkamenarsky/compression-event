@@ -1207,14 +1207,27 @@ export const project = remembered((
   // survived, or one the offset made where two walls met. So naming them where
   // they come out says nothing untrue, and this path stays exactly the shape
   // it always was.
-  if (effects === null) {
+  //
+  // Unless some of the source's points are samples, which is when there is a
+  // `was` at all (see `sampled`). It says which point by point *of the
+  // source*, and the offset hands back another ring — shorter, started
+  // elsewhere — so read against the answer it lands on the wrong points: an
+  // arc's samples five places on, on a row of teeth, which made them samples
+  // and the arc's own points corners, and a deform after it laid its runs from
+  // those. So a sampled ring is named before it is eroded and carries the
+  // names through, which is what the fold does.
+  if (effects === null && was === null) {
     const shape = offsetOf(source, rings, erosion, depths);
 
     return { shape, ids: identify(shape, member, was) };
   }
 
-  return folding(source, rings, erosion, depths, effects, member, was);
+  return folding(source, rings, erosion, depths, effects ?? UNEFFECTED, member, was);
 });
+
+/** No facets, no bevels and no deform: the fold with nothing to lay but the
+ * erosion. */
+const UNEFFECTED: readonly Memo[] = [[], [], [], []];
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,

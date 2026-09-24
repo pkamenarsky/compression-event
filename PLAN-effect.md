@@ -678,15 +678,29 @@ match no room's angle. It is the one place a run is started off the geometry.
 Preferring the arc ends among those points was tried and was red again: which
 points are arc ends is read off names too.
 
-With these, and the two changes below, law 3 is green throughout, and law 1's
-first and third properties are.
+With these and the entries after them, all twelve law properties are green,
+three full runs on fresh seeds.
 
-**What is not settled: a rare break in _nor does resolving a scope inside
-it_.** It went green on one full run and red on the next, with sixteen pieces
-differing near one corner. It has not been chased. The seed is the runner's, so
-pin the one `fc.assert` prints when it turns up. It may be the round-only break
-this entry used to describe: an entire arc present on one side and absent on the
-other.
+**The rare break in _nor does resolving a scope inside it_ was two more
+causes**, each found by pinning the seed `fc.assert` printed and hashing what
+each effect was handed on both paths.
+
+- *A tooth on a facet joint leaned with whichever facet it landed on.*
+  `rideOf` pushed a tooth out along one facet's normal, and at a joint which
+  facet that was came down to the last bit of the run's length. The two paths
+  measured one run 60.86765835288015 and 60.867658352880156 long, and a tooth
+  centred on the apex of a rounded tip swung one way on one and the other way
+  on the other, a unit apart at its tip. The normal is now eased from the
+  bisector at one joint to the bisector at the next, continuous in the length,
+  so an ulp moves it by an ulp. On a straight it is the same normal.
+- *A polygon with samples and only an erosion was named after the erosion.*
+  `project`'s path for a polygon with no effects offsets the source and then
+  calls `identify` with `was` — which says which points *of the source* are
+  samples. The offset hands back a different ring, 53 points in and 34 out
+  on the counterexample, so the sample marks landed five points along, on a
+  row of teeth, and the arc's own points became corners the deform then
+  started runs from. A sampled polygon now goes through `folding`, which names
+  the source first and carries the names through the erosion.
 
 **A round never rounds a polygon out of existence.** An opening at a radius
 wider than the polygon is empty, since no disc that size fits. So a square
