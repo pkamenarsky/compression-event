@@ -852,3 +852,33 @@ fails about one run in three, on `seed: -1742226975, path:
 "25:40:6:1:1:3:5:0:0:0:5:6"`. Confirmed red on `fe8846a`, before step 9 touched
 anything. `laws.test.ts` now takes `LAW_SEED` and `LAW_PATH` from the
 environment to replay one. Not looked into.
+
+## A step owned as error is chased for nothing
+
+A stretch whose two ends are comparable — same signature, same names — can
+still jump between them: a facet count stepping under a round moves an arc's
+samples by up to the round's own accuracy, and a crossing a narrow notch makes
+of one of them can move by more. Bisection pins it to `BEND`, finds it still
+off, owns it as error, and `chased` sends the whole track back to be cut ten
+times finer and then a hundred, for an answer no width can improve. On the
+world in `scratch/world-2026-09-24T13-46-52Z` these were every span's `worst`
+(0.27 to 0.62 against a tolerance of 0.05) and a good share of its evaluations.
+
+A step has a signature a bend has not: halving a bend's interval brings its
+error down by about four, halving a step's leaves it at half the step.
+`cutSteps(true)` in `bake.ts` cuts a piece whose error came down by less than
+`STEP` for its last halving as an event, as an incomparable pair already is,
+and keeps `settled`'s window check from measuring across it. With it on, every
+span of that world came inside tolerance (0.033 to 0.049) and 8–16% faster.
+
+**Off by default, because it is not settled.** It is a heuristic, and `STEP`
+(0.75) was never tuned. It fires on a smooth motion that is singular — a
+crossing racing along two walls going parallel does not come down for halving
+either — and cuts it as a snap under a millionth of a span wide. It changes
+what an effect-free world bakes to: the `level` baseline's span 1 has a 31-unit
+step at t = 0 whose error was the same as its parent's to thirteen digits, and
+with the rule on its digest is not master's. And it makes the bake blind to a
+pop under the round's accuracy that happens inside a millionth of a span, which
+it used to report. Still to decide: whether that blindness is the right trade,
+whether a step should be told apart from a singularity by more than one
+halving, and whether the goldens should follow.
