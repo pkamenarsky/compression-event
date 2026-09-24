@@ -41,7 +41,7 @@ import { combineIdentified, on } from '../ids';
 import type { Effect, Step } from '../effect';
 // `eroding` is taken here: the core's is the question of whether a scope
 // erodes at all, and this is the effect that does it.
-import { deforming, eroding as offsetting, inOrder, orderFrom, orderKey, roundingAcross, sagitta } from '../effect';
+import { deforming, eroding as offsetting, foldEach, inOrder, orderFrom, orderKey, roundingAcross, sagitta } from '../effect';
 import {
   GroupId,
   Id,
@@ -594,7 +594,7 @@ const foldedBy = remembered((
     }) }),
   });
 
-  return steps.reduce<Drawn>((it, fx) => fx(it), union);
+  return foldEach(union, steps);
 });
 
 /**
