@@ -400,16 +400,21 @@ describe('a group\'s effects', () => {
     const g = grouped(s.world, 0, [a.id, s.id], TOP)!;
     const w = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 5) }), 0, g.id, round(5));
     const vertices = new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    const has = (x: number, y: number) => vertices.has(`${x.toFixed(6)},${y.toFixed(6)}`);
 
-    // Where the solid crosses the wall, and its own corners in the room: none
-    // of them a point any more, each an arc.
-    ['100,40', '100,60', '80,40', '80,60', '0,0'].forEach(p => {
-      const [x, y] = p.split(',').map(Number);
+    // Where the solid crosses the wall, and the room's own corners: none of
+    // them a point any more, each an arc.
+    expect(has(100, 40)).toBe(false);
+    expect(has(100, 60)).toBe(false);
+    expect(has(0, 0)).toBe(false);
 
-      expect(vertices.has(`${x.toFixed(6)},${y.toFixed(6)}`)).toBe(false);
-    });
+    // The solid's own corners in the room turn into it, and an opening
+    // leaves a corner that turns in as it is.
+    expect(has(80, 40)).toBe(true);
+    expect(has(80, 60)).toBe(true);
 
-    expect(csg(w, 0).flat().length).toBe(8 * 9 + 1);
+    // Six arcs of eight, the two inner corners, and the ring closed.
+    expect(csg(w, 0).flat().length).toBe(6 * 9 + 2 + 1);
   });
 
   test('a loose group has none to give', () => {
