@@ -880,22 +880,34 @@ function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] 
     return crossing(a, b, c, d) || crossing(b, c, d, a);
   };
 
+  // Walked from just past a wall that does not fold, so that a run straddling
+  // the ring's first point is one run. Walked from the first point, it was two,
+  // and which walls went in whole and which as quads came down to where the
+  // ring happened to start — so the same outline, handed up by a scope and by
+  // the polygon it resolved to, eroded to two different shapes. A run's `to`
+  // may then pass `n`; everything reading one takes its indices round the ring.
+  const start = Array.from({ length: n }, (_, k) => k).find(k => !folded(k));
+  const s = start === undefined ? 0 : start + 1;
   const out: Run[] = [];
-  let i = 0;
+  let k = 0;
 
-  while (i < n) {
+  while (k < n) {
+    const i = (s + k) % n;
+
     if (!folded(i)) {
-      i++;
+      k++;
       continue;
     }
 
-    let to = i;
+    let to = k;
 
-    while (to + 1 < n && folded(to + 1) && depth(to + 1) === depth(i)) to++;
+    while (to + 1 < n && folded((s + to + 1) % n) && depth((s + to + 1) % n) === depth(i)) to++;
 
-    if (to > i && plain(ring, moved, i, to)) out.push({ from: i, to, side: depth(i) });
+    const end = i + to - k;
 
-    i = to + 1;
+    if (end > i && plain(ring, moved, i, end)) out.push({ from: i, to: end, side: depth(i) });
+
+    k = to + 1;
   }
 
   return out;
@@ -2828,11 +2840,8 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
       ring.push(nodes[from[e]]);
       ringTag.push(tags[from[e]]);
 
-      const at = to[e];
-      if (at === from[start] && ring.length > 1) break;
-
-      const next = successor(e, at, out, used, nodes, from, to);
-      if (next < 0) break;
+      const next = successor(e, to[e], out, used, nodes, from, to);
+      if (next < 0 || next === start || used[next]) break;
 
       e = next;
     }
@@ -3053,23 +3062,32 @@ function successor(
   from: number[],
   to: number[],
 ): number {
-  const candidates = out[at].filter(i => !used[i]);
-  if (candidates.length === 0) return -1;
-  if (candidates.length === 1) return candidates[0];
-
   const back = angleOf(nodes[to[e]], nodes[from[e]]);
+  const sharpest = (candidates: readonly number[]): number => {
+    let best = -1, bestTurn = -Infinity;
 
-  let best = -1, bestTurn = -Infinity;
-
-  for (const i of candidates) {
-    const turn = norm(angleOf(nodes[from[i]], nodes[to[i]]) - back);
-    if (turn > bestTurn) {
-      bestTurn = turn;
-      best = i;
+    for (const i of candidates) {
+      const turn = norm(angleOf(nodes[from[i]], nodes[to[i]]) - back);
+      if (turn > bestTurn) {
+        bestTurn = turn;
+        best = i;
+      }
     }
-  }
 
-  return best;
+    return best;
+  };
+
+  // Chosen among every edge leaving here, walked or not, so that which edge
+  // follows which is a fact about the corner and not about where the walk
+  // began. Chosen among the unwalked ones only, a ring pinched through a
+  // corner came out pinched from one start and as two rings from another —
+  // pairing the walls across two different wedges of material there — and an
+  // erosion, which reads a corner off the walls either side of it, eroded the
+  // two differently. The unwalked are asked only where the arrangement has
+  // left the corner lopsided and the sharpest turn is already spent.
+  const best = sharpest(out[at]);
+
+  return best < 0 || !used[best] ? best : sharpest(out[at].filter(i => !used[i]));
 }
 
 function angleOf(a: Point, b: Point): number {
