@@ -2922,6 +2922,26 @@ function edge(off: number): number {
 }
 
 /**
+ * What a ring's point is called, where the ring leaves it along `seg`: the
+ * node's own tag, unless two corners stand on that node and it is the other
+ * one's edge the ring leaves by.
+ *
+ * A point and the edge leaving it are named alike, so a node with two corners
+ * on it — two rooms touching at a corner, the boundary passing through it
+ * twice — is two points, each named after the corner whose wall it goes on
+ * along. Called by the node's one tag, both visits had the same name, the one
+ * name left along two walls, and a deform reading which wall a crossing cut
+ * found a name whose points lay on two lines and laid neither as one. What
+ * `boundaryRuns` hands a resolve names each visit after its own corner, so a
+ * scope and its resolution named that wall differently.
+ */
+function leaves(seg: Seg, tag: Tag): Tag {
+  const own = seg.ta;
+
+  return tag.kind === 'vertex' && own.kind === 'vertex' && cmpRef(own.at, seg.edge) === 0 ? own : tag;
+}
+
+/**
  * Kept segments back into rings. Where more than two edges meet, the successor
  * is the sharpest left turn available: with the interior on the left, hugging
  * it traces each face separately instead of driving straight through the
@@ -2960,7 +2980,7 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
     while (true) {
       used[e] = true;
       ring.push(nodes[from[e]]);
-      ringTag.push(tags[from[e]]);
+      ringTag.push(leaves(segs[e], tags[from[e]]));
 
       const next = successor(e, to[e], out, used, nodes, from, to);
       if (next < 0 || next === start || used[next]) break;

@@ -553,6 +553,43 @@ describe('law 1: a scope draws what it resolves to', () => {
     }
   });
 
+  /**
+   * Found by seed 27. The eroding scope's two rooms touch at one corner, and
+   * the union of them passes through that corner twice: once going on along
+   * the first room's bottom wall, once along the second's top.
+   *
+   * What it turned on: the arrangement called both visits by one tag, the
+   * first room's corner, so the name that says which wall leaves a point was
+   * left along two walls. After the erosion and the other scope's teeth had cut
+   * the second room's top into pieces, the outer deform asked which wall each
+   * crossing was on, found a wall with points on two lines, and laid every
+   * piece from its own middle. The resolution, which names each visit after
+   * its own corner, laid them as one wall, and the teeth came out 3.7 apart.
+   */
+  test('and a corner two rooms touch at is two corners, each leaving by its own wall', () => {
+    const spec: Spec = { kind: 'group', kit: { deform: 2 }, members: [
+      { kind: 'group', kit: { erode: 1 }, members: [
+        { kind: 'room', at: rect(60, 120, 120, 120) },
+        { kind: 'room', at: rect(180, 240, 120, 120) },
+      ] },
+      { kind: 'group', kit: { deform: 11 }, members: [
+        { kind: 'room', at: rect(120, 240, 120, 200) },
+        { kind: 'room', at: rect(120, 240, 200, 80) },
+      ] },
+    ] };
+
+    const { world } = built(emptyWorld(), spec);
+    const scope = joining(world);
+
+    for (const id of world.groups.keys()) {
+      const out = resolveGroup(world, 0, id)!;
+
+      if (scope.across && out.ids.length > 1) continue;
+
+      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+    }
+  });
+
   test('nor does resolving a scope inside it', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
