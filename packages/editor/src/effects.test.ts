@@ -676,17 +676,7 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // The one row that does not hold, and it wants a bevel `arcsWith` has to
-  // ration: at 120 the corner at (200, 0) takes the whole of the wall into
-  // it, and the tooth at its tangent point has no room left. The fold keeps
-  // that tooth, flat, as a point of the ring the line on it can fade in over;
-  // the same ring drawn as a polygon drops it, and comes out one point short
-  // at each such corner. At 60, where nothing is rationed, the row passes.
-  //
-  // So it is the flat tooth again, at the other end: `reach` made a group
-  // keep one where it had not, and this is a polygon losing one where the
-  // fold keeps it. See `FoldShaped.fades` and PLAN-bevel 3.9.
-  test.fails('members deformed, under a scope rounding past a whole wall', () => {
+  test('members deformed, under a scope rounding past a whole wall', () => {
     const { world, id } = scopes({ deform: 6 }, { round: 120 });
 
     same(world, id);
