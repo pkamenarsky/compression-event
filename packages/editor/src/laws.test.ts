@@ -105,11 +105,16 @@ function drawn(world: World): [Point, Point][] {
     for (const p of s) meeting.set(at(p), [...(meeting.get(at(p)) ?? []), i]);
   });
 
+  // Straight is `b` lying within `eps` of the chord from `a` to `c`: the same
+  // distance the points are clustered at, and the one the arrangement snaps
+  // at. An angle would not do — a vertex the arrangement welded onto a wall
+  // 3e-7 off it, on a wall twenty long, turns by 2e-8 there, and a sine
+  // tolerance calls that a corner where the other drawing has none.
   const straight = (a: Point, b: Point, c: Point) => {
-    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
-    const scale = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+    const wx = c.x - a.x, wy = c.y - a.y;
+    const len = Math.hypot(wx, wy);
 
-    return scale === 0 || Math.abs(ux * vy - uy * vx) <= scale * 1e-9;
+    return len === 0 || Math.abs((b.x - a.x) * wy - (b.y - a.y) * wx) <= eps * len;
   };
 
   for (let i = 0; i < segs.length; i++) {
