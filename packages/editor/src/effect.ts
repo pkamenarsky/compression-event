@@ -19,7 +19,7 @@
 
 import type { Point } from '@ce/game/world';
 import type { Effecting, Shape, Sweptfrom } from './geometry';
-import { OpSubtract, OpUnion, along, patternRun, sweptBand } from './geometry';
+import { OpSubtract, OpUnion, along, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
 import { combineIdentified, keyOf, madeOf, on, shows, tooth } from './ids';
 
@@ -103,26 +103,58 @@ export function eroding(depth: Amount): Effect {
   return it => {
     if (!asks(depth)) return it;
 
-    const band = sweptBand(it.shape, (r, i) => amountOf(depth, it.ids[r][i]));
+    // One polygon at a time, which is how a resolve does it and so how this has
+    // to. See `polygonsOf`: a band is not contained in the ring that swept it,
+    // so a shape offset whole has one polygon's slivers cutting into another's
+    // material and does not draw what its resolution draws.
+    const groups = polygonsOf(it.shape);
 
-    const side = (shape: Shape, from: Sweptfrom[][], along: Sweptfrom[][]): Drawn => ({
-      shape,
-      ids: from.map(ring => ring.map(w => nameOf(it.ids, w))),
-      edges: along.map(ring => ring.map(w => nameOf(it.ids, w))),
-    });
+    if (groups.length < 2) return erodeOne(it, depth);
 
-    let out: Drawn = it;
+    const parts = groups.map(group => erodeOne(
+      {
+        shape: group.map(r => it.shape[r]),
+        ids: group.map(r => it.ids[r]),
+        ...(it.edges === undefined ? {} : { edges: group.map(r => it.edges![r]) }),
+      },
+      depth,
+    ));
 
-    if (band.inward.length > 0) {
-      out = combineIdentified(out, side(band.inward, band.inwardFrom, band.inwardAlong), OpSubtract);
-    }
-
-    if (band.outward.length > 0) {
-      out = combineIdentified(out, side(band.outward, band.outwardFrom, band.outwardAlong), OpUnion);
-    }
-
-    return out;
+    // Edges only where every part has them. What `combineIdentified` hands back
+    // is walked and carries none, and a part the depths asked nothing of comes
+    // back as it went in and carries whatever it arrived with — so the two are
+    // mixed, and half an `edges` is worse than none: a reader takes its absence
+    // to mean an edge leaves the point it is indexed by, which is true of both.
+    return {
+      shape: parts.flatMap(p => p.shape),
+      ids: parts.flatMap(p => p.ids),
+      ...(parts.every(p => p.edges !== undefined) ? { edges: parts.flatMap(p => p.edges!) } : {}),
+    };
   };
+}
+
+/** The erosion of one polygon: an outline and its holes, and nothing else in
+ * the shape to reach into it. */
+function erodeOne(it: Drawn, depth: Amount): Drawn {
+  const band = sweptBand(it.shape, (r, i) => amountOf(depth, it.ids[r][i]));
+
+  const side = (shape: Shape, from: Sweptfrom[][], along: Sweptfrom[][]): Drawn => ({
+    shape,
+    ids: from.map(ring => ring.map(w => nameOf(it.ids, w))),
+    edges: along.map(ring => ring.map(w => nameOf(it.ids, w))),
+  });
+
+  let out: Drawn = it;
+
+  if (band.inward.length > 0) {
+    out = combineIdentified(out, side(band.inward, band.inwardFrom, band.inwardAlong), OpSubtract);
+  }
+
+  if (band.outward.length > 0) {
+    out = combineIdentified(out, side(band.outward, band.outwardFrom, band.outwardAlong), OpUnion);
+  }
+
+  return out;
 }
 
 /** The name of the corner a band point came of, or of the place along its wall

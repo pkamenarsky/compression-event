@@ -885,6 +885,59 @@ function ccw(ring: Ring): Ring {
   return isCCW(ring) ? ring : [...ring].reverse();
 }
 
+/**
+ * Which rings of a shape make up one polygon each: an outline and the holes in
+ * it, by index into `shape`.
+ *
+ * An offset is a per-polygon question and has to be asked that way, because a
+ * swept band is *not* contained in the ring that swept it. A corner whose two
+ * walls approach a hairpin is moved along a bisector scaled by `1 / cosHalf`,
+ * which is unbounded, so a quad of the band can reach far outside its own
+ * outline — further than the depth by any factor you like. Handed to the
+ * arrangement as one operand for the whole shape, such a sliver takes material
+ * out of a *different* polygon, and then a shape's erosion depends on a
+ * polygon it never touches. A resolve, which offsets one polygon at a time,
+ * does not do that, and the two have to draw the same thing.
+ *
+ * A hole goes with the outline it is a hole in rather than into a group of its
+ * own: the band it sweeps runs into that outline's material, which is where it
+ * belongs. The same rule `resolve`'s `nested` uses — the sign relative to the
+ * biggest ring, so a mirrored frame does not turn every outline into a hole —
+ * and outlines come back in the order they came in.
+ */
+export function polygonsOf(shape: Shape): number[][] {
+  if (shape.length < 2) return shape.map((_ring, i) => [i]);
+
+  const area = shape.map(signedArea2);
+  const biggest = area.reduce((b, a, i) => (Math.abs(a) > Math.abs(area[b]) ? i : b), 0);
+  const outward = Math.sign(area[biggest]);
+  const hole = area.map(a => Math.sign(a) !== outward);
+  const groups = new Map<number, number[]>();
+
+  shape.forEach((_ring, i) => {
+    if (!hole[i]) groups.set(i, [i]);
+  });
+
+  shape.forEach((ring, i) => {
+    if (!hole[i]) return;
+
+    // The tightest outline round it, so a courtyard inside a room inside a
+    // courtyard belongs to the room. A hole nothing encloses is nothing's, and
+    // stands as its own group rather than being dropped.
+    let owner: number | null = null;
+
+    shape.forEach((other, j) => {
+      if (hole[j] || !contains([other], ring[0])) return;
+      if (owner === null || Math.abs(area[j]) < Math.abs(area[owner])) owner = j;
+    });
+
+    if (owner === null) groups.set(i, [i]);
+    else groups.get(owner)!.push(i);
+  });
+
+  return [...groups.keys()].sort((a, b) => a - b).map(k => groups.get(k)!);
+}
+
 /** One self-intersecting loop as a set of loops that are not. */
 export function decompose(ring: Ring): Cut {
   return simplify([ring]);

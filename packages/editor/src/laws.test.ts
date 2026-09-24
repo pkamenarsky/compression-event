@@ -323,6 +323,40 @@ describe('law 1: a scope draws what it resolves to', () => {
     }), RUNS);
   });
 
+  /**
+   * The counterexample this property shrank to for as long as an offset was
+   * taken over a whole shape at once, kept as a case of its own because a
+   * property that finds it in a minute is a property nobody reruns.
+   *
+   * What it turned on: the middle scope erodes by fourteen, and what it erodes
+   * is two polygons about two units apart. A near-hairpin corner of the second
+   * is moved along a bisector scaled by `1 / cosHalf` — thirty-five units, on a
+   * polygon twenty-five wide — so three quads of its swept band reached back
+   * into the *first* polygon and subtracted material there. The resolution,
+   * which offsets one polygon at a time, could not do that, and the two
+   * drawings differed by exactly those three points.
+   */
+  test('and a scope whose erosion sweeps a band out past its own polygon', () => {
+    const spec: Spec = { kind: 'group', kit: { erode: 1 }, members: [
+      { kind: 'group', kit: { erode: 14, round: 1, deform: 3 }, members: [
+        { kind: 'group', kit: { erode: 11, deform: 12 }, members: [
+          { kind: 'room', at: rect(0, 0, 120, 80) },
+          { kind: 'room', at: rect(0, 0, 80, 80) },
+        ] },
+        { kind: 'group', kit: { round: 13 }, members: [
+          { kind: 'room', at: rect(0, 0, 80, 120) },
+          { kind: 'room', at: rect(0, 60, 80, 80) },
+        ] },
+      ] },
+      { kind: 'room', at: rect(120, 0, 80, 80) },
+    ] };
+
+    const { world, id } = built(emptyWorld(), spec);
+    const out = resolveGroup(world, 0, id)!;
+
+    expect(drawn(out.world)).toEqual(drawn(world));
+  });
+
   test('nor does resolving a scope inside it', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);

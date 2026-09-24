@@ -529,62 +529,41 @@ it can be picked up cold: what was measured, what was ruled out, and what is
 still unknown. Nothing here is a guess dressed as a finding — where the
 mechanism was not found it says so.
 
-## A ring's erosion depends on a ring thirty units away
+## A ring's erosion depends on a ring thirty units away — found, and fixed
 
-**This is what the one law property that was chased all the way down turns out
-to be.** Whether it is also what the other six are has not been shown — each
-would have to be instrumented the same way. What is shown is that for `law 1:
-resolving the top scope` the naming is now right and this is the whole of the
-remaining difference.
+**A swept band is not contained in the ring that swept it.** `corners` moves a
+corner along the bisector of its two walls, scaled by `1 / cosHalf`, and that
+factor is unbounded: as two walls approach a hairpin the moved corner goes as
+far as you like, in any direction the bisector happens to point. So a quad of
+the band can lie well outside its own outline — measured at thirty-five units
+of reach on a polygon twenty-five wide, at a depth of fourteen. Handed to the
+arrangement as *one operand for the whole shape*, those slivers subtract
+material from a different polygon, and that is the whole of the dependence.
 
-Two rings, eroded by nine, from the world `law 1: resolving the top scope`
-shrinks to. They are thirty-one units apart at their nearest, not nested, and
-wound the same way:
+This is why the ruled-out list was wrong about distance: a depth of nine indeed
+cannot reach thirty-one units, but the bisector is not the depth and it can.
 
-```
-ERODE together  [7,9,3, 17,16, 9,4,7,13,7,10,9,9,8,12,11]
-ERODE 1 alone   [       16,14, 9,4,7,13,7,10,9,9,8,12,11]
-ERODE 1 + far   [7,9,3, 16,14, 9,4,7,13,7,10,9,9,8,12,11]
-```
+Instrumented at `eroding`: of six calls in the counterexample's world that were
+handed a multi-ring shape, one differed from the same rings eroded one polygon
+at a time — 59 points against 56 — and exactly three quads of the second ring's
+band were found to cover points of the first. Three quads, three points, and
+they are the three the property reported.
 
-The neighbour at its real distance puts three points into the **other** ring's
-erosion. Moved a hundred thousand units away it does not, and every other ring
-of both is unchanged, including its own three.
+Tolerance was ruled out by measurement rather than by argument this time: the
+arrangement's own `snap` in `combineTagged` is taken over both operands' every
+ring, so it was the obvious suspect, but forcing it by hand from `1e-2` down to
+`1e-14` left the three points in place at every value. The gap was geometric.
 
-Why it breaks the laws: a resolve splits one shape into one polygon per
-outline, and each is then eroded alone. So a scope that erodes `[A, B]` as one
-shape does not draw what its resolution draws, and the three points are the
-whole of the difference. The same three survive the round — they are already
-there at `eroded`, before `dilating` and before the resample — and come out as
-three points of the final drawing.
+**The fix.** `eroding` groups the rings into polygons — an outline with the
+holes in it, by `polygonsOf` in `geometry.ts` — and sweeps and subtracts one
+polygon at a time, which is what a resolve does and so what this has to do. The
+two paths then agree by construction rather than by luck, at any tolerance and
+in any frame. The counterexample is kept as a case of its own in
+`laws.test.ts`, beside the property that found it.
 
-Ruled out, each by measurement rather than by argument:
-
-- **The two shapes meeting.** A depth of nine cannot reach thirty-one units.
-- **Nesting.** The bounding boxes are disjoint in x — `[234..326]` against
-  `[-6..203]` — and both signed areas are positive, so neither is the other's
-  hole.
-- **Tolerance by extent.** Coincidence is judged against a tolerance taken off
-  the extent of what is being worked on — `scale * 1e-9`, as `keeping` does it
-  — so the suspicion was that a bigger shape snaps coarser and loses points a
-  smaller one keeps. It is the wrong way round: moving the neighbour a hundred
-  thousand units away *raises* the extent three hundredfold and gives the
-  **alone** answer.
-- **Duplicate names.** Counted at the resample on both paths: none, either way.
-
-**Mechanism not found.** What is known is that it is `eroding`, not `dilating`
-and not `resampled`, and that it is the presence of the second ring rather than
-its distance in any way that a nine-unit offset could feel. The next thing to
-look at is `sweptBand` over a two-ring shape against the same ring alone —
-whether the band it builds for one ring is the same geometry in both, or
-whether it is the single `combineIdentified` over the pair that differs.
-
-The reproduction is `laws.test.ts`'s own counterexample. To get it back: run
-`law 1: resolving the top scope`, take the printed `Counterexample` spec, build
-it with that file's `built`, and read the two rings out of `rounding`'s input.
-Beware that the spec is printed with `undefined` in it, which JSON has no word
-for — parsed as `null`, every `=== undefined` in `optionsOf` answers false and
-the world comes out with every effect on it.
+The property it was found through is still red, on a counterexample that now
+shrinks to rounds and deforms with a single erosion at the top. That is a
+different cause, and nothing here says what it is.
 
 ## Law 2 is green, and was not expected to be
 
