@@ -433,17 +433,45 @@ up by hand, and it is exactly the kind of thing one pipeline is for: one
 default — centred — and the writing down goes. Law 3's deform is green over
 worlds where nothing else is laid.
 
-**Where it stands.** Law 1's top-scope property is green over three hundred and
-sixty generated worlds with erosions and rounds at every level, and Law 2 is
-green once no deform is in the generator — it was red for everything before.
-What is left is one break, not three: a round, an erosion and a deform all fail
-the same way, on worlds three deep carrying effects at every level, which is
-the question of whether identity is minted per scope from the walk or carried
-up from the members. Step 9 is where that is answered.
+**Identity is carried up from the members.** `folded` named the union it was
+handed with `identify`, which calls every point of a shape a drawn corner —
+true of a ring nobody has touched, false of the union of two rounded rooms.
+Every facet of every arc came out a `corner`, a corner is where a run may
+start, and a sealed group of rounded members took a tooth on every facet of
+every round. No predicate fixes that: the names were wrong before anything read
+them, and a scope may not work out from coordinates what a point is.
 
-Twenty-five tests go red with the step — `effects.test` 15, `bake.test` 8, one
-convert, one export — and they are the old look and the old machinery, which
-steps 8, 9 and 10 take out and regenerate.
+So the members hand their names up. `project` returns a `Drawn` and mints in a
+member of its own (the polygon's id, which joins the memo key: what is
+remembered is a drawing *and who drew it*). `Resolved` carries `ids` beside
+`shape`. `keeping` splices names in lockstep, still minting none of its own —
+it says which edge a point went into and how far along, and the caller says
+what that is called. `drawnUnion`, `settledDrawn` and `underfootDrawn` are the
+arrangement run through `combineIdentified`. Two rounded rooms sealed and
+deformed: 105 runs before, 2 after.
+
+Law 2 went green with it, having been red since step 0.
+
+**Where it stands.** Seven of eleven law properties red, four green. What is
+left is one break at one boundary, and it is the same bug one step further out:
+**a published ring loses what its points are.** A resolve hands its members the
+bare ring and the scope's own effects, so that the same fold lays them again —
+which is Law 1 by construction, *if* the ring's names survive being written
+down. They do not. The ring becomes a polygon of `Vertex`es and `identify`
+calls every one of them a drawn corner, so an arc a scope was carrying comes
+back as a row of corners and the deform after it lays different teeth. The
+counterexample shows it outright: an arc's facets on one side, a tooth standing
+where they were on the other.
+
+The fix is for a `Vertex` to carry what its construction made it, rather than
+for `identify` to assume. That is a field on `Vertex`, a field in the save
+format and a converter, and it belongs with steps 8 and 9 — it is the same
+question the bake asks when it wants to follow a member's corner through a
+scope above it.
+
+Twenty-three tests go red with the step — `effects.test` 14, `bake.test` 8, one
+export — and they are the old look and the old machinery, which steps 8, 9 and
+10 take out and regenerate.
 
 **8. Strip the publishing machinery.** `Named`, `namesOf`, `movedIn`,
 `foldShaped`'s back-channel and the parallel arrays in `ArcDeform`, now
