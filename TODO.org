@@ -2,6 +2,9 @@
 * TODO point 8
 * TODO point 9
 * TODO make baking faster maybe
+* TODO effect order; should we skip per corner effects?
+** seems fine to me - simpler code, simpler data model, scope can be 'effect' | 'group'
+** would also simplify the UI a lot
 * TODO fix open bugs/issues
 
 * Bugs
