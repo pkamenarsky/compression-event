@@ -2,10 +2,14 @@
 * TODO point 8
 * TODO point 9
 * TODO make baking faster maybe
-* TODO effect order; should we skip per corner effects?
+* TODO fix open bugs/issues
+* TODO merge into master
+
+* TODO deform edge then round corner -> chaos (one more reason for removing the corner effects)
+
+* TODO only then deal with effect order; should we skip per corner effects?
 ** seems fine to me - simpler code, simpler data model, scope can be 'effect' | 'group'
 ** would also simplify the UI a lot
-* TODO fix open bugs/issues
 
 * Bugs
 * TODO copying something in a later version and pasting it should not change its shape
@@ -63,6 +67,7 @@
 **** snap to grid
 **** autobake
 ** Look & layout
+*** TODO left dock closable with TAB; ~ for back panel
 *** TODO draw effects in order in the inspector pane with arrows pointing down between them
 *** TODO statusbar shows errors, action + available modifier keys (it only shows messages now)
 **** should be prominent so it can't be missed
