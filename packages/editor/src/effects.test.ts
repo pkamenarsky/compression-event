@@ -352,7 +352,7 @@ describe('a group\'s effects', () => {
       const sealed = withEffects(sealing(g.world, g.id, true), g.id, fx);
       const one = wrote(sealed, 0, a.id, deform(8));
 
-      return fx.round === undefined ? one : wrote(one, 0, g.id, round(10));
+      return fx.round === undefined ? one : wrote(one, 0, g.id, round(2));
     };
 
     // How high the teeth stand off the member's top wall.
@@ -361,10 +361,13 @@ describe('a group\'s effects', () => {
       .map(p => p.y - 140));
 
     // Loose in a scope with no effects, the member deforms itself; under one
-    // that rounds, or one that deforms, the fold lays the same teeth.
+    // that deforms, the fold lays the same teeth. Under one that rounds they
+    // are still there, their tips opened by the scope's round, which comes
+    // after them: a little short of their height and no more.
     expect(off(build({}))).toBeCloseTo(8, 9);
-    expect(off(build({ round: inSegments(8, 10) }))).toBeCloseTo(8, 9);
     expect(off(build({ deform: zigzag }))).toBeCloseTo(8, 9);
+    expect(off(build({ round: inSegments(8, 2) }))).toBeGreaterThan(7);
+    expect(off(build({ round: inSegments(8, 2) }))).toBeLessThan(8);
   });
 
   test('two members deformed differently keep their own patterns under one rounding scope', () => {
@@ -378,8 +381,10 @@ describe('a group\'s effects', () => {
     const b = room(a.world, rect(400, 300, 200, 140));
     const w = withEffects(withEffects(b.world, a.id, { deform: wide }), b.id, { deform: tight });
     const g = grouped(w, 0, [a.id, b.id], TOP)!;
-    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) });
-    const world = wrote(wrote(wrote(sealed, 0, a.id, deform(8)), 0, b.id, deform(8)), 0, g.id, round(10));
+    // A round small enough to leave the tight teeth standing: it opens their
+    // tips, coming after them, and one of ten opens them clean away.
+    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 2) });
+    const world = wrote(wrote(wrote(sealed, 0, a.id, deform(8)), 0, b.id, deform(8)), 0, g.id, round(2));
 
     // The teeth along each room's top wall: the tips, which stand off it.
     const tips = (from: number, to: number, wall: number) => csg(world, 0).flat()
