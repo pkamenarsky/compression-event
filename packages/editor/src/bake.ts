@@ -225,6 +225,7 @@ import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, play
 import { WorldSet, pieces } from './worldset';
 import { held } from './hold';
 import type { Ident, Ids } from './ids';
+import { madeOf } from './ids';
 
 // -----------------------------------------------------------------------------
 // What comes out
@@ -1529,9 +1530,10 @@ function fadingNamed(m: Moving, it: Resolved, t: number): Fade[] {
  * the span has got from the one end to the other. */
 function namedFades(shape: Shape, ids: Ids, [near, far]: [Ends, Ends], t: number): Fade[] {
   const out: Fade[] = [];
+  const kept = new Set([...handedOn(near, far), ...handedOn(far, near)]);
 
   ids.forEach((ring, r) => ring.forEach((id, i) => {
-    const a = near.flat.has(id) || !near.all.has(id), b = far.flat.has(id) || !far.all.has(id);
+    const a = near.flat.has(id) || (!near.all.has(id) && !kept.has(id)), b = far.flat.has(id) || (!far.all.has(id) && !kept.has(id));
 
     if (a || b) out.push({ p: shape[r][i], v: mix(a ? 0 : 1, b ? 0 : 1, t) });
   }));
@@ -1573,6 +1575,46 @@ function sideEnds(cast: Cast, items: Moving[]): Map<Id, [Ends, Ends]> {
 interface Ends {
   all: Set<Ident>
   flat: Set<Ident>
+  /** Where the edge each name leaves ends: the next point round its ring
+   * that is not one of that edge's own teeth or samples. */
+  next: Map<Ident, Ident>
+}
+
+/**
+ * The corners `from` has and `to` has not that are lost by handing over to
+ * crossings `to` has and `from` has not, and those crossings, which are all
+ * solid across the span.
+ *
+ * A corner swept through a wall goes at the instant it stands on it, and the
+ * crossings of its two edges with the wall are born there, on the same point:
+ * the vertical is one vertical the whole time. Faded by name, the corner went
+ * out across the span and the crossings came in across it, so where the corner
+ * touched the one line stood at whatever the corner had got down to and the
+ * next frame at whatever the crossings had got up to. A crossing is known to be
+ * one of these by its edges: it is of the edge the corner leaves or the one
+ * arriving at it.
+ */
+function handedOn(from: Ends, to: Ends): Set<Ident> {
+  const out = new Set<Ident>();
+
+  for (const id of to.all) {
+    if (from.all.has(id)) continue;
+
+    const what = madeOf(id);
+
+    if (what.kind !== 'born') continue;
+
+    for (const e of [what.a, what.b]) {
+      for (const v of [e, from.next.get(e)]) {
+        if (v !== undefined && from.all.has(v) && !to.all.has(v) && !from.flat.has(v)) {
+          out.add(id);
+          out.add(v);
+        }
+      }
+    }
+  }
+
+  return out;
 }
 
 const flatEnds = new WeakMap<Moving, [Ends, Ends]>();
@@ -1606,7 +1648,24 @@ function flatIn(shape: Shape, ids: Ids): Ends {
     if (reach === 0 || Math.abs(ux * vy - uy * vx) / reach <= snap) out.add(ids[r][i]);
   }));
 
-  return { all: new Set(ids.flat()), flat: out };
+  const next = new Map<Ident, Ident>();
+  const onIt = (e: Ident, id: Ident) => {
+    const what = madeOf(id);
+
+    return (what.kind === 'tooth' && what.run === e) || (what.kind === 'on' && what.edge === e);
+  };
+
+  for (const ring of ids) {
+    ring.forEach((id, i) => {
+      let k = (i + 1) % ring.length;
+
+      while (k !== i && onIt(id, ring[k])) k = (k + 1) % ring.length;
+
+      next.set(id, ring[k]);
+    });
+  }
+
+  return { all: new Set(ids.flat()), flat: out, next };
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */
