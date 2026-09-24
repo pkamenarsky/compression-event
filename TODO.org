@@ -25,6 +25,7 @@
 ** TODO level history
 ** TODO each level has different wall heights/RenderConfigs
 *** even better - different RenderConfig for each version/keyframe
+**** sky shader, wall shader, floor shader, artefact shapes, verticals and tiles - all customizable in addition to all the other things (wall heights etc)
 *** sky shader configurable (pasting GLSL into the editor is fine)
 ** TODO adaptive tables - per polygon instead of smallest event (chain a finer table to the parent?)
 
