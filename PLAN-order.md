@@ -66,15 +66,18 @@ ways of saying it. What a polygon's fold does comes down to its clean-up —
 `sliced`, `identify`, `combineIdentified` — and the effect pipeline has one
 entry, `foldedBy`.
 
-This is a rename only because the per-corner effects are gone first (below). A
+This is a rename only because the per-corner and per-edge effects are gone first (below). A
 polygon's effects are then one amount and one set of options each, and they go
 to a scope unchanged.
 
-## No per-corner effects
+## No per-corner or per-edge effects
 
-A corner's own depth, a corner's own bevel (already dropped from the fold, see
-`folding`), an edge's own amplitude and an edge's own deform options all go. An
-effect is one amount over its whole ring, and one set of options.
+Everything an effect says about less than its whole ring goes. At the corners,
+that is a corner's own depth and a corner's own bevel (already dropped from the
+fold, see `folding`). At the edges, it is an edge's own amplitude, an edge's own
+deform options, an edge switched on or off apart from its polygon, and an edge
+inheriting its polygon's options again. An effect is one amount over its whole
+ring, and one set of options.
 
 They are rarely used, and they cost far more than they are used: a second
 keying of every amount, a second set of pickers and panes in the editor, and
@@ -108,9 +111,11 @@ What goes:
 - **The resolve.** Whatever `publishing` writes per corner or per edge: per-edge
   options, `anchor`, `reach`, `key`. Most of that goes in step 6 anyway. This
   takes it sooner.
-- **The editor.** `cornersAmounted`, `edgeDeform`, `edgeDeforming`, `ownDeform`
-  and `edgesOptioned` (`effects.ts`). The inspector's *Deform edges* and the
-  per-corner rows it shows under a corner pick (`inspector.ts`). The canvas's
+- **The editor.** `cornersAmounted`, and every edge effect in `effects.ts`:
+  `edgeDeform`, `edgeDeforming`, `ownDeform`, `edgesSwitched`, `edgesOptioned`
+  and `edgesInheriting`. The inspector's *Deform edges*, its `ownEdge` field and
+  *as the polygon* link, and the per-corner rows it shows under a corner pick
+  (`inspector.ts`). The canvas's
   amount gestures under the corner and edge tools (`cornersFor`, the
   `cornersAmounted` call in `canvas/index.ts`), and whatever `canvas/draw.ts`
   draws for a corner's own depth. The corner tools stay, for moving corners.
@@ -120,8 +125,9 @@ What goes:
   `keys.test.ts`, `key.test.ts`, `bake.test.ts`, `save.test.ts`,
   `resolve.test.ts` and `scene.test.ts` go with what they test.
 
-What a file with per-corner amounts converts to: each polygon keeps its own
-amount and options, and the per-corner extras are dropped. The drawing changes
+What a file with per-corner or per-edge effects converts to: each polygon keeps
+its own amount and options, and the extras on single corners and edges are
+dropped. The drawing changes
 where they were used, which is why this conversion loses something, and it is
 written down as one.
 
@@ -180,13 +186,13 @@ and drop `effect-order`'s WIP commit: `Effects.order`, `ORDER`, `inOrder`,
 `orderKey` and the laws' random orders. The law generator's orders are replaced
 in step 7 by the chain that says the same thing.
 
-**1. Remove the per-corner effects.** Everything listed under *No per-corner
-effects*, with its conversion step and a save version bump. It goes first
+**1. Remove the per-corner and per-edge effects.** Everything listed under *No
+per-corner or per-edge effects*, with its conversion step and a save version bump. It goes first
 because it is a deletion that stands on its own, on today's design, and every
-step after it is smaller for it: no per-corner amounts to move to scopes (4), no
+step after it is smaller for it: no per-corner or per-edge amounts to move to scopes (4), no
 per-corner reads in the fold (5) or the resolve (6), and no corner-edit routing
 in the editor (9). The law sweep must not move, since the laws never generate
-per-corner amounts.
+per-corner or per-edge amounts.
 
 **2. Prove the names survive a resolve.** Before anything moves: a test in which
 a scope deforms a union of two members, one member is resolved, and the teeth do
