@@ -383,10 +383,47 @@ arrives standing flat on the wall, so nothing pops; teeth tall enough to cut a
 room in two come back as thirteen rings whose crossings are named of the walls
 that crossed.
 
-**7. The fold, behind the present signature.** `resolve` becomes the reduce
-above, with `project` kept as the door so the editor and the bake do not move
-yet. Laws 1 and 3 go green. Expect `effects.test.ts`'s *a scope inside a scope*
-to go red here: rewrite it to Law 3, as the laws say.
+**7. The fold, behind the present signature.** In part. A scope's shape is the
+reduce: its members reach it *drawn* and `folded` lays the scope's own on what
+they came to. Nothing is published and nothing is re-derived.
+
+`project` keeps its signature and **does not keep its body**, which the plan
+did not allow for. `arcsWith` is a tension curve and the opening is an arc, so
+a scope rounding by the opening while the polygons it resolves into round by
+`arcsWith` cannot make Law 3 green however right either is alone. Both sides
+are the fold now, and there is no other path through `project`.
+
+What stood in the way of that was per-corner amounts, and the answer is that
+**an effect's amount is per identity**: one number, or a number written against
+an `Ident`. A polygon's corners have the plainest identities there are, so a
+depth on one corner is a map with one entry and the effect is the same effect —
+and it survives the notch closing, the arcs going in and the scope above,
+because the amount is against the corner and not against an index. A point the
+construction made asks whatever it was made of, a born point taking the larger
+of its two, which is `round(max(a, b))` said of an amount.
+
+**Per-corner rounds are dropped.** An opening is a statement about the whole
+shape: a depth at one corner and nought at its neighbours leaves the wall
+between them a chord sloping back rather than a wall offset by `b`, and the arc
+that grows off it lands short — forty comes back as thirty. A ring takes the
+largest bevel anybody on it asked for. It could be had by keeping only the
+pieces an opening removes whose arc is named by a corner that asked — the
+pieces know — but that is a second construction with a caveat on it and it buys
+one editor feature.
+
+The resolve reads its members drawn and publishes nothing; the scope's own
+amounts go onto the ring as the ring's own and the same fold lays them again,
+which is Law 1 by construction.
+
+**Where it stands.** Law 1's top-scope property is green over three hundred and
+sixty generated worlds with erosions and rounds at every level, and Law 2 is
+green once no deform is in the generator — it was red for everything before.
+What is left is the deform, in worlds three deep with an erosion beside it; a
+plain deform and a deformed scope inside a rounding scope both come out
+identical, so it is not the laying of teeth but which ring they are laid on.
+Twenty-seven tests go red with the step — `effects.test` 16, `bake.test` 10,
+one export — and they are the old look and the old machinery, which steps 8, 9
+and 10 take out and regenerate.
 
 **8. Strip the publishing machinery.** `Named`, `namesOf`, `movedIn`,
 `foldShaped`'s back-channel and the parallel arrays in `ArcDeform`, now
