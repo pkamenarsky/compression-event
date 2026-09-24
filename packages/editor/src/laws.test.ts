@@ -49,7 +49,21 @@ function withEffects(world: World, id: Id, fx: Effects): World {
  */
 function drawn(world: World): string[] {
   const runs = csg(world, 0);
-  const at = (p: Point) => `${p.x.toFixed(6)},${p.y.toFixed(6)}`;
+  // Six places, and the one thing to say about them is the sign at zero.
+  // `toFixed` writes a coordinate of `-1.4e-14` as `-0.000000` and one of
+  // `+1.4e-14` as `0.000000`, and those two strings differ while the points do
+  // not: the two paths reach the same corner by multiplying the same numbers in
+  // a different order and land an ulp apart, which is the one difference no
+  // implementation can be asked to close. Everywhere else the rounding has
+  // already settled it — this is not a tolerance being let in, it is the
+  // tolerance `toFixed` always was, applied to both signs alike.
+  const six = (v: number) => {
+    const said = v.toFixed(6);
+
+    return said === '-0.000000' ? '0.000000' : said;
+  };
+
+  const at = (p: Point) => `${six(p.x)},${six(p.y)}`;
   const segs: [Point, Point][] = [];
   const gone: boolean[] = [];
 

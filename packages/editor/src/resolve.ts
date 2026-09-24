@@ -745,8 +745,24 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     // them that is not a sample, which is what the scope's own deform reads
     // too. A crossing an arrangement made is such a point, and a crossing is
     // exactly what cut the arc.
+    //
+    // And a third, because that second one has a precondition a round breaks:
+    // it needs a point somewhere on the ring that is *not* a sample, and a ring
+    // that is nothing but arcs has none. That is not an exotic case — it is
+    // what a round of a round hands up, every point of it a sample of some
+    // member's corner — and there the fallback held nothing, so every sample
+    // whose own start had been cut away was written down as a corner. Thirty of
+    // sixty-four, on the counterexample this was found on. Those corners are
+    // features, so the resample may not move them, and the polygon then drew a
+    // different outline from the scope it came of, which is Law 1.
+    //
+    // So: failing both, the stretch the sample is in. Consecutive samples of
+    // one edge are one arc however the arrangement cut it, and the first of
+    // that stretch is where the run begins. It agrees with `begins` wherever
+    // the `on(e, 0)` end survived, being that same point.
     const starts = parts.map(part => {
       const what = madeIn(part);
+      const n = what.length;
       const begins = new Map<string, number>();
 
       what.forEach((w, i) => {
@@ -768,7 +784,36 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
         }
       }
 
-      return { begins, held };
+      // Where a stretch of samples of one edge begins: the point whose
+      // predecessor is a sample of something else, or no sample at all. Walked
+      // from one of those, so a stretch that straddles the ring's own start is
+      // still one stretch. A ring of samples all of one edge has no such point
+      // and is one run from wherever it happens to start.
+      const edgeAt = (i: number): string | null => {
+        const w = what[(i + n) % n];
+
+        return w?.kind === 'on' ? String(w.edge) : null;
+      };
+
+      const within: (number | null)[] = what.map(() => null);
+      const first = n === 0 ? -1 : what.findIndex((w, i) => w?.kind === 'on' && edgeAt(i - 1) !== edgeAt(i));
+
+      if (first >= 0) {
+        let begun = first;
+
+        for (let k = 0; k < n; k++) {
+          const i = (first + k) % n;
+
+          if (edgeAt(i) === null) continue;
+          if (edgeAt(i - 1) !== edgeAt(i)) begun = i;
+          within[i] = begun;
+        }
+      }
+      else if (what.every(w => w?.kind === 'on')) {
+        what.forEach((_w, i) => (within[i] = 0));
+      }
+
+      return { begins, held, within };
     });
 
     // Every corner of every ring gets its id before any of them is asked
@@ -789,7 +834,10 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
         // as the corner it now is. See `Vertex.sample`.
         const of = what?.kind !== 'on'
           ? undefined
-          : starts[ring].begins.get(String(what.edge)) ?? starts[ring].held[i] ?? undefined;
+          : starts[ring].begins.get(String(what.edge))
+            ?? starts[ring].held[i]
+            ?? starts[ring].within[i]
+            ?? undefined;
 
         points.push({
           id: corner,
