@@ -1,6 +1,7 @@
 * Next
 * TODO point 8
 * TODO point 9
+* TODO make baking faster maybe
 * TODO fix open bugs/issues
 
 * Bugs
