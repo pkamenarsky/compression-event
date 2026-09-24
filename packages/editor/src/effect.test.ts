@@ -17,7 +17,7 @@
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Effecting, OpSubtract, Shape, along, erode, rounded, shapeArea, simplify } from './geometry';
+import { Effecting, OpSubtract, Shape, along, erode, shapeArea, simplify } from './geometry';
 import { deforming, dilating, eroding, resampled, rounding } from './effect';
 import { Drawn, Ident, combineIdentified, corner, identify, madeOf, on, shows } from './ids';
 
@@ -353,21 +353,6 @@ describe('the round', () => {
       const r = rounding(by, 0.5)(drawn([rect(0, 0, 200, 200)], 0));
 
       expect(apart(r.shape[0], circled(200, by))).toBeLessThan(0.5);
-    }
-  });
-
-  test('which is not quite what `arcsWith` draws, and that is `arcsWith`', () => {
-    // The old round is a tension curve and not an arc, and it sits further
-    // from a true circle the bigger the bevel gets — which is the whole of the
-    // difference between the two. A rounded square still reads as a rounded
-    // square; it reads as one more exactly than it did.
-    for (const by of [10, 20, 50]) {
-      const square = rect(0, 0, 200, 200);
-      const mine = rounding(by, 0.5)(drawn([square], 0)).shape[0];
-      const was = rounded(square, () => by, 24);
-      const truth = circled(200, by);
-
-      expect(apart(mine, truth)).toBeLessThan(apart(was, truth) / 3);
     }
   });
 

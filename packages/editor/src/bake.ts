@@ -1282,12 +1282,6 @@ const NOTHING: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'> = {
  *
  * `local` and `depths` are the corners at each end, for a round held against
  * the erosion: see `drawnBevels`.
- *
- * A corner `spanning` invented at an end sits, at that end, wherever its
- * neighbours there put it — between two teeth as likely as not — and a drawn
- * corner there would turn the arcs beside it towards it. So it is rounded
- * apart there: its arc a sliver along the points either side, and the arcs
- * around it laid as though it were not there. See `outlineOf`.
  */
 function effectsOver(
   world: World,
@@ -1301,11 +1295,7 @@ function effectsOver(
   dead: [boolean[], boolean[]] | null,
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
-  const deadened = (e: Effected | null, end: 0 | 1): Effected | null => (e === null || dead === null || !dead[end].some(Boolean) ? e : {
-    ...e,
-    apart: dead[end],
-  });
-  const two = ([0, 1] as const).map(i => deadened(effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i]), i)) as [Effected | null, Effected | null];
+  const two = ([0, 1] as const).map(i => (effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i]))) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
@@ -1313,10 +1303,8 @@ function effectsOver(
   // options are a fact about the thing, and the same at both.
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
     facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
-    rounds: other.rounds,
     bevels: other.bevels.map(() => 0),
-    flat: other.flat,
-    deform: other.deform === null ? null : { ...other.deform, before: other.deform.before.map(() => 0), after: other.deform.after.map(() => 0), seen: other.deform.seen.map(() => 0) },
+    deform: other.deform === null ? null : { ...other.deform, after: other.deform.after.map(() => 0) },
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
@@ -1327,34 +1315,6 @@ function effectsOver(
     facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
   });
 
-  // The longer of each wall's two ends, halved: how far the pattern on it
-  // runs either way from its middle, so that both ends lay the same teeth.
-  // One number for the span rather than a correction to the wall in front of
-  // it, because the wall is not linear in `t` and the reach has to be. See
-  // `Effected.reach`.
-  const ring = ringsOf(corners);
-
-  // The run corner `i` names, not the wall to the next corner: a corner an end
-  // invented names nothing and the run goes through it, so the run is what has
-  // to be measured. See `imagedBy`'s `halvesBy`.
-  //
-  // Each end measured with its own corners set aside, and the longer of the
-  // two taken: one number for the span, so that the reach holds still across
-  // it. Half of it is how far the pattern runs either way from its middle.
-  const wall = (end: 0 | 1, i: number): number => {
-    const aside = (k: number) => dead !== null && dead[end][k];
-    let j = nextOf(ring, corners.length, i);
-
-    while (aside(j) && j !== i) j = nextOf(ring, corners.length, j);
-
-    const p = local[end][i], q = local[end][j];
-
-    return Math.hypot(q.x - p.x, q.y - p.y) * scales[end];
-  };
-  const reach = corners.map((_c, i) => Math.max(wall(0, i), wall(1, i)) / 2);
-  const changes = corners.some((_c, i) => wall(0, i) !== wall(1, i));
-  const spared = (e: Effected): Effected => (changes ? { ...e, reach } : e);
-
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
@@ -1362,51 +1322,23 @@ function effectsOver(
   });
 
   return {
-    effected: [spared(ended(seeded(a, b), 0)), spared(ended(seeded(b, a), 1))],
+    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
   };
 }
 
 /** A polygon's effects `t` of the way across a span. */
 function effectedAt(e: [Effected, Effected], t: number): Effected {
-  const apart = e[0].apart ?? e[1].apart?.map(() => false);
-  const apartTo = e[1].apart ?? e[0].apart?.map(() => false);
-
-  // Both namings at either end too, the far one at nought and the near one
-  // whole: its teeth lie flat on the wall there rather than being absent, so
-  // the ring keeps its points across the whole span and each line fades in
-  // instead of arriving. The geometry is still that end's own — `apartAt` of
-  // nought or one sets aside that end's list alone — so the outline is the
-  // editor's. See PLAN-bevel 3.9.
-  if (t === 0) return { ...e[0], apart, apartTo, apartAt: 0 };
-  if (t === 1) return { ...e[1], apart, apartTo, apartAt: 1 };
+  if (t === 0) return e[0];
+  if (t === 1) return e[1];
 
   const [d0, d1] = [e[0].deform, e[1].deform];
 
   return {
     facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
-
-    // The options are a fact about the thing and the same at both ends: see
-    // `bare`.
-    rounds: e[0].rounds,
     bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
-    flat: e[0].flat,
-
-    // Both namings, and where the span has got to between them: a wall the
-    // two ends name differently carries both patterns, the near one going and
-    // the far one coming. At either end the blend is not taken at all — `t`
-    // of nought and one answer with that end's own — so each still is the
-    // editor's. See `Effected.apart`.
-    apart,
-    apartTo,
-    apartAt: t,
-
-    // The same at both ends, so there is nothing to mix: the reach holds
-    // still across the span and the walk lays the same teeth at every
-    // instant of it. See `Effected.reach`.
-    reach: e[0].reach ?? e[1].reach,
     deform: d0 === null || d1 === null
       ? d0 ?? d1
-      : { ...d0, before: d0.before.map((x, i) => mix(x, d1.before[i], t)), after: d0.after.map((x, i) => mix(x, d1.after[i], t)), seen: d0.seen.map((x, i) => mix(x, d1.seen[i], t)) },
+      : { ...d0, after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
   };
 }
 
@@ -2320,7 +2252,6 @@ function toothy(e: Effected | null): number {
 
   let most = 0;
 
-  for (const x of e.deform.before) most = Math.max(most, Math.abs(x));
   for (const x of e.deform.after) most = Math.max(most, Math.abs(x));
 
   return most;

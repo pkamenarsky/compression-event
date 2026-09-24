@@ -33,17 +33,11 @@
 import { Point } from '@ce/game/world';
 import {
   fraction,
-  ringStarts,
   Effecting,
-  CRAMMED,
   FALLOFF,
   Facets,
-  Round,
-  precisionFor,
   Fade,
   SEEDING,
-  ArcTeeth,
-  Imaged,
   PLAIN,
   SQUARE,
   facetsOf,
@@ -57,11 +51,7 @@ import {
   isCCW,
   keeping,
   diameter,
-  mitred,
   nextOf,
-  Naming,
-  foldShaped,
-  outlineOf,
   prevOf,
   signedArea2,
   subdivided,
@@ -276,101 +266,30 @@ export interface Resolved {
 }
 
 /**
- * What rounds a polygon's corners and deforms its arcs, corner by corner and
- * index for index with `Resolved.corners`: each corner's facets, and the
- * bevel it is drawn at — the polygon's with the corner's own on top, and the
- * depth on that where the round is held. See `drawnBevels`.
+ * What a polygon's fold lays after its erosion, corner by corner and index
+ * for index with `Resolved.corners`: each corner's facets and the bevel it
+ * asks for, and the deform. A round is the ring's — the fold takes the finest
+ * facets and the largest bevel — but they are kept per corner because that is
+ * how a keyframe writes them and how a span lays them.
  *
  * Lengths, so a frame that scales divides them the way it divides a depth.
- * The round is drawn before the erosion, and the teeth along the arcs with
- * it; the teeth along the straights are in the corners already. See
- * `deforms` and `outlineOf`.
  */
 export interface Effected {
   facets: readonly Facets[]
-  /**
-   * The options each corner's round is drawn in, with its precision taken
-   * into the world as its bevel is — nothing where it is not rounded.
-   *
-   * Beside the facets, because a facet count is for one bevel: a scope that
-   * rounds a corner its member rounded draws the *sum*, and a sum wants the
-   * facets of a sum. See `namesOf` and `foldShaped`.
-   */
-  rounds: readonly (Round | null)[]
   bevels: readonly number[]
-  /** Which corners are teeth, which a round leaves square. */
-  flat: readonly boolean[]
-  /** The deform along the arcs: its options, and at each corner the
-   * amplitude of the edge before it and of the edge after. Nothing where the
-   * thing has no deform of its own, or no arc could take one. */
   deform: ArcDeform | null
-  /** Which corners are rounded apart from the rest: see `outlineOf`. Only
-   * the bake's, for a corner it invented. A corner apart names no wall, so
-   * the wall it stands on keeps the pattern it had without it.
-   *
-   * With `apartTo`, the naming at the far end of the span, and `apartAt` how
-   * far across it is: a wall splitting or joining then carries both patterns,
-   * each at its own height, so that either end is the editor's still and the
-   * middle shows the one going and the one coming. See PLAN-bevel's step 4. */
-  apart?: readonly boolean[]
-  apartTo?: readonly boolean[]
-  apartAt?: number
-  /**
-   * How far the pattern on each wall runs either way from its middle,
-   * corner by corner and as a half-length: `patternRun`'s `reach`, given
-   * outright rather than read off the wall in front of it.
-   *
-   * A wall names a run whose pattern reaches half its length either way from
-   * its middle, so a wall that is longer at the other end of a span lays more
-   * teeth there, and the ring changes length part way through — the one event
-   * `spanning` exists to prevent. The span's longest, at both ends and so at
-   * every instant between them, and the teeth a shorter wall has no room for
-   * stand flat at its end and come up as it grows.
-   *
-   * Outright because the half-wall it used to be a correction to is not
-   * linear in `t` — a corner nudged across a span moves in a straight line
-   * and the length of the wall it ends is a hypotenuse of that, so a reach
-   * built as half-wall plus a lerped remainder holds only at the two ends and
-   * bows by a fraction of a unit in between. That is enough: a station
-   * crossing the walk's own bound puts a flat tooth into the ring or takes it
-   * out, which is a point appearing, which is an event. Five hundred and
-   * sixty-two of them on one span. A reach that is the same number at both
-   * ends lerps to itself. See `patternRun`'s `reach` and PLAN-bevel's
-   * step 0.
-   */
-  reach?: readonly number[]
 }
 
+/**
+ * A polygon's deform: its options, the options the edge leaving each corner
+ * stands in where that edge has its own — `cornerEffects`, which names an
+ * edge by the corner it leaves — and the amplitude of each such edge.
+ * Amounts add and options do not: one set lays a run, and the nearest wins.
+ */
 export interface ArcDeform {
   e: Effecting
-  /**
-   * The options the edge leaving each corner stands in, where that edge has
-   * its own — `cornerEffects`, which names an edge by the corner it leaves,
-   * as the amplitudes do. Nothing where it stands in the polygon's, which is
-   * every edge of a polygon nobody has given one options of its own.
-   *
-   * Amounts add and options do not: one set lays a run, and the nearest wins.
-   * See `foldShaped`'s `laidBy`.
-   */
   es: readonly (Effecting | null)[]
-  /** How far along the wall each edge's pattern sits from that edge's own
-   * middle, and how far either way from there it runs — nothing where the
-   * edge is centred on itself, which is every edge but a resolved fold's.
-   * See `Effects['deform'].anchor`. */
-  anchors: readonly number[]
-  reaches: readonly (number | null)[]
-  before: readonly number[]
   after: readonly number[]
-  /** Each corner's arc's name to the noise and the offset: its id. */
-  keys: readonly number[]
-  /** What names the edge leaving each corner: its own id, or what the edge
-   * says names it — a resolved ring's runs are the member edges' and keep
-   * their names, so their patterns are the ones those edges had. See
-   * `namesOf` and `Effects['deform'].key`. */
-  ids: readonly number[]
-  /** Each corner's bevel as it is seen, which its arc's teeth are laid by:
-   * see `ArcTeeth.seen`. */
-  seen: readonly number[]
 }
 
 /** How many segments a round of `bevel` is in. See `segmentsFor`. */
@@ -449,7 +368,7 @@ export function effectedOf(
   scale = 1,
 ): Effected | null {
   const fx = world.effects.get(id);
-  const deform = arcDeform(world, id, corners, amounts, scale, drawnBevels(world, id, corners, local, amounts, () => 0));
+  const deform = arcDeform(world, id, corners, amounts, scale);
 
   // A deform with no round still has somewhere to be: the teeth are laid on
   // the eroded outline and the round is only one more thing that happens to
@@ -475,27 +394,9 @@ export function effectedOf(
   };
   const flat = corners.map(c => c.root !== undefined);
 
-  // Faceted as the arc is seen, not as it is drawn: a held round the erosion
-  // draws bigger is the same curve once eroded, and would otherwise gain a
-  // facet — and a line fading in — for a change nobody sees.
-  const roundOf = (c: Vertex, i: number): Round | null => {
-    const round = fx?.round?.off === true ? undefined : fx?.round;
-
-    return round === undefined || flat[i] || !(bevels[i] > 0)
-      ? null
-      : {
-          precision: round.precision * scale,
-          tension: round.tension,
-          chamfer: round.chamfer,
-          ...(round.facets === undefined ? {} : { facets: round.facets }),
-        };
-  };
-
   return shaping({
     facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(fx?.round?.off === true ? undefined : fx?.round, bevels[i] > 0 ? seen[i] : 0))),
-    rounds: corners.map(roundOf),
     bevels,
-    flat,
     deform,
   });
 }
@@ -562,10 +463,8 @@ function arcDeform(
   corners: readonly Vertex[],
   amounts: Pick<State, 'amplitude' | 'amplitudes'>,
   scale: number,
-  seen: readonly number[],
 ): ArcDeform | null {
   const fx = world.effects.get(id);
-  const rings = ringsOf(corners), n = corners.length;
   const edge = (c: Vertex) => c.root ?? c.id;
   const mineAt = (c: Vertex) => optionOf(fx, 'deform', world.cornerEffects.get(edge(c)));
   const polygon = fx?.deform !== undefined && fx.deform.off !== true && fx.deform.spacing > 0;
@@ -601,31 +500,11 @@ function arcDeform(
     ? amplitude
     : (from: VertexId) => (world.cornerEffects.get(from)?.deform === undefined ? 0 : amplitude(from));
 
-  const at = (c: Vertex) => world.cornerEffects.get(edge(c))?.deform;
-
   return {
     e: { ...e, spacing: e.spacing * scale },
     es: corners.map(own),
-    anchors: corners.map(c => (at(c)?.anchor ?? 0) * scale),
-    reaches: corners.map(c => {
-      const mine = at(c)?.reach;
-
-      return mine === undefined ? null : mine * scale;
-    }),
-    before: corners.map((_c, i) => amplitudeOf(edge(corners[prevOf(rings, n, i)]))),
     after: corners.map(c => amplitudeOf(edge(c))),
-    keys: corners.map(c => arcKey(c.id)),
-    ids: corners.map(c => at(c)?.key ?? c.id),
-    seen,
   };
-}
-
-/**
- * Which of `corners` are teeth, which a round leaves square. See
- * `outlineOf`.
- */
-export function unrounded(corners: readonly Vertex[]): boolean[] {
-  return corners.map(c => c.root !== undefined);
 }
 
 /** Kept only where it does something: a round that rounds, or a deform whose
@@ -642,10 +521,9 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.before.map(a => a / s), d.after.map(a => a / s), [...d.keys], d.seen.map(b => b / s), [...d.ids], Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s)),
-      d.anchors.map(a => a / s), d.reaches.map(r => (r === null ? -1 : r / s))];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.after.map(a => a / s), Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s))];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), e.flat.map(Number), deform, (e.apart ?? []).map(Number), (e.apartTo ?? []).map(Number), e.apartAt ?? 0, (e.reach ?? []).map(r => r / s)];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), deform];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1227,7 +1105,7 @@ export const project = remembered((
 
 /** No facets, no bevels and no deform: the fold with nothing to lay but the
  * erosion. */
-const UNEFFECTED: readonly Memo[] = [[], [], [], []];
+const UNEFFECTED: readonly Memo[] = [[], [], []];
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
@@ -1261,7 +1139,7 @@ function folding(
   member: number,
   was: readonly number[] | null,
 ): Drawn {
-  const [facets, bevels, , deform] = effects as [Memo[], number[], number[], Memo[]];
+  const [facets, bevels, deform] = effects as [Memo[], number[], Memo[]];
   // Named as it was drawn, point for point with `source`, and the names
   // carried through the clean-up rather than minted after it: `simplify`
   // re-walks a ring and drops what does not turn, and names read off its walk
@@ -1285,8 +1163,8 @@ function folding(
     return out;
   };
 
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, , , , offset, own] =
-    deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[]];
+  const [spacing, pattern, seed, sides, jitter, falloff, after, offset, own] =
+    deform as [number, number, number, number, number, number, number[], number, number[]];
 
   // One bevel for the whole ring, and the largest anybody asked for.
   //
@@ -1347,318 +1225,6 @@ function roundingOf(bevel: number, facets: readonly Facets[]): Effect {
   const f = facets.reduce<Facets>((best, g) => (g.n > best.n ? g : best), SQUARE);
 
   return roundingAcross(bevel, sagitta(bevel, f.from), sagitta(bevel, f.to), f.at);
-}
-
-/** Where each of a polygon's features lands: the construction `project`
- * builds its effects by, before the arrangement. */
-const imagedBy = remembered((
-  source: Ring,
-  rings: readonly number[],
-  erosion: number,
-  depths: readonly number[] | null,
-  effects: readonly Memo[],
-): Imaged => {
-  const [facets, bevels, flat, deform, apart, apartTo, apartAt, reach] = effects as [Memo[], number[], number[], Memo[], number[], number[], number, number[]];
-  const each = facets.map(facetsFrom);
-  const [spacing, pattern, seed, sides, jitter, falloff, before, after, keys, seen, ids, offset, own, anchors, reaches] =
-    deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[], number[], number[]];
-  const e: Effecting | null = deform.length === 0
-    ? null
-    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
-  // The options the edge leaving each corner stands in, its own over the
-  // polygon's: see `ArcDeform.es`.
-  const es = (i: number): Effecting | null => (deform.length === 0 ? null : effectingFrom(own, i * 7));
-
-  // An arc's teeth are its two edges', as its amplitudes are: the edge
-  // leaving it names the arc, so its options lay it.
-  const teeth = (i: number): ArcTeeth | null => {
-    const mine = e === null ? null : es(i) ?? e;
-
-    if (mine === null || (before[i] === 0 && after[i] === 0)) return null;
-
-    return { e: mine, before: before[i], after: after[i], key: keys[i], seen: bevels[i] > 0 ? Math.min(CRAMMED, seen[i] / bevels[i]) : 1 };
-  };
-
-  // The corner names and the amplitudes, which come with the deform and so
-  // are not there without one: the round is drawn either way, and names its
-  // own arcs by where the corner is in the ring.
-  const name = ids ?? source.map((_p, i) => i);
-  const amp = after ?? source.map(() => 0);
-
-  // Which corners are set aside, at each end of a span and for the geometry.
-  //
-  // A corner is set aside where it is flat — where the bake invented it, so
-  // that it sits wherever its neighbours put it and the arcs beside it are
-  // laid as though it were not there. That is true at the end that invented
-  // it and nowhere else: one instant into the span it is off the wall and
-  // turns like any other corner, and holding it aside there would round its
-  // neighbours against a corner the outline no longer goes through. So the
-  // geometry sets aside only what both ends do, which at either end is that
-  // end's own list — `apartTo` being empty there — and across the span is a
-  // corner flat at both ends. The namings keep their own lists and their
-  // weight. See `Effected.apart` and PLAN-bevel's step 4.
-  const near = source.map((_p, i) => apart[i] === 1);
-  const far = apartTo.length === 0 ? near : source.map((_p, i) => apartTo[i] === 1);
-  const aside = apartAt === 0 ? near : apartAt === 1 ? far : near.map((x, i) => x && far[i]);
-
-  // Eroded first, and the round and the teeth in one pass on what that
-  // leaves: a polygon takes the order a scope's fold takes, and publishes its
-  // corners to that fold exactly as `namesOf` publishes them to a scope. See
-  // PLAN-bevel's step 6.
-  const n = source.length;
-  const at = (i: number) => depths?.[i] ?? erosion;
-  const ats = source.map((_p, i) => mitred(source, rings, i, at(i)));
-  const eroded = offsetOf(source, rings, erosion, depths);
-  // Its own corners, as a member's reach a fold: the bevel it asks for and
-  // the options it asks for it in. A polygon is a fold of one. Its facets are
-  // already for this bevel, so the options it hands over say exactly them.
-  const ours = ats.flatMap((p, i) => (p === null
-    ? []
-    : [{
-        id: i,
-        at: p,
-        bevel: bevels[i],
-        round: each[i].n > 0
-          ? {
-              precision: precisionFor(each[i].n, bevels[i], each[i].tension),
-              tension: each[i].tension,
-              chamfer: each[i].n === 1,
-              facets: each[i],
-            }
-          : null,
-      }]));
-  const lines: { id: number, a: Point, b: Point, deform: Effecting | null }[] = [];
-  const same = (p: Point, q: Point) => p.x === q.x && p.y === q.y;
-
-  // A corner the bake invented names nothing: it sits wherever its neighbours
-  // put it, and a wall that took its name would lose its pattern the instant
-  // the corner arrived. The line runs through it to the next real corner, as
-  // the arcs beside it are laid as though it were not there. See
-  // `effectsOver`.
-  const linesBy = (aside: readonly boolean[]): { id: number, a: Point, b: Point, deform: Effecting | null }[] => {
-    const names = (i: number) => !aside[i];
-    const out: { id: number, a: Point, b: Point, deform: Effecting | null }[] = [];
-
-    for (let i = 0; i < n; i++) {
-      if (!names(i)) continue;
-
-      let j = nextOf(rings, n, i);
-
-      while (!names(j) && j !== i) j = nextOf(rings, n, j);
-
-      const a = ats[i], b = ats[j];
-
-      if (a === null || b === null || same(a, b)) continue;
-
-      out.push({ id: name[i], a, b, deform: es(i) });
-    }
-
-    return out;
-  };
-
-  lines.push(...linesBy(near));
-
-  // The far end's naming, where a corner arriving or leaving makes it differ:
-  // the wall it splits carries both patterns across the span.
-  const other = far.every((x, i) => x === near[i]) ? null : { lines: linesBy(far), weight: apartAt };
-
-  const amplitude = new Map(name.map((id, i) => [id, amp[i]]));
-
-  // Which source corner each point of the eroded outline came of: its own
-  // corners, where the erosion put them, so a run is named outright and
-  // nothing is matched to a line within a tolerance. A point a crossing made
-  // is nobody's and names nothing. See `Naming`.
-  //
-  // Matched with a tolerance, not by equality: the arrangement the erosion
-  // runs may hand a point back a hair from where `mitred` put it, as
-  // `foldShaped`'s own `ownAt` allows for.
-  let big = 1;
-
-  for (const ring of eroded) for (const p of ring) big = Math.max(big, Math.abs(p.x), Math.abs(p.y));
-
-  const tol = big * 1e-9;
-  /**
-   * Each naming's source run, halved: what its pattern runs over, and what
-   * `namingBy`'s reach is read off.
-   *
-   * To the next corner that names something, not to the next corner — a
-   * corner set aside names nothing and the run goes straight through it, so
-   * measuring to it would cut the pattern off half way along its own line
-   * and drop the teeth past that. A wall carrying an arriving corner is
-   * exactly that case: one run of two walls at the end that invented it.
-   *
-   * The source's, which the erosion does not change, so the same teeth are
-   * laid at every depth.
-   */
-  const halvesBy = (aside: readonly boolean[]): number[] => source.map((p, i) => {
-    const q = source[runsTo(aside, i)];
-
-    return Math.hypot(q.x - p.x, q.y - p.y) / 2;
-  });
-
-  /** Where each naming's run ends in the source: the next corner that names
-   * something, a corner set aside naming nothing. */
-  function runsTo(aside: readonly boolean[], i: number): number {
-    let j = nextOf(rings, n, i);
-
-    while (aside[j] && j !== i) j = nextOf(rings, n, j);
-
-    return j;
-  }
-
-  /** The middle of each naming's run in the source, which is where its
-   * pattern is centred. The source's, and not the middle of the eroded line,
-   * whose two ends move along their own mitres and so slide it along the wall
-   * where the corners turn differently: a pattern's coordinate along its edge
-   * does not move with the depth. See PLAN-bevel 2.4. */
-  const midsBy = (aside: readonly boolean[]): Point[] => source.map((p, i) => {
-    const q = source[runsTo(aside, i)];
-
-    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-  });
-  const owner = (p: Point): number | undefined => {
-    const k = ats.findIndex(q => q !== null && Math.abs(q.x - p.x) <= tol && Math.abs(q.y - p.y) <= tol);
-
-    return k < 0 ? undefined : k;
-  };
-
-  /** The naming that `aside` gives: a corner set aside names no run, so the
-   * one before it keeps the whole of what it had. */
-  const namingBy = (aside: readonly boolean[], of: readonly { id: number, a: Point, b: Point }[]): Naming => {
-    const line = new Map(of.map(l => [l.id, l]));
-    const walls = halvesBy(aside);
-    const mids = midsBy(aside);
-
-    return (a: Point, b: Point) => {
-      const mine = owner(a);
-
-      // Nobody's corner names nothing. There is no arc to be inside of here:
-      // the round is drawn after this, on the ring these names are read off.
-      if (mine === undefined) return null;
-
-      let k = mine;
-
-      while (aside[k]) {
-        const back = prevOf(rings, n, k);
-
-        if (back === mine) return null;
-
-        k = back;
-      }
-
-      const l = line.get(name[k]);
-
-      if (l === undefined) return null;
-
-      const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
-
-      if (len === 0) return null;
-
-      const mid = mids[k];
-
-      // Its own middle, and then however far off it the edge says its pattern
-      // sits: a length along the wall, which the erosion does not change. See
-      // `Effects['deform'].anchor`.
-      const off = deform.length === 0 ? 0 : anchors[k] ?? 0;
-
-      return {
-        key: name[k],
-        from: ((mid.x - a.x) * dx + (mid.y - a.y) * dy) / len + off,
-
-        // Half the wall as it is *drawn* — the source's, which the erosion
-        // does not change — so the same teeth are laid at every depth. Across
-        // a span the span's own, which is the longer of its two ends' and the
-        // same number at both, so the teeth this end lays are the ones the
-        // other end lays too. See `Effected.reach`.
-        reach: (deform.length === 0 ? undefined : reaches[k] >= 0 ? reaches[k] : undefined) ?? reach?.[k] ?? walls[k],
-      };
-    };
-  };
-
-  // A corner set aside is flat — it lies on the edge between its neighbours,
-  // so the arrangement drops it — and then the wall it stands on is one run,
-  // and the naming that splits there cannot see its two halves. Kept, so that
-  // both namings read the same ring at either end of a span. It fades with
-  // the teeth below, the line on it coming up rather than arriving. See
-  // `keeping` and PLAN-bevel 3.9.
-  const flatCorners = aside.flatMap((x, i) => {
-    const p = ats[i];
-
-    return x && p !== null ? [p] : [];
-  });
-  const ring = flatCorners.length === 0 ? eroded : keeping(eroded, flatCorners);
-
-  const laid = foldShaped(ring, [], [], lines, [], ours, SQUARE, 0, e === null ? null : {
-    e,
-    amplitude: (key: number) => amplitude.get(key) ?? 0,
-
-    // The teeth are the edge's, laid over its length wherever the erosion has
-    // put the run's ends.
-    reach: true,
-    naming: namingBy(near, lines),
-    over: other === null ? undefined : { ...other, naming: namingBy(far, other.lines) },
-  }, 0, flatCorners);
-
-  // The teeth lying flat in it, which `simplify` takes out of the shape for
-  // not turning: put back, so the ring keeps its points while a pattern comes
-  // up out of nothing or a run's end takes one away. The fold does the same
-  // with what its slots published. See `FoldShaped.fades`.
-  const lying = laid.fades.filter(f => f.v === 0);
-
-  // Each source corner's arc, as the fold drew it: a single point where it
-  // asked for no round, and nothing where the erosion took the corner away.
-  const runs = new Map(laid.runs.map(run => [run.id, run.points]));
-  const corners = ats.map((p, i) => runs.get(i) ?? (p === null ? null : [p]));
-
-  return {
-    shape: lying.length === 0 ? laid.shape : keeping(laid.shape, lying),
-    corners,
-    teeth: [],
-    drawn: corners.map(run => run ?? []),
-    rest: [],
-    restSquare: [],
-    flat: lying.map(f => f.p),
-    kept: lying,
-  };
-});
-
-/** The noise's name for a corner's arc: its own, told apart from the edge it
- * starts, which has the same id. */
-function arcKey(id: number): number {
-  return id ^ 0x5bd1e995;
-}
-
-/**
- * Where each corner's arc and each edge's deform points land in a polygon's
- * projection, in world units: `imaged`, taken the way `projection` takes it.
- * Nothing for a polygon with no effects.
- *
- * What the bake asks instead of `mitred` wherever effects are on, so that
- * where it thinks a point is and where the projection put it cannot differ.
- */
-export function imagesOf(at: Omit<Resolved, 'shape' | 'ids'>): Imaged | null {
-  const fx = at.effected ?? null;
-
-  if (fx === null) return null;
-
-  const s = similarity(at.frame);
-
-  if (s === null) return imagedBy(at.source, at.rings, at.erosion, at.depths, effectKey(fx));
-
-
-  const im = imagedBy(at.local, at.rings, at.erosion / s, scaled(at.depths, s), effectKey(fx, s));
-  const run = (r: Point[] | null) => (r === null ? null : place(at.frame, r));
-
-  return {
-    shape: im.shape.map(ring => place(at.frame, ring)),
-    corners: im.corners.map(run),
-    teeth: place(at.frame, im.teeth ?? []),
-    flat: place(at.frame, im.flat ?? []),
-    kept: (im.kept ?? []).map(f => ({ ...f, p: place(at.frame, [f.p])[0], ...(f.to === undefined ? {} : { to: place(at.frame, [f.to])[0] }) })),
-    drawn: (im.drawn ?? []).map(r => place(at.frame, r)),
-    rest: im.rest.map(r => place(at.frame, r)),
-    restSquare: im.restSquare,
-  };
 }
 
 /** The erosion alone: the first of the three, and all of it for a polygon

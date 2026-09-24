@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { rounded, shapeArea } from './geometry';
-import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { shapeArea } from './geometry';
+import { TOP, addPolygon, copied, csg, grouped, pasted, resolveAt, rigOf, sealing } from './scene';
 import { Span, spanAt, stamp } from './bake';
-import { cornerRounded, stateAt } from './rig';
+import { stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
   applies,
@@ -37,10 +37,12 @@ function withEffects(world: World, id: Id, fx: Effects): World {
 const round = (by: number) => ({ kind: 'round' as const, by });
 const deform = (by: number) => ({ kind: 'deform' as const, by });
 
-/** A `w` by `h` rectangle's area with its four corners rounded `r` deep in
- * `segments`, as the geometry rounds a ring on its own. */
+/** A `w` by `h` rectangle's area with its four corners rounded `r` deep:
+ * each a quarter circle, as the opening draws it, in `segments` chords. */
 function roundedRect(w: number, h: number, r: number, segments: number): number {
-  return shapeArea([rounded(rect(0, 0, w, h), () => r, segments)]);
+  const chord = Math.sin(Math.PI / (2 * segments)) * Math.cos(Math.PI / (2 * segments));
+
+  return w * h - 4 * r * r + 4 * r * r * segments * chord;
 }
 
 /** How far a point is from a room of 0,0 to 100,100: nought on it, positive
@@ -796,9 +798,9 @@ describe('editing effects', () => {
     moved.forEach(p => expect(from(p, c.at)).toBeGreaterThan(30));
 
     // The corner the deformed edge does not touch is rounded as it was.
-    const arc = (at: typeof it) => imagesOf(at)!.corners[at.corners.findIndex(q => q.id === c.id)];
+    const arc = (shape: Point[][]) => shape[0].filter(p => from(p, c.at) <= 30);
 
-    expect(arc(it)).toEqual(arc(resolveAt(rounded, 0).find(r => r.id === id)!));
+    expect(arc(it.shape)).toEqual(arc(plain.shape));
   });
 
   test('an edge\'s deform options are its own, over its polygon\'s', () => {
@@ -847,76 +849,6 @@ describe('editing effects', () => {
 
     expect(bottom(sealed)).toBeGreaterThan(0);
     expect(bottom(tight)).toBeGreaterThan(bottom(sealed) * 3);
-  });
-
-  // PHASE 3: parked, and this one is false by design now. Laid on the eroded
-  // outline, a straight and an arc are one kind of run, so teeth no longer
-  // stop short of an arc — they run along it. Replace with 3.5's "teeth of one
-  // size along straights and arcs alike".
-  test.skip('a polygon\'s teeth stop short of its corners\' arcs, and are never rounded', () => {
-    const { world, id } = room();
-    const [a, b] = world.polygons.get(id)!.points;
-    const fx = { round: inSegments(8, 30), deform: DEFORM.deform! };
-    const it = resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
-    const teeth = edgeRun(it, a.id).slice(1, -1).map(i => it.source[i]);
-    const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
-
-    expect(teeth.length).toBeGreaterThan(0);
-    expect(teeth.every(p => from(p, a.at) > 30 && from(p, b.at) > 30)).toBe(true);
-
-    // A square corner's arc is the one point; a drawn corner's is its nine.
-    const arcs = imagesOf(it)!.corners.map(r => r?.length);
-    const at = (vertex: number) => arcs[it.corners.findIndex(q => q.id === vertex)];
-
-    edgeRun(it, a.id).slice(1, -1).forEach(i => expect(arcs[i] ?? 1).toBe(1));
-    expect(at(a.id)).toBe(9);
-    expect(at(b.id)).toBe(9);
-  });
-
-  // PHASE 3: parked. An arc's teeth no longer come through `imagesOf().teeth`
-  // — nothing puts them among the corners — but out of `foldShaped` with every
-  // other run's. Same intent, read off the shape: see 3.5.
-  test.skip('a polygon\'s arcs take teeth of their own, along the curve, laid as its edges\' are', () => {
-    const { world, id } = room();
-    const fx = { round: inSegments(8, 30), deform: { ...DEFORM.deform!, spacing: 10 } };
-    const plain = resolveAt(wrote(withEffects(world, id, { round: fx.round }), 0, id, round(30)), 0).find(r => r.id === id)!;
-    const toothed = resolveAt(wrote(withEffects(world, id, fx), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!;
-    const im = imagesOf(toothed)!;
-
-    // An arc thirty deep is some forty long: a tooth every ten of it, less
-    // those within a spacing of its ends, which are flat there and not laid.
-    expect(im.teeth!.length).toBeGreaterThanOrEqual(4 * 2);
-
-    // Each arc is still its nine points, from where it leaves one edge to
-    // where it joins the next: the teeth push its points off the curve
-    // between them, as an edge's teeth push its straight between them, and
-    // leave its ends where they were.
-    const arcsOf = (it: Resolved) => imagesOf(it)!.corners.filter((r): r is Point[] => r !== null && r.length > 1);
-
-    expect(arcsOf(toothed)).toHaveLength(4);
-    arcsOf(toothed).forEach((run, k) => {
-      expect(run).toHaveLength(9);
-      expect(run[0]).toEqual(arcsOf(plain)[k][0]);
-      expect(run[8]).toEqual(arcsOf(plain)[k][8]);
-    });
-
-    // And every point of them, teeth and all, off the curve by no more than
-    // the amplitude, near enough: the plain arc's facets are a little off it.
-    const offCurve = (p: Point) => Math.min(...arcsOf(plain).flat().map(q => Math.hypot(p.x - q.x, p.y - q.y)));
-
-    [...im.teeth!, ...arcsOf(toothed).flat()].forEach(p => expect(offCurve(p)).toBeLessThan(3 + 10));
-
-    // A tooth on an arc stands as tall as one on an edge: out, the tallest
-    // are the amplitude off the curve, as near as the curve read at its
-    // points, not between them, lets that be read.
-    const out = { ...fx, deform: { ...fx.deform, sides: 'out' as const } };
-    const outward = imagesOf(resolveAt(wrote(withEffects(world, id, out), 0, id, round(30), deform(3)), 0).find(r => r.id === id)!)!;
-    const fine = resolveAt(wrote(withEffects(world, id, { round: inSegments(64, 30) }), 0, id, round(30)), 0).find(r => r.id === id)!;
-    const curve = imagesOf(fine)!.corners.filter((r): r is Point[] => r !== null && r.length > 1).flat();
-    const tallest = Math.max(...outward.teeth!.map(p => Math.min(...curve.map(q => Math.hypot(p.x - q.x, p.y - q.y)))));
-
-    expect(tallest).toBeGreaterThan(3 * 0.95);
-    expect(tallest).toBeLessThan(3 * 1.15);
   });
 });
 
