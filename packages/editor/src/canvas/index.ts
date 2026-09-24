@@ -645,22 +645,15 @@ export function worldCanvas(
       // means to anything else.
       const standing = kind !== undefined ? [] : selection().artefacts;
 
-      // An amount is one number over a whole ring, so under the tools that
-      // pick corners and edges it goes on the polygons they are on: an amount
-      // is written into the timeline of the thing that has a ring, and a
-      // corner has none. Every other gesture ignores them, being about where a
-      // whole thing is. Only under those tools: corners left picked while the
-      // hand is on whole things are not what the gesture there is asking about.
-      const corners = new Set(kind === undefined ? [] : pickedCorners());
-
-      if (kind !== undefined && tool() !== 'polygon' && corners.size === 0) return;
-
-      const owners = corners.size === 0 ? [] : owning(world(), corners);
+      // An amount is one number over a whole ring, so it is a gesture on
+      // whole things only: under the tools that pick corners and edges it does
+      // nothing.
+      if (kind !== undefined && tool() !== 'polygon') return;
 
       // Paths sit them out for the reason artefacts do: a walk has no outline.
       const walks = kind !== undefined ? [] : selection().paths;
 
-      const ids = [...(owners.length > 0 ? owners : selection().polygons), ...standing, ...walks];
+      const ids = [...selection().polygons, ...standing, ...walks];
 
       // A depth is an offset of a *union*, and a loose group has none: its
       // members are in the set one by one, and there is no single boundary for
@@ -674,8 +667,7 @@ export function worldCanvas(
         return;
       }
 
-      // What the effect is on: the things picked, or the polygons of the
-      // corners picked. The gesture switches it on where it is off — an
+      // What the effect is on: the things picked. The gesture switches it on where it is off — an
       // amount of something that does not apply is invisible — and gives one
       // that has never had it the options last used. From there it works
       // over that.
@@ -877,19 +869,6 @@ export function worldCanvas(
       finally {
         ungrabbed();
       }
-    }
-
-    /**
-     * The corners picked under the tools that pick them, whose polygons an
-     * amount goes on: edges picked stand for their ends.
-     */
-    function pickedCorners(): VertexId[] {
-      const sel = selection();
-
-      if (tool() === 'point') return sel.vertices;
-      if (tool() === 'edge') return endsOf(edgeable(), sel.edges);
-
-      return [];
     }
 
     function retype(kind: PolygonKind): void {

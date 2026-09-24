@@ -134,11 +134,10 @@ const SPACING = 100;
 const SEEDS = 100;
 const COARSEST = 2;
 
-/** What the pane is about: the things picked, or the polygons of the corners
- * or edges picked. */
+/** What the pane is about: the things picked, and only under the polygon
+ * tool — a corner or an edge has no effects of its own. */
 export function effectTargets(world: World, selection: Selection, tool: Tool): Id[] {
-  if (tool === 'point') return owning(world, new Set(selection.vertices));
-  if (tool === 'edge') return owning(world, new Set(selection.edges));
+  if (tool !== 'polygon') return [];
 
   return selection.polygons.filter(id => world.polygons.has(id) || world.groups.has(id));
 }
