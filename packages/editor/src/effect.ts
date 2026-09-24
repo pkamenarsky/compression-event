@@ -28,6 +28,39 @@ import { holding } from './hold';
 export type Effect = (it: Drawn) => Drawn
 
 /**
+ * A fold's steps laid over each polygon of `it` on its own, and the parts laid
+ * side by side.
+ *
+ * Which is what a scope resolves to: one polygon per island, each folded by
+ * itself and the lot unioned when drawn. Folding the union whole agrees with
+ * that only while no step joins two islands before another step reads them —
+ * true of the default order, whose deform comes last, and of no other. A
+ * deform first lays teeth that can reach across a gap between islands, and a
+ * round or an erosion after it would then open or offset the two as one,
+ * which an opening of overlapping pieces is not: round(A ∪ B) is not
+ * round(A) ∪ round(B) where a circle fits across the join. So the islands are
+ * the ones the fold was handed, taken once, before any step.
+ */
+export function foldEach(it: Drawn, steps: readonly Effect[]): Drawn {
+  const groups = polygonsOf(it.shape);
+
+  if (groups.length < 2) return steps.reduce<Drawn>((d, fx) => fx(d), it);
+
+  const parts = groups.map(group => steps.reduce<Drawn>((d, fx) => fx(d), {
+    shape: group.map(r => it.shape[r]),
+    ids: group.map(r => it.ids[r]),
+    ...(it.edges === undefined ? {} : { edges: group.map(r => it.edges![r]) }),
+  }));
+
+  // Edges only where every part has them, as `eroding` says.
+  return {
+    shape: parts.flatMap(p => p.shape),
+    ids: parts.flatMap(p => p.ids),
+    ...(parts.every(p => p.edges !== undefined) ? { edges: parts.flatMap(p => p.edges!) } : {}),
+  };
+}
+
+/**
  * How much of an effect a point is given: one amount for the whole shape, or
  * an amount per identity.
  *
