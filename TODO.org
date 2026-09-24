@@ -1,4 +1,10 @@
-* Bugs
+* Next
+* TODO fix the laws
+* TODO fix deform
+* TODO make it fast
+* TODO point 8
+* TODO point 9
+
 * Bugs
 * TODO comb step-6 and the other branches for bugfixes that might be useful to have here
 * TODO copying something in a later version and pasting it should not change its shape
