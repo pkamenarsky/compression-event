@@ -225,7 +225,7 @@ import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, play
 import { WorldSet, pieces } from './worldset';
 import { held } from './hold';
 import type { Ident, Ids } from './ids';
-import { madeOf } from './ids';
+import { madeOf, shows } from './ids';
 
 // -----------------------------------------------------------------------------
 // What comes out
@@ -1847,6 +1847,8 @@ interface Taken {
    * them, and read as one throughout — a group's union has no source corners
    * to fade, so it is never in here. */
   fade: Map<Id, number[][]>
+  /** Per contributor, what each point of `table` is called, where it says. */
+  names: Map<Id, Ids>
 }
 
 /**
@@ -2195,11 +2197,13 @@ function evaluating(cast: Cast, items: Moving[], t: number, only: Id | null): Ta
   const table = new Map<Id, Shape>();
   const world = new Map<Id, Shape>();
   const fade = new Map<Id, number[][]>();
+  const names = new Map<Id, Ids>();
   const moving = new Map(items.map(m => [m.at.id, m]));
   const was = new Map(resolved.map(it => [it.id, it]));
 
   for (const it of at) {
     world.set(it.id, it.shape);
+    if (it.ids !== undefined) names.set(it.id, it.ids);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
 
     // Only a polygon has source corners, and only they can be invented; a
@@ -2220,7 +2224,7 @@ function evaluating(cast: Cast, items: Moving[], t: number, only: Id | null): Ta
     fill: r.fill,
   }));
 
-  return { frame, table, world, out, fade, t };
+  return { frame, table, world, out, fade, names, t };
 }
 
 // -----------------------------------------------------------------------------
@@ -2796,7 +2800,7 @@ const MARGIN = 0.5;
 
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
-  return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b);
+  return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b) && named(a, b);
 }
 
 /**
@@ -2838,6 +2842,65 @@ function numbered(a: Taken, b: Taken): boolean {
   }
 
   return true;
+}
+
+/**
+ * Whether every vertex the runs refer to is the same point at both ends.
+ *
+ * A vertex is referred to by its index, and `signature` compares indices: it
+ * cannot see a ring whose points have been renamed under it. A hole that
+ * touches the outline and comes away again does exactly that — the points it
+ * made on the way in die, the ones it makes on the way out are born of other
+ * edges, and when as many are born as died the ring comes back the same
+ * length. Both ends then read `17.0.10`, one meaning a crossing on one side of
+ * the room and the other a crossing on the far side, and the stretch between
+ * them slid a point four hundred units in no time at all. Bisection could not
+ * close it, because the event it hid was a millionth wide; it spent forty
+ * evaluations a time finding that out.
+ *
+ * Where a contributor carries no names there is nothing to hold it to, and
+ * only a crossing is held: see `crossed`.
+ */
+function named(a: Taken, b: Taken): boolean {
+  for (const it of [a, b]) {
+    for (const run of it.out) {
+      for (const o of run.whence) {
+        if (o.kind !== 'vertex') continue;
+
+        const p = a.names.get(o.at.id), q = b.names.get(o.at.id);
+
+        if (p === undefined || q === undefined) continue;
+        const x = p[o.at.ring]?.[o.at.index], y = q[o.at.ring]?.[o.at.index];
+
+        if (x !== y && x !== undefined && y !== undefined && crossed(x) && crossed(y) && lineage(x) !== lineage(y)) return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * A name with where along things it sits left out. `on(edge, t)` names a point
+ * by how far along it is, and that slides with the geometry: an arc's sample at
+ * a third is the same point at a quarter a moment later. What it is *of* does
+ * not slide, and that is what `named` holds the two ends to.
+ */
+function lineage(id: Ident): string {
+  return shows(id).replace(/@[-+.\de]+/g, '');
+}
+
+/**
+ * Whether a point is of a crossing, somewhere down its name: born of two
+ * edges, or along or a tooth of something that was, and so a different point
+ * wherever it comes of two others.
+ *
+ * Only these are held to their names. A corner arriving is a point laid on a
+ * wall at one end and the drawn corner at the other — two names, one point,
+ * and a move rather than an event — and that is the bake working as meant.
+ */
+function crossed(id: Ident): boolean {
+  return shows(id).includes('×');
 }
 
 /**
@@ -3687,6 +3750,12 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
       // `strayed` will cheerfully measure the distance across a discontinuity
       // and report the pop as though the replay had invented it.
       if (signature(drawn(grown, riders, t)) !== signature(now.out)) continue;
+
+      // Nor across one the signature cannot see: the same indices, other names.
+      // See `named`.
+      const end = pieces[pieceOf(i)];
+
+      if (!comparable(side < 0 ? end.a : end.b, now)) continue;
 
       const off = strayed(drawn(grown, riders, t), now.out);
 
@@ -4726,3 +4795,4 @@ export function replayed(
 
   return span === null ? null : sample(span, forward ? rest : 1 - rest);
 }
+
