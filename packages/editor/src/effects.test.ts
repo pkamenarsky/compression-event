@@ -124,17 +124,6 @@ describe('a polygon\'s effects', () => {
     expect(shapeArea(shapeOf(squashed, id))).toBeCloseTo(roundedRect(200, 100, 5 * Math.SQRT2, 8), 6);
   });
 
-  test('a corner rounds on its own, over its room\'s', () => {
-    const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[2].id;
-    const w = withRig(withEffects(world, id, { round: inSegments(4, 10) }), id, cornerRounded(rigOf(world, id), corner, 0, 10));
-    const shape = shapeOf(w, id);
-
-    expect(shape[0]).toHaveLength(3 + 5);
-    expect(shape[0]).toContainEqual({ x: 90, y: 100 });
-    expect(shape[0]).toContainEqual({ x: 100, y: 90 });
-  });
-
   test('a deform puts its points into every edge, off the line by its amplitude', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out — every twenty along each

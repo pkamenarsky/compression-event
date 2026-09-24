@@ -515,9 +515,20 @@ is the deform's alone now: an edge's own options keyed by the corner it leaves,
 which the fold honours exactly. A round a file carries there is dropped on the
 way in.
 
-Still standing, and for this step proper: a per-corner bevel *amount* reaches
-the fold, where `most` takes the largest of them. That is the rig rather than
-the options.
+Then the publishing half, which turned out to be written and never read. A
+resolve asks `contributed` for its members drawn, so `bare` was never true, so
+`Contributed.named` was never set and `readingAt`'s published corners and lines
+were always empty. Out with it: `bare`, `named`, `namesOf`, `movedIn`, the
+scope-side `Named`, `erodedOf`, `shapedFold`, the `square` channel
+(`squareIn`, `squaredThrough`, `squareFrom`), `Reading.corners` and `.lines`,
+and `told`. `resolves` is now the fold and the keeps, nothing else. One
+`sagitta`, in `effect.ts`. A B-drag on picked corners writes the polygon's own
+bevel, which is what `most` made of a per-corner one anyway; the rig and the
+save format still carry a per-corner round, so an old file reads as it did.
+
+**What is left of this step is only reachable through the bake**: `foldShaped`,
+`arcsWith`, `ArcTeeth`, `CRAMMED`, `ArcDeform`'s parallel arrays and
+`imagedBy` are there because `imagesOf` is, and go with step 9.
 
 **9. The bake.** `Effected` and `Imaged` replaced by the fold's own output, and
 `apart` / `apartTo` / `apartAt` / `reach` / `fades` reconsidered one at a time
@@ -726,17 +737,3 @@ broke it too. It went green when identity started being carried up from the
 members. The evidence was sound and the conclusion drawn from it was too
 strong — what it showed was that the deform was not the *only* thing breaking
 Law 2, not that the breakage was in erode and round themselves.
-
-## Two copies of one formula
-
-`sagitta` in `scene/core.ts` and `sagittaOf` in `scene/reading.ts` are the same
-expression character for character. Harmless today, and exactly the kind of
-thing that stops being harmless when somebody changes one. For step 8.
-
-## The per-corner bevel amount outlives the per-corner round
-
-Per-corner rounds are dropped and their options are gone, but a bevel amount
-written against a single corner still reaches the fold, where `most` takes the
-largest. So the drag gesture on a corner raises the whole ring's bevel rather
-than doing nothing — odd, not broken. It is the rig rather than the options,
-and it goes with the rest of the old machinery at step 8.
