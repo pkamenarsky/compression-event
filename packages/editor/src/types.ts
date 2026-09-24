@@ -313,6 +313,29 @@ export interface Vertex {
    * of the polygon's own. See `deformedAt` in `scene.ts`.
    */
   root?: VertexId
+  /**
+   * For a corner a resolve wrote down that was not a corner: which of the
+   * polygon's own corners starts the run it is a sample of, and how far along
+   * that run it sits.
+   *
+   * Absent is a drawn corner, which is what a corner somebody drew is and what
+   * a crossing an arrangement made is. Present says the opposite: this point
+   * is one of however many a curve was described with.
+   *
+   * Why it has to be written down. A scope hands its members the bare ring it
+   * folded and its own effects, so the same fold lays them again — which is
+   * law 1 by construction, *if* what the ring's points are survives being
+   * written down. Without this it does not: the ring becomes a polygon of
+   * corners, and a deform after it reads every facet of every arc as a place
+   * its rhythm may restart. An arc a scope was carrying came back as a row of
+   * corners with a tooth on each.
+   *
+   * It is not the member's original name — that named a member this polygon
+   * has no memory of. It is the same *structure*: `identify` reads it and lays
+   * `on(corner, t)` where it says so, and a corner where it does not. That is
+   * all anything downstream asks of it. See `identify` in `ids.ts`.
+   */
+  sample?: { of: VertexId, t: number }
 }
 
 /**

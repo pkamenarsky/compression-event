@@ -117,6 +117,8 @@ import {
   keyRigOf,
 } from './scene';
 import { AmountKind, EMPTY_RIG, Entry, KeyRig, Rig, amountedBy, keysOf, nextKey, once, stateAt } from './rig';
+import type { Ident, Ids } from './ids';
+import { born, madeOf } from './ids';
 import {
   GroupId,
   Id,
@@ -138,10 +140,19 @@ import {
 // they have to be closed, because a ring is what a polygon is.
 // -----------------------------------------------------------------------------
 
-/** One corner of the union: where it is, and what the arrangement calls it. */
+/**
+ * One corner of the union: where it is, what the arrangement calls it, and
+ * what the construction made it.
+ *
+ * `key` is the arrangement's own, for joining runs. `name` is the identity —
+ * the member's own name for the point, or `born` of the two walls that crossed
+ * to make it — and it is what says whether this corner is a corner or a sample
+ * on somebody's curve. See `ids.ts` and `Vertex.sample`.
+ */
 interface Named {
   at: Point
   key: string
+  name: Ident | null
 }
 
 type NamedRing = Named[];
@@ -165,6 +176,29 @@ function named(w: Whither): string {
     // Sorted, so that A crossing B and B crossing A are one crossing: the
     // arrangement does not promise which way round it saw them.
     : `x${[of(w.a), of(w.b)].sort().join('|')}`;
+}
+
+/**
+ * What the construction calls a boundary point, from where the arrangement
+ * says it came.
+ *
+ * A point that is a member's own corner is that corner — whatever the member
+ * called it, which after a round is a point on an arc and not a corner at all.
+ * A crossing is `born` of the walls leaving the two points that crossed, which
+ * is the same rule `combineIdentified` uses and has to be, or the two paths to
+ * a union would name the same corner differently.
+ *
+ * Nothing where the contributor brought no names: a reader that never asked
+ * for them, which is every reader but the resolve.
+ */
+function nameOf(w: Whither, said: ReadonlyMap<Id, Ids>): Ident | null {
+  const of = (p: Whence): Ident | null => said.get(p.id)?.[p.ring]?.[p.index] ?? null;
+
+  if (w.kind === 'vertex') return of(w.at);
+
+  const a = of(w.a), b = of(w.b);
+
+  return a === null || b === null ? null : born(a, b);
 }
 
 /** Twice the signed area, which is what says which way a ring is wound. */
@@ -264,6 +298,10 @@ export function rings(items: readonly Contributed[], set: SetName): NamedRing[] 
   if (top === null) return [];
 
   const mine: Member[] = [];
+  /** What each contributor calls each of its own points, so that a point of
+   * the union can be named of the point it came off rather than minted afresh
+   * as a corner. See `Vertex.sample`. */
+  const said = new Map<Id, Ids>();
 
   for (const it of items) {
     const slot = slotOf(it.kind, set);
@@ -273,6 +311,7 @@ export function rings(items: readonly Contributed[], set: SetName): NamedRing[] 
     if (it.shape.length === 0 || slot === null) continue;
 
     mine.push({ id: it.id, slot: slot - top, shape: it.shape });
+    if (it.ids !== undefined) said.set(it.id, it.ids);
   }
 
   // The slots above the outermost are dropped, and the rule for what is left
@@ -290,7 +329,7 @@ export function rings(items: readonly Contributed[], set: SetName): NamedRing[] 
   // a room owns its own. This is `worldset` asked about one neighbourhood.
   for (const m of mine) {
     for (const run of boundaryRuns(m, mine.filter(o => o.id !== m.id), slots, rule, on)) {
-      out.push(run.points.map((p, i) => ({ at: p, key: named(run.whence[i]) })));
+      out.push(run.points.map((p, i) => ({ at: p, key: named(run.whence[i]), name: nameOf(run.whence[i], said) })));
     }
   }
 
@@ -355,6 +394,10 @@ interface Reading {
   corners: (Published['corners'][number] | null)[]
   lines: (Published['lines'][number] | null)[]
   ring: Ring
+  /** What each point of `ring` is called, where the contributors brought their
+   * names: what says whether it is a corner or a sample on somebody's curve.
+   * See `Vertex.sample`. */
+  names: readonly (Ident | null)[]
 }
 
 /**
@@ -473,7 +516,8 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   // one there is nothing of the pillar left to be. A pillar sticking out past
   // the room it was in goes with it — it was cutting the rooms *around* the
   // group as well, and that is what resolving to one shape costs.
-  const walls = rings(items, 'level').map(ring => ring.map(p => p.at));
+  const walled = rings(items, 'level');
+  const walls = walled.map(ring => ring.map(p => p.at));
   const level = outermostIn(items, 'level');
   const floor = outermostIn(items, 'floor');
 
@@ -494,16 +538,24 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       { lines: [], corners: [] } as Published,
     );
 
-  const sides: [PolygonKind, readonly Ring[], Published][] = [
-    [SLOT_KINDS.level[level ?? 0], walls, namesIn('level')],
-    [
-      SLOT_KINDS.floor[floor ?? 0],
-      level === 0 ? floors(items, walls) : rings(items, 'floor').map(ring => ring.map(p => p.at)),
-      namesIn('floor'),
-    ],
+  const floored = level === 0 ? null : rings(items, 'floor');
+  const nothing = (side: readonly Ring[]) => side.map(ring => ring.map(() => null));
+  const sides: readonly (readonly [PolygonKind, readonly Ring[], readonly (readonly (Ident | null)[])[], Published])[] = [
+    [SLOT_KINDS.level[level ?? 0], walls, walled.map(ring => ring.map(p => p.name)), namesIn('level')],
+    ...(floored === null
+      ? (() => {
+          const side = floors(items, walls);
+
+          // A floor cut to the walls above it is an arrangement of its own and
+          // the names do not come through it. Nothing is written down, which
+          // says every point of it is a corner — which is what a floor's
+          // points are, no floor having arcs on it that its level does not.
+          return [[SLOT_KINDS.floor[floor ?? 0], side, nothing(side), namesIn('floor')] as const];
+        })()
+      : [[SLOT_KINDS.floor[floor ?? 0], floored.map(ring => ring.map(p => p.at)), floored.map(ring => ring.map(p => p.name)), namesIn('floor')] as const]),
   ];
 
-  for (const [kind, side, names] of sides) {
+  for (const [kind, side, said, names] of sides) {
     // Matched where the fold left them, in world units, before the ring goes
     // into the group's frame: a corner of the fold *is* the member's corner,
     // and a line runs from one to the next, so both are found by the point.
@@ -523,6 +575,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       hole: how[i].hole,
       owner: how[i].owner === null ? null : base + how[i].owner!,
       ring,
+      names: said[i],
       corners: side[i].map(p => corner.get(key(p)) ?? null),
       lines: side[i].map((p, k) => lineAlong(names.lines, p, side[i][(k + 1) % side[i].length], scale)),
     }));
@@ -673,12 +726,47 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     const mine = next;
     const points: Vertex[] = [];
 
+    // Where each ring's runs start, so a point that is a sample can say which
+    // of this polygon's own corners it is a sample *of*. A run's start is the
+    // point named `on(e, 0)`: the one place an arc about `e` can begin.
+    const starts = parts.map(part => {
+      const out = new Map<string, number>();
+
+      part.ring.forEach((p, i) => {
+        const what = part.names[i] === null ? null : madeOf(part.names[i]!);
+
+        if (what?.kind === 'on' && what.t === 0) out.set(String(what.edge), i);
+      });
+
+      return out;
+    });
+
+    // Every corner of every ring gets its id before any of them is asked
+    // about, since a sample names a corner that may come after it.
+    const ids = parts.map(part => part.ring.map(() => ++next));
+
     parts.forEach((part, ring) => {
       part.ring.forEach((at, i) => {
-        const corner = ++next;
+        const corner = ids[ring][i];
         const to = part.ring[(i + 1) % part.ring.length];
+        const what = part.names[i] === null ? null : madeOf(part.names[i]!);
 
-        points.push({ id: corner, at, ring, birth: born, death });
+        // A sample keeps being a sample. Its old name meant a member this
+        // polygon has no memory of, so what is written down is the same
+        // structure said in this polygon's own corners: which run, and how far
+        // along. A run whose start is not in this ring — cut away by the
+        // arrangement — has nothing to point at, and the point is written down
+        // as the corner it now is. See `Vertex.sample`.
+        const of = what?.kind === 'on' ? starts[ring].get(String(what.edge)) : undefined;
+
+        points.push({
+          id: corner,
+          at,
+          ring,
+          birth: born,
+          death,
+          ...(of === undefined || what?.kind !== 'on' ? {} : { sample: { of: ids[ring][of], t: what.t } }),
+        });
         told.push({ id: mine, corner, was: part.corners[i], line: part.lines[i], from: at, to });
       });
     });

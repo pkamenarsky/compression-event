@@ -161,10 +161,20 @@ export function shows(id: Ident): string {
  * start a ring where it likes, and naming the points of a shape that has not
  * been through one gives names that move when it does.
  */
-export function identify(shape: Cut, member: number): Ids {
+export function identify(shape: Cut, member: number, was: readonly number[] | null = null): Ids {
   let vertex = 0;
 
-  return shape.map(ring => ring.map(() => corner(member, vertex++)));
+  return shape.map(ring => ring.map(() => {
+    const here = vertex++;
+    const of = was === null ? -1 : was[here * 2];
+
+    // A point a construction sampled rather than turned at: `on` the run
+    // leaving corner `of`, at the same `t` it sat at before. Not the name the
+    // point had when it was made — that named somebody this shape has no
+    // memory of — but the same shape of name, which is all anything reading it
+    // asks. See `Vertex.sample`.
+    return of < 0 ? corner(member, here) : on(corner(member, of), was![here * 2 + 1]);
+  }));
 }
 
 /**

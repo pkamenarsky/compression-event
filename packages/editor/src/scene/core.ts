@@ -1196,6 +1196,12 @@ export const project = remembered((
    * polygon asked for again every frame — is untouched.
    */
   member: number,
+  /**
+   * Which of `source`'s points a construction sampled rather than turned at,
+   * as flat pairs — the index of the corner whose run it is on, and how far
+   * along — with `-1` for a corner. See `Vertex.sample` and `identify`.
+   */
+  was: readonly number[] | null,
 ): Drawn => {
   // With no effect on it every point of the answer is a feature: a corner that
   // survived, or one the offset made where two walls met. So naming them where
@@ -1204,10 +1210,10 @@ export const project = remembered((
   if (effects === null) {
     const shape = offsetOf(source, rings, erosion, depths);
 
-    return { shape, ids: identify(shape, member) };
+    return { shape, ids: identify(shape, member, was) };
   }
 
-  return folding(source, rings, erosion, depths, effects, member);
+  return folding(source, rings, erosion, depths, effects, member, was);
 });
 
 /**
@@ -1240,10 +1246,11 @@ function folding(
   depths: readonly number[] | null,
   effects: readonly Memo[],
   member: number,
+  was: readonly number[] | null,
 ): Drawn {
   const [facets, bevels, , deform] = effects as [Memo[], number[], number[], Memo[]];
   const shape = simplify(sliced(source, rings));
-  const ids = identify(shape, member);
+  const ids = identify(shape, member, was);
 
   // The names the amounts are written against: the ring as it was drawn, which
   // is the ring `source` is and the ring `identify` has just named. A shape the
@@ -1907,9 +1914,11 @@ function projection(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
   const s = similarity(at.frame);
   const fx = at.effected ?? null;
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx), at.id);
+  const was = sampled(at.corners);
 
-  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s), at.id);
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx), at.id, was);
+
+  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s), at.id, was);
 
   // The frame moves the points and says nothing about the names: a corner
   // carried across the world is the corner it was, which is the whole of what
@@ -1933,11 +1942,33 @@ function projection(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
 export function erodedOf(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
   const s = similarity(at.frame);
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, null, at.id);
+  const was = sampled(at.corners);
 
-  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), null, at.id);
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, null, at.id, was);
+
+  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), null, at.id, was);
 
   return { shape: it.shape.map(ring => place(at.frame, ring)), ids: it.ids };
+}
+
+/**
+ * What each corner says it is, flat, for `identify` — the index of the corner
+ * whose run it is a sample of and how far along, or `-1` twice for a corner.
+ *
+ * Nothing at all where no corner says anything, which is every polygon somebody
+ * drew: the array is part of `project`'s memo key and an array of `-1`s would
+ * be one more thing to hash on every frame.
+ */
+function sampled(corners: readonly Vertex[]): readonly number[] | null {
+  if (!corners.some(c => c.sample !== undefined)) return null;
+
+  const at = new Map(corners.map((c, i) => [c.id, i]));
+
+  return corners.flatMap(c => {
+    const of = c.sample === undefined ? undefined : at.get(c.sample.of);
+
+    return of === undefined ? [-1, -1] : [of, c.sample!.t];
+  });
 }
 
 /**

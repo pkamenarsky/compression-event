@@ -157,6 +157,16 @@ export interface Contributed {
    * solid each stands. See `facetFades`. */
   faded?: readonly Fade[]
   /**
+   * What each point of `shape` is called, ring for ring and point for point.
+   *
+   * So that a reader unioning these can name what it gets out of the points
+   * that went in, rather than calling every one of them a drawn corner. A
+   * resolve is the reader that needs it: what it writes down about the ring it
+   * makes is the difference between an arc surviving being published and
+   * coming back as a row of corners. See `Vertex.sample`.
+   */
+  ids?: Ids
+  /**
    * What a scope's fold published about itself: each straight with the
    * amount and the options its run inherits, each corner that was a
    * member's with its summed bevel. Only where the caller asked for the fold
@@ -1193,6 +1203,7 @@ export function contributed(
           id: k === 0 ? id : sideOf(id, kind),
           kind,
           shape: it.shape,
+          ids: it.ids,
           frame: it.frame,
           // Already an arrangement, whatever its depth. See `plainly`.
           simple: true,
@@ -1224,7 +1235,7 @@ export function contributed(
     // here and a floor there, and nothing that cuts either. Two ids, because
     // they are two boundaries. See `outermostSlot`.
     for (const set of SETS) {
-      const { shape } = resolves(id, set, bare);
+      const { shape, ids } = resolves(id, set, bare);
 
       if (shape.length === 0) continue;
 
@@ -1236,6 +1247,7 @@ export function contributed(
         id: sideOf(id, kind),
         kind,
         shape,
+        ids,
         frame: how.frame ?? IDENTITY,
         simple: true,
         ...(faded.length === 0 ? {} : { faded }),
