@@ -2656,7 +2656,7 @@ function cornersOnly(
  * Anything that does not land on an edge is not put anywhere: an eroded ring
  * that has swallowed the edge a corner sat on genuinely does not have it.
  */
-export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape {
+export function keeping(shape: Shape, points: readonly (Point | Fade)[], also?: Kept): Shape {
   if (points.length === 0) return shape;
 
   // The same tolerance the arrangement works to, taken off the same geometry.
@@ -2681,8 +2681,8 @@ export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape 
 
     // On a corner, the edge leaving it the way `to` goes; otherwise the edge
     // it lies in the middle of.
-    const piled = (to: Point): { ring: number, index: number, off: number } | null => {
-      let best: { ring: number, index: number, off: number } | null = null;
+    const piled = (to: Point): Found | null => {
+      let best: Found | null = null;
 
       for (let r = 0; r < out.length; r++) {
         const ring = out[r];
@@ -2698,15 +2698,15 @@ export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape 
           const turn = Math.abs((to.x - a.x) * dy - (to.y - a.y) * dx) / l;
 
           if ((to.x - a.x) * dx + (to.y - a.y) * dy < 0) continue;
-          if (best === null || turn < best.off) best = { ring: r, index: i, off: turn };
+          if (best === null || turn < best.off) best = { ring: r, index: i, off: turn, t: 0 };
         }
       }
 
       return best;
     };
 
-    const along = (): { ring: number, index: number, off: number } | null => {
-      let best: { ring: number, index: number, off: number } | null = null;
+    const along = (): Found | null => {
+      let best: Found | null = null;
 
       for (let r = 0; r < out.length; r++) {
         const ring = out[r];
@@ -2722,7 +2722,7 @@ export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape 
           const at = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l;
 
           if (at <= snap || at >= l - snap) continue;
-          if (best === null || off < best.off) best = { ring: r, index: i, off };
+          if (best === null || off < best.off) best = { ring: r, index: i, off, t: at / l };
         }
       }
 
@@ -2743,9 +2743,37 @@ export function keeping(shape: Shape, points: readonly (Point | Fade)[]): Shape 
     if (best === null) continue;
 
     out[best.ring].splice(best.index + 1, 0, p);
+
+    // The names in lockstep, where a caller brought them: the point is on the
+    // edge leaving `index`, so that is what it is named of. Spliced at the same
+    // place, because after this splice `index` means something else.
+    if (also !== undefined) {
+      also.ids[best.ring].splice(best.index + 1, 0, also.name(also.ids[best.ring][best.index], best.t));
+    }
   }
 
   return out;
+}
+
+/** Where `keeping` put one point: which edge it went into, and how far along
+ * it — so a caller naming its points can name this one too. */
+interface Found {
+  ring: number
+  index: number
+  off: number
+  t: number
+}
+
+/**
+ * The names beside the points, for a caller that has them.
+ *
+ * `keeping` is geometry and knows nothing about identity, so it does not mint
+ * a name — it says which edge the point went into and how far along, and the
+ * caller says what that is called. See `ids.ts`.
+ */
+export interface Kept {
+  ids: number[][]
+  name: (edge: number, t: number) => number
 }
 
 function successor(

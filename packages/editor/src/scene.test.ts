@@ -3017,7 +3017,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           });
 
           // The world frame's answer, which is what this has to reproduce.
-          const there = project(place(m, ring), [0], t.erosion, null, null);
+          const there = project(place(m, ring), [0], t.erosion, null, null, 0).shape;
 
           // And the local one's, placed. Read off a `Resolved` rather than
           // worked out here, so that what is being checked is the path the
@@ -3103,7 +3103,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           const depths = ring.map((_, i) =>
             t.erosion + (i === t.which % ring.length ? t.by : 0));
 
-          const there = project(place(m, ring), [0], t.erosion, depths, null);
+          const there = project(place(m, ring), [0], t.erosion, depths, null, 0).shape;
 
           const here = resolved({
             id: 0,

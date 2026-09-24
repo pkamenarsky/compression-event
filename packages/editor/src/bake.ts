@@ -1493,7 +1493,7 @@ function between(a: Ring, b: Ring, t: number): Ring {
  */
 function invented(
   m: Moving,
-  at: Omit<Resolved, 'shape' | 'rings'>,
+  at: Omit<Resolved, 'shape' | 'ids' | 'rings'>,
   t: number,
 ): (Point | Fade)[] {
   const end = t === 0 ? 0 : t === 1 ? 1 : null;
@@ -1548,7 +1548,7 @@ function invented(
  * the projection, `keeping` takes every one of them, and the ring is as long
  * at the end as it is in between.
  */
-function slots(m: Moving, at: Omit<Resolved, 'shape'>): { points: Point[], dead: [boolean, boolean] }[] {
+function slots(m: Moving, at: Omit<Resolved, 'shape' | 'ids'>): { points: Point[], dead: [boolean, boolean] }[] {
   const im = imagesOf(at);
 
   if (im === null) return [];
@@ -1580,7 +1580,7 @@ function deepAt(m: Moving, a: number, b: number, frame: Affine, t: number): numb
 }
 
 /** A polygon `t` of the way across the span, without the corners it keeps. */
-function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'rings'> {
+function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'ids' | 'rings'> {
   const local = between(m.local[0], m.local[1], t);
   const frame = riding(m, t);
 
@@ -1667,7 +1667,7 @@ function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
  * the teeth turn and need no excuse. The same points `invented` keeps, for
  * the same reason and at the same instants. See `FoldShaped.fades`.
  */
-function teethFading(it: Omit<Resolved, 'shape'>): Fade[] {
+function teethFading(it: Omit<Resolved, 'shape' | 'ids'>): Fade[] {
   const flat = imagesOf(it)?.flat;
 
   return flat === undefined ? [] : flat.map(p => ({ p, v: 0 }));
@@ -1675,7 +1675,7 @@ function teethFading(it: Omit<Resolved, 'shape'>): Fade[] {
 
 /** Where its arcs' points are on their facets at one end of the span or the
  * other, and fading. See `facetFades`. */
-function facetsFading(it: Omit<Resolved, 'shape'>): Fade[] {
+function facetsFading(it: Omit<Resolved, 'shape' | 'ids'>): Fade[] {
   const e = it.effected ?? null;
 
   if (e === null) return [];

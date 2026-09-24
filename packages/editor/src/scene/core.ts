@@ -48,6 +48,7 @@ import {
   SQUARE,
   facetsOf,
   segmentsFor,
+  Cut,
   Ring,
   Shape,
   erode,
@@ -105,8 +106,8 @@ import {
   within,
 } from '../types';
 import { outline } from '../worldset';
-import type { Drawn, Ident } from '../ids';
-import { identify } from '../ids';
+import type { Drawn, Ident, Ids } from '../ids';
+import { identify, on } from '../ids';
 import type { Amount as Given, Effect } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
@@ -218,6 +219,17 @@ export interface Resolved {
    * one from another names the fields.
    */
   readonly shape: Shape
+  /**
+   * What each point of `shape` is called, ring for ring and point for point.
+   *
+   * Taken with the shape and from the same fold, so a scope above can lay its
+   * own effects on what its members drew without minting names again off the
+   * walk. That is the difference between a scope knowing its members' arcs are
+   * arcs and a scope being told every point of the union is a drawn corner —
+   * and the second is what put a tooth on every facet of every round. See
+   * `identify` and `PLAN-effect`.
+   */
+  readonly ids: Ids
   /** The depth `shape` was taken at: what its erosions add up to. */
   erosion: number
   /**
@@ -1173,10 +1185,29 @@ export const project = remembered((
   erosion: number,
   depths: readonly number[] | null,
   effects: readonly Memo[] | null,
-): Shape => {
-  if (effects === null) return offsetOf(source, rings, erosion, depths);
+  /**
+   * Which member these names are minted in, so that two polygons in one scope
+   * do not both call their first corner `0.0`. The polygon's own id.
+   *
+   * Part of the key, which means two polygons drawn alike no longer share one
+   * entry. That is the price of the names being carried up instead of minted
+   * again at every scope, and it is the right way round: what is remembered is
+   * a drawing *and who drew it*, and the case the memo exists for — the same
+   * polygon asked for again every frame — is untouched.
+   */
+  member: number,
+): Drawn => {
+  // With no effect on it every point of the answer is a feature: a corner that
+  // survived, or one the offset made where two walls met. So naming them where
+  // they come out says nothing untrue, and this path stays exactly the shape
+  // it always was.
+  if (effects === null) {
+    const shape = offsetOf(source, rings, erosion, depths);
 
-  return folding(source, rings, erosion, depths, effects);
+    return { shape, ids: identify(shape, member) };
+  }
+
+  return folding(source, rings, erosion, depths, effects, member);
 });
 
 /**
@@ -1208,10 +1239,11 @@ function folding(
   erosion: number,
   depths: readonly number[] | null,
   effects: readonly Memo[],
-): Shape {
+  member: number,
+): Drawn {
   const [facets, bevels, , deform] = effects as [Memo[], number[], number[], Memo[]];
   const shape = simplify(sliced(source, rings));
-  const ids = identify(shape, 0);
+  const ids = identify(shape, member);
 
   // The names the amounts are written against: the ring as it was drawn, which
   // is the ring `source` is and the ring `identify` has just named. A shape the
@@ -1274,7 +1306,7 @@ function folding(
     ...(whole === null ? [] : [deforming(amplitude, (id: Ident) => mine.get(id) ?? whole)]),
   ];
 
-  return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids }).shape;
+  return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids });
 }
 
 /** The most any of an amount's points is given: what a facet count is read
@@ -1577,7 +1609,7 @@ function arcKey(id: number): number {
  * What the bake asks instead of `mitred` wherever effects are on, so that
  * where it thinks a point is and where the projection put it cannot differ.
  */
-export function imagesOf(at: Omit<Resolved, 'shape'>): Imaged | null {
+export function imagesOf(at: Omit<Resolved, 'shape' | 'ids'>): Imaged | null {
   const fx = at.effected ?? null;
 
   if (fx === null) return null;
@@ -1661,7 +1693,7 @@ export interface Named {
  * of it to the corner at the other, which the teeth stand off but do not
  * move.
  */
-export function namesOf(at: Omit<Resolved, 'shape'>): Named {
+export function namesOf(at: Omit<Resolved, 'shape' | 'ids'>): Named {
   const lines: Named['lines'] = [], corners: Named['corners'] = [];
   const n = at.corners.length;
   const drawn = (i: number) => at.corners[i].root === undefined;
@@ -1794,7 +1826,7 @@ export function movedIn(named: Named, depth: number): Named {
 
 /** The erosion alone: the first of the three, and all of it for a polygon
  * with no effects. */
-function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Shape {
+function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Cut {
   // One ring is the case the winding still has to be settled for: a source ring
   // is whatever it was drawn as, and `erodeAt` is what decides which way is in.
   // A source with holes in it has already said, by how its rings are wound, and
@@ -1871,14 +1903,18 @@ function similarity(m: Affine): number | null {
  * no framing makes two of them one. That is the bake's own cost and it is
  * inherent; this is for the polygon that moves at the depth it already had.
  */
-function projection(at: Omit<Resolved, 'shape'>): Shape {
+function projection(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
   const s = similarity(at.frame);
   const fx = at.effected ?? null;
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx));
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx), at.id);
 
-  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s))
-    .map(ring => place(at.frame, ring));
+  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s), at.id);
+
+  // The frame moves the points and says nothing about the names: a corner
+  // carried across the world is the corner it was, which is the whole of what
+  // identity is for.
+  return { shape: it.shape.map(ring => place(at.frame, ring)), ids: it.ids };
 }
 
 /**
@@ -1894,13 +1930,14 @@ function projection(at: Omit<Resolved, 'shape'>): Shape {
  * points the arrangement drops: the scope lays the member's teeth itself, at
  * the amplitude the member's line carries.
  */
-export function erodedOf(at: Omit<Resolved, 'shape'>): Shape {
+export function erodedOf(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
   const s = similarity(at.frame);
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, null);
+  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, null, at.id);
 
-  return project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), null)
-    .map(ring => place(at.frame, ring));
+  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), null, at.id);
+
+  return { shape: it.shape.map(ring => place(at.frame, ring)), ids: it.ids };
 }
 
 /**
@@ -1911,15 +1948,31 @@ export function erodedOf(at: Omit<Resolved, 'shape'>): Shape {
  * work it out again would be asking them all to agree, and the bake and the
  * editor build these in different places for different reasons.
  */
-export function resolved(at: Omit<Resolved, 'shape' | 'rings'>): Resolved {
+export function resolved(at: Omit<Resolved, 'shape' | 'ids' | 'rings'>): Resolved {
   const rings = ringsOf(at.corners);
-  let shape: Shape | null = null;
+  let drawn: Drawn | null = null;
+
+  // One fold for both, taken once: the names are only the names of these very
+  // points, and a second fold could not be relied on to hand back the same
+  // ones.
+  const taken = (): Drawn => {
+    if (drawn !== null) return drawn;
+
+    const it = projection({ ...at, rings });
+    const ids = it.ids.map(ring => [...ring]);
+    const shape = keeping(it.shape, at.keep ?? [], { ids, name: (edge, t) => on(edge as Ident, t) });
+
+    return drawn = { shape, ids: ids as Ids };
+  };
 
   return {
     ...at,
     rings,
     get shape(): Shape {
-      return shape ??= keeping(projection({ ...at, rings }), at.keep ?? []);
+      return taken().shape;
+    },
+    get ids(): Ids {
+      return taken().ids;
     },
   };
 }
