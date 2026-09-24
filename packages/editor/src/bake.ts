@@ -2858,6 +2858,13 @@ function numbered(a: Taken, b: Taken): boolean {
  * close it, because the event it hid was a millionth wide; it spent forty
  * evaluations a time finding that out.
  *
+ * Where along an edge a crossing sits is part of its name and is held too. An
+ * arc's sample at a third is not the same point as one at two sevenths: the
+ * arc was laid again with another count of facets, and a crossing a narrow
+ * notch makes of one of them can land twelve units from where the other's
+ * does. Letting the two ends match left that step to bisection, which pinned
+ * it to a hundred-millionth and then reported it as six units of error.
+ *
  * Where a contributor carries no names there is nothing to hold it to, and
  * only a crossing is held: see `crossed`.
  */
@@ -2872,22 +2879,12 @@ function named(a: Taken, b: Taken): boolean {
         if (p === undefined || q === undefined) continue;
         const x = p[o.at.ring]?.[o.at.index], y = q[o.at.ring]?.[o.at.index];
 
-        if (x !== y && x !== undefined && y !== undefined && crossed(x) && crossed(y) && lineage(x) !== lineage(y)) return false;
+        if (x !== y && x !== undefined && y !== undefined && crossed(x) && crossed(y)) return false;
       }
     }
   }
 
   return true;
-}
-
-/**
- * A name with where along things it sits left out. `on(edge, t)` names a point
- * by how far along it is, and that slides with the geometry: an arc's sample at
- * a third is the same point at a quarter a moment later. What it is *of* does
- * not slide, and that is what `named` holds the two ends to.
- */
-function lineage(id: Ident): string {
-  return shows(id).replace(/@[-+.\de]+/g, '');
 }
 
 /**
