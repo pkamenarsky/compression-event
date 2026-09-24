@@ -1029,6 +1029,66 @@ export interface Field {
   tree: Packed
   /** `a` and `b` of each edge, flattened, four numbers apiece. */
   edges: Float64Array
+  /** The edges again, by the horizontal strips they reach into. See `Strips`. */
+  strips: Strips
+}
+
+/**
+ * The edges filed by height, which is all a ray to the right needs.
+ *
+ * The tree answers a box, and a ray is a box of no height and endless width:
+ * it walks every node the line passes through to find the handful of edges
+ * that straddle it, and that walk was most of what a winding number cost. A
+ * strip is the same question answered by a lookup. An edge is filed under
+ * every strip its height reaches into, so the strip `p.y` falls in holds every
+ * edge that could straddle it, and `turn` sorts out the rest exactly as it
+ * sorted out what the tree handed it.
+ *
+ * Strip `s` of an edge is `floor((y - lo) / h)` of its ends, and that is
+ * monotone in `y` however it rounds, so an edge reaching `p.y` is always filed
+ * under the strip `p.y` reads as. Laid out flat: the edges of strip `s` are
+ * `items[start[s]]` up to `items[start[s + 1]]`.
+ */
+interface Strips {
+  lo: number
+  h: number
+  start: Int32Array
+  items: Int32Array
+}
+
+/** How many strips, for `n` edges: few enough that a tall edge is not filed a
+ * thousand times over, many enough that a strip holds a handful. */
+function stripCount(n: number): number {
+  return Math.max(1, Math.ceil(2 * Math.sqrt(n)));
+}
+
+function stripsOf(boxes: Float64Array, n: number): Strips {
+  let lo = Infinity, hi = -Infinity;
+
+  for (let i = 0; i < n; i++) {
+    lo = Math.min(lo, boxes[i * 4 + 1]);
+    hi = Math.max(hi, boxes[i * 4 + 3]);
+  }
+
+  const count = n === 0 ? 1 : stripCount(n);
+  const h = n === 0 || hi <= lo ? 1 : (hi - lo) / count;
+  const of = (y: number) => Math.min(count - 1, Math.max(0, Math.floor((y - lo) / h)));
+  const start = new Int32Array(count + 1);
+
+  for (let i = 0; i < n; i++) {
+    for (let s = of(boxes[i * 4 + 1]), e = of(boxes[i * 4 + 3]); s <= e; s++) start[s + 1]++;
+  }
+
+  for (let s = 0; s < count; s++) start[s + 1] += start[s];
+
+  const items = new Int32Array(start[count]);
+  const at = start.slice(0, count);
+
+  for (let i = 0; i < n; i++) {
+    for (let s = of(boxes[i * 4 + 1]), e = of(boxes[i * 4 + 3]); s <= e; s++) items[at[s]++] = i;
+  }
+
+  return { lo, h, start, items };
 }
 
 export function field(shape: Shape): Field {
@@ -1059,23 +1119,37 @@ export function field(shape: Shape): Field {
     }
   }
 
-  return { shape, tree: pack(boxes), edges };
+  return { shape, tree: pack(boxes), edges, strips: stripsOf(boxes, n) };
 }
 
 export function fieldWinding(f: Field, p: Point): number {
   const e = f.edges;
+  const { lo, h, start, items } = f.strips;
+  const px = p.x, py = p.y;
+  const count = start.length - 1;
+  const s = Math.min(count - 1, Math.max(0, Math.floor((py - lo) / h)));
   let w = 0;
 
-  // Everything the ray could meet: to the right of `p`, and level with it.
-  eachPacked(f.tree, p.x, p.y, Infinity, p.y, id => {
-    const at = id * 4;
+  // Every edge the ray could meet is in this strip. `turn`, written out: this
+  // is asked twice for every piece of every arrangement, and the two points it
+  // wanted per edge were a good part of what it cost. Its arithmetic to the
+  // letter.
+  for (let k = start[s], stop = start[s + 1]; k < stop; k++) {
+    const at = items[k] * 4;
+    const ax = e[at], ay = e[at + 1], bx = e[at + 2], by = e[at + 3];
 
-    w += turn(
-      { x: e[at], y: e[at + 1] },
-      { x: e[at + 2], y: e[at + 3] },
-      p,
-    );
-  });
+    // Behind the ray's start, which the tree never handed over. Mathematically
+    // `turn` says nought to these anyway; with `p` a rounding to the right of
+    // an end it might not, and the tree's answer is the one to keep.
+    if (ax < px && bx < px) continue;
+
+    if (ay <= py) {
+      if (by > py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) > 0) w += 1;
+    }
+    else {
+      if (by <= py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) < 0) w -= 1;
+    }
+  }
 
   return w;
 }
