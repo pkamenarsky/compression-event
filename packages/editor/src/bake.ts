@@ -224,6 +224,7 @@ import {
 import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 import { held } from './hold';
+import type { Step } from './effect';
 import type { Ident, Ids } from './ids';
 import { madeOf } from './ids';
 
@@ -1340,6 +1341,7 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
     deform: d0 === null || d1 === null
       ? d0 ?? d1
       : { ...d0, after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
+    ...(e[0].order === undefined ? {} : { order: e[0].order }),
   };
 }
 
@@ -1870,6 +1872,7 @@ export interface Cast {
     facets: Facets
     bevel: [number, number]
     deform: { e: Effecting, spacing: [number, number], amplitude: [number, number] } | null
+    order?: readonly Step[]
   }>
   /**
    * What each eroding group's own points ride: its own flight over the span,
@@ -1940,6 +1943,7 @@ function casting(world: World, from: number): Cast {
       facets: { n: Math.max(from, to), from, to, at: 0, tension: round?.tension ?? 0.5 },
       bevel: round === undefined ? [0, 0] : [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
       deform: d === null ? null : { e: d.e, spacing: [d.e.spacing, dTo?.e.spacing ?? d.e.spacing], amplitude: [was.amplitude, now.amplitude] },
+      ...(world.effects.get(id)?.order === undefined ? {} : { order: world.effects.get(id)!.order }),
     });
   }
 
@@ -2003,6 +2007,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
                 amplitude: mix(fx.deform.amplitude[0], fx.deform.amplitude[1], t),
               },
             }),
+            ...(fx.order === undefined ? {} : { order: fx.order }),
           },
         }),
       };

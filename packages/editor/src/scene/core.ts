@@ -99,10 +99,10 @@ import {
 import { outline } from '../worldset';
 import type { Drawn, Ident, Ids } from '../ids';
 import { combineIdentified, identify, on } from '../ids';
-import type { Amount as Given, Effect } from '../effect';
+import type { Amount as Given, Effect, Step } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
-import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
+import { deforming, eroding as offsetting, inOrder, orderFrom, orderKey, roundingAcross, sagitta } from '../effect';
 import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
@@ -279,6 +279,8 @@ export interface Effected {
   facets: readonly Facets[]
   bevels: readonly number[]
   deform: ArcDeform | null
+  /** The order they are laid in, with the erosion: see `ORDER`. */
+  order?: readonly Step[]
 }
 
 /**
@@ -399,6 +401,7 @@ export function effectedOf(
     facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(fx?.round?.off === true ? undefined : fx?.round, bevels[i] > 0 ? seen[i] : 0))),
     bevels,
     deform,
+    ...(fx?.order === undefined ? {} : { order: fx.order }),
   });
 }
 
@@ -524,7 +527,7 @@ function effectKey(e: Effected, s = 1): Memo[] {
     ? []
     : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.after.map(a => a / s), Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s))];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), deform];
+  return [e.facets.map(facetKey), e.bevels.map(r => r / s), deform, orderKey(e.order)];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -1106,7 +1109,7 @@ export const project = remembered((
 
 /** No facets, no bevels and no deform: the fold with nothing to lay but the
  * erosion. */
-const UNEFFECTED: readonly Memo[] = [[], [], []];
+const UNEFFECTED: readonly Memo[] = [[], [], [], orderKey(undefined)];
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
@@ -1140,7 +1143,7 @@ function folding(
   member: number,
   was: readonly number[] | null,
 ): Drawn {
-  const [facets, bevels, deform] = effects as [Memo[], number[], Memo[]];
+  const [facets, bevels, deform, order] = effects as [Memo[], number[], Memo[], number[]];
   // Named as it was drawn, point for point with `source`, and the names
   // carried through the clean-up rather than minted after it: `simplify`
   // re-walks a ring and drops what does not turn, and names read off its walk
@@ -1200,11 +1203,11 @@ function folding(
     for (const [id, i] of index) mine.set(id, effectingFrom(own, i * 7));
   }
 
-  const steps: Effect[] = [
-    offsetting(at(depths, erosion)),
-    roundingOf(bevel, facets.map(facetsFrom)),
-    ...(whole === null ? [] : [deforming(amplitude, (id: Ident) => mine.get(id) ?? whole)]),
-  ];
+  const steps = inOrder(orderFrom(order), {
+    erode: offsetting(at(depths, erosion)),
+    round: roundingOf(bevel, facets.map(facetsFrom)),
+    ...(whole === null ? {} : { deform: deforming(amplitude, (id: Ident) => mine.get(id) ?? whole) }),
+  });
 
   return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids });
 }

@@ -27,6 +27,35 @@ import { holding } from './hold';
 /** A shape to a shape, carrying identity. */
 export type Effect = (it: Drawn) => Drawn
 
+/** One of the effects a fold lays. */
+export type Step = 'erode' | 'round' | 'deform'
+
+/**
+ * The order a fold lays its effects in where nothing says otherwise.
+ *
+ * Any order draws coherently: a fold that deforms and then erodes draws what
+ * a deforming scope sealed into an eroding one does, which the laws already
+ * hold to. The order changes the shape, not whether the laws hold.
+ */
+export const ORDER: readonly Step[] = ['erode', 'round', 'deform'];
+
+/** A fold's effects in `order`, each at most once, the ones it lacks left
+ * out. An order that leaves an effect out lays it where `ORDER` would. */
+export function inOrder(order: readonly Step[] | undefined, steps: Partial<Record<Step, Effect>>): Effect[] {
+  const seen = order === undefined ? ORDER : [...new Set([...order.filter(s => ORDER.includes(s)), ...ORDER])];
+
+  return seen.flatMap(s => (steps[s] === undefined ? [] : [steps[s]!]));
+}
+
+/** An order as numbers, for a memo key, and back. */
+export function orderKey(order: readonly Step[] | undefined): number[] {
+  return (order ?? ORDER).map(s => ORDER.indexOf(s));
+}
+
+export function orderFrom(key: readonly number[]): Step[] {
+  return key.map(k => ORDER[k]);
+}
+
 /**
  * How much of an effect a point is given: one amount for the whole shape, or
  * an amount per identity.

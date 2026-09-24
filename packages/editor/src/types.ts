@@ -25,6 +25,7 @@ import {
 import type { Bake } from './bake';
 import type { Place } from './keys';
 import type { Facets, Pattern, Sides } from './geometry';
+import type { Step } from './effect';
 import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
 // From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
 // so importing a value back out of it would be a runtime cycle. See
@@ -680,6 +681,8 @@ export interface World {
  *   `outlineOf`.
  */
 export interface Effects {
+  /** The order its effects are laid in: see `ORDER`. Absent is that. */
+  order?: readonly Step[]
   /**
    * `facets` is a count written down rather than asked for, and it wins over
    * the precision where it is there. Nothing an author sets: the precision is

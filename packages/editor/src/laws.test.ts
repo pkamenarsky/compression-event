@@ -16,6 +16,7 @@ import fc from 'fast-check';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, csg, grouped, sealing } from './scene';
 import { resolveGroup } from './resolve';
+import type { Step } from './effect';
 import { laidAcross } from './effect';
 import { Writing, erode, inSegments, wrote } from './testing';
 import { Effects, Id, World, emptyWorld } from './types';
@@ -283,6 +284,8 @@ interface Kit {
   erode?: number
   round?: number
   deform?: number
+  /** The order they are laid in. Absent is `ORDER`. */
+  order?: readonly Step[]
 }
 
 /** A room, or a sealed group of them with a kit of its own. */
@@ -293,6 +296,7 @@ type Spec =
 const ZIGZAG = { spacing: 25, pattern: 'zigzag' as const, seed: 1, sides: 'both' as const, jitter: 0 };
 
 const optionsOf = (k: Kit): Effects => ({
+  ...(k.order === undefined ? {} : { order: k.order }),
   ...(k.round === undefined ? {} : { round: inSegments(8, k.round) }),
   ...(k.deform === undefined ? {} : { deform: ZIGZAG }),
 });
@@ -366,6 +370,13 @@ const arbKit: fc.Arbitrary<Kit> = fc.record({
   erode: fc.option(fc.integer({ min: 1, max: 20 }), { nil: undefined }),
   round: fc.option(fc.integer({ min: 1, max: 40 }), { nil: undefined }),
   deform: fc.option(fc.integer({ min: 1, max: 12 }), { nil: undefined }),
+  // Any order at all: the laws hold for a fold whatever it lays first, since
+  // a fold in another order is a nesting of folds in this one.
+  order: fc.option(fc.constantFrom<readonly Step[]>(
+    ['erode', 'round', 'deform'], ['erode', 'deform', 'round'],
+    ['round', 'erode', 'deform'], ['round', 'deform', 'erode'],
+    ['deform', 'erode', 'round'], ['deform', 'round', 'erode'],
+  ), { nil: undefined }),
 });
 
 /** A room, or a group of two or three shapes one level shallower. A group
@@ -433,7 +444,7 @@ const arbLoose: fc.Arbitrary<Spec[]> = fc
 
 /** Slow properties over arrangements: enough to find a break, not so many that
  * nobody runs them. */
-const RUNS = { numRuns: 60, ...(process.env.LAW_SEED === undefined ? {} : { seed: Number(process.env.LAW_SEED), path: process.env.LAW_PATH, endOnFailure: true }) };
+const RUNS = { numRuns: 60, ...(process.env.LAW_SEED === undefined ? {} : { seed: Number(process.env.LAW_SEED), path: process.env.LAW_PATH, endOnFailure: process.env.LAW_SHRINK === undefined }) };
 
 /**
  * Long enough that a property which finds nothing is allowed to say so.

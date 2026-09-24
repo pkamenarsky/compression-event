@@ -38,10 +38,10 @@ import {
 } from '../geometry';
 import type { Drawn, Ident, Ids } from '../ids';
 import { combineIdentified, on } from '../ids';
-import type { Effect } from '../effect';
+import type { Effect, Step } from '../effect';
 // `eroding` is taken here: the core's is the question of whether a scope
 // erodes at all, and this is the effect that does it.
-import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
+import { deforming, eroding as offsetting, inOrder, orderFrom, orderKey, roundingAcross, sagitta } from '../effect';
 import {
   GroupId,
   Id,
@@ -188,6 +188,7 @@ export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing
     facets: round === undefined ? SQUARE : facetsOf(segmentsOf(round, state.bevel, scale), round.tension),
     bevel: round === undefined ? 0 : state.bevel,
     ...(deform === null ? {} : { deform }),
+    ...(world.effects.get(id)?.order === undefined ? {} : { order: world.effects.get(id)!.order }),
   };
 }
 
@@ -387,7 +388,7 @@ export interface Standing {
   depth: number
   /** Its round and its deform, on its fold after the depth: see
    * `foldShaped`. Absent is neither. */
-  effects?: { facets: Facets, bevel: number, deform?: { e: Effecting, amplitude: number } }
+  effects?: { facets: Facets, bevel: number, deform?: { e: Effecting, amplitude: number }, order?: readonly Step[] }
   /**
    * The frame to keep the union's points in.
    *
@@ -572,15 +573,17 @@ const foldedBy = remembered((
   key: readonly number[],
 ): Drawn => {
   const union: Drawn = { shape, ids: ids as Ids, ...(edges === null ? {} : { edges: edges as Ids }) };
-  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
+  // The order first, as many numbers as it has steps, and the rest after it.
+  const order = orderFrom(key.slice(1, 1 + key[0]));
+  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key.slice(1 + key[0]);
   const round = n > 0 && bevel > 0;
 
-  const steps: Effect[] = [
-    ...(depth === 0 ? [] : [offsetting(depth)]),
+  const steps = inOrder(order, {
+    ...(depth === 0 ? {} : { erode: offsetting(depth) }),
     // Across a span whose count changes, laid at both ends' and blended: see
     // `roundingAcross`.
-    ...(round ? [roundingAcross(bevel, sagitta(bevel, from), sagitta(bevel, to), at)] : []),
-    ...(spacing === undefined ? [] : [deforming(amplitude, {
+    ...(round ? { round: roundingAcross(bevel, sagitta(bevel, from), sagitta(bevel, to), at) } : {}),
+    ...(spacing === undefined ? {} : { deform: deforming(amplitude, {
       spacing,
       pattern: PATTERNS[pattern],
       seed,
@@ -588,8 +591,8 @@ const foldedBy = remembered((
       jitter,
       falloff,
       offset: offset === 1,
-    })]),
-  ];
+    }) }),
+  });
 
   return steps.reduce<Drawn>((it, fx) => fx(it), union);
 });
@@ -606,7 +609,10 @@ function shapeKey(s: Standing | null): number[] | null {
   const round = fx !== undefined && fx.facets.n > 0 && fx.bevel > 0;
   const d = fx?.deform;
 
+  const order = orderKey(fx?.order);
+
   return [
+    order.length, ...order,
     ...facetKey(round ? fx!.facets : SQUARE), round ? fx!.bevel : 0,
     ...(d === undefined ? [] : [d.e.spacing, PATTERNS.indexOf(d.e.pattern), d.e.seed, DEFORM_SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude, Number(d.e.offset)]),
   ];
