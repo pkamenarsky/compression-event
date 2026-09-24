@@ -529,16 +529,32 @@ describe('the deform', () => {
   });
 
   test('an arc takes its teeth as a wall does', () => {
+    // A rounded square has no corner left on it — every one of them is an arc
+    // — so there is nowhere for the rhythm to restart and it does not: one run
+    // the whole way round, teeth a spacing apart across walls and arcs alike.
+    //
+    // This is the thing that was wrong while the resample's anchors and the
+    // deform's run starts were one question. Each arc was its own run, each
+    // run centred a tooth in itself, and a rounded square came back with four
+    // long rhythms and a spike stuck on each corner.
     const square = drawn([rect(0, 0, 200, 200)], 0);
     const round = rounding(30, 0.5)(square);
     const r = deforming(6, ZIGZAG)(round);
     const said = r.ids[0].map(shows);
+    const teeth = said.flatMap((s, i) => (s.includes('#') ? [i] : []));
 
-    // Teeth on the arc about corner 1, and the arc's own facets still there
-    // between them.
-    expect(said.some(s => /^0\.1@0#/.test(s))).toBe(true);
+    // The arc's own facets are still there, and the teeth are not them.
     expect(said.some(s => /^0\.1@0\.\d/.test(s))).toBe(true);
     expect(r.shape[0].length).toBeGreaterThan(round.shape[0].length);
+
+    // One run: every tooth belongs to it, and no two of them to different ones.
+    expect(new Set(teeth.map(i => said[i].split('#')[0])).size).toBe(1);
+
+    // At least one of them stands on an arc rather than on a wall, which is
+    // what `an arc is more of the ring` comes to.
+    const onArc = (i: number) => /@0?\.\d/.test(said[(i + said.length - 1) % said.length]);
+
+    expect(teeth.some(onArc)).toBe(true);
   });
 
   test('a tooth comes and goes as the room for it does, and not at a step', () => {

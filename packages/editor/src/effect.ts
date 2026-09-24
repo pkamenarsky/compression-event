@@ -286,9 +286,17 @@ function facets(swept: number, by: number, eps: number): number {
  *
  * It finishes with the resample, which is what keeps the arcs from piling up:
  * a round of a round costs what one round costs.
+ *
+ * An opening at nought is the identity, and it has to be the identity *whole*:
+ * not the same points under new names. The resample renames what it lays as a
+ * curve's own samples, and a curve's samples are not features — so a ring that
+ * had been asked for no round at all would come back with no corners on it,
+ * and the deform after it would read two walls as one run and lay its teeth
+ * across the corner between them. Hence the guard, rather than leaning on
+ * erode and dilate each doing nothing.
  */
 export function rounding(by: Amount, eps: number): Effect {
-  return it => resampled(dilating(by, eps)(eroding(by)(it)), eps);
+  return it => (asks(by) ? resampled(dilating(by, eps)(eroding(by)(it)), eps) : it);
 }
 
 // -----------------------------------------------------------------------------
@@ -388,7 +396,42 @@ export function resampled(it: Drawn, eps: number): Drawn {
  * is the same point whatever the walk did.
  */
 function anchorsOf(names: readonly Ident[]): number[] {
-  const held = names.flatMap((id, i) => (loose(id) ? [] : [i]));
+  return startedAt(names, id => !loose(id));
+}
+
+/**
+ * Where a deform's runs begin, which is not where the resample's do.
+ *
+ * A run is what a pattern is laid along: it starts, the teeth are spaced out
+ * from it and it ends. So where a run starts is where the rhythm is allowed to
+ * restart, and the only thing that earns that is a turn the boundary actually
+ * makes — a drawn corner, a corner where two members crossed, the tip of a
+ * tooth a deform already laid. An arc is not one of those. An arc is the wall
+ * carrying on round, and `on(v, 0)` and `on(v, 1)` are only where somebody
+ * chose to stop calling it one wall and start calling it the next.
+ *
+ * The resample holds those two ends, and has to: they are the features that
+ * keep a round of a round of a round from smearing. But holding them and
+ * restarting on them are different questions, and answering them with one
+ * predicate is what made a round come back with a tooth stuck on each of its
+ * arcs — every arc its own run, every run centring one tooth in itself,
+ * whatever the arc's length. A rounded square went round in four long
+ * rhythms and four spikes instead of one rhythm all the way round.
+ *
+ * So: an `on` is never a run's start. A rounded ring has no corners left at
+ * all, falls through to the least of its names, and takes its teeth as one run
+ * the whole way round — which is what `an arc is more of the ring` was always
+ * meant to say.
+ */
+function runsOf(names: readonly Ident[]): number[] {
+  return startedAt(names, id => madeOf(id).kind !== 'on');
+}
+
+/** The indices `holds` picks out, or — where it picks out none — the one least
+ * name, so that a ring with no feature on it still starts somewhere that is
+ * not an index. */
+function startedAt(names: readonly Ident[], holds: (id: Ident) => boolean): number[] {
+  const held = names.flatMap((id, i) => (holds(id) ? [i] : []));
 
   if (held.length > 0) return held;
 
@@ -571,7 +614,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
 
     it.shape.forEach((ring, r) => {
       const names = it.ids[r];
-      const held = ring.length < 3 ? [] : anchorsOf(names);
+      const held = ring.length < 3 ? [] : runsOf(names);
 
       if (held.length === 0) {
         shape.push(ring);

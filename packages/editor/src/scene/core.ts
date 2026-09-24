@@ -408,9 +408,11 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
     jitter: deform?.jitter ?? 0,
     falloff: deform?.falloff ?? FALLOFF,
 
-    // A polygon's teeth start off each edge's middle unless it says otherwise:
-    // see `Effects['deform'].offset`.
-    offset: deform?.offset ?? true,
+    // Absent, a run's teeth are centred on the run: see
+    // `Effects['deform'].offset`. It is one default because there is one
+    // pipeline — a ring is a ring, and which thing carried the effect onto it
+    // is not a question the deform gets to ask.
+    offset: deform?.offset ?? false,
   };
 }
 

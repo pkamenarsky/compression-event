@@ -633,10 +633,13 @@ export interface Effects {
    * `Effecting.falloff`.
    *
    * `offset` is whether each run's teeth start off its middle by a share of
-   * the spacing its seed gives it — see `Effecting.offset`. Absent, a
-   * polygon's do and a scope's fold's do not, which is what each has always
-   * done; written, it is what it says. A resolve writes it false onto the
-   * ring it makes, because that ring's teeth were a fold's.
+   * the spacing its seed gives it — see `Effecting.offset`. Absent, they do
+   * not: they are centred on the run. One default, because there is one
+   * pipeline — a deform is a ring to a ring, and it cannot read off which kind
+   * of thing carried it there. A polygon's used to be offset and a scope's
+   * fold's centred, and a resolve had to write the difference down onto the
+   * ring it made to keep the two agreeing; that is law 3, and the fix is the
+   * default rather than the writing down.
    */
   deform?: {
     spacing: number
