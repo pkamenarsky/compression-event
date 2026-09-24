@@ -659,9 +659,8 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
 }
 
 /**
- * Where each corner goes for the sweep: `end` where the wall coming in ends up,
- * `start` where the wall going out starts. Between walls of any length that is
- * one point, `corners`' mitre, and `apex` is nothing.
+ * Where each corner goes for the sweep, and which corners stand beside a wall
+ * too short to say where it points.
  *
  * A mitre is where two walls' moved lines cross, `1 / cosHalf` out along the
  * bisector, and that is a length set by the walls' directions and nothing
@@ -671,83 +670,97 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
  * one of them a hundred units into a room eroded at forty-five: the round over
  * it jumped whole teeth.
  *
- * So beside a wall shorter than `SHORT` of the ring the two walls end apart,
- * each `depth` along its own normal, and the sweep fills the corner between
- * them with the kite out to `apex` — the mitre, taken in towards the middle of
- * the two ends in proportion to how short the wall is — and, where the corner
- * turns towards the sweep, the `fan` of the arc round it, which is the ground
- * a disc there covers however sharply it turns. At a wall of no length that
- * is every point within `depth` of the corner and nothing further, so a notch
- * of nothing sweeps what the corner would have; at a wall `SHORT` long it is
- * the mitre again, and in between it moves as the wall grows.
+ * So a wall speaks for its direction in proportion to its length, up to
+ * `SHORT` of the ring: the normal a corner sees coming in is its wall's own,
+ * that much, and the rest is the one the corner before it saw, and so back
+ * along the ring until a wall long enough answers; going out, the same
+ * forwards. A run of walls of no length is then one corner of the two walls
+ * either side of it, which is what it looks like; a wall `SHORT` long is a wall
+ * like any other; and in between it moves as the wall grows, with nothing
+ * decided by which side of a threshold anything fell.
  *
- * Walls of an arc are far longer than that and keep their mitres, so a round
- * eroded past its radius still folds into runs and sweeps as one piece.
+ * It was once a kite per corner, its point let in towards the middle of the
+ * walls' two ends. Three such corners a hundredth of a unit apart laid three
+ * kites whose edges ran all but along each other, and where they crossed an
+ * arrangement found walls of a thousandth born in no time — a unit of pop in a
+ * bake. Then a cap per run of short walls, which jumped whenever a wall grew
+ * past the threshold and took the run's far wall with it.
+ *
+ * Walls of an arc are far longer than that and keep their own normals, so a
+ * round eroded past its radius still folds into runs and sweeps as one piece.
  */
-function joints(ring: Ring, depth: (i: number) => number): { start: Point[], end: Point[], apex: (Point | null)[], fan: Point[][] } {
+function joints(ring: Ring, depth: (i: number) => number): { at: Point[], bevel: boolean[] } {
   const n = ring.length;
-  const mitres = corners(ring, depth);
   const normals: Point[] = [];
-  const lengths: number[] = [];
+  const weights: number[] = [];
+  const short = extentOf([ring]) * SHORT;
 
   for (let i = 0; i < n; i++) {
     const a = ring[i], b = ring[(i + 1) % n];
     const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
 
-    lengths.push(l);
-    normals.push(l === 0
-      ? (normals[i - 1] ?? { x: 0, y: 0 })
-      : { x: -dy / l, y: dx / l });
+    normals.push(l === 0 ? { x: 0, y: 0 } : { x: -dy / l, y: dx / l });
+    weights.push(short > 0 ? Math.min(1, l / short) : 1);
   }
 
-  const start: Point[] = [], end: Point[] = [], apex: (Point | null)[] = [], fan: Point[][] = [];
-  const short = extentOf([ring]) * SHORT;
+  const first = weights.findIndex(w => w >= 1);
 
-  ring.forEach((v, i) => {
+  if (first < 0) return { at: corners(ring, depth), bevel: new Array(n).fill(false) };
+
+  // Carried round the ring from a long wall, one way for what each wall hands
+  // the corner after it and the other for what it hands the corner before.
+  const carried = (step: number): Point[] => {
+    const out: Point[] = new Array(n);
+    let seen = normals[first];
+
+    for (let k = 0; k < n; k++) {
+      const i = (first + step * k + n) % n;
+      const w = weights[i];
+
+      seen = { x: normals[i].x * w + seen.x * (1 - w), y: normals[i].y * w + seen.y * (1 - w) };
+      out[i] = seen;
+    }
+
+    return out;
+  };
+
+  const ins = carried(1), outs = carried(-1);
+  const mitres = corners(ring, depth);
+  const bevel = ring.map((_, i) => weights[(i - 1 + n) % n] < 1 || weights[i] < 1);
+
+  // A corner between two long walls is `corners`' own, to the bit.
+  const at = ring.map((v, i) => {
+    if (!bevel[i]) return mitres[i];
+
     const d = depth(i);
-    const p = normals[(i - 1 + n) % n], q = normals[i];
-    const w = Math.min(1, lengths[(i - 1 + n) % n] / short, lengths[i] / short);
+    const p = unit(ins[(i - 1 + n) % n]), q = unit(outs[i]);
 
-    if (d !== 0 && w < 1) {
-      const e = { x: v.x + p.x * d, y: v.y + p.y * d };
-      const s = { x: v.x + q.x * d, y: v.y + q.y * d };
-      const mx = (e.x + s.x) / 2, my = (e.y + s.y) / 2;
+    let bx = p.x + q.x, by = p.y + q.y;
+    const l = Math.hypot(bx, by);
 
-      // The arc between them, `depth` round the corner: the ground a disc
-      // there covers, however sharply it turns.
-      const turn = Math.atan2(p.x * q.y - p.y * q.x, p.x * q.x + p.y * q.y);
-      const m = (p.x * q.y - p.y * q.x) * d < 0 ? Math.ceil(Math.abs(turn) / FAN_STEP) : 0;
-      const arc: Point[] = [];
+    if (l < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
 
-      for (let k = 1; k < m; k++) {
-        const a = turn * k / m, c = Math.cos(a), sn = Math.sin(a);
+    bx /= l;
+    by /= l;
 
-        arc.push({ x: v.x + (p.x * c - p.y * sn) * d, y: v.y + (p.x * sn + p.y * c) * d });
-      }
+    const cosHalf = bx * q.x + by * q.y;
 
-      end.push(e);
-      start.push(s);
-      apex.push({ x: mx + (mitres[i].x - mx) * w, y: my + (mitres[i].y - my) * w });
-      fan.push(m === 0 ? [] : arc);
-    }
-    else {
-      end.push(mitres[i]);
-      start.push(mitres[i]);
-      apex.push(null);
-      fan.push([]);
-    }
+    if (Math.abs(cosHalf) < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
+
+    return { x: v.x + bx / cosHalf * d, y: v.y + by / cosHalf * d };
   });
 
-  return { start, end, apex, fan };
+  return { at, bevel };
 }
 
-/** The most a fan turns in one facet: a sixty-fourth of a turn, a part in two
- * thousand of the depth off the arc. */
-const FAN_STEP = Math.PI / 32;
+function unit(p: Point): Point {
+  const l = Math.hypot(p.x, p.y);
 
-/** How short a wall is too short to say where its moved line crosses its
- * neighbour's, as a share of the ring's extent: a mitre is blended in from
- * nothing at a wall of no length to the whole of it at a wall this long. */
+  return l === 0 ? p : { x: p.x / l, y: p.y / l };
+}
+
+/** How short a wall is too short to say where it points, as a share of the
+ * ring's extent. */
 const SHORT = 1e-5;
 
 /**
@@ -798,8 +811,8 @@ function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
 
 /** One ring's worth of it, into `out`. */
 function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): void {
-  const { start, end, apex, fan } = joints(ring, depth);
-  const bevel = apex.map(a => a !== null);
+  const { at: start, bevel } = joints(ring, depth);
+  const end = start;
   const n = ring.length;
 
   /**
@@ -939,26 +952,6 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
       [near, far, near, near],
       side,
     );
-  }
-
-  // The corner beside a wall too short for a mitre: the ground between where
-  // the wall coming in ended and where the wall going out started, the fan
-  // round it where it turns towards the sweep and the kite out to where its
-  // mitre is let in. Every point is the corner's, and so is every edge.
-  for (let i = 0; i < n; i++) {
-    const d = depth(i);
-
-    if (apex[i] === null || d === 0) continue;
-
-    const at: Sweptfrom = { ring: r, index: i };
-
-    if (fan[i].length > 0) {
-      const disc = [ring[i], end[i], ...fan[i], start[i]];
-
-      emit(disc, disc.map(() => at), disc.map(() => at), d);
-    }
-
-    put(ring[i], end[i], apex[i]!, start[i], [at, at, at, at], [at, at, at, at], d);
   }
 }
 
