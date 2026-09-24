@@ -170,7 +170,7 @@ laid by run and corner names, and a resolve that makes new polygons mints new
 the teeth move, and law 1 is red. So a resolved polygon has to carry the names
 its points had in the union — which `identify(cut, member, was)` is already for,
 and is where the per-corner amounts are keyed too. This is the one real piece of
-work in the resolve, and the part to prove first (step 2).
+work in the resolve, and the part to prove first (step 0).
 
 ## The bake
 
@@ -185,25 +185,26 @@ with the law sweep (`LAW_SEED` 1–30) no worse than where the step started. Tha
 sweep's baseline is whatever `law1-walls` leaves: its two default-order cases,
 from seeds 19 and 27, are not this plan's.
 
-**0. Start from `effect-fold` with `foldEach`.** Keep the island fold (46ee4af),
-and drop `effect-order`'s WIP commit: `Effects.order`, `ORDER`, `inOrder`,
-`orderKey` and the laws' random orders. The law generator's orders are replaced
-in step 7 by the lists that say the same thing.
-
-**1. Remove the per-corner and per-edge effects.** Everything listed under *No
-per-corner or per-edge effects*, with its conversion step and a save version bump. It goes first
-because it is a deletion that stands on its own, on today's design, and every
-step after it is smaller for it: no per-corner or per-edge amounts to move to scopes (4), no
-per-corner reads in the fold (5) or the resolve (6), and no corner-edit routing
-in the editor (9). The law sweep must not move, since the laws never generate
-per-corner or per-edge amounts.
-
-**2. Prove the names survive a resolve.** Before anything moves: a test in which
+**0. Prove the names survive a resolve.** Before anything else, because the
+whole design stands on it: a test in which
 a scope deforms a union of two members, one member is resolved, and the teeth do
 not move. It goes green today only because `publishing` writes `key`, `anchor`
 and `reach`. Make it green with the names alone — the resolved polygon carries
 the union's names — with `publishing`'s deform half switched off. If this cannot
 be done, the design is wrong and stops here.
+
+**1. Start from `effect-fold` with `foldEach`.** Keep the island fold (46ee4af),
+and drop `effect-order`'s WIP commit: `Effects.order`, `ORDER`, `inOrder`,
+`orderKey` and the laws' random orders. The law generator's orders are replaced
+in step 7 by the lists that say the same thing.
+
+**2. Remove the per-corner and per-edge effects.** Everything listed under *No
+per-corner or per-edge effects*, with its conversion step and a save version bump. It goes early
+because it is a deletion that stands on its own, on today's design, and every
+step after it is smaller for it: no per-corner or per-edge amounts to move to scopes (4), no
+per-corner reads in the fold (5) or the resolve (6), and no corner-edit routing
+in the editor (9). The law sweep must not move, since the laws never generate
+per-corner or per-edge amounts.
 
 **3. `Layer`, and `Group.effects`.** The types, and `Effects` read as a list of
 layers everywhere it is read (`groupEffects`, `effectedAt`, `shapeKey`,
