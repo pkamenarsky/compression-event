@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { rounded, shapeArea } from './geometry';
-import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, movedIn, namesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
+import { Resolved, TOP, addPolygon, contributing, copied, csg, grouped, imagesOf, pasted, resolveAt, rigOf, sealing, withRig } from './scene';
 import { Span, spanAt, stamp } from './bake';
 import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
@@ -163,86 +163,6 @@ describe('a polygon\'s effects', () => {
 
     expect(after.world.effects.get(copy)).toEqual(ROUND);
     expect(shapeArea(shapeOf(after.world, copy))).toBeCloseTo(shapeArea(shapeOf(w, id)), 9);
-  });
-});
-
-describe('what a member publishes about its outline', () => {
-  /** The room's own corners, in ring order: a tooth is its edge's, not one
-   * of these. */
-  const idsOf = (w: World, id: Id) => resolveAt(w, 0).find(r => r.id === id)!.corners.filter(c => c.root === undefined).map(c => c.id);
-  const on = (line: { a: Point, b: Point }, p: Point) => {
-    const dx = line.b.x - line.a.x, dy = line.b.y - line.a.y;
-
-    return Math.abs((p.x - line.a.x) * dy - (p.y - line.a.y) * dx) / Math.hypot(dx, dy);
-  };
-
-  test('a plain room publishes its four edges, on the lines they are eroded to', () => {
-    const { world, id } = room();
-    const w = wrote(world, 0, id, erode(10));
-    const it = resolveAt(w, 0).find(r => r.id === id)!;
-    const names = namesOf(it);
-
-    expect(names.corners.map(c => c.id)).toEqual(idsOf(w, id));
-    expect(names.corners.map(c => c.bevel)).toEqual([0, 0, 0, 0]);
-    expect(names.lines.map(l => l.id)).toEqual(idsOf(w, id));
-    expect(names.lines.map(l => l.amplitude)).toEqual([0, 0, 0, 0]);
-
-    // The eroded room is the square pulled in ten: each line is that wall.
-    expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([40, 40, 40, 40]);
-  });
-
-  test('a rounded, deformed room publishes the round it asks for, not the arc it would draw', () => {
-    const { world, id } = room();
-    const fx: Effects = { round: inSegments(8, 10), deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
-    const w = wrote(withEffects(world, id, fx), 0, id, round(10), deform(4), erode(5));
-    const it = resolveAt(w, 0).find(r => r.id === id)!;
-    const names = namesOf(it);
-    const corners = idsOf(w, id);
-
-    // One corner per corner and one line per wall — the teeth between are
-    // the wall's, and name nothing of their own. No arc points anywhere: the
-    // round is an amount beside the corner, for whoever holds it to lay.
-    expect(names.corners.map(c => c.id)).toEqual(corners);
-    expect(names.corners.every(c => c.bevel > 0)).toBe(true);
-    // The options it asks for its round in, not a facet count: it is drawn
-    // at this bevel plus whatever holds it, and a count is for one bevel.
-    expect(names.corners.every(c => c.round !== null && c.round.precision > 0)).toBe(true);
-    expect(names.lines.map(l => l.id)).toEqual(corners);
-
-    // And the deform's height along each wall, which is the amplitude asked
-    // for: the teeth themselves are not published either.
-    expect(names.lines.map(l => l.amplitude)).toEqual([4, 4, 4, 4]);
-
-    // Each wall pulled in by the erosion: the square's walls are at 0 and
-    // 100, and five in from either.
-    expect(names.lines.map(l => Math.round(on(l, { x: 50, y: 50 })))).toEqual([45, 45, 45, 45]);
-  });
-
-  test('moved in by a depth, they are where that depth puts the outline', () => {
-    // What a scope does to what its members published: the same erosion the
-    // fold itself goes through, so the names still lie on it. Against the
-    // room resolved at that depth, which is the answer.
-    const { world, id } = room();
-    const fx: Effects = { round: inSegments(8, 10) };
-    const w = withEffects(world, id, fx);
-    const shallow = wrote(w, 0, id, round(10));
-    const deep = wrote(w, 0, id, round(10), erode(7));
-    const at = (x: World) => resolveAt(x, 0).find(r => r.id === id)!;
-    const moved = movedIn(namesOf(at(shallow)), 7);
-    const theirs = namesOf(at(deep));
-    const near = (p: Point, all: readonly Point[]) => Math.min(...all.map(q => Math.hypot(p.x - q.x, p.y - q.y)));
-
-
-    // Every corner of the one where the other has it: the mitre of the two
-    // walls at it is where eroding the outline puts it.
-    moved.corners.forEach((c, i) => {
-      expect(near(c.at, [theirs.corners[i].at])).toBeLessThan(1e-9);
-    });
-
-    moved.lines.forEach((l, i) => {
-      expect(near(l.a, [theirs.lines[i].a])).toBeLessThan(1e-9);
-      expect(near(l.b, [theirs.lines[i].b])).toBeLessThan(1e-9);
-    });
   });
 });
 

@@ -96,9 +96,6 @@ import {
 import {
   Contributed,
   Landing,
-  // This file has a `Named` of its own — a point of a boundary run — so the
-  // scope's is taken under a name that says whose it is.
-  Named as Published,
   chain,
   contributed,
   depths,
@@ -109,23 +106,20 @@ import {
   order,
   outermostOf,
   resolveAt,
-  rigOf,
   standingIn,
   underfoot,
   ungrouping,
   unplace,
   keyRigOf,
 } from './scene';
-import { AmountKind, EMPTY_RIG, Entry, KeyRig, Rig, amountedBy, keysOf, nextKey, once, stateAt } from './rig';
+import { EMPTY_RIG, Entry, KeyRig, Rig, keysOf, once, stateAt } from './rig';
 import type { Ident, Ids } from './ids';
 import { born, madeOf } from './ids';
 import {
   GroupId,
   Id,
-  Options,
   PolygonId,
   KeyframeId,
-  VertexId,
   Unrolled,
   Vertex,
   World,
@@ -385,14 +379,6 @@ interface Reading {
   hole: boolean
   /** The reading it is a hole in, by index in this same list. */
   owner: number | null
-  /**
-   * What the fold published about each point of the ring: the corner it was,
-   * where it was one of a member's, and the line leaving it. Nothing for a
-   * join, or a corner an erosion made — which asks for nothing and takes the
-   * ring's own amounts. See `Contributed.named`.
-   */
-  corners: (Published['corners'][number] | null)[]
-  lines: (Published['lines'][number] | null)[]
   ring: Ring
   /** What each point of `ring` is called, where the contributors brought their
    * names: what says whether it is a corner or a sample on somebody's curve.
@@ -431,33 +417,6 @@ function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }
   });
 }
 
-/** A point as a key: a corner of the fold *is* the member's corner, so it is
- * found by where it is and not by what is near it. */
-function key(p: Point): string {
-  return `${p.x},${p.y}`;
-}
-
-/**
- * Which published line a ring edge lies on: the first along it, as the fold
- * itself names its straights.
- *
- * By the line and not by the ends, because the ends are where the union put
- * them. A wall two rooms share starts at a crossing that is neither room's
- * corner, and it is still that member edge's wall — the arrangement cuts
- * edges up and drops the pieces inside, but it never moves one off its line.
- * See `foldShaped`'s `namedBy` and PLAN-bevel 2.2.
- */
-function lineAlong(lines: Published['lines'], a: Point, b: Point, scale: number): Published['lines'][number] | null {
-  const near = scale * 1e-6;
-  const off = (line: { a: Point, b: Point }, p: Point) =>
-    Math.abs((p.x - line.a.x) * (line.b.y - line.a.y) - (p.y - line.a.y) * (line.b.x - line.a.x))
-      / Math.max(Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y), 1e-300);
-
-  if (a.x === b.x && a.y === b.y) return null;
-
-  return lines.find(line => off(line, a) <= near && off(line, b) <= near) ?? null;
-}
-
 /**
  * What the group's members come to, ring by ring, as one version sees them.
  *
@@ -479,13 +438,8 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   const items = contributed(
     world,
     resolveAt(world, v).filter(it => inside.has(it.id)),
-    // The group itself stands, at depth nought: what is asked for is its own
-    // fold, bare — its members eroded at their own depths, folded, and
-    // rounded and deformed nowhere — with what it would have laid on that
-    // fold published beside it. Anything drawn into the ring is geometry a
-    // polygon would round and deform all over again; anything published is an
-    // amount the ring can carry as its own. See PLAN-bevel's *The resolve
-    // carries geometry*.
+    // The group itself stands, at depth nought and laying nothing: what is
+    // asked for is the union of its members drawn.
     //
     // Nought rather than its depth, which the ring takes as an erosion of its
     // own further down, so that the names come back on the points the ring
@@ -493,8 +447,7 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
     //
     // A sealed group nested inside it stands for its members, exactly as it
     // does for the CSG: its shape is a real shape and pulling it apart here
-    // would resolve it too, which is not what was asked. Bare reaches it too,
-    // so its own round and deform are published rather than drawn.
+    // would resolve it too, which is not what was asked.
     g => {
       // The scope itself stands and lays nothing: what is wanted is the union
       // of its members *drawn*, and the scope's own amounts go onto the ring
@@ -530,18 +483,10 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
   // The floor is clipped only to a level. A solid is something standing in a
   // room, not the room a floor is laid in, so a group that is one keeps its
   // floor whole, as the scope it resolves does. See `resolves` in `scene.ts`.
-  /** What the contributions of one set published, together. */
-  const namesIn = (set: SetName): Published => items
-    .filter(it => slotOf(it.kind, set) !== null && it.named !== undefined)
-    .reduce(
-      (all, it) => ({ lines: [...all.lines, ...it.named!.lines], corners: [...all.corners, ...it.named!.corners] }),
-      { lines: [], corners: [] } as Published,
-    );
-
   const floored = level === 0 ? null : rings(items, 'floor');
   const nothing = (side: readonly Ring[]) => side.map(ring => ring.map(() => null));
-  const sides: readonly (readonly [PolygonKind, readonly Ring[], readonly (readonly (Ident | null)[])[], Published])[] = [
-    [SLOT_KINDS.level[level ?? 0], walls, walled.map(ring => ring.map(p => p.name)), namesIn('level')],
+  const sides: readonly (readonly [PolygonKind, readonly Ring[], readonly (readonly (Ident | null)[])[]])[] = [
+    [SLOT_KINDS.level[level ?? 0], walls, walled.map(ring => ring.map(p => p.name))],
     ...(floored === null
       ? (() => {
           const side = floors(items, walls);
@@ -550,21 +495,12 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
           // the names do not come through it. Nothing is written down, which
           // says every point of it is a corner — which is what a floor's
           // points are, no floor having arcs on it that its level does not.
-          return [[SLOT_KINDS.floor[floor ?? 0], side, nothing(side), namesIn('floor')] as const];
+          return [[SLOT_KINDS.floor[floor ?? 0], side, nothing(side)] as const];
         })()
-      : [[SLOT_KINDS.floor[floor ?? 0], floored.map(ring => ring.map(p => p.at)), floored.map(ring => ring.map(p => p.name)), namesIn('floor')] as const]),
+      : [[SLOT_KINDS.floor[floor ?? 0], floored.map(ring => ring.map(p => p.at)), floored.map(ring => ring.map(p => p.name))] as const]),
   ];
 
-  for (const [kind, side, said, names] of sides) {
-    // Matched where the fold left them, in world units, before the ring goes
-    // into the group's frame: a corner of the fold *is* the member's corner,
-    // and a line runs from one to the next, so both are found by the point.
-    const corner = new Map(names.corners.map(c => [key(c.at), c] as const));
-
-    let scale = 1;
-
-    for (const ring of side) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
-
+  for (const [kind, side, said] of sides) {
     // Into the group's frame first, since that is where the winding is read.
     const mine = side.map(ring => ring.map(p => unplace(frame, p)));
     const how = nested(mine);
@@ -576,8 +512,6 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
       owner: how[i].owner === null ? null : base + how[i].owner!,
       ring,
       names: said[i],
-      corners: side[i].map(p => corner.get(key(p)) ?? null),
-      lines: side[i].map((p, k) => lineAlong(names.lines, p, side[i][(k + 1) % side[i].length], scale)),
     }));
   }
 
@@ -638,10 +572,8 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
 
   if (group === undefined) return null;
 
-  // Bare, always. A scope lays one round and one deform on the *union*, so
-  // the ring carries those as amounts and draws them itself — which is what
-  // `publishing` writes down. A scope laying nothing of its own still folds,
-  // and still hands its members' amounts on; see `shapeKey`.
+  // Its members drawn, and the scope's own effects left off: the ring
+  // carries those as its own, and the same fold lays them again.
   const readings = readingAt(world, v, id);
 
   // Every version any of the geometry is there at, rather than every version
@@ -709,18 +641,6 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // pillar standing in it makes no set, so what it resolves to is nothing, and
   // it goes. Anything else would be a gesture that did what it said on some
   // groups and quietly declined on others.
-  /** What each new corner was told about itself, to be written down once the
-   * polygons are in: see `publishing`. */
-  const told: {
-    id: PolygonId
-    corner: VertexId
-    was: Reading['corners'][number]
-    line: Reading['lines'][number]
-    /** The edge leaving it, which is what its own anchor is read off. */
-    from: Point
-    to: Point
-  }[] = [];
-
   for (const outer of readings.filter(r => !r.hole)) {
     const parts = [outer, ...readings.filter(r => r.hole && readings[r.owner!] === outer)];
     const mine = next;
@@ -823,7 +743,6 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     parts.forEach((part, ring) => {
       part.ring.forEach((at, i) => {
         const corner = ids[ring][i];
-        const to = part.ring[(i + 1) % part.ring.length];
         const what = part.names[i] === null ? null : madeOf(part.names[i]!);
 
         // A sample keeps being a sample. Its old name meant a member this
@@ -847,7 +766,6 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
           death,
           ...(of === undefined || what?.kind !== 'on' ? {} : { sample: { of: ids[ring][of], t: what.t } }),
         });
-        told.push({ id: mine, corner, was: part.corners[i], line: part.lines[i], from: at, to });
       });
     });
 
@@ -909,15 +827,6 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // reason the group is used as scaffolding rather than dismantled by hand.
   groups.set(id, { ...group, members: [...made, ...kept] });
 
-  // What the scope itself was asking for at the keyframe the ring was read
-  // at, which its rig carries: what a published amount is *over*.
-  const here = fx === undefined ? { bevel: 0, amplitude: 0 } : stateAt(world, id, v);
-
-  // Nothing to publish any more. A member drew its own effects into the ring
-  // this became, so there is no amount of its to be written down over the
-  // scope's — which is what `publishing` was for and what `PLAN-effect` step 8
-  // takes out with the rest of the machinery. What the ring carries is the
-  // scope's own, above, and the same fold lays it again.
   const held = { ...world, polygons, groups, rigs, effects, nextId: next };
 
   // Taken apart, so that what came out is pickable one ring at a time. It is
