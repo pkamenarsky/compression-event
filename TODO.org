@@ -1,7 +1,4 @@
 * Next
-* TODO fix the laws
-* TODO fix deform
-* TODO make it fast
 * TODO point 8
 * TODO point 9
 
@@ -10,6 +7,7 @@
 * TODO copying something in a later version and pasting it should not change its shape
 
 * Low hanging fruit
+* TODO noise default in deform, jitter at 100 or something
 * TODO 3d view from upper right corner and resizable
 * TODO inspector view scrollable
 * TODO round tension of 0.2 is a good default i think
