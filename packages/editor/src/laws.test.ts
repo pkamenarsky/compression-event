@@ -44,26 +44,38 @@ function withEffects(world: World, id: Id, fx: Effects): World {
  *
  * So: every segment, two collinear ones sharing an end merged into one
  * wherever nothing else meets them there, each written down without a
- * direction, and the lot sorted. Nothing about the order survives, and
- * everything about the outline does.
+ * direction. Nothing about the order survives, and everything about the
+ * outline does — which is why the answer is compared by `differing` and not by
+ * being sorted into a list.
+ *
+ * **Two points are the same point within an ulp, and nothing looser than
+ * that.** The two sides of a law reach the same corner by multiplying the same
+ * numbers in a different order — a scope folds its effects over a union, its
+ * resolution folds them over one polygon — and they land some 4e-14 apart on
+ * coordinates of order three hundred. That is the one difference no
+ * implementation can be asked to close, and it is measured rather than assumed:
+ * where these properties are red for a real reason the two drawings differ by
+ * whole points and by tenths of a unit, never by an ulp.
+ *
+ * It is still point for point. Every piece of one drawing has its own piece of
+ * the other at the same place, and a piece the other lacks is a break however
+ * short it is. What is *not* here is any comparison of area or of total length,
+ * which is how a broken one would hide.
  */
-function drawn(world: World): string[] {
+function drawn(world: World): [Point, Point][] {
   const runs = csg(world, 0);
-  // Six places, and the one thing to say about them is the sign at zero.
-  // `toFixed` writes a coordinate of `-1.4e-14` as `-0.000000` and one of
-  // `+1.4e-14` as `0.000000`, and those two strings differ while the points do
-  // not: the two paths reach the same corner by multiplying the same numbers in
-  // a different order and land an ulp apart, which is the one difference no
-  // implementation can be asked to close. Everywhere else the rounding has
-  // already settled it — this is not a tolerance being let in, it is the
-  // tolerance `toFixed` always was, applied to both signs alike.
-  const six = (v: number) => {
-    const said = v.toFixed(6);
+  const eps = spanOf(runs.flat()) * 1e-9;
 
-    return said === '-0.000000' ? '0.000000' : said;
+  // Every point standing for the one place it is, so that the merge below
+  // counts two ends of a junction as meeting there. Within one drawing: two
+  // points of it that are an ulp apart are one point, and which of them stands
+  // for the pair is settled by whichever came first.
+  const held = clustered(eps);
+  const at = (p: Point) => {
+    const q = held(p);
+
+    return `${q.x},${q.y}`;
   };
-
-  const at = (p: Point) => `${six(p.x)},${six(p.y)}`;
   const segs: [Point, Point][] = [];
   const gone: boolean[] = [];
 
@@ -132,9 +144,113 @@ function drawn(world: World): string[] {
     }
   }
 
-  return segs
-    .flatMap((s, i) => (gone[i] ? [] : [[at(s[0]), at(s[1])].sort().join(' → ')]))
-    .sort();
+  return segs.flatMap((s, i) => (gone[i] ? [] : [[held(s[0]), held(s[1])] as [Point, Point]]));
+}
+
+/** The span of the box round a set of points, and 1 for a set with no size to
+ * speak of: the unit the comparison's own tolerance is written in, so that it
+ * says the same thing whatever units the rooms were drawn in. */
+function spanOf(points: readonly Point[]): number {
+  let lo = Infinity, hi = -Infinity;
+
+  for (const p of points) {
+    lo = Math.min(lo, p.x, p.y);
+    hi = Math.max(hi, p.x, p.y);
+  }
+
+  const d = hi - lo;
+
+  return Number.isFinite(d) && d > 0 ? d : 1;
+}
+
+/**
+ * Points to the one place each stands for, within `eps`.
+ *
+ * Bucketed at `eps` and asked of the nine cells round it, which is what makes
+ * it a clustering rather than a rounding: a pair that straddles a cell's own
+ * boundary still finds each other, where `toFixed` would have written them
+ * either side of it.
+ */
+function clustered(eps: number): (p: Point) => Point {
+  const cells = new Map<string, Point[]>();
+
+  return p => {
+    const cx = Math.round(p.x / eps), cy = Math.round(p.y / eps);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const q of cells.get(`${cx + dx}:${cy + dy}`) ?? []) {
+          if (Math.hypot(p.x - q.x, p.y - q.y) <= eps) return q;
+        }
+      }
+    }
+
+    const k = `${cx}:${cy}`;
+    const held = cells.get(k);
+
+    if (held === undefined) cells.set(k, [p]);
+    else held.push(p);
+
+    return p;
+  };
+}
+
+/**
+ * What one drawing has that the other has not: the pieces of `a` with no piece
+ * of `b` at the same place, and then the other way about. Empty both ways is
+ * the two drawing the same outline.
+ *
+ * **One clustering over both of them**, which is the whole of how the ulp is
+ * set aside. Every point of either drawing is asked which place it stands for,
+ * `a`'s first, so a point of `b` that is 4e-14 from one of `a`'s comes back as
+ * that same place — and then the two are compared for equality, exactly, as
+ * multisets of pieces. There is no boundary for a pair to straddle, which is
+ * what went wrong when this was two lists of `toFixed` strings.
+ *
+ * A multiset and not a set: a wall drawn twice in one and once in the other is
+ * a difference.
+ */
+function differing(a: readonly [Point, Point][], b: readonly [Point, Point][]): string[] {
+  const eps = spanOf([...a.flat(), ...b.flat()]) * 1e-9;
+  const held = clustered(eps);
+  const key = (s: readonly [Point, Point]) => [held(s[0]), held(s[1])]
+    .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`)
+    .sort()
+    .join(' → ');
+
+  const mine = new Map<string, number>();
+
+  // `a` first, so it is `a`'s points that stand for the places and `b`'s that
+  // are drawn to them.
+  for (const s of a) {
+    const k = key(s);
+
+    mine.set(k, (mine.get(k) ?? 0) + 1);
+  }
+
+  const theirs = new Map<string, number>();
+
+  for (const s of b) {
+    const k = key(s);
+
+    theirs.set(k, (theirs.get(k) ?? 0) + 1);
+  }
+
+  const out: string[] = [];
+
+  for (const [k, n] of mine) {
+    const m = theirs.get(k) ?? 0;
+
+    if (n > m) out.push(`only here${n - m > 1 ? ` (${n - m}×)` : ''}: ${k}`);
+  }
+
+  for (const [k, n] of theirs) {
+    const m = mine.get(k) ?? 0;
+
+    if (n > m) out.push(`only there${n - m > 1 ? ` (${n - m}×)` : ''}: ${k}`);
+  }
+
+  return out.sort();
 }
 
 // -----------------------------------------------------------------------------
@@ -299,6 +415,17 @@ const arbLoose: fc.Arbitrary<Spec[]> = fc
 const RUNS = { numRuns: 60 };
 
 /**
+ * Long enough that a property which finds nothing is allowed to say so.
+ *
+ * Sixty arrangements over a nested world is a minute's work and more, and
+ * `fc.assert` is synchronous — so a runner that gives up at five seconds cannot
+ * stop it, it can only mark what it did afterwards, and a green property came
+ * back as a failed one with a timeout where its counterexample should be. That
+ * is worse than a slow suite: it is a red that says nothing about the code.
+ */
+const SLOW = 600_000;
+
+/**
  * The same world with every kit emptied: nesting and rooms alone, and no
  * effect anywhere.
  *
@@ -322,9 +449,9 @@ describe('law 1: a scope draws what it resolves to', () => {
 
       if (out === null) return;
 
-      expect(drawn(out.world)).toEqual(drawn(world));
+      expect(differing(drawn(out.world), drawn(world))).toEqual([]);
     }), RUNS);
-  });
+  }, SLOW);
 
   test('resolving the top scope does not move the outline', () => {
     fc.assert(fc.property(arbScope, spec => {
@@ -333,9 +460,9 @@ describe('law 1: a scope draws what it resolves to', () => {
 
       if (out === null) return;
 
-      expect(drawn(out.world)).toEqual(drawn(world));
+      expect(differing(drawn(out.world), drawn(world))).toEqual([]);
     }), RUNS);
-  });
+  }, SLOW);
 
   /**
    * The counterexample this property shrank to for as long as an offset was
@@ -368,7 +495,7 @@ describe('law 1: a scope draws what it resolves to', () => {
     const { world, id } = built(emptyWorld(), spec);
     const out = resolveGroup(world, 0, id)!;
 
-    expect(drawn(out.world)).toEqual(drawn(world));
+    expect(differing(drawn(out.world), drawn(world))).toEqual([]);
   });
 
   test('nor does resolving a scope inside it', () => {
@@ -381,10 +508,10 @@ describe('law 1: a scope draws what it resolves to', () => {
 
         if (out === null) continue;
 
-        expect([id, drawn(out.world)]).toEqual([id, drawn(world)]);
+        expect([id, differing(drawn(out.world), drawn(world))]).toEqual([id, []]);
       }
     }), RUNS);
-  });
+  }, SLOW);
 
   test('and resolving every scope, innermost first, leaves the same outline', () => {
     fc.assert(fc.property(arbScope, spec => {
@@ -401,10 +528,10 @@ describe('law 1: a scope draws what it resolves to', () => {
         if (out === null) break;
 
         w = out.world;
-        expect(drawn(w)).toEqual(was);
+        expect(differing(drawn(w), was)).toEqual([]);
       }
     }), RUNS);
-  });
+  }, SLOW);
 });
 
 // -----------------------------------------------------------------------------
@@ -426,9 +553,9 @@ describe('law 2: sealing draws what was there', () => {
 
       const g = grouped(loose, 0, ids, TOP)!;
 
-      expect(drawn(sealing(g.world, g.id, true))).toEqual(drawn(loose));
+      expect(differing(drawn(sealing(g.world, g.id, true)), drawn(loose))).toEqual([]);
     }), RUNS);
-  });
+  }, SLOW);
 
   test('sealing things into a scope that lays nothing does not move the outline', () => {
     fc.assert(fc.property(arbLoose, members => {
@@ -445,9 +572,9 @@ describe('law 2: sealing draws what was there', () => {
       const g = grouped(loose, 0, ids, TOP)!;
       const sealed = sealing(g.world, g.id, true);
 
-      expect(drawn(sealed)).toEqual(drawn(loose));
+      expect(differing(drawn(sealed), drawn(loose))).toEqual([]);
     }), RUNS);
-  });
+  }, SLOW);
 });
 
 // -----------------------------------------------------------------------------
@@ -477,7 +604,7 @@ function bothWays(spec: Spec, kit: Kit): void {
         return kitted(sealing(g.world, g.id, true), g.id, kit);
       })();
 
-  expect(drawn(after)).toEqual(onScope);
+  expect(differing(drawn(after), onScope)).toEqual([]);
 }
 
 describe('law 3: an effect on a scope is an effect on its resolution', () => {
@@ -485,29 +612,29 @@ describe('law 3: an effect on a scope is an effect on its resolution', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 40 }), (spec, by) => {
       bothWays(bare(spec), { round: by });
     }), RUNS);
-  });
+  }, SLOW);
 
   test('a round', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 40 }), (spec, by) => {
       bothWays(spec, { round: by });
     }), RUNS);
-  });
+  }, SLOW);
 
   test('an erosion', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 20 }), (spec, by) => {
       bothWays(spec, { erode: by });
     }), RUNS);
-  });
+  }, SLOW);
 
   test('a deform', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 12 }), (spec, by) => {
       bothWays(spec, { deform: by });
     }), RUNS);
-  });
+  }, SLOW);
 
   test('all three at once', () => {
     fc.assert(fc.property(arbScope, arbKit, (spec, kit) => {
       bothWays(spec, kit);
     }), RUNS);
-  });
+  }, SLOW);
 });
