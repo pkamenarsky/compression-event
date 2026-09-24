@@ -336,7 +336,38 @@ export interface Vertex {
    * all anything downstream asks of it. See `identify` in `ids.ts`.
    */
   sample?: { of: VertexId, t: number }
+  /**
+   * What a crossing a scope had was a crossing of: the corners whose edges
+   * made it, in this polygon's own corners, as far back as it goes: see
+   * `Parent`. Two crossings on one edge say so, whether or not the corner it
+   * leaves is still there, and so does a crossing on an edge that was itself
+   * a crossing's.
+   *
+   * Why it has to be written down. The deform reads a wall cut in two by
+   * something rising through it off the crossings' names — each piece is
+   * `born` of the wall, and the wall lays one pattern along all of them from
+   * its own middle. Resolved into plain corners, every piece was laid from its
+   * own middle instead, and the polygon drew different teeth from the scope it
+   * came of. `identify` reads it and names the point `born` of the two again.
+   * See `linesOf` in `effect.ts`.
+   */
+  crossing?: { a: Parent, b: Parent }
+  /**
+   * The corner this one has the same name as, where an arrangement left two
+   * points of one ring called the same thing. A scope reads them as one edge
+   * leaving from two places, and so, with this, does the polygon it resolves
+   * to. See `crossing`.
+   */
+  twin?: VertexId
 }
+
+/**
+ * One of the two edges a crossing is of: see `Vertex.crossing`. The corner it
+ * leaves; or, that corner cut away, the crossing it was, of two edges again;
+ * or, a corner cut away that was nobody's crossing, which of the polygon's
+ * cut-away corners it is.
+ */
+export type Parent = { at: VertexId } | { born: [Parent, Parent] } | { cut: number }
 
 /**
  * Where each ring starts, in a list of corners kept in ring order.

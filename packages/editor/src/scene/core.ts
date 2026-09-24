@@ -73,6 +73,7 @@ import {
   LevelPart,
   PathId,
   SetName,
+  Parent,
   Vertex,
   Polygon,
   PolygonId,
@@ -1323,23 +1324,55 @@ function projection(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
 }
 
 /**
- * What each corner says it is, flat, for `identify` — the index of the corner
- * whose run it is a sample of and how far along, or `-1` twice for a corner.
+ * What each corner says it is, flat, for `identify`: a pair apiece — the index
+ * of the corner whose run it is a sample of and how far along; `-2` and the
+ * index of a twin; `-3` and where its crossing is written, past the pairs; or
+ * `-1` twice for a corner. A crossing's two edges are written there as a tree:
+ * `0` and a corner's index, `1` and a cut-away corner's number, or `2` and two
+ * more of them.
  *
  * Nothing at all where no corner says anything, which is every polygon somebody
  * drew: the array is part of `project`'s memo key and an array of `-1`s would
  * be one more thing to hash on every frame.
  */
 function sampled(corners: readonly Vertex[]): readonly number[] | null {
-  if (!corners.some(c => c.sample !== undefined)) return null;
+  if (!corners.some(c => c.sample !== undefined || c.crossing !== undefined || c.twin !== undefined)) return null;
 
   const at = new Map(corners.map((c, i) => [c.id, i]));
+  const trees: number[] = [];
 
-  return corners.flatMap(c => {
+  // Written, or nothing where it names a corner that is not here.
+  const tree = (p: Parent): number[] | null => {
+    if ('cut' in p) return [1, p.cut];
+    if ('at' in p) return at.has(p.at) ? [0, at.get(p.at)!] : null;
+
+    const a = tree(p.born[0]), b = tree(p.born[1]);
+
+    return a === null || b === null ? null : [2, ...a, ...b];
+  };
+
+  const pairs = corners.map(c => {
+    const a = c.crossing === undefined ? null : tree(c.crossing.a);
+    const b = c.crossing === undefined ? null : tree(c.crossing.b);
+
+    if (a !== null && b !== null) {
+      const where = trees.length;
+
+      trees.push(...a, ...b);
+
+      return [-3, where];
+    }
+
+    const twin = c.twin === undefined ? undefined : at.get(c.twin);
+
+    if (twin !== undefined) return [-2, twin];
+
     const of = c.sample === undefined ? undefined : at.get(c.sample.of);
 
     return of === undefined ? [-1, -1] : [of, c.sample!.t];
   });
+
+  return [...pairs.flat(), ...trees];
 }
 
 /**

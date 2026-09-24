@@ -121,6 +121,7 @@ import {
   PolygonId,
   KeyframeId,
   Unrolled,
+  Parent,
   Vertex,
   World,
   within,
@@ -740,6 +741,47 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     // about, since a sample names a corner that may come after it.
     const ids = parts.map(part => part.ring.map(() => ++next));
 
+    // A crossing keeps what it was a crossing of, said in this polygon's own
+    // corners: the corner whose edge each of its two edges is, where that
+    // corner is in the polygon, and where it is not — cut away by the
+    // arrangement — the crossing that edge left, as far back as it goes, and
+    // past that a number, the same on every crossing on it. The deform reads
+    // a wall cut in two off exactly this, and so does whatever this polygon is
+    // sealed into later. See `Vertex.crossing`.
+    const crossing = new Map<number, { a: Parent, b: Parent }>();
+    const twins = new Map<number, number>();
+
+    if (parts.every(part => part.names.every(n => n !== null))) {
+      const where = new Map<Ident, number>();
+
+      parts.forEach((part, ring) => part.names.forEach((n, i) => {
+        const first = where.get(n!);
+
+        if (first === undefined) where.set(n!, ids[ring][i]);
+        else twins.set(ids[ring][i], first);
+      }));
+
+      const stands = new Map<Ident, number>();
+      const edgeOf = (e: Ident): Parent => {
+        const had = where.get(e);
+
+        if (had !== undefined) return { at: had };
+
+        const what = madeOf(e);
+
+        if (what.kind === 'born') return { born: [edgeOf(what.a), edgeOf(what.b)] };
+        if (!stands.has(e)) stands.set(e, stands.size);
+
+        return { cut: stands.get(e)! };
+      };
+
+      parts.forEach((part, ring) => part.names.forEach((n, i) => {
+        const what = madeOf(n!);
+
+        if (what.kind === 'born') crossing.set(ids[ring][i], { a: edgeOf(what.a), b: edgeOf(what.b) });
+      }));
+    }
+
     parts.forEach((part, ring) => {
       part.ring.forEach((at, i) => {
         const corner = ids[ring][i];
@@ -765,6 +807,7 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
           birth: born,
           death,
           ...(of === undefined || what?.kind !== 'on' ? {} : { sample: { of: ids[ring][of], t: what.t } }),
+          ...(twins.has(corner) ? { twin: twins.get(corner) } : crossing.has(corner) ? { crossing: crossing.get(corner) } : {}),
         });
       });
     });

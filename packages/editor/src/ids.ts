@@ -163,19 +163,67 @@ export function shows(id: Ident): string {
  * been through one gives names that move when it does.
  */
 export function identify(shape: Cut, member: number, was: readonly number[] | null = null): Ids {
-  let vertex = 0;
+  const n = shape.reduce((k, ring) => k + ring.length, 0);
+  const named: (Ident | undefined)[] = [];
+  const naming = new Set<number>();
 
-  return shape.map(ring => ring.map(() => {
-    const here = vertex++;
+  // One of a crossing's two edges, read off `was` from `at`: named as the
+  // point it leaves is — itself a crossing, as often as not — or, that point
+  // cut away, as the crossing it was, or past that by a number beyond the
+  // corners that no point has. See `Vertex.crossing`.
+  const edge = (at: number): { id: Ident, next: number } => {
+    const kind = was![at];
+
+    if (kind === 0) return { id: name(was![at + 1]), next: at + 2 };
+    if (kind === 1) return { id: corner(member, n + was![at + 1]), next: at + 2 };
+
+    const a = edge(at + 1), b = edge(a.next);
+
+    return { id: born(a.id, b.id), next: b.next };
+  };
+
+  // The run a sample is on, by the name of the point it leaves where that is
+  // a crossing — which has no corner's name to go by — and by the corner
+  // otherwise, a sample's start being a sample itself as often as not.
+  const run = (k: number): Ident => (was![k * 2] === -3 ? name(k) : corner(member, k));
+
+  function name(here: number): Ident {
+    const had = named[here];
+
+    if (had !== undefined) return had;
+
+    // A crossing on a sample whose run leaves that same crossing: the loop is
+    // cut where it closes, by the corner's name.
+    if (naming.has(here)) return corner(member, here);
+
+    naming.add(here);
+
     const of = was === null ? -1 : was[here * 2];
+    const second = was === null ? -1 : was[here * 2 + 1];
+
+    // A crossing, where a resolve wrote down what it was a crossing of:
+    // `born` of those two edges again.
+    if (of === -3) {
+      const a = edge(n * 2 + second), b = edge(a.next);
+
+      return (named[here] = born(a.id, b.id));
+    }
+
+    // A twin, where two points had one name, is called what the other is.
+    // See `Vertex.twin`.
+    if (of === -2) return (named[here] = name(second));
 
     // A point a construction sampled rather than turned at: `on` the run
     // leaving corner `of`, at the same `t` it sat at before. Not the name the
     // point had when it was made — that named somebody this shape has no
     // memory of — but the same shape of name, which is all anything reading it
     // asks. See `Vertex.sample`.
-    return of < 0 ? corner(member, here) : on(corner(member, of), was![here * 2 + 1]);
-  }));
+    return (named[here] = of < 0 ? corner(member, here) : on(run(of), second));
+  }
+
+  let vertex = 0;
+
+  return shape.map(ring => ring.map(() => name(vertex++)));
 }
 
 /**

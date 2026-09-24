@@ -585,16 +585,37 @@ stays there, and a corner arriving into a rounded ring leaves 0.43, which is
 the arc's resample stepping to a finer count as it turns — no more than the
 round's accuracy.
 
-**One real pop is left**, and its test is `test.fails` on purpose: *a union
-edge cut in two keeps its teeth*. A deform starts a run at every point a
-construction turned the boundary at, and a crossing is one, so where a room's
-tip reaches its neighbour's wall the wall's run is cut in two and each half
-lays its pattern from its own middle. Every tooth on that wall moves at once —
-6.8 units, not shrinking however finely it is sampled. The old fold named both
-halves by the member edge they lay on. The fold has no name for that: a run
-belongs to the point it starts at. Fixing it means a run that can see past a
-crossing to the wall it continues, which is a question about identity, not
-about the bake.
+**The last real pop is gone**: *a union edge cut in two keeps its teeth*. A
+deform starts a run at every point a construction turned the boundary at, and
+a crossing is one, so where a room's tip reached its neighbour's wall the
+wall's run was cut in two and each half laid its pattern from its own middle —
+every tooth on the wall moved at once, 6.8 units. The answer is the identity
+the crossing already has: it is `born` of two edges and the run leaving it
+carries on along one of them, the one whose other points lie on its line.
+`linesOf` follows each run back that way, through as many crossings as there
+are, and runs that come to one edge, in one line and running one way, are laid
+as one wall from the middle of them all.
+
+Followed *back*, and not one step, because which name a crossing gets depends
+on the order an arrangement met things in: a wall cut by one room and then
+another has its second crossing on the first crossing's edge, and cut by both
+at once on the wall's. And a line learnt on the way is handed back up, since
+an edge cut away with one point left on it has no line of its own to check.
+
+Law 1 and 3 are what made it more than that. A scope reads its crossings'
+parents at every stage after — its own erosion and deform, and every scope it
+is sealed into — and a resolve wrote them down as plain corners. So resolving
+now keeps them: `Vertex.crossing` says what each crossing was a crossing of in
+the polygon's own corners, recursively where the parent was itself a crossing
+now cut away, and a number where a cut-away parent was a corner; `Vertex.twin`
+keeps two points an arrangement named alike named alike; and `identify` names
+them all `born` again. Writing down only the decision — which pieces were one
+wall at resolve time — was tried first and is not enough, for exactly that
+reason: the decision is taken again after the scope's own erosion, and in the
+scopes above.
+
+Measured on forty law seeds against the tree before it: the same failures
+(seeds 4 and 22, law 1 nested, both red before), and no new ones.
 
 **10. `baseline.golden.json` regenerated, once, at the end.**
 

@@ -2504,15 +2504,14 @@ describe('effects', () => {
     teeth.forEach(t => expect(t.v).toBe(1));
   });
 
-  // Red, and kept red on purpose: this one is a real pop, not a cut the fades
-  // hide. A deform starts a run at every point a construction turned the
-  // boundary at, and the crossing where the diamond's tip meets the wall is
-  // one — so the wall's run is cut in two there and each half lays its own
-  // pattern from its own middle. Every tooth on the wall moves at that
-  // instant: `steadiest` at 1600 steps is 6.8. The old fold named both halves
-  // by the member edge they lie on; the new one has no such name for a run.
-  // See PLAN-effect, step 9.
-  test.fails('a union edge cut in two keeps its teeth, both halves being one edge\'s', () => {
+  // A real pop, not a cut the fades hide, while it was red: the crossing
+  // where the diamond's tip meets the wall starts a run, so the wall was cut
+  // in two there and each half laid its own pattern from its own middle —
+  // every tooth on the wall moved at that instant, 6.8 units at 1600 steps.
+  // Now a run leaving a crossing follows it back to the wall it carries on,
+  // and the halves are laid from the whole wall's middle. See `linesOf` and
+  // PLAN-effect, step 9.
+  test('a union edge cut in two keeps its teeth, both halves being one edge\'s', () => {
     // A room rising through the top wall of the room it is sealed in with,
     // point first: part way, the wall's union edge becomes two, either side
     // of it. Both lie on the same edge of the same room, and that edge names

@@ -909,6 +909,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
 
     const shape: Shape = [];
     const ids: Ids = [];
+    const lines = linesOf(it);
 
     it.shape.forEach((ring, r) => {
       const names = it.ids[r];
@@ -927,17 +928,18 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
       for (let k = 0; k < held.length; k++) {
         const from = held[k], to = held[(k + 1) % held.length];
         const run = between(ring, from, to);
-        const whose = names[from];
+        const line = lines.get(`${r}:${from}`);
+        const whose = line?.edge ?? names[from];
         const lengths = walked(run);
         const total = lengths[lengths.length - 1];
         const how = options(whose);
         const high = amountOf(by, whose);
         const lay = how === null || !(how.spacing > 0) || (high === 0 && !flat)
           ? { along: [], across: [], teeth: [], room: [] }
-          : patternRun(how, keyOf(whose), high, total);
+          : patternRun(how, keyOf(whose), high, total, 0, 0, how.spacing, line?.middle ?? total / 2);
 
         out.push(ring[from]);
-        said.push(whose);
+        said.push(names[from]);
 
         // A run that takes teeth is its teeth and nothing else: each stands on
         // the run where its arc length puts it, a facet of an arc included,
@@ -969,6 +971,226 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
 
     return combineIdentified({ shape, ids }, { shape: [], ids: [] }, inA => inA);
   };
+}
+
+/**
+ * The runs that are pieces of one edge, and where the middle of all of them
+ * together falls along each: keyed `ring:start`.
+ *
+ * A run starts at every crossing, so where something rises through a wall the
+ * wall's run is cut in two, and each half laid from its own middle moved every
+ * tooth on the wall at the instant of the cut. But a crossing is `born` of the
+ * two edges that made it, and the run leaving it carries on along one of them
+ * — the one whose other points lie on its line. Followed back through as many
+ * crossings as there are, pieces that come to the same edge and lie in one
+ * line running one way are one wall: named by one of them, and laid from the
+ * middle of them all, which is the middle the uncut wall had. So the pattern
+ * is the one it was on both halves, and only a tooth that no longer has room
+ * changes.
+ *
+ * Only straight runs, and only in a line: anything else is left as it was,
+ * each crossing starting a run of its own.
+ *
+ * A polygon a scope resolves to reads the same, because resolving writes down
+ * what each crossing was a crossing of (`Vertex.crossing`) and `identify`
+ * names it `born` of the same again.
+ */
+function linesOf(it: Drawn): Map<string, Line> {
+  const out = new Map<string, Line>();
+
+  let scale = 1;
+
+  for (const ring of it.shape) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+
+  // A ring at a time: a resolve makes a polygon of each outer ring, and the
+  // pieces of an edge two of them share would not be one edge after it.
+  it.shape.forEach((ring, r) => {
+    for (const [i, line] of linesIn(ring, it.ids[r], scale * 1e-7)) out.set(`${r}:${i}`, line);
+  });
+
+  return out;
+}
+
+/** One piece of a wall: the name its pattern is laid by, and where the wall's
+ * middle falls along the piece. */
+interface Line {
+  edge: Ident
+  middle: number
+}
+
+/** `linesOf`, for one ring: keyed by the index each piece starts at. */
+function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number): Map<number, Line> {
+  const out = new Map<number, Line>();
+
+  if (ring.length < 3) return out;
+
+  interface Piece {
+    from: number
+    at: Point
+    dx: number
+    dy: number
+    total: number
+  }
+
+  // Every point of the ring that lies on an edge: the one it leaves, and each
+  // crossing it made. Whatever kind of name that is — a resolved polygon's
+  // corner is a scope's tooth or sample, and the two have to read alike.
+  const on = new Map<Ident, Point[]>();
+  const put = (e: Ident, p: Point) => {
+    const had = on.get(e);
+
+    if (had === undefined) on.set(e, [p]);
+    else had.push(p);
+  };
+
+  names.forEach((id, i) => {
+    const what = madeOf(id);
+
+    if (what.kind === 'born') {
+      put(what.a, ring[i]);
+      put(what.b, ring[i]);
+    }
+    else {
+      put(id, ring[i]);
+    }
+  });
+
+  // The straight runs, each by the name of the point it leaves.
+  const pieces: Piece[] = [];
+  const leaving = new Map<Ident, Piece>();
+  const held = runsOf(ring, names);
+
+  for (let k = 0; k < held.length; k++) {
+    const from = held[k], to = held[(k + 1) % held.length];
+    const run = between(ring, from, to);
+    const lengths = walked(run);
+    const total = lengths[lengths.length - 1];
+    const a = run[0], b = run[run.length - 1];
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+
+    // Only a straight run is a piece of a line.
+    if (!(l > 0) || total - l > snap) continue;
+
+    const piece = { from, at: a, dx: (b.x - a.x) / l, dy: (b.y - a.y) / l, total };
+
+    pieces.push(piece);
+    leaving.set(names[from], piece);
+  }
+
+  const onLine = (at: Point, dx: number, dy: number) => (p: Point) => Math.abs((p.x - at.x) * dy - (p.y - at.y) * dx) <= snap;
+
+  // The line an edge lies on, where the ring says: along its piece, if it
+  // leaves a point here, or along the piece of an edge that carries on from
+  // it, or else through two of the points on it.
+  const known = new Map<Ident, (p: Point) => boolean>();
+
+  for (const [e, piece] of leaving) known.set(e, onLine(piece.at, piece.dx, piece.dy));
+
+  const lineOf = (e: Ident): ((p: Point) => boolean) | null => {
+    const had = known.get(e);
+
+    if (had !== undefined) return had;
+
+    const pts = on.get(e) ?? [];
+    const far = pts.find(p => Math.hypot(p.x - pts[0].x, p.y - pts[0].y) > snap);
+
+    if (far === undefined) return null;
+
+    const l = Math.hypot(far.x - pts[0].x, far.y - pts[0].y);
+
+    return onLine(pts[0], (far.x - pts[0].x) / l, (far.y - pts[0].y) / l);
+  };
+
+  // Which edge an edge carries on. The edge leaving a crossing is named by
+  // the crossing, and it runs on along one of the two edges that made it: the
+  // one whose points lie on its line. Which name a crossing gets depends on
+  // the order an arrangement met things in — a wall cut by one room and then
+  // another has its second crossing on the first crossing's edge, and cut by
+  // both at once on the wall's — so an edge is followed back to the one it
+  // carries on, and the one at the end of that is the wall. What is learnt of
+  // a line on the way is handed back, so an edge cut away with a single point
+  // left on it is still found on the line of the piece that carries it on.
+  const up = (e: Ident): Ident | null => {
+    const what = madeOf(e);
+
+    if (what.kind !== 'born') return null;
+
+    const line = lineOf(e);
+
+    if (line === null) return null;
+
+    // The crossing's own point is on both and says nothing. An edge with
+    // nothing else on it here lies on every line there is, so where the other
+    // has a point on this one, that is the one.
+    const self = leaving.get(e)?.at;
+    const others = (c: Ident) => (on.get(c) ?? []).filter(p => p !== self);
+    const fits = [what.a, what.b].filter(c => others(c).every(line));
+    const seen = fits.filter(c => others(c).length > 0);
+    const carries = fits.length > 1 ? seen : fits;
+
+    if (carries.length !== 1) return null;
+    if (!known.has(carries[0])) known.set(carries[0], line);
+
+    return carries[0];
+  };
+  const rootOf = (e: Ident): Ident => {
+    const seen = new Set<Ident>();
+    let at = e;
+
+    while (true) {
+      seen.add(at);
+
+      const next = up(at);
+
+      if (next === null || seen.has(next)) return at;
+
+      at = next;
+    }
+  };
+
+  // Twice, and the second time with every line the first learnt.
+  for (const p of pieces) rootOf(names[p.from]);
+
+  const groups = new Map<Ident, Piece[]>();
+
+  for (const p of pieces) {
+    const root = rootOf(names[p.from]);
+    const got = groups.get(root);
+
+    if (got === undefined) groups.set(root, [p]);
+    else got.push(p);
+  }
+
+  for (const [root, got] of groups) {
+    if (got.length < 2) continue;
+
+    // Named by a point that is there in any case: the edge's own start where
+    // it is, and otherwise the piece furthest back along the line. The edge
+    // itself may have been cut away, and a resolved polygon has no amount or
+    // options for a corner it does not have.
+    const { dx, dy } = got[0];
+    const along = (p: Piece) => p.at.x * dx + p.at.y * dy;
+    const head = got.find(p => names[p.from] === root)
+      ?? got.reduce((best, p) => (along(p) < along(best) ? p : best));
+    const line = onLine(head.at, dx, dy);
+    const mine = got.filter(p => p.dx * dx + p.dy * dy > 1 - 1e-9 && line(p.at));
+
+    if (mine.length < 2 || !mine.includes(head)) continue;
+
+    const from = (p: Piece) => (p.at.x - head.at.x) * dx + (p.at.y - head.at.y) * dy;
+    let lo = Infinity, hi = -Infinity;
+
+    for (const p of mine) {
+      lo = Math.min(lo, from(p));
+      hi = Math.max(hi, from(p) + p.total);
+    }
+
+    const middle = (lo + hi) / 2;
+
+    for (const p of mine) out.set(p.from, { edge: names[head.from], middle: middle - from(p) });
+  }
+
+  return out;
 }
 
 /** Where `step` points on from `from` sits in the ring. */
