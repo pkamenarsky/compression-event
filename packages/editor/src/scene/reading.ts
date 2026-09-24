@@ -608,18 +608,47 @@ function linedKey(l: Named['lines'][number]): (number | Point)[] {
  * coordinate to work out what a point is.
  */
 function folded(union: Drawn, here: Standing): Drawn {
-  const fx = here.effects;
-  const round = fx !== undefined && fx.facets.n > 0 && fx.bevel > 0;
-  const deform = fx?.deform;
+  return foldedBy(union.shape, union.ids, union.edges ?? null, here.depth, shapeKey(here)!);
+}
+
+/**
+ * `folded`, remembered by what it is asked: the union's points and names, the
+ * depth, and the rest of the scope's effects as `shapeKey` spells them, which
+ * is all of them the fold reads.
+ *
+ * A scope's fold is an arrangement or three, and the editor asks for the same
+ * one over and over — every frame a view pans, for every ghost on screen, and
+ * for every scope a gesture elsewhere leaves alone. Keyed by content, so a
+ * scope nothing touched answers from memory whoever is asking and whatever
+ * world it is asked in.
+ */
+const foldedBy = remembered((
+  shape: Shape,
+  ids: readonly (readonly number[])[],
+  edges: readonly (readonly number[])[] | null,
+  depth: number,
+  key: readonly number[],
+): Drawn => {
+  const union: Drawn = { shape, ids: ids as Ids, ...(edges === null ? {} : { edges: edges as Ids }) };
+  const [n, , , , , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
+  const round = n > 0 && bevel > 0;
 
   const steps: Effect[] = [
-    ...(here.depth === 0 ? [] : [offsetting(here.depth)]),
-    ...(round ? [rounding(fx!.bevel, sagittaOf(fx!.bevel, fx!.facets.n))] : []),
-    ...(deform === undefined ? [] : [deforming(deform.amplitude, deform.e)]),
+    ...(depth === 0 ? [] : [offsetting(depth)]),
+    ...(round ? [rounding(bevel, sagittaOf(bevel, n))] : []),
+    ...(spacing === undefined ? [] : [deforming(amplitude, {
+      spacing,
+      pattern: PATTERNS[pattern],
+      seed,
+      sides: DEFORM_SIDES[sides],
+      jitter,
+      falloff,
+      offset: offset === 1,
+    })]),
   ];
 
   return steps.reduce<Drawn>((it, fx) => fx(it), union);
-}
+});
 
 /**
  * The accuracy an arc of `bevel` drawn in `n` facets stands at: how far the
