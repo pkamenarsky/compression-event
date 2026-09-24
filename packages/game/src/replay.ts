@@ -24,7 +24,7 @@ export const BEAT_MS = 5000;
 
 /** How long one span takes to play, in milliseconds. Slow enough to watch a
  * room pinch in two. */
-export const REPLAY_MS = 4000;
+export const REPLAY_MS = 400;
 
 /** A curve through a walk: 0 to 1, both ends pinned. */
 export type Easing = (t: number) => number;
