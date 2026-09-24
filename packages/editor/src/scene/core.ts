@@ -107,11 +107,11 @@ import {
 } from '../types';
 import { outline } from '../worldset';
 import type { Drawn, Ident, Ids } from '../ids';
-import { identify, on } from '../ids';
+import { combineIdentified, identify, on } from '../ids';
 import type { Amount as Given, Effect } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
-import { deforming, eroding as offsetting, rounding, sagitta } from '../effect';
+import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
 import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
@@ -1262,20 +1262,25 @@ function folding(
   was: readonly number[] | null,
 ): Drawn {
   const [facets, bevels, , deform] = effects as [Memo[], number[], number[], Memo[]];
-  const shape = simplify(sliced(source, rings));
-  const ids = identify(shape, member, was);
+  // Named as it was drawn, point for point with `source`, and the names
+  // carried through the clean-up rather than minted after it: `simplify`
+  // re-walks a ring and drops what does not turn, and names read off its walk
+  // would say nothing about which of the source's corners a point is. The
+  // amounts are written against the source's numbering, and so are `was`'s
+  // samples, so that is the numbering the names have to come of.
+  const cut = sliced(source, rings) as Cut;
+  const names = identify(cut, member, was);
+  const index = new Map(names.flat().map((id, i) => [id, i]));
+  const { shape, ids } = combineIdentified({ shape: cut, ids: names }, { shape: [], ids: [] }, inA => inA);
 
-  // The names the amounts are written against: the ring as it was drawn, which
-  // is the ring `source` is and the ring `identify` has just named. A shape the
-  // arrangement re-walked would have its corners in another order, so this is
-  // read off the source's own numbering and not off the walk's.
+  // The names the amounts are written against, by where each name's corner
+  // is in the source.
   const at = (of: readonly number[] | null, whole: number): Given => {
     if (of === null || of.length === 0) return whole;
 
     const out = new Map<Ident, number>();
-    const starts = ringStarts(shape);
 
-    shape.forEach((ring, r) => ring.forEach((_p, i) => out.set(ids[r][i], of[starts[r] + i] ?? whole)));
+    for (const [id, i] of index) out.set(id, of[i] ?? whole);
 
     return out;
   };
@@ -1313,16 +1318,12 @@ function folding(
   const mine = new Map<Ident, Effecting | null>();
 
   if (deform.length !== 0 && own.length > 0) {
-    const starts = ringStarts(shape);
-
-    shape.forEach((ring, r) => ring.forEach((_p, i) => {
-      mine.set(ids[r][i], effectingFrom(own, (starts[r] + i) * 7));
-    }));
+    for (const [id, i] of index) mine.set(id, effectingFrom(own, i * 7));
   }
 
   const steps: Effect[] = [
     offsetting(at(depths, erosion)),
-    rounding(bevel, sagitta(bevel, facets.length === 0 ? 0 : facetsFrom(facets[0]).n)),
+    roundingOf(bevel, facets.map(facetsFrom)),
     ...(whole === null ? [] : [deforming(amplitude, (id: Ident) => mine.get(id) ?? whole)]),
   ];
 
@@ -1333,6 +1334,19 @@ function folding(
  * off, a count being one number for the whole polygon. */
 function most(by: Given): number {
   return typeof by === 'number' ? by : Math.max(0, ...by.values());
+}
+
+/**
+ * The round a polygon's facets ask for: at the accuracy their count stood at,
+ * and — part way across a span whose count changes — laid at both ends'
+ * counts and blended, so the ring keeps its points and each end is the
+ * editor's. One count for the ring, the finest any corner has, a round being
+ * the ring's. See `roundingAcross`.
+ */
+function roundingOf(bevel: number, facets: readonly Facets[]): Effect {
+  const f = facets.reduce<Facets>((best, g) => (g.n > best.n ? g : best), SQUARE);
+
+  return roundingAcross(bevel, sagitta(bevel, f.from), sagitta(bevel, f.to), f.at);
 }
 
 /** Where each of a polygon's features lands: the construction `project`

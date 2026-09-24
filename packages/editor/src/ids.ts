@@ -38,6 +38,7 @@
 
 import type { Cut, Op, Shape, SourceRef, Tag } from './geometry';
 import { combineTagged } from './geometry';
+import { holding } from './hold';
 
 declare const ident: unique symbol;
 
@@ -216,8 +217,6 @@ export function combineIdentified(
   op: Op,
   inert?: (ring: number, index: number) => boolean,
 ): Drawn {
-  const tagged = combineTagged(a.shape, b.shape, op, undefined, inert);
-
   const at = (ref: SourceRef): Ident => {
     const got = (ref.shape === 0 ? a : b).ids[ref.ring]?.[ref.index];
 
@@ -233,6 +232,11 @@ export function combineIdentified(
 
     return it.edges === undefined ? at(ref) : it.edges[ref.ring][ref.index];
   };
+
+  // Held, everything a construction laid and nothing an arrangement made: a
+  // crossing turns by construction and needs no holding. See `hold.ts`.
+  const keeps = holding() ? (tag: Tag) => tag.kind === 'vertex' && madeOf(at(tag.at)).kind !== 'born' : undefined;
+  const tagged = combineTagged(a.shape, b.shape, op, undefined, inert, keeps);
 
   const named = (tag: Tag): Ident =>
     (tag.kind === 'vertex' ? at(tag.at) : born(leaving(tag.a), leaving(tag.b)));

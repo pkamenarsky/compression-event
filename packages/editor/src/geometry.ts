@@ -1817,6 +1817,8 @@ export function combineTagged(
   /** Edges of `b` that bound its fill and are never part of the answer: they
    * are left out of the cut and still read by the fill. See `eroding`. */
   inert?: (ring: number, index: number) => boolean,
+  /** Points kept although they do not turn: see `hold.ts`. */
+  keeps?: (tag: Tag) => boolean,
 ): TaggedShape {
   const cutters = segments(b, 1);
   const raw = [...segments(a, 0), ...(inert === undefined ? cutters : cutters.filter(s => !inert(s.edge.ring, s.edge.index)))];
@@ -1834,6 +1836,7 @@ export function combineTagged(
       snap,
     ),
     snap,
+    keeps,
   );
 }
 
@@ -2790,7 +2793,7 @@ function edge(off: number): number {
  * it traces each face separately instead of driving straight through the
  * crossing and coming back out as one self-intersecting loop.
  */
-function chain(segs: Seg[], snap: number): TaggedShape {
+function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): TaggedShape {
   const weld = welder(snap);
   const nodes = weld.at;
   const tags: Tag[] = [];
@@ -2835,7 +2838,7 @@ function chain(segs: Seg[], snap: number): TaggedShape {
     }
 
     if (ring.length >= 3 && Math.abs(signedArea2(ring)) > snap * snap) {
-      const kept = cornersOnly(ring, ringTag, snap);
+      const kept = cornersOnly(ring, ringTag, snap, keeps);
 
       if (kept !== null) {
         rings.push(kept.ring);
@@ -2876,6 +2879,7 @@ function cornersOnly(
   ring: Ring,
   tags: Tag[],
   snap: number,
+  keeps?: (tag: Tag) => boolean,
 ): { ring: Ring, tags: Tag[] } | null {
   const n = ring.length;
 
@@ -2894,7 +2898,7 @@ function cornersOnly(
   const keep: number[] = [];
 
   for (let i = 0; i < n; i++) {
-    if (turns(i)) keep.push(i);
+    if (turns(i) || keeps?.(tags[i]) === true) keep.push(i);
   }
 
   if (keep.length === n) return { ring, tags };

@@ -22,6 +22,7 @@ import type { Effecting, Shape, Sweptfrom } from './geometry';
 import { OpSubtract, OpUnion, along, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
 import { combineIdentified, keyOf, madeOf, on, shows, tooth } from './ids';
+import { holding } from './hold';
 
 /** A shape to a shape, carrying identity. */
 export type Effect = (it: Drawn) => Drawn
@@ -396,6 +397,101 @@ export function rounding(by: Amount, eps: number): Effect {
 }
 
 /**
+ * A round part way across a span whose accuracy changes: laid at `near` and
+ * at `far`, and `at` of the way from the one layout to the other.
+ *
+ * The bake needs a ring as long at both ends of a span as in the middle of
+ * it, and the editor's outline at each end. A round laid at the finer of the
+ * two accuracies has the points; laid at the coarser one it has the outline.
+ * So the finer layout's points are each put where the same fraction of the
+ * way along the same run of the coarser one falls, and moved from there to
+ * where the finer layout has them. At the coarse end every point the fine
+ * layout has over lies on a facet of the coarse one — the outline the editor
+ * draws there, with points on it that do not turn — and from there they come
+ * out as the arc gains its facets.
+ *
+ * A run is found in the other layout by the names at its two ends, which a
+ * round gives the same whatever its accuracy: they are where the arc leaves
+ * one wall and meets the next. Where the two layouts do not agree about their
+ * runs there is nothing to blend and the finer one is taken whole.
+ *
+ * Linear in the span where `at` is the bevel-weighted fraction the bake hands
+ * over: each layout is its bevel times something of the corner, so the blend
+ * is the lerp of the two ends.
+ */
+export function roundingAcross(by: Amount, near: number, far: number, at: number): Effect {
+  if (near === far) return rounding(by, near);
+
+  return it => {
+    const a = rounding(by, near)(it), b = rounding(by, far)(it);
+    const fineIsFar = far < near;
+    const fine = fineIsFar ? b : a, coarse = fineIsFar ? a : b;
+    const w = fineIsFar ? at : 1 - at;
+
+    if (fine.shape.length !== coarse.shape.length) return fine;
+
+    const shape: Shape = [];
+    const ids: Ids = [];
+
+    fine.shape.forEach((ring, r) => {
+      const names = fine.ids[r];
+      const other = coarse.shape[r], theirs = coarse.ids[r];
+      const held = anchorsOf(ring, names);
+      const where = new Map(theirs.map((id, i) => [id, i]));
+
+      if (ring.length < 3 || held.length === 0 || held.some(i => !where.has(names[i]))) {
+        shape.push(ring);
+        ids.push(names);
+
+        return;
+      }
+
+      const out: Point[] = [];
+      const said: Ident[] = [];
+
+      for (let k = 0; k < held.length; k++) {
+        const from = held[k], to = held[(k + 1) % held.length];
+        const run = between(ring, from, to);
+        const along = between(other, where.get(names[from])!, where.get(names[to])!);
+
+        // The least count both layouts' steps divide, so that every point of
+        // either is a point of the blend: miss one and that end cuts across
+        // it, and is not the editor's there.
+        const nf = run.length - 1, nc = along.length - 1;
+        const n = nf * nc / gcd(nf, nc);
+        const base = family(names[from]);
+        const at = (poly: readonly Point[], m: number, j: number): Point => {
+          const c = j * m / n, i = Math.floor(c), u = c - i;
+
+          return i >= m ? poly[m] : { x: poly[i].x + (poly[i + 1].x - poly[i].x) * u, y: poly[i].y + (poly[i + 1].y - poly[i].y) * u };
+        };
+
+        out.push(ring[from]);
+        said.push(names[from]);
+
+        for (let j = 1; j < n; j++) {
+          const q = at(run, nf, j), p = at(along, nc, j);
+
+          out.push({ x: p.x + (q.x - p.x) * w, y: p.y + (q.y - p.y) * w });
+          said.push(n === nf ? names[(from + j) % ring.length] : on(base, j / n));
+        }
+      }
+
+      shape.push(out);
+      ids.push(said);
+    });
+
+    return { shape, ids };
+  };
+}
+
+function gcd(a: number, b: number): number {
+  while (b !== 0) [a, b] = [b, a % b];
+
+  return a;
+}
+
+/**
  * The opening of one polygon, never rounded out of existence.
  *
  * Taken literally an opening at a radius wider than the polygon is nothing at
@@ -483,7 +579,7 @@ export function resampled(it: Drawn, eps: number): Drawn {
 
   it.shape.forEach((ring, r) => {
     const names = it.ids[r];
-    const held = anchorsOf(names);
+    const held = anchorsOf(ring, names);
 
     if (ring.length < 3 || held.length === 0) {
       shape.push(ring);
@@ -519,6 +615,34 @@ export function resampled(it: Drawn, eps: number): Drawn {
 }
 
 /**
+ * Which points of a ring lie flat, where the ring is held: see `hold.ts`.
+ *
+ * A held point that does not turn is one a still does not have at all — the
+ * arrangement would have dropped it — so it may neither start a run nor hold
+ * one in place, or a held fold lays its teeth and its samples from a point the
+ * still's does not and the two draw different outlines. Nothing is flat where
+ * nothing is held, so a still reads exactly as it did.
+ */
+function flatAt(ring: readonly Point[]): (i: number) => boolean {
+  if (!holding()) return () => false;
+
+  let scale = 1;
+
+  for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = scale * 1e-9;
+  const n = ring.length;
+
+  return i => {
+    const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    return reach > 0 && Math.abs(ux * vy - uy * vx) / reach <= snap;
+  };
+}
+
+/**
  * Which points of a ring the resample may not move: the ones a construction
  * turned the boundary at.
  *
@@ -536,8 +660,10 @@ export function resampled(it: Drawn, eps: number): Drawn {
  * says only how the walk went. So it starts at the least of its names, which
  * is the same point whatever the walk did.
  */
-function anchorsOf(names: readonly Ident[]): number[] {
-  return startedAt(names, id => !loose(id));
+function anchorsOf(ring: readonly Point[], names: readonly Ident[]): number[] {
+  const flat = flatAt(ring);
+
+  return startedAt(names, (id, i) => !loose(id) && !flat(i));
 }
 
 /**
@@ -578,7 +704,8 @@ function anchorsOf(names: readonly Ident[]): number[] {
  * tied on it short of a shape built to tie them.
  */
 function runsOf(ring: readonly Point[], names: readonly Ident[]): number[] {
-  const turns = names.flatMap((id, i) => (madeOf(id).kind !== 'on' ? [i] : []));
+  const flat = flatAt(ring);
+  const turns = names.flatMap((id, i) => (madeOf(id).kind !== 'on' && !flat(i) ? [i] : []));
 
   if (turns.length > 0) return turns;
 
@@ -594,8 +721,8 @@ const LEAD = { x: -Math.cos(0.3183), y: -Math.sin(0.3183) };
 /** The indices `holds` picks out, or — where it picks out none — the one least
  * name, so that a ring with no feature on it still starts somewhere that is
  * not an index. */
-function startedAt(names: readonly Ident[], holds: (id: Ident) => boolean): number[] {
-  const held = names.flatMap((id, i) => (holds(id) ? [i] : []));
+function startedAt(names: readonly Ident[], holds: (id: Ident, i: number) => boolean): number[] {
+  const held = names.flatMap((id, i) => (holds(id, i) ? [i] : []));
 
   if (held.length > 0) return held;
 
@@ -773,7 +900,12 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
   const options = typeof e === 'function' ? e : () => e;
 
   return it => {
-    if (!asks(by)) return it;
+    // Held, a deform at nought still lays its teeth, flat: the bake needs
+    // them there at the end a pattern comes up from, so the ring has the same
+    // points at every instant of the span. See `hold.ts`.
+    const flat = holding();
+
+    if (!asks(by) && !flat) return it;
 
     const shape: Shape = [];
     const ids: Ids = [];
@@ -800,7 +932,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
         const total = lengths[lengths.length - 1];
         const how = options(whose);
         const high = amountOf(by, whose);
-        const lay = how === null || !(how.spacing > 0) || high === 0
+        const lay = how === null || !(how.spacing > 0) || (high === 0 && !flat)
           ? { along: [], across: [], teeth: [], room: [] }
           : patternRun(how, keyOf(whose), high, total);
 

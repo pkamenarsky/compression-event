@@ -1,4 +1,5 @@
 import { Point } from '@ce/game/world';
+import { holding } from './hold';
 
 /** What a remembered function may be asked about: plain geometry, which is
  * what makes its text a faithful name for it. */
@@ -29,7 +30,7 @@ export function remembered<A extends Key[], R>(f: (...args: A) => R): (...args: 
   const held = new Map<string, R>();
 
   return (...args) => {
-    const key = JSON.stringify(args);
+    const key = (holding() ? 'held:' : '') + JSON.stringify(args);
     const known = held.get(key);
 
     if (known !== undefined) {

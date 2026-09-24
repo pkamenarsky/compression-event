@@ -412,7 +412,7 @@ const arbLoose: fc.Arbitrary<Spec[]> = fc
 
 /** Slow properties over arrangements: enough to find a break, not so many that
  * nobody runs them. */
-const RUNS = { numRuns: 60 };
+const RUNS = { numRuns: 60, ...(process.env.LAW_SEED === undefined ? {} : { seed: Number(process.env.LAW_SEED), path: process.env.LAW_PATH, endOnFailure: true }) };
 
 /**
  * Long enough that a property which finds nothing is allowed to say so.

@@ -41,7 +41,7 @@ import { combineIdentified, on } from '../ids';
 import type { Effect } from '../effect';
 // `eroding` is taken here: the core's is the question of whether a scope
 // erodes at all, and this is the effect that does it.
-import { deforming, eroding as offsetting, rounding, sagitta } from '../effect';
+import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
 import {
   GroupId,
   Id,
@@ -572,12 +572,14 @@ const foldedBy = remembered((
   key: readonly number[],
 ): Drawn => {
   const union: Drawn = { shape, ids: ids as Ids, ...(edges === null ? {} : { edges: edges as Ids }) };
-  const [n, , , , , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
+  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
   const round = n > 0 && bevel > 0;
 
   const steps: Effect[] = [
     ...(depth === 0 ? [] : [offsetting(depth)]),
-    ...(round ? [rounding(bevel, sagitta(bevel, n))] : []),
+    // Across a span whose count changes, laid at both ends' and blended: see
+    // `roundingAcross`.
+    ...(round ? [roundingAcross(bevel, sagitta(bevel, from), sagitta(bevel, to), at)] : []),
     ...(spacing === undefined ? [] : [deforming(amplitude, {
       spacing,
       pattern: PATTERNS[pattern],

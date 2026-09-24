@@ -2260,8 +2260,10 @@ describe('effects', () => {
 
   test('a bevel growing finer keeps its ring, draws the editor\'s outline at both ends, and fades its new points in', () => {
     // At a precision of `inSegments(4, 20)`, ten deep is three segments and
-    // forty is six: the span lays six at both ends, three of them on facets
-    // at the near one.
+    // forty is six. The round's resample lays those as four steps and six,
+    // and the span lays each arc in twelve, which both divide: every point of
+    // either end's layout is a point of the span's. Four of the eleven turn at
+    // the far end and lie on a facet at the near one.
     const { world, id } = room({ round: inSegments(4, 20) });
     const w = wrote(wrote(world, 0, id, round(10)), 1, id, round(30));
     const span = run(bakeSpan(w, 0));
@@ -2278,7 +2280,7 @@ describe('effects', () => {
     const s = span.tracks[0].stretches[0];
     const later = s.opacity[1].flat();
 
-    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0)).toHaveLength(4 * 3);
+    expect(s.opacity[0].flat().filter((v, k) => v === 0 && later[k] > 0)).toHaveLength(4 * 4);
   });
 
   test('a turning room at a fixed bevel costs no stretches', () => {

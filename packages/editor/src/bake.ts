@@ -153,7 +153,6 @@ import {
   Facets,
   Fade,
   SEEDING,
-  facetFades,
   facetsOf,
   keeping,
   mitred,
@@ -179,7 +178,6 @@ import {
   effectedOf,
   facing,
   groupFrame,
-  imagesOf,
   keyAt,
   order,
   outermostSlot,
@@ -225,6 +223,8 @@ import {
 } from './types';
 import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
+import { held } from './hold';
+import type { Ident, Ids } from './ids';
 
 // -----------------------------------------------------------------------------
 // What comes out
@@ -831,7 +831,6 @@ function spanning(was: Resolved, now: Resolved): Spanned {
   const n = corners.length;
   const ends = [here, there] as const;
   const ends2 = [was.erosion, now.erosion] as const;
-  const straight = [straightOf(was), straightOf(now)] as const;
   const local: [Ring, Ring] = [
     corners.map(c => here.get(c.id) ?? ORIGIN),
     corners.map(c => there.get(c.id) ?? ORIGIN),
@@ -907,10 +906,7 @@ function spanning(was: Resolved, now: Resolved): Spanned {
         ? fraction(other.get(corners[before].id)!, other.get(corners[after].id)!, other.get(c.id)!)
         : betweenOf(rings, n, before, i) / betweenOf(rings, n, before, after);
 
-      // On the edge as it is drawn there: between the two corners' arcs, and
-      // not on a stretch one of them has rounded away, where it would clamp
-      // that arc short of the one the editor draws.
-      const [lo, hi] = straight[side](corners[before].id, corners[after].id, from, to);
+      const lo = from, hi = to;
 
       local[side][i] = between2(lo, hi, c.root === undefined && [was, now][side].effected ? onDrawn(i, side, lo, hi, taste) : taste);
 
@@ -974,29 +970,6 @@ function merged(a: readonly Vertex[], b: readonly Vertex[], points: readonly Ver
   }
 
   return out;
-}
-
-/**
- * Where the straight part of an edge of the polygon as drawn runs, in its own
- * frame: from the end of the first corner's arc to the start of the second's,
- * where a round draws them before the erosion. The whole of it for a polygon
- * that is not rounded, and for a corner that is not.
- */
-function straightOf(it: Resolved): (a: VertexId, b: VertexId, from: Point, to: Point) => [Point, Point] {
-  const im = it.effected ? imagesOf(it) : null;
-  const drawn = im?.drawn;
-
-  if (drawn === undefined) return (_a, _b, from, to) => [from, to];
-
-  const index = new Map(it.corners.map((c, i) => [c.id, i]));
-
-  return (a, b, from, to) => {
-    const first = drawn[index.get(a)!], second = drawn[index.get(b)!];
-
-    if (first === undefined || second === undefined || first.length === 0 || second.length === 0) return [from, to];
-
-    return [unplace(it.frame, first[first.length - 1]), unplace(it.frame, second[0])];
-  };
 }
 
 /** What `Resolved.depths` says, by corner id, and nothing where the polygon is
@@ -1499,27 +1472,9 @@ function invented(
   const end = t === 0 ? 0 : t === 1 ? 1 : null;
   const rings = ringsOf(m.corners);
 
-  if (m.effected !== null) {
-    return [
-      ...(end === null ? [] : slots(m, { ...at, rings }).flatMap(s => (s.dead[end] ? s.points : []))),
-      ...(end === null ? [] : facetsFading({ ...at, rings }).filter(f => f.v === 0).map(f => f.p)),
-
-      // And its teeth lying flat — a pattern still at nought amplitude, or a
-      // tooth at a run's end with no room left. They do not turn, so the
-      // arrangement drops them unless asked, and the ring would be shorter
-      // wherever one of them was than it is where they all stand.
-      //
-      // At every instant, not just at the ends, which is what tells them from
-      // an invented corner: a corner is flat at one end of the span and out of
-      // the wall ever after, but a wall growing over a span takes its teeth
-      // back one at a time, and each is flat until the instant it turns.
-      //
-      // Asked for as fades rather than as points: a pile of them stands on
-      // one corner, where the arrangement gives the pile one point and where
-      // it lies says nothing about which wall each came off. See `Fade.to`.
-      ...(imagesOf({ ...at, rings })?.kept ?? []),
-    ];
-  }
+  // Its flat points are held by name through every arrangement of the fold
+  // instead: see `hold.ts`.
+  if (m.effected !== null) return [];
 
   if (end === null) return [];
 
@@ -1534,33 +1489,6 @@ function invented(
 
     if (p !== null) out.push(p);
   }
-
-  return out;
-}
-
-/**
- * A polygon with effects, slot by slot: each corner's arc and each edge's
- * deform points where the projection has them at `t`, and whether the slot is
- * flat at either end.
- *
- * A flat corner's arc is a short run along its wall, never one point — see
- * `shaped` — so at an end where a slot is flat its points lie on an edge of
- * the projection, `keeping` takes every one of them, and the ring is as long
- * at the end as it is in between.
- */
-function slots(m: Moving, at: Omit<Resolved, 'shape' | 'ids'>): { points: Point[], dead: [boolean, boolean] }[] {
-  const im = imagesOf(at);
-
-  if (im === null) return [];
-
-  const out: { points: Point[], dead: [boolean, boolean] }[] = [];
-
-  m.corners.forEach((_c, i) => {
-    const run = im.corners[i];
-    const dead: [boolean, boolean] = [m.dead[0][i], m.dead[1][i]];
-
-    if (run !== null && (dead[0] || dead[1])) out.push({ points: run, dead });
-  });
 
   return out;
 }
@@ -1647,48 +1575,106 @@ function fading(m: Moving, it: Resolved, t: number): number[][] | null {
 function fadingPoints(m: Moving, it: Resolved, t: number): Fade[] {
   return m.effected === null
     ? fadingCorners(m, it, t)
-    : [...fadingSlots(m, it, t), ...facetsFading(it), ...teethFading(it)];
+    : fadingNamed(m, it, t);
 }
 
 /**
- * Its teeth lying flat at this instant, each with nothing standing on it.
+ * `fadingPoints` for a polygon with effects: every point of its fold that lies
+ * flat at one end of the span or the other, by name, as solid as the span has
+ * got from the one end to the other.
  *
- * A tooth at nought amplitude, or at a run's end with no room left, is a
- * point of the ring that does not turn — so the wall stands no vertical there
- * and `faded` reads it as nothing anyway. What this adds is the *reason*:
- * without a fade behind it, a point that turns at one end of a stretch and
- * not at the other is a corner `explained` cannot account for, and the bake
- * cuts an event rather than letting the line fade in. A deform coming up out
- * of nothing is the whole span of that, and it was pinning two jumps at the
- * first instant and cutting the span into twelve.
- *
- * Only where they are flat, which is an end of the span: `explained` asks
- * only that one of a stretch's two ends knows about the point, and in between
- * the teeth turn and need no excuse. The same points `invented` keeps, for
- * the same reason and at the same instants. See `FoldShaped.fades`.
+ * Flat is not turning: an arc's samples on a coarser facet, a tooth at nought
+ * or clamped at a run's end, a corner arriving. Each is held through the fold
+ * (see `hold.ts`), so the ring has it at every instant, and its name is the
+ * same at every instant — which is what lets it be found at both ends and
+ * asked about in between, where it turns and needs no finding by position.
  */
-function teethFading(it: Omit<Resolved, 'shape' | 'ids'>): Fade[] {
-  const flat = imagesOf(it)?.flat;
-
-  return flat === undefined ? [] : flat.map(p => ({ p, v: 0 }));
+function fadingNamed(m: Moving, it: Resolved, t: number): Fade[] {
+  return namedFades(it.shape, it.ids, flatAtEnds(m), t);
 }
 
-/** Where its arcs' points are on their facets at one end of the span or the
- * other, and fading. See `facetFades`. */
-function facetsFading(it: Omit<Resolved, 'shape' | 'ids'>): Fade[] {
-  const e = it.effected ?? null;
+/** The points of `shape` flat or missing at an end, by name, each as solid as
+ * the span has got from the one end to the other. */
+function namedFades(shape: Shape, ids: Ids, [near, far]: [Ends, Ends], t: number): Fade[] {
+  const out: Fade[] = [];
 
-  if (e === null) return [];
+  ids.forEach((ring, r) => ring.forEach((id, i) => {
+    const a = near.flat.has(id) || !near.all.has(id), b = far.flat.has(id) || !far.all.has(id);
 
-  const faded = (f: Facets) => f.n > 0 && (f.from !== f.to || f.from < f.n);
+    if (a || b) out.push({ p: shape[r][i], v: mix(a ? 0 : 1, b ? 0 : 1, t) });
+  }));
 
-  if (!e.facets.some(faded)) return [];
+  return out;
+}
 
-  const im = imagesOf(it);
+/** Each scope side's names at both ends of the span, for the same items. */
+const sideEndsOf = new WeakMap<readonly Moving[], Map<Id, [Ends, Ends]>>();
 
-  if (im === null) return [];
+function sideEnds(cast: Cast, items: Moving[]): Map<Id, [Ends, Ends]> {
+  let known = sideEndsOf.get(items);
 
-  return im.corners.flatMap((run, i) => (run === null ? [] : facetFades(run, e.facets[i])));
+  if (known === undefined) {
+    const out = new Map<Id, [Ends, Ends]>();
+    const [near, far] = held(() => [0, 1].map(t => folded(cast, world1(items, t), t)));
+    const theirs = new Map(far.map(it => [it.id, it]));
+
+    for (const it of near) {
+      const other = theirs.get(it.id);
+
+      if (it.ids === undefined || other?.ids === undefined) continue;
+
+      out.set(it.id, [flatIn(it.shape, it.ids), flatIn(other.shape, other.ids)]);
+    }
+
+    sideEndsOf.set(items, known = out);
+  }
+
+  return known;
+}
+
+/**
+ * The names at each end of a polygon's span, and which of them lie flat
+ * there. A name one end does not have at all is as flat there as one lying
+ * on a wall: a tooth a growing wall gains arrives out of nothing, and its
+ * vertical comes up with it rather than standing all at once.
+ */
+interface Ends {
+  all: Set<Ident>
+  flat: Set<Ident>
+}
+
+const flatEnds = new WeakMap<Moving, [Ends, Ends]>();
+
+function flatAtEnds(m: Moving): [Ends, Ends] {
+  let known = flatEnds.get(m);
+
+  if (known === undefined) {
+    known = held(() => [0, 1].map(t => { const it = world1([m], t)[0]; return flatIn(it.shape, it.ids); }) as [Ends, Ends]);
+    flatEnds.set(m, known);
+  }
+
+  return known;
+}
+
+/** A fold's names, and the ones it does not turn at, to the arrangement's
+ * own tolerance. */
+function flatIn(shape: Shape, ids: Ids): Ends {
+  let scale = 1;
+
+  for (const ring of shape) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = scale * 1e-9;
+  const out = new Set<Ident>();
+
+  shape.forEach((ring, r) => ring.forEach((b, i) => {
+    const a = ring[(i - 1 + ring.length) % ring.length], c = ring[(i + 1) % ring.length];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    if (reach === 0 || Math.abs(ux * vy - uy * vx) / reach <= snap) out.add(ids[r][i]);
+  }));
+
+  return { all: new Set(ids.flat()), flat: out };
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */
@@ -1757,16 +1743,6 @@ function paintedOn(shape: Shape, points: readonly { p: Point, v: number }[]): nu
   return any ? out : null;
 }
 
-/** `fadingPoints` for a polygon with a round, slot by slot: every point of a
- * slot flat at one end fades over the span. */
-function fadingSlots(m: Moving, it: Resolved, t: number): Fade[] {
-  return slots(m, it).flatMap(slot => {
-    const v = mix(slot.dead[0] ? 0 : 1, slot.dead[1] ? 0 : 1, t);
-
-    return slot.points.map(p => ({ p, v }));
-  });
-}
-
 /**
  * How solid each point of a scope's side is at `t`: its polygons' fading,
  * carried onto it. A polygon's point is moved in by the depth of every scope
@@ -1781,6 +1757,9 @@ function groupFading(
   moving: ReadonlyMap<Id, Moving>,
   was: ReadonlyMap<Id, Resolved>,
   t: number,
+  /** The side's names at each end of the span: its own fold's flat points
+   * fade by them as a polygon's do. See `fadingNamed`. */
+  ends: [Ends, Ends] | undefined,
 ): number[][] | null {
   const group = sidedWith(side.id) ?? side.id;
   const world = cast.world;
@@ -1789,7 +1768,7 @@ function groupFading(
 
   const set = setOf(side.kind);
 
-  const points: Fade[] = [...(side.faded ?? [])];
+  const points: Fade[] = ends === undefined || side.ids === undefined ? [] : namedFades(side.shape, side.ids, ends, t);
 
   for (const id of within(world, group)) {
     const m = moving.get(id), it = was.get(id);
@@ -2212,7 +2191,12 @@ function everything(at: readonly Contributed[]): Frame {
     .sort((p, q) => p.id - q.id);
 }
 
+/** Held, so the ring has the same points at every instant: see `hold.ts`. */
 function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
+  return held(() => evaluating(cast, items, t, only));
+}
+
+function evaluating(cast: Cast, items: Moving[], t: number, only: Id | null): Taken {
   const resolved = world1(items, t);
   const at = folded(cast, resolved, t);
 
@@ -2230,7 +2214,7 @@ function evaluate(cast: Cast, items: Moving[], t: number, only: Id | null): Take
     // Only a polygon has source corners, and only they can be invented; a
     // scope's side fades where its polygons' do.
     const m = moving.get(it.id), mine = was.get(it.id);
-    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t) : fading(m, mine, t);
+    const how = m === undefined || mine === undefined ? groupFading(cast, it, moving, was, t, sideEnds(cast, items).get(it.id)) : fading(m, mine, t);
 
     if (how !== null) fade.set(it.id, how);
   }
