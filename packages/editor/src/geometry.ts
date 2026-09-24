@@ -778,12 +778,42 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
     emit([a, b, c, d], from, along, side);
   };
 
+  // Walls whose quads fold, gathered into runs. Past the radius of an arc every
+  // facet's quad folds — its two moved corners have passed through the arc's
+  // middle and come out the far side the wrong way round — and every one of
+  // them crosses every other, which is quadratic in the facets for ground that
+  // is one piece. A run of them goes in as that piece. See `folds`.
+  const whole = folds(ring, moved, depth);
+
+  for (const run of whole) {
+    const walls: Sweptfrom[] = [];
+    const piece: Point[] = [];
+    const from: Sweptfrom[] = [];
+
+    for (let k = run.from; k <= run.to + 1; k++) {
+      piece.push(ring[k % n]);
+      from.push({ ring: r, index: k % n });
+      walls.push({ ring: r, index: k % n });
+    }
+
+    for (let k = run.from; k <= run.to + 1; k++) {
+      piece.push(moved[k % n]);
+      from.push({ ring: r, index: k % n });
+      walls.push({ ring: r, index: k % n });
+    }
+
+    emit(piece, from, walls, run.side);
+  }
+
+  const skipped = new Set(whole.flatMap(run => Array.from({ length: run.to - run.from + 1 }, (_, k) => (run.from + k) % n)));
+
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
     const a = ring[i], b = ring[j];
     const da = depth(i), db = depth(j);
 
     if (da === 0 && db === 0) continue;
+    if (skipped.has(i)) continue;
 
     const near: Sweptfrom = { ring: r, index: i };
     const far: Sweptfrom = { ring: r, index: j };
@@ -817,6 +847,109 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
       side,
     );
   }
+}
+
+/** A run of walls `from` to `to` inclusive, all folding, swept as one piece. */
+interface Run {
+  from: number
+  to: number
+  side: number
+}
+
+/**
+ * The runs of walls whose quads fold, where the piece that covers them is one
+ * simple ring: the walls where they stood, then where their corners went, in
+ * the same order. The moved corners of an arc taken past its radius lie on a
+ * small arc through its far side, and the ring round both holds every folded
+ * quad of the run and the ground between them.
+ *
+ * Only where it is plainly that: two walls at least, one depth along all of
+ * them, no corner turning as much as a right angle's half, and a ring that is
+ * convex. Anything else keeps its quads.
+ */
+function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] {
+  const n = ring.length;
+  const folded = (i: number): boolean => {
+    const j = (i + 1) % n;
+    const da = depth(i), db = depth(j);
+
+    if (da === 0 || da !== db) return false;
+
+    const a = ring[i], b = ring[j], c = moved[j], d = moved[i];
+
+    return crossing(a, b, c, d) || crossing(b, c, d, a);
+  };
+
+  const out: Run[] = [];
+  let i = 0;
+
+  while (i < n) {
+    if (!folded(i)) {
+      i++;
+      continue;
+    }
+
+    let to = i;
+
+    while (to + 1 < n && folded(to + 1) && depth(to + 1) === depth(i)) to++;
+
+    if (to > i && plain(ring, moved, i, to)) out.push({ from: i, to, side: depth(i) });
+
+    i = to + 1;
+  }
+
+  return out;
+}
+
+/**
+ * Whether the run's ring is convex. Every folded quad of the run is a triangle
+ * or two on the ring's own points, so a convex ring holds all of them — and
+ * that containment is the whole of what makes the swap sound. Short of convex,
+ * a join where the walls give way to where they went can bend in and leave a
+ * corner of some quad outside it, which is a sliver of ground the erosion
+ * should have taken and did not.
+ */
+function plain(ring: Ring, moved: Point[], from: number, to: number): boolean {
+  const n = ring.length;
+  const piece: Point[] = [];
+
+  for (let k = from; k <= to + 1; k++) piece.push(ring[k % n]);
+  for (let k = from; k <= to + 1; k++) piece.push(moved[k % n]);
+
+  // Facets of a curve, and nothing sharper. A corner that turns hard has its
+  // mitre held at a limit, so where it went is not where its two walls' moved
+  // lines meet, and the ring round the run can then take ground none of its
+  // quads did — a room losing half itself in a quarter of a unit of depth.
+  for (let k = from; k <= to + 1; k++) {
+    const a = ring[(k + n - 1) % n], b = ring[k % n], c = ring[(k + 1) % n];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+
+    if (ux * vx + uy * vy < Math.SQRT1_2 * Math.hypot(ux, uy) * Math.hypot(vx, vy)) return false;
+  }
+
+  const m = piece.length;
+  let sign = 0;
+
+  for (let k = 0; k < m; k++) {
+    const t = cross(piece[(k + m - 1) % m], piece[k], piece[(k + 1) % m]);
+
+    if (t === 0) continue;
+    if (sign !== 0 && Math.sign(t) !== sign) return false;
+
+    sign = Math.sign(t);
+  }
+
+  if (sign === 0) return false;
+
+  // Turning one way throughout can still go round twice.
+  for (let p = 0; p < m; p++) {
+    for (let q = p + 2; q < m; q++) {
+      if (p === 0 && q === m - 1) continue;
+      if (crossing(piece[p], piece[p + 1], piece[q], piece[(q + 1) % m])) return false;
+    }
+  }
+
+  return true;
 }
 
 /** Where two segments cross, or nothing when they do not. */
