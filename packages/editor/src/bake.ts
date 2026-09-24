@@ -2798,6 +2798,10 @@ const finer = (l: Limits): Limits => ({ gap: l.gap / 10, bend: l.bend / 10 });
 
 const MARGIN = 0.5;
 
+/** How little a halving may bring an error down by and still be a bend: a
+ * step's does not come down at all, a bend's by about four. */
+const STEP = 0.75;
+
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
   return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b) && named(a, b);
@@ -3569,6 +3573,9 @@ interface Piece {
    * walk down to it and stop there again.
    */
   limited: boolean
+  /** A step with the same names either side: the geometry jumped where
+   * nothing a reading compares could tell. */
+  step?: boolean
 }
 
 /** What cutting one track needs, whatever part of it is being cut. */
@@ -3598,17 +3605,17 @@ function* bisected(
 
   // Left to right, so what comes out is in order and the progress is honest:
   // how much of the span has been settled, which only ever goes forwards.
-  const stack: [Taken, Taken][] = [[from, to]];
+  const stack: [Taken, Taken, number][] = [[from, to, Infinity]];
 
   while (stack.length > 0) {
-    const [a, b] = stack.pop()!;
+    const [a, b, before] = stack.pop()!;
     const narrow = b.t - a.t <= limits.gap;
 
     if (!comparable(a, b)) {
       if (!narrow) {
         const m = at((a.t + b.t) / 2);
 
-        stack.push([m, b], [a, m]);
+        stack.push([m, b, Infinity], [a, m, Infinity]);
         continue;
       }
 
@@ -3648,7 +3655,7 @@ function* bisected(
     }
 
     if (off > tol * MARGIN && b.t - a.t > limits.bend) {
-      stack.push([m, b], [a, m]);
+      stack.push([m, b, off], [a, m, off]);
       continue;
     }
 
@@ -3656,8 +3663,15 @@ function* bisected(
     // not, which is a discontinuity that has been pinned as far as it is worth
     // pinning — the same answer the incomparable path above reaches, from the
     // other side of it.
-    if (!Number.isFinite(off)) {
-      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
+    //
+    // So is one whose error did not come down for being halved. A bend's does,
+    // by about four each time; a step's is half the step at every width that
+    // holds it. Owned as error, it sent the whole track back to be cut ten
+    // times finer, and then a hundred, for an answer no width could improve —
+    // a facet count stepping under a round, which is a jump of up to the
+    // round's own accuracy wherever it happens.
+    if (!Number.isFinite(off) || (off > tol * MARGIN && off >= before * STEP)) {
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true, step: Number.isFinite(off) });
 
       yield b.t;
       continue;
@@ -3754,13 +3768,19 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
 
       if (!comparable(side < 0 ? end.a : end.b, now)) continue;
 
+      // Nor across a step, which is comparable at both ends and jumps between.
+      const here = pieceOf(i), there = pieceOf(i + side);
+      let stepped = false;
+
+      for (let k = Math.min(here, there) + 1; k < Math.max(here, there); k++) stepped ||= pieces[k].step === true;
+
+      if (stepped) continue;
+
       const off = strayed(drawn(grown, riders, t), now.out);
 
       worst = Math.max(worst, off);
 
       if (off > tol) {
-        const here = pieceOf(i), there = pieceOf(i + side);
-
         between(Math.min(here, there), Math.max(here, there));
       }
     }
