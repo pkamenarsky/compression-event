@@ -225,7 +225,7 @@ import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, play
 import { WorldSet, pieces } from './worldset';
 import { held } from './hold';
 import type { Ident, Ids } from './ids';
-import { madeOf } from './ids';
+import { madeOf, shows } from './ids';
 
 // -----------------------------------------------------------------------------
 // What comes out
@@ -1847,6 +1847,8 @@ interface Taken {
    * them, and read as one throughout — a group's union has no source corners
    * to fade, so it is never in here. */
   fade: Map<Id, number[][]>
+  /** Per contributor, what each point of `table` is called, where it says. */
+  names: Map<Id, Ids>
 }
 
 /**
@@ -2195,11 +2197,13 @@ function evaluating(cast: Cast, items: Moving[], t: number, only: Id | null): Ta
   const table = new Map<Id, Shape>();
   const world = new Map<Id, Shape>();
   const fade = new Map<Id, number[][]>();
+  const names = new Map<Id, Ids>();
   const moving = new Map(items.map(m => [m.at.id, m]));
   const was = new Map(resolved.map(it => [it.id, it]));
 
   for (const it of at) {
     world.set(it.id, it.shape);
+    if (it.ids !== undefined) names.set(it.id, it.ids);
     table.set(it.id, it.shape.map(ring => ring.map(q => unplace(it.frame, q))));
 
     // Only a polygon has source corners, and only they can be invented; a
@@ -2220,7 +2224,7 @@ function evaluating(cast: Cast, items: Moving[], t: number, only: Id | null): Ta
     fill: r.fill,
   }));
 
-  return { frame, table, world, out, fade, t };
+  return { frame, table, world, out, fade, names, t };
 }
 
 // -----------------------------------------------------------------------------
@@ -2794,9 +2798,13 @@ const finer = (l: Limits): Limits => ({ gap: l.gap / 10, bend: l.bend / 10 });
 
 const MARGIN = 0.5;
 
+/** How little a halving may bring an error down by and still be a bend: a
+ * step's does not come down at all, a bend's by about four. */
+const STEP = 0.75;
+
 /** Two evaluations that could be the ends of one stretch, or could not. */
 function comparable(a: Taken, b: Taken): boolean {
-  return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b);
+  return signature(a.frame) === signature(b.frame) && explained(a, b) && numbered(a, b) && named(a, b);
 }
 
 /**
@@ -2838,6 +2846,62 @@ function numbered(a: Taken, b: Taken): boolean {
   }
 
   return true;
+}
+
+/**
+ * Whether every vertex the runs refer to is the same point at both ends.
+ *
+ * A vertex is referred to by its index, and `signature` compares indices: it
+ * cannot see a ring whose points have been renamed under it. A hole that
+ * touches the outline and comes away again does exactly that — the points it
+ * made on the way in die, the ones it makes on the way out are born of other
+ * edges, and when as many are born as died the ring comes back the same
+ * length. Both ends then read `17.0.10`, one meaning a crossing on one side of
+ * the room and the other a crossing on the far side, and the stretch between
+ * them slid a point four hundred units in no time at all. Bisection could not
+ * close it, because the event it hid was a millionth wide; it spent forty
+ * evaluations a time finding that out.
+ *
+ * Where along an edge a crossing sits is part of its name and is held too. An
+ * arc's sample at a third is not the same point as one at two sevenths: the
+ * arc was laid again with another count of facets, and a crossing a narrow
+ * notch makes of one of them can land twelve units from where the other's
+ * does. Letting the two ends match left that step to bisection, which pinned
+ * it to a hundred-millionth and then reported it as six units of error.
+ *
+ * Where a contributor carries no names there is nothing to hold it to, and
+ * only a crossing is held: see `crossed`.
+ */
+function named(a: Taken, b: Taken): boolean {
+  for (const it of [a, b]) {
+    for (const run of it.out) {
+      for (const o of run.whence) {
+        if (o.kind !== 'vertex') continue;
+
+        const p = a.names.get(o.at.id), q = b.names.get(o.at.id);
+
+        if (p === undefined || q === undefined) continue;
+        const x = p[o.at.ring]?.[o.at.index], y = q[o.at.ring]?.[o.at.index];
+
+        if (x !== y && x !== undefined && y !== undefined && crossed(x) && crossed(y)) return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Whether a point is of a crossing, somewhere down its name: born of two
+ * edges, or along or a tooth of something that was, and so a different point
+ * wherever it comes of two others.
+ *
+ * Only these are held to their names. A corner arriving is a point laid on a
+ * wall at one end and the drawn corner at the other — two names, one point,
+ * and a move rather than an event — and that is the bake working as meant.
+ */
+function crossed(id: Ident): boolean {
+  return shows(id).includes('×');
 }
 
 /**
@@ -3509,6 +3573,9 @@ interface Piece {
    * walk down to it and stop there again.
    */
   limited: boolean
+  /** A step with the same names either side: the geometry jumped where
+   * nothing a reading compares could tell. */
+  step?: boolean
 }
 
 /** What cutting one track needs, whatever part of it is being cut. */
@@ -3538,17 +3605,17 @@ function* bisected(
 
   // Left to right, so what comes out is in order and the progress is honest:
   // how much of the span has been settled, which only ever goes forwards.
-  const stack: [Taken, Taken][] = [[from, to]];
+  const stack: [Taken, Taken, number][] = [[from, to, Infinity]];
 
   while (stack.length > 0) {
-    const [a, b] = stack.pop()!;
+    const [a, b, before] = stack.pop()!;
     const narrow = b.t - a.t <= limits.gap;
 
     if (!comparable(a, b)) {
       if (!narrow) {
         const m = at((a.t + b.t) / 2);
 
-        stack.push([m, b], [a, m]);
+        stack.push([m, b, Infinity], [a, m, Infinity]);
         continue;
       }
 
@@ -3588,7 +3655,7 @@ function* bisected(
     }
 
     if (off > tol * MARGIN && b.t - a.t > limits.bend) {
-      stack.push([m, b], [a, m]);
+      stack.push([m, b, off], [a, m, off]);
       continue;
     }
 
@@ -3596,8 +3663,15 @@ function* bisected(
     // not, which is a discontinuity that has been pinned as far as it is worth
     // pinning — the same answer the incomparable path above reaches, from the
     // other side of it.
-    if (!Number.isFinite(off)) {
-      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true });
+    //
+    // So is one whose error did not come down for being halved. A bend's does,
+    // by about four each time; a step's is half the step at every width that
+    // holds it. Owned as error, it sent the whole track back to be cut ten
+    // times finer, and then a hundred, for an answer no width could improve —
+    // a facet count stepping under a round, which is a jump of up to the
+    // round's own accuracy wherever it happens.
+    if (!Number.isFinite(off) || (off > tol * MARGIN && off >= before * STEP)) {
+      pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true, step: Number.isFinite(off) });
 
       yield b.t;
       continue;
@@ -3688,13 +3762,25 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
       // and report the pop as though the replay had invented it.
       if (signature(drawn(grown, riders, t)) !== signature(now.out)) continue;
 
+      // Nor across one the signature cannot see: the same indices, other names.
+      // See `named`.
+      const end = pieces[pieceOf(i)];
+
+      if (!comparable(side < 0 ? end.a : end.b, now)) continue;
+
+      // Nor across a step, which is comparable at both ends and jumps between.
+      const here = pieceOf(i), there = pieceOf(i + side);
+      let stepped = false;
+
+      for (let k = Math.min(here, there) + 1; k < Math.max(here, there); k++) stepped ||= pieces[k].step === true;
+
+      if (stepped) continue;
+
       const off = strayed(drawn(grown, riders, t), now.out);
 
       worst = Math.max(worst, off);
 
       if (off > tol) {
-        const here = pieceOf(i), there = pieceOf(i + side);
-
         between(Math.min(here, there), Math.max(here, there));
       }
     }
@@ -4726,3 +4812,4 @@ export function replayed(
 
   return span === null ? null : sample(span, forward ? rest : 1 - rest);
 }
+

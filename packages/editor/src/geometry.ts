@@ -659,6 +659,111 @@ function corners(ring: Ring, depth: (i: number) => number): Point[] {
 }
 
 /**
+ * Where each corner goes for the sweep, and which corners stand beside a wall
+ * too short to say where it points.
+ *
+ * A mitre is where two walls' moved lines cross, `1 / cosHalf` out along the
+ * bisector, and that is a length set by the walls' directions and nothing
+ * else. A wall a hundred-thousandth of a unit long, which an arrangement
+ * leaves wherever a ring crosses itself, has a direction like any other — the
+ * last bits of its ends — and a crossing born between two such corners threw
+ * one of them a hundred units into a room eroded at forty-five: the round over
+ * it jumped whole teeth.
+ *
+ * So a wall speaks for its direction in proportion to its length, up to
+ * `SHORT` of the ring: the normal a corner sees coming in is its wall's own,
+ * that much, and the rest is the one the corner before it saw, and so back
+ * along the ring until a wall long enough answers; going out, the same
+ * forwards. A run of walls of no length is then one corner of the two walls
+ * either side of it, which is what it looks like; a wall `SHORT` long is a wall
+ * like any other; and in between it moves as the wall grows, with nothing
+ * decided by which side of a threshold anything fell.
+ *
+ * It was once a kite per corner, its point let in towards the middle of the
+ * walls' two ends. Three such corners a hundredth of a unit apart laid three
+ * kites whose edges ran all but along each other, and where they crossed an
+ * arrangement found walls of a thousandth born in no time — a unit of pop in a
+ * bake. Then a cap per run of short walls, which jumped whenever a wall grew
+ * past the threshold and took the run's far wall with it.
+ *
+ * Walls of an arc are far longer than that and keep their own normals, so a
+ * round eroded past its radius still folds into runs and sweeps as one piece.
+ */
+function joints(ring: Ring, depth: (i: number) => number): { at: Point[], bevel: boolean[] } {
+  const n = ring.length;
+  const normals: Point[] = [];
+  const weights: number[] = [];
+  const short = extentOf([ring]) * SHORT;
+
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+
+    normals.push(l === 0 ? { x: 0, y: 0 } : { x: -dy / l, y: dx / l });
+    weights.push(short > 0 ? Math.min(1, l / short) : 1);
+  }
+
+  const first = weights.findIndex(w => w >= 1);
+
+  if (first < 0) return { at: corners(ring, depth), bevel: new Array(n).fill(false) };
+
+  // Carried round the ring from a long wall, one way for what each wall hands
+  // the corner after it and the other for what it hands the corner before.
+  const carried = (step: number): Point[] => {
+    const out: Point[] = new Array(n);
+    let seen = normals[first];
+
+    for (let k = 0; k < n; k++) {
+      const i = (first + step * k + n) % n;
+      const w = weights[i];
+
+      seen = { x: normals[i].x * w + seen.x * (1 - w), y: normals[i].y * w + seen.y * (1 - w) };
+      out[i] = seen;
+    }
+
+    return out;
+  };
+
+  const ins = carried(1), outs = carried(-1);
+  const mitres = corners(ring, depth);
+  const bevel = ring.map((_, i) => weights[(i - 1 + n) % n] < 1 || weights[i] < 1);
+
+  // A corner between two long walls is `corners`' own, to the bit.
+  const at = ring.map((v, i) => {
+    if (!bevel[i]) return mitres[i];
+
+    const d = depth(i);
+    const p = unit(ins[(i - 1 + n) % n]), q = unit(outs[i]);
+
+    let bx = p.x + q.x, by = p.y + q.y;
+    const l = Math.hypot(bx, by);
+
+    if (l < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
+
+    bx /= l;
+    by /= l;
+
+    const cosHalf = bx * q.x + by * q.y;
+
+    if (Math.abs(cosHalf) < 1e-12) return { x: v.x + q.x * d, y: v.y + q.y * d };
+
+    return { x: v.x + bx / cosHalf * d, y: v.y + by / cosHalf * d };
+  });
+
+  return { at, bevel };
+}
+
+function unit(p: Point): Point {
+  const l = Math.hypot(p.x, p.y);
+
+  return l === 0 ? p : { x: p.x / l, y: p.y / l };
+}
+
+/** How short a wall is too short to say where it points, as a share of the
+ * ring's extent. */
+const SHORT = 1e-5;
+
+/**
  * The ground the boundary covers on its way in and on its way out, kept apart
  * for `offset`: one quad per wall, running from where it was to where it went.
  *
@@ -706,7 +811,8 @@ function swept(shape: Shape, depth: (r: number, i: number) => number): Band {
 
 /** One ring's worth of it, into `out`. */
 function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): void {
-  const moved = corners(ring, depth);
+  const { at: start, bevel } = joints(ring, depth);
+  const end = start;
   const n = ring.length;
 
   /**
@@ -783,7 +889,7 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
   // middle and come out the far side the wrong way round — and every one of
   // them crosses every other, which is quadratic in the facets for ground that
   // is one piece. A run of them goes in as that piece. See `folds`.
-  const whole = folds(ring, moved, depth);
+  const whole = folds(ring, start, end, bevel, depth);
 
   for (const run of whole) {
     const walls: Sweptfrom[] = [];
@@ -797,7 +903,7 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
     }
 
     for (let k = run.from; k <= run.to + 1; k++) {
-      piece.push(moved[k % n]);
+      piece.push(k <= run.to ? start[k % n] : end[k % n]);
       from.push({ ring: r, index: k % n });
       walls.push({ ring: r, index: k % n });
     }
@@ -825,13 +931,13 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
       // depths' own zero: a corner moved along its bisector slides along the
       // wall as well as across it, so where the offset passes through nothing
       // is a crossing to be solved for rather than a fraction to be read off.
-      const x = met(a, b, moved[i], moved[j]);
+      const x = met(a, b, start[i], end[j]);
 
       if (x !== null) {
         const at: Sweptfrom = { ring: r, index: i, t: fraction(a, b, x) };
 
-        put3(a, x, moved[i], [near, at, near], [near, near, near], da);
-        put3(x, b, moved[j], [at, far, far], [near, far, near], db);
+        put3(a, x, start[i], [near, at, near], [near, near, near], da);
+        put3(x, b, end[j], [at, far, far], [near, far, near], db);
         continue;
       }
     }
@@ -841,7 +947,7 @@ function sweep(ring: Ring, r: number, depth: (i: number) => number, out: Band): 
     // The wall, its far corner, and the two places they went. Every edge of it
     // is the wall itself but for the one capping the far corner.
     put(
-      a, b, moved[j], moved[i],
+      a, b, end[j], start[i],
       [near, far, far, near],
       [near, far, near, near],
       side,
@@ -867,7 +973,7 @@ interface Run {
  * them, no corner turning as much as a right angle's half, and a ring that is
  * convex. Anything else keeps its quads.
  */
-function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] {
+function folds(ring: Ring, start: Point[], end: Point[], bevel: boolean[], depth: (i: number) => number): Run[] {
   const n = ring.length;
   const folded = (i: number): boolean => {
     const j = (i + 1) % n;
@@ -875,7 +981,7 @@ function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] 
 
     if (da === 0 || da !== db) return false;
 
-    const a = ring[i], b = ring[j], c = moved[j], d = moved[i];
+    const a = ring[i], b = ring[j], c = end[j], d = start[i];
 
     return crossing(a, b, c, d) || crossing(b, c, d, a);
   };
@@ -886,8 +992,8 @@ function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] 
   // ring happened to start — so the same outline, handed up by a scope and by
   // the polygon it resolved to, eroded to two different shapes. A run's `to`
   // may then pass `n`; everything reading one takes its indices round the ring.
-  const start = Array.from({ length: n }, (_, k) => k).find(k => !folded(k));
-  const s = start === undefined ? 0 : start + 1;
+  const flat = Array.from({ length: n }, (_, k) => k).find(k => !folded(k));
+  const s = flat === undefined ? 0 : flat + 1;
   const out: Run[] = [];
   let k = 0;
 
@@ -903,9 +1009,9 @@ function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] 
 
     while (to + 1 < n && folded((s + to + 1) % n) && depth((s + to + 1) % n) === depth(i)) to++;
 
-    const end = i + to - k;
+    const last = i + to - k;
 
-    if (end > i && plain(ring, moved, i, end)) out.push({ from: i, to: end, side: depth(i) });
+    if (last > i && plain(ring, start, end, bevel, i, last)) out.push({ from: i, to: last, side: depth(i) });
 
     k = to + 1;
   }
@@ -921,12 +1027,16 @@ function folds(ring: Ring, moved: Point[], depth: (i: number) => number): Run[] 
  * corner of some quad outside it, which is a sliver of ground the erosion
  * should have taken and did not.
  */
-function plain(ring: Ring, moved: Point[], from: number, to: number): boolean {
+function plain(ring: Ring, start: Point[], end: Point[], bevel: boolean[], from: number, to: number): boolean {
   const n = ring.length;
   const piece: Point[] = [];
 
   for (let k = from; k <= to + 1; k++) piece.push(ring[k % n]);
-  for (let k = from; k <= to + 1; k++) piece.push(moved[k % n]);
+  // A corner whose walls end apart has ground of its own between them, which
+  // the ring round the run would not know was there.
+  for (let k = from + 1; k <= to; k++) if (bevel[k % n]) return false;
+
+  for (let k = from; k <= to + 1; k++) piece.push(k <= to ? start[k % n] : end[k % n]);
 
   // Facets of a curve, and nothing sharper. A corner that turns hard has its
   // mitre held at a limit, so where it went is not where its two walls' moved
@@ -1171,7 +1281,6 @@ function turn(a: Point, b: Point, p: Point): number {
 
 export interface Field {
   shape: Shape
-  tree: Packed
   /** `a` and `b` of each edge, flattened, four numbers apiece. */
   edges: Float64Array
   /** The edges again, by the horizontal strips they reach into. See `Strips`. */
@@ -1264,7 +1373,7 @@ export function field(shape: Shape): Field {
     }
   }
 
-  return { shape, tree: pack(boxes), edges, strips: stripsOf(boxes, n) };
+  return { shape, edges, strips: stripsOf(boxes, n) };
 }
 
 export function fieldWinding(f: Field, p: Point): number {
@@ -1351,6 +1460,19 @@ export function encloses(outer: Shape, inner: Shape): boolean {
   const e = f.edges;
   const eps = extentOf(outer) * 1e-7;
 
+  // Built here rather than with the field: this is the one reader of it, and
+  // a field is made twice per arrangement that never asks.
+  const boxes = new Float64Array(e.length);
+
+  for (let at = 0; at < e.length; at += 4) {
+    boxes[at] = Math.min(e[at], e[at + 2]);
+    boxes[at + 1] = Math.min(e[at + 1], e[at + 3]);
+    boxes[at + 2] = Math.max(e[at], e[at + 2]);
+    boxes[at + 3] = Math.max(e[at + 1], e[at + 3]);
+  }
+
+  const tree = pack(boxes);
+
   for (const ring of inner) {
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i], b = ring[(i + 1) % ring.length];
@@ -1359,7 +1481,7 @@ export function encloses(outer: Shape, inner: Shape): boolean {
       let clear = true;
 
       eachPacked(
-        f.tree,
+        tree,
         Math.min(a.x, b.x) - eps,
         Math.min(a.y, b.y) - eps,
         Math.max(a.x, b.x) + eps,
