@@ -21,7 +21,7 @@
 import { expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { EXACT_GAP, Frame, Span, TOLERANCE, bakeSpan, lined, sample, truth } from './bake';
-import { TOP, addPolygon, addVertex, deepen, depths, grouped, removeVertices, sealing, resolveAt, rigOf, withRig } from './scene';
+import { TOP, addPolygon, addVertex, depths, grouped, removeVertices, sealing, resolveAt, rigOf, withRig } from './scene';
 import { Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
 import { nudged } from './rig';
 import { Writing, erode, move, scaled, turned as turning, wrote } from './testing';
@@ -365,37 +365,6 @@ test('the replay never strays far from csg(t)', () => {
     check('nudge and erode', transformed(bent, 1, ids[0], { erosion: 22 }));
     check('nudge, erode and turn', transformed(bent, 1, ids[0], { erosion: 22, rotation: 0.4 }));
   }
-  {
-    // A depth arriving on one corner alone over the span, which is the case the
-    // uniform offset never had: the two edges meeting there tilt as it deepens,
-    // so the boundary is not a set of parallel translates of the source and the
-    // corner's image slides along a line neither of its edges is on.
-    const { world, ids } = drawn(['level', rect(0, 0, 200, 140)]);
-    const corner = (w: World, i: number, by: number): World => {
-      const it = resolveAt(w, 1).find(r => r.id === ids[0])!;
-
-      return deepen(w, 1, ids[0], new Set([it.corners[i].id]), by);
-    };
-
-    // The jump column reads 200 for this one and its neighbour below, and that
-    // is the rect's own width rather than anything moving: three corners stand
-    // exactly still while the fourth leaves the extreme it was at, so the
-    // arrangement cuts the ring at a different corner the instant the depth
-    // leaves zero and every index shifts by one. The truth does the identical
-    // thing at the identical instant, which is the whole of what is being
-    // asked here — `apart` reads the two through `lined` and sees none of it.
-    check('one corner eroding', corner(world, 0, 60));
-    check('one corner eroding while another grows', corner(corner(world, 1, 40), 3, -25));
-    check('two corners deep', corner(corner(world, 2, 60), 1, 40));
-
-    // And with the polygon under a depth of its own and moving, so the corner's
-    // offset, the polygon's and the frame are all changing at once.
-    check('one corner eroding deeper than its polygon',
-      transformed(corner(world, 1, 45), 1, ids[0], { erosion: 20, rotation: 0.5 }));
-
-    // Deep enough to take the corner's own edges away with it, which is where
-    // the ring loses points part way through the span.
-    check('one corner eroding past its neighbours', corner(world, 3, 150)); }
   {
     const build = (dx: number, dy: number, w: number, h: number) => {
       let world = emptyWorld();

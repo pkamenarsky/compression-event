@@ -16,13 +16,10 @@
 // off and takes nothing away: its options and amounts apply again when it is
 // ticked. Erosion has no options, so its box is only the switch.
 //
-// With corners or edges picked, the pane is about the polygons they are on —
-// except the round and the deform, which are about the picked ids' own: the
-// round of each as a corner and the deform of the edge leaving it, as
-// `cornersAmounted` reads them. Either is ticked, unticked and optioned apart
-// from its polygon's, and put back to it by the link under it. An option
-// changed is changed on every picked thing that has the effect, and is what
-// the next thing given it starts with.
+// With corners or edges picked, the pane is about the polygons they are on:
+// an effect is one amount over its whole ring, and one set of options. An
+// option changed is changed on every picked thing that has the effect, and is
+// what the next thing given it starts with.
 // -----------------------------------------------------------------------------
 
 import { ObjectValue, Value } from '@incpt/kontinuum';
@@ -33,12 +30,6 @@ import {
   EffectName,
   Switch,
   applies,
-  edgeDeform,
-  edgeDeforming,
-  edgesInheriting,
-  edgesOptioned,
-  edgesSwitched,
-  ownDeform,
   switchedOff,
   sizeOf,
   sizedFor,
@@ -63,7 +54,6 @@ import {
   Target,
   Tool,
   Update,
-  VertexId,
   World,
   marked,
   picks,
@@ -77,11 +67,6 @@ type Some = 'all' | 'some' | 'none';
  * control for its own field alone: the pane is made once, and a change moves
  * what it shows rather than making it again — a field being typed into keeps
  * its focus and a select stays open.
- *
- * With `corners`, the deform is about the picked edges' own, and `ownEdge` is
- * how many of them have options of their own. The round has no such pair: a
- * round is an opening and an opening is a statement about the whole ring, so
- * it is the polygon's or it is nothing. See `rounding` in `effect.ts`.
  */
 interface Model {
   /** Whether there is a key to show: see `currentKey`. */
@@ -99,7 +84,7 @@ interface Model {
   deforms: number
   /** How many keyframes it plays at, `∞` to the end. */
   times: string
-  /** Whether it holds anything about single corners as well, or instead. */
+  /** Whether it moves single corners as well, or instead. */
   cornered: boolean
   /** Whether it is an unchaining, a state rather than a change, which is not
    * typed into. */
@@ -131,9 +116,6 @@ interface Model {
   precision: number
   tension: number
   chamfer: boolean
-  corners: boolean
-  /** Whether the picked edges have deform options of their own. */
-  ownEdge: Some
 }
 
 const PATTERNS: Pattern[] = ['zigzag', 'sine', 'noise'];
@@ -185,9 +167,6 @@ export function inspector(
 ): VNode {
   const targets = () => (picks(tool()) ? effectTargets(world(), selection(), tool()) : []);
 
-  // A round under the corner tool is about the corners picked.
-  const corners = () => (tool() === 'point' ? selection().vertices : []);
-
   // What a retype would land on, which is also what the kind reports: a
   // sealed group is a scope stating its own rule and the descent stops at it.
   // See `retypable`.
@@ -197,7 +176,6 @@ export function inspector(
     world(),
     keyframe(),
     targets(),
-    corners(),
     reached(),
     remembered(),
     currentPlace(world(), target(), keyframe(), targets()),
@@ -225,7 +203,7 @@ export function inspector(
           gap: '6px',
         },
       },
-      [object(model, m => body(m, targets, corners, reached, () => currentPlace(world(), target(), keyframe(), targets()), update))],
+      [object(model, m => body(m, targets, reached, () => currentPlace(world(), target(), keyframe(), targets()), update))],
     ),
   );
 }
@@ -248,7 +226,6 @@ function modelOf(
   world: World,
   v: KeyframeId,
   ids: readonly Id[],
-  corners: readonly VertexId[],
   reached: readonly PolygonId[],
   remembered: Options,
   place: Place | undefined,
@@ -267,8 +244,7 @@ function modelOf(
     return id === undefined ? remembered[name] : world.effects.get(id)![name]! as Options[N];
   };
 
-  const mine = corners.length > 0;
-  const d = mine ? edgeDeform(world, corners[0]) ?? remembered.deform : shown('deform');
+  const d = shown('deform');
   const r = shown('round');
 
   return {
@@ -284,7 +260,7 @@ function modelOf(
     deforms: fine(by?.deform ?? 0),
     times: key === undefined || key.times === null ? '' : String(key.times),
     stand: key?.stand !== undefined,
-    cornered: key !== undefined && [key.corners, key.depths, key.rounds, key.deforms].some(m => m !== undefined && m.size > 0),
+    cornered: key?.corners !== undefined && key.corners.size > 0,
     kinds: kinds.length > 0,
     hollow: some(kinds, k => k.level === 'hollow'),
     solid: some(kinds, k => k.level === 'solid'),
@@ -293,7 +269,7 @@ function modelOf(
     voidFloor: some(kinds, k => k.floor === 'void'),
     bareLevel: kinds.every(k => k.floor !== undefined),
     bareFloor: kinds.every(k => k.level !== undefined),
-    deform: mine ? some(corners, c => edgeDeforming(world, c)) : some(ids, id => applies(world, id, 'deform')),
+    deform: some(ids, id => applies(world, id, 'deform')),
     spacing: d.spacing,
     size: ids.length === 0 ? 0 : sizeOf(world, v, ids[0]),
     pattern: d.pattern,
@@ -306,15 +282,12 @@ function modelOf(
     precision: r.precision,
     tension: r.tension,
     chamfer: r.chamfer,
-    corners: mine,
-    ownEdge: mine ? some(corners, c => ownDeform(world, c)) : 'none',
   };
 }
 
 function body(
   m: ObjectValue<Model>,
   targets: () => Id[],
-  corners: () => VertexId[],
   reached: () => PolygonId[],
   place: () => Place | undefined,
   update: Update,
@@ -363,22 +336,17 @@ function body(
     return marked({ ...s, world }, s.world);
   });
 
-  /** One option changed on every one that has the effect, on or off — or on
-   * the picked edges' own deforms — and remembered. `further` is a slider
+  /** One option changed on every one that has the effect, on or off, and
+   * remembered. `further` is a slider
    * still moving: the step before it already went into the history, so this
    * one only carries it on. */
   const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>, further = false) => update(s => {
     let world = s.world;
 
-    if (name === 'deform' && m.corners()) {
-      world = edgesOptioned(world, corners(), patch as Partial<Options['deform']>, s.remembered);
-    }
-    else {
-      for (const id of targets()) {
-        const was = world.effects.get(id)?.[name];
+    for (const id of targets()) {
+      const was = world.effects.get(id)?.[name];
 
-        if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as Options[N]);
-      }
+      if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as Options[N]);
     }
 
     const shown = name === 'round'
@@ -389,17 +357,6 @@ function body(
     return further ? { ...s, world, remembered } : marked({ ...s, world, remembered }, s.world);
   });
 
-  const rounded = () => toggled('round', m.round());
-
-  const deformed = () => {
-    if (!m.corners()) return toggled('deform', m.deform());
-
-    const on = m.deform() !== 'all';
-
-    update(s => marked({ ...s, world: edgesSwitched(s.world, corners(), on, s.remembered) }, s.world));
-  };
-
-  const inheritedEdge = () => update(s => marked({ ...s, world: edgesInheriting(s.world, corners()) }, s.world));
 
   return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
     show(() => m.kinds(), fragment([
@@ -460,7 +417,7 @@ function body(
       ]),
     ])),
 
-    heading(() => (m.corners() ? 'Deform edges' : 'Deform'), 'd', m.deform, deformed),
+    heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
     options(m.deform, [
       // A length, shown as a percentage of the thing's size so that the
       // slider has somewhere to stop: see `sizeOf`. Along the slider by its
@@ -486,12 +443,11 @@ function body(
       // A seed is the noise's, the jitter's, and where each edge's teeth
       // start.
       field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)),
-      show(() => m.ownEdge() !== 'none', fragment(field('', link('as the polygon', inheritedEdge)))),
     ]),
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
 
-    heading(() => 'Round', 'b', m.round, rounded),
+    heading(() => 'Round', 'b', m.round, () => toggled('round', m.round())),
     options(m.round, [
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
@@ -717,7 +673,3 @@ function tick(value: Value<boolean>, onchange: (v: boolean) => void): VNode {
   });
 }
 
-/** A button that reads as text: taking something back rather than setting it. */
-function link(name: string, onclick: () => void): VNode {
-  return span({ style: { color: theme.accent, cursor: 'pointer', fontSize: '11px' }, onclick }, [text(name)]);
-}

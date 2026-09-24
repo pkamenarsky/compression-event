@@ -9,13 +9,24 @@
 
 import { Point } from '@ce/game/world';
 import { keyRigOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig, writtenInto } from './scene';
-import { Amount, Move, Op, REST, addedBy, deltaOf, idle, keysAt, repeating, withKeys } from './rig';
+import { Amount, Move, Op, REST, addedBy, deltaOf, idle, keysAt, nextKey, nudgedBy, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
-import { Id, KeyframeId, Options, World } from './types';
+import { Id, KeyframeId, Options, VertexId, World } from './types';
 
 /** An operation, or one worked out from the world as it stands when it is
  * written — which is what a gesture's is. */
 export type Writing = Op | ((world: World, v: KeyframeId, id: Id) => Op);
+
+/** Corners of a polygon moved at `v` by one gesture, in one key: what a drag
+ * of several picked corners writes. */
+export function nudge(world: World, v: KeyframeId, id: Id, corners: Iterable<VertexId>, by: Point): World {
+  let rig = keyRigOf(world, id);
+  const made = nextKey(rig);
+
+  for (const c of corners) rig = nudgedBy(rig, made, c, v, by);
+
+  return withKeyRig(world, id, rig);
+}
 
 /**
  * `ops` added to the end of what `v` does to `id`, one after another, each

@@ -20,9 +20,6 @@ import {
   Op,
   Rig,
   Timeline,
-  cornerRounded,
-  deepened,
-  edgeDeformed,
   nudged,
   once,
   repeating,
@@ -67,7 +64,6 @@ function world(): EditorState {
 
   w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null)]);
   w = withRig(w, b.id, nudged(rigOf(w, b.id), corners[1].id, 2, { x: 1, y: -1 }));
-  w = withRig(w, b.id, deepened(rigOf(w, b.id), corners[2].id, 2, -3));
   w = gestured(w, a.world);
 
   return {
@@ -99,8 +95,8 @@ describe('save', () => {
     for (const k of before.world.keyframes) {
       expect(resolveAt(after.world, k.id).map(it => it.source))
         .toEqual(resolveAt(before.world, k.id).map(it => it.source));
-      expect(resolveAt(after.world, k.id).map(it => it.depths))
-        .toEqual(resolveAt(before.world, k.id).map(it => it.depths));
+      expect(resolveAt(after.world, k.id).map(it => it.erosion))
+        .toEqual(resolveAt(before.world, k.id).map(it => it.erosion));
     }
   });
 
@@ -132,28 +128,23 @@ describe('save', () => {
     expect(after.world).toEqual(stood);
   });
 
-  test('effects survive the trip: options, a corner\'s own, amounts, and a stand\'s', () => {
+  test('effects survive the trip: options, amounts, and a stand\'s', () => {
     const before = world();
     const [a, b] = [...before.world.polygons.keys()];
-    const corners = before.world.polygons.get(b)!.points;
     let w = wrote(before.world, 1, b, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
 
-    w = withRig(w, b, cornerRounded(rigOf(w, b), corners[0].id, 2, 3));
-    w = withRig(w, b, edgeDeformed(rigOf(w, b), corners[1].id, 2, -1));
     w = {
       ...w,
       effects: new Map([
         [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[1].id, { deform: { spacing: 9, pattern: 'zigzag' as const, seed: 3, sides: 'both' as const, jitter: 0.2, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
     const stood = rigOf(w, b).keys.get(4)![0].op;
 
     expect(stood.kind === 'stand' && stood.bevel).toBe(4);
-    expect(stood.kind === 'stand' && stood.bevels.get(corners[0].id)).toBe(3);
 
     const after = trip({ ...before, world: w });
 
@@ -297,18 +288,13 @@ describe('keys in a file', () => {
         frame: { t: { x: 5, y: 6 }, angle: 0.3, skew: 0.1, scale: { x: 1.2, y: 0.9 } },
         erosion: 1,
         corners: new Map([[10, { x: 1, y: 1 }]]),
-        depths: new Map([[10, 0.5]]),
         bevel: 0.25,
         amplitude: 0.75,
-        bevels: new Map([[10, 0.1]]),
-        amplitudes: new Map([[10, 0.2]]),
       }),
     ]);
 
     rig = nudged(rig, 11, 1, { x: 4, y: -2 });
-    rig = deepened(rig, 11, 3, 1.5);
-    rig = cornerRounded(rig, 12, 2, 0.5);
-    rig = edgeDeformed(rig, 12, 2, 0.25);
+    rig = nudged(rig, 12, 3, { x: -1, y: 0.5 });
 
     return rig;
   }
@@ -380,10 +366,6 @@ describe('keys in a file', () => {
         expect(ours.corners.get(id)!.x, `v${i}: corner ${id} x`).toBeCloseTo(p.x, 9);
         expect(ours.corners.get(id)!.y, `v${i}: corner ${id} y`).toBeCloseTo(p.y, 9);
       }
-
-      for (const [id, d] of theirs.depths) expect(ours.depths.get(id), `v${i}: depth ${id}`).toBeCloseTo(d, 9);
-      for (const [id, d] of theirs.bevels) expect(ours.bevels.get(id), `v${i}: bevel ${id}`).toBeCloseTo(d, 9);
-      for (const [id, d] of theirs.amplitudes) expect(ours.amplitudes.get(id), `v${i}: amplitude ${id}`).toBeCloseTo(d, 9);
     }
   });
 });

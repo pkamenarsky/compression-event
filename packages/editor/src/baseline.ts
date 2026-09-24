@@ -4,7 +4,7 @@
 //
 // A handful of worlds built only from what master had — rooms, pillars,
 // floors and holes; moves, turns, squashes and erosions; corners nudged,
-// deepened, added and taken out; births and deaths; sealed groups; repeats and
+// added and taken out; births and deaths; sealed groups; repeats and
 // unchaining — and a digest of everything the editor draws and the game gets
 // for each. `baseline.golden.json` holds the digests master made of them; the
 // test holds this branch to the same, bit for bit, so that nothing built for
@@ -44,7 +44,7 @@ import { createHash } from 'node:crypto';
 import { Point } from '@ce/game/world';
 import { EXACT_GAP, TOLERANCE, bakeAll } from './bake';
 import { shipped } from './export';
-import { deepened, nudged } from './rig';
+import { nudged } from './rig';
 import {
   TOP,
   addPolygon,
@@ -101,7 +101,7 @@ function seeded(from: number): () => number {
 }
 
 /** A small level of rooms, corridors and pillars, and a keyframe or two of
- * erosion, moves, spins, nudges and deepened corners over it. */
+ * erosion, moves, spins and nudges over it. */
 function level(): World {
   const rnd = seeded(12345);
   const specs: [Named, Point[]][] = [];
@@ -131,7 +131,10 @@ function level(): World {
       const c = corners[(rnd() * corners.length) | 0];
 
       if (roll > 0.4 && roll < 0.55) world = withRig(world, id, nudged(rigOf(world, id), c.id, v, { x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 30 }));
-      if (roll > 0.6 && roll < 0.7) world = withRig(world, id, deepened(rigOf(world, id), c.id, v, 4 + rnd() * 8));
+      // Where a corner used to be deepened on its own, before corners had no
+      // depth of their own: the draw kept, so that the rest of the level is
+      // the one it was.
+      if (roll > 0.6 && roll < 0.7) rnd();
     }
   }
 

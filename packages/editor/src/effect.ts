@@ -61,49 +61,13 @@ export function foldEach(it: Drawn, steps: readonly Effect[]): Drawn {
 }
 
 /**
- * How much of an effect a point is given: one amount for the whole shape, or
- * an amount per identity.
+ * How much of an effect a shape is given: one number, over the whole of it.
  *
- * Per identity is what a polygon has always been able to carry — a round on
- * one corner, a deform on one edge — and it is the only part of the old
- * pipeline that an effect could not say, because an effect took one number.
- * Saying it by *identity* rather than by index is what makes it an effect: the
- * amount is attached to the point the construction made and not to where that
- * point sits in a ring today, so it survives an erosion closing a notch, a
- * union cutting the wall it is on, and the scope above laying its own.
+ * It used to be able to be a number per identity, which is what a round on
+ * one corner or a deform on one edge was written as. An effect is one amount
+ * over its whole ring now, and one set of options: see PLAN-order.
  */
-export type Amount = number | ReadonlyMap<Ident, number>
-
-/**
- * The amount a point gets, for an identity nobody wrote one against.
- *
- * Every identity but a `corner` was made by an effect, so it has somewhere to
- * ask. A point along a run is its run's; a tooth is its run's; and a point born
- * where two pieces crossed takes the larger of the two, which is the same rule
- * `round(max(a, b))` states for two rounds meeting at one corner. A drawn
- * corner nobody named gets nothing, which is what "this corner is not rounded"
- * means.
- */
-function amountOf(by: Amount, id: Ident): number {
-  if (typeof by === 'number') return by;
-
-  const had = by.get(id);
-
-  if (had !== undefined) return had;
-
-  const what = madeOf(id);
-
-  if (what.kind === 'corner') return 0;
-  if (what.kind === 'on') return amountOf(by, what.edge);
-  if (what.kind === 'tooth') return amountOf(by, what.run);
-
-  return Math.max(amountOf(by, what.a), amountOf(by, what.b));
-}
-
-/** Whether an amount asks for anything at all. */
-function asks(by: Amount): boolean {
-  return typeof by === 'number' ? by !== 0 : [...by.values()].some(a => a !== 0);
-}
+export type Amount = number
 
 /**
  * The erosion, as an effect.
@@ -125,12 +89,11 @@ function asks(by: Amount): boolean {
  * the whole design turns on.
  *
  * A negative depth grows the shape instead, and the band goes on the other side
- * and is added; both halves run where a depth per corner changed sign, which is
- * why they are both here rather than one branch of an `if`.
+ * and is added.
  */
 export function eroding(depth: Amount): Effect {
   return it => {
-    if (!asks(depth)) return it;
+    if (depth === 0) return it;
 
     // One polygon at a time, which is how a resolve does it and so how this has
     // to. See `polygonsOf`: a band is not contained in the ring that swept it,
@@ -165,7 +128,7 @@ export function eroding(depth: Amount): Effect {
 /** The erosion of one polygon: an outline and its holes, and nothing else in
  * the shape to reach into it. */
 function erodeOne(it: Drawn, depth: Amount): Drawn {
-  const band = sweptBand(it.shape, (r, i) => amountOf(depth, it.ids[r][i]));
+  const band = sweptBand(it.shape, () => depth);
 
   const side = (shape: Shape, from: Sweptfrom[][], along: Sweptfrom[][]): Drawn => ({
     shape,
@@ -275,7 +238,7 @@ function nameOf(ids: Ids, w: Sweptfrom): Ident {
  */
 export function dilating(by: Amount, eps: number): Effect {
   return it => {
-    if (!asks(by)) return it;
+    if (by === 0) return it;
 
     const quads: Drawn = { shape: [], ids: [], edges: [] };
     const fans: Drawn = { shape: [], ids: [], edges: [] };
@@ -284,7 +247,7 @@ export function dilating(by: Amount, eps: number): Effect {
       const names = it.ids[r];
       const n = ring.length;
       const out = ring.map((p, i) => outward(p, ring[(i + 1) % n]));
-      const grows = names.map(id => amountOf(by, id));
+      const grows = names.map(() => by);
 
       for (let i = 0; i < n; i++) {
         const j = (i + 1) % n;
@@ -415,7 +378,7 @@ export function sagitta(bevel: number, n: number): number {
  */
 export function rounding(by: Amount, eps: number): Effect {
   return it => {
-    if (!asks(by)) return it;
+    if (by === 0) return it;
 
     // One polygon at a time, as the erosion is, and for a reason of its own:
     // how far a polygon may be rounded is a question about that polygon. An
@@ -548,7 +511,7 @@ function opened(it: Drawn, by: Amount, eps: number): Drawn {
 
   for (let k = 0; k < SHRINKS; k++) {
     const mid = (lo + hi) / 2;
-    const tried = eroding(scaled(by, mid))(it);
+    const tried = eroding(by * mid)(it);
 
     if (tried.shape.length > 0) {
       lo = mid;
@@ -559,17 +522,12 @@ function opened(it: Drawn, by: Amount, eps: number): Drawn {
     }
   }
 
-  return kept === null ? it : dilating(scaled(by, lo), eps)(kept);
+  return kept === null ? it : dilating(by * lo, eps)(kept);
 }
 
 /** How many halvings the most a polygon can be rounded is found to: a part in
  * four thousand of what was asked. */
 const SHRINKS = 12;
-
-/** An amount taken down by a share, whether one number or one per identity. */
-function scaled(by: Amount, share: number): Amount {
-  return typeof by === 'number' ? by * share : new Map([...by].map(([id, a]) => [id, a * share]));
-}
 
 // -----------------------------------------------------------------------------
 // The canonical resample
@@ -931,16 +889,14 @@ function stationOf(run: readonly Point[], t: number): Point {
  * Teeth cross each other and cross walls, so it finishes through the
  * arrangement — which names what the crossings make, as it does anywhere else.
  */
-export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting | null)): Effect {
-  const options = typeof e === 'function' ? e : () => e;
-
+export function deforming(by: Amount, how: Effecting): Effect {
   return it => {
     // Held, a deform at nought still lays its teeth, flat: the bake needs
     // them there at the end a pattern comes up from, so the ring has the same
     // points at every instant of the span. See `hold.ts`.
     const flat = holding();
 
-    if (!asks(by) && !flat) return it;
+    if (by === 0 && !flat) return it;
 
     const shape: Shape = [];
     const ids: Ids = [];
@@ -967,15 +923,14 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
         const whose = line?.edge ?? names[from];
         const lengths = walked(run);
         const total = lengths[lengths.length - 1];
-        const how = options(whose);
-        const high = amountOf(by, whose);
-        const lay = how === null || !(how.spacing > 0) || (high === 0 && !flat)
+        const high = by;
+        const lay = !(how.spacing > 0) || (high === 0 && !flat)
           ? { along: [], across: [], teeth: [], room: [] }
           : patternRun(how, keyOf(line?.root ?? whose), high, total, 0, 0, rampAt(how.spacing, line?.before), line?.middle ?? total / 2, undefined, rampAt(how.spacing, line?.after));
 
         // The whole wall's pattern, where this is a piece of a wall that was
         // cut: what a piece ends on at the cut. See `wallAt`.
-        const whole = line === undefined || (line.before === undefined && line.after === undefined) || how === null || !(how.spacing > 0) || (high === 0 && !flat)
+        const whole = line === undefined || (line.before === undefined && line.after === undefined) || !(how.spacing > 0) || (high === 0 && !flat)
           ? null
           : patternRun(how, keyOf(line.root), high, line.span, 0, 0, how.spacing, line.middle + line.at);
         const leg = (at: number, s: number, t: number) => {

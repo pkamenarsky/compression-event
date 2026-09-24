@@ -16,7 +16,6 @@
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
 
-import { Point } from '@ce/game/world';
 import {
   CornerKind,
   Key,
@@ -328,7 +327,7 @@ function unwritten(world: World, p: Cornered): World {
 
 function lessCorner(key: Key, kind: CornerKind, corner: VertexId): Key | null {
   const held = heldOf(kind);
-  const mine = new Map(key[held] as ReadonlyMap<VertexId, never> | undefined ?? []);
+  const mine = new Map(key[held] ?? []);
 
   mine.delete(corner);
 
@@ -340,17 +339,12 @@ function lessCorner(key: Key, kind: CornerKind, corner: VertexId): Key | null {
 /** A key with everything about the corners in `gone` taken out, or nothing
  * where that was all it held. */
 function lessCorners(key: Key, gone: ReadonlySet<VertexId>): Key | null {
-  let out = key;
+  const mine = key.corners;
 
-  for (const held of ['corners', 'depths', 'rounds', 'deforms'] as const) {
-    const mine = out[held] as ReadonlyMap<VertexId, never> | undefined;
+  if (mine === undefined || ![...mine.keys()].some(v => gone.has(v))) return key;
 
-    if (mine === undefined || ![...mine.keys()].some(v => gone.has(v))) continue;
-
-    const kept = new Map([...mine].filter(([v]) => !gone.has(v)));
-
-    out = { ...out, [held]: kept.size === 0 ? undefined : kept };
-  }
+  const kept = new Map([...mine].filter(([v]) => !gone.has(v)));
+  const out = { ...key, corners: kept.size === 0 ? undefined : kept };
 
   return bare(out) ? null : out;
 }
@@ -358,8 +352,7 @@ function lessCorners(key: Key, gone: ReadonlySet<VertexId>): Key | null {
 /** Whether a key says nothing at all any more. */
 function bare(key: Key): boolean {
   return key.by === undefined && key.stand === undefined
-    && key.corners === undefined && key.depths === undefined
-    && key.rounds === undefined && key.deforms === undefined;
+    && key.corners === undefined;
 }
 
 /** Places in one thing's list at one keyframe, together, and the corners' one
@@ -462,7 +455,7 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
   if (from === undefined) return world;
 
   const held = heldOf(p.kind);
-  const by = (from[held] as ReadonlyMap<VertexId, number | Point>).get(p.corner)!;
+  const by = from[held]!.get(p.corner)!;
   const moved = skipping(world.keyframes, from, to);
   const out = unwritten(world, p);
   const rig = keyRigOf(out, p.id);
@@ -487,10 +480,10 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
   }
 
   const was = list[into];
-  const mine = new Map(was[held] as ReadonlyMap<VertexId, never> | undefined ?? []);
-  const there = mine.get(p.corner) as number | Point | undefined;
+  const mine = new Map(was[held] ?? []);
+  const there = mine.get(p.corner);
 
-  mine.set(p.corner, (there === undefined ? by : added(by, there)) as never);
+  mine.set(p.corner, there === undefined ? by : { x: by.x + there.x, y: by.y + there.y });
 
   return withKeyRig(out, p.id, withKeysAt(rig, to, list.map((x, i) => (i === into ? { ...was, [held]: mine } : x))));
 }
@@ -498,15 +491,6 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
 /** Whether a key is about single corners and nothing else. */
 function bareCorners(key: Key): boolean {
   return key.by === undefined && key.stand === undefined;
-}
-
-/** Two of one corner's writings of one kind, as one. */
-function added(a: number | Point, b: number | Point): number | Point {
-  if (typeof a === 'number' && typeof b === 'number') return a + b;
-
-  const p = a as Point, q = b as Point;
-
-  return { x: p.x + q.x, y: p.y + q.y };
 }
 
 /** Whether two things repeat the same way. */

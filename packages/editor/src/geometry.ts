@@ -264,11 +264,6 @@ export function simplify(a: Shape): Cut {
  * `depth` along their own normals, cross — and a wall that runs out of room
  * takes its endpoints with it.
  *
- * One depth for the whole shape, which is `erodeAt` with the same number
- * everywhere and nothing else: the two are the same construction and this is
- * the name for the ordinary case. See there for how it is built and what it
- * costs.
- *
  * It is done by taking away the band the boundary sweeps on its way in, rather
  * than by moving the vertices and filling the ring that comes out. That was a
  * page of code and got the easy half right, but the ring folds back on itself
@@ -289,8 +284,7 @@ export function simplify(a: Shape): Cut {
  * special case. A negative depth grows the shape instead, by putting the band
  * on the other side and adding it. The input has to be simple; `simplify` is
  * what the caller has already run to make it so, and its winding is what says
- * which way is in — unlike `erodeAt`, which is handed a bare ring and settles
- * that itself.
+ * which way is in.
  */
 export function erode(shape: Cut, depth: number): Cut {
   if (depth === 0) return shape;
@@ -299,82 +293,11 @@ export function erode(shape: Cut, depth: number): Cut {
 }
 
 /**
- * The offset taken with a depth per vertex: every corner moves to the point
- * that is `depths[i]` from both of the walls meeting there, and the boundary
- * between two moved corners is the straight line joining them.
- *
- * The corner rather than the wall, which is the whole of what makes this
- * different from `erode`. A uniform depth cannot tell the two apart — a corner
- * at `d` from both its walls is exactly where the two walls moved `d` along
- * their own normals cross, so the mitre *is* the moved corner and either
- * reading builds the same band. Once the depths differ they part company, and
- * they part immediately: the scaled bisector slides a corner *along* its walls
- * as well as across them, so the wall joining two moved corners is a chord
- * between them rather than the original wall carrying a linear ramp of depth.
- *
- * What it buys is that there is no mitre to run away. `erode` has to build a
- * wedge at every corner the ring turns away from, and the wedge reaches to
- * where the two moved walls cross, which is off towards infinity as they close
- * on parallel — hence `MITRE_LIMIT`, and hence a spike as long as the limit
- * allows standing in the middle of a room. Here the corner *is* the crossing.
- * There is one quad per wall, they meet at the corners, and nothing reaches
- * anywhere the offset does not go.
- *
- * What it costs is that a quad can fold. A corner whose bisector is long enough
- * sends its moved point past the far end of the wall, and the quad crosses
- * itself; a bowtie's two lobes are wound against each other, so filled as one
- * ring it would cancel most of the band away. Each is cut into two triangles
- * and wound separately, which fills both lobes — and both lobes are ground the
- * wall genuinely sweeps on its way in.
- *
- * The ring rather than a `Cut`, and the winding settled here, for the reason
- * `erode` takes a `Cut`: the depths are named by where a corner sits in the
- * ring the caller has in hand, and an arrangement would not keep them there.
- */
-export function erodeAt(source: Ring, depths: readonly number[]): Cut {
-  const flip = !isCCW(source);
-  const ring = flip ? [...source].reverse() : source;
-  const at = flip ? [...depths].reverse() : depths;
-
-  return offset(simplify([ring]), swept([ring], (_, i) => at[i]));
-}
-
-/**
- * The same for a source with holes in it: the depths flat and in ring order,
- * exactly as the corners they belong to are.
- *
- * The winding is taken as it stands rather than settled, which is the one
- * difference from `erodeAt` and is the same difference `erodeShapeAt` has from
- * it. There is no settling to do — a shape with a hole in it has already said
- * which of its rings is which by how they are wound, and reversing a ring here
- * because it happens to be clockwise would fill the hole in.
- */
-export function erodeRingsAt(source: Shape, depths: readonly number[]): Cut {
-  const starts = ringStarts(source);
-
-  return offset(simplify(source), swept(source, (r, i) => depths[starts[r] + i]));
-}
-
-/** Where each ring of a shape begins, once its rings are laid end to end. */
-export function ringStarts(shape: Shape): number[] {
-  const out: number[] = [];
-
-  let n = 0;
-
-  for (const ring of shape) {
-    out.push(n);
-    n += ring.length;
-  }
-
-  return out;
-}
-
-/**
  * Where each corner of `source` goes under the same offset the projection
  * takes: index for index with the ring it was handed.
  *
  * The corner and not the outline, which is the only reason this can answer at
- * all. What comes back out of `erode` or `erodeAt` is an arrangement, and an
+ * all. What comes back out of `erode` is an arrangement, and an
  * arrangement keeps no names — a corner can be cut away by a neighbour's band,
  * or land on a wall it now shares with three others, and asking which of the
  * points in the result *was* a given source vertex is a question the offset
@@ -387,20 +310,14 @@ export function ringStarts(shape: Shape): number[] {
  * not on the eroded boundary, that corner is one the erosion consumed, and the
  * line running past the outline into the interior is the picture of that.
  *
- * A number for a uniform depth, an array for one per corner — the same two
- * cases `erode` and `erodeAt` divide on, and the winding settled here the way
- * `erodeAt` settles it, so a clockwise ring moves inwards like any other.
+ * The winding is settled here, so a clockwise ring moves inwards like any
+ * other.
  */
-export function erodedCorners(source: Ring, depths: readonly number[] | number): Point[] {
+export function erodedCorners(source: Ring, depth: number): Point[] {
   const flip = !isCCW(source);
   const ring = flip ? [...source].reverse() : source;
-  const n = source.length;
 
-  const depth = typeof depths === 'number'
-    ? () => depths
-    : (i: number) => depths[flip ? n - 1 - i : i];
-
-  const moved = corners(ring, depth);
+  const moved = corners(ring, () => depth);
 
   return flip ? moved.reverse() : moved;
 }
@@ -411,7 +328,7 @@ export function erodedCorners(source: Ring, depths: readonly number[] | number):
  *
  * The winding is taken as it stands rather than settled, which is the one
  * difference from `erodedCorners` and is what makes this the counterpart to
- * `erode` rather than to `erodeAt`. Material is on the left of every ring an
+ * `erode`. Material is on the left of every ring an
  * arrangement produces, hole and outer alike, so the bisector already points
  * into the material and a hole opens up as the ground around it shrinks — the
  * same reason `erode` can take a `Cut` and offset every ring by one number.
@@ -423,20 +340,8 @@ export function erodedCorners(source: Ring, depths: readonly number[] | number):
  * and has lost the brand on its way through `Contributed`. Nothing here writes
  * back, so the worst a shape that is not walked can do is draw a wrong line.
  */
-export function erodedRingCorners(
-  source: Shape,
-  depths: readonly number[] | number,
-): Point[] {
-  const starts = ringStarts(source);
-  const out: Point[] = [];
-
-  source.forEach((ring, r) => {
-    const at = typeof depths === 'number' ? () => depths : (i: number) => depths[starts[r] + i];
-
-    out.push(...corners(ring, at));
-  });
-
-  return out;
+export function erodedRingCorners(source: Shape, depth: number): Point[] {
+  return source.flatMap(ring => corners(ring, () => depth));
 }
 
 export function erodedShape(shape: Shape, depth: number): Point[][] {
@@ -3270,9 +3175,7 @@ function norm(t: number): number {
 // jump. Then the erosion takes the lot, as it would take corners drawn by
 // hand. A round's amount is its bevel: how deep from the corner, along each
 // edge, its curve starts — the same at any angle, so a sharp corner and a
-// blunt one are cut back alike — and, held, the depth on top of that, so
-// that what the erosion leaves is the bevel asked for (`drawnBevels` in
-// `scene/core.ts`). It is faceted where it bends: see `spread`.
+// blunt one are cut back alike. It is faceted where it bends: see `spread`.
 //
 // A group's round is still laid after its erosion, on its union, so the
 // joins between its rooms are not rounded, and it leaves its members' teeth

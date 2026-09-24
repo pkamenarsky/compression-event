@@ -46,15 +46,11 @@ import {
   Ring,
   Shape,
   erode,
-  erodeAt,
-  erodeRingsAt,
   isCCW,
   keeping,
   diameter,
   nextOf,
   prevOf,
-  signedArea2,
-  subdivided,
   simplify,
   sliced,
 } from '../geometry';
@@ -99,7 +95,7 @@ import {
 import { outline } from '../worldset';
 import type { Drawn, Ident, Ids } from '../ids';
 import { combineIdentified, identify, on } from '../ids';
-import type { Amount as Given, Effect } from '../effect';
+import type { Effect } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
 import { deforming, eroding as offsetting, roundingAcross, sagitta } from '../effect';
@@ -120,7 +116,6 @@ import {
   Turn,
   affineOf,
   blank,
-  deepened,
   framed,
   heldFrame,
   indexIn,
@@ -146,7 +141,6 @@ import {
   keysAt,
   withKeysAt,
   Key as RigKey,
-  amountedBy,
   deltaOf,
   nextKey,
   nudgedBy,
@@ -224,30 +218,6 @@ export interface Resolved {
   /** The depth `shape` was taken at: what its erosions add up to. */
   erosion: number
   /**
-   * The extra depth on single corners, by id, as this keyframe leaves it, and
-   * empty in every world nobody has offset a corner of.
-   *
-   * Kept by id rather than as an array beside `corners` because that is how it
-   * is authored and how it is written down; `depths` below is the same thing
-   * arranged for the offset, which wants a number per vertex of the ring and
-   * nothing to look up.
-   *
-   * The editor's business alone, and absent where nobody is going to ask: an
-   * instant inside a span is not a version and has no layer to have said this,
-   * and building the map anyway would be one allocation per polygon per instant
-   * of the bake for a field nothing there reads.
-   */
-  over?: ReadonlyMap<VertexId, number>
-  /**
-   * The total depth at each of `corners`, or nothing where they all agree.
-   *
-   * `null` is not an optimisation. A uniform offset is the one `erode` takes,
-   * an arrangement it has always taken and whose answer is byte-for-byte what
-   * it was; the varying one goes another way round. So the two are told apart
-   * once, here, rather than by every reader comparing numbers.
-   */
-  depths: readonly number[] | null
-  /**
    * Points the projection must have as vertices even though it does not turn
    * at them, in world units.
    *
@@ -267,33 +237,24 @@ export interface Resolved {
 }
 
 /**
- * What a polygon's fold lays after its erosion, corner by corner and index
- * for index with `Resolved.corners`: each corner's facets and the bevel it
- * asks for, and the deform. A round is the ring's — the fold takes the finest
- * facets and the largest bevel — but they are kept per corner because that is
- * how a keyframe writes them and how a span lays them.
+ * What a polygon's fold lays after its erosion: its round's facets and the
+ * bevel it asks for, and the deform. One of each for the whole ring, an effect
+ * being one amount over its ring and one set of options.
  *
  * Lengths, so a frame that scales divides them the way it divides a depth.
  */
 export interface Effected {
-  facets: readonly Facets[]
-  bevels: readonly number[]
+  facets: Facets
+  bevel: number
   deform: ArcDeform | null
 }
 
-/**
- * A polygon's deform: its options, the options the edge leaving each corner
- * stands in where that edge has its own — `cornerEffects`, which names an
- * edge by the corner it leaves — and the amplitude of each such edge.
- * Amounts add and options do not: one set lays a run, and the nearest wins.
- */
+/** A polygon's deform: its options, and the amplitude it is laid at. */
 export interface ArcDeform {
   e: Effecting
-  es: readonly (Effecting | null)[]
-  after: readonly number[]
+  amplitude: number
 }
 
-/** How many segments a round of `bevel` is in. See `segmentsFor`. */
 /** `bevel` is in the world and `scale` is what took it there (`scaleAt`):
  * the precision is a length at the thing's own scale, as the bevel was, so a
  * thing scaled keeps the facets it had. */
@@ -302,25 +263,15 @@ export function segmentsOf(round: Options['round'], bevel: number, scale = 1): n
 }
 
 /**
- * The options of one effect on a thing, with a corner's own over its
- * thing's, and nothing where the one that applies is switched off — or its
- * thing's is, which switches off its corners' with it.
+ * The options of one effect on a thing, and nothing where it is switched off.
  *
  * One function for both effects with options: they differ in nothing but
  * which key they read. See `Effects` in `types.ts`.
  */
-export function optionOf<N extends keyof Options>(
-  fx: Effects | undefined,
-  name: N,
-  own?: Partial<Effects>,
-): Options[N] | undefined {
+export function optionOf<N extends keyof Options>(fx: Effects | undefined, name: N): Options[N] | undefined {
   const mine = fx?.[name] as Options[N] | undefined;
 
-  if (mine?.off === true) return undefined;
-
-  const option = (own?.[name] as Options[N] | undefined) ?? mine;
-
-  return option?.off === true ? undefined : option;
+  return mine?.off === true ? undefined : mine;
 }
 
 /** Whether a thing's erosion applies: it does unless switched off. */
@@ -328,9 +279,9 @@ export function eroding(world: World, id: Id): boolean {
   return world.effects.get(id)?.erode?.off !== true;
 }
 
-/** A thing's options, with a corner's own over them where it has them. */
-export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effecting {
-  const deform = optionOf(fx, 'deform', own);
+/** A thing's options. */
+export function effecting(fx: Effects | undefined): Effecting {
+  const deform = optionOf(fx, 'deform');
 
   return {
     spacing: deform?.spacing ?? 0,
@@ -349,170 +300,68 @@ export function effecting(fx: Effects | undefined, own?: Partial<Effects>): Effe
 }
 
 /**
- * A polygon's round at its standing corners, from its options in the world
- * and its amounts as a keyframe leaves them — or as the bake has them part
- * way along — and the deform its arcs take. Nothing where it is not rounded,
- * or not by anything there: then the projection is its erosion alone,
- * exactly as it always was.
- *
- * `local` is where the corners are, and `depth` how deep each is eroded,
- * for a round that is held: see `drawnBevels`.
+ * A polygon's round, from its options in the world and its amounts as a
+ * keyframe leaves them — or as the bake has them part way along — and the
+ * deform. Nothing where it is not rounded or deformed, or not by anything
+ * there: then the projection is its erosion alone, exactly as it always was.
  */
 export function effectedOf(
   world: World,
   id: Id,
-  corners: readonly Vertex[],
-  local: readonly Point[],
-  amounts: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'>,
-  depth: (i: number) => number,
+  amounts: Pick<State, 'bevel' | 'amplitude'>,
   /** What took the amounts into the world: see `segmentsOf`. */
   scale = 1,
 ): Effected | null {
   const fx = world.effects.get(id);
-  const deform = arcDeform(world, id, corners, amounts, scale);
+  const deform = arcDeform(world, id, amounts.amplitude, scale);
+  const round = optionOf(fx, 'round');
 
   // A deform with no round still has somewhere to be: the teeth are laid on
   // the eroded outline and the round is only one more thing that happens to
   // it first. See PLAN-bevel 3.1.
-  if (fx?.round === undefined && deform === null) return null;
+  if (round === undefined && deform === null) return null;
 
-  const bevels = drawnBevels(world, id, corners, local, amounts, depth);
-  const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
+  // The round is drawn after the erosion — see PLAN-bevel's step 6 — so the
+  // bevel is the one asked for, at any depth.
+  const bevel = round === undefined ? 0 : Math.max(0, amounts.bevel);
+
   // A count written down wins over the precision: it is there because a fold
-  // drew this very corner in it and a resolve wrote it back, and the whole
-  // point of writing it was that the precision would not say the same. See
-  // `Effects['round']`.
-  const faceted = (round: Options['round'] | undefined, bevel: number): Facets => {
-    if (round === undefined) return SQUARE;
-
-    // The count only where the bevel is still the one it was taken at: see
-    // `Effects['round']`.
+  // drew this very ring in it and a resolve wrote it back, and the whole point
+  // of writing it was that the precision would not say the same. Only where
+  // the bevel is still the one it was taken at: see `Effects['round']`.
+  const faceted = (round: Options['round']): Facets => {
     const kept = round.facets !== undefined
       && round.facetsAt !== undefined
       && Math.abs(round.facetsAt - bevel) < 1e-9 * Math.max(1, Math.abs(bevel));
 
     return kept ? round.facets! : facetsOf(segmentsOf(round, bevel, scale), round.tension);
   };
-  const flat = corners.map(c => c.root !== undefined);
 
-  return shaping({
-    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(fx?.round?.off === true ? undefined : fx?.round, bevels[i] > 0 ? seen[i] : 0))),
-    bevels,
-    deform,
-  });
+  return shaping({ facets: round === undefined ? SQUARE : faceted(round), bevel, deform });
 }
 
 /**
- * Each corner's bevel as it is drawn, before the erosion: the polygon's with
- * the corner's own on top, and nothing for a tooth or a corner not rounded.
- *
- * Where the round is held — which it is unless it says otherwise — the depth
- * the corner is eroded by goes on top of that where the corner turns out of
- * the material and comes off where it turns in, so that what the erosion
- * leaves is a round of the bevel asked for, at any depth. A bevel of nought
- * is nought, held or not: a corner eroded from square is square.
+ * The deform a polygon takes: its own, at its amplitude — nought where the
+ * timeline never deforms it. A group's deform is its members' alone.
  */
-export function drawnBevels(
-  world: Pick<World, 'effects' | 'cornerEffects'>,
-  id: Id,
-  corners: readonly Vertex[],
-  local: readonly Point[],
-  amounts: Pick<State, 'bevel' | 'bevels'>,
-  depth: (i: number) => number,
-): number[] {
-  const fx = world.effects.get(id);
-  const rings = ringsOf(corners), n = corners.length;
-  const drawn = (k: number) => corners[k].root === undefined;
+function arcDeform(world: World, id: Id, amplitude: number, scale: number): ArcDeform | null {
+  const deform = optionOf(world.effects.get(id), 'deform');
 
-  // Out of the material is to the right of the outline's way round: see
-  // `deformedAt`. A corner turning left is one turning out of it.
-  const first = local.slice(0, rings[1] ?? n);
-  const wound = signedArea2(first) >= 0 ? 1 : -1;
-  const convex = (i: number): number => {
-    let a = prevOf(rings, n, i), c = nextOf(rings, n, i);
+  if (deform === undefined || !(deform.spacing > 0)) return null;
 
-    while (!drawn(a) && a !== i) a = prevOf(rings, n, a);
-    while (!drawn(c) && c !== i) c = nextOf(rings, n, c);
-
-    const p = local[a], q = local[i], r = local[c];
-    const turn = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x);
-
-    return Math.sign(turn) * wound;
-  };
-
-  return corners.map((c, i) => {
-    const round = fx?.round?.off === true ? undefined : fx?.round;
-
-    if (round === undefined || !drawn(i)) return 0;
-
-    // The bevel as it is asked for. The round is drawn after the erosion — see
-    // PLAN-bevel's step 6 — so there is no depth left to draw it out against,
-    // which is what `held` used to do and why it is gone.
-    return Math.max(0, amounts.bevel + (amounts.bevels.get(c.id) ?? 0));
-  });
-}
-
-/**
- * The deform a polygon's arcs take: its own, at its amounts, the amplitude
- * each side of a corner the one its edge has — nought on an edge the
- * timeline never deforms, as `deforms` has it for the straights. A group's
- * deform is its members' straights' alone.
- */
-function arcDeform(
-  world: World,
-  id: Id,
-  corners: readonly Vertex[],
-  amounts: Pick<State, 'amplitude' | 'amplitudes'>,
-  scale: number,
-): ArcDeform | null {
-  const fx = world.effects.get(id);
-  const edge = (c: Vertex) => c.root ?? c.id;
-  const mineAt = (c: Vertex) => optionOf(fx, 'deform', world.cornerEffects.get(edge(c)));
-  const polygon = fx?.deform !== undefined && fx.deform.off !== true && fx.deform.spacing > 0;
-
-  // A deform an edge asks for on its own is a deform, whatever its polygon
-  // asks for: the polygon's options are what an edge without its own stands
-  // in, and nothing more. See `ArcDeform.es`.
-  if (!polygon && !corners.some(c => {
-    const own = world.cornerEffects.get(edge(c))?.deform;
-
-    return own !== undefined && own.off !== true && own.spacing > 0 && mineAt(c) !== undefined;
-  })) return null;
-
-  const ever = everDeformed(keyRigOf(world, id));
-  const e = effecting(fx);
-  const amplitude = (from: VertexId) => (ever.all || ever.edges.has(from) ? amounts.amplitude + (amounts.amplitudes.get(from) ?? 0) : 0);
-
-  // The edge leaving each corner, where it asks for options of its own. A
-  // tooth is not a corner and asks for nothing: its edge's are its root's.
-  const own = (c: Vertex): Effecting | null => {
-    const mine = world.cornerEffects.get(edge(c));
-
-    if (mine?.deform === undefined) return null;
-
-    const theirs = effecting(fx, mine);
-
-    return { ...theirs, spacing: theirs.spacing * scale };
-  };
-
-  // Where the polygon has none of its own, an edge without options of its own
-  // is not deformed at all — its amplitude has nothing to lay it by.
-  const amplitudeOf = polygon
-    ? amplitude
-    : (from: VertexId) => (world.cornerEffects.get(from)?.deform === undefined ? 0 : amplitude(from));
+  const e = effecting(world.effects.get(id));
 
   return {
     e: { ...e, spacing: e.spacing * scale },
-    es: corners.map(own),
-    after: corners.map(c => amplitudeOf(edge(c))),
+    amplitude: everDeformed(keyRigOf(world, id)) ? amplitude : 0,
   };
 }
 
 /** Kept only where it does something: a round that rounds, or a deform whose
  * teeth stand anywhere. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.facets.some((f, i) => f.n > 0 && e.bevels[i] > 0);
-  const toothed = e.deform !== null && e.deform.after.some(a => a !== 0);
+  const any = e.facets.n > 0 && e.bevel > 0;
+  const toothed = e.deform !== null && e.deform.amplitude !== 0;
 
   return any || toothed ? e : null;
 }
@@ -522,36 +371,13 @@ function effectKey(e: Effected, s = 1): Memo[] {
   const d = e.deform;
   const deform: Memo[] = d === null
     ? []
-    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.after.map(a => a / s), Number(d.e.offset), d.es.flatMap(e => effectingKey(e, s))];
+    : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude / s, Number(d.e.offset)];
 
-  return [e.facets.map(facetKey), e.bevels.map(r => r / s), deform];
+  return [facetKey(e.facets), e.bevel / s, deform];
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
 export const SIDES: readonly Effecting['sides'][] = ['in', 'out', 'both'];
-
-/** One edge's options as a memo, seven numbers with a pattern of `-1` where
- * it has none of its own: see `ArcDeform.es`. */
-function effectingKey(e: Effecting | null, s = 1): number[] {
-  if (e === null) return [0, -1, 0, 0, 0, 0, 0];
-
-  return [e.spacing / s, PATTERNS.indexOf(e.pattern), e.seed, SIDES.indexOf(e.sides), e.jitter, e.falloff, Number(e.offset)];
-}
-
-/** And back, for `imagedBy`. */
-function effectingFrom(k: readonly number[], at: number): Effecting | null {
-  if (k[at + 1] === -1) return null;
-
-  return {
-    spacing: k[at],
-    pattern: PATTERNS[k[at + 1]],
-    seed: k[at + 2],
-    sides: SIDES[k[at + 3]],
-    jitter: k[at + 4],
-    falloff: k[at + 5],
-    offset: k[at + 6] === 1,
-  };
-}
 
 export function facetKey(f: Facets): number[] {
   return [f.n, f.from, f.to, f.at, f.tension];
@@ -1062,7 +888,6 @@ export const project = remembered((
   source: Ring,
   rings: readonly number[],
   erosion: number,
-  depths: readonly number[] | null,
   effects: readonly Memo[] | null,
   /**
    * Which member these names are minted in, so that two polygons in one scope
@@ -1096,35 +921,27 @@ export const project = remembered((
   // those. So a sampled ring is named before it is eroded and carries the
   // names through, which is what the fold does.
   if (effects === null && was === null) {
-    const shape = offsetOf(source, rings, erosion, depths);
+    const shape = offsetOf(source, rings, erosion);
 
     return { shape, ids: identify(shape, member, was) };
   }
 
-  return folding(source, rings, erosion, depths, effects ?? UNEFFECTED, member, was);
+  return folding(source, rings, erosion, effects ?? UNEFFECTED, member, was);
 });
 
-/** No facets, no bevels and no deform: the fold with nothing to lay but the
+/** No facets, no bevel and no deform: the fold with nothing to lay but the
  * erosion. */
-const UNEFFECTED: readonly Memo[] = [[], [], []];
+const UNEFFECTED: readonly Memo[] = [facetKey(SQUARE), 0, []];
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
  * and nothing else anywhere.
  *
- * A polygon has genuine drawn corners and may carry a different depth, bevel
- * and amplitude at each of them. An effect takes an `Amount`, which is either
- * one number or a number per *identity* — and a polygon's corners have the
- * plainest identities there are, `corner(member, vertex)`, one per point of
- * the ring it was drawn as. So a round on one corner is a map with one entry
- * in it, and the effect is the same effect.
- *
- * By identity and not by index is the whole of why this works through the
- * fold. The erosion closes a notch and the ring is two rings; the round makes
- * arcs where corners were; a scope above unions the lot with somebody else's
- * wall. Through all of it a bevel written against corner four is still against
- * corner four, and a point the construction made on the way asks whatever it
- * was made of — see `amountOf`.
+ * Each effect is one amount over the whole ring. The names still matter: the
+ * erosion closes a notch and the ring is two rings; the round makes arcs where
+ * corners were; a scope above unions the lot with somebody else's wall. The
+ * deform lays its runs by the names its points carry, and a scope above lays
+ * its own by the same names — see `identify`.
  *
  * That both sides must round the same way is the thing this step turned up:
  * `arcsWith` is a tension curve and the opening is an arc, so a scope rounding
@@ -1135,119 +952,51 @@ function folding(
   source: Ring,
   rings: readonly number[],
   erosion: number,
-  depths: readonly number[] | null,
   effects: readonly Memo[],
   member: number,
   was: readonly number[] | null,
 ): Drawn {
-  const [facets, bevels, deform] = effects as [Memo[], number[], Memo[]];
+  const [facets, bevel, deform] = effects as [number[], number, number[]];
   // Named as it was drawn, point for point with `source`, and the names
   // carried through the clean-up rather than minted after it: `simplify`
   // re-walks a ring and drops what does not turn, and names read off its walk
-  // would say nothing about which of the source's corners a point is. The
-  // amounts are written against the source's numbering, and so are `was`'s
-  // samples, so that is the numbering the names have to come of.
+  // would say nothing about which of the source's corners a point is. `was`'s
+  // samples are written against the source's numbering, so that is the
+  // numbering the names have to come of.
   const cut = sliced(source, rings) as Cut;
   const names = identify(cut, member, was);
-  const index = new Map(names.flat().map((id, i) => [id, i]));
   const { shape, ids } = combineIdentified({ shape: cut, ids: names }, { shape: [], ids: [] }, inA => inA);
 
-  // The names the amounts are written against, by where each name's corner
-  // is in the source.
-  const at = (of: readonly number[] | null, whole: number): Given => {
-    if (of === null || of.length === 0) return whole;
-
-    const out = new Map<Ident, number>();
-
-    for (const [id, i] of index) out.set(id, of[i] ?? whole);
-
-    return out;
-  };
-
-  const [spacing, pattern, seed, sides, jitter, falloff, after, offset, own] =
-    deform as [number, number, number, number, number, number, number[], number, number[]];
-
-  // One bevel for the whole ring, and the largest anybody asked for.
-  //
-  // The erosion takes a depth per corner and the deform an amplitude per edge,
-  // both exactly — a band is built corner by corner and a pattern is laid run
-  // by run, so an amount per identity is what they wanted all along. **The
-  // round is not like them and per-corner rounds are dropped.** A round is an
-  // opening, in by `b` and out by `b`, and an opening is a statement about the
-  // whole shape: run it with a depth at one corner and nought at its
-  // neighbours and the wall between them is a chord sloping back rather than
-  // a wall offset by `b`, so the arc that grows off it lands short — a bevel
-  // of forty comes back running thirty along the wall.
-  //
-  // Rounding one corner and not its neighbour could be had, by taking the
-  // pieces an opening removes and keeping only those whose arc is named by a
-  // corner that asked — the pieces know, which is what identity is for. It is
-  // a second construction with a caveat on it (a piece can span two corners
-  // once the amounts are large), and it buys one editor feature. Dropped
-  // instead, and written down here rather than left as a silent 25%.
-  const bevel = most(at(bevels, 0));
-  const amplitude = deform.length === 0 ? 0 : at(after, 0);
+  const [spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = deform;
   const whole: Effecting | null = deform.length === 0
     ? null
     : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
 
-  // The options the edge leaving each corner stands in, its own over the
-  // polygon's — which is what `ArcDeform.es` carried as a parallel array and
-  // is now a question asked of the run's own name.
-  const mine = new Map<Ident, Effecting | null>();
-
-  if (deform.length !== 0 && own.length > 0) {
-    for (const [id, i] of index) mine.set(id, effectingFrom(own, i * 7));
-  }
-
   const steps: Effect[] = [
-    offsetting(at(depths, erosion)),
-    roundingOf(bevel, facets.map(facetsFrom)),
-    ...(whole === null ? [] : [deforming(amplitude, (id: Ident) => mine.get(id) ?? whole)]),
+    offsetting(erosion),
+    roundingOf(bevel, facetsFrom(facets)),
+    ...(whole === null ? [] : [deforming(amplitude, whole)]),
   ];
 
   return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids });
-}
-
-/** The most any of an amount's points is given: what a facet count is read
- * off, a count being one number for the whole polygon. */
-function most(by: Given): number {
-  return typeof by === 'number' ? by : Math.max(0, ...by.values());
 }
 
 /**
  * The round a polygon's facets ask for: at the accuracy their count stood at,
  * and — part way across a span whose count changes — laid at both ends'
  * counts and blended, so the ring keeps its points and each end is the
- * editor's. One count for the ring, the finest any corner has, a round being
- * the ring's. See `roundingAcross`.
+ * editor's. See `roundingAcross`.
  */
-function roundingOf(bevel: number, facets: readonly Facets[]): Effect {
-  const f = facets.reduce<Facets>((best, g) => (g.n > best.n ? g : best), SQUARE);
-
+function roundingOf(bevel: number, f: Facets): Effect {
   return roundingAcross(bevel, sagitta(bevel, f.from), sagitta(bevel, f.to), f.at);
 }
 
 /** The erosion alone: the first of the three, and all of it for a polygon
  * with no effects. */
-function offsetOf(source: Ring, rings: readonly number[], erosion: number, depths: readonly number[] | null): Cut {
-  // One ring is the case the winding still has to be settled for: a source ring
-  // is whatever it was drawn as, and `erodeAt` is what decides which way is in.
-  // A source with holes in it has already said, by how its rings are wound, and
-  // settling each of them on its own would fill the holes.
-  if (depths !== null) {
-    return rings.length <= 1 ? erodeAt(source, depths) : erodeRingsAt(sliced(source, rings), depths);
-  }
-
+function offsetOf(source: Ring, rings: readonly number[], erosion: number): Cut {
   const simple = simplify(sliced(source, rings));
 
   return erosion === 0 ? simple : erode(simple, erosion);
-}
-
-/** The per-corner depths under a frame that scales: an offset is a length and
- * goes through one the way lengths do. */
-function scaled(depths: readonly number[] | null, s: number): readonly number[] | null {
-  return depths === null ? null : depths.map(d => d / s);
 }
 
 /**
@@ -1313,9 +1062,9 @@ function projection(at: Omit<Resolved, 'shape' | 'ids'>): Drawn {
 
   const was = sampled(at.corners);
 
-  if (s === null) return project(at.source, at.rings, at.erosion, at.depths, fx === null ? null : effectKey(fx), at.id, was);
+  if (s === null) return project(at.source, at.rings, at.erosion, fx === null ? null : effectKey(fx), at.id, was);
 
-  const it = project(at.local, at.rings, at.erosion / s, scaled(at.depths, s), fx === null ? null : effectKey(fx, s), at.id, was);
+  const it = project(at.local, at.rings, at.erosion / s, fx === null ? null : effectKey(fx, s), at.id, was);
 
   // The frame moves the points and says nothing about the names: a corner
   // carried across the world is the corner it was, which is the whole of what
@@ -1471,48 +1220,6 @@ export function groupFrame(world: World, v: KeyframeId, id: Id): Affine {
   return worldFrame(world, id, v);
 }
 
-/** Shared, because there is one of these per polygon per resolve and almost
- * all of them are this. */
-const EMPTY_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
-
-/**
- * The depth at each standing corner, or nothing where the layer says nothing
- * about any of them.
- *
- * A corner named with an offset of nought is the same as a corner not named, so
- * a map that has been written into and emptied again does not put the polygon
- * down the slower road for the rest of the session.
- */
-function varying(
-  corners: readonly Vertex[],
-  erosion: number,
-  over: ReadonlyMap<VertexId, number>,
-): readonly number[] | null {
-  if (over.size === 0) return null;
-
-  let any = false;
-
-  const out = corners.map(c => {
-    const d = over.get(c.id) ?? 0;
-
-    if (d !== 0) any = true;
-
-    return erosion + d;
-  });
-
-  return any ? out : null;
-}
-
-/**
- * The deforms a polygon's rings go through at keyframe `v`, in the order they
- * are done: its own, and then each group's holding it, outwards. A group's
- * deform is its members', each on its own rings — what a group deforms is
- * what it holds, and taking the deform off the group takes it off them all.
- *
- * Each with its options, and the amplitude of each edge by the corner it
- * starts at: the thing's own amplitude, and for a polygon's own deform the
- * edge's on top.
- */
 /**
  * How much a thing is scaled at `v`, as one number: the square root of how
  * much its frame, and every frame holding it, scales area.
@@ -1541,49 +1248,12 @@ export function scaledState(world: World, id: Id, v: KeyframeId): State {
 
   if (k === 1) return state;
 
-  const by = (m: ReadonlyMap<VertexId, number>) => (m.size === 0 ? m : new Map([...m].map(([c, d]) => [c, d * k])));
-
   return {
     ...state,
     erosion: state.erosion * k,
-    depths: by(state.depths),
     bevel: state.bevel * k,
-    bevels: by(state.bevels),
     amplitude: state.amplitude * k,
-    amplitudes: by(state.amplitudes),
   };
-}
-
-export function deforms(world: World, v: KeyframeId, id: Id): Deforming[] {
-  const out: Deforming[] = [];
-
-  for (const owner of [id, ...enclosing(world, id)]) {
-    const fx = world.effects.get(owner);
-
-    // A sealed group's deform is laid on its fold, not on its members: see
-    // `groupDeform`.
-    if (owner !== id && world.groups.get(owner)?.sealed === true) continue;
-
-    if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) continue;
-
-    const state = scaledState(world, owner, v);
-    const ever = everDeformed(keyRigOf(world, owner));
-    const own = owner === id;
-    const e = effecting(fx);
-
-    out.push({
-      owner,
-      // A loose group's deform is laid along each member's edges, the walls
-      // they share included, and stays from their middles: offset, two
-      // members' teeth along one wall fall wherever they fall, and the
-      // arrangement flickers where they meet.
-      e: { ...e, spacing: e.spacing * scaleAt(world, owner, v), offset: own },
-      amplitude: own ? from => state.amplitude + (state.amplitudes.get(from) ?? 0) : () => state.amplitude,
-      toothed: own ? from => ever.all || ever.edges.has(from) : () => ever.all,
-    });
-  }
-
-  return out;
 }
 
 /**
@@ -1596,7 +1266,7 @@ export function groupDeform(world: World, id: Id, amplitude: number, scale: numb
   const fx = world.effects.get(id);
 
   if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) return null;
-  if (!everDeformed(keyRigOf(world, id)).all) return null;
+  if (!everDeformed(keyRigOf(world, id))) return null;
 
   const e = effecting(fx);
 
@@ -1645,149 +1315,18 @@ export function diameterAt(world: World, v: KeyframeId, id: Id): number {
 }
 
 /**
- * One deform a polygon's rings go through. `toothed` is whether an edge gets
- * teeth at all: only one some amount somewhere in the timeline deforms, so an
- * edge deformed on its own leaves the others straight and their corners' bevels
- * whole.
+ * Whether a thing's timeline ever deforms it. Over every keyframe rather than
+ * at one, so a polygon has its teeth at each — flat where its amplitude is
+ * nought — and they never come or go with it.
  */
-interface Deforming {
-  owner: Id
-  e: Effecting
-  amplitude: (from: VertexId) => number
-  toothed: (from: VertexId) => boolean
-}
-
-/**
- * What a thing's timeline ever deforms: all its edges, where an amount is
- * written about the whole thing, and the edges written about one by one.
- * Over every keyframe rather than at one, so an edge has its teeth at each —
- * flat where its amplitude is nought — and they never come or go with it.
- */
-function everDeformed(rig: KeyRig): { all: boolean, edges: ReadonlySet<VertexId> } {
-  const edges = new Set<VertexId>();
-  let all = false;
-
+function everDeformed(rig: KeyRig): boolean {
   for (const list of rig.keys.values()) {
     for (const key of list) {
-      if ((key.by?.deform ?? 0) !== 0) all = true;
-
-      key.deforms?.forEach((a, from) => a !== 0 && edges.add(from));
-
-      if (key.stand !== undefined) {
-        if (key.stand.amplitude !== 0) all = true;
-
-        key.stand.amplitudes.forEach((a, from) => a !== 0 && edges.add(from));
-      }
+      if ((key.by?.deform ?? 0) !== 0 || (key.stand?.amplitude ?? 0) !== 0) return true;
     }
   }
 
-  return { all, edges };
-}
-
-/**
- * A polygon's standing corners with its deforms done to them: its rings
- * subdivided and perturbed, in the world, before anything else happens to
- * them. See `subdivided` in `geometry.ts`.
- *
- * The teeth are corners from here on, each with an id of its own made from
- * who deforms it, the corner its edge starts at, and which tooth it is — so it
- * is the same corner at every keyframe, and the bake carries it as it carries
- * any other. A tooth's extra depth is its edge's, in proportion along it, so
- * a varying erosion leaves a straight edge straight. What has no deform comes
- * back as it came.
- *
- * Every deform keeps each drawn corner's bevel — `bevel`, as it is drawn —
- * free of teeth, which stop short of the arc there rather than run into it:
- * see `patternRun`. The arc takes teeth of its own: see `outlineOf`.
- */
-function deformedAt(
-  world: World,
-  v: KeyframeId,
-  id: Id,
-  corners: readonly Vertex[],
-  local: readonly Point[],
-  frame: Affine,
-  over: ReadonlyMap<VertexId, number>,
-  bevel: (c: Vertex) => number,
-): { corners: Vertex[], local: Point[], source: Point[], over: ReadonlyMap<VertexId, number> } {
-  const chain = deforms(world, v, id);
-
-  // Nothing here any more: the teeth are laid on the eroded outline, in the
-  // projection, and a polygon's standing corners are the ones it was drawn
-  // with. See PLAN-bevel 3.1 and `imagedBy`.
-  if (chain.length >= 0) return { corners: [...corners], local: [...local], source: place(frame, local), over };
-
-  let cs: Vertex[] = [...corners];
-  let pts: Point[] = place(frame, local);
-  let deep: number[] = cs.map(c => over.get(c.id) ?? 0);
-
-  for (const { owner, e, amplitude, toothed } of chain) {
-    const rings = ringsOf(cs);
-    const slices = sliced(pts, rings);
-
-    // Out of the material is to the right of a ring wound the way the outline
-    // is, counter-clockwise, and a hole is wound the other way.
-    const out: 1 | -1 = signedArea2(slices[0]) >= 0 ? 1 : -1;
-    const next: Vertex[] = [], placed: Point[] = [], depths: number[] = [];
-
-    slices.forEach((ring, r) => {
-      const at = rings[r];
-
-      const clear = (i: number) => (cs[at + i].root === undefined ? Math.max(0, bevel(cs[at + i])) : 0);
-      const laid = subdivided(ring, e, i => amplitude(cs[at + i].id), i => cs[at + i].id, out, clear, i => toothed(cs[at + i].root ?? cs[at + i].id));
-
-      for (const made of laid) {
-        const from = cs[at + made.from];
-        const d0 = deep[at + made.from], d1 = deep[at + (made.from + 1) % ring.length];
-
-        placed.push(made.at);
-
-        if (made.j === null) {
-          next.push(from);
-          depths.push(d0);
-          continue;
-        }
-
-        next.push({ ...from, id: toothId(owner, from.id, made.j), root: from.root ?? from.id });
-        depths.push(d0 + (d1 - d0) * made.along);
-      }
-    });
-
-    cs = next;
-    pts = placed;
-    deep = depths;
-  }
-
-  const inverse = pts.map(p => unplace(frame, p));
-  const deeper = over.size === 0 ? over : new Map(cs.flatMap((c, i) => (deep[i] === 0 ? [] : [[c.id, deep[i]] as const])));
-
-  // A tooth is where it is, in the polygon's own frame, like any corner.
-  return {
-    corners: cs.map((c, i) => (c.root === undefined ? c : { ...c, at: inverse[i] })),
-    local: inverse,
-    source: pts,
-    over: deeper,
-  };
-}
-
-/**
- * A tooth's id: who deformed it, the corner its edge starts at, and which
- * tooth. Negative, so nothing counted out of `nextId` is ever one, and the
- * same numbers every time.
- */
-function toothId(owner: Id, from: VertexId, j: number): VertexId {
-  const text = `${owner}:${from}:${j}`;
-  let a = 0x811c9dc5, b = 0x01000193;
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-
-    a = Math.imul(a ^ c, 0x01000193);
-    b = Math.imul(b ^ c, 0x5bd1e995);
-    b ^= b >>> 13;
-  }
-
-  return -((a >>> 0) * 0x100000 + ((b >>> 0) >>> 12)) - 1;
+  return false;
 }
 
 /**
@@ -1876,25 +1415,17 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     if (corners.length < 3) continue;
 
     const frame = worldFrame(world, id, v);
-    const fx = world.effects.get(id);
-    const depth = (c: Vertex) => state.erosion + (state.depths.get(c.id) ?? 0);
-    const rest = corners.map(c => state.corners.get(c.id)!);
-    const bevels = drawnBevels(world, id, corners, rest, state, i => depth(corners[i]));
-    const bevelOf = new Map(corners.map((c, i) => [c.id, bevels[i]]));
-    const drawn = deformedAt(world, v, id, corners, rest, frame, state.depths, c => bevelOf.get(c.id) ?? 0);
-    const deep = new Map(drawn.corners.map(c => [c.id, depth(c)]));
+    const local = corners.map(c => state.corners.get(c.id)!);
 
     out.push(resolved({
       id,
       polygon,
-      corners: drawn.corners,
-      local: drawn.local,
+      corners,
+      local,
       frame,
-      source: drawn.source,
+      source: place(frame, local),
       erosion: state.erosion,
-      over: drawn.over,
-      depths: varying(drawn.corners, state.erosion, drawn.over),
-      effected: effectedOf(world, id, drawn.corners, drawn.local, state, i => deep.get(drawn.corners[i].id)!, scaleAt(world, id, v)),
+      effected: effectedOf(world, id, state, scaleAt(world, id, v)),
     }));
   }
 
@@ -1918,7 +1449,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
 
 /** A state with its erosion taken out where the thing's is switched off. */
 function erodingOnly(world: World, id: Id, state: State): State {
-  return eroding(world, id) ? state : { ...state, erosion: 0, depths: new Map() };
+  return eroding(world, id) ? state : { ...state, erosion: 0 };
 }
 
 /** Everything written about a thing, as keys: what the world holds. */
@@ -2263,54 +1794,29 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
 
   const here = stateAt(world, id, v);
 
-  /** What `v`'s own keys say about one corner, of one kind, added up. */
-  const ours = (held: 'corners' | 'depths' | 'rounds' | 'deforms', c: VertexId): number | Point => {
-    let out: number | Point = held === 'corners' ? { x: 0, y: 0 } : 0;
+  /** What `v`'s own keys move one corner by, added up. */
+  const ours = (c: VertexId): Point => {
+    const out = { x: 0, y: 0 };
 
     for (const key of keysOfAt(world, v, id)) {
-      const by = key[held]?.get(c);
+      const by = key.corners?.get(c);
 
       if (by === undefined) continue;
 
-      out = typeof out === 'number' ? out + (by as number) : { x: out.x + (by as Point).x, y: out.y + (by as Point).y };
+      out.x += by.x;
+      out.y += by.y;
     }
 
     return out;
   };
 
   const corners = new Map([...here.corners].map(([c, p]) => {
-    const own = ours('corners', c) as Point;
+    const own = ours(c);
 
     return [c, { x: p.x - own.x, y: p.y - own.y }];
   }));
 
-  // Each corner's amounts less what `v` adds to them.
-  const less = (
-    amounts: ReadonlyMap<VertexId, number>,
-    held: 'depths' | 'rounds' | 'deforms',
-  ): Map<VertexId, number> => {
-    const out = new Map<VertexId, number>();
-
-    for (const [c, d] of amounts) {
-      const left = d - (ours(held, c) as number);
-
-      if (left !== 0) out.set(c, left);
-    }
-
-    return out;
-  };
-
-  return {
-    kind: 'stand',
-    frame,
-    erosion,
-    corners,
-    depths: less(here.depths, 'depths'),
-    bevel,
-    amplitude,
-    bevels: less(here.bevels, 'rounds'),
-    amplitudes: less(here.amplitudes, 'deforms'),
-  };
+  return { kind: 'stand', frame, erosion, corners, bevel, amplitude };
 }
 
 /**
@@ -2994,8 +2500,7 @@ function carriedKey(id: number, ref: Point, op: Op): RigKey {
 /** A key's writing about single corners, alone, or nothing where it has
  * none. */
 function onlyCorners(key: RigKey): RigKey | null {
-  if (key.corners === undefined && key.depths === undefined
-    && key.rounds === undefined && key.deforms === undefined) return null;
+  if (key.corners === undefined) return null;
 
   return {
     id: key.id,
@@ -3003,10 +2508,7 @@ function onlyCorners(key: RigKey): RigKey | null {
     times: key.times,
     ...(key.skip === undefined ? {} : { skip: key.skip }),
     ...(key.group === undefined ? {} : { group: key.group }),
-    ...(key.corners === undefined ? {} : { corners: key.corners }),
-    ...(key.depths === undefined ? {} : { depths: key.depths }),
-    ...(key.rounds === undefined ? {} : { rounds: key.rounds }),
-    ...(key.deforms === undefined ? {} : { deforms: key.deforms }),
+    corners: key.corners,
   };
 }
 
@@ -3320,38 +2822,7 @@ export function placeVertex(world: World, v: KeyframeId, it: Resolved, index: nu
   return withKeyRig(world, it.id, nudgedBy(rig, nextKey(rig), it.corners[index].id, v, by));
 }
 
-/**
- * The named corners of a polygon taken `by` deeper than it, or shallower where
- * `by` is negative, at `v`.
- *
- * Added to what `v` already said about them. A corner that comes back to
- * nothing is taken out of the map rather than written as nought: only an
- * empty map says *nothing here is offset*, which is what puts the polygon back
- * on the road `erode` has always taken. See `varying`.
- */
-export function deepen(
-  world: World,
-  v: KeyframeId,
-  id: PolygonId,
-  corners: ReadonlySet<VertexId>,
-  by: number,
-): World {
-  const polygon = world.polygons.get(id);
-
-  if (polygon === undefined || by === 0) return world;
-
-  let rig = keyRigOf(world, id);
-  const id0 = nextKey(rig);
-
-  for (const corner of polygon.points) {
-    if (corners.has(corner.id)) rig = amountedBy(rig, id0, 'erode', corner.id, v, by);
-  }
-
-  return withKeyRig(world, id, rig);
-}
-
-/** Which polygons the picked corners belong to. A depth is written into the
- * layer of the thing that has a ring, and a corner is not one. */
+/** Which polygons the picked corners belong to. */
 export function owning(world: World, corners: ReadonlySet<VertexId>): PolygonId[] {
   const out: PolygonId[] = [];
 
@@ -3789,16 +3260,10 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
         death: c.death === null ? null : offset(c.death),
       }));
 
-    const kept = new Set(points.map(c => c.id));
-
     return [{
       kind: 'polygon',
       ...kindOf(polygon),
       points,
-      depths: [...state.depths],
-      bevels: [...state.bevels],
-      amplitudes: [...state.amplitudes],
-      cornerEffects: [...kept].flatMap(c => (world.cornerEffects.has(c) ? [[c, world.cornerEffects.get(c)!] as [VertexId, Partial<Effects>]] : [])),
       death: outliving(world, polygon, v),
       ...time,
     }];
@@ -3947,7 +3412,6 @@ function written(
   id: Id,
   clip: Timed,
   corners: ReadonlyMap<VertexId, Point>,
-  amounts: { depths: ReadonlyMap<VertexId, number>, bevels: ReadonlyMap<VertexId, number>, amplitudes: ReadonlyMap<VertexId, number> },
   into: Affine | null,
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
@@ -3957,7 +3421,6 @@ function written(
     frame: start,
     erosion: clip.erosion,
     corners,
-    ...amounts,
     bevel: clip.bevel ?? 0,
     amplitude: clip.amplitude ?? 0,
   };
@@ -4017,14 +3480,9 @@ function renamedCorners(rig: KeyRig, renamed: ReadonlyMap<VertexId, VertexId>): 
       const out: RigKey = {
         ...key,
         corners: named(key.corners),
-        depths: named(key.depths),
-        rounds: named(key.rounds),
-        deforms: named(key.deforms),
       };
 
-      const held = out.corners ?? out.depths ?? out.rounds ?? out.deforms;
-
-      return out.by === undefined && out.stand === undefined && held === undefined ? [] : [out];
+      return out.by === undefined && out.stand === undefined && out.corners === undefined ? [] : [out];
     });
 
     if (mine.length > 0) keys.set(at, mine);
@@ -4058,7 +3516,7 @@ function restore(
 
     const out = { ...world, artefacts, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, into), id };
   }
 
   if (clip.kind === 'path') {
@@ -4069,7 +3527,7 @@ function restore(
 
     const out = { ...world, paths, nextId: id + 1 };
 
-    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, into), id };
   }
 
   if (clip.kind === 'group') {
@@ -4089,7 +3547,7 @@ function restore(
     groups.set(id, { members, sealed: clip.sealed, birth: v });
     out = effectsPasted({ ...out, groups, nextId: id + 1 }, id, clip.effects);
 
-    return { world: written(out, v, id, clip, none, { depths: none, bevels: none, amplitudes: none }, into), id };
+    return { world: written(out, v, id, clip, none, into), id };
   }
 
   const id = world.nextId;
@@ -4114,30 +3572,9 @@ function restore(
 
   let out: World = effectsPasted({ ...world, polygons, nextId: id + 1 + points.length }, id, clip.effects);
 
-  if ((clip.cornerEffects ?? []).length > 0) {
-    const cornerEffects = new Map(out.cornerEffects);
-
-    for (const [c, fx] of clip.cornerEffects!) {
-      const now = renamed.get(c);
-
-      if (now !== undefined) cornerEffects.set(now, fx);
-    }
-
-    out = { ...out, cornerEffects };
-  }
-
   const corners = new Map(points.filter(c => c.birth === v).map(c => [c.id, c.at]));
-  const renaming = (amounts: readonly [VertexId, number][] | undefined) => new Map((amounts ?? []).flatMap(([c, d]) => {
-    const now = renamed.get(c);
 
-    return now === undefined ? [] : [[now, d] as const];
-  }));
-
-  out = written(out, v, id, clip, corners, {
-    depths: renaming(clip.depths),
-    bevels: renaming(clip.bevels),
-    amplitudes: renaming(clip.amplitudes),
-  }, into);
+  out = written(out, v, id, clip, corners, into);
   out = withKeyRig(out, id, renamedCorners(keyRigOf(out, id), renamed));
 
   return { world: out, id };

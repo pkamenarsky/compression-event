@@ -1,17 +1,19 @@
 // -----------------------------------------------------------------------------
-// Files from before keys, as files of keys, and deforms in the world as
-// deforms in proportion
+// Files from before keys, as files of keys, deforms in the world as deforms
+// in proportion, and effects on single corners and edges dropped
 //
 //   pnpm convert <world.json>...
 //
-// Writes `<world>.v26.json` beside each. What it reads is a 20, a 21, a 22 or
+// Writes `<world>.v27.json` beside each. What it reads is a 20, a 21, a 22 or
 // a 23 — the formats whose timelines are lists of operations — which it makes
 // a 24, whose timelines are keys (`converted`); a 24, whose amounts are
-// lengths in the world, which it makes a 26, whose amounts are lengths at the
-// thing's own scale (`relative`); and a 25, whose kinds are a type and a mask,
-// which it makes a 26, whose kinds are a part per set (`unmasked`). See
-// `FORMAT` in `save.ts` for what each of those said, and `convert-19-20.ts`
-// for what takes a 19 to a 21.
+// lengths in the world, which it makes a 27, whose amounts are lengths at the
+// thing's own scale (`relative`); a 25, whose kinds are a type and a mask,
+// which it makes a 26, whose kinds are a part per set (`unmasked`); and a 26,
+// whose effects could be written about single corners and edges, which it
+// makes a 27, where they cannot (`uncornered`). See `FORMAT` in `save.ts` for
+// what each of those said, and `convert-19-20.ts` for what takes a 19 to a
+// 21.
 //
 // Its own file, and not a branch inside `save.ts`, because a format is a thing
 // a file *is* rather than a thing the editor carries a reading of. `save.ts`
@@ -25,7 +27,6 @@
 
 import { Point, PolygonKind } from '@ce/game/world';
 import {
-  Amount,
   Entry,
   Frame,
   KeyframeId,
@@ -41,7 +42,8 @@ import { chain, scaleAt, standingIn } from './scene';
 import { Key } from './rig';
 import { Effects, Id, Options, Polygon, PolygonId, REMEMBERED, VertexId, World } from './types';
 
-/** A timeline as a 23 and older wrote it: its lists, and a map per corner. */
+/** A timeline as a 23 and older wrote it: its lists, and a map per corner.
+ * The amounts on single corners are read and dropped: see `uncornered`. */
 export interface OldRig {
   keys: [KeyframeId, OldEntry[]][]
   nudges: [VertexId, [KeyframeId, OldEntry][]][]
@@ -82,7 +84,7 @@ type OldOp = Exclude<Op, { kind: 'stand' }> | OldStand;
 /** A file as a 23 and older wrote it: everything a 24 has, with timelines of
  * operations and the fields that came later missing. */
 export interface Old extends Omit<Saved, 'world'> {
-  world: Omit<Saved['world'], 'rigs' | 'flags' | 'effects' | 'cornerEffects'> & {
+  world: Omit<Saved['world'], 'rigs' | 'flags' | 'effects'> & {
     rigs: [Id, OldRig][]
     flags?: [Id, Flags][]
     effects?: [Id, Effects][]
@@ -112,7 +114,6 @@ export function converted(file: Old): Saved | { refused: string } {
       rigs: rigs.map(([id, rig]) => [id, savedKeyRig(rig)]),
       flags: file.world.flags ?? [],
       effects: (file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)]),
-      cornerEffects: (file.world.cornerEffects ?? []).map(([c, fx]) => [c, optioned(fx)]),
     },
     // Baked against a world whose motion this may have changed in the way
     // between keyframes, and cheap to make again. See `Saved.baked`.
@@ -157,9 +158,6 @@ function restoredRig(rig: OldRig): Rig {
   return {
     keys: new Map(rig.keys.map(([k, list]) => [k, list.map(restoredEntry)])),
     nudges: corners<Move>(rig.nudges),
-    depths: corners<Amount<'erode'>>(rig.depths),
-    rounds: corners<Amount<'round'>>(rig.rounds),
-    deforms: corners<Amount<'deform'>>(rig.deforms),
   };
 }
 
@@ -182,11 +180,8 @@ function restoredStand(op: OldStand): Stand {
     frame: { ...op.frame, skew: op.frame.skew ?? 0 },
     erosion: op.erosion,
     corners: new Map(op.corners),
-    depths: new Map(op.depths),
     bevel: op.bevel ?? op.radius ?? 0,
     amplitude: op.amplitude ?? 0,
-    bevels: new Map(op.bevels ?? op.radii ?? []),
-    amplitudes: new Map(op.amplitudes ?? []),
   };
 }
 
@@ -214,6 +209,65 @@ function rounding(round: Effects['round'] & object): Options['round'] {
     tension: was.tension ?? REMEMBERED.round.tension,
     chamfer: was.chamfer ?? was.segments === 1,
     ...(was.off === undefined ? {} : { off: was.off }),
+  };
+}
+
+/** A 26's key, with what a key could say about single corners' amounts. */
+interface CorneredKey extends SavedKey {
+  depths?: [VertexId, number][]
+  rounds?: [VertexId, number][]
+  deforms?: [VertexId, number][]
+  stand?: SavedKey['stand'] & {
+    depths?: [VertexId, number][]
+    bevels?: [VertexId, number][]
+    amplitudes?: [VertexId, number][]
+  }
+}
+
+/**
+ * A 26 as a 27: every effect one amount over its whole ring and one set of
+ * options. The amounts written about single corners and edges — a key's
+ * `depths`, `rounds` and `deforms`, and a stand's `depths`, `bevels` and
+ * `amplitudes` — are dropped, and so are an edge's own deform options,
+ * `cornerEffects`. Each polygon keeps its own amounts and options.
+ *
+ * The one conversion that loses something: wherever those were used, the
+ * drawing changes, and the bake with it, which is dropped where anything was.
+ * Nothing else about the file is touched.
+ */
+export function uncornered(file: Saved): Saved | { refused: string } {
+  if (file.format !== 26) return { refused: `format ${file.format}, and this takes 26` };
+
+  let lost = false;
+
+  const some = (m: readonly unknown[] | undefined): boolean => m !== undefined && m.length > 0;
+  const key = (was: SavedKey): SavedKey => {
+    const { depths, rounds, deforms, stand, ...rest } = was as CorneredKey;
+
+    if (some(depths) || some(rounds) || some(deforms)) lost = true;
+    if (stand === undefined) return rest;
+
+    const { depths: d, bevels: b, amplitudes: a, ...kept } = stand;
+
+    if ([d, b, a].some(m => (m ?? []).some(([, x]) => x !== 0))) lost = true;
+
+    return { ...rest, stand: kept };
+  };
+
+  const { cornerEffects, ...world } = file.world as Saved['world'] & { cornerEffects?: unknown[] };
+
+  if (some(cornerEffects)) lost = true;
+
+  const rigs = world.rigs.map(([id, rig]): Saved['world']['rigs'][number] => [
+    id,
+    { keys: rig.keys.map(([k, list]) => [k, list.map(key)]) },
+  ]);
+
+  return {
+    ...file,
+    format: 27,
+    world: { ...world, rigs },
+    ...(lost ? { baked: undefined } : {}),
   };
 }
 
@@ -269,7 +323,7 @@ export function unmasked(file: Saved): Saved | { refused: string } {
 }
 
 /**
- * A 24 as a 26: every amount — depths, bevels, a deform's spacing and its
+ * A 24 as a 27: every amount — depths, bevels, a deform's spacing and its
  * amplitudes — which was a length in the world, as a length at the thing's
  * own scale, which the world multiplies by `scaleAt`.
  *
@@ -284,7 +338,9 @@ export function relative(file: Saved): Saved | { refused: string } {
   if (file.format !== 24) return { refused: `format ${file.format}, and this takes 24` };
 
   // Its kinds made a 26's first, since what reads it is the editor, and the
-  // editor reads nothing else. What comes out is a 26 whole.
+  // editor reads nothing else. What comes out is a 27 whole: the editor reads
+  // no amounts on single corners either, so they are dropped on the way, as
+  // `uncornered` drops them.
   const state = restored({ ...kinded(file), format: FORMAT });
   const world = state.world;
   const effects = new Map(world.effects);
@@ -300,26 +356,19 @@ export function relative(file: Saved): Saved | { refused: string } {
 
     if (fx?.deform !== undefined) effects.set(id, { ...fx, deform: { ...fx.deform, spacing: fx.deform.spacing / k } });
 
-    const shrunk = (m: ReadonlyMap<number, number>) => new Map([...m].map(([c, a]) => [c, a / k]));
     const key = (key: Key): Key => ({
       ...key,
       ...(key.by === undefined
         ? {}
         : { by: { ...key.by, erode: key.by.erode / k, round: key.by.round / k, deform: key.by.deform / k } }),
-      ...(key.depths === undefined ? {} : { depths: shrunk(key.depths) }),
-      ...(key.rounds === undefined ? {} : { rounds: shrunk(key.rounds) }),
-      ...(key.deforms === undefined ? {} : { deforms: shrunk(key.deforms) }),
       ...(key.stand === undefined
         ? {}
         : {
           stand: {
             ...key.stand,
             erosion: key.stand.erosion / k,
-            depths: shrunk(key.stand.depths),
             bevel: key.stand.bevel / k,
-            bevels: shrunk(key.stand.bevels),
             amplitude: key.stand.amplitude / k,
-            amplitudes: shrunk(key.stand.amplitudes),
           },
         }),
     });

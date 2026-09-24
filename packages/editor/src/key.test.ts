@@ -20,7 +20,7 @@ import {
   stepped,
   withKeys,
 } from './rig';
-import { Vertex, VertexId } from './types';
+import { Vertex } from './types';
 import {
   Delta,
   NOTHING,
@@ -310,53 +310,27 @@ function someRig(seed: number): Rig {
         frame: { t: { x: span(), y: span() }, angle: roll() * 2, skew: roll() * 0.4, scale: { x: 0.8, y: 1.3 } },
         erosion: roll() * 3,
         corners: new Map(held.map(c => [c.id, { x: span(), y: span() }])),
-        depths: new Map(held.map(c => [c.id, roll() * 2])),
         bevel: roll(),
         amplitude: roll(),
-        bevels: new Map(held.map(c => [c.id, roll()])),
-        amplitudes: new Map(held.map(c => [c.id, roll()])),
       }));
     }
 
     if (list.length > 0) rig = withKeys(rig, f.id, list);
 
-    // A corner's own: nudges, depths, bevels and amplitudes, each repeating as
-    // it pleases.
+    // A corner's own nudges, each repeating as it pleases.
     for (const c of CORNERS) {
       if (roll() < 0.7) continue;
 
       const times = pick([1, 2, null]);
+      const was = rig.nudges.get(c.id) ?? new Map();
+      const nudges = new Map(rig.nudges);
 
-      if (roll() < 0.5) {
-        const was = rig.nudges.get(c.id) ?? new Map();
-        const nudges = new Map(rig.nudges);
-
-        nudges.set(c.id, new Map(was).set(f.id, repeating<Move>({ kind: 'move', by: { x: span(), y: span() } }, times)));
-        rig = { ...rig, nudges };
-      }
-      else if (roll() < 0.34) {
-        rig = { ...rig, depths: written(rig.depths, c.id, f.id, repeating({ kind: 'erode', by: roll() * 3 }, times)) };
-      }
-      else if (roll() < 0.5) {
-        rig = { ...rig, rounds: written(rig.rounds, c.id, f.id, repeating({ kind: 'round', by: roll() * 3 }, times)) };
-      }
-      else {
-        rig = { ...rig, deforms: written(rig.deforms, c.id, f.id, repeating({ kind: 'deform', by: roll() }, times)) };
-      }
+      nudges.set(c.id, new Map(was).set(f.id, repeating<Move>({ kind: 'move', by: { x: span(), y: span() } }, times)));
+      rig = { ...rig, nudges };
     }
   }
 
   return rig;
-}
-
-/** One corner's entry at one keyframe, into the map its kind is kept in. */
-function written<E>(
-  was: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, E>>,
-  vertex: VertexId,
-  at: KeyframeId,
-  e: E,
-): Map<VertexId, ReadonlyMap<KeyframeId, E>> {
-  return new Map(was).set(vertex, new Map(was.get(vertex) ?? []).set(at, e));
 }
 
 function timelineOf(rig: Rig): Timeline {
@@ -368,12 +342,6 @@ function timelineOf(rig: Rig): Timeline {
     artefacts: new Map(),
     paths: new Map(),
   };
-}
-
-function sameNumbers(mine: ReadonlyMap<VertexId, number>, theirs: ReadonlyMap<VertexId, number>, what: string): void {
-  expect([...mine.keys()].sort(), `${what}: which corners`).toEqual([...theirs.keys()].sort());
-
-  for (const [id, n] of theirs) expect(mine.get(id), `${what}: corner ${id}`).toBeCloseTo(n, 9);
 }
 
 describe('the walk over keys is the walk over entries', () => {
@@ -411,10 +379,6 @@ describe('the walk over keys is the walk over entries', () => {
           expect(ours!.corners.get(id)!.x, `v${at}: corner ${id} x`).toBeCloseTo(p.x, 9);
           expect(ours!.corners.get(id)!.y, `v${at}: corner ${id} y`).toBeCloseTo(p.y, 9);
         }
-
-        sameNumbers(ours!.depths, theirs.depths, `v${at}: depths`);
-        sameNumbers(ours!.bevels, theirs.bevels, `v${at}: bevels`);
-        sameNumbers(ours!.amplitudes, theirs.amplitudes, `v${at}: amplitudes`);
       }
     });
   }
@@ -492,11 +456,8 @@ describe('a key as the operations it is made of', () => {
       frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
       erosion: 0,
       corners: new Map(),
-      depths: new Map(),
       bevel: 0,
       amplitude: 0,
-      bevels: new Map(),
-      amplitudes: new Map(),
     };
     const p = { ref: { x: 0, y: 0 }, stand };
 

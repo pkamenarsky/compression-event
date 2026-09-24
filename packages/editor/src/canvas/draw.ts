@@ -443,7 +443,7 @@ function polygons(
     // falls back to the same ring, so what is drawn is what can be picked.
     const gone = it.shape.length === 0;
 
-    if (gone || ((it.erosion !== 0 || it.depths !== null) && here && (picked || handles))) {
+    if (gone || (it.erosion !== 0 && here && (picked || handles))) {
       source(ctx, view, sliced(it.source, it.rings), gone && !picked ? theme.gone : theme.source);
 
       if (picked) leaders(ctx, view, it);
@@ -571,7 +571,7 @@ function edges(ctx: CanvasRenderingContext2D, view: View, items: readonly Resolv
 function leaders(ctx: CanvasRenderingContext2D, view: View, it: Resolved): void {
   // Ring by ring, since a corner's mitre is bisected between the two walls of
   // its own ring and a hole's last corner does not meet the outline's first.
-  const moved = erodedRingCorners(sliced(it.source, it.rings), it.depths ?? it.erosion);
+  const moved = erodedRingCorners(sliced(it.source, it.rings), it.erosion);
 
   spokes(ctx, view, it.source, moved, survived(it.shape));
 }

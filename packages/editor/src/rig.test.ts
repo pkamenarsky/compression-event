@@ -14,9 +14,6 @@ import {
   Stand,
   Timeline,
   affineOf,
-  cornerRounded,
-  deepened,
-  edgeDeformed,
   framed,
   nudged,
   once,
@@ -556,15 +553,6 @@ describe('corners', () => {
 
     expect(rig.nudges.size).toBe(0);
   });
-
-  test('depths add up on single corners', () => {
-    const rig = deepened(deepened(EMPTY_RIG, 102, 0, 3), 102, 2, 1);
-    const tl = rigged(room, P, rig);
-
-    expect(stateAt(tl, P, 1).depths.get(102)).toBe(3);
-    expect(stateAt(tl, P, 2).depths.get(102)).toBe(4);
-    expect(stateAt(tl, P, 2).depths.has(101)).toBe(false);
-  });
 });
 
 const round = (by: number): Op => ({ kind: 'round', by });
@@ -610,36 +598,18 @@ describe('effect amounts', () => {
     expect(writing(erode(2), round(0))).toHaveLength(1);
   });
 
-  test('a corner\'s bevel and an edge\'s amplitude are over the thing\'s own, and repeat', () => {
-    let rig = cornerRounded(EMPTY_RIG, 102, 0, 3);
-
-    rig = edgeDeformed(rig, 101, 1, 2);
-    rig = { ...rig, deforms: new Map([[101, new Map([[1, { ...rig.deforms.get(101)!.get(1)!, times: null }]])]]) };
-
-    const tl = rigged(room, P, rig);
-
-    expect(stateAt(tl, P, 0).bevels.get(102)).toBe(3);
-    expect(stateAt(tl, P, 3).bevels.get(102)).toBe(3);
-    expect(stateAt(tl, P, 0).amplitudes.has(101)).toBe(false);
-    expect(stateAt(tl, P, 3).amplitudes.get(101)).toBe(6);
-    expect(cornerRounded(rig, 102, 0, -3).rounds.size).toBe(0);
-  });
-
   test('a stand holds them, and a repeat begun before it goes on growing them', () => {
     let tl = keyed(room, 0, P, [round(9), repeating(deform(1), null)]);
 
-    tl = rigged(tl, P, cornerRounded(rigOf(tl, P), 101, 0, 4));
     tl = keyed(tl, 3, P, [{
       ...NOTHING_STANDS,
       corners: stateAt(tl, P, 2).corners,
       bevel: 2,
       amplitude: 1,
-      bevels: new Map([[102, 1]]),
     }]);
 
     expect(stateAt(tl, P, 3).bevel).toBe(2);
     expect(stateAt(tl, P, 3).amplitude).toBe(1);
-    expect([...stateAt(tl, P, 3).bevels]).toEqual([[102, 1]]);
     expect(stateAt(tl, P, 5).amplitude).toBe(3);
   });
 
@@ -656,11 +626,8 @@ const NOTHING_STANDS: Stand = {
   frame: REST,
   erosion: 0,
   corners: new Map(),
-  depths: new Map(),
   bevel: 0,
   amplitude: 0,
-  bevels: new Map(),
-  amplitudes: new Map(),
 };
 
 describe('stands', () => {
@@ -672,11 +639,8 @@ describe('stands', () => {
     frame: held,
     erosion: 4,
     corners: new Map([[100, { x: 0, y: 0 }], [101, { x: 20, y: 0 }], [102, { x: 20, y: 20 }]]),
-    depths: new Map([[101, 1]]),
     bevel: 0,
     amplitude: 0,
-    bevels: new Map(),
-    amplitudes: new Map(),
   };
 
   test('a stand is what it says, and upstream stops being heard', () => {
@@ -720,7 +684,6 @@ describe('stands', () => {
     let rig = nudged(EMPTY_RIG, 100, 0, { x: 5, y: 5 });
 
     rig = nudged(rig, 101, 3, { x: 1, y: 0 });
-    rig = deepened(rig, 102, 0, 9);
 
     let tl = rigged(room, P, rig);
 
@@ -732,7 +695,6 @@ describe('stands', () => {
       [101, { x: 21, y: 0 }],
       [102, { x: 20, y: 20 }],
     ]);
-    expect([...stateAt(tl, P, 3).depths]).toEqual([[101, 1]]);
   });
 });
 

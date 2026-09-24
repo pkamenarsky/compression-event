@@ -11,15 +11,17 @@
 // Erosion is the odd one: it has no options, so it applies unless switched
 // off, and there is nothing to give it.
 //
-// Edges are named by the drawn corner they start at, which is the corner an
-// edge's own amplitude is kept by. A deform's teeth are not drawn corners, so
-// an edge runs from one drawn corner to the next, through whatever teeth lie
-// between.
+// An effect is one amount over its whole ring, and one set of options: there
+// is nothing here about single corners or edges.
+//
+// Edges are named by the drawn corner they start at. A deform's teeth are not
+// drawn corners, so an edge runs from one drawn corner to the next, through
+// whatever teeth lie between.
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { Amount, AmountKind, amountedBy, nextKey } from './rig';
-import { Resolved, diameterAt, keyRigOf, optionOf, scaleAt, withKeyRig } from './scene';
+import { AmountKind } from './rig';
+import { Resolved, diameterAt, scaleAt } from './scene';
 import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
@@ -135,143 +137,6 @@ function withEffects(world: World, id: Id, fx: Effects): World {
   else effects.set(id, kept);
 
   return { ...world, effects };
-}
-
-// -----------------------------------------------------------------------------
-// A corner's own round
-//
-// Over its polygon's, and switched on and off on its own: a corner can be
-// left square on a rounded room, or rounded finer than the rest.
-// Its polygon's round switched off leaves it square whatever it says itself.
-// -----------------------------------------------------------------------------
-
-/** The polygon each corner is on. */
-function ownersOf(world: World, corners: readonly VertexId[]): Map<VertexId, Id> {
-  const wanted = new Set(corners);
-  const out = new Map<VertexId, Id>();
-
-  for (const [id, polygon] of world.polygons) {
-    for (const c of polygon.points) {
-      if (wanted.has(c.id)) out.set(c.id, id);
-    }
-  }
-
-  return out;
-}
-
-/**
- * One edge's own options for one effect, or none.
- *
- * A corner used to be able to carry a round of its own under the same key,
- * the id meaning the corner rather than the edge leaving it. It cannot any
- * more: a round is an opening, an opening is a statement about the whole ring,
- * and a bevel at one corner with nought at its neighbours leaves a chord
- * rather than a wall offset by the bevel. See `rounding` in `effect.ts`. A
- * ring takes the largest bevel anybody on it asked for, and this map is the
- * deform's alone.
- */
-function withCornerOption<N extends keyof Options>(world: World, corner: VertexId, name: N, option: Options[N] | undefined): World {
-  const cornerEffects = new Map(world.cornerEffects);
-  const { [name]: _was, ...rest } = cornerEffects.get(corner) ?? {};
-  const now: Partial<Effects> = option === undefined ? rest : { ...rest, [name]: option };
-
-  if (Object.keys(now).length === 0) cornerEffects.delete(corner);
-  else cornerEffects.set(corner, now);
-
-  return { ...world, cornerEffects };
-}
-
-/**
- * The deform an edge would have were everything switched on: its own options,
- * or its polygon's. Nothing where neither has one.
- *
- * An edge is named by the corner it leaves, as its amplitude is — so this
- * takes that corner's id and the corner's *round* is a different entry under
- * the same key. See `cornersAmounted` and `ArcDeform.es`.
- */
-export function edgeDeform(world: World, edge: VertexId): Options['deform'] | undefined {
-  const owner = ownersOf(world, [edge]).get(edge);
-  const own = world.cornerEffects.get(edge)?.deform;
-
-  return own ?? (owner === undefined ? undefined : world.effects.get(owner)?.deform);
-}
-
-/** Whether an edge is deformed: its deform applies, switched off neither on
- * it nor on its polygon. */
-export function edgeDeforming(world: World, edge: VertexId): boolean {
-  const owner = ownersOf(world, [edge]).get(edge);
-
-  return owner !== undefined && optionOf(world.effects.get(owner), 'deform', world.cornerEffects.get(edge)) !== undefined;
-}
-
-/** Whether an edge has options of its own. */
-export function ownDeform(world: World, edge: VertexId): boolean {
-  return world.cornerEffects.get(edge)?.deform !== undefined;
-}
-
-/**
- * Edges deformed, or left straight. The twin of `cornersSwitched`, and the
- * same law: on switches their polygons' deform on and their own back on where
- * it was off, off switches their own off and keeps what it was.
- */
-export function edgesSwitched(world: World, edges: readonly VertexId[], on: boolean, options: Options): World {
-  const owners = ownersOf(world, edges);
-  let w = on ? switchedOn(world, [...new Set(owners.values())], 'deform', options) : world;
-
-  for (const c of owners.keys()) {
-    const deform = edgeDeform(w, c) ?? options.deform;
-
-    if (on) {
-      if (ownDeform(w, c) && deform.off === true) w = withCornerOption(w, c, 'deform', { ...deform, off: false });
-    }
-    else {
-      w = withCornerOption(w, c, 'deform', { ...deform, off: true });
-    }
-  }
-
-  return w;
-}
-
-/** An option of edges' own deforms changed, starting from what each has now:
- * its own, its polygon's, or `options`. */
-export function edgesOptioned(world: World, edges: readonly VertexId[], patch: Partial<Options['deform']>, options: Options): World {
-  let w = world;
-
-  for (const c of ownersOf(world, edges).keys()) w = withCornerOption(w, c, 'deform', { ...(edgeDeform(w, c) ?? options.deform), ...patch });
-
-  return w;
-}
-
-/** Edges back to their polygon's deform, their own options dropped. */
-export function edgesInheriting(world: World, edges: readonly VertexId[]): World {
-  return edges.reduce((w, c) => (ownDeform(w, c) ? withCornerOption(w, c, 'deform', undefined) : w), world);
-}
-
-/**
- * An amount written at `v` about single corners of a polygon — or, for a
- * deform, the edges starting at them. Added to what `v` already said about
- * each. See `amounted`.
- */
-export function cornersAmounted(
-  world: World,
-  v: KeyframeId,
-  id: Id,
-  kind: AmountKind,
-  corners: ReadonlySet<VertexId>,
-  by: number,
-): World {
-  const polygon = world.polygons.get(id);
-
-  if (polygon === undefined || by === 0) return world;
-
-  let rig = keyRigOf(world, id);
-  const made = nextKey(rig);
-
-  for (const c of polygon.points) {
-    if (corners.has(c.id)) rig = amountedBy(rig, made, kind, c.id, v, by);
-  }
-
-  return withKeyRig(world, id, rig);
 }
 
 // -----------------------------------------------------------------------------

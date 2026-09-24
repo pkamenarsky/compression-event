@@ -55,7 +55,6 @@ import {
   pasted,
   placeVertex,
   place,
-  deepen,
   owning,
   removeVertices,
   resolveAt,
@@ -315,146 +314,8 @@ describe('transforms', () => {
   });
 });
 
-describe('a depth per corner', () => {
-  /** The polygon's corners with `by` written onto the ones named, at `v`. */
-  function deepened(
-    world: World,
-    v: KeyframeId,
-    id: PolygonId,
-    which: readonly number[],
-    by: number,
-  ): World {
-    const polygon = world.polygons.get(id)!;
-    const corners = new Set(which.map(i => polygon.points[i].id));
-
-    return deepen(world, v, id, corners, by);
-  }
-
-  test('a corner is offset over the depth its polygon is under, not instead of it', () => {
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const flat = transformed(world, 1, ids[0], { erosion: 10 });
-    const bent = deepened(flat, 1, ids[0], [0], 10);
-
-    const it = only(bent, 1, ids[0]);
-
-    expect(it.erosion).toBe(10);
-    expect(it.depths).toEqual([20, 10, 10, 10]);
-
-    // Less ground than the uniform ten, and more than a uniform twenty.
-    expect(shapeArea(csg(bent, 1))).toBeLessThan(6400);
-    expect(shapeArea(csg(bent, 1))).toBeGreaterThan(3600);
-  });
-
-  test('a corner back at its polygon\'s depth puts it on the uniform road again', () => {
-    // Not an optimisation to be tested for its own sake — `depths` being null
-    // is what decides which offset runs, so a map written into and undone has
-    // to leave nothing behind.
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 10);
-    const back = deepened(bent, 1, ids[0], [0], -10);
-
-    expect(only(bent, 1, ids[0]).depths).not.toBe(null);
-    expect(only(back, 1, ids[0]).depths).toBe(null);
-    expect(rigOf(back, ids[0]).depths.size).toBe(0);
-  });
-
-  test('it is inherited by the versions after it, like any other depth', () => {
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 25);
-
-    for (const v of [1, 2, 3, 4]) {
-      expect(only(bent, v, ids[0]).depths).toEqual([25, 0, 0, 0]);
-    }
-
-    expect(only(bent, 0, ids[0]).depths).toBe(null);
-  });
-
-  test('eroding a corner at v1 and turning at v2 turns what v1 produced', () => {
-    // The question the whole layer model answers, asked of this: v2 states its
-    // own transform over the source v1 left, and the offset is taken after it.
-    // So the shape at v2 is the shape at v1, turned — the same area, and every
-    // corner a quarter turn round.
-    const { world, ids } = drawn(['level', rect(-50, -50, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 30);
-    const turned = transformed(bent, 2, ids[0], { rotation: Math.PI / 2 });
-
-    expect(shapeArea(csg(turned, 2))).toBeCloseTo(shapeArea(csg(bent, 1)), 6);
-    expect(only(turned, 2, ids[0]).depths).toEqual([30, 0, 0, 0]);
-  });
-
-  test('and eroding again at v2 deepens it from the polygon rather than from the offset', () => {
-    // v2 erodes v1's *source*, never v1's projection, so a corner asked for 30
-    // at v1 and 30 again at v2 is 30 deep, not 60.
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 30);
-    const again = transformed(bent, 2, ids[0], { rotation: Math.PI / 2 });
-
-    expect(shapeArea(csg(again, 2))).toBeCloseTo(shapeArea(csg(bent, 1)), 6);
-  });
-
-  test('a scale at a later version scales the polygon and the depth with it', () => {
-    // A depth is a length at the thing's own scale, which the world takes by
-    // `scaleAt`. So a room made twice the size is twice the room with twice the
-    // bite out of the corner. The same reading as `transform.erosion`, because
-    // it is one.
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 20);
-    const big = transformed(bent, 2, ids[0], { scale: { x: 2, y: 2 } });
-
-    const alone = drawn(['level', rect(0, 0, 200, 200)]);
-
-    expect(only(big, 2, ids[0]).depths).toEqual([40, 0, 0, 0]);
-    expect(shapeArea(csg(big, 2)))
-      .toBeCloseTo(shapeArea(csg(deepened(alone.world, 0, alone.ids[0], [0], 40), 0)), 6);
-  });
-
-  test('a squash takes the world frame, where a corner depth means the same thing', () => {
-    // Not a similarity, so there is no one depth the local frame could be
-    // offset by — the projection is taken where the polygon actually is, and
-    // that road has to carry the corner depths as well as the polygon's.
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 20);
-    const squashed = transformed(bent, 2, ids[0], { scale: { x: 2, y: 1 } });
-
-    const it = only(squashed, 2, ids[0]);
-
-    expect(it.depths![0]).toBeCloseTo(20 * Math.SQRT2, 9);
-    expect(it.depths!.slice(1)).toEqual([0, 0, 0]);
-    expect(shapeArea(csg(squashed, 2))).toBeGreaterThan(0);
-    expect(shapeArea(csg(squashed, 2))).toBeLessThan(20000);
-  });
-
-  test('a group erodes the union its members handed over, corner depths and all', () => {
-    // The member projects with its own corners offset apart; the group offsets
-    // the union of what came out. A group has no corners of its own to offset —
-    // the union's boundary belongs to no member — so its depth stays one number.
-    const { world, ids } = drawn(
-      ['level', rect(0, 0, 100, 100)],
-      ['level', rect(100, 0, 100, 100)],
-    );
-    const g = sealed(world, 0, ids, TOP)!;
-    const bent = deepened(g.world, 0, ids[0], [0], 30);
-    const both = wrote(bent, 0, g.id, erode(8));
-
-    // Less than the same group with nothing bent, and the group's own depth is
-    // still doing its work on top.
-    const plain = wrote(g.world, 0, g.id, erode(8));
-
-    expect(shapeArea(csg(both, 0))).toBeLessThan(shapeArea(csg(plain, 0)));
-    expect(shapeArea(csg(both, 0))).toBeGreaterThan(0);
-  });
-
-  test('a gesture at a later keyframe keeps the depths from before it', () => {
-    // A gesture writes one operation and nothing about the corners, so what
-    // was offset before it is offset after it. It used to have to seed them.
-    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)]);
-    const bent = deepened(world, 1, ids[0], [0], 15);
-    const turned = wrote(bent, 2, ids[0], spun(0.3));
-
-    expect(only(turned, 2, ids[0]).depths).toEqual([15, 0, 0, 0]);
-  });
-
-  test('picking a corner names the polygon its depth is written into', () => {
+describe('corners', () => {
+  test('picking a corner names the polygon it is on', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(200, 0, 100, 100)],
@@ -3017,7 +2878,7 @@ describe('a projection is the same shape wherever it is taken', () => {
           });
 
           // The world frame's answer, which is what this has to reproduce.
-          const there = project(place(m, ring), [0], t.erosion, null, null, 0, null).shape;
+          const there = project(place(m, ring), [0], t.erosion, null, 0, null).shape;
 
           // And the local one's, placed. Read off a `Resolved` rather than
           // worked out here, so that what is being checked is the path the
@@ -3033,8 +2894,6 @@ describe('a projection is the same shape wherever it is taken', () => {
             frame: m,
             source: place(m, ring),
             erosion: t.erosion,
-            over: new Map(),
-            depths: null,
           }).shape;
 
           expect(here.length).toBe(there.length);
@@ -3063,79 +2922,6 @@ describe('a projection is the same shape wherever it is taken', () => {
     );
 
     expect(checked).toBeGreaterThan(200);
-  });
-
-  test('and carries it with a depth per corner as well', () => {
-    // The varying offset goes the other road inside `erodeAt` — the band is
-    // built off the ring the caller handed over rather than off the arrangement
-    // of it — so being right in one frame says nothing about being right in the
-    // other, and the two have to be held together here just the same.
-    fc.assert(
-      fc.property(
-        fc.constantFrom(...rings),
-        fc.record({
-          x: fc.double({ min: -400, max: 400, noNaN: true }),
-          y: fc.double({ min: -400, max: 400, noNaN: true }),
-          rotation: fc.double({ min: -3.14, max: 3.14, noNaN: true }),
-          scale: fc.double({ min: 0.4, max: 2.5, noNaN: true }),
-          // Both away from zero, and within a couple of orders of each other.
-          // Where a wall's two ends carry depths of opposite sign, the boundary
-          // crosses the wall at `erosion / (erosion + |by|)` along it — so a
-          // depth a thousandth of its neighbour's puts that crossing hard up
-          // against a corner, where the boundary is barely turning and the two
-          // framings are as free to disagree as they are about a depth under
-          // the arrangement's own snap.
-          erosion: fc.double({ min: 0.5, max: 12, noNaN: true }),
-          which: fc.nat({ max: 20 }),
-          by: fc.oneof(
-            fc.double({ min: 0.5, max: 12, noNaN: true }),
-            fc.double({ min: -12, max: -0.5, noNaN: true }),
-          ),
-        }),
-        (ring, t) => {
-          const m = affineOf({
-            t: { x: t.x, y: t.y },
-            angle: t.rotation,
-            skew: 0,
-            scale: { x: t.scale, y: t.scale },
-          });
-
-          const depths = ring.map((_, i) =>
-            t.erosion + (i === t.which % ring.length ? t.by : 0));
-
-          const there = project(place(m, ring), [0], t.erosion, depths, null, 0, null).shape;
-
-          const here = resolved({
-            id: 0,
-            polygon: { ...kind('level'), birth: 0, death: null, points: [] },
-            // One ring's worth, because the ring split is read off these: see
-            // `resolved`. A `Resolved` whose corners do not answer for its
-            // points is not one the editor or the bake ever builds.
-            corners: oneRing(ring),
-            local: ring,
-            frame: m,
-            source: place(m, ring),
-            erosion: t.erosion,
-            over: new Map(),
-            depths,
-          }).shape;
-
-          expect(here.length).toBe(there.length);
-
-          for (let r = 0; r < there.length; r++) {
-            expect(here[r].length).toBe(there[r].length);
-
-            for (let i = 0; i < there[r].length; i++) {
-              expect(Math.hypot(here[r][i].x - there[r][i].x, here[r][i].y - there[r][i].y))
-                .toBeLessThan(1e-6 * t.scale * 400);
-            }
-          }
-
-          return true;
-        },
-      ),
-      { numRuns: 400 },
-    );
   });
 });
 

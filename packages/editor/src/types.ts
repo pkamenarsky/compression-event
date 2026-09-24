@@ -633,22 +633,6 @@ export interface World {
   /** Which effects each polygon or group has, and how: one fact over every
    * keyframe. How much is in its timeline. Absent is none. See `Effects`. */
   effects: ReadonlyMap<Id, Effects>
-  /**
-   * An edge's own deform options, over its polygon's, keyed by the corner the
-   * edge leaves. Absent is its polygon's.
-   *
-   * The deform alone. A corner used to be able to carry a round of its own
-   * under the same key — the id read as the corner rather than as the edge —
-   * and it cannot any more: a round is an opening, an opening is a statement
-   * about the whole ring, and a bevel at one corner with nought at its
-   * neighbours leaves a chord rather than a wall offset by the bevel. A ring
-   * takes the largest bevel anybody on it asked for. See `rounding` in
-   * `effect.ts`.
-   *
-   * The name is kept so that a file written before this still loads; the
-   * round a file carries is dropped on the way in.
-   */
-  cornerEffects: ReadonlyMap<VertexId, Pick<Effects, 'deform'>>
 }
 
 /**
@@ -657,9 +641,7 @@ export interface World {
  *
  * An effect switched `off` is kept, options and amounts and all, and does
  * nothing: unticking one in the pane is a question of whether it applies, and
- * its timeline is still there when it is ticked again. A corner's own round
- * switched off leaves that corner square; its thing's switched off leaves
- * every corner square, its own options or not.
+ * its timeline is still there when it is ticked again.
  *
  * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
  * effects a thing has, and how, is one fact about it over every keyframe, as
@@ -716,30 +698,6 @@ export interface Effects {
     jitter: number
     falloff?: number
     offset?: boolean
-    /**
-     * How far along the wall the pattern's middle sits from this edge's own
-     * middle, and how far either way from there it runs. Lengths, at the
-     * thing's own scale, and about one edge — they mean nothing written about
-     * a whole polygon, so they live in `cornerEffects`.
-     *
-     * A resolve writes them: a scope centres a run on the member edge that
-     * named it and reaches that edge's half length, and the ring it hands
-     * back has no member edge to centre on. Absent, an edge is centred on
-     * itself and reaches its own ends, which is what a polygon has always
-     * done. See PLAN-bevel's 2.1 and `publishing` in `resolve.ts`.
-     */
-    anchor?: number
-    reach?: number
-    /**
-     * What names this edge's run to the pattern — the noise, the jitter and
-     * the share of the spacing a seeded start offsets by are all read off it.
-     * Its own corner, where it does not say otherwise.
-     *
-     * A resolve writes it, for the same reason it writes the anchor: the run
-     * was a member edge's and the pattern along it is that edge's, down to
-     * which way each tooth was nudged. See `ArcDeform.ids`.
-     */
-    key?: number
     off?: boolean
   }
   /** Erosion has no options, so it is here only to be switched off. */
@@ -868,7 +826,6 @@ export function emptyWorld(): World {
     rigs: new Map(),
     flags: new Map(),
     effects: new Map(),
-    cornerEffects: new Map(),
   };
 }
 
@@ -1134,14 +1091,6 @@ export type Clipping =
   | ({
       kind: 'polygon'
       points: Vertex[]
-      /** The extra depth on single corners at the copy keyframe. */
-      depths: [VertexId, number][]
-      /** The extra bevel on single corners there, and amplitude on single
-       * edges. Absent is none. */
-      bevels?: [VertexId, number][]
-      amplitudes?: [VertexId, number][]
-      /** Its corners' own options. Absent is none. */
-      cornerEffects?: [VertexId, Partial<Effects>][]
     } & PolygonKind & Timed)
   | ({
       kind: 'group'
@@ -1213,10 +1162,7 @@ export function marked(s: EditorState, was: World): EditorState {
 function doing(key: Key | undefined): string {
   if (key === undefined) return '';
 
-  const held = (m: ReadonlyMap<VertexId, unknown> | undefined) => (m === undefined ? '' : JSON.stringify([...m]));
-
-  return JSON.stringify([key.by ?? null, key.stand ?? null])
-    + [key.corners, key.depths, key.rounds, key.deforms].map(held).join('|');
+  return JSON.stringify([key.by ?? null, key.stand ?? null, key.corners === undefined ? null : [...key.corners]]);
 }
 
 export function gestured(world: World, was: World): World {

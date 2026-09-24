@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, broken, deepen, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
-import { deltaOf, deepened, nudged, repeating, stateAt } from './rig';
+import { TOP, addPolygon, broken, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
+import { deltaOf, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
 import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, steppedKey, timesTo } from './track';
-import { erode, move, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
+import { erode, move, nudge, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
 import { restored, saved } from './save';
 import { EMPTY_SELECTION, Id, KeyframeId, World, clickable, emptyWorld, flagged, gestured, initialState, visible } from './types';
 
@@ -101,9 +101,8 @@ describe('corner rows', () => {
   test('under the polygon, only asked for, and only the corners written about', () => {
     const { world, id } = room();
     const corners = world.polygons.get(id)!.points.map(c => c.id);
-    let rig = deepened(rigOf(world, id), corners[2], 1, 2);
+    let rig = nudged(rigOf(world, id), corners[2], 1, { x: 1, y: 0 });
 
-    rig = nudged(rig, corners[2], 1, { x: 1, y: 0 });
     rig = { ...rig, nudges: new Map([...rig.nudges, [corners[0], new Map([[3, repeating(move(0, 1), 2)]])]]) };
 
     const w = withRig(world, id, rig);
@@ -113,8 +112,8 @@ describe('corner rows', () => {
     const rows = rowsOf(w, [id], true);
 
     expect(rows.map(r => [r.label, r.depth, r.corner])).toEqual([[`hollow ${id}`, 0, null], ['corner 0', 1, corners[0]], ['corner 2', 1, corners[2]]]);
-    expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }, { id, at: 1, corner: corners[2], kind: 'erode' }]);
-    expect(rows[2].cells[1].kinds).toEqual([['move'], ['erode']]);
+    expect(rows[2].cells[1].places).toEqual([{ id, at: 1, corner: corners[2], kind: 'move' }]);
+    expect(rows[2].cells[1].kinds).toEqual([['move']]);
     expect(rows[1].bars.map(b => [b.from, b.end])).toEqual([[3, 4]]);
   });
 });
@@ -124,14 +123,14 @@ describe('gestures', () => {
     const a = room();
     const b = room(a.world);
     const corners = b.world.polygons.get(a.id)!.points.map(c => c.id);
-    const eroded = gestured(deepen(b.world, 1, a.id, new Set(corners.slice(0, 3)), 2), b.world);
-    const turned = gestured(wrote(wrote(eroded, 1, a.id, move(1, 0)), 1, b.id, move(1, 0)), eroded);
+    const bent = gestured(nudge(b.world, 1, a.id, corners.slice(0, 3), { x: 0, y: 2 }), b.world);
+    const turned = gestured(wrote(wrote(bent, 1, a.id, move(1, 0)), 1, b.id, move(1, 0)), bent);
     const rows = rowsOf(turned, [a.id, b.id], true);
 
-    expect(gestureOf(turned, rows, 1, { id: a.id, at: 1, corner: corners[1], kind: 'erode' })).toEqual(
-      corners.slice(0, 3).map(c => ({ id: a.id, at: 1, corner: c, kind: 'erode' })),
+    expect(gestureOf(turned, rows, 1, { id: a.id, at: 1, corner: corners[1], kind: 'move' })).toEqual(
+      corners.slice(0, 3).map(c => ({ id: a.id, at: 1, corner: c, kind: 'move' })),
     );
-    // `a`'s move is the second key of its keyframe, behind the key the depths
+    // `a`'s move is the second key of its keyframe, behind the key the nudges
     // were written in; `b` has only the move.
     expect(gestureOf(turned, rows, 1, listedAt(turned, b.id, 1, 0))).toEqual([listedAt(turned, a.id, 1, 1), listedAt(turned, b.id, 1, 0)]);
 

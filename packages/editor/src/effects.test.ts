@@ -7,12 +7,7 @@ import { stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
   applies,
-  cornersAmounted,
-  edgeDeform,
   edgeRun,
-  edgesInheriting,
-  edgesOptioned,
-  ownDeform,
   edgesBetween,
   edgesWithinBox,
   endsOf,
@@ -91,7 +86,7 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room(emptyWorld(), rect(0, 0, 1000, 1000));
     const fx: Effects = { round: { precision: 2, tension: 0.5, chamfer: false } };
     const facets = (depth: number) => resolveAt(wrote(withEffects(world, id, fx), 0, id, erode(depth), round(300)), 0)
-      .find(it => it.id === id)!.effected!.facets.map(f => f.n);
+      .find(it => it.id === id)!.effected!.facets.n;
 
     // Drawn at 300 and at 400, the same round of 300 once eroded, and so the
     // same facets: a facet more would be a line fading in for nothing.
@@ -135,12 +130,9 @@ describe('a polygon\'s effects', () => {
     expect(out.filter(d => Math.abs(d - 2) < 1e-9).length).toBeGreaterThanOrEqual(4);
   });
 
-  test('a pasted room comes with its effects and its edges\' own', () => {
+  test('a pasted room comes with its effects', () => {
     const { world, id } = room();
-    const edge = world.polygons.get(id)!.points[0].id;
-    let w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
-
-    w = { ...w, cornerEffects: new Map([[edge, { deform: { spacing: 12, pattern: 'noise' as const, seed: 7, sides: 'in' as const, jitter: 0 } }]]) };
+    const w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
 
     const after = pasted(w, 0, copied(w, 0, [id]), { x: 300, y: 0 }, TOP);
     const copy = after.ids[0];
@@ -175,33 +167,15 @@ describe('a group\'s effects', () => {
   // publishes none as square geometry, and the square machinery — `squareIn`,
   // `effectedSquare`, `imaged` — is what 3.4 takes out. Restore as a test that
   // a group's outline is a polygon's, per 3.5.
-  test.skip('its round leaves its members\' deformed geometry square, and its own deform is on its union', () => {
+  test.skip('its own deform is on its union', () => {
     const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'out' as const, jitter: 0 };
     const a = room(emptyWorld(), rect(0, 0, 100, 100));
     const b = room(a.world, rect(60, 0, 140, 100));
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
     const sealed = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) }), 0, g.id, round(10));
     const vertices = (w: World) => new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
-    const teethOf = (w: World, id: Id) => {
-      const it = resolveAt(w, 0).find(r => r.id === id)!;
 
-      // Those standing off the wall: the rest are on its line, and the union,
-      // an arrangement, drops them.
-      return it.source.filter((p, i) => it.corners[i].root !== undefined && p.y > 100 + 1e-9);
-    };
-
-    // One edge of a room deformed: its teeth and its ends are where they are
-    // in the union, square, and the rest of the union rounded as before.
-    const top = (world: World) => cornersAmounted(withEffects(world, a.id, { deform: zigzag }), 0, a.id, 'deform', new Set([a.world.polygons.get(a.id)!.points[2].id]), 4);
-    const one = top(sealed);
-    const teeth = teethOf(one, a.id);
-
-    expect(teeth.length).toBeGreaterThan(0);
-    teeth.forEach(p => expect(vertices(one).has(`${p.x.toFixed(6)},${p.y.toFixed(6)}`)).toBe(true));
-    expect(vertices(one).has('0.000000,100.000000')).toBe(true);
-    expect(vertices(one).has('0.000000,0.000000')).toBe(false);
-
-    // Deformed by the group itself, the same.
+    // Deformed by the group itself.
     const whole = wrote(withEffects(sealed, g.id, { round: inSegments(8, 10), deform: zigzag }), 0, g.id, deform(4));
 
     // Its teeth are laid on the union, not its rooms: they stand off the
@@ -700,11 +674,7 @@ describe('editing effects', () => {
 
   test('switched off, an effect does nothing and keeps everything, and switched on is as it was', () => {
     const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
-    let w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2));
-
-    w = cornersAmounted(w, 0, id, 'round', new Set([corner]), 4);
-
+    const w = wrote(withEffects(world, id, { ...ROUND, ...DEFORM }), 0, id, erode(3), round(5), deform(2));
     const off = switchedOff(w, [id], 'round');
 
     expect(applies(off, id, 'round')).toBe(false);
@@ -715,8 +685,7 @@ describe('editing effects', () => {
 
   test('erosion switched off stands the thing at its outline, its timeline kept', () => {
     const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
-    const w = cornersAmounted(wrote(world, 0, id, erode(5)), 0, id, 'erode', new Set([corner]), 2);
+    const w = wrote(world, 0, id, erode(5));
 
     expect(applies(w, id, 'erode')).toBe(true);
 
@@ -726,15 +695,6 @@ describe('editing effects', () => {
     expect(stateAt(off, id, 0).erosion).toBe(5);
     expect(shapeOf(switchedOn(off, [id], 'erode', REMEMBERED), id)).toEqual(shapeOf(w, id));
     expect(switchedOn(off, [id], 'erode', REMEMBERED).effects.has(id)).toBe(false);
-  });
-
-  test('an edge\'s amplitude is its own, over its polygon\'s', () => {
-    const { world, id } = room();
-    const [a] = world.polygons.get(id)!.points;
-    const w = cornersAmounted(wrote(withEffects(world, id, DEFORM), 0, id, deform(1)), 0, id, 'deform', new Set([a.id]), 3);
-
-    expect(rigOf(w, id).deforms.get(a.id)!.get(0)!.op.by).toBe(3);
-    expect(stateAt(w, id, 0).amplitudes.get(a.id)).toBe(3);
   });
 
   test('an edge runs from its drawn corner to the next, and its teeth are in the shape', () => {
@@ -762,54 +722,6 @@ describe('editing effects', () => {
 
     // The top edge alone lies wholly inside a box round it, teeth and all.
     expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
-  });
-
-  test('an edge\'s deform options are its own, over its polygon\'s', () => {
-    // An amount adds and options do not: one set lays a run, and the nearest
-    // wins. An edge is named by the corner it leaves, as its amplitude is.
-    const { world, id } = room();
-    const points = world.polygons.get(id)!.points;
-    const w = wrote(withEffects(world, id, DEFORM), 0, id, deform(4));
-    const tight = edgesOptioned(w, [points[0].id], { spacing: 5 }, REMEMBERED);
-
-    expect(edgeDeform(tight, points[0].id)!.spacing).toBe(5);
-    expect(edgeDeform(tight, points[1].id)!.spacing).toBe(DEFORM.deform!.spacing);
-    expect(ownDeform(tight, points[0].id)).toBe(true);
-    expect(ownDeform(tight, points[1].id)).toBe(false);
-
-    // The bottom wall, at its own spacing of five, against the left wall at
-    // the polygon's twenty.
-    const teeth = (at: World, wall: (p: Point) => boolean) =>
-      shapeOf(at, id)[0].filter(p => wall(p) && offRoom(p) > 1e-9).length;
-    const bottom = (p: Point) => p.y < 0 && p.x > 1 && p.x < 99;
-    const left = (p: Point) => p.x < 0 && p.y > 1 && p.y < 99;
-
-    expect(teeth(w, bottom)).toBe(teeth(w, left));
-    expect(teeth(tight, left)).toBe(teeth(w, left));
-    expect(teeth(tight, bottom)).toBeGreaterThanOrEqual(teeth(w, bottom) * 3);
-
-    // And dropped again, it is its polygon's edge like any other.
-    expect(teeth(edgesInheriting(tight, [points[0].id]), bottom)).toBe(teeth(w, bottom));
-  });
-
-  test('an edge\'s own options reach the fold it is a member of', () => {
-    // A member publishes the options each of its edges stands in, so a scope
-    // that rounds and does not deform lays each run by whichever member edge
-    // named it — at that edge's own spacing where it has one.
-    const a = room(emptyWorld(), rect(0, 0, 200, 140));
-    const away = room(a.world, rect(600, 0, 60, 60));
-    const points = a.world.polygons.get(a.id)!.points;
-    const w = wrote(withEffects(away.world, a.id, DEFORM), 0, a.id, deform(6));
-    const g = grouped(w, 0, [a.id, away.id], TOP)!;
-    const sealed = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) }), 0, g.id, round(10));
-
-    // The first room's bottom wall, which is the edge leaving its first
-    // corner: its teeth, and then four times as many at a fifth the spacing.
-    const bottom = (at: World) => csg(at, 0).flat().filter(p => p.y < -1e-9 && p.x > 20 && p.x < 180).length;
-    const tight = edgesOptioned(sealed, [points[0].id], { spacing: 5 }, REMEMBERED);
-
-    expect(bottom(sealed)).toBeGreaterThan(0);
-    expect(bottom(tight)).toBeGreaterThan(bottom(sealed) * 3);
   });
 });
 

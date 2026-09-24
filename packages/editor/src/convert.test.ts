@@ -1,19 +1,19 @@
 // -----------------------------------------------------------------------------
 // Files from before keys
 //
-// What `convert.ts` takes and what it leaves behind: a 20, a 21, a 22 and a 23
-// are read here and nowhere else, and what comes out is a 24 that `save.ts`
-// opens like any other.
+// What `convert.ts` takes and what it leaves behind: a 20 to a 26 are read
+// here and nowhere else, and what comes out is a 27 that `save.ts` opens like
+// any other.
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { Old, OldEntry, OldRig, converted, relative, unmasked } from './convert';
+import { Old, OldEntry, OldRig, converted, relative, uncornered, unmasked } from './convert';
 import { Saved, restored, restoredKeyRig, saved } from './save';
 import { Entry, KeyframeId, Op, Rig, entriesOf, keysOf } from './rig';
-import { TOP, addPolygon, grouped, handed, keyed, resolveAt, rigOf, scaleAt, withRig } from './scene';
+import { TOP, addPolygon, grouped, handed, keyed, resolveAt, scaleAt } from './scene';
 import { withEffect } from './effects';
-import { cornerRounded, once } from './rig';
+import { once } from './rig';
 import { EditorState, Id, PolygonKind, REMEMBERED, VertexId, World, emptyWorld, initialState } from './types';
 import { scaled, wrote } from './testing';
 
@@ -70,9 +70,9 @@ function savedOldRig(rig: Rig): OldRig {
   return {
     keys: [...rig.keys].map(([k, list]) => [k, list.map(savedOldEntry)]),
     nudges: corners(rig.nudges),
-    depths: corners(rig.depths),
-    rounds: corners(rig.rounds),
-    deforms: corners(rig.deforms),
+    depths: [],
+    rounds: [],
+    deforms: [],
   };
 }
 
@@ -83,11 +83,11 @@ function savedOldEntry(e: Entry): OldEntry {
         frame: e.op.frame,
         erosion: e.op.erosion,
         corners: [...e.op.corners],
-        depths: [...e.op.depths],
+        depths: [],
         bevel: e.op.bevel,
         amplitude: e.op.amplitude,
-        bevels: [...e.op.bevels],
-        amplitudes: [...e.op.amplitudes],
+        bevels: [],
+        amplitudes: [],
       }
     : e.op;
 
@@ -128,10 +128,8 @@ function through(file: Old): EditorState {
   test('a stand saved when its bevels were radii keeps them', () => {
     const before = world();
     const [id] = [...before.world.polygons.keys()];
-    const corner = before.world.polygons.get(id)!.points[0].id;
     let w = wrote(before.world, 1, id, { kind: 'round', by: 4 });
 
-    w = withRig(w, id, cornerRounded(rigOf(w, id), corner, 1, 3));
     w = keyed(w, 2, id, [once(handed(w, 2, id))]);
 
     const file = asOld(saved({ ...before, world: w }));
@@ -170,10 +168,10 @@ function through(file: Old): EditorState {
       round: { precision: 0.5, tension: 0.5, chamfer: false },
       deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
-    // A corner's own round is not a thing any more: a round is an opening and
-    // an opening is a statement about the whole ring. An old file may carry
-    // one, and it is dropped on the way in. See `World.cornerEffects`.
-    expect(w.cornerEffects.get(corner)).toBe(undefined);
+    // A corner's own effects are not a thing any more: an effect is one
+    // amount over its whole ring. An old file may carry them, and they are
+    // dropped on the way in. See `uncornered`.
+    expect('cornerEffects' in w).toBe(false);
   });
 
   test('a 24 made a 25 is eroded, rounded and deformed where it was', () => {
@@ -245,6 +243,57 @@ function through(file: Old): EditorState {
     expect(unmasked({ ...file, format: 24 })).toEqual({ refused: expect.stringContaining('format 24') });
   });
 
+  test('a 26 made a 27 has its effects on single corners and edges dropped, and nothing else', () => {
+    const file = saved(world());
+    const [id] = [...world().world.polygons.keys()];
+    const corner = world().world.polygons.get(id)!.points[0].id;
+    const deform = { ...REMEMBERED.deform, spacing: 9 };
+    const stand = {
+      kind: 'stand', frame: { t: { x: 0, y: 0 }, angle: 0, skew: 0, scale: { x: 1, y: 1 } }, erosion: 1,
+      corners: [], depths: [[corner, 2]], bevel: 3, amplitude: 4, bevels: [[corner, 5]], amplitudes: [],
+    };
+    const cornered = (keyed: boolean) => ({
+      ...file,
+      format: 26,
+      world: {
+        ...file.world,
+        rigs: [[id, { keys: [[1, [
+          { id: 0, ref: { x: 0, y: 0 }, times: 1, stand },
+          { id: 1, ref: { x: 0, y: 0 }, times: 1, corners: [[corner, { x: 1, y: 0 }]], ...(keyed ? { depths: [[corner, 2]] } : {}) },
+        ]]] }]],
+        cornerEffects: keyed ? [[corner, { deform }]] : [],
+      },
+      baked: 'bake',
+    }) as unknown as Saved;
+
+    const out = uncornered(cornered(true));
+
+    if ('refused' in out) throw new Error(out.refused);
+
+    expect(out.format).toBe(27);
+    expect('cornerEffects' in out.world).toBe(false);
+    const { depths: _depths, bevels: _bevels, amplitudes: _amplitudes, ...kept } = stand;
+
+    expect(JSON.parse(JSON.stringify(out.world.rigs))).toStrictEqual([[id, { keys: [[1, [
+      { id: 0, ref: { x: 0, y: 0 }, times: 1, stand: kept },
+      { id: 1, ref: { x: 0, y: 0 }, times: 1, corners: [[corner, { x: 1, y: 0 }]] },
+    ]]] }]]);
+
+    // The drawing changes where anything was dropped, so the bake goes with
+    // it; where nothing was, it stays.
+    expect(out.baked).toBe(undefined);
+
+    const clean = uncornered({ ...cornered(false), world: { ...cornered(false).world, rigs: file.world.rigs } } as Saved);
+
+    if ('refused' in clean) throw new Error(clean.refused);
+
+    expect(clean.baked).toBe('bake');
+    expect(uncornered({ ...file, format: 25 })).toEqual({ refused: expect.stringContaining('format 25') });
+
+    // And the editor opens it.
+    expect(restored(JSON.parse(JSON.stringify(out)) as Saved).world.rigs.get(id)!.keys.get(1)!.length).toBe(2);
+  });
+
   test('a format this does not take is refused rather than half-read', () => {
     expect(converted({ ...asOld(saved(world())), format: 19 })).toEqual({ refused: expect.stringContaining('format 19') });
     expect(converted({ ...asOld(saved(world())), format: 24 })).toEqual({ refused: expect.stringContaining('format 24') });
@@ -263,17 +312,11 @@ function through(file: Old): EditorState {
           frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
           erosion: 0,
           corners: new Map(),
-          depths: new Map(),
           bevel: 0,
           amplitude: 0,
-          bevels: new Map(),
-          amplitudes: new Map(),
         }),
       ]]]),
       nudges: new Map(),
-      depths: new Map(),
-      rounds: new Map(),
-      deforms: new Map(),
     };
 
     const file = asOld(saved({

@@ -56,8 +56,8 @@
 // place leaves it alone.
 //
 // A stand is the one operation that says nothing about what came before: it is
-// how a thing stops hearing from upstream. The state is its numbers, corners
-// and their depths included, and nothing written before it reaches past it —
+// how a thing stops hearing from upstream. The state is its numbers and its
+// corners, and nothing written before it reaches past it —
 // except the repeats still running, which go on taking their steps. Those are
 // what the thing is doing rather than where it got to, and a stand that stopped
 // them would change what is on screen from the moment it was written.
@@ -65,9 +65,8 @@
 
 import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
-import { CORNER_KINDS, CORNER_MAPS } from './cornermaps';
+import { CORNER_MAPS } from './cornermaps';
 import type { CornerKind } from './cornermaps';
-import type { CornerMap } from './cornermaps';
 import { GroupId, Id, PolygonId, Structure, Vertex, VertexId, enclosing } from './types';
 
 export type KeyframeId = number;
@@ -187,31 +186,22 @@ export function amount(op: Op): op is Amount {
 }
 
 /**
- * What each amount is called where a state keeps it: its running total, and
- * the extra on single corners — for a deform, on single edges, by the corner
- * each starts at. With the rig map the entries for those live in.
+ * What each amount is called where a state keeps it: its running total.
  *
  * The one place the three are named, so the walk, `stateAt` and a stand read
  * them by kind rather than by hand. See `Amount`.
  */
 export const AMOUNTS = {
-  erode: { total: 'erosion', each: 'depths', map: 'depths' },
-  round: { total: 'bevel', each: 'bevels', map: 'rounds' },
-  deform: { total: 'amplitude', each: 'amplitudes', map: 'deforms' },
-} as const satisfies { [K in AmountKind]: {
-  total: keyof State & keyof Stand,
-  each: keyof State & keyof Stand,
-  /** The map whose `CORNER_KINDS` entry is this kind, so the two tables
-   * cannot disagree about which map holds what. */
-  map: { [M in CornerMap]: typeof CORNER_KINDS[M] extends K ? M : never }[CornerMap],
-} };
+  erode: { total: 'erosion' },
+  round: { total: 'bevel' },
+  deform: { total: 'amplitude' },
+} as const satisfies { [K in AmountKind]: { total: keyof State & keyof Stand } };
 
 /**
  * A thing's state, outright: what unchaining writes.
  *
  * Everything the walk carries, frozen — the frame, the depth, bevel and
- * amplitude, which corners stand and where, and the amounts on single corners
- * and edges. Played, it replaces
+ * amplitude, and which corners stand and where. Played, it replaces
  * whatever the walk had arrived at, so a thing standing on one stops hearing
  * from anything before it.
  */
@@ -222,11 +212,8 @@ export interface Stand {
   /** Where each corner stood, in the rest frame, and by which ids are in it,
    * which corners there were. */
   corners: ReadonlyMap<VertexId, Point>
-  depths: ReadonlyMap<VertexId, number>
   bevel: number
   amplitude: number
-  bevels: ReadonlyMap<VertexId, number>
-  amplitudes: ReadonlyMap<VertexId, number>
 }
 
 export type Op = Move | Turn | Scale | Skew | Amount | Stand;
@@ -267,8 +254,8 @@ export interface Entry<O extends Op = Op> extends Repeat {
  * `entriesOf` and `keysOf` below, and `convert.ts`. The editor's own is
  * `KeyRig`.
  *
- * The corners have maps of their own rather than a place in the list: a nudge
- * or a depth is about one corner, and there is only ever one per corner per
+ * The corners have a map of their own rather than a place in the list: a nudge
+ * is about one corner, and there is only ever one per corner per
  * keyframe, so there is no order among them to keep. A key has no such limit,
  * which is the one thing this cannot say back.
  */
@@ -276,19 +263,12 @@ export interface Rig {
   keys: ReadonlyMap<KeyframeId, readonly Entry[]>
   /** Moves of single corners, in the rest frame. */
   nudges: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Move>>>
-  /** Extra depth on single corners, over the thing's own. */
-  depths: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'erode'>>>>
-  /** Extra bevel on single corners, over the thing's own. */
-  rounds: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'round'>>>>
-  /** Extra amplitude on single edges, over the thing's own, each by the
-   * corner it starts at. */
-  deforms: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<'deform'>>>>
 }
 
 export type { CornerKind, CornerMap } from './cornermaps';
 export { CORNER_KINDS, CORNER_MAPS, cornerMapOf, eachCornerMap } from './cornermaps';
 
-export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map(), depths: new Map(), rounds: new Map(), deforms: new Map() };
+export const EMPTY_RIG: Rig = { keys: new Map(), nudges: new Map() };
 
 /** Whether nothing at all is written in a rig. */
 export function blank(rig: Rig): boolean {
@@ -351,20 +331,13 @@ export interface State {
   /** The corners standing, by id, at their rest-frame positions with every
    * nudge in. Empty for anything without a ring. */
   corners: ReadonlyMap<VertexId, Point>
-  /** The extra depth on single corners. Absent is nought. */
-  depths: ReadonlyMap<VertexId, number>
   /** How far its corners are rounded, and its edges deformed: what its
    * rounds and deforms add up to. */
   bevel: number
   amplitude: number
-  /** The extra bevel on single corners, and amplitude on single edges by
-   * the corner each starts at. Absent is nought. */
-  bevels: ReadonlyMap<VertexId, number>
-  amplitudes: ReadonlyMap<VertexId, number>
 }
 
 export const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
-export const NO_DEPTHS: ReadonlyMap<VertexId, number> = new Map();
 
 /** What a thing is before it is born, and what anything the world does not
  * know is: at rest, with nothing on it. */
@@ -372,11 +345,8 @@ export const UNBORN: State = {
   frame: REST,
   erosion: 0,
   corners: NO_CORNERS,
-  depths: NO_DEPTHS,
   bevel: 0,
   amplitude: 0,
-  bevels: NO_DEPTHS,
-  amplitudes: NO_DEPTHS,
 };
 
 // -----------------------------------------------------------------------------
@@ -662,40 +632,6 @@ function standingAt(
 }
 
 /**
- * One of the amounts kept by corner — depths, bevels, amplitudes — for every
- * corner standing at `i`: what the stand froze, and what its entries have added
- * since.
- */
-function amountsAt(
-  keyframes: readonly Keyframe[],
-  written: ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>,
-  frozen: ReadonlyMap<VertexId, number> | undefined,
-  corners: readonly Placing[],
-  stood: { at: number, op: Stand } | null,
-  i: number,
-): ReadonlyMap<VertexId, number> {
-  if (written.size === 0 && (frozen === undefined || frozen.size === 0)) return NO_DEPTHS;
-
-  const out = new Map<VertexId, number>();
-
-  for (const c of corners) {
-    const from = counted(c, stood, i);
-
-    if (from === null) continue;
-
-    let d = frozen?.get(c.corner.id) ?? 0;
-
-    for (const [k, e] of written.get(c.corner.id) ?? []) {
-      d += e.op.by * applications(keyframes, e, k, from, i);
-    }
-
-    if (d !== 0) out.set(c.corner.id, d);
-  }
-
-  return out;
-}
-
-/**
  * How many times an entry written at `k` has contributed by `i`, counting only
  * what it did after `from` if it was written before it.
  *
@@ -831,40 +767,6 @@ export function nudged(rig: Rig, vertex: VertexId, k: KeyframeId, by: Point): Ri
     : { ...(was ?? once<Move>({ kind: 'move', by: sum })), op: { kind: 'move' as const, by: sum } };
 
   return { ...rig, nudges: cornered(rig.nudges, vertex, k, entry) };
-}
-
-/** One corner's depth at a keyframe deepened. See `amounted`. */
-export function deepened(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
-  return amounted(rig, 'erode', vertex, k, by);
-}
-
-/** One corner rounded further at a keyframe. See `amounted`. */
-export function cornerRounded(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
-  return amounted(rig, 'round', vertex, k, by);
-}
-
-/** One edge, by the corner it starts at, deformed further. See `amounted`. */
-export function edgeDeformed(rig: Rig, vertex: VertexId, k: KeyframeId, by: number): Rig {
-  return amounted(rig, 'deform', vertex, k, by);
-}
-
-/**
- * One corner amounted further at a keyframe — for a deform, the edge starting
- * at it: a depth goes deeper, a bevel wider, an amplitude further off the
- * line. One that comes back to nothing is taken out, and its repeat is kept.
- */
-export function amounted<K extends AmountKind>(rig: Rig, kind: K, vertex: VertexId, k: KeyframeId, by: number): Rig {
-  // The one cast is this lookup, which `AMOUNTS` is what makes true; tying
-  // `op` to `K` is what stops the wrong kind being written into a map, since
-  // the computed key below puts the result past the compiler's reach.
-  const map = AMOUNTS[kind].map;
-  const maps = rig[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount<K>>>>;
-  const was = maps.get(vertex)?.get(k);
-  const sum = (was?.op.by ?? 0) + by;
-  const op: Amount<K> = { kind, by: sum };
-  const entry = sum === 0 ? null : { ...(was ?? once(op)), op };
-
-  return { ...rig, [map]: cornered(maps, vertex, k, entry) };
 }
 
 export function cornered<E>(
@@ -1025,11 +927,6 @@ export interface Key {
   by?: Delta
   /** Moves of single corners, in the rest frame. */
   corners?: ReadonlyMap<VertexId, Point>
-  /** The extra amounts on single corners, and on single edges by the corner
-   * each starts at. */
-  depths?: ReadonlyMap<VertexId, number>
-  rounds?: ReadonlyMap<VertexId, number>
-  deforms?: ReadonlyMap<VertexId, number>
   /** How many keyframes it contributes to, from its own: 1 is once, `null` is
    * to the end. */
   times: number | null
@@ -1321,8 +1218,7 @@ export function deltaOf(op: Op): Delta | null {
 // its own keys in order, each from the state the one before it left.
 //
 // What a key holds about single corners is not played here. A corner's move is
-// in the rest frame and its amounts are numbers, so they commute with
-// everything and with each other, and the walk counts them where it needs them
+// in the rest frame, so the moves commute with everything and each other, and the walk counts them where it needs them
 // rather than keeping them — as the entry walk does, and for the same reason.
 // -----------------------------------------------------------------------------
 
@@ -1431,11 +1327,8 @@ export function walkedBy(
       frame,
       erosion: totals.erode,
       corners: none ? NO_CORNERS : standingBy(keyframes, rig, placing, stood, i),
-      depths: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'depths', stood?.op.depths, placing, stood, i),
       bevel: totals.round,
       amplitude: totals.deform,
-      bevels: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'rounds', stood?.op.bevels, placing, stood, i),
-      amplitudes: none ? NO_DEPTHS : amountsBy(keyframes, rig, 'deforms', stood?.op.amplitudes, placing, stood, i),
     };
   }
 
@@ -1622,39 +1515,6 @@ function standingBy(
   return out;
 }
 
-/** One of the amounts kept by corner, for every corner standing at `i`. */
-function amountsBy(
-  keyframes: readonly Keyframe[],
-  rig: KeyRig,
-  held: 'depths' | 'rounds' | 'deforms',
-  frozen: ReadonlyMap<VertexId, number> | undefined,
-  corners: readonly Placing[],
-  stood: { at: number, op: Stand } | null,
-  i: number,
-): ReadonlyMap<VertexId, number> {
-  const out = new Map<VertexId, number>();
-
-  for (const c of corners) {
-    const from = counted(c, stood, i);
-
-    if (from === null) continue;
-
-    let d = frozen?.get(c.corner.id) ?? 0;
-
-    for (const [at, list] of rig.keys) {
-      for (const key of list) {
-        const by = key[held]?.get(c.corner.id);
-
-        if (by !== undefined) d += by * applications(keyframes, key, at, from, i);
-      }
-    }
-
-    if (d !== 0) out.set(c.corner.id, d);
-  }
-
-  return out.size === 0 ? NO_DEPTHS : out;
-}
-
 // -----------------------------------------------------------------------------
 // From entries
 //
@@ -1667,8 +1527,8 @@ function amountsBy(
  *
  * An entry is a key that holds one channel, so the list converts one for one
  * and keeps its order. What a corner has written about it becomes keys of its
- * own, one per repeat at a keyframe — a nudge and a depth written by the same
- * gesture, repeating the same way, are one key. They hold no `by`, so where
+ * own, one per repeat at a keyframe — two nudges written by the same gesture,
+ * repeating the same way, are one key. They hold no `by`, so where
  * they sit among the others does not matter: a corner's move is in the rest
  * frame and commutes with everything the list does.
  */
@@ -1731,20 +1591,6 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
     }
   }
 
-  for (const map of CORNER_MAPS) {
-    if (map === 'nudges') continue;
-
-    const held = HELD[map];
-
-    for (const [vertex, written] of rig[map]) {
-      for (const [at, e] of written) {
-        const key = mine(at, e);
-
-        key[held] = new Map(key[held] ?? []).set(vertex, e.op.by);
-      }
-    }
-  }
-
   const out: KeyRig = { keys: kept(keys, was) };
 
   made.set(out, entriesBy(out, rig));
@@ -1800,7 +1646,7 @@ function sameKey(a: Key, b: Key): boolean {
   if ((a.by === undefined) !== (b.by === undefined)) return false;
   if (a.by !== undefined && b.by !== undefined && !sameDelta(a.by, b.by)) return false;
 
-  return CORNER_HELD.every(m => sameHeld(a[m], b[m]));
+  return sameHeld(a.corners, b.corners);
 }
 
 function sameDelta(a: Delta, b: Delta): boolean {
@@ -1810,18 +1656,15 @@ function sameDelta(a: Delta, b: Delta): boolean {
     && (a.about?.x ?? null) === (b.about?.x ?? null) && (a.about?.y ?? null) === (b.about?.y ?? null);
 }
 
-function sameHeld(a: ReadonlyMap<VertexId, unknown> | undefined, b: ReadonlyMap<VertexId, unknown> | undefined): boolean {
+function sameHeld(a: ReadonlyMap<VertexId, Point> | undefined, b: ReadonlyMap<VertexId, Point> | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   if (a.size !== b.size) return false;
 
-  for (const [k, v] of a) {
-    const mine = b.get(k);
+  for (const [k, p] of a) {
+    const q = b.get(k);
 
-    if (v === mine) continue;
-
-    const p = v as Point, q = mine as Point | undefined;
-
-    if (q === undefined || typeof v === 'number' || p.x !== q.x || p.y !== q.y) return false;
+    if (p === q) continue;
+    if (q === undefined || p.x !== q.x || p.y !== q.y) return false;
   }
 
   return true;
@@ -1829,22 +1672,11 @@ function sameHeld(a: ReadonlyMap<VertexId, unknown> | undefined, b: ReadonlyMap<
 
 const ORIGIN: Point = { x: 0, y: 0 };
 
-/** A key while it is being written into: the maps a corner's writing goes in,
- * which are read-only on a `Key` and are filled here before it is one. */
+/** A key while it is being written into: the map a corner's writing goes in,
+ * which is read-only on a `Key` and is filled here before it is one. */
 interface Writing extends Key {
   corners?: Map<VertexId, Point>
-  depths?: Map<VertexId, number>
-  rounds?: Map<VertexId, number>
-  deforms?: Map<VertexId, number>
 }
-
-/** Which of a key's corner maps each of a rig's is. */
-const HELD = {
-  nudges: 'corners',
-  depths: 'depths',
-  rounds: 'rounds',
-  deforms: 'deforms',
-} as const satisfies { [M in CornerMap]: keyof Key };
 
 function sameRepeat(a: Repeat, b: Repeat): boolean {
   if (a.times !== b.times) return false;
@@ -2083,8 +1915,8 @@ export function channelOf(d: Delta): string | null {
 }
 
 /** Which of a key's corner maps a kind of corner writing is in. */
-export function heldOf(kind: CornerKind): 'corners' | 'depths' | 'rounds' | 'deforms' {
-  return kind === 'move' ? 'corners' : ({ erode: 'depths', round: 'rounds', deform: 'deforms' } as const)[kind];
+export function heldOf(_kind: CornerKind): 'corners' {
+  return 'corners';
 }
 
 /**
@@ -2139,43 +1971,36 @@ export function idle(d: Delta): boolean {
 
 /**
  * One corner's move at a keyframe added to, the way a hand adds to it: a nudge
- * moves it further, a depth goes deeper, an amplitude further off the line.
- * One that comes back to nothing is taken out.
+ * moves it further. One that comes back to nothing is taken out.
  *
  * It goes in the keyframe's last key about corners alone, or a new one where
  * there is none. Which key a corner's writing sits in never changes what plays
- * — a corner's move is in the rest frame and its amounts are numbers, so they
- * commute with everything — and keeping them together is what makes one
- * gesture over four corners one key.
+ * — a corner's move is in the rest frame, so it commutes with everything — and
+ * keeping them together is what makes one gesture over four corners one key.
  */
-export function cornerWrite<T>(
+export function cornerWrite(
   rig: KeyRig,
   k: KeyframeId,
   id: number,
-  held: 'corners' | 'depths' | 'rounds' | 'deforms',
   vertex: VertexId,
-  add: (was: T | undefined) => T | null,
+  add: (was: Point | undefined) => Point | null,
 ): KeyRig {
   const list = keysAt(rig, k);
   const at = lastCornerKey(list);
   const key: Key = at < 0 ? { id, ref: REST.t, times: 1 } : list[at];
-  const mine = key[held] as ReadonlyMap<VertexId, T> | undefined;
-  const now = add(mine?.get(vertex));
-  const into = new Map(mine ?? []);
+  const now = add(key.corners?.get(vertex));
+  const into = new Map(key.corners ?? []);
 
   if (now === null) into.delete(vertex);
   else into.set(vertex, now);
 
-  const written = { ...key, [held]: into.size === 0 ? undefined : into } as Key;
-  const empty = CORNER_HELD.every(m => written[m] === undefined);
+  const written: Key = { ...key, corners: into.size === 0 ? undefined : into };
+  const empty = written.corners === undefined;
 
   if (at < 0) return empty ? rig : withKeysAt(rig, k, [...list, written]);
 
   return withKeysAt(rig, k, empty ? list.filter((_x, i) => i !== at) : list.map((x, i) => (i === at ? written : x)));
 }
-
-/** The four maps a key keeps about single corners. */
-const CORNER_HELD = ['corners', 'depths', 'rounds', 'deforms'] as const;
 
 /** Where a keyframe's last key about corners alone is, or -1. */
 function lastCornerKey(list: readonly Key[]): number {
@@ -2188,28 +2013,10 @@ function lastCornerKey(list: readonly Key[]): number {
 
 /** One corner's nudge at a keyframe, added to. */
 export function nudgedBy(rig: KeyRig, id: number, vertex: VertexId, k: KeyframeId, by: Point): KeyRig {
-  return cornerWrite<Point>(rig, k, id, 'corners', vertex, was => {
+  return cornerWrite(rig, k, id, vertex, was => {
     const sum = { x: (was?.x ?? 0) + by.x, y: (was?.y ?? 0) + by.y };
 
     return sum.x === 0 && sum.y === 0 ? null : sum;
-  });
-}
-
-/** One corner's own depth, bevel or amplitude at a keyframe, added to. */
-export function amountedBy(
-  rig: KeyRig,
-  id: number,
-  kind: AmountKind,
-  vertex: VertexId,
-  k: KeyframeId,
-  by: number,
-): KeyRig {
-  const held = ({ erode: 'depths', round: 'rounds', deform: 'deforms' } as const)[kind];
-
-  return cornerWrite<number>(rig, k, id, held, vertex, was => {
-    const sum = (was ?? 0) + by;
-
-    return sum === 0 ? null : sum;
   });
 }
 
@@ -2257,21 +2064,6 @@ export function entriesOf(rig: KeyRig): Rig {
       if (key.corners !== undefined) {
         for (const [vertex, by] of key.corners) {
           out = { ...out, nudges: cornered(out.nudges, vertex, at, { ...repeat, op: { kind: 'move', by } }) };
-        }
-      }
-
-      for (const map of ['depths', 'rounds', 'deforms'] as const) {
-        const mine = key[map];
-
-        if (mine === undefined) continue;
-
-        for (const [vertex, by] of mine) {
-          // One map at a time, so that each keeps the kind it holds: the cast
-          // is the lookup `AMOUNTS` makes true, as `amounted` says.
-          const op = { kind: CORNER_KINDS[map], by } as Amount<AmountKind>;
-          const held = cornered(out[map] as ReadonlyMap<VertexId, ReadonlyMap<KeyframeId, Entry<Amount>>>, vertex, at, { ...repeat, op });
-
-          out = { ...out, [map]: held };
         }
       }
     }

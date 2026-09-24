@@ -100,12 +100,9 @@ import { Listed, aiming } from '../keys';
 import { Amount, Op as Operation } from '../rig';
 import {
   AmountKind,
-  cornersAmounted,
   edgeOf,
-  edgesBetween,
   edgesWithinBox,
   endsOf,
-  edgesSwitched,
   sizedFor,
   switchedOn,
   withEffect,
@@ -648,23 +645,15 @@ export function worldCanvas(
       // means to anything else.
       const standing = kind !== undefined ? [] : selection().artefacts;
 
-      // The amounts are the transforms a corner or an edge can be under by
-      // itself: picked ones go further than the thing they are on rather
-      // than instead of it, which is what an amount per corner is for. Their
-      // polygons stand in for them here — an amount is written into the
-      // timeline of the thing that has a ring, and a corner has none — and
-      // every other gesture ignores them, being about where a whole thing is.
-      // Only under the tools that pick them: corners left picked while the
+      // An amount is one number over a whole ring, so under the tools that
+      // pick corners and edges it goes on the polygons they are on: an amount
+      // is written into the timeline of the thing that has a ring, and a
+      // corner has none. Every other gesture ignores them, being about where a
+      // whole thing is. Only under those tools: corners left picked while the
       // hand is on whole things are not what the gesture there is asking about.
-      const corners = new Set(kind === undefined ? [] : cornersFor(kind));
+      const corners = new Set(kind === undefined ? [] : pickedCorners());
 
-      if (kind !== undefined && tool() !== 'polygon' && corners.size === 0) {
-        if (kind === 'deform') {
-          update(s => saying(s, 'A deform is along edges: pick both ends of one, or pick edges with the edge tool.'));
-        }
-
-        return;
-      }
+      if (kind !== undefined && tool() !== 'polygon' && corners.size === 0) return;
 
       const owners = corners.size === 0 ? [] : owning(world(), corners);
 
@@ -692,15 +681,7 @@ export function worldCanvas(
       // over that.
       const targets = kind === undefined ? [] : ids.filter(id => was.polygons.has(id) || was.groups.has(id));
       const first = kind === 'deform' ? sizedFor(was, v, targets, remembered()) : remembered();
-      const on = kind === undefined ? was : switchedOn(was, targets, kind, first);
-
-      // Edges left straight on their own are deformed again by a deform on
-      // them: a picked id is the edge leaving that corner. There is no twin
-      // for the round — a round is the polygon's, an opening being a
-      // statement about the whole ring. See `cornersAmounted`.
-      const base = corners.size === 0 || kind !== 'deform'
-        ? on
-        : edgesSwitched(on, [...corners], true, remembered());
+      const base = kind === undefined ? was : switchedOn(was, targets, kind, first);
 
       const reached = new Set(polygonsIn(world(), ids));
       const items = resolveAt(world(), v).filter(it => reached.has(it.id));
@@ -860,14 +841,6 @@ export function worldCanvas(
                 const scale = kind === undefined ? 1 : scaleAt(was, id, v);
                 const amount = scale > 0 ? by / scale : 0;
 
-                // A round on picked corners is a round on their ring: an
-                // opening is a statement about the whole shape, so there is no
-                // bevel of one corner for it to write.
-                if (kind !== undefined && kind !== 'round' && corners.size > 0 && world.polygons.has(id)) {
-                  world = cornersAmounted(world, v, id, kind, corners, amount);
-                  continue;
-                }
-
                 const op = kind !== undefined
                   ? { kind, by: amount } satisfies Amount
                   : mode(p, { pivot, from, to, alt: e.altKey, factor });
@@ -907,15 +880,14 @@ export function worldCanvas(
     }
 
     /**
-     * The corners an amount acts on under the tools that pick them, or — for
-     * a deform — the edges, by the corner each starts at. Corners picked
-     * stand for the edges between them; edges picked, for their ends.
+     * The corners picked under the tools that pick them, whose polygons an
+     * amount goes on: edges picked stand for their ends.
      */
-    function cornersFor(kind: AmountKind): VertexId[] {
+    function pickedCorners(): VertexId[] {
       const sel = selection();
 
-      if (tool() === 'point') return kind === 'deform' ? edgesBetween(edgeable(), sel.vertices) : sel.vertices;
-      if (tool() === 'edge') return kind === 'deform' ? sel.edges : endsOf(edgeable(), sel.edges);
+      if (tool() === 'point') return sel.vertices;
+      if (tool() === 'edge') return endsOf(edgeable(), sel.edges);
 
       return [];
     }

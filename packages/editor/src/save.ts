@@ -63,9 +63,15 @@ import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
  * `floor` fields, either absent — rather than a `type` with a `from` mask on
  * its voids. See `PolygonKind`; `convert.ts` takes a 25 across.
  *
+ * 27: an effect is one amount over its whole ring, and one set of options.
+ * The amounts on single corners and edges — a key's `depths`, `rounds` and
+ * `deforms`, a stand's `depths`, `bevels` and `amplitudes` — and an edge's own
+ * deform options, `cornerEffects`, are gone. `convert.ts` takes a 26 across,
+ * dropping them, which changes the drawing wherever they were used.
+ *
  * A file is one shape, and this is the shape.
  */
-export const FORMAT = 26;
+export const FORMAT = 27;
 
 /**
  * The oldest this reads, which is the one it writes.
@@ -110,10 +116,6 @@ export interface Saved {
     rigs: [Id, SavedKeyRig][]
     flags: [Id, Flags][]
     effects: [Id, Effects][]
-    /** The deform of the edge leaving each corner. A file written before the
-     * per-corner round went may carry a `round` here too; `restored` drops it.
-     * See `World.cornerEffects`. */
-    cornerEffects: [VertexId, Partial<Effects>][]
   }
   /**
    * The bake, where there was one: every span of it that still stood when the
@@ -137,9 +139,6 @@ export interface SavedKey {
   /** Absent where the key is about single corners alone. */
   by?: Partial<Delta>
   corners?: [VertexId, Point][]
-  depths?: [VertexId, number][]
-  rounds?: [VertexId, number][]
-  deforms?: [VertexId, number][]
   times: number | null
   /** Absent is none. */
   skip?: KeyframeId[]
@@ -170,7 +169,6 @@ export function saved(state: EditorState): Saved {
       rigs: [...state.world.rigs].map(([id, rig]) => [id, savedKeyRig(rig)]),
       flags: [...state.world.flags],
       effects: [...state.world.effects],
-      cornerEffects: [...state.world.cornerEffects],
     },
   };
 }
@@ -191,9 +189,6 @@ export function restored(file: Saved): EditorState {
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredKeyRig(rig)])),
     flags: new Map(file.world.flags),
     effects: new Map(file.world.effects),
-    cornerEffects: new Map(file.world.cornerEffects.flatMap(
-      ([c, fx]) => (fx.deform === undefined ? [] : [[c, { deform: fx.deform }] as [VertexId, Pick<Effects, 'deform'>]]),
-    )),
   };
 
   return {
@@ -354,11 +349,8 @@ function savedStand(op: Stand): SavedStand {
     frame: op.frame,
     erosion: op.erosion,
     corners: [...op.corners],
-    depths: [...op.depths],
     bevel: op.bevel,
     amplitude: op.amplitude,
-    bevels: [...op.bevels],
-    amplitudes: [...op.amplitudes],
   };
 }
 
@@ -369,11 +361,8 @@ function restoredStand(op: SavedStand): Stand {
     frame: op.frame,
     erosion: op.erosion,
     corners: new Map(op.corners),
-    depths: new Map(op.depths),
     bevel: op.bevel,
     amplitude: op.amplitude,
-    bevels: new Map(op.bevels),
-    amplitudes: new Map(op.amplitudes),
   };
 }
 
@@ -383,11 +372,8 @@ export interface SavedStand {
   frame: Frame
   erosion: number
   corners: [VertexId, Point][]
-  depths: [VertexId, number][]
   bevel: number
   amplitude: number
-  bevels: [VertexId, number][]
-  amplitudes: [VertexId, number][]
 }
 
 /** The timelines as a 24 keeps them: a key is nearly JSON as it stands, so
@@ -406,9 +392,6 @@ function savedKey(key: Key): SavedKey {
     ref: key.ref,
     by: key.by,
     corners: pairs(key.corners),
-    depths: pairs(key.depths),
-    rounds: pairs(key.rounds),
-    deforms: pairs(key.deforms),
     times: key.times,
     skip: key.skip === undefined || key.skip.size === 0 ? undefined : [...key.skip],
     stand: key.stand === undefined ? undefined : savedStand(key.stand),
@@ -428,9 +411,6 @@ function restoredKey(key: SavedKey): Key {
     // before a field existed reads as not doing it.
     by: key.by === undefined ? undefined : { ...NOTHING, ...key.by },
     corners: key.corners === undefined ? undefined : new Map(key.corners),
-    depths: key.depths === undefined ? undefined : new Map(key.depths),
-    rounds: key.rounds === undefined ? undefined : new Map(key.rounds),
-    deforms: key.deforms === undefined ? undefined : new Map(key.deforms),
     times: key.times,
     skip: key.skip === undefined || key.skip.length === 0 ? undefined : new Set(key.skip),
     stand: key.stand === undefined ? undefined : restoredStand(key.stand),

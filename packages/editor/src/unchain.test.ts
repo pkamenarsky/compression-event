@@ -22,7 +22,7 @@ import {
   unchainedAt,
   withRig,
 } from './scene';
-import { cornerRounded, nudged as nudging, repeating, stateAt } from './rig';
+import { nudged as nudging, repeating, stateAt } from './rig';
 import { Writing, erode, move, turned as turning, wrote } from './testing';
 import {
   ArtefactId,
@@ -176,10 +176,7 @@ describe('unchaining', () => {
 
   test('so do upstream rounds and deforms, and the amounts they came to are kept', () => {
     const { world, id } = square();
-    const corner = world.polygons.get(id)!.points[0].id;
-    let shaped = wrote(world, 1, id, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
-
-    shaped = withRig(shaped, id, cornerRounded(rigOf(shaped, id), corner, 1, 3));
+    const shaped = wrote(world, 1, id, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
 
     const loose = unchained(shaped, 3, [id]);
     const later = wrote(loose, 1, id, { kind: 'round', by: 10 });
@@ -187,7 +184,7 @@ describe('unchaining', () => {
     for (const w of [loose, later]) {
       const state = stateAt(w, id, 3);
 
-      expect([state.bevel, state.amplitude, state.bevels.get(corner)]).toEqual([4, 2, 3]);
+      expect([state.bevel, state.amplitude]).toEqual([4, 2]);
     }
 
     expect(stateAt(later, id, 1).bevel).toBe(14);

@@ -588,7 +588,6 @@ export interface Stamp {
   /** Which effects things have, and how: one fact over every keyframe, so
    * every span hears of a change to it. */
   effects: unknown
-  cornerEffects: unknown
 }
 
 export interface Bake {
@@ -639,7 +638,6 @@ export function stamp(world: World, from: number): Stamp {
     groups: world.groups,
     artefacts: world.artefacts,
     effects: world.effects,
-    cornerEffects: world.cornerEffects,
   };
 }
 
@@ -684,7 +682,7 @@ function stamped(a: Stamp, b: Stamp): boolean {
   if (a.polygons !== b.polygons) return false;
   if (a.groups !== b.groups) return false;
   if (a.artefacts !== b.artefacts) return false;
-  if (a.effects !== b.effects || a.cornerEffects !== b.cornerEffects) return false;
+  if (a.effects !== b.effects) return false;
   if (a.order !== b.order) return false;
   if (a.written.length !== b.written.length) return false;
 
@@ -751,20 +749,6 @@ interface Moving extends Rider {
   dead: [boolean[], boolean[]]
   depth: [number, number]
   /**
-   * The depth at each of `corners` at the two ends, written over the same ring
-   * the way `local` is, and read only where `varying` says the polygon has
-   * corners offset apart from each other.
-   *
-   * A corner one end had to invent carries the depth its edge has where it
-   * sits — the same interpolation its position gets — so that it stays flat in
-   * the projection as well as in the source. Anything else and it would push a
-   * dent into a wall it is supposed to be lying along.
-   */
-  depths: [number[], number[]]
-  /** Whether either end offsets a corner apart from the rest. Almost never, and
-   * the uniform road is the one whose arithmetic has not moved. */
-  varying: boolean
-  /**
    * What took the depths at each end into the world: the thing's `scaleAt`
    * there. Part way, a depth is its own length lerped and taken out by the
    * scale the frame has then — see `deepAt` — which for a room scaled evenly
@@ -809,7 +793,6 @@ interface Moving extends Rider {
 function spanning(was: Resolved, now: Resolved): Spanned {
   const here = new Map(was.corners.map((c, i) => [c.id, was.local[i]]));
   const there = new Map(now.corners.map((c, i) => [c.id, now.local[i]]));
-  const deep = [depthsOf(was), depthsOf(now)] as const;
 
   const corners = merged(was.corners, now.corners, was.polygon.points);
 
@@ -820,18 +803,12 @@ function spanning(was: Resolved, now: Resolved): Spanned {
 
   // Same count as both ends means the same corners as both ends: each is a
   // subset of the union, so equal sizes make all three the same set.
-  const depths: [number[], number[]] = [
-    corners.map(c => deep[0].get(c.id) ?? was.erosion),
-    corners.map(c => deep[1].get(c.id) ?? now.erosion),
-  ];
-
   if (corners.length === was.corners.length && corners.length === now.corners.length) {
-    return straightened(corners, [was.local, now.local], dead, depths);
+    return straightened(corners, [was.local, now.local], dead);
   }
 
   const n = corners.length;
   const ends = [here, there] as const;
-  const ends2 = [was.erosion, now.erosion] as const;
   const local: [Ring, Ring] = [
     corners.map(c => here.get(c.id) ?? ORIGIN),
     corners.map(c => there.get(c.id) ?? ORIGIN),
@@ -910,20 +887,10 @@ function spanning(was: Resolved, now: Resolved): Spanned {
       const lo = from, hi = to;
 
       local[side][i] = between2(lo, hi, c.root === undefined && [was, now][side].effected ? onDrawn(i, side, lo, hi, taste) : taste);
-
-      const at = fraction(from, to, local[side][i]);
-
-      // The depth it would have had if it were on the edge, because it is: a
-      // corner is flat in the projection only where its own offset agrees with
-      // what its neighbours' offsets say the edge is doing at that point.
-      const da = deep[side].get(corners[before].id) ?? ends2[side];
-      const db = deep[side].get(corners[after].id) ?? ends2[side];
-
-      depths[side][i] = da + (db - da) * at;
     }
   });
 
-  return straightened(corners, local, dead, depths);
+  return straightened(corners, local, dead);
 }
 
 /**
@@ -973,24 +940,11 @@ function merged(a: readonly Vertex[], b: readonly Vertex[], points: readonly Ver
   return out;
 }
 
-/** What `Resolved.depths` says, by corner id, and nothing where the polygon is
- * under one depth throughout. */
-function depthsOf(it: Resolved): Map<VertexId, number> {
-  const out = new Map<VertexId, number>();
-
-  if (it.depths !== null) {
-    it.corners.forEach((c, i) => out.set(c.id, it.depths![i]));
-  }
-
-  return out;
-}
-
 /** The two ends of a span written over one ring: what `spanning` produces. */
 interface Spanned {
   corners: Vertex[]
   local: [Ring, Ring]
   dead: [boolean[], boolean[]]
-  depths: [number[], number[]]
 }
 
 /**
@@ -1021,7 +975,6 @@ function straightened(
   corners: Vertex[],
   local: [Ring, Ring],
   dead: [boolean[], boolean[]],
-  depths: [number[], number[]],
 ): Spanned {
   const snap: [number, number] = [near1(local[0]), near1(local[1])];
   const rings = ringsOf(corners);
@@ -1029,13 +982,13 @@ function straightened(
   for (let i = 0; i < corners.length; i++) {
     if (dead[0][i] || dead[1][i]) continue;
 
-    const was = flat(local[0], rings, depths[0], i, snap[0]);
-    const now = flat(local[1], rings, depths[1], i, snap[1]);
+    const was = flat(local[0], rings, i, snap[0]);
+    const now = flat(local[1], rings, i, snap[1]);
 
     if (was !== now) dead[was ? 0 : 1][i] = true;
   }
 
-  return { corners, local, dead, depths };
+  return { corners, local, dead };
 }
 
 /** The arrangement's own tolerance, off one ring. See `near`. */
@@ -1051,16 +1004,12 @@ function near1(ring: Ring): number {
  * Whether the ring runs straight through a corner: `cornersOnly`'s question,
  * asked of the source rather than of the projection.
  *
- * Asking it of the source is only allowed because the offset does not bend a
- * straight run — which is true while one depth covers the whole ring, and false
- * the moment a corner carries its own. Three points in a line whose depths are
- * not in the same line come out of `erodeAt` as a genuine corner, so the depths
- * have to answer the same question the positions do, and both have to say yes.
+ * Asking it of the source is allowed because the offset does not bend a
+ * straight run: one depth covers the whole ring.
  */
 function flat(
   ring: Ring,
   rings: readonly number[],
-  depths: readonly number[],
   i: number,
   snap: number,
 ): boolean {
@@ -1072,14 +1021,8 @@ function flat(
   const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
 
   if (reach === 0) return true;
-  if (Math.abs(ux * vy - uy * vx) / reach > snap) return false;
 
-  // Where the depth sits, against where running from `a` to `c` would put it.
-  const l = Math.hypot(ux, uy) + Math.hypot(vx, vy);
-  const da = depths[before], db = depths[i], dc = depths[after];
-  const want = l === 0 ? da : da + (dc - da) * (Math.hypot(ux, uy) / l);
-
-  return Math.abs(db - want) <= snap;
+  return Math.abs(ux * vy - uy * vx) / reach <= snap;
 }
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -1201,11 +1144,9 @@ function moving(world: World, from: number): Moving[] {
         // is taken off. A full depth against a thousandth of a polygon is not a
         // thin room; it is an inside-out one.
         depth: [0, it.erosion] as [number, number],
-        depths: [it.corners.map(() => 0), flatDepths(it)] as [number[], number[]],
-        varying: it.depths !== null,
         scales: [scaleAt(world, it.id, far), scaleAt(world, it.id, far)] as [number, number],
         holders: holders(world, from, it.id),
-        ...effectsOver(world, it.id, it.corners, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)], [budding(it.local), it.local], [it.corners.map(() => 0), flatDepths(it)], null),
+        ...effectsOver(world, it.id, [null, scaledState(world, it.id, far)], [1, scaleAt(world, it.id, far)]),
       };
     }
 
@@ -1218,11 +1159,9 @@ function moving(world: World, from: number): Moving[] {
       local: over.local,
       dead: over.dead,
       depth: [was.erosion, it.erosion] as [number, number],
-      depths: over.depths,
-      varying: was.depths !== null || it.depths !== null,
       scales: [scaleAt(world, it.id, near), scaleAt(world, it.id, far)] as [number, number],
       holders: holders(world, from, it.id),
-      ...effectsOver(world, it.id, over.corners, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)], over.local, over.depths, over.dead),
+      ...effectsOver(world, it.id, [scaledState(world, it.id, near), scaledState(world, it.id, far)], [scaleAt(world, it.id, near), scaleAt(world, it.id, far)]),
     };
   });
 
@@ -1244,11 +1183,9 @@ function moving(world: World, from: number): Moving[] {
       local: [was.local, budding(was.local)] as [Ring, Ring],
       dead: [was.corners.map(() => false), was.corners.map(() => false)] as [boolean[], boolean[]],
       depth: [was.erosion, 0] as [number, number],
-      depths: [flatDepths(was), was.corners.map(() => 0)] as [number[], number[]],
-      varying: was.depths !== null,
       scales: [scaleAt(world, id, near), scaleAt(world, id, near)] as [number, number],
       holders: holders(world, from, id),
-      ...effectsOver(world, id, was.corners, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1], [was.local, budding(was.local)], [flatDepths(was), was.corners.map(() => 0)], null),
+      ...effectsOver(world, id, [scaledState(world, id, near), null], [scaleAt(world, id, near), 1]),
     });
   }
 
@@ -1256,18 +1193,11 @@ function moving(world: World, from: number): Moving[] {
 }
 
 /** A thing's amounts where it is not there: none. */
-const NOTHING: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'> = {
-  bevel: 0,
-  bevels: new Map(),
-  amplitude: 0,
-  amplitudes: new Map(),
-};
+const NOTHING: Pick<State, 'bevel' | 'amplitude'> = { bevel: 0, amplitude: 0 };
 
 /**
- * A polygon's round at both ends of a span, written over the same corners,
- * and the deform its arcs take. Nothing where it has none. The deform of its
- * straights is not here: that is in its corners already, teeth and all, and
- * the bake carries them as it carries any.
+ * A polygon's round and deform at both ends of a span. Nothing where it has
+ * none.
  *
  * A degenerate end is seeded, never collapsed. A bevel of nought at one end
  * and more at the other is `SEEDING` of the other there, so the arc turns,
@@ -1280,32 +1210,25 @@ const NOTHING: Pick<State, 'bevel' | 'bevels' | 'amplitude' | 'amplitudes'> = {
  * end has. At the coarser end the points it has over are on its facets, so
  * its outline is the still's; across the span the arc goes over from the one
  * to the other. See `Facets`.
- *
- * `local` and `depths` are the corners at each end, for a round held against
- * the erosion: see `drawnBevels`.
  */
 function effectsOver(
   world: World,
   id: Id,
-  corners: readonly Vertex[],
   ends: [State | null, State | null],
   /** What took each end's amounts into the world: see `segmentsOf`. */
   scales: [number, number],
-  local: [Ring, Ring],
-  depths: [number[], number[]],
-  dead: [boolean[], boolean[]] | null,
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
-  const two = ([0, 1] as const).map(i => (effectedOf(world, id, corners, local[i], ends[i] ?? NOTHING, k => depths[i][k], scales[i]))) as [Effected | null, Effected | null];
+  const two = ([0, 1] as const).map(i => effectedOf(world, id, ends[i] ?? NOTHING, scales[i])) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
   // Where it has no effects at one end, it has them at nought there: the
   // options are a fact about the thing, and the same at both.
   const bare = (e: Effected | null, other: Effected): Effected => e ?? {
-    facets: other.facets.map(f => (f.n > 0 ? facetsOf(1, f.tension) : f)),
-    bevels: other.bevels.map(() => 0),
-    deform: other.deform === null ? null : { ...other.deform, after: other.deform.after.map(() => 0) },
+    facets: other.facets.n > 0 ? facetsOf(1, other.facets.tension) : other.facets,
+    bevel: 0,
+    deform: other.deform === null ? null : { ...other.deform, amplitude: 0 },
   };
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
@@ -1313,13 +1236,13 @@ function effectsOver(
   const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension });
   const ended = (e: Effected, at: number): Effected => ({
     ...e,
-    facets: a.facets.map((f, i) => spanned(f, b.facets[i], at)),
+    facets: spanned(a.facets, b.facets, at),
   });
 
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
   const seeded = (e: Effected, o: Effected): Effected => ({
     ...e,
-    bevels: e.bevels.map((r, i) => (e.facets[i].n > 0 ? seed(r, o.bevels[i]) : r)),
+    bevel: e.facets.n > 0 ? seed(e.bevel, o.bevel) : e.bevel,
   });
 
   return {
@@ -1335,11 +1258,11 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
   const [d0, d1] = [e[0].deform, e[1].deform];
 
   return {
-    facets: e[0].facets.map((f, i) => ({ ...f, at: weighed(e[0].bevels[i], e[1].bevels[i], t) })),
-    bevels: e[0].bevels.map((r, i) => mix(r, e[1].bevels[i], t)),
+    facets: { ...e[0].facets, at: weighed(e[0].bevel, e[1].bevel, t) },
+    bevel: mix(e[0].bevel, e[1].bevel, t),
     deform: d0 === null || d1 === null
       ? d0 ?? d1
-      : { ...d0, after: d0.after.map((x, i) => mix(x, d1.after[i], t)) },
+      : { ...d0, amplitude: mix(d0.amplitude, d1.amplitude, t) },
   };
 }
 
@@ -1356,11 +1279,6 @@ function weighed(a: number, b: number, t: number): number {
   const bevel = mix(a, b, t);
 
   return bevel > 0 ? t * b / bevel : t;
-}
-
-/** A depth per corner for a polygon standing still: whatever it is under. */
-function flatDepths(it: Resolved): number[] {
-  return it.depths !== null ? [...it.depths] : it.corners.map(() => it.erosion);
 }
 
 function mix(u: number, v: number, t: number): number {
@@ -1413,12 +1331,11 @@ function invented(
 
   const dead = m.dead[end];
   const out: Point[] = [];
-  const erosion = at.depths ?? at.erosion;
 
   for (let i = 0; i < at.source.length; i++) {
     if (dead[i] !== true) continue;
 
-    const p = mitred(at.source, rings, i, typeof erosion === 'number' ? erosion : erosion[i]);
+    const p = mitred(at.source, rings, i, at.erosion);
 
     if (p !== null) out.push(p);
   }
@@ -1455,7 +1372,6 @@ function at1(m: Moving, t: number): Omit<Resolved, 'shape' | 'ids' | 'rings'> {
     frame,
     source: place(frame, local),
     erosion: deepAt(m, m.depth[0], m.depth[1], frame, t),
-    depths: m.varying ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t)) : null,
     effected: m.effected === null ? null : effectedAt(m.effected, t),
   };
 }
@@ -1675,7 +1591,7 @@ function fadingCorners(m: Moving, it: Resolved, t: number): Fade[] {
   for (let i = 0; i < m.corners.length; i++) {
     if (!m.dead[0][i] && !m.dead[1][i]) continue;
 
-    const image = mitred(it.source, it.rings, i, it.depths === null ? it.erosion : it.depths[i]);
+    const image = mitred(it.source, it.rings, i, it.erosion);
 
     // Swallowed: an offset deep enough to eat the edge the corner sat on leaves
     // it nowhere to be, and a point that is not drawn needs no opacity.
@@ -2282,17 +2198,14 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, frame:
   }
 
   // The depth as it is at `t`, which goes with the scale the frame has then.
-  const own = m.varying
-    ? m.depths[0].map((d, i) => deepAt(m, d, m.depths[1][i], frame, t))
-    : m.corners.map(() => deepAt(m, m.depth[0], m.depth[1], frame, t));
+  const own = deepAt(m, m.depth[0], m.depth[1], frame, t);
+  const out = Math.max(0, -own) + groups;
 
-  const out = own.map(d => Math.max(0, -d) + groups);
-
-  if (out.every(d => d === 0)) return [];
+  if (out === 0) return [];
 
   const shape = sliced(placed, ringsOf(m.corners));
 
-  return [...erodedRingCorners(shape, out), ...erodedRingCorners(shape, out.map(d => -d))];
+  return [...erodedRingCorners(shape, out), ...erodedRingCorners(shape, -out)];
 }
 
 /**
@@ -2311,13 +2224,7 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, frame:
  * corners already bound.
  */
 function toothy(e: Effected | null): number {
-  if (e?.deform == null) return 0;
-
-  let most = 0;
-
-  for (const x of e.deform.after) most = Math.max(most, Math.abs(x));
-
-  return most;
+  return e?.deform == null ? 0 : Math.abs(e.deform.amplitude);
 }
 
 function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB {
@@ -4333,7 +4240,6 @@ function movement(out: unknown[], m: Moving, cast: Cast): void {
   into(out, m.local);
   into(out, m.dead);
   into(out, m.depth);
-  into(out, m.varying ? m.depths : null);
   into(out, m.effected);
   into(out, m.frame);
   into(out, m.ops);

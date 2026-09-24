@@ -12,7 +12,7 @@
 
 import { Point } from '../packages/game/src/world';
 import { TOP, addPolygon, keyed, middle, resolveAt, rigOf, withRig } from '../packages/editor/src/scene';
-import { Op, deepened, nudged } from '../packages/editor/src/rig';
+import { Op, nudged } from '../packages/editor/src/rig';
 import {
   PolygonId,
   PolygonKind,
@@ -81,19 +81,12 @@ export function level(rooms: number): { world: World, ids: PolygonId[] } {
 
 /**
  * One keyframe over the level, touching `share` of it.
- *
- * `bend` is the share of the polygons it touches that get one corner offset
- * apart from the rest, which is what puts them on the varying road inside
- * `erodeAt` rather than the uniform one `erode` has always taken. Nought by
- * default, so every row measured before this existed still measures the same
- * thing.
  */
 export function version(
   world: World,
   ids: PolygonId[],
   share: number,
   v = 1,
-  bend = 0,
 ): World {
   const rnd = seeded(999);
   const at = resolveAt(world, v);
@@ -124,12 +117,9 @@ export function version(
       out = withRig(out, id, nudged(rigOf(out, id), c.id, v, { x: (rnd() - 0.5) * 30, y: (rnd() - 0.5) * 30 }));
     }
 
-    if (rnd() < bend) {
-      const poly = out.polygons.get(id)!;
-      const c = poly.points[(rnd() * poly.points.length) | 0];
-
-      out = withRig(out, id, deepened(rigOf(out, id), c.id, v, 5 + rnd() * 10));
-    }
+    // The draw that once chose whether to offset a corner apart from the
+    // rest, kept so that every level is the one it was.
+    rnd();
   }
 
   return out;

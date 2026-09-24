@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
-import { Frame, cornerRounded, deepened, edgeDeformed, framed, nudged, repeating, stateAt, worldFrame } from './rig';
+import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
 import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
@@ -176,22 +176,20 @@ describe('keyframes', () => {
     expect(listAt(back.world, 1, id)[0].skip).toEqual(new Set([out.key]));
   });
 
-  test('a paste carries the amounts, and a corner\'s rounds after the copy', () => {
+  test('a paste carries the amounts', () => {
     const { world, id } = room();
-    const corners = world.polygons.get(id)!.points.map(c => c.id);
     let w = wrote(world, 0, id, { kind: 'round', by: 4 });
 
     w = wrote(w, 1, id, { kind: 'deform', by: 2 });
-    w = withRig(w, id, cornerRounded(cornerRounded(rigOf(w, id), corners[1], 0, 3), corners[1], 2, 1));
+    w = wrote(w, 2, id, { kind: 'round', by: 1 });
 
     const { world: out, ids } = pasted(w, 3, copied(w, 1, [id]), { x: 0, y: 0 }, TOP);
     const copy = ids[0];
-    const renamed = out.polygons.get(copy)!.points[1].id;
 
     for (const [from, to] of [[1, 3], [2, 4]]) {
       const was = stateAt(w, id, from), now = stateAt(out, copy, to);
 
-      expect([now.bevel, now.amplitude, now.bevels.get(renamed)]).toEqual([was.bevel, was.amplitude, was.bevels.get(corners[1])]);
+      expect([now.bevel, now.amplitude]).toEqual([was.bevel, was.amplitude]);
     }
   });
 
@@ -281,20 +279,6 @@ describe('keyframes', () => {
     expect(stateAt(out, id, 3).corners.get(corner)!.x).toBe(rest.x + 7);
   });
 
-  test('so do a corner\'s rounds and an edge\'s deforms', () => {
-    const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
-    let rig = cornerRounded(rigOf(world, id), corner, 2, 3);
-
-    rig = cornerRounded(rig, corner, 3, 4);
-    rig = edgeDeformed(rig, corner, 2, 1);
-
-    const out = ok(deleted(withRig(world, id, rig), 2));
-
-    expect(stateAt(out, id, 3).bevels.get(corner)).toBe(7);
-    expect(stateAt(out, id, 3).amplitudes.get(corner)).toBe(1);
-  });
-
   test('the only keyframe stays', () => {
     const world = { ...emptyWorld(), keyframes: [{ id: 0, name: 'v0', visible: true }] };
 
@@ -303,14 +287,13 @@ describe('keyframes', () => {
 });
 
 describe('places', () => {
-  /** A room with one corner nudged and deepened at 1, and another nudged at
-   * 2; and a list of three at 1. */
+  /** A room with one corner nudged at 1, and another nudged at 2; and a list
+   * of three at 1. */
   const rigged = () => {
     const { world, id } = room();
     const corners = world.polygons.get(id)!.points.map(c => c.id);
     let rig = nudged(rigOf(world, id), corners[0], 1, { x: 1, y: 0 });
 
-    rig = deepened(rig, corners[0], 1, 2);
     rig = nudged(rig, corners[1], 2, { x: 0, y: 1 });
 
     const w = wrote(withRig(world, id, rig), 1, id, move(1, 0), erode(1), move(0, 1));
@@ -323,15 +306,13 @@ describe('places', () => {
 
     // The corner's own key is first in the list, and the three the gesture
     // wrote follow it: a corner's writing is a key like any other.
-    const out = droppedAt(w, [listedAt(w, id, 1, 1), listedAt(w, id, 1, 3), { id, at: 1, corner: corners[0], kind: 'erode' }]);
+    const out = droppedAt(w, [listedAt(w, id, 1, 1), listedAt(w, id, 1, 3), { id, at: 1, corner: corners[0], kind: 'move' }]);
 
     expect(listAt(out, 1, id).map(e => e.op)).toEqual([erode(1)]);
 
-    // The corner's depth is out of the key it was in; its nudge, which was in
-    // the same key, stays.
-    expect(stateAt(out, id, 1).depths.get(corners[0])).toBeUndefined();
-    expect(stateAt(out, id, 1).corners.get(corners[0])!.x)
-      .toBe(w.polygons.get(id)!.points[0].at.x + 1);
+    // The corner's nudge is out, and with it the key it was all of.
+    expect(stateAt(out, id, 1).corners.get(corners[0])!.x).toBe(w.polygons.get(id)!.points[0].at.x);
+    expect(listedAt(out, id, 1, 1).key).toBe(-1);
   });
 
   test('a corner pushed along lands on the next keyframe, added to what it has there', () => {
@@ -350,25 +331,6 @@ describe('places', () => {
       .toEqual({ x: 1, y: 0 });
   });
 
-  test('a corner\'s round is picked, pushed and dropped by its kind', () => {
-    const { w, id, corners } = rigged();
-    const round: Place = { id, at: 1, corner: corners[0], kind: 'round' };
-    const rounded = withRig(w, id, cornerRounded(rigOf(w, id), corners[0], 1, 5));
-
-    expect(entryAt(rounded, round)?.rounds?.get(corners[0])).toBe(5);
-
-    const on = ok(pushedAt(rounded, [round]));
-
-    expect(entryAt(on, { ...round, at: 2 })?.rounds?.get(corners[0])).toBe(5);
-
-    // Dropped by its kind, and what the same key says about that corner's
-    // depth is untouched.
-    const less = droppedAt(rounded, [round]);
-
-    expect(stateAt(less, id, 1).bevels.get(corners[0])).toBeUndefined();
-    expect(stateAt(less, id, 1).depths.get(corners[0])).toBe(2);
-  });
-
   test('a corner repeating unlike the one it would land on stays where it is', () => {
     const { w, id, corners } = rigged();
     const nudge: Place = { id, at: 1, corner: corners[1], kind: 'move' };
@@ -381,12 +343,12 @@ describe('places', () => {
 
   test('a corner repeats and skips like an entry in a list', () => {
     const { w, id, corners } = rigged();
-    const depth: Place = { id, at: 1, corner: corners[0], kind: 'erode' };
-    const out = ok(skipToggledAt(ok(timedAt(w, depth, 3)), depth, 2));
+    const nudge: Place = { id, at: 1, corner: corners[0], kind: 'move' };
+    const out = ok(skipToggledAt(ok(timedAt(w, nudge, 3)), nudge, 2));
 
-    const key = entryAt(out, depth)!;
+    const key = entryAt(out, nudge)!;
 
-    expect(key.depths?.get(corners[0])).toBe(2);
+    expect(key.corners?.get(corners[0])).toEqual({ x: 1, y: 0 });
     expect(key.times).toBe(2);
     expect(key.skip).toEqual(new Set([2]));
   });
