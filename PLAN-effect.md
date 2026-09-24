@@ -415,19 +415,56 @@ The resolve reads its members drawn and publishes nothing; the scope's own
 amounts go onto the ring as the ring's own and the same fold lays them again,
 which is Law 1 by construction.
 
+**Two questions the deform was answering with one predicate.** Where the
+resample may not move a point, and where a deform's rhythm may restart, are
+not the same question, and they were `anchorsOf` both. So an arc's two ends
+started runs, each arc was a run of its own, and each run centred its teeth in
+itself whatever its length: a rounded square came back as four long rhythms
+with a single spike stuck on each of its four arcs. `runsOf` is the second
+question — an `on` is a point on a curve and a curve is not where a run starts
+— and a rounded ring, having no corner left on it, falls through to the least
+of its names and takes its teeth one spacing apart the whole way round. That
+is what *an arc is more of the ring* was always meant to say.
+
+**One default for `offset`.** A polygon's teeth started off each run's middle
+by a share of the spacing, a scope's fold's were centred, and a resolve wrote
+the difference onto the ring it made so the two would agree. That is Law 3 held
+up by hand, and it is exactly the kind of thing one pipeline is for: one
+default — centred — and the writing down goes. Law 3's deform is green over
+worlds where nothing else is laid.
+
 **Where it stands.** Law 1's top-scope property is green over three hundred and
 sixty generated worlds with erosions and rounds at every level, and Law 2 is
 green once no deform is in the generator — it was red for everything before.
-What is left is the deform, in worlds three deep with an erosion beside it; a
-plain deform and a deformed scope inside a rounding scope both come out
-identical, so it is not the laying of teeth but which ring they are laid on.
-Twenty-seven tests go red with the step — `effects.test` 16, `bake.test` 10,
-one export — and they are the old look and the old machinery, which steps 8, 9
-and 10 take out and regenerate.
+What is left is one break, not three: a round, an erosion and a deform all fail
+the same way, on worlds three deep carrying effects at every level, which is
+the question of whether identity is minted per scope from the walk or carried
+up from the members. Step 9 is where that is answered.
+
+Twenty-five tests go red with the step — `effects.test` 15, `bake.test` 8, one
+convert, one export — and they are the old look and the old machinery, which
+steps 8, 9 and 10 take out and regenerate.
 
 **8. Strip the publishing machinery.** `Named`, `namesOf`, `movedIn`,
 `foldShaped`'s back-channel and the parallel arrays in `ArcDeform`, now
 unreferenced.
+
+Done ahead of the rest: the per-corner round, everywhere it stood outside the
+geometry. The pane's *Round corners* heading and its `as the polygon` link,
+the gesture that switched a picked corner's round back on, `cornerRound`,
+`cornerRounding`, `ownRound`, `cornersSwitched`, `cornersOptioned` and
+`cornersInheriting`, and the slot in the save format. `publishing` in
+`resolve.ts` went with them — step 7 left it with no caller and half of what it
+wrote down was that round.
+
+`cornerEffects` stays, and stays under its name so an old file still loads. It
+is the deform's alone now: an edge's own options keyed by the corner it leaves,
+which the fold honours exactly. A round a file carries there is dropped on the
+way in.
+
+Still standing, and for this step proper: a per-corner bevel *amount* reaches
+the fold, where `most` takes the largest of them. That is the rig rather than
+the options.
 
 **9. The bake.** `Effected` and `Imaged` replaced by the fold's own output, and
 `apart` / `apartTo` / `apartAt` / `reach` / `fades` reconsidered one at a time
