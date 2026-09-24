@@ -2217,6 +2217,70 @@ export function worldCanvas(
       });
     }
 
+    /** Everything a paint reads. */
+    const painting = () => [
+      world(),
+      settings(),
+      view(),
+      tool(),
+      selection(),
+      inside(),
+      keyframe(),
+      replay(),
+      bake(),
+      local(),
+      afoot(),
+      target(),
+    ] as const;
+
+    /** What the canvas last changed to and has not yet painted, and the frame
+     * it will be painted in. See the effect that draws. */
+    let pending: ReturnType<typeof painting> | null = null;
+    let frame = 0;
+
+    function paint(): void {
+      const next = pending;
+
+      pending = null;
+
+      if (next === null) return;
+
+      const [w, s, v, t, sel, ins, at, r, b, l, g, aim] = next;
+
+      if (el && ctx) {
+        // Standing on a key, the world drawn is the one that keyframe
+        // leaves after that key — see `upto`. Where the keyframe ends
+        // up is drawn over it as a ghost, so that what is being
+        // adjusted and what it comes to are both on screen.
+        const { here, stood } = standingOn(w, at, aim);
+        const items = resolveAt(here, at);
+        const ends = here === w ? null : resolveAt(w, at).filter(it => stood.has(it.id));
+
+        set = live(set, contributing(here, at, items));
+
+        const played = r === null
+          ? null
+          : replayed(b, w, r.from, r.to, r.at);
+
+        draw(
+          el,
+          ctx,
+          v,
+          layers(
+            here, s, v, t, sel, ins, at, l, items, runs(set), floorRuns(set),
+            played,
+            // An artefact flying on its own, with the walls it belongs
+            // to standing still because their span has not been baked
+            // yet, reads as a glitch rather than as a walk.
+            played === null ? null : r,
+            g,
+            ends,
+            w,
+          ),
+        );
+      }
+    }
+
     // -------------------------------------------------------------------------
 
     return {
@@ -2243,55 +2307,26 @@ export function worldCanvas(
           effect(() => el && input.surface('canvas', el)),
 
           effect(
-            () => [
-              world(),
-              settings(),
-              view(),
-              tool(),
-              selection(),
-              inside(),
-              keyframe(),
-              replay(),
-              bake(),
-              local(),
-              afoot(),
-              target(),
-            ] as const,
-            ([w, s, v, t, sel, ins, at, r, b, l, g, aim]) => {
-              if (el && ctx) {
-                // Standing on a key, the world drawn is the one that keyframe
-                // leaves after that key — see `upto`. Where the keyframe ends
-                // up is drawn over it as a ghost, so that what is being
-                // adjusted and what it comes to are both on screen.
-                const { here, stood } = standingOn(w, at, aim);
-                const items = resolveAt(here, at);
-                const ends = here === w ? null : resolveAt(w, at).filter(it => stood.has(it.id));
+            painting,
+            // Once a frame, whatever changed in it and however often. A drag
+            // writes the label and then the world for every move, and a move
+            // can arrive more often than the screen does: every one of those
+            // drew the whole level again, and all but the last were never seen.
+            // So the change is only noted, and what is on screen is painted from
+            // the latest of them when the browser next draws.
+            inputs => {
+              const first = pending === null;
 
-                set = live(set, contributing(here, at, items));
+              pending = inputs;
 
-                const played = r === null
-                  ? null
-                  : replayed(b, w, r.from, r.to, r.at);
-
-                draw(
-                  el,
-                  ctx,
-                  v,
-                  layers(
-                    here, s, v, t, sel, ins, at, l, items, runs(set), floorRuns(set),
-                    played,
-                    // An artefact flying on its own, with the walls it belongs
-                    // to standing still because their span has not been baked
-                    // yet, reads as a glitch rather than as a walk.
-                    played === null ? null : r,
-                    g,
-                    ends,
-                    w,
-                  ),
-                );
-              }
+              if (first) frame = requestAnimationFrame(paint);
             },
           ),
+
+          effect(() => () => {
+            cancelAnimationFrame(frame);
+            pending = null;
+          }),
 
           // A half-drawn polygon belongs to the pen. Leaving it on screen after
           // switching away would leave it waiting for clicks that now mean
