@@ -1,4 +1,4 @@
-# Plan: one effect per scope, and order is nesting
+# Plan: a scope's effects are a list, laid in order
 
 # What this is for
 
@@ -14,52 +14,57 @@ author's to choose.
 thing that has effects, threaded through the fold, the memo keys, the bake and
 the resolve. It works, and it is the wrong shape. An order is a second fact
 about a thing that only means something alongside the first, it has to be
-carried by every place that carries `Effects`, and it says with a list what the
-tree already says with nesting: a scope that rounds, sealed inside one that
-deforms, *is* a round and then a deform. The laws are the proof of that — law 3
-says an effect on a scope is an effect on its resolution, so an effect is
-exactly one layer of a fold, and layers are what scopes are.
+carried by every place that carries `Effects`, and it sits beside a record that
+can hold each kind only once.
 
-So: **a scope has at most one effect, and the order of effects is the order of
-the scopes.** There is no `ORDER`, no `Effects.order`, no `inOrder`, and
-nothing that reads one.
+The laws say what an effect is: law 3 makes an effect on a scope an effect on
+its resolution, so each effect is one layer of a fold, and a scope that rounds
+sealed inside one that deforms *is* a round and then a deform. That suggests
+one effect per scope, with order as nesting. It is sound, and it is bad to use:
+an author reads a room's effects by drilling down through empty groups and
+collecting one from each.
+
+So: **a scope's effects are a list, laid in list order.** A list of layers on
+one scope is by law 3 the same as the same layers on nested scopes, so it costs
+the laws nothing, and it keeps a thing's effects in one place. The order is the
+list. There is no `ORDER`, no `Effects.order`, no `inOrder`, and nothing that
+reads one.
 
 # The design
 
-## A scope, with one effect or none
+## A scope, and its list of effects
 
 ```ts
 interface Group {
   members: Id[]
   sealed: boolean
   birth?: KeyframeId
-  /** The one thing this scope does to its union, or nothing. Only a sealed
-   * scope has one: an effect is a statement about a union. */
-  effect?: Layer
+  /** What this scope does to its union, first to last. Only a sealed scope
+   * has any: an effect is a statement about a union. Absent is none. */
+  effects?: Layer[]
 }
 
-type Layer =
-  | { kind: 'erode', off?: boolean }
-  | { kind: 'round', off?: boolean, precision: number, tension: number, chamfer: boolean }
-  | { kind: 'deform', off?: boolean, spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, falloff?: number, offset?: boolean }
+type Layer = { id: LayerId, off?: boolean } & (
+  | { kind: 'erode' }
+  | { kind: 'round', precision: number, tension: number, chamfer: boolean }
+  | { kind: 'deform', spacing: number, pattern: Pattern, seed: number, sides: Sides, jitter: number, falloff?: number, offset?: boolean }
+)
 ```
 
-A field on `Group` rather than a union type `Group | Effect`. What an effect
-node would need is everything a sealed group already has: members, a birth, a
-row in the timeline, flags, selection, hierarchy, moving together, sealing's
-clipping of solids and floors. A second kind of node would repeat all of it and
-teach every one of those places a second case. A sealed group with no effect is
-the node that does nothing but union, and one with an effect is the effect
-node. It is still a union type in every sense that matters. It just has one tag.
+A field on `Group`, not a node of its own. An effect node would need everything
+a sealed group already has: members, a birth, a row in the timeline, flags,
+selection, the hierarchy, moving together, and sealing's clipping of solids and
+floors.
 
-Stacking effects is nesting: *round then deform* is a deforming scope whose one
-member is a rounding scope. Reordering is moving a scope up or down the chain.
-The same kind twice — two rounds — is two scopes, which is what law 3 already
-says it means.
+**A layer has an id**, from the world's one counter, and its amount over time is
+the rig under that id. Reordering the list moves layers and keeps their ids, so
+each keeps its timeline. The same kind twice (two rounds) is two layers, which
+is what law 3 already says it means. Nesting still works and means the same
+thing: a scope inside a scope lays the inner list, then the outer.
 
 ## Polygons have no effects
 
-A polygon's effects become scopes around it. A sealed scope holding one polygon
+A polygon's effects become a scope around it, holding them as its list. A sealed scope holding one polygon
 resolves to that polygon, so by law 1 and law 3 an effect on the polygon and an
 effect on a scope around it are one thing, and there is no reason to keep two
 ways of saying it. What a polygon's fold does comes down to its clean-up —
@@ -68,7 +73,7 @@ entry, `foldedBy`.
 
 This is a rename only because the per-corner and per-edge effects are gone first (below). A
 polygon's effects are then one amount and one set of options each, and they go
-to a scope unchanged.
+to the scope's list unchanged, in the order they were folded.
 
 ## No per-corner or per-edge effects
 
@@ -83,8 +88,7 @@ They are rarely used, and they cost far more than they are used: a second
 keying of every amount, a second set of pickers and panes in the editor, and
 most of the reason the bake and the resolve have to talk about single corners.
 They are also what would make this plan hard. Kept, they would have to move to
-the scope that lays their effect and be keyed by corners two levels down, and
-the editor would have to decide which scope a corner edit goes to. Without
+the scope that lays their effect and be keyed by corners a level down. Without
 them, an effect is a `Layer` and a number over time.
 
 An author who wants one wall deformed and the rest straight splits the room, or
@@ -131,11 +135,12 @@ dropped. The drawing changes
 where they were used, which is why this conversion loses something, and it is
 written down as one.
 
-## A fold is one step per scope
+## A fold is a scope's layers, in order
 
-`foldedBy` takes one `Layer` and one amount, not three, and its memo key is that
-layer's options. A chain folds from the innermost outwards, each scope's input
-being its members' outputs. Two rules carry over from what the laws taught:
+`foldedBy` takes the scope's list of layers and one amount per layer, and its
+memo key is those, in order. Scopes fold from the innermost outwards, each
+scope's input being its members' outputs. Two rules carry over from what the
+laws taught:
 
 - **The islands are the ones a scope is handed.** A scope folds each polygon of
   its input on its own and lays the parts side by side (`foldEach`). Rings two
@@ -143,14 +148,14 @@ being its members' outputs. Two rules carry over from what the laws taught:
   they are drawn. This is not a special case of anything. It is what resolving
   does.
 - **A scope of one member does not union it.** Its input is that member's
-  output as it came, so a chain of single-member scopes costs one fold per
-  scope and no arrangement between them.
+  output as it came. So a scope wrapping one room costs its layers and no
+  arrangement, and a list is the same as the nesting it stands for.
 
 ## Resolving
 
-Resolving a sealed scope with no effect is what it is today: its union, one
-polygon per island. Resolving one with an effect **resolves what is under it and
-keeps the effect**. The scope stays, holding the polygons its members resolved
+Resolving a sealed scope with no effects is what it is today: its union, one
+polygon per island. Resolving one with effects **resolves what is under it and
+keeps the effects**. The scope stays, holding the polygons its members resolved
 to. An effect is never moved onto a polygon, because a polygon cannot hold one.
 
 That deletes most of `publishing` in `resolve.ts`: the amounts written into the
@@ -169,10 +174,9 @@ work in the resolve, and the part to prove first (step 2).
 
 ## The bake
 
-`Standing.effects` and `Cast.shapes` carry one layer and its amount per scope
-instead of an `Effects` and three amounts. A span's fold is the chain of its
-scopes' folds, each memoised on its own. That is finer than today's memo, so a
-chain that one keyframe changes only at its top reuses everything under it.
+`Standing.effects` and `Cast.shapes` carry a scope's layers and one amount per
+layer, instead of an `Effects` and three amounts. A span's fold is its scopes'
+folds, each memoised on its own, as today.
 
 # The plan
 
@@ -184,7 +188,7 @@ from seeds 19 and 27, are not this plan's.
 **0. Start from `effect-fold` with `foldEach`.** Keep the island fold (46ee4af),
 and drop `effect-order`'s WIP commit: `Effects.order`, `ORDER`, `inOrder`,
 `orderKey` and the laws' random orders. The law generator's orders are replaced
-in step 7 by the chain that says the same thing.
+in step 7 by the lists that say the same thing.
 
 **1. Remove the per-corner and per-edge effects.** Everything listed under *No
 per-corner or per-edge effects*, with its conversion step and a save version bump. It goes first
@@ -201,39 +205,43 @@ and `reach`. Make it green with the names alone — the resolved polygon carries
 the union's names — with `publishing`'s deform half switched off. If this cannot
 be done, the design is wrong and stops here.
 
-**3. `Layer`, and `Group.effect`.** The types, and `Effects` read as a chain of
+**3. `Layer`, and `Group.effects`.** The types, and `Effects` read as a list of
 layers everywhere it is read (`groupEffects`, `effectedAt`, `shapeKey`,
-`folding`). No behaviour changes: a thing with three effects folds as three
-nested layers in the old order, computed on the fly. This is the step that finds
-every reader of `Effects`.
+`folding`). No behaviour changes: a thing with three effects folds as a list of
+three in the old order, computed on the fly. This is the step that finds every
+reader of `Effects`.
 
 **4. Save format, and the conversion.** A version bump in `save.ts` and a step in
-`convert.ts`: each thing's `Effects` becomes a chain of sealed scopes around it
-in the order it was folded (erode innermost, then round, then deform). Its
-amounts move from its rig to theirs. A polygon with effects inside a loose group gets its
-scopes inside that group, in its place. The golden files are reconverted, and
+`convert.ts`: each group's `Effects` becomes its list, in the order it was
+folded (erode, round, deform), each layer with a new id. Its amounts move from
+the group's rig to the layers'. A polygon with effects is wrapped in a new
+sealed scope holding them the same way. A polygon with effects inside a loose group gets its
+scope inside that group, in its place. The golden files are reconverted, and
 `baseline.test.ts` says the drawing did not move.
 
 **5. Polygons lose `Effects`.** The polygon fold is its clean-up and nothing else.
 `folding`'s effect half goes, with `roundingOf`.
 
-**6. Resolve keeps the effect.** `resolveGroup` on a scope with an effect
-resolves its members and leaves the scope. `publishing` loses the amounts and
+**6. Resolve keeps the effects.** `resolveGroup` on a scope with effects
+resolves its members and leaves the scope, its list untouched. `publishing` loses the amounts and
 the facet fade.
 
-**7. The laws over chains.** `arbKit` becomes a chain of zero to three layers in
-any order, each a scope. Law 3's "an effect on a scope" is one layer.
+**7. The laws over lists.** `arbKit` becomes a list of zero to three layers in
+any order, the same kind allowed twice. Law 3's "an effect on a scope" is one
+layer added to the end of the list. A new property says a list draws what the
+same layers on nested scopes draw.
 `effects.test.ts`'s *a scope inside a scope* is rewritten to what law 3 says (see
 `PLAN-effect.md`).
 
-**8. The bake, one layer per scope.** `Standing` and `Cast` as above, and the
-memo per scope. The perf tests say whether the finer memo pays for the extra
-stages.
+**8. The bake, a list per scope.** `Standing` and `Cast` as above. The perf
+tests say whether folding the layers of a wrapped room as a scope costs more
+than folding them on the polygon did.
 
-**9. The editor.** The inspector shows a scope's one effect, and "add an effect"
-on a selection wraps it in a new sealed scope with that effect. The hierarchy
-shows the chain, and reordering is moving a scope past its neighbour — swapping
-two single-member scopes' layers, which keeps their ids and their timelines.
+**9. The editor.** The inspector lists a scope's layers, first to last, each
+with its options, an on/off tick and a way to move it up or down. "Add an
+effect" appends a layer, and on a selection that is not a sealed scope it first
+wraps the selection in one. A room's effects are read on its scope's row. The
+timeline shows one amount row per layer.
 
 **10. Delete what is left.** `Effects`, `Options`' three-in-one shape, and
 whatever of `publishing` survived step 6.
@@ -244,18 +252,18 @@ whatever of `publishing` survived step 6.
   slot — level, solid, floor. Today a scope's effects apply to the one that is
   its outermost kind, and a scope around a lone solid or floor has to do the
   same. Read `outermostSlot` before step 3 and write down what it does.
-- **What a chain costs in the hierarchy.** Three effects on every room is three
-  scopes on every room. The hierarchy may want to draw a chain of single-member
-  effect scopes as one row with its layers listed, which is only a view.
-- **What a single-member chain costs in the fold.** Each stage is a resample,
-  and the resamples are what the bake's linearity is proved for (see
-  `PLAN-effect`'s step 1). More stages should change nothing there, but the
-  linearity test should say so over a chain.
+- **A room with effects is a room in a scope.** Every room that had effects
+  gains a scope row in the hierarchy. The hierarchy may want to draw a scope of
+  one room as that room's row with its layers, which is only a view.
+- **What a long list costs in the fold.** Each layer ends in a resample, and
+  the resamples are what the bake's linearity is proved for (see
+  `PLAN-effect`'s step 1). More layers should change nothing there, but the
+  linearity test should say so over a list.
 
 # If this is too much
 
-The smaller change is an **ordered list per node**: `Group.effects` and
-`Polygon.effects` become a list of layers, each with its own amount in the rig,
-folded in list order. It keeps polygons' effects and `publishing` as they are, and it lets the same kind appear twice. It
-buys the order without the restructure, and it leaves two ways of saying one
-thing — a list on a node, and nesting — for the laws to keep agreeing.
+The smaller change keeps **polygons' own lists**: `Polygon.effects` becomes a
+list too, and polygons are not wrapped. No room gains a scope, and
+`publishing` stays as it is, since an effect can still change hands in a
+resolve. It leaves two places an effect can live, and the polygon fold keeps
+its own copy of the pipeline for the laws to keep agreeing with.
