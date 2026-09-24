@@ -863,8 +863,8 @@ function crossing(a: Point, b: Point, c: Point, d: Point): boolean {
  * ring wound the other way sweeps its band the other way and says so in what
  * it draws.
  */
-export function sweptBand(shape: Shape, depth: number): Band {
-  return swept(shape, () => depth);
+export function sweptBand(shape: Shape, depth: (r: number, i: number) => number): Band {
+  return swept(shape, depth);
 }
 
 function offset(shape: Cut, swept: Band): Cut {

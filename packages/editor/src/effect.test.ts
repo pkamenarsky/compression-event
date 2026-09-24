@@ -19,7 +19,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Effecting, OpSubtract, Shape, along, erode, rounded, shapeArea, simplify } from './geometry';
 import { deforming, dilating, eroding, resampled, rounding } from './effect';
-import { Drawn, Ident, combineIdentified, corner, identify, on, shows } from './ids';
+import { Drawn, Ident, combineIdentified, corner, identify, madeOf, on, shows } from './ids';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -574,7 +574,13 @@ describe('the deform', () => {
     const it = drawn([rect(0, 0, 200, 200)], 0);
 
     expect(deforming(0, ZIGZAG)(it)).toBe(it);
-    expect(deforming(8, { ...ZIGZAG, spacing: 0 })(it)).toBe(it);
+
+    // Spacing is asked for a run at a time now, so nought is answered a run at
+    // a time too: the ring comes back as it was rather than untouched.
+    const none = deforming(8, { ...ZIGZAG, spacing: 0 })(it);
+
+    expect(none.shape).toEqual(it.shape);
+    expect(none.ids.map(g => g.map(shows))).toEqual(it.ids.map(g => g.map(shows)));
   });
 
   test('every point of it has exactly one name, and no two share one', () => {
@@ -584,5 +590,109 @@ describe('the deform', () => {
     expect(r.ids.length).toBe(r.shape.length);
     r.shape.forEach((ring, i) => expect(r.ids[i].length).toBe(ring.length));
     expect(new Set(said).size).toBe(said.length);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// An amount per identity
+//
+// A polygon may carry a different depth at each corner and a different
+// amplitude along each edge, and an effect takes one number. The way through
+// is that the number may be written against an *identity* instead — and a
+// polygon's corners have the plainest identities there are.
+//
+// By identity and not by index is the whole of why it survives the pipeline:
+// an erosion closes a notch and the ring is two rings, a round puts arcs where
+// corners were, a scope above unions the lot with somebody else's wall, and a
+// depth written against corner four is still against corner four.
+// -----------------------------------------------------------------------------
+
+describe('an amount per identity', () => {
+  test('an erosion takes a depth at each corner, and exactly', () => {
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+    const r = eroding(new Map([[it.ids[0][1], 20]]))(it);
+    const at = (x: number, y: number) => r.shape[0].some(p => Math.hypot(p.x - x, p.y - y) < 1e-9);
+
+    // The corner goes to the point twenty from both of its walls, and its
+    // neighbours do not move at all.
+    expect(at(180, 20)).toBe(true);
+    expect(at(0, 0)).toBe(true);
+    expect(at(200, 200)).toBe(true);
+    expect(at(200, 0)).toBe(false);
+  });
+
+  test('a deform takes an amplitude along each edge', () => {
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+    const r = deforming(new Map([[it.ids[0][0], 8]]), ZIGZAG)(it);
+    const said = r.ids[0].map(shows);
+
+    expect(said.filter(s => s.startsWith('0.0#')).length).toBeGreaterThan(4);
+    expect(said.filter(s => /^0\.[123]#/.test(s))).toEqual([]);
+  });
+
+  test('and its options too, a run at a time', () => {
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+    const wide = { ...ZIGZAG, spacing: 100 };
+    const r = deforming(8, (id => (id === it.ids[0][0] ? wide : ZIGZAG)))(it);
+    const said = r.ids[0].map(shows);
+
+    expect(said.filter(s => s.startsWith('0.0#')).length)
+      .toBeLessThan(said.filter(s => s.startsWith('0.1#')).length);
+  });
+
+  test('a point the construction made asks whatever it was made of', () => {
+    // The teeth of a wall are the wall's, and the arc about a corner is the
+    // corner's — so a second effect written against the corner reaches them.
+    const it = drawn([rect(0, 0, 200, 200)], 0);
+    const toothed = deforming(8, ZIGZAG)(it);
+    const only = new Map([[it.ids[0][0], 6]]);
+    const r = eroding(only)(toothed);
+
+    // Every tooth of wall nought moved; nothing of wall two did.
+    const held = new Map(r.ids[0].map((id, i) => [shows(id), r.shape[0][i]] as const));
+    const was = new Map(toothed.ids[0].map((id, i) => [shows(id), toothed.shape[0][i]] as const));
+
+    for (const [name, p] of held) {
+      const q = was.get(name);
+
+      if (q === undefined || !name.startsWith('0.')) continue;
+
+      const moved = Math.hypot(p.x - q.x, p.y - q.y) > 1e-6;
+
+      if (name.startsWith('0.2')) expect([name, moved]).toEqual([name, false]);
+    }
+  });
+
+  test('and a born point takes the larger of the two it was born of', () => {
+    // Which is `round(max(a, b))` again, said of an amount: a corner where two
+    // pieces crossed belongs to both, and the one that asks for more wins.
+    const room: Shape = [rect(0, 0, 200, 120)];
+    const bite: Shape = [rect(80, -20, 40, 60)];
+    const a = drawn(room, 0), b = drawn(bite, 1);
+    const cut = combineIdentified(a, b, OpSubtract);
+    const born = cut.ids[0].find(id => shows(id).includes('×'))!;
+
+    const where = cut.shape[0][cut.ids[0].indexOf(born)];
+
+    // Written against neither parent, it gets nothing and stands still.
+    const none = eroding(new Map([[a.ids[0][2], 10]]))(cut);
+    const still = none.shape[0][none.ids[0].indexOf(born)];
+
+    expect([still.x, still.y]).toEqual([where.x, where.y]);
+
+    // Written against one of the two it was born of, it takes that one.
+    const what = madeOf(born);
+    const parents = what.kind === 'born' ? [what.a, what.b] : [];
+    const one = eroding(new Map([[parents[0], 10]]))(cut);
+    const near = one.shape[0][one.ids[0].indexOf(born)];
+
+    expect(Math.hypot(near.x - where.x, near.y - where.y)).toBeCloseTo(10 * Math.SQRT2, 6);
+
+    // Written against both, the larger wins — `round(max(a, b))` again, said
+    // of an amount rather than of a round.
+    const both = eroding(new Map([[parents[0], 10], [parents[1], 30]]))(cut);
+    const far = both.shape[0][both.ids[0].indexOf(born)];
+
+    expect(Math.hypot(far.x - where.x, far.y - where.y)).toBeCloseTo(30 * Math.SQRT2, 6);
   });
 });
