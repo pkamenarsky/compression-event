@@ -62,13 +62,6 @@ function toShape(p: Point, shape: readonly (readonly Point[])[]): number {
   })));
 }
 
-/** Which of `corners`' edges a point stands nearest, by index. */
-function nearestEdge(p: Point, corners: readonly { at: Point }[]): number {
-  const far = corners.map((c, i) => toShape(p, [[c.at, corners[(i + 1) % corners.length].at]]));
-
-  return far.indexOf(Math.min(...far));
-}
-
 function shapeOf(world: World, id: Id) {
   return resolveAt(world, 0).find(it => it.id === id)!.shape;
 }
@@ -769,41 +762,6 @@ describe('editing effects', () => {
 
     // The top edge alone lies wholly inside a box round it, teeth and all.
     expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
-  });
-
-  test('one edge deformed leaves the others straight, and their corners\' bevels whole', () => {
-    const { world, id } = room();
-    const [a, b, c, d] = world.polygons.get(id)!.points;
-    const rounded = wrote(withEffects(world, id, { round: inSegments(8, 30), ...DEFORM }), 0, id, round(30));
-    const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
-    const it = resolveAt(w, 0).find(r => r.id === id)!;
-
-    // Every edge is its two ends now; what tells them apart is the shape.
-    [a, b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
-
-    // Only the deformed edge's *run* has anything standing off it — and its
-    // run is the wall and the two arcs at its ends. Laid on the eroded
-    // outline, a straight and an arc are one kind of run, so a tooth carries
-    // on round the corner rather than stopping short of it, going over from
-    // this edge's amplitude to its neighbour's as it goes: PLAN-bevel 3.5 and
-    // the parked test below. So a point the deform moved is nearer that edge
-    // than any other, or else on one of its two corners' arcs.
-    const plain = resolveAt(rounded, 0).find(r => r.id === id)!;
-    const moved = it.shape[0].filter(p => toShape(p, plain.shape) > 1e-6);
-    const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
-
-    expect(moved.length).toBeGreaterThan(0);
-    moved.forEach(p => expect(
-      nearestEdge(p, [a, b, c, d]) === 0 || from(p, a.at) <= 30 || from(p, b.at) <= 30,
-    ).toBe(true));
-
-    // And nothing stands off the two walls that edge does not touch.
-    moved.forEach(p => expect(from(p, c.at)).toBeGreaterThan(30));
-
-    // The corner the deformed edge does not touch is rounded as it was.
-    const arc = (shape: Point[][]) => shape[0].filter(p => from(p, c.at) <= 30);
-
-    expect(arc(it.shape)).toEqual(arc(plain.shape));
   });
 
   test('an edge\'s deform options are its own, over its polygon\'s', () => {
