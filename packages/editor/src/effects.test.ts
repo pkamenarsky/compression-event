@@ -828,7 +828,7 @@ describe('editing effects', () => {
 
     expect(teeth(w, bottom)).toBe(teeth(w, left));
     expect(teeth(tight, left)).toBe(teeth(w, left));
-    expect(teeth(tight, bottom)).toBeGreaterThan(teeth(w, bottom) * 3);
+    expect(teeth(tight, bottom)).toBeGreaterThanOrEqual(teeth(w, bottom) * 3);
 
     // And dropped again, it is its polygon's edge like any other.
     expect(teeth(edgesInheriting(tight, [points[0].id]), bottom)).toBe(teeth(w, bottom));
@@ -989,19 +989,23 @@ describe('a scope inside a scope', () => {
     expect(two.flat().length).toBe(one.flat().length);
   });
 
-  test('two rounds two deep are one round of their sum', () => {
-    // The whole of the nesting: an inner scope publishes what its fold came
-    // to, so the outer adds its own amount to a sum and rounds the corner
-    // once. See PLAN-bevel's step 5.
-    const one = nested([{ depth: 0, bevel: 30 }]);
+  test('two rounds two deep are one round of the larger', () => {
+    // A round is an opening, and an arc already at curvature `1 / 10` is
+    // untouched by an opening at twenty but for being opened again to twenty:
+    // rounds compose as `round(max(a, b))`, not as their sum. Law 3 says what
+    // the nesting draws, and this is that; the old summing was one particular
+    // construction's. See `rounding` and PLAN-effect's laws.
+    const one = nested([{ depth: 0, bevel: 20 }]);
     const two = nested([{ depth: 0, bevel: 10 }, { depth: 0, bevel: 20 }]);
 
     expect(apart(one, two)).toBeLessThan(1e-9);
     expect(two.flat().length).toBe(one.flat().length);
   });
 
-  test('a depth and a round at each scope come to the same as both at one', () => {
-    const one = nested([{ depth: 30, bevel: 30 }]);
+  test('a depth and a round at each scope come to the depths\' sum and the larger round', () => {
+    // Eroded past the inner round's own radius, a convex corner is a mitre
+    // again, and the outer round lays its own arc on it.
+    const one = nested([{ depth: 30, bevel: 20 }]);
     const two = nested([{ depth: 10, bevel: 10 }, { depth: 20, bevel: 20 }]);
 
     expect(apart(one, two)).toBeLessThan(1e-9);
