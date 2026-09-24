@@ -38,10 +38,14 @@ correct. Where the two disagree, Law 3 wins and the summing test is rewritten.
 They are written down in `laws.test.ts`, as properties over generated worlds
 rather than as a handful of shapes somebody thought of: a random nesting of
 sealed groups, a random kit of effects at each node, and each law asserted on
-the drawing. **Nine of them are red today and two are green** — the two being
-the bare controls, a world of rooms and nestings with no effect anywhere, which
-resolve and seal transparently. That pair is what says the other nine are about
-the architecture and not about the way two drawings are compared there.
+the drawing. **Seven are red today and five are green.** The green: law 1 and
+law 3's bare controls — a world of rooms and nestings with no effect anywhere,
+which resolve and seal transparently, and a round over one of those — both of
+law 2, and law 1's case for an erosion sweeping a band out past its own polygon.
+The controls are what say the seven are about the architecture and not about the
+way two drawings are compared there, and that is worth saying twice over,
+because for a while two of the seven were red about exactly that: see the open
+bugs.
 
 Those tests are the specification. They go green by the design below and by
 nothing else; a law made to pass by narrowing its generator has not passed.
@@ -529,6 +533,25 @@ it can be picked up cold: what was measured, what was ruled out, and what is
 still unknown. Nothing here is a guess dressed as a finding — where the
 mechanism was not found it says so.
 
+The ones marked *found, and fixed* are kept rather than deleted, because what
+they cost to find is the useful part and each says how it was cornered. Two
+things did all the work, and both are measurements rather than arguments.
+
+**Cut the generator's kits down to one effect at a time**, to learn which effect
+a law needs to break. That is how the round was fingered for *a ring that
+is nothing but arcs*, and how the last entry here was narrowed to the round and
+the deform *together* — three pairs, two of them green.
+
+**Then instrument the effect and compare what the two paths hand it**: the
+geometry, the amounts, the accuracy, and what each point is *called*. Both fixed
+entries turned on a difference that was visible there and invisible in the
+reasoning — one in the geometry, where a band reached into a polygon it had no
+business in, and one in the names alone, where the geometry and the bevel and
+the accuracy were identical and thirty points had been renamed. Suspicion went
+the wrong way in both cases before the instrument went in: tolerance was the
+obvious candidate for the first and is ruled out under it by measurement, and
+for the second the round itself was, and it was not the round.
+
 ## A ring's erosion depends on a ring thirty units away — found, and fixed
 
 **A swept band is not contained in the ring that swept it.** `corners` moves a
@@ -561,9 +584,107 @@ two paths then agree by construction rather than by luck, at any tolerance and
 in any frame. The counterexample is kept as a case of its own in
 `laws.test.ts`, beside the property that found it.
 
-The property it was found through is still red, on a counterexample that now
-shrinks to rounds and deforms with a single erosion at the top. That is a
-different cause, and nothing here says what it is.
+The property it was found through was still red afterwards, on a counterexample
+that shrank to rounds and deforms with a single erosion at the top. That was a
+different cause, and it is the next entry.
+
+## A ring that is nothing but arcs lost its runs — found, and fixed
+
+**Where the second law 1 cause was**, in `starts` in `resolve.ts`. A resolved
+polygon writes each of its points as a `Vertex`, and a point that arrived named
+`on(e, t)` is written as a sample of one of the polygon's own corners: which run
+it is in, and how far along. Where the arrangement had cut the arc, the `on(e,
+0)` end is gone, and the fallback was the run the sample is actually in — the
+last point before it that is not a sample.
+
+That fallback has a precondition, and a round breaks it: it needs a point
+somewhere on the ring that is *not* a sample. **A round of a round hands up a
+ring where every point is one.** There `from` comes back `-1`, the fallback
+holds nothing, and every sample whose own start had been cut away is written
+down as a corner. Thirty of sixty-four, measured. A corner is a feature, so the
+resample may not move it, and the polygon then draws a different outline from
+the scope it came of: same geometry, same bevel, same accuracy, ninety-six
+points against sixty-six.
+
+How it was localised, by the drill that also narrowed the last entry here: run
+the property with the generator's kits cut down to one effect at a time. Erosion
+alone was green — that was the entry above — and the deform alone was green, and
+the round alone was red. Then instrument `rounding` and print, for each call on
+each path, the bevel, the accuracy, and what each point of the input is
+*called*. The geometry, the bevel and the accuracy were identical and the names
+were not, which is what pointed at `resolve` rather than at any effect.
+
+**The fix** is a third fallback: the stretch the sample is in. Consecutive
+samples of one edge are one arc however the arrangement cut it, and the first of
+that stretch is where the run begins; it agrees with the `on(e, 0)` map wherever
+that end survived, being the same point. A ring of samples all of one edge is
+one run from wherever it starts.
+
+Worth knowing while the deform is being worked on: this changes how many teeth a
+resolved polygon lays. It used to start a run at each of those minted corners
+and lay a tooth on each — five, on an arc the scope drew one along — and now it
+lays the scope's one.
+
+## The laws were reading decimal strings, and two of them were red for it
+
+Not a bug in the pipeline, and recorded because it was costing two properties
+their green. `drawn` wrote every coordinate with `toFixed(6)` and the properties
+compared the strings, which reads the representation rather than the drawing.
+
+The two sides of a law reach the same corner by multiplying the same numbers in
+a different order — a scope folds its effects over a union, its resolution folds
+them over one polygon — and they land some **4e-14 apart** on coordinates of
+order three hundred. Measured, over sixty worlds. That is the one difference no
+implementation can be asked to close, and it leaked through in two ways: the
+sign at zero, where `-1.4e-14` is written `-0.000000` and `+1.4e-14` is written
+`0.000000`, and the boundary anywhere else, where an ulp can fall either side of
+the sixth place and take the merge of collinear pieces with it.
+
+So `drawn` hands back its pieces and `differing` matches them against another
+drawing's under one clustering over both: every point is asked which place it
+stands for, the first drawing's points standing for the places, and the pieces
+are then compared exactly, as multisets. No boundary for a pair to straddle. It
+is still point for point — a piece the other lacks is a break however short it
+is, and there is still no comparison of area or of length, which is how a broken
+one would hide.
+
+**And `fc.assert` is synchronous**, so a runner that gives up at five seconds
+cannot stop sixty arrangements over a nested world, only mark them afterwards. A
+property that found nothing came back *failed*, with a timeout where its
+counterexample should be. Two of law 1's three were in that state, and a red
+that says nothing about the code is worse than a slow suite. They have a timeout
+they can finish in.
+
+## Law 1 is red where the round meets the deform
+
+**What is left of law 1, and the one thing here whose mechanism is not found.**
+All three of its properties are red, and the generator says what they need: with
+the kits cut down to erosion and round it is green, with erosion and deform it
+is green, and with round and deform it is red. Neither effect alone does it.
+
+What the drawings differ by is not a missing arc or a moved corner. It is the
+same zigzag, **shifted along the wall**: teeth at `239,1` `239,51` `239,101`
+`239,151` against teeth at `239,4` `239,54` `239,104` `239,154`, and elsewhere
+`4.862393` against `4.000000`. The pattern is the pattern; the phase the run
+starts laying it at is not.
+
+So the question is where a run begins on a ring a round has handed up, which is
+the same question the entry above answers for identity and does not answer for
+phase: the stretch fallback picks a start consistently, but nothing shown says
+it picks the one the scope's own deform started from. **It is not to be guessed
+at while the deform's shape is still being worked on** — a phase chosen to make
+this property green would be a guess about what the teeth are meant to look
+like, dressed as a fix.
+
+**And the round alone is not quite settled either.** It is green over three
+seeds of all three properties, which is what *neither effect alone does it*
+above rests on, and it is *not* green always: one run of *nor does resolving a
+scope inside it*, round-only, failed with an entire arc — eight pieces and more
+— present in one drawing and absent in the other. That is a different shape of
+difference from the phase shift, it was not chased, and a seed that finds it
+again is the place to start. The properties take their seed from the runner, so
+a rare break comes and goes between runs; `fc.assert` prints the seed it used
+and that is what to pin when one turns up.
 
 ## Law 2 is green, and was not expected to be
 
