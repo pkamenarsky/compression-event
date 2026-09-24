@@ -454,13 +454,16 @@ function readingAt(world: World, v: KeyframeId, id: GroupId): Reading[] {
     // would resolve it too, which is not what was asked. Bare reaches it too,
     // so its own round and deform are published rather than drawn.
     g => {
-      if (g === id) return { depth: 0, effects: groupEffects(world, v, g) };
+      // The scope itself stands and lays nothing: what is wanted is the union
+      // of its members *drawn*, and the scope's own amounts go onto the ring
+      // as the ring's own, where the same fold lays them again. A member is
+      // drawn and not published — that is the whole of `PLAN-effect` — so
+      // everything under it reads as it does anywhere else.
+      if (g === id) return { depth: 0 };
       if (!inside.has(g)) return null;
 
       return world.groups.get(g)?.sealed === true ? { depth: depth.get(g) ?? 0, effects: groupEffects(world, v, g) } : null;
     },
-    undefined,
-    true,
   );
 
   const frame = groupFrame(world, v, id);
@@ -747,13 +750,12 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // at, which its rig carries: what a published amount is *over*.
   const here = fx === undefined ? { bevel: 0, amplitude: 0 } : stateAt(world, id, v);
 
-  const held = publishing(
-    { ...world, polygons, groups, rigs, effects, nextId: next },
-    world,
-    born,
-    told,
-    { bevel: fx === undefined ? 0 : here.bevel, amplitude: fx === undefined ? 0 : here.amplitude },
-  );
+  // Nothing to publish any more. A member drew its own effects into the ring
+  // this became, so there is no amount of its to be written down over the
+  // scope's — which is what `publishing` was for and what `PLAN-effect` step 8
+  // takes out with the rest of the machinery. What the ring carries is the
+  // scope's own, above, and the same fold lays it again.
+  const held = { ...world, polygons, groups, rigs, effects, nextId: next };
 
   // Taken apart, so that what came out is pickable one ring at a time. It is
   // the whole reason to resolve: a union you cannot get at is the group you

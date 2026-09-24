@@ -41,6 +41,12 @@ import {
   subtract,
   unionAll,
 } from '../geometry';
+import type { Drawn } from '../ids';
+import { identify } from '../ids';
+import type { Effect } from '../effect';
+// `eroding` is taken here: the core's is the question of whether a scope
+// erodes at all, and this is the effect that does it.
+import { deforming, eroding as offsetting, rounding } from '../effect';
 import {
   GroupId,
   Id,
@@ -508,6 +514,59 @@ function linedKey(l: Named['lines'][number]): (number | Point)[] {
   ];
 }
 
+/**
+ * A scope's own effects, laid on what its members drew: the fold of
+ * `PLAN-effect`, and the whole of what a scope is.
+ *
+ * ```
+ * resolve(scope) = scope.effects.reduce((s, fx) => fx(s), combine(members))
+ * ```
+ *
+ * Its members reach it *drawn*, with their own effects already on them, and
+ * this lays the scope's on the result. Laws 1 and 3 are then near-tautologies:
+ * resolving is evaluating the fold, and an effect on a scope is its last step,
+ * which is the same function applied to the same shape whichever side of the
+ * resolve it is asked from. Nothing is published, nothing is re-derived from a
+ * source, and nothing is matched to anything within a tolerance.
+ *
+ * Erode, then round, then deform — PLAN-bevel's step 4, unchanged: the one
+ * step that cannot be lifted onto a rounded ring goes first, on a ring with no
+ * teeth in it and nothing rounded to cut back.
+ *
+ * The identity is minted here rather than carried up from the members. What a
+ * scope's own fold needs is that its three steps can name each other's points,
+ * and they can; following a corner of a member through a scope above it is
+ * what the bake wants, and that is step 9's, with the rest of `Effected`.
+ */
+function folded(union: Shape, here: Standing): Shape {
+  const fx = here.effects;
+  const shape = simplify(union);
+  const round = fx !== undefined && fx.facets.n > 0 && fx.bevel > 0;
+  const deform = fx?.deform;
+
+  const steps: Effect[] = [
+    ...(here.depth === 0 ? [] : [offsetting(here.depth)]),
+    ...(round ? [rounding(fx!.bevel, sagittaOf(fx!.bevel, fx!.facets.n))] : []),
+    ...(deform === undefined ? [] : [deforming(deform.amplitude, deform.e)]),
+  ];
+
+  if (steps.length === 0) return shape;
+
+  return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids: identify(shape, 0) }).shape;
+}
+
+/**
+ * The accuracy an arc of `bevel` drawn in `n` facets stands at: how far the
+ * chord of one facet of a square corner's arc falls from the arc.
+ *
+ * The round is an opening and lays as many facets as the accuracy asks for
+ * rather than the count it is told; asking for the accuracy the old count
+ * stood at is how the two are held to the same look.
+ */
+function sagittaOf(bevel: number, n: number): number {
+  return Math.max(bevel * (1 - Math.cos(Math.PI / (4 * Math.max(1, n)))), 1e-9);
+}
+
 /** A scope's fold as its own effects draw it, by `shapeKey`: see
  * `foldShaped`. */
 const shapedFold = remembered((
@@ -969,8 +1028,13 @@ export function contributed(
     const shapedBy = shapeKey(here);
     const slots: { shape: Shape, keep: Point[], square: Point[], named: Named }[] = [];
 
+    // Its members drawn, not bare: what a member is, a scope combines. It was
+    // read bare so that the scope could lay the amounts it published on the
+    // union instead, which is the thing `PLAN-effect` replaces and the reason
+    // laws 1 and 3 were red. Flat, still: a shaping scope's own depth is the
+    // first step of its fold rather than a per-slot offset.
     for (let k = from ?? SLOTS[set]; k < SLOTS[set]; k++) {
-      slots.push(slotted(id, set, k, shapedBy !== null, bare || shapedBy !== null));
+      slots.push(slotted(id, set, k, here !== null, bare));
     }
 
     const settles = slots.length === 0 ? [] : settled(slots.map(u => u.shape));
@@ -982,21 +1046,16 @@ export function contributed(
     // any, and before a floor is cut to its level, whose arcs it takes as they
     // come.
     const inside = slots.flatMap(u => u.square);
-    const shaped = shapedBy === null
-      ? null
-      : shapedFold(
-        settles,
-        inside,
-        slots.flatMap(u => u.keep),
-        slots.flatMap(u => u.named.lines.flatMap(l => linedKey(l))),
-        slots.flatMap(u => u.named.corners.flatMap(c => [
-          c.id, c.at, c.bevel,
-          c.round?.precision ?? -1, c.round?.tension ?? 0, c.round?.chamfer === true ? 1 : 0,
-          ...facetKeyed(c.round?.facets), ...facetKeyed(c.facets),
-        ])),
-        shapedBy,
-        here!.depth,
-      );
+    const drawn = here === null ? null : folded(settles, here);
+    const shaped = drawn === null ? null : {
+      shape: drawn,
+      runs: [] as { points: Point[] }[],
+      square: inside,
+      keep: slots.flatMap(u => u.keep),
+      fades: [] as Fade[],
+      bare: settles,
+      named: { lines: [], corners: [] } as Named,
+    };
     const rounded = shaped ?? { shape: settles, runs: [], square: inside, keep: slots.flatMap(u => u.keep), fades: [] };
 
     // Taken bare by a scope above: the fold before its own round and deform,

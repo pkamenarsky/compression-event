@@ -104,6 +104,12 @@ import {
   within,
 } from '../types';
 import { outline } from '../worldset';
+import type { Drawn } from '../ids';
+import { identify } from '../ids';
+import type { Effect } from '../effect';
+// `eroding` is this file's own — whether a scope erodes at all — so the effect
+// that does it comes in under another name.
+import { deforming, eroding as offsetting, rounding } from '../effect';
 import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
@@ -1167,6 +1173,12 @@ export const project = remembered((
 ): Shape => {
   if (effects === null) return offsetOf(source, rings, erosion, depths);
 
+  // The fold, wherever the polygon's amounts are one amount apiece — which is
+  // every polygon a scope resolved, and so both sides of law 3. See `folding`.
+  const fold = folding(source, rings, erosion, depths, effects);
+
+  if (fold !== null) return fold;
+
   // Rounded, deformed along its arcs, and then eroded: see `outlineOf`.
   //
   // The arrangement drops the teeth lying flat in it, as it drops any point
@@ -1179,6 +1191,79 @@ export const project = remembered((
 
   return simplify(im.shape);
 });
+
+/**
+ * A polygon drawn as the fold of `PLAN-effect` draws it — erode, round,
+ * deform — or nothing where its amounts are not one amount apiece.
+ *
+ * A polygon has genuine drawn corners and may carry a different bevel, a
+ * different depth and a different amplitude at each of them, and the fold's
+ * effects take one amount for the whole shape. Where they differ the old path
+ * still draws it; where they do not — which is every polygon a scope resolved
+ * into, and so both sides of law 3 — this is what draws it, and it draws what
+ * a scope's own fold draws because it is the same three functions.
+ *
+ * That both sides must round the same way is the thing this step turned up:
+ * `arcsWith` is a tension curve and the opening is an arc, so a scope rounding
+ * by the opening while the polygons it resolves to round by `arcsWith` cannot
+ * make law 3 green however right either of them is on its own.
+ */
+function folding(
+  source: Ring,
+  rings: readonly number[],
+  erosion: number,
+  depths: readonly number[] | null,
+  effects: readonly Memo[],
+): Shape | null {
+  const [facets, bevels, , deform] = effects as [Memo[], number[], number[], Memo[]];
+  const depth = only(depths ?? [erosion]);
+  const bevel = only(bevels);
+  const n = facets.length === 0 ? 0 : facetsFrom(facets[0]).n;
+
+  if (depth === null || bevel === null) return null;
+
+  const [spacing, pattern, seed, sides, jitter, falloff, before, after, , , , offset, own] =
+    deform as [number, number, number, number, number, number, number[], number[], number[], number[], number[], number, number[]];
+
+  // A deform whose edges stand in options of their own is a polygon under a
+  // scope that published them, which is what the fold does away with; it is
+  // not one amount and it goes the old way.
+  if (deform.length !== 0 && own.some((_, i) => i % 7 === 1 && own[i] !== -1)) return null;
+
+  const amplitude = deform.length === 0 ? 0 : only([...before, ...after]);
+
+  if (amplitude === null) return null;
+
+  const shape = simplify(sliced(source, rings));
+  const e: Effecting | null = deform.length === 0 || amplitude === 0
+    ? null
+    : { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 };
+
+  const steps: Effect[] = [
+    ...(depth === 0 ? [] : [offsetting(depth)]),
+    ...(bevel > 0 && n > 0 ? [rounding(bevel, sagitta(bevel, n))] : []),
+    ...(e === null || amplitude === 0 ? [] : [deforming(amplitude, e)]),
+  ];
+
+  if (steps.length === 0) return shape;
+
+  return steps.reduce<Drawn>((it, fx) => fx(it), { shape, ids: identify(shape, 0) }).shape;
+}
+
+/** The one number a list is all of, or nothing where it is not. An empty list
+ * asks for nothing and is nought. */
+function only(all: readonly number[]): number | null {
+  if (all.length === 0) return 0;
+
+  return all.every(a => a === all[0]) ? all[0] : null;
+}
+
+/** How far the chord of one facet of a square corner's arc of `bevel` in `n`
+ * falls from the arc: the accuracy the opening is asked to stand at, so that
+ * it lays about as many facets as the count it replaces. */
+function sagitta(bevel: number, n: number): number {
+  return Math.max(bevel * (1 - Math.cos(Math.PI / (4 * Math.max(1, n)))), 1e-9);
+}
 
 /** Where each of a polygon's features lands: the construction `project`
  * builds its effects by, before the arrangement. */
