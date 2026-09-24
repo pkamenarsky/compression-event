@@ -1,4 +1,5 @@
 * Bugs
+* Bugs
 * TODO comb step-6 and the other branches for bugfixes that might be useful to have here
 * TODO copying something in a later version and pasting it should not change its shape
 

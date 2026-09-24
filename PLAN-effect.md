@@ -488,25 +488,7 @@ crossing that cut the arc.
 counterexample, the naming now matches one run for one: same starts, same
 lengths, same teeth, and with the scope's own effects taken off, resolving is
 point-for-point identical. What breaks is narrower and older, and it is in the
-erosion. Two rings, thirty-one units apart at their nearest, no nesting, same
-winding, eroded by nine:
-
-```
-ERODE together  [7,9,3, 17,16, 9,4,7,13,7,10,9,9,8,12,11]
-ERODE 1 alone   [       16,14, 9,4,7,13,7,10,9,9,8,12,11]
-ERODE 1 + far   [7,9,3, 16,14, 9,4,7,13,7,10,9,9,8,12,11]
-```
-
-The neighbour at its real distance puts three points into the *other* ring's
-erosion; moved a hundred thousand units away it does not, and every other ring
-is unchanged. A depth of nine cannot reach thirty-one units, so this is not the
-two shapes meeting. Ruled out: nesting (the boxes are disjoint in x and both
-areas are positive) and tolerance by extent (moving it away *raises* the extent
-and gives the alone answer). Mechanism not found.
-
-That is what stands between the laws and green: a resolve splits one shape into
-two polygons, each is eroded alone, and the erosion of one is not what it was
-beside the other.
+erosion — see *Open bugs* at the end.
 
 Twenty-three tests go red with the step — `effects.test` 14, `bake.test` 8, one
 export — and they are the old look and the old machinery, which steps 8, 9 and
@@ -539,3 +521,91 @@ against the resample. The largest step, and the one that is only safe once 1 is
 answered.
 
 **10. `baseline.golden.json` regenerated, once, at the end.**
+
+# Open bugs
+
+What is known to be wrong and is not any step's to fix. Each one is written so
+it can be picked up cold: what was measured, what was ruled out, and what is
+still unknown. Nothing here is a guess dressed as a finding — where the
+mechanism was not found it says so.
+
+## A ring's erosion depends on a ring thirty units away
+
+**This is what the one law property that was chased all the way down turns out
+to be.** Whether it is also what the other six are has not been shown — each
+would have to be instrumented the same way. What is shown is that for `law 1:
+resolving the top scope` the naming is now right and this is the whole of the
+remaining difference.
+
+Two rings, eroded by nine, from the world `law 1: resolving the top scope`
+shrinks to. They are thirty-one units apart at their nearest, not nested, and
+wound the same way:
+
+```
+ERODE together  [7,9,3, 17,16, 9,4,7,13,7,10,9,9,8,12,11]
+ERODE 1 alone   [       16,14, 9,4,7,13,7,10,9,9,8,12,11]
+ERODE 1 + far   [7,9,3, 16,14, 9,4,7,13,7,10,9,9,8,12,11]
+```
+
+The neighbour at its real distance puts three points into the **other** ring's
+erosion. Moved a hundred thousand units away it does not, and every other ring
+of both is unchanged, including its own three.
+
+Why it breaks the laws: a resolve splits one shape into one polygon per
+outline, and each is then eroded alone. So a scope that erodes `[A, B]` as one
+shape does not draw what its resolution draws, and the three points are the
+whole of the difference. The same three survive the round — they are already
+there at `eroded`, before `dilating` and before the resample — and come out as
+three points of the final drawing.
+
+Ruled out, each by measurement rather than by argument:
+
+- **The two shapes meeting.** A depth of nine cannot reach thirty-one units.
+- **Nesting.** The bounding boxes are disjoint in x — `[234..326]` against
+  `[-6..203]` — and both signed areas are positive, so neither is the other's
+  hole.
+- **Tolerance by extent.** Coincidence is judged against a tolerance taken off
+  the extent of what is being worked on — `scale * 1e-9`, as `keeping` does it
+  — so the suspicion was that a bigger shape snaps coarser and loses points a
+  smaller one keeps. It is the wrong way round: moving the neighbour a hundred
+  thousand units away *raises* the extent three hundredfold and gives the
+  **alone** answer.
+- **Duplicate names.** Counted at the resample on both paths: none, either way.
+
+**Mechanism not found.** What is known is that it is `eroding`, not `dilating`
+and not `resampled`, and that it is the presence of the second ring rather than
+its distance in any way that a nine-unit offset could feel. The next thing to
+look at is `sweptBand` over a two-ring shape against the same ring alone —
+whether the band it builds for one ring is the same geometry in both, or
+whether it is the single `combineIdentified` over the pair that differs.
+
+The reproduction is `laws.test.ts`'s own counterexample. To get it back: run
+`law 1: resolving the top scope`, take the printed `Counterexample` spec, build
+it with that file's `built`, and read the two rings out of `rounding`'s input.
+Beware that the spec is printed with `undefined` in it, which JSON has no word
+for — parsed as `null`, every `=== undefined` in `optionsOf` answers false and
+the world comes out with every effect on it.
+
+## Law 2 is green, and was not expected to be
+
+Recorded because it is a claim in this plan that turned out wrong, not because
+anything is broken. Step 2 said Law 2 could not go green yet and gave evidence:
+with the deform taken out of the generator it was still red, so erode and round
+broke it too. It went green when identity started being carried up from the
+members. The evidence was sound and the conclusion drawn from it was too
+strong — what it showed was that the deform was not the *only* thing breaking
+Law 2, not that the breakage was in erode and round themselves.
+
+## Two copies of one formula
+
+`sagitta` in `scene/core.ts` and `sagittaOf` in `scene/reading.ts` are the same
+expression character for character. Harmless today, and exactly the kind of
+thing that stops being harmless when somebody changes one. For step 8.
+
+## The per-corner bevel amount outlives the per-corner round
+
+Per-corner rounds are dropped and their options are gone, but a bevel amount
+written against a single corner still reaches the fold, where `most` takes the
+largest. So the drag gesture on a corner raises the whole ring's bevel rather
+than doing nothing — odd, not broken. It is the rig rather than the options,
+and it goes with the rest of the old machinery at step 8.
