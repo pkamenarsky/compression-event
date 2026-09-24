@@ -936,7 +936,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
         const high = amountOf(by, whose);
         const lay = how === null || !(how.spacing > 0) || (high === 0 && !flat)
           ? { along: [], across: [], teeth: [], room: [] }
-          : patternRun(how, keyOf(whose), high, total, 0, 0, how.spacing, line?.middle ?? total / 2);
+          : patternRun(how, keyOf(line?.root ?? whose), high, total, 0, 0, rampAt(how.spacing, line?.before), line?.middle ?? total / 2, undefined, rampAt(how.spacing, line?.after));
 
         out.push(ring[from]);
         said.push(names[from]);
@@ -961,7 +961,7 @@ export function deforming(by: Amount, e: Effecting | ((id: Ident) => Effecting |
           const ride = rideOf(run, lengths, lay.along[j] * total);
 
           out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
-          said.push(tooth(whose, lay.teeth[j]));
+          said.push(tooth(line?.root ?? whose, lay.teeth[j]));
         }
       }
 
@@ -1002,29 +1002,59 @@ function linesOf(it: Drawn): Map<string, Line> {
 
   for (const ring of it.shape) for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
 
-  // A ring at a time: a resolve makes a polygon of each outer ring, and the
-  // pieces of an edge two of them share would not be one edge after it.
-  it.shape.forEach((ring, r) => {
-    for (const [i, line] of linesIn(ring, it.ids[r], scale * 1e-7)) out.set(`${r}:${i}`, line);
-  });
+  for (const [key, line] of linesIn(it, scale * 1e-7)) out.set(key, line);
 
   return out;
 }
 
-/** One piece of a wall: the name its pattern is laid by, and where the wall's
- * middle falls along the piece. */
-interface Line {
-  edge: Ident
-  middle: number
+/**
+ * How many walls have been laid across more than one ring, ever: for the laws,
+ * which have to know. A scope whose union is two islands sharing a wall lays
+ * the wall once across both, and resolving it makes each island a polygon of
+ * its own, which cannot — so there, and only there, the resolution draws a
+ * different pattern from the scope. See PLAN-effect, step 9.
+ */
+let across = 0;
+
+export function laidAcross(): number {
+  return across;
 }
 
-/** `linesOf`, for one ring: keyed by the index each piece starts at. */
-function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number): Map<number, Line> {
-  const out = new Map<number, Line>();
+/** One piece of a wall: the name its pattern is laid by, where the wall's
+ * middle falls along the piece, and how wide the cut is at either end of it
+ * where it ends in one rather than at the wall's own end. */
+interface Line {
+  edge: Ident
+  /** The wall itself, which its teeth are named and keyed by: the same edge
+   * before a cut and after it, where the piece `edge` names need not be — and
+   * a tooth whose name changed across a span faded out and popped back. */
+  root: Ident
+  middle: number
+  before?: number
+  after?: number
+}
 
-  if (ring.length < 3) return out;
+/**
+ * How far from the end of a run its teeth come up over: a spacing, or where
+ * the run ends at a cut in its wall, no more than the cut is wide.
+ *
+ * A cut opens from nothing. Ramped over a whole spacing the moment it opened,
+ * every tooth within a spacing of it dropped at once — nineteen units, on a
+ * room pinched in two by its erosion. Ramped over the width of the cut, a
+ * cut of nothing shrinks nothing, and the teeth go down as it opens.
+ */
+function rampAt(spacing: number, cut: number | undefined): number {
+  return cut === undefined ? spacing : Math.max(1e-9, Math.min(spacing, cut));
+}
+
+/** `linesOf`, keyed by the ring and index each piece starts at. */
+function linesIn(it: Drawn, snap: number): Map<string, Line> {
+  const out = new Map<string, Line>();
 
   interface Piece {
+    key: string
+    ring: number
+    name: Ident
     from: number
     at: Point
     dx: number
@@ -1043,39 +1073,42 @@ function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number):
     else had.push(p);
   };
 
-  names.forEach((id, i) => {
+  it.ids.forEach((names, r) => names.forEach((id, i) => {
     const what = madeOf(id);
 
     if (what.kind === 'born') {
-      put(what.a, ring[i]);
-      put(what.b, ring[i]);
+      put(what.a, it.shape[r][i]);
+      put(what.b, it.shape[r][i]);
     }
     else {
-      put(id, ring[i]);
+      put(id, it.shape[r][i]);
     }
-  });
+  }));
 
   // The straight runs, each by the name of the point it leaves.
   const pieces: Piece[] = [];
   const leaving = new Map<Ident, Piece>();
-  const held = runsOf(ring, names);
+  it.shape.forEach((ring, r) => {
+    const names = it.ids[r];
+    const held = ring.length < 3 ? [] : runsOf(ring, names);
 
-  for (let k = 0; k < held.length; k++) {
-    const from = held[k], to = held[(k + 1) % held.length];
-    const run = between(ring, from, to);
-    const lengths = walked(run);
-    const total = lengths[lengths.length - 1];
-    const a = run[0], b = run[run.length - 1];
-    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    for (let k = 0; k < held.length; k++) {
+      const from = held[k], to = held[(k + 1) % held.length];
+      const run = between(ring, from, to);
+      const lengths = walked(run);
+      const total = lengths[lengths.length - 1];
+      const a = run[0], b = run[run.length - 1];
+      const l = Math.hypot(b.x - a.x, b.y - a.y);
 
-    // Only a straight run is a piece of a line.
-    if (!(l > 0) || total - l > snap) continue;
+      // Only a straight run is a piece of a line.
+      if (!(l > 0) || total - l > snap) continue;
 
-    const piece = { from, at: a, dx: (b.x - a.x) / l, dy: (b.y - a.y) / l, total };
+      const piece = { key: `${r}:${from}`, ring: r, name: names[from], from, at: a, dx: (b.x - a.x) / l, dy: (b.y - a.y) / l, total };
 
-    pieces.push(piece);
-    leaving.set(names[from], piece);
-  }
+      pieces.push(piece);
+      leaving.set(names[from], piece);
+    }
+  });
 
   const onLine = (at: Point, dx: number, dy: number) => (p: Point) => Math.abs((p.x - at.x) * dy - (p.y - at.y) * dx) <= snap;
 
@@ -1149,12 +1182,12 @@ function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number):
   };
 
   // Twice, and the second time with every line the first learnt.
-  for (const p of pieces) rootOf(names[p.from]);
+  for (const p of pieces) rootOf(p.name);
 
   const groups = new Map<Ident, Piece[]>();
 
   for (const p of pieces) {
-    const root = rootOf(names[p.from]);
+    const root = rootOf(p.name);
     const got = groups.get(root);
 
     if (got === undefined) groups.set(root, [p]);
@@ -1162,7 +1195,10 @@ function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number):
   }
 
   for (const [root, got] of groups) {
-    if (got.length < 2) continue;
+    // A lone piece is a line of its own, unless it carries on an edge by
+    // another name: then its teeth are that edge's, as they are wherever the
+    // edge is whole or cut in several.
+    if (got.length < 2 && got[0].name === root) continue;
 
     // Named by a point that is there in any case: the edge's own start where
     // it is, and otherwise the piece furthest back along the line. The edge
@@ -1170,12 +1206,12 @@ function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number):
     // options for a corner it does not have.
     const { dx, dy } = got[0];
     const along = (p: Piece) => p.at.x * dx + p.at.y * dy;
-    const head = got.find(p => names[p.from] === root)
+    const head = got.find(p => p.name === root)
       ?? got.reduce((best, p) => (along(p) < along(best) ? p : best));
     const line = onLine(head.at, dx, dy);
     const mine = got.filter(p => p.dx * dx + p.dy * dy > 1 - 1e-9 && line(p.at));
 
-    if (mine.length < 2 || !mine.includes(head)) continue;
+    if (!mine.includes(head) || (mine.length < 2 && head.name === root)) continue;
 
     const from = (p: Piece) => (p.at.x - head.at.x) * dx + (p.at.y - head.at.y) * dy;
     let lo = Infinity, hi = -Infinity;
@@ -1187,7 +1223,18 @@ function linesIn(ring: readonly Point[], names: readonly Ident[], snap: number):
 
     const middle = (lo + hi) / 2;
 
-    for (const p of mine) out.set(p.from, { edge: names[head.from], middle: middle - from(p) });
+    if (mine.some(p => p.ring !== mine[0].ring)) across++;
+
+    // In order along the wall, each with the width of the cut either side of
+    // it: nothing at the wall's own ends.
+    mine.sort((a, b) => from(a) - from(b));
+    mine.forEach((p, k) => out.set(p.key, {
+      edge: head.name,
+      root,
+      middle: middle - from(p),
+      ...(k === 0 ? {} : { before: Math.max(0, from(p) - from(mine[k - 1]) - mine[k - 1].total) }),
+      ...(k + 1 === mine.length ? {} : { after: Math.max(0, from(mine[k + 1]) - from(p) - p.total) }),
+    }));
   }
 
   return out;

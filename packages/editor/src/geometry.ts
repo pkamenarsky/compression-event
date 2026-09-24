@@ -3264,6 +3264,9 @@ export function patternRun(
    * See PLAN-bevel 3.6.
    */
   reach?: number,
+  /** The ramp at the far end, where it is not the near end's: a run that
+   * ends where a wall was cut, and not at a corner. See `linesOf`. */
+  rampTo = ramp,
 ): EdgeRun {
   // From the middle — or, offset, off it by a share of the spacing the seed
   // gives the edge: so no tooth is sure to stand in the middle of every edge,
@@ -3305,7 +3308,7 @@ export function patternRun(
   const places = [...before.reverse(), ...after];
 
   for (const [j, at] of places) {
-    const had = Math.min(1, Math.min(at - clear, length - clearTo - at) / ramp);
+    const had = Math.min(1, (at - clear) / ramp, (length - clearTo - at) / rampTo);
 
     if (had <= 0 && reach === undefined) continue;
 

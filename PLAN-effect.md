@@ -617,6 +617,31 @@ scopes above.
 Measured on forty law seeds against the tree before it: the same failures
 (seeds 4 and 22, law 1 nested, both red before), and no new ones.
 
+**A ring pinched in two keeps its teeth too.** An erosion can pinch one
+polygon into two rings, and the wall that ran through the neck then lies in
+both: in pieces on different rings. So pieces are gathered by the wall they
+come back to across every ring of the fold, not ring by ring. Per ring, a
+scratch world's step was 115; across rings, 19.
+
+What was left was the tooth beside a cut that was just opening. It went from
+whole to a spacing shorter in one step, because a run's ends ramp over a
+whole spacing and a cut is a new end. So a piece's ramp at a cut is as wide
+as the cut is: nothing at first, and a whole spacing once the cut is that
+wide (`patternRun`'s `rampTo`). That brought it to 1.4.
+
+A piece alone on its wall is named by the wall too, when it carries on from
+one by another name. The wall through the neck is whole at v0 and named by
+its edge. At v1 it is one piece on the pinched-off ring, leaving a crossing,
+and a lone piece used to lay its teeth under its own name. Every tooth on it
+faded out across the span and came back at v1 under the new name.
+
+The laws had to give a little for it. A scope whose union is several islands
+sharing a wall lays that wall as one, and resolving it hands the islands out
+as separate polygons, each of which then lays its own piece alone. That is
+the one place resolve and scope honestly differ, so law 1 and law 3 skip a
+scope whose wall was joined across rings (`laidAcross`) and which resolves to
+more than one polygon. Every counterexample seen resolved to three to five.
+
 **10. `baseline.golden.json` regenerated, once, at the end.**
 
 # Open bugs

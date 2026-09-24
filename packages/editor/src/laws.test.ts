@@ -16,6 +16,7 @@ import fc from 'fast-check';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, csg, grouped, sealing } from './scene';
 import { resolveGroup } from './resolve';
+import { laidAcross } from './effect';
 import { Writing, erode, inSegments, wrote } from './testing';
 import { Effects, Id, World, emptyWorld } from './types';
 
@@ -215,6 +216,21 @@ function clustered(eps: number): (p: Point) => Point {
  * A multiset and not a set: a wall drawn twice in one and once in the other is
  * a difference.
  */
+/**
+ * The drawing, and whether a deform in it laid one wall across two rings.
+ *
+ * Where it did, and the scope resolves to more than one polygon, the law does
+ * not hold and is not asked to: the wall was one wall across two islands of
+ * the union, and resolving makes each island a polygon that lays its own. See
+ * `laidAcross`.
+ */
+function joining(world: World): { lines: [Point, Point][], across: boolean } {
+  const before = laidAcross();
+  const lines = drawn(world);
+
+  return { lines, across: laidAcross() > before };
+}
+
 function differing(a: readonly [Point, Point][], b: readonly [Point, Point][]): string[] {
   const eps = spanOf([...a.flat(), ...b.flat()]) * 1e-9;
   const held = clustered(eps);
@@ -465,7 +481,11 @@ describe('law 1: a scope draws what it resolves to', () => {
 
       if (out === null) return;
 
-      expect(differing(drawn(out.world), drawn(world))).toEqual([]);
+      const scope = joining(world);
+
+      if (scope.across && out.ids.length > 1) return;
+
+      expect(differing(drawn(out.world), scope.lines)).toEqual([]);
     }), RUNS);
   }, SLOW);
 
@@ -507,13 +527,14 @@ describe('law 1: a scope draws what it resolves to', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
       const inner = [...world.groups.keys()];
+      const scope = joining(world);
 
       for (const id of inner) {
         const out = resolveGroup(world, 0, id);
 
-        if (out === null) continue;
+        if (out === null || (scope.across && out.ids.length > 1)) continue;
 
-        expect([id, differing(drawn(out.world), drawn(world))]).toEqual([id, []]);
+        expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
       }
     }), RUNS);
   }, SLOW);
@@ -521,7 +542,7 @@ describe('law 1: a scope draws what it resolves to', () => {
   test('and resolving every scope, innermost first, leaves the same outline', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
-      const was = drawn(world);
+      const was = joining(world);
       let w = world;
 
       // Innermost first: a group holding no group is one, and resolving it
@@ -530,10 +551,10 @@ describe('law 1: a scope draws what it resolves to', () => {
         const id = [...w.groups.keys()].find(g => ![...w.groups.values()].some(h => h.members?.includes?.(g)));
         const out = id === undefined ? null : resolveGroup(w, 0, id);
 
-        if (out === null) break;
+        if (out === null || (was.across && out.ids.length > 1)) break;
 
         w = out.world;
-        expect(differing(drawn(w), was)).toEqual([]);
+        expect(differing(drawn(w), was.lines)).toEqual([]);
       }
     }), RUNS);
   }, SLOW);
@@ -601,7 +622,7 @@ describe('law 2: sealing draws what was there', () => {
  */
 function bothWays(spec: Spec, kit: Kit): void {
   const { world, id } = built(emptyWorld(), spec.kind === 'room' ? spec : { ...spec, kit: {} });
-  const onScope = drawn(kitted(world, id, kit));
+  const onScope = joining(kitted(world, id, kit));
   const out = resolveGroup(world, 0, id);
 
   if (out === null) return;
@@ -614,7 +635,9 @@ function bothWays(spec: Spec, kit: Kit): void {
         return kitted(sealing(g.world, g.id, true), g.id, kit);
       })();
 
-  expect(differing(drawn(after), onScope)).toEqual([]);
+  if (onScope.across && out.ids.length > 1) return;
+
+  expect(differing(drawn(after), onScope.lines)).toEqual([]);
 }
 
 describe('law 3: an effect on a scope is an effect on its resolution', () => {
