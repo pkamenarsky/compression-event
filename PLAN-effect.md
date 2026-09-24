@@ -535,6 +535,59 @@ save format still carry a per-corner round, so an old file reads as it did.
 against the resample. The largest step, and the one that is only safe once 1 is
 answered.
 
+Mostly done. What was wrong going in: the bake took its kept points and its
+fades from `imagedBy`, which was the old pipeline run for its positions — arcs
+on a tension curve the fold no longer draws — so they were spliced into a ring
+they did not lie on. At the near end of a bevel growing finer the bake drew 29
+points where the editor drew 20.
+
+**Flat points are held by name** (`hold.ts`). An arrangement drops every point
+it does not turn at, and the points the bake needs across a span — an arc's
+samples on a coarser facet, a tooth at nought, a corner arriving — are exactly
+those. So an instant of a span is folded *held*: `combineIdentified` keeps every
+collinear point that is not a crossing, a deform at nought lays its teeth flat,
+and a held flat point neither starts a deform's run nor anchors the resample,
+since the still it has to agree with does not have it. A dynamic scope rather
+than an argument, because it has to reach every arrangement of every effect of
+every fold, and part of `remembered`'s key so a held answer never reaches a
+still. Three ways were weighed — this, positional `keep` from a second fold,
+and letting a count change be an event — and this is the one that keeps names.
+
+**Fades are read off names.** At each end of the span the fold is taken held
+and its flat names noted; at any instant a point flat or *missing* at an end
+fades from nought there. A scope's side is faded the same way, off its own
+union's names, which carry its members' up. `groupFading`'s positional walk
+stays for polygons without effects.
+
+**A polygon's source is named before `simplify`** and the names carried through
+it. `identify` numbered the walk, and the amounts and `was` are written against
+the source's numbering, so wherever `simplify` dropped or re-started a ring the
+depths, the options and the sample marks landed on the wrong points.
+
+**A round across a span whose count changes** (`roundingAcross`) lays both
+ends' layouts and blends them `at` of the way, at a count both ends' steps
+divide, so every point of either is a point of the blend and each end is the
+editor's outline exactly. The bevel-weighted `at` keeps the blend a lerp.
+
+Gone with `imagedBy`: `foldShaped`, `arcsWith` and the tension curve, `ArcTeeth`,
+`CRAMMED`, `teethAlong`, `Imaged`, `effectedSquare`, `facetFades`, `straightOf`,
+and the span's naming fields. `Effected` is facets, bevels and deform;
+`ArcDeform` its options, each edge's own, and each edge's amplitude.
+
+**Still open: something arriving mid-span.** A corner turning out of a wall
+under a round, and a wall growing teeth, change how many points the fold lays
+part way through the span. Each arriving point is missing at the near end, so
+it fades up from nothing rather than popping, but the count changes and the
+bake cuts there. Four bake tests ask for the old answer — the same count at
+both ends, no cut — and are red: *a corner arriving into a rounded ring*, *a
+corner arriving inside a rounded corner's reach*, *an edge growing longer*, and
+*a union edge cut in two*. Getting the old answer back means laying at the
+span's count throughout: an arc at a corner that does not yet turn, and a
+pattern at the span's longest reach with the teeth past a run's end clamped
+flat. The second is `patternRun`'s `reach`, keyed by the run's name; the first
+has no analogue yet. Whether either is worth it over a cut the fades already
+hide is the question to settle before 10.
+
 **10. `baseline.golden.json` regenerated, once, at the end.**
 
 # Open bugs
@@ -737,3 +790,11 @@ broke it too. It went green when identity started being carried up from the
 members. The evidence was sound and the conclusion drawn from it was too
 strong — what it showed was that the deform was not the *only* thing breaking
 Law 2, not that the breakage was in erode and round themselves.
+
+## Law 2 is red on one seed, before any of step 9
+
+*Sealing things into a scope that lays nothing does not move the outline*
+fails about one run in three, on `seed: -1742226975, path:
+"25:40:6:1:1:3:5:0:0:0:5:6"`. Confirmed red on `fe8846a`, before step 9 touched
+anything. `laws.test.ts` now takes `LAW_SEED` and `LAW_PATH` from the
+environment to replay one. Not looked into.
