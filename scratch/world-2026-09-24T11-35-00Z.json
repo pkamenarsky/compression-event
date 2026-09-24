@@ -1,0 +1,356 @@
+{
+  "format": 26,
+  "tool": "polygon",
+  "figure": "rect",
+  "keyframe": 0,
+  "selection": [
+    13
+  ],
+  "artefacts": [],
+  "paths": [],
+  "settings": {
+    "gridSize": 100,
+    "showGrid": true
+  },
+  "view": {
+    "x": -2899.84375,
+    "y": -1366.421875,
+    "zoom": 0.25
+  },
+  "world": {
+    "nextId": 14,
+    "polygons": [
+      [
+        0,
+        {
+          "level": "hollow",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 1,
+              "at": {
+                "x": -1000,
+                "y": -900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 2,
+              "at": {
+                "x": 0,
+                "y": -900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 3,
+              "at": {
+                "x": 0,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 4,
+              "at": {
+                "x": -1000,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ],
+      [
+        6,
+        {
+          "level": "hollow",
+          "birth": 0,
+          "death": null,
+          "points": [
+            {
+              "id": 7,
+              "at": {
+                "x": -1000,
+                "y": -900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 8,
+              "at": {
+                "x": 0,
+                "y": -900
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 9,
+              "at": {
+                "x": 0,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            },
+            {
+              "id": 10,
+              "at": {
+                "x": -1000,
+                "y": 100
+              },
+              "ring": 0,
+              "birth": 0,
+              "death": null
+            }
+          ]
+        }
+      ]
+    ],
+    "groups": [
+      [
+        13,
+        {
+          "members": [
+            6,
+            0
+          ],
+          "sealed": true,
+          "birth": 0
+        }
+      ]
+    ],
+    "artefacts": [],
+    "paths": [],
+    "start": {
+      "at": {
+        "x": 0,
+        "y": 0
+      },
+      "facing": 0
+    },
+    "keyframes": [
+      {
+        "id": 0,
+        "name": "v0",
+        "visible": true
+      },
+      {
+        "id": 1,
+        "name": "v1",
+        "visible": true
+      },
+      {
+        "id": 2,
+        "name": "v2",
+        "visible": true
+      },
+      {
+        "id": 3,
+        "name": "v3",
+        "visible": true
+      },
+      {
+        "id": 4,
+        "name": "v4",
+        "visible": true
+      },
+      {
+        "id": 5,
+        "name": "v5",
+        "visible": true
+      },
+      {
+        "id": 6,
+        "name": "v6",
+        "visible": true
+      },
+      {
+        "id": 7,
+        "name": "v7",
+        "visible": true
+      },
+      {
+        "id": 8,
+        "name": "v8",
+        "visible": true
+      }
+    ],
+    "rigs": [
+      [
+        0,
+        {
+          "keys": [
+            [
+              0,
+              [
+                {
+                  "id": 0,
+                  "ref": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "by": {
+                    "move": {
+                      "x": 0,
+                      "y": 0
+                    },
+                    "angle": 0,
+                    "skew": 0,
+                    "scale": {
+                      "x": 1,
+                      "y": 1
+                    },
+                    "along": 0,
+                    "lean": 0,
+                    "erode": 0,
+                    "round": 238.546875,
+                    "deform": 0
+                  },
+                  "times": 1,
+                  "group": 5
+                }
+              ]
+            ]
+          ]
+        }
+      ],
+      [
+        6,
+        {
+          "keys": [
+            [
+              0,
+              [
+                {
+                  "id": 0,
+                  "ref": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "times": 1,
+                  "stand": {
+                    "kind": "stand",
+                    "frame": {
+                      "t": {
+                        "x": 100,
+                        "y": 100
+                      },
+                      "angle": 0,
+                      "skew": 0,
+                      "scale": {
+                        "x": 1,
+                        "y": 1
+                      }
+                    },
+                    "erosion": 0,
+                    "corners": [
+                      [
+                        7,
+                        {
+                          "x": -1000,
+                          "y": -900
+                        }
+                      ],
+                      [
+                        8,
+                        {
+                          "x": 0,
+                          "y": -900
+                        }
+                      ],
+                      [
+                        9,
+                        {
+                          "x": 0,
+                          "y": 100
+                        }
+                      ],
+                      [
+                        10,
+                        {
+                          "x": -1000,
+                          "y": 100
+                        }
+                      ]
+                    ],
+                    "depths": [],
+                    "bevel": 0,
+                    "amplitude": 0,
+                    "bevels": [],
+                    "amplitudes": []
+                  },
+                  "group": 11
+                },
+                {
+                  "id": 1,
+                  "ref": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "by": {
+                    "move": {
+                      "x": 400,
+                      "y": 200
+                    },
+                    "angle": 0,
+                    "skew": 0,
+                    "scale": {
+                      "x": 1,
+                      "y": 1
+                    },
+                    "along": 0,
+                    "lean": 0,
+                    "erode": 0,
+                    "round": 238.546875,
+                    "deform": 0
+                  },
+                  "times": 1,
+                  "group": 12
+                }
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    "flags": [],
+    "effects": [
+      [
+        0,
+        {
+          "round": {
+            "precision": 0.5,
+            "tension": 0.5,
+            "chamfer": false
+          }
+        }
+      ],
+      [
+        6,
+        {
+          "round": {
+            "precision": 0.5,
+            "tension": 0.5,
+            "chamfer": false
+          }
+        }
+      ]
+    ],
+    "cornerEffects": []
+  }
+}

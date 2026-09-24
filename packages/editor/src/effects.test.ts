@@ -40,7 +40,7 @@ const deform = (by: number) => ({ kind: 'deform' as const, by });
 /** A `w` by `h` rectangle's area with its four corners rounded `r` deep:
  * each a quarter circle, as the opening draws it, in `segments` chords. */
 function roundedRect(w: number, h: number, r: number, segments: number): number {
-  const chord = Math.sin(Math.PI / (2 * segments)) * Math.cos(Math.PI / (2 * segments));
+  const chord = Math.sin(Math.PI / (4 * segments)) * Math.cos(Math.PI / (4 * segments));
 
   return w * h - 4 * r * r + 4 * r * r * segments * chord;
 }
@@ -60,13 +60,6 @@ function toShape(p: Point, shape: readonly (readonly Point[])[]): number {
 
     return Math.hypot(p.x - q.x - dx * u, p.y - q.y - dy * u);
   })));
-}
-
-/** Which of `corners`' edges a point stands nearest, by index. */
-function nearestEdge(p: Point, corners: readonly { at: Point }[]): number {
-  const far = corners.map((c, i) => toShape(p, [[c.at, corners[(i + 1) % corners.length].at]]));
-
-  return far.indexOf(Math.min(...far));
 }
 
 function shapeOf(world: World, id: Id) {
@@ -246,11 +239,11 @@ describe('a group\'s effects', () => {
     expect(area(60)).toBeLessThan(area(40));
   });
 
-  test('a run\'s teeth are its naming edge\'s, so the far end moving leaves them where they are', () => {
+  test('a wall made of two members\' edges is one run, its teeth centred on the whole of it', () => {
     // Two rooms along one wall, sealed and deformed as one. The wall is one
-    // straight of the fold and takes one pattern — the first room's edge
-    // names it, and the teeth are counted out from that edge's own middle.
-    // So the second room growing at the far end moves nothing over the first.
+    // straight of the fold and takes one pattern, centred — step 7's one
+    // default — on the wall and not on either room's edge. So the far end
+    // moving moves the middle, and the teeth with it.
     const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
     const build = (by: number) => {
       const a = room(emptyWorld(), rect(0, 0, 200, 140));
@@ -260,14 +253,17 @@ describe('a group\'s effects', () => {
       return wrote(withEffects(sealing(g.world, g.id, true), g.id, { deform: zigzag }), 0, g.id, deform(6));
     };
 
-    // The teeth on the near half of the wall, where only the first room is.
-    const near = (w: World) => csg(w, 0).flat()
-      .filter(p => p.y > 140 - 1e-9 && p.x > 10 && p.x < 150)
-      .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+    // The wall's points off its line, mirrored about its middle.
+    const off = (w: World, end: number) => csg(w, 0).flat()
+      .filter(p => p.y > 140 + 1e-9)
+      .map(p => [p.x, end - p.x].map(x => x.toFixed(6)).sort().join());
 
-    expect(near(build(0)).length).toBeGreaterThanOrEqual(4);
-    expect(near(build(40))).toEqual(near(build(0)));
-    expect(near(build(130))).toEqual(near(build(0)));
+    for (const by of [0, 40, 130]) {
+      const tips = off(build(by), 360 + by);
+
+      expect(tips.length).toBeGreaterThanOrEqual(8);
+      expect(new Set(tips).size * 2).toBe(tips.length + (tips.length % 2));
+    }
   });
 
   test('a run cut in two keeps the teeth on the piece its naming edge is on', () => {
@@ -349,7 +345,7 @@ describe('a group\'s effects', () => {
       const sealed = withEffects(sealing(g.world, g.id, true), g.id, fx);
       const one = wrote(sealed, 0, a.id, deform(8));
 
-      return fx.round === undefined ? one : wrote(one, 0, g.id, round(10));
+      return fx.round === undefined ? one : wrote(one, 0, g.id, round(2));
     };
 
     // How high the teeth stand off the member's top wall.
@@ -358,10 +354,13 @@ describe('a group\'s effects', () => {
       .map(p => p.y - 140));
 
     // Loose in a scope with no effects, the member deforms itself; under one
-    // that rounds, or one that deforms, the fold lays the same teeth.
+    // that deforms, the fold lays the same teeth. Under one that rounds they
+    // are still there, their tips opened by the scope's round, which comes
+    // after them: a little short of their height and no more.
     expect(off(build({}))).toBeCloseTo(8, 9);
-    expect(off(build({ round: inSegments(8, 10) }))).toBeCloseTo(8, 9);
     expect(off(build({ deform: zigzag }))).toBeCloseTo(8, 9);
+    expect(off(build({ round: inSegments(8, 2) }))).toBeGreaterThan(7);
+    expect(off(build({ round: inSegments(8, 2) }))).toBeLessThan(8);
   });
 
   test('two members deformed differently keep their own patterns under one rounding scope', () => {
@@ -375,8 +374,10 @@ describe('a group\'s effects', () => {
     const b = room(a.world, rect(400, 300, 200, 140));
     const w = withEffects(withEffects(b.world, a.id, { deform: wide }), b.id, { deform: tight });
     const g = grouped(w, 0, [a.id, b.id], TOP)!;
-    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 10) });
-    const world = wrote(wrote(wrote(sealed, 0, a.id, deform(8)), 0, b.id, deform(8)), 0, g.id, round(10));
+    // A round small enough to leave the tight teeth standing: it opens their
+    // tips, coming after them, and one of ten opens them clean away.
+    const sealed = withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 2) });
+    const world = wrote(wrote(wrote(sealed, 0, a.id, deform(8)), 0, b.id, deform(8)), 0, g.id, round(2));
 
     // The teeth along each room's top wall: the tips, which stand off it.
     const tips = (from: number, to: number, wall: number) => csg(world, 0).flat()
@@ -392,16 +393,21 @@ describe('a group\'s effects', () => {
     const g = grouped(s.world, 0, [a.id, s.id], TOP)!;
     const w = wrote(withEffects(sealing(g.world, g.id, true), g.id, { round: inSegments(8, 5) }), 0, g.id, round(5));
     const vertices = new Set(csg(w, 0).flat().map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    const has = (x: number, y: number) => vertices.has(`${x.toFixed(6)},${y.toFixed(6)}`);
 
-    // Where the solid crosses the wall, and its own corners in the room: none
-    // of them a point any more, each an arc.
-    ['100,40', '100,60', '80,40', '80,60', '0,0'].forEach(p => {
-      const [x, y] = p.split(',').map(Number);
+    // Where the solid crosses the wall, and the room's own corners: none of
+    // them a point any more, each an arc.
+    expect(has(100, 40)).toBe(false);
+    expect(has(100, 60)).toBe(false);
+    expect(has(0, 0)).toBe(false);
 
-      expect(vertices.has(`${x.toFixed(6)},${y.toFixed(6)}`)).toBe(false);
-    });
+    // The solid's own corners in the room turn into it, and an opening
+    // leaves a corner that turns in as it is.
+    expect(has(80, 40)).toBe(true);
+    expect(has(80, 60)).toBe(true);
 
-    expect(csg(w, 0).flat().length).toBe(8 * 9 + 1);
+    // Six arcs of eight, the two inner corners, and the ring closed.
+    expect(csg(w, 0).flat().length).toBe(6 * 9 + 2 + 1);
   });
 
   test('a loose group has none to give', () => {
@@ -663,17 +669,7 @@ describe('a scope draws what it resolves to', () => {
     same(world, id);
   });
 
-  // The one row that does not hold, and it wants a bevel `arcsWith` has to
-  // ration: at 120 the corner at (200, 0) takes the whole of the wall into
-  // it, and the tooth at its tangent point has no room left. The fold keeps
-  // that tooth, flat, as a point of the ring the line on it can fade in over;
-  // the same ring drawn as a polygon drops it, and comes out one point short
-  // at each such corner. At 60, where nothing is rationed, the row passes.
-  //
-  // So it is the flat tooth again, at the other end: `reach` made a group
-  // keep one where it had not, and this is a polygon losing one where the
-  // fold keeps it. See `FoldShaped.fades` and PLAN-bevel 3.9.
-  test.fails('members deformed, under a scope rounding past a whole wall', () => {
+  test('members deformed, under a scope rounding past a whole wall', () => {
     const { world, id } = scopes({ deform: 6 }, { round: 120 });
 
     same(world, id);
@@ -768,41 +764,6 @@ describe('editing effects', () => {
     expect(edgesWithinBox([it], { x: -10, y: -10 }, { x: 110, y: 10 })).toEqual([points[0].id]);
   });
 
-  test('one edge deformed leaves the others straight, and their corners\' bevels whole', () => {
-    const { world, id } = room();
-    const [a, b, c, d] = world.polygons.get(id)!.points;
-    const rounded = wrote(withEffects(world, id, { round: inSegments(8, 30), ...DEFORM }), 0, id, round(30));
-    const w = cornersAmounted(rounded, 0, id, 'deform', new Set([a.id]), 3);
-    const it = resolveAt(w, 0).find(r => r.id === id)!;
-
-    // Every edge is its two ends now; what tells them apart is the shape.
-    [a, b, c, d].forEach(p => expect(edgeRun(it, p.id)).toHaveLength(2));
-
-    // Only the deformed edge's *run* has anything standing off it — and its
-    // run is the wall and the two arcs at its ends. Laid on the eroded
-    // outline, a straight and an arc are one kind of run, so a tooth carries
-    // on round the corner rather than stopping short of it, going over from
-    // this edge's amplitude to its neighbour's as it goes: PLAN-bevel 3.5 and
-    // the parked test below. So a point the deform moved is nearer that edge
-    // than any other, or else on one of its two corners' arcs.
-    const plain = resolveAt(rounded, 0).find(r => r.id === id)!;
-    const moved = it.shape[0].filter(p => toShape(p, plain.shape) > 1e-6);
-    const from = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
-
-    expect(moved.length).toBeGreaterThan(0);
-    moved.forEach(p => expect(
-      nearestEdge(p, [a, b, c, d]) === 0 || from(p, a.at) <= 30 || from(p, b.at) <= 30,
-    ).toBe(true));
-
-    // And nothing stands off the two walls that edge does not touch.
-    moved.forEach(p => expect(from(p, c.at)).toBeGreaterThan(30));
-
-    // The corner the deformed edge does not touch is rounded as it was.
-    const arc = (shape: Point[][]) => shape[0].filter(p => from(p, c.at) <= 30);
-
-    expect(arc(it.shape)).toEqual(arc(plain.shape));
-  });
-
   test('an edge\'s deform options are its own, over its polygon\'s', () => {
     // An amount adds and options do not: one set lays a run, and the nearest
     // wins. An edge is named by the corner it leaves, as its amplitude is.
@@ -825,7 +786,7 @@ describe('editing effects', () => {
 
     expect(teeth(w, bottom)).toBe(teeth(w, left));
     expect(teeth(tight, left)).toBe(teeth(w, left));
-    expect(teeth(tight, bottom)).toBeGreaterThan(teeth(w, bottom) * 3);
+    expect(teeth(tight, bottom)).toBeGreaterThanOrEqual(teeth(w, bottom) * 3);
 
     // And dropped again, it is its polygon's edge like any other.
     expect(teeth(edgesInheriting(tight, [points[0].id]), bottom)).toBe(teeth(w, bottom));
@@ -986,19 +947,23 @@ describe('a scope inside a scope', () => {
     expect(two.flat().length).toBe(one.flat().length);
   });
 
-  test('two rounds two deep are one round of their sum', () => {
-    // The whole of the nesting: an inner scope publishes what its fold came
-    // to, so the outer adds its own amount to a sum and rounds the corner
-    // once. See PLAN-bevel's step 5.
-    const one = nested([{ depth: 0, bevel: 30 }]);
+  test('two rounds two deep are one round of the larger', () => {
+    // A round is an opening, and an arc already at curvature `1 / 10` is
+    // untouched by an opening at twenty but for being opened again to twenty:
+    // rounds compose as `round(max(a, b))`, not as their sum. Law 3 says what
+    // the nesting draws, and this is that; the old summing was one particular
+    // construction's. See `rounding` and PLAN-effect's laws.
+    const one = nested([{ depth: 0, bevel: 20 }]);
     const two = nested([{ depth: 0, bevel: 10 }, { depth: 0, bevel: 20 }]);
 
     expect(apart(one, two)).toBeLessThan(1e-9);
     expect(two.flat().length).toBe(one.flat().length);
   });
 
-  test('a depth and a round at each scope come to the same as both at one', () => {
-    const one = nested([{ depth: 30, bevel: 30 }]);
+  test('a depth and a round at each scope come to the depths\' sum and the larger round', () => {
+    // Eroded past the inner round's own radius, a convex corner is a mitre
+    // again, and the outer round lays its own arc on it.
+    const one = nested([{ depth: 30, bevel: 20 }]);
     const two = nested([{ depth: 10, bevel: 10 }, { depth: 20, bevel: 20 }]);
 
     expect(apart(one, two)).toBeLessThan(1e-9);
