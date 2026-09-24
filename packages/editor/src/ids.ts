@@ -210,8 +210,13 @@ export interface Drawn {
  * What comes back is walked, so its own edges leave its own points and it needs
  * no `edges` of its own.
  */
-export function combineIdentified(a: Drawn, b: Drawn, op: Op): Drawn {
-  const tagged = combineTagged(a.shape, b.shape, op);
+export function combineIdentified(
+  a: Drawn,
+  b: Drawn,
+  op: Op,
+  inert?: (ring: number, index: number) => boolean,
+): Drawn {
+  const tagged = combineTagged(a.shape, b.shape, op, undefined, inert);
 
   const at = (ref: SourceRef): Ident => {
     const got = (ref.shape === 0 ? a : b).ids[ref.ring]?.[ref.index];

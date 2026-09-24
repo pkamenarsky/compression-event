@@ -1681,8 +1681,12 @@ export function combineTagged(
   b: Shape,
   op: Op,
   fill: Fill = fieldContains,
+  /** Edges of `b` that bound its fill and are never part of the answer: they
+   * are left out of the cut and still read by the fill. See `eroding`. */
+  inert?: (ring: number, index: number) => boolean,
 ): TaggedShape {
-  const raw = [...segments(a, 0), ...segments(b, 1)];
+  const cutters = segments(b, 1);
+  const raw = [...segments(a, 0), ...(inert === undefined ? cutters : cutters.filter(s => !inert(s.edge.ring, s.edge.index)))];
   const snap = scaleOf(raw) * 1e-9;
 
   // Prepared once and asked four times per segment, which is the whole reason

@@ -144,14 +144,56 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
     edges: along.map(ring => ring.map(w => nameOf(it.ids, w))),
   });
 
+  // Which of the band's edges can never be boundary, and so need not cut
+  // anything. A wall where it stood is the shape's own edge again. A spoke, from
+  // a corner to where it went, is boundary unless the quads either side of it
+  // both have it — one each way round, so there is band on both of its sides.
+  // At a corner turning out they do; at one turning in the two quads can fold
+  // onto the same side, and then the spoke is the edge of the band after all.
+  //
+  // The band is quads by the hundred, and past a round's radius every spoke
+  // crosses every other, so leaving them out of the cut is most of what an
+  // erosion costs. They still bound the fill.
+  const source = new Set(it.shape.flat());
+
+  const inertIn = (pieces: Shape, from: Sweptfrom[][]) => {
+    const edges = new Set<string>();
+    const key = (p: Point, q: Point) => `${p.x},${p.y},${q.x},${q.y}`;
+
+    for (const ring of pieces) ring.forEach((p, i) => edges.add(key(p, ring[(i + 1) % ring.length])));
+
+    return (r: number, i: number): boolean => {
+      const ring = pieces[r], j = (i + 1) % ring.length;
+      const p = ring[i], q = ring[j];
+      const f = from[r][i], g = from[r][j];
+
+      if (source.has(p) && source.has(q)) return true;
+
+      return source.has(p) !== source.has(q)
+        && f.t === undefined && g.t === undefined
+        && f.ring === g.ring && f.index === g.index
+        && edges.has(key(q, p));
+    };
+  };
+
   let out: Drawn = it;
 
   if (band.inward.length > 0) {
-    out = combineIdentified(out, side(band.inward, band.inwardFrom, band.inwardAlong), OpSubtract);
+    out = combineIdentified(
+      out,
+      side(band.inward, band.inwardFrom, band.inwardAlong),
+      OpSubtract,
+      inertIn(band.inward, band.inwardFrom),
+    );
   }
 
   if (band.outward.length > 0) {
-    out = combineIdentified(out, side(band.outward, band.outwardFrom, band.outwardAlong), OpUnion);
+    out = combineIdentified(
+      out,
+      side(band.outward, band.outwardFrom, band.outwardAlong),
+      OpUnion,
+      inertIn(band.outward, band.outwardFrom),
+    );
   }
 
   return out;
