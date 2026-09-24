@@ -1311,9 +1311,14 @@ interface Strips {
 }
 
 /** How many strips, for `n` edges: few enough that a tall edge is not filed a
- * thousand times over, many enough that a strip holds a handful. */
+ * thousand times over, many enough that a strip holds a handful.
+ *
+ * Eight rather than two: an erosion's band is spokes that lie along each other,
+ * and a strip twice as fat walked them in rows. It bought five percent of a
+ * bake. The cost is an edge filed four times as often, which for the short
+ * edges a level is made of is still about once. */
 function stripCount(n: number): number {
-  return Math.max(1, Math.ceil(2 * Math.sqrt(n)));
+  return Math.max(1, Math.ceil(8 * Math.sqrt(n)));
 }
 
 function stripsOf(boxes: Float64Array, n: number): Strips {
