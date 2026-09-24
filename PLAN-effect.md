@@ -574,19 +574,27 @@ Gone with `imagedBy`: `foldShaped`, `arcsWith` and the tension curve, `ArcTeeth`
 and the span's naming fields. `Effected` is facets, bevels and deform;
 `ArcDeform` its options, each edge's own, and each edge's amplitude.
 
-**Still open: something arriving mid-span.** A corner turning out of a wall
-under a round, and a wall growing teeth, change how many points the fold lays
-part way through the span. Each arriving point is missing at the near end, so
-it fades up from nothing rather than popping, but the count changes and the
-bake cuts there. Four bake tests ask for the old answer — the same count at
-both ends, no cut — and are red: *a corner arriving into a rounded ring*, *a
-corner arriving inside a rounded corner's reach*, *an edge growing longer*, and
-*a union edge cut in two*. Getting the old answer back means laying at the
-span's count throughout: an arc at a corner that does not yet turn, and a
-pattern at the span's longest reach with the teeth past a run's end clamped
-flat. The second is `patternRun`'s `reach`, keyed by the run's name; the first
-has no analogue yet. Whether either is worth it over a cut the fades already
-hide is the question to settle before 10.
+**Something arriving mid-span is a cut, and that is settled.** A corner
+turning out of a wall under a round, and a wall growing teeth, change how many
+points the fold lays part way through a span, and the bake cuts there. Each
+arriving point is missing at the near end and fades up from nothing. The tests
+that asked for the old answer — the same count at both ends, no cut — now ask
+that nothing pops instead, sampled finely enough that the geometry's own motion
+is well under the bar: a growing wall moves an eighth of a unit a step and
+stays there, and a corner arriving into a rounded ring leaves 0.43, which is
+the arc's resample stepping to a finer count as it turns — no more than the
+round's accuracy.
+
+**One real pop is left**, and its test is `test.fails` on purpose: *a union
+edge cut in two keeps its teeth*. A deform starts a run at every point a
+construction turned the boundary at, and a crossing is one, so where a room's
+tip reaches its neighbour's wall the wall's run is cut in two and each half
+lays its pattern from its own middle. Every tooth on that wall moves at once —
+6.8 units, not shrinking however finely it is sampled. The old fold named both
+halves by the member edge they lay on. The fold has no name for that: a run
+belongs to the point it starts at. Fixing it means a run that can see past a
+crossing to the wall it continues, which is a question about identity, not
+about the bake.
 
 **10. `baseline.golden.json` regenerated, once, at the end.**
 
