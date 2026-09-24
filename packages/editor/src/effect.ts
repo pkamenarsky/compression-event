@@ -336,7 +336,9 @@ function turnOf(out: readonly (Point | null)[], i: number): Point | null {
 function facets(swept: number, by: number, eps: number): number {
   const most = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - eps / by)));
 
-  return Math.max(1, Math.ceil(swept / Math.max(most, 1e-6)));
+  // Less a hair, so an accuracy asked for as `sagitta` of a count lays that
+  // count and not one more for the rounding in `acos`.
+  return Math.max(1, Math.ceil(swept / Math.max(most, 1e-6) - 1e-9));
 }
 
 /**

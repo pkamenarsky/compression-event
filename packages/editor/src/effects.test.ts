@@ -40,7 +40,7 @@ const deform = (by: number) => ({ kind: 'deform' as const, by });
 /** A `w` by `h` rectangle's area with its four corners rounded `r` deep:
  * each a quarter circle, as the opening draws it, in `segments` chords. */
 function roundedRect(w: number, h: number, r: number, segments: number): number {
-  const chord = Math.sin(Math.PI / (2 * segments)) * Math.cos(Math.PI / (2 * segments));
+  const chord = Math.sin(Math.PI / (4 * segments)) * Math.cos(Math.PI / (4 * segments));
 
   return w * h - 4 * r * r + 4 * r * r * segments * chord;
 }
