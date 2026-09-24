@@ -170,7 +170,10 @@ function through(file: Old): EditorState {
       round: { precision: 0.5, tension: 0.5, chamfer: false },
       deform: { spacing: 12, pattern: 'sine', seed: 0, sides: 'out', jitter: 0 },
     });
-    expect(w.cornerEffects.get(corner)).toEqual({ round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } });
+    // A corner's own round is not a thing any more: a round is an opening and
+    // an opening is a statement about the whole ring. An old file may carry
+    // one, and it is dropped on the way in. See `World.cornerEffects`.
+    expect(w.cornerEffects.get(corner)).toBe(undefined);
   });
 
   test('a 24 made a 25 is eroded, rounded and deformed where it was', () => {

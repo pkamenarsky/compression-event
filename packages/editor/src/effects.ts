@@ -159,38 +159,16 @@ function ownersOf(world: World, corners: readonly VertexId[]): Map<VertexId, Id>
   return out;
 }
 
-/** The round a corner would have were everything switched on: its own
- * options, or its polygon's. Nothing where neither has one. */
-export function cornerRound(world: World, corner: VertexId): Options['round'] | undefined {
-  const owner = ownersOf(world, [corner]).get(corner);
-  const own = world.cornerEffects.get(corner)?.round;
-
-  return own ?? (owner === undefined ? undefined : world.effects.get(owner)?.round);
-}
-
-/** Whether a corner is rounded: its round applies, switched off neither on
- * it nor on its polygon. */
-export function cornerRounding(world: World, corner: VertexId): boolean {
-  const owner = ownersOf(world, [corner]).get(corner);
-
-  return owner !== undefined && optionOf(world.effects.get(owner), 'round', world.cornerEffects.get(corner)) !== undefined;
-}
-
-/** Whether a corner has options of its own. */
-export function ownRound(world: World, corner: VertexId): boolean {
-  return world.cornerEffects.get(corner)?.round !== undefined;
-}
-
-function withCornerRound(world: World, corner: VertexId, round: Options['round'] | undefined): World {
-  return withCornerOption(world, corner, 'round', round);
-}
-
 /**
- * One corner's own options for one effect, or none.
+ * One edge's own options for one effect, or none.
  *
- * One function for both: a corner names itself for a round and the edge
- * leaving it for a deform, which is a difference in what the id means and in
- * nothing this does. See `optionOf`.
+ * A corner used to be able to carry a round of its own under the same key,
+ * the id meaning the corner rather than the edge leaving it. It cannot any
+ * more: a round is an opening, an opening is a statement about the whole ring,
+ * and a bevel at one corner with nought at its neighbours leaves a chord
+ * rather than a wall offset by the bevel. See `rounding` in `effect.ts`. A
+ * ring takes the largest bevel anybody on it asked for, and this map is the
+ * deform's alone.
  */
 function withCornerOption<N extends keyof Options>(world: World, corner: VertexId, name: N, option: Options[N] | undefined): World {
   const cornerEffects = new Map(world.cornerEffects);
@@ -267,45 +245,6 @@ export function edgesOptioned(world: World, edges: readonly VertexId[], patch: P
 /** Edges back to their polygon's deform, their own options dropped. */
 export function edgesInheriting(world: World, edges: readonly VertexId[]): World {
   return edges.reduce((w, c) => (ownDeform(w, c) ? withCornerOption(w, c, 'deform', undefined) : w), world);
-}
-
-/**
- * Corners rounded, or left square. On switches their polygons' round on —
- * given `options` where they have none — and their own back on where it was
- * off; off switches their own off, taking their polygon's options as their
- * own to keep, so that switched on again they are as they were.
- */
-export function cornersSwitched(world: World, corners: readonly VertexId[], on: boolean, options: Options): World {
-  const owners = ownersOf(world, corners);
-  let w = on ? switchedOn(world, [...new Set(owners.values())], 'round', options) : world;
-
-  for (const c of owners.keys()) {
-    const round = cornerRound(w, c) ?? options.round;
-
-    if (on) {
-      if (ownRound(w, c) && round.off === true) w = withCornerRound(w, c, { ...round, off: false });
-    }
-    else {
-      w = withCornerRound(w, c, { ...round, off: true });
-    }
-  }
-
-  return w;
-}
-
-/** An option of corners' own rounds changed, starting from what each has
- * now: its own, its polygon's, or `options`. */
-export function cornersOptioned(world: World, corners: readonly VertexId[], patch: Partial<Options['round']>, options: Options): World {
-  let w = world;
-
-  for (const c of ownersOf(world, corners).keys()) w = withCornerRound(w, c, { ...(cornerRound(w, c) ?? options.round), ...patch });
-
-  return w;
-}
-
-/** Corners back to their polygon's round, their own options dropped. */
-export function cornersInheriting(world: World, corners: readonly VertexId[]): World {
-  return corners.reduce((w, c) => (ownRound(w, c) ? withCornerRound(w, c, undefined) : w), world);
 }
 
 /**

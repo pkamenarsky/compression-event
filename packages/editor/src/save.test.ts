@@ -146,7 +146,7 @@ describe('save', () => {
         [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
         [a, { erode: { off: true } }],
       ]),
-      cornerEffects: new Map([[corners[0].id, { round: { precision: 0.5, tension: 0.5, chamfer: true, off: true } }]]),
+      cornerEffects: new Map([[corners[1].id, { deform: { spacing: 9, pattern: 'zigzag' as const, seed: 3, sides: 'both' as const, jitter: 0.2, off: true } }]]),
     };
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 

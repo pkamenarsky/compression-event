@@ -579,9 +579,22 @@ export interface World {
   /** Which effects each polygon or group has, and how: one fact over every
    * keyframe. How much is in its timeline. Absent is none. See `Effects`. */
   effects: ReadonlyMap<Id, Effects>
-  /** A corner's own options, over its polygon's: its round, and the deform of
-   * the edge it starts. Absent is its polygon's. */
-  cornerEffects: ReadonlyMap<VertexId, Partial<Effects>>
+  /**
+   * An edge's own deform options, over its polygon's, keyed by the corner the
+   * edge leaves. Absent is its polygon's.
+   *
+   * The deform alone. A corner used to be able to carry a round of its own
+   * under the same key — the id read as the corner rather than as the edge —
+   * and it cannot any more: a round is an opening, an opening is a statement
+   * about the whole ring, and a bevel at one corner with nought at its
+   * neighbours leaves a chord rather than a wall offset by the bevel. A ring
+   * takes the largest bevel anybody on it asked for. See `rounding` in
+   * `effect.ts`.
+   *
+   * The name is kept so that a file written before this still loads; the
+   * round a file carries is dropped on the way in.
+   */
+  cornerEffects: ReadonlyMap<VertexId, Pick<Effects, 'deform'>>
 }
 
 /**

@@ -7,11 +7,7 @@ import { cornerRounded, stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
   applies,
-  cornerRounding,
   cornersAmounted,
-  cornersInheriting,
-  cornersOptioned,
-  cornersSwitched,
   edgeDeform,
   edgeRun,
   edgesInheriting,
@@ -139,16 +135,6 @@ describe('a polygon\'s effects', () => {
     expect(shape[0]).toContainEqual({ x: 100, y: 90 });
   });
 
-  test('a corner\'s own options are over its room\'s', () => {
-    const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
-    let w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
-
-    w = { ...w, cornerEffects: new Map([[corner, { round: inSegments(2, 5) }]]) };
-
-    expect(shapeOf(w, id)[0]).toHaveLength(3 * 9 + 3);
-  });
-
   test('a deform puts its points into every edge, off the line by its amplitude', () => {
     const { world, id } = room();
     // Out, a zigzag is teeth: out, on the line, out — every twenty along each
@@ -165,12 +151,12 @@ describe('a polygon\'s effects', () => {
     expect(out.filter(d => Math.abs(d - 2) < 1e-9).length).toBeGreaterThanOrEqual(4);
   });
 
-  test('a pasted room comes with its effects and its corners\' own', () => {
+  test('a pasted room comes with its effects and its edges\' own', () => {
     const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
+    const edge = world.polygons.get(id)!.points[0].id;
     let w = wrote(withEffects(world, id, ROUND), 0, id, round(5));
 
-    w = { ...w, cornerEffects: new Map([[corner, { round: inSegments(2, 5) }]]) };
+    w = { ...w, cornerEffects: new Map([[edge, { deform: { spacing: 12, pattern: 'noise' as const, seed: 7, sides: 'in' as const, jitter: 0 } }]]) };
 
     const after = pasted(w, 0, copied(w, 0, [id]), { x: 300, y: 0 }, TOP);
     const copy = after.ids[0];
@@ -833,32 +819,6 @@ describe('editing effects', () => {
     expect(stateAt(off, id, 0).erosion).toBe(5);
     expect(shapeOf(switchedOn(off, [id], 'erode', REMEMBERED), id)).toEqual(shapeOf(w, id));
     expect(switchedOn(off, [id], 'erode', REMEMBERED).effects.has(id)).toBe(false);
-  });
-
-  test('a corner left square on a rounded room, and rounded its own way', () => {
-    const { world, id } = room();
-    const [a, b] = world.polygons.get(id)!.points;
-    const w = wrote(withEffects(world, id, { round: inSegments(8, 10) }), 0, id, round(10));
-    const ring = () => shapeOf(w, id)[0].length;
-
-    const square = cornersSwitched(w, [a.id], false, REMEMBERED);
-
-    expect(cornerRounding(square, a.id)).toBe(false);
-    expect(cornerRounding(square, b.id)).toBe(true);
-    expect(shapeOf(square, id)[0]).toHaveLength(ring() - 8);
-
-    const back = cornersSwitched(square, [a.id], true, REMEMBERED);
-
-    expect(shapeOf(back, id)).toEqual(shapeOf(w, id));
-
-    const finer = cornersOptioned(w, [a.id], { precision: inSegments(12, 10).precision }, REMEMBERED);
-
-    expect(finer.cornerEffects.get(a.id)!.round).toEqual(inSegments(12, 10));
-    expect(shapeOf(finer, id)[0]).toHaveLength(ring() + 4);
-    expect(shapeOf(cornersInheriting(finer, [a.id]), id)).toEqual(shapeOf(w, id));
-
-    // The room's round switched off leaves every corner square, its own too.
-    expect(shapeOf(switchedOff(finer, [id], 'round'), id)[0]).toHaveLength(4);
   });
 
   test('an edge\'s amplitude is its own, over its polygon\'s', () => {

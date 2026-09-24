@@ -442,7 +442,7 @@ export function effectedOf(
   // A deform with no round still has somewhere to be: the teeth are laid on
   // the eroded outline and the round is only one more thing that happens to
   // it first. See PLAN-bevel 3.1.
-  if (fx?.round === undefined && !corners.some(c => world.cornerEffects.get(c.id)?.round !== undefined) && deform === null) return null;
+  if (fx?.round === undefined && deform === null) return null;
 
   const bevels = drawnBevels(world, id, corners, local, amounts, depth);
   const seen = drawnBevels(world, id, corners, local, amounts, () => 0);
@@ -467,7 +467,7 @@ export function effectedOf(
   // draws bigger is the same curve once eroded, and would otherwise gain a
   // facet — and a line fading in — for a change nobody sees.
   const roundOf = (c: Vertex, i: number): Round | null => {
-    const round = optionOf(fx, 'round', world.cornerEffects.get(c.id));
+    const round = fx?.round?.off === true ? undefined : fx?.round;
 
     return round === undefined || flat[i] || !(bevels[i] > 0)
       ? null
@@ -480,7 +480,7 @@ export function effectedOf(
   };
 
   return shaping({
-    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(optionOf(fx, 'round', world.cornerEffects.get(c.id)), bevels[i] > 0 ? seen[i] : 0))),
+    facets: corners.map((c, i) => (flat[i] ? SQUARE : faceted(fx?.round?.off === true ? undefined : fx?.round, bevels[i] > 0 ? seen[i] : 0))),
     rounds: corners.map(roundOf),
     bevels,
     flat,
@@ -527,7 +527,7 @@ export function drawnBevels(
   };
 
   return corners.map((c, i) => {
-    const round = optionOf(fx, 'round', world.cornerEffects.get(c.id));
+    const round = fx?.round?.off === true ? undefined : fx?.round;
 
     if (round === undefined || !drawn(i)) return 0;
 

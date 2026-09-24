@@ -33,18 +33,12 @@ import {
   EffectName,
   Switch,
   applies,
-  cornerRound,
-  cornerRounding,
-  cornersInheriting,
-  cornersOptioned,
-  cornersSwitched,
   edgeDeform,
   edgeDeforming,
   edgesInheriting,
   edgesOptioned,
   edgesSwitched,
   ownDeform,
-  ownRound,
   switchedOff,
   sizeOf,
   sizedFor,
@@ -84,8 +78,10 @@ type Some = 'all' | 'some' | 'none';
  * what it shows rather than making it again — a field being typed into keeps
  * its focus and a select stays open.
  *
- * With `corners`, the round is about the picked corners' own, and `own` is
- * how many of them have options of their own.
+ * With `corners`, the deform is about the picked edges' own, and `ownEdge` is
+ * how many of them have options of their own. The round has no such pair: a
+ * round is an opening and an opening is a statement about the whole ring, so
+ * it is the polygon's or it is nothing. See `rounding` in `effect.ts`.
  */
 interface Model {
   /** Whether there is a key to show: see `currentKey`. */
@@ -136,9 +132,7 @@ interface Model {
   tension: number
   chamfer: boolean
   corners: boolean
-  own: Some
-  /** Whether the picked edges have deform options of their own, as `own` is
-   * for the picked corners' rounds. */
+  /** Whether the picked edges have deform options of their own. */
   ownEdge: Some
 }
 
@@ -275,7 +269,7 @@ function modelOf(
 
   const mine = corners.length > 0;
   const d = mine ? edgeDeform(world, corners[0]) ?? remembered.deform : shown('deform');
-  const r = mine ? cornerRound(world, corners[0]) ?? remembered.round : shown('round');
+  const r = shown('round');
 
   return {
     key: key !== undefined,
@@ -308,12 +302,11 @@ function modelOf(
     jitter: d.jitter,
     falloff: d.falloff ?? FALLOFF,
     erode: some(ids, id => applies(world, id, 'erode')),
-    round: mine ? some(corners, c => cornerRounding(world, c)) : some(ids, id => applies(world, id, 'round')),
+    round: some(ids, id => applies(world, id, 'round')),
     precision: r.precision,
     tension: r.tension,
     chamfer: r.chamfer,
     corners: mine,
-    own: mine ? some(corners, c => ownRound(world, c)) : 'none',
     ownEdge: mine ? some(corners, c => ownDeform(world, c)) : 'none',
   };
 }
@@ -371,16 +364,13 @@ function body(
   });
 
   /** One option changed on every one that has the effect, on or off — or on
-   * the picked corners' own rounds — and remembered. `further` is a slider
+   * the picked edges' own deforms — and remembered. `further` is a slider
    * still moving: the step before it already went into the history, so this
    * one only carries it on. */
   const changed = <N extends EffectName>(name: N, patch: Partial<Options[N]>, further = false) => update(s => {
     let world = s.world;
 
-    if (name === 'round' && m.corners()) {
-      world = cornersOptioned(world, corners(), patch, s.remembered);
-    }
-    else if (name === 'deform' && m.corners()) {
+    if (name === 'deform' && m.corners()) {
       world = edgesOptioned(world, corners(), patch as Partial<Options['deform']>, s.remembered);
     }
     else {
@@ -399,15 +389,7 @@ function body(
     return further ? { ...s, world, remembered } : marked({ ...s, world, remembered }, s.world);
   });
 
-  const rounded = () => {
-    if (!m.corners()) return toggled('round', m.round());
-
-    const on = m.round() !== 'all';
-
-    update(s => marked({ ...s, world: cornersSwitched(s.world, corners(), on, s.remembered) }, s.world));
-  };
-
-  const inherited = () => update(s => marked({ ...s, world: cornersInheriting(s.world, corners()) }, s.world));
+  const rounded = () => toggled('round', m.round());
 
   const deformed = () => {
     if (!m.corners()) return toggled('deform', m.deform());
@@ -509,7 +491,7 @@ function body(
 
     heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
 
-    heading(() => (m.corners() ? 'Round corners' : 'Round'), 'b', m.round, rounded),
+    heading(() => 'Round', 'b', m.round, rounded),
     options(m.round, [
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
@@ -517,7 +499,6 @@ function body(
       // From about a circle at nought to tight in the corner at one.
       show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05')))),
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
-      show(() => m.own() !== 'none', fragment(field('', link('as the polygon', inherited)))),
     ]),
   ]);
 }

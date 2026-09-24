@@ -117,7 +117,6 @@ import {
   keyRigOf,
 } from './scene';
 import { AmountKind, EMPTY_RIG, Entry, KeyRig, Rig, amountedBy, keysOf, nextKey, once, stateAt } from './rig';
-import { cornerRound } from './effects';
 import {
   GroupId,
   Id,
@@ -773,130 +772,6 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   };
 }
 
-/**
- * What the fold published, written onto the ring it became.
- *
- * A scope lays one round and one deform on amounts its members publish — a
- * bevel per corner, an amplitude and options per edge — and the ring it hands
- * back is bare, so the polygon that ring becomes has to be told the same
- * amounts if it is to draw the same outline. What is written is what the
- * member asked for *over* the scope's, since the scope's own is on the
- * polygon already as its own amount: a corner both rounded draws the sum
- * either way.
- *
- * A point the fold named nothing about — a join between two members, a corner
- * an erosion made — is outline like the rest and takes the polygon's own. The
- * one exception is a run no line named at all, which the fold gives no teeth:
- * it is written down as the amplitude taken back off, so that the polygon
- * lays none there either.
- *
- * See PLAN-bevel's *The resolve carries geometry*.
- */
-function publishing(
-  held: World,
-  world: World,
-  born: KeyframeId,
-  told: readonly {
-    id: PolygonId
-    corner: VertexId
-    was: Reading['corners'][number]
-    line: Reading['lines'][number]
-    from: Point
-    to: Point
-  }[],
-  scope: { bevel: number, amplitude: number },
-): World {
-  const cornerEffects = new Map(held.cornerEffects);
-  const rigs = new Map(held.rigs);
-  const amounts = new Map<PolygonId, KeyRig>();
-
-  /** One corner's amount of one kind, added to what its polygon's rig says. */
-  const amounted = (id: PolygonId, kind: AmountKind, corner: VertexId, by: number) => {
-    if (by === 0) return;
-
-    const rig = amounts.get(id) ?? keyRigOf(held, id);
-
-    amounts.set(id, amountedBy(rig, nextKey(rig), kind, corner, born, by));
-  };
-
-  /** A corner's own options for an effect, where they are not what its
-   * polygon would have given it anyway. */
-  const optioned = <N extends keyof Options>(id: PolygonId, corner: VertexId, name: N, option: Options[N] | undefined) => {
-    const mine = held.effects.get(id)?.[name];
-
-    if (option === undefined || same(option, mine)) return;
-
-    cornerEffects.set(corner, { ...cornerEffects.get(corner), [name]: option });
-  };
-
-  /** How far along `from` → `to` a point sits, projected onto it. */
-  const along = (p: Point, from: Point, to: Point): number => {
-    const dx = to.x - from.x, dy = to.y - from.y, l = Math.hypot(dx, dy);
-
-    return l === 0 ? 0 : ((p.x - from.x) * dx + (p.y - from.y) * dy) / l;
-  };
-
-  for (const { id, corner, was, line, from, to } of told) {
-    if (was !== null) {
-      amounted(id, 'round', corner, was.bevel - scope.bevel);
-
-      // Not the options it asked for but the count the fold actually drew it
-      // in, written down as a count. The ring carries the summed bevel as an
-      // amount, and a precision at that sum is not what was drawn — the fold
-      // facets a corner its member gave no options for in the scope's own
-      // count, whatever the sum comes to. A count is what says that, which is
-      // the whole of why `Effects['round'].facets` is there.
-      // The count, and something to fall back on past the bevel it was taken
-      // at: the options the member published where it published any, and the
-      // ring's own — the scope's, which is what faceted this corner — where
-      // it did not. A precision of nought would chamfer.
-      const mine = held.effects.get(id)?.round;
-
-      optioned(id, corner, 'round', was.facets === undefined ? undefined : {
-        precision: was.round?.precision ?? mine?.precision ?? 0,
-        tension: was.round?.tension ?? mine?.tension ?? was.facets.tension,
-        chamfer: was.round?.chamfer ?? mine?.chamfer ?? false,
-        facets: was.facets,
-        facetsAt: was.bevel,
-      });
-    }
-
-    if (line === null) amounted(id, 'deform', corner, -scope.amplitude);
-    else {
-      amounted(id, 'deform', corner, line.amplitude - scope.amplitude);
-
-      // Where the fold put this edge's pattern, as an offset from where the
-      // edge would put it itself, and how far the fold let it run. The fold
-      // centres a run on the member edge that named it; the ring has no
-      // member edge, so it is told. See `Effects['deform'].anchor`.
-      optioned(id, corner, 'deform', line.deform === null ? undefined : {
-        spacing: line.deform.spacing,
-        pattern: line.deform.pattern,
-        seed: line.deform.seed,
-        sides: line.deform.sides,
-        jitter: line.deform.jitter,
-        falloff: line.deform.falloff,
-        offset: line.deform.offset,
-        anchor: along(line.at, from, to) - Math.hypot(to.x - from.x, to.y - from.y) / 2,
-        reach: line.reach,
-
-        // The run was this member edge's, so its pattern is that edge's: the
-        // same teeth nudged the same ways, which a seeded start, a jitter and
-        // the noise all read off the name.
-        key: line.id,
-      });
-    }
-  }
-
-  for (const [id, rig] of amounts) rigs.set(id, rig);
-
-  return { ...held, cornerEffects, rigs };
-}
-
-/** Two sets of options, field for field. */
-function same(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
 
 /** Whether anything is written about a thing at a keyframe. */
 function written(rig: KeyRig, k: KeyframeId): boolean {

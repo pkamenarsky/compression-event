@@ -110,6 +110,9 @@ export interface Saved {
     rigs: [Id, SavedKeyRig][]
     flags: [Id, Flags][]
     effects: [Id, Effects][]
+    /** The deform of the edge leaving each corner. A file written before the
+     * per-corner round went may carry a `round` here too; `restored` drops it.
+     * See `World.cornerEffects`. */
     cornerEffects: [VertexId, Partial<Effects>][]
   }
   /**
@@ -188,7 +191,9 @@ export function restored(file: Saved): EditorState {
     rigs: new Map(file.world.rigs.map(([id, rig]) => [id, restoredKeyRig(rig)])),
     flags: new Map(file.world.flags),
     effects: new Map(file.world.effects),
-    cornerEffects: new Map(file.world.cornerEffects),
+    cornerEffects: new Map(file.world.cornerEffects.flatMap(
+      ([c, fx]) => (fx.deform === undefined ? [] : [[c, { deform: fx.deform }] as [VertexId, Pick<Effects, 'deform'>]]),
+    )),
   };
 
   return {
