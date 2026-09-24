@@ -523,6 +523,36 @@ describe('law 1: a scope draws what it resolves to', () => {
     expect(differing(drawn(out.world), drawn(world))).toEqual([]);
   });
 
+  /**
+   * Found by seed 19. The inner scope deforms its left wall, and a room outside
+   * it covers that wall: the teeth pointing out are buried, and the one tooth
+   * pointing in leaves a notch the room does not reach. The notch is a hole in
+   * the union that touches its outline at the corner the tooth starts from.
+   *
+   * What it turned on: `nested`, in the resolve, asked whether the hole was in
+   * the outline at the hole's first point — that corner, on the outline's own
+   * boundary — got no, owned it by nothing and dropped it. The scope drew the
+   * notch and the resolution did not.
+   */
+  test('and a notch that touches the outline at a corner is still a hole in it', () => {
+    const spec: Spec = { kind: 'group', kit: {}, members: [
+      { kind: 'group', kit: { deform: 9 }, members: [
+        { kind: 'room', at: rect(120, 120, 200, 200) },
+        { kind: 'room', at: rect(240, 180, 120, 120) },
+      ] },
+      { kind: 'room', at: rect(0, 120, 120, 120) },
+    ] };
+
+    const { world } = built(emptyWorld(), spec);
+    const scope = joining(world);
+
+    for (const id of world.groups.keys()) {
+      const out = resolveGroup(world, 0, id)!;
+
+      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+    }
+  });
+
   test('nor does resolving a scope inside it', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
