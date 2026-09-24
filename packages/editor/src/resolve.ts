@@ -726,19 +726,49 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
     const mine = next;
     const points: Vertex[] = [];
 
+    /** What each point of a ring was made, or nothing where the contributors
+     * brought no names. */
+    const madeIn = (part: Reading) => part.ring.map((_p, i) => (part.names[i] === null ? null : madeOf(part.names[i]!)));
+
     // Where each ring's runs start, so a point that is a sample can say which
-    // of this polygon's own corners it is a sample *of*. A run's start is the
-    // point named `on(e, 0)`: the one place an arc about `e` can begin.
+    // of this polygon's own corners it is a sample *of*.
+    //
+    // Two answers, and the second is not a nicety. A sample's own run starts at
+    // the point named `on(e, 0)` — the one place an arc about `e` can begin —
+    // and that is the first map. But an arrangement is free to cut an arc, and
+    // where it cuts one the `on(e, 0)` end is *gone*: what is left of the arc
+    // is samples whose start gave out. Written down as corners, every one of
+    // them starts a run of its own, and a deform after the resolve lays a tooth
+    // on each — five teeth, on an arc a scope drew one along.
+    //
+    // So the fallback is the run they are actually in: the last point before
+    // them that is not a sample, which is what the scope's own deform reads
+    // too. A crossing an arrangement made is such a point, and a crossing is
+    // exactly what cut the arc.
     const starts = parts.map(part => {
-      const out = new Map<string, number>();
+      const what = madeIn(part);
+      const begins = new Map<string, number>();
 
-      part.ring.forEach((p, i) => {
-        const what = part.names[i] === null ? null : madeOf(part.names[i]!);
-
-        if (what?.kind === 'on' && what.t === 0) out.set(String(what.edge), i);
+      what.forEach((w, i) => {
+        if (w?.kind === 'on' && w.t === 0) begins.set(String(w.edge), i);
       });
 
-      return out;
+      // Walked from a point that is not a sample, so that the first sample of
+      // the ring finds the run it is in rather than the one before it.
+      const from = what.findIndex(w => w?.kind !== 'on');
+      const held: (number | null)[] = what.map(() => null);
+      let last: number | null = null;
+
+      if (from >= 0) {
+        for (let k = 0; k < what.length; k++) {
+          const i = (from + k) % what.length;
+
+          if (what[i]?.kind !== 'on') last = i;
+          held[i] = last;
+        }
+      }
+
+      return { begins, held };
     });
 
     // Every corner of every ring gets its id before any of them is asked
@@ -757,7 +787,9 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
         // along. A run whose start is not in this ring — cut away by the
         // arrangement — has nothing to point at, and the point is written down
         // as the corner it now is. See `Vertex.sample`.
-        const of = what?.kind === 'on' ? starts[ring].get(String(what.edge)) : undefined;
+        const of = what?.kind !== 'on'
+          ? undefined
+          : starts[ring].begins.get(String(what.edge)) ?? starts[ring].held[i] ?? undefined;
 
         points.push({
           id: corner,
