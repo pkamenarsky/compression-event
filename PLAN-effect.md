@@ -464,10 +464,49 @@ counterexample shows it outright: an arc's facets on one side, a tooth standing
 where they were on the other.
 
 The fix is for a `Vertex` to carry what its construction made it, rather than
-for `identify` to assume. That is a field on `Vertex`, a field in the save
-format and a converter, and it belongs with steps 8 and 9 — it is the same
-question the bake asks when it wants to follow a member's corner through a
-scope above it.
+for `identify` to assume. `Vertex.sample` is that: which of the polygon's own
+corners starts the run this point is a sample of, and how far along it sits.
+Not the member's old name, which named a member the new polygon has no memory
+of — the same *structure*, said in this polygon's own corners, which is all
+anything downstream asks. Getting a value there meant naming the union's points
+rather than minting them, and the arrangement was already most of the way:
+`Whither` says a boundary point is a member's vertex or a crossing of two, so
+`nameOf` reads the contributor's own name or `born` of the two walls that
+crossed — the same rule `combineIdentified` uses, and it has to be.
+
+It needed a second answer to be worth anything. An arrangement is free to cut
+an arc, and where it cuts one the `on(e, 0)` end is exactly what goes: what is
+left is samples whose start gave out, written down as corners, each starting a
+run of its own. A stretch a scope laid as one run of seven points over 24.17
+units with one tooth came back, resolved, as six runs of 0.10, 0.17, 0.17,
+0.17, 0.17 and 23.37 with a tooth forced onto each. So a sample whose start is
+missing takes the run it is actually in: the last point before it that is not a
+sample, which is what the scope's own deform reads too, and which is the
+crossing that cut the arc.
+
+**What is left is not about identity at all.** Instrumented on the generated
+counterexample, the naming now matches one run for one: same starts, same
+lengths, same teeth, and with the scope's own effects taken off, resolving is
+point-for-point identical. What breaks is narrower and older, and it is in the
+erosion. Two rings, thirty-one units apart at their nearest, no nesting, same
+winding, eroded by nine:
+
+```
+ERODE together  [7,9,3, 17,16, 9,4,7,13,7,10,9,9,8,12,11]
+ERODE 1 alone   [       16,14, 9,4,7,13,7,10,9,9,8,12,11]
+ERODE 1 + far   [7,9,3, 16,14, 9,4,7,13,7,10,9,9,8,12,11]
+```
+
+The neighbour at its real distance puts three points into the *other* ring's
+erosion; moved a hundred thousand units away it does not, and every other ring
+is unchanged. A depth of nine cannot reach thirty-one units, so this is not the
+two shapes meeting. Ruled out: nesting (the boxes are disjoint in x and both
+areas are positive) and tolerance by extent (moving it away *raises* the extent
+and gives the alone answer). Mechanism not found.
+
+That is what stands between the laws and green: a resolve splits one shape into
+two polygons, each is eroded alone, and the erosion of one is not what it was
+beside the other.
 
 Twenty-three tests go red with the step — `effects.test` 14, `bake.test` 8, one
 export — and they are the old look and the old machinery, which steps 8, 9 and
