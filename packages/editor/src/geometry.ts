@@ -1171,7 +1171,6 @@ function turn(a: Point, b: Point, p: Point): number {
 
 export interface Field {
   shape: Shape
-  tree: Packed
   /** `a` and `b` of each edge, flattened, four numbers apiece. */
   edges: Float64Array
   /** The edges again, by the horizontal strips they reach into. See `Strips`. */
@@ -1264,7 +1263,7 @@ export function field(shape: Shape): Field {
     }
   }
 
-  return { shape, tree: pack(boxes), edges, strips: stripsOf(boxes, n) };
+  return { shape, edges, strips: stripsOf(boxes, n) };
 }
 
 export function fieldWinding(f: Field, p: Point): number {
@@ -1351,6 +1350,19 @@ export function encloses(outer: Shape, inner: Shape): boolean {
   const e = f.edges;
   const eps = extentOf(outer) * 1e-7;
 
+  // Built here rather than with the field: this is the one reader of it, and
+  // a field is made twice per arrangement that never asks.
+  const boxes = new Float64Array(e.length);
+
+  for (let at = 0; at < e.length; at += 4) {
+    boxes[at] = Math.min(e[at], e[at + 2]);
+    boxes[at + 1] = Math.min(e[at + 1], e[at + 3]);
+    boxes[at + 2] = Math.max(e[at], e[at + 2]);
+    boxes[at + 3] = Math.max(e[at + 1], e[at + 3]);
+  }
+
+  const tree = pack(boxes);
+
   for (const ring of inner) {
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i], b = ring[(i + 1) % ring.length];
@@ -1359,7 +1371,7 @@ export function encloses(outer: Shape, inner: Shape): boolean {
       let clear = true;
 
       eachPacked(
-        f.tree,
+        tree,
         Math.min(a.x, b.x) - eps,
         Math.min(a.y, b.y) - eps,
         Math.max(a.x, b.x) + eps,
