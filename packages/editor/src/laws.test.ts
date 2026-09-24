@@ -590,6 +590,43 @@ describe('law 1: a scope draws what it resolves to', () => {
     }
   });
 
+  /**
+   * Found by seed 20. The middle scope deforms, and one of its walls is named
+   * by a crossing that heads two runs, so the first tooth of that wall is laid
+   * twice under one name: once far off on the right, once as a flank the outer
+   * erosion leaves standing and another wall cuts in two.
+   *
+   * What it turned on: the outer deform follows each piece of a cut wall back
+   * to the edge it carries on, and asked that every other point of that edge
+   * lie on the piece's line. The copy on the right did not, so the pieces were
+   * never joined and each was laid from its own middle; and where they were,
+   * the line was taken from whichever piece by that name came first. The
+   * resolution, whose flank is one corner's edge, laid them as one wall.
+   */
+  test('and a tooth laid twice under one name still carries its cut pieces as one wall', () => {
+    const spec: Spec = { kind: 'group', kit: { erode: 16, deform: 1 }, members: [
+      { kind: 'group', kit: { erode: 9, deform: 8 }, members: [
+        { kind: 'room', at: rect(180, 0, 120, 120) },
+        { kind: 'group', kit: { erode: 1, round: 1, deform: 1 }, members: [
+          { kind: 'room', at: rect(180, 120, 120, 160) },
+          { kind: 'room', at: rect(240, 0, 160, 120) },
+        ] },
+      ] },
+      { kind: 'room', at: rect(60, 0, 80, 120) },
+    ] };
+
+    const { world } = built(emptyWorld(), spec);
+    const scope = joining(world);
+
+    for (const id of world.groups.keys()) {
+      const out = resolveGroup(world, 0, id)!;
+
+      if (scope.across && out.ids.length > 1) continue;
+
+      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+    }
+  });
+
   test('nor does resolving a scope inside it', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
@@ -738,3 +775,93 @@ describe('law 3: an effect on a scope is an effect on its resolution', () => {
     }), RUNS);
   }, SLOW);
 });
+
+// -----------------------------------------------------------------------------
+// Shrinking a counterexample by hand
+// -----------------------------------------------------------------------------
+
+/**
+ * A law 1 counterexample, shrunk: `LAW_SHRINK='<spec json>' pnpm vitest run
+ * laws -t shrink`. fast-check will not shrink a replayed seed, and even
+ * unreplayed its shrinks keep the arrangement's shape. This one drops
+ * members, lifts a group's members into its holder and lowers each amount,
+ * one step at a time for as long as some scope still resolves to a different
+ * drawing, and prints what is left with the difference.
+ */
+test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample', () => {
+  const diffs = (spec: Spec) => {
+    const { world } = built(emptyWorld(), spec);
+    const scope = joining(world);
+    const out: [Id, string[]][] = [];
+
+    for (const id of world.groups.keys()) {
+      const r = resolveGroup(world, 0, id);
+
+      if (r === null || (scope.across && r.ids.length > 1)) continue;
+
+      const d = differing(drawn(r.world), scope.lines);
+
+      if (d.length > 0) out.push([id, d]);
+    }
+
+    return out;
+  };
+  const fails = (spec: Spec) => {
+    try {
+      return diffs(spec).length > 0;
+    }
+    catch {
+      return false;
+    }
+  };
+  const smaller = function* (s: Spec): Generator<Spec> {
+    if (s.kind === 'room') return;
+
+    const at = (i: number, ...by: Spec[]) => [...s.members.slice(0, i), ...by, ...s.members.slice(i + 1)];
+
+    for (let i = 0; i < s.members.length; i++) {
+      const m = s.members[i];
+
+      if (s.members.length > 2) yield { ...s, members: at(i) };
+
+      if (m.kind === 'group') {
+        for (const inner of m.members) yield { ...s, members: at(i, inner) };
+        yield { ...s, members: at(i, ...m.members) };
+      }
+
+      for (const v of smaller(m)) yield { ...s, members: at(i, v) };
+    }
+
+    for (const k of ['erode', 'round', 'deform'] as const) {
+      const by = s.kit[k];
+
+      if (by === undefined) continue;
+
+      const { [k]: _, ...rest } = s.kit;
+
+      yield { ...s, kit: rest };
+      for (let v = 1; v < by; v++) yield { ...s, kit: { ...s.kit, [k]: v } };
+    }
+  };
+
+  let spec: Spec = JSON.parse(process.env.LAW_SHRINK!);
+
+  expect(fails(spec)).toBe(true);
+
+  let again = true;
+
+  while (again) {
+    again = false;
+
+    for (const v of smaller(spec)) {
+      if (fails(v)) {
+        spec = v;
+        again = true;
+        break;
+      }
+    }
+  }
+
+  console.log(JSON.stringify(spec));
+  console.log(JSON.stringify(diffs(spec), null, 1));
+}, SLOW);

@@ -1209,7 +1209,12 @@ function linesIn(it: Drawn, snap: number): Map<string, Line> {
     const others = (c: Ident) => (on.get(c) ?? []).filter(p => p !== self);
     const fits = [what.a, what.b].filter(c => others(c).every(line));
     const seen = fits.filter(c => others(c).length > 0);
-    const carries = fits.length > 1 ? seen : fits;
+    let carries = fits.length > 1 ? seen : fits;
+
+    // A name laid in two places — a tooth of a wall whose name heads two runs
+    // is laid once on each — has points off this line that are not this edge
+    // here. Where neither fits whole, the one with a point on the line does.
+    if (carries.length === 0) carries = [what.a, what.b].filter(c => others(c).some(line));
 
     if (carries.length !== 1) return null;
     if (!known.has(carries[0])) known.set(carries[0], line);
@@ -1254,14 +1259,24 @@ function linesIn(it: Drawn, snap: number): Map<string, Line> {
     // it is, and otherwise the piece furthest back along the line. The edge
     // itself may have been cut away, and a resolved polygon has no amount or
     // options for a corner it does not have.
-    const { dx, dy } = got[0];
-    const along = (p: Piece) => p.at.x * dx + p.at.y * dy;
-    const head = got.find(p => p.name === root)
-      ?? got.reduce((best, p) => (along(p) < along(best) ? p : best));
-    const line = onLine(head.at, dx, dy);
-    const mine = got.filter(p => p.dx * dx + p.dy * dy > 1 - 1e-9 && line(p.at));
+    //
+    // The line is the one most of the pieces lie on. A name can head pieces
+    // in two places — a tooth of a wall whose name heads two runs is laid on
+    // each — and the one that happened to come first need not be the wall
+    // the others are cut from.
+    const lined = (a: Piece) => {
+      const on = onLine(a.at, a.dx, a.dy);
 
-    if (!mine.includes(head) || (mine.length < 2 && head.name === root)) continue;
+      return got.filter(p => p.dx * a.dx + p.dy * a.dy > 1 - 1e-9 && on(p.at));
+    };
+    const named = got.filter(p => p.name === root);
+    const most = (named.length > 0 ? named : got).reduce((best, p) => (lined(p).length > lined(best).length ? p : best));
+    const { dx, dy } = most;
+    const along = (p: Piece) => p.at.x * dx + p.at.y * dy;
+    const mine = lined(most);
+    const head = named.length > 0 ? most : mine.reduce((best, p) => (along(p) < along(best) ? p : best));
+
+    if (mine.length < 2 && head.name === root) continue;
 
     const from = (p: Piece) => (p.at.x - head.at.x) * dx + (p.at.y - head.at.y) * dy;
     let lo = Infinity, hi = -Infinity;
