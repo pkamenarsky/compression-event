@@ -41,7 +41,7 @@ import { combineIdentified, on } from '../ids';
 import type { Effect } from '../effect';
 // `eroding` is taken here: the core's is the question of whether a scope
 // erodes at all, and this is the effect that does it.
-import { deforming, eroding as offsetting, rounding } from '../effect';
+import { deforming, eroding as offsetting, rounding, sagitta } from '../effect';
 import {
   GroupId,
   Id,
@@ -577,7 +577,7 @@ const foldedBy = remembered((
 
   const steps: Effect[] = [
     ...(depth === 0 ? [] : [offsetting(depth)]),
-    ...(round ? [rounding(bevel, sagittaOf(bevel, n))] : []),
+    ...(round ? [rounding(bevel, sagitta(bevel, n))] : []),
     ...(spacing === undefined ? [] : [deforming(amplitude, {
       spacing,
       pattern: PATTERNS[pattern],
@@ -591,18 +591,6 @@ const foldedBy = remembered((
 
   return steps.reduce<Drawn>((it, fx) => fx(it), union);
 });
-
-/**
- * The accuracy an arc of `bevel` drawn in `n` facets stands at: how far the
- * chord of one facet of a square corner's arc falls from the arc.
- *
- * The round is an opening and lays as many facets as the accuracy asks for
- * rather than the count it is told; asking for the accuracy the old count
- * stood at is how the two are held to the same look.
- */
-function sagittaOf(bevel: number, n: number): number {
-  return Math.max(bevel * (1 - Math.cos(Math.PI / (4 * Math.max(1, n)))), 1e-9);
-}
 
 /**
  * A scope's round and deform as `foldedBy` is keyed by them: the facets and

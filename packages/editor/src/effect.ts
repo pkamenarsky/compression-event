@@ -71,11 +71,6 @@ function asks(by: Amount): boolean {
   return typeof by === 'number' ? by !== 0 : [...by.values()].some(a => a !== 0);
 }
 
-/** The most any point is given, which is what a facet count is read off. */
-function most(by: Amount): number {
-  return typeof by === 'number' ? by : Math.max(0, ...by.values());
-}
-
 /**
  * The erosion, as an effect.
  *
@@ -341,6 +336,19 @@ function facets(swept: number, by: number, eps: number): number {
   const most = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - eps / by)));
 
   return Math.max(1, Math.ceil(swept / Math.max(most, 1e-6)));
+}
+
+/**
+ * How far the chord of one facet of a square corner's arc of `bevel` in `n`
+ * falls from the arc: the accuracy a round is asked to stand at, so that it
+ * lays about as many facets as the count it is told.
+ *
+ * The round is an opening and lays as many facets as the accuracy asks for
+ * rather than a count; asking for the accuracy the count stood at is how the
+ * two are held to the same look.
+ */
+export function sagitta(bevel: number, n: number): number {
+  return Math.max(bevel * (1 - Math.cos(Math.PI / (4 * Math.max(1, n)))), 1e-9);
 }
 
 /**

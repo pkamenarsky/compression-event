@@ -860,7 +860,10 @@ export function worldCanvas(
                 const scale = kind === undefined ? 1 : scaleAt(was, id, v);
                 const amount = scale > 0 ? by / scale : 0;
 
-                if (kind !== undefined && corners.size > 0 && world.polygons.has(id)) {
+                // A round on picked corners is a round on their ring: an
+                // opening is a statement about the whole shape, so there is no
+                // bevel of one corner for it to write.
+                if (kind !== undefined && kind !== 'round' && corners.size > 0 && world.polygons.has(id)) {
                   world = cornersAmounted(world, v, id, kind, corners, amount);
                   continue;
                 }

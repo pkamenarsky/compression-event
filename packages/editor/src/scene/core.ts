@@ -111,7 +111,7 @@ import { identify, on } from '../ids';
 import type { Amount as Given, Effect } from '../effect';
 // `eroding` is this file's own — whether a scope erodes at all — so the effect
 // that does it comes in under another name.
-import { deforming, eroding as offsetting, rounding } from '../effect';
+import { deforming, eroding as offsetting, rounding, sagitta } from '../effect';
 import { Key as Memo, remembered } from '../memo';
 import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
@@ -1333,13 +1333,6 @@ function folding(
  * off, a count being one number for the whole polygon. */
 function most(by: Given): number {
   return typeof by === 'number' ? by : Math.max(0, ...by.values());
-}
-
-/** How far the chord of one facet of a square corner's arc of `bevel` in `n`
- * falls from the arc: the accuracy the opening is asked to stand at, so that
- * it lays about as many facets as the count it replaces. */
-function sagitta(bevel: number, n: number): number {
-  return Math.max(bevel * (1 - Math.cos(Math.PI / (4 * Math.max(1, n)))), 1e-9);
 }
 
 /** Where each of a polygon's features lands: the construction `project`
