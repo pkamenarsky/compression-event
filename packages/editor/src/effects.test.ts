@@ -246,11 +246,11 @@ describe('a group\'s effects', () => {
     expect(area(60)).toBeLessThan(area(40));
   });
 
-  test('a run\'s teeth are its naming edge\'s, so the far end moving leaves them where they are', () => {
+  test('a wall made of two members\' edges is one run, its teeth centred on the whole of it', () => {
     // Two rooms along one wall, sealed and deformed as one. The wall is one
-    // straight of the fold and takes one pattern — the first room's edge
-    // names it, and the teeth are counted out from that edge's own middle.
-    // So the second room growing at the far end moves nothing over the first.
+    // straight of the fold and takes one pattern, centred — step 7's one
+    // default — on the wall and not on either room's edge. So the far end
+    // moving moves the middle, and the teeth with it.
     const zigzag = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
     const build = (by: number) => {
       const a = room(emptyWorld(), rect(0, 0, 200, 140));
@@ -260,14 +260,17 @@ describe('a group\'s effects', () => {
       return wrote(withEffects(sealing(g.world, g.id, true), g.id, { deform: zigzag }), 0, g.id, deform(6));
     };
 
-    // The teeth on the near half of the wall, where only the first room is.
-    const near = (w: World) => csg(w, 0).flat()
-      .filter(p => p.y > 140 - 1e-9 && p.x > 10 && p.x < 150)
-      .map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`);
+    // The wall's points off its line, mirrored about its middle.
+    const off = (w: World, end: number) => csg(w, 0).flat()
+      .filter(p => p.y > 140 + 1e-9)
+      .map(p => [p.x, end - p.x].map(x => x.toFixed(6)).sort().join());
 
-    expect(near(build(0)).length).toBeGreaterThanOrEqual(4);
-    expect(near(build(40))).toEqual(near(build(0)));
-    expect(near(build(130))).toEqual(near(build(0)));
+    for (const by of [0, 40, 130]) {
+      const tips = off(build(by), 360 + by);
+
+      expect(tips.length).toBeGreaterThanOrEqual(8);
+      expect(new Set(tips).size * 2).toBe(tips.length + (tips.length % 2));
+    }
   });
 
   test('a run cut in two keeps the teeth on the piece its naming edge is on', () => {
