@@ -92,6 +92,7 @@ import {
   boundaryRuns,
   contains,
   ground,
+  onBoundary,
 } from './geometry';
 import {
   Contributed,
@@ -407,15 +408,39 @@ function nested(rings: readonly Ring[]): { hole: boolean, owner: number | null }
 
     // The tightest outline round it. Tightest rather than first, so a courtyard
     // inside a room inside a courtyard belongs to the room.
+    //
+    // Asked of a point of the hole that is not on the outline. A hole may touch
+    // its outline at a corner — a notch a deform bit into a wall, closed off
+    // where another room covers the rest of it, meets the outline at the one
+    // corner the tooth started from — and a point on a boundary is inside or
+    // out by the last bit of a winding number. Asked there, the hole was owned
+    // by nothing and went, and the notch the scope drew went with it.
     let owner: number | null = null;
 
     rings.forEach((other, j) => {
-      if (hole[j] || !contains([other], ring[0])) return;
+      if (hole[j] || !contains([other], clearOf(other, ring))) return;
       if (owner === null || Math.abs(area[j]) < Math.abs(area[owner])) owner = j;
     });
 
     return { hole: true, owner };
   });
+}
+
+/**
+ * A point of `ring` that is not on `other`'s boundary: a corner, or failing
+ * that the middle of an edge, since a ring can touch another at every corner
+ * and still not lie along it. The first corner where every one of them is on
+ * it, which is a ring lying along the other and no question of containment.
+ */
+function clearOf(other: Ring, ring: Ring): Point {
+  const on = onBoundary([other]);
+  const mid = (i: number) => {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+
+  return ring.find(p => !on(p)) ?? ring.map((_p, i) => mid(i)).find(p => !on(p)) ?? ring[0];
 }
 
 /**
