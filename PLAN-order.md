@@ -199,6 +199,17 @@ property: a list on a scope draws what its layers on nested scopes draw, one
 each. `effects.test.ts`'s *a scope inside a scope* is rewritten to what law 3
 says (see `PLAN-effect.md`).
 
+   *Done, and red on two, both new coverage.* Law 3's *an erosion*: a polygon
+   `[erode 3, deform 1]` beside another under a scope `[erode 1]`, and one more
+   erosion laid on it, draws a tooth corner 3e-4 from where the resolution does
+   (`[erode 3, deform 1, erode 1, erode 1]` on the polygon). The nesting
+   property: a scope `[erode 2, erode 1]` over a scope `[erode 4]` over a room
+   `[round 25, erode 1]` draws one corner 0.03 from the list taken apart. Both
+   are one list split across a fold boundary — a union between two of its
+   layers — against the same list laid in one fold, and both need an erosion
+   of a ring an earlier layer made. Without a polygon's own list under it
+   neither shows. Shrink with `LAW_THREE` / `LAW_NEST` and `LAW_SHRINK`.
+
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.
 

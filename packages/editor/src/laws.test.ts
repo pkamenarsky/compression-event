@@ -3,8 +3,8 @@
 //
 // PLAN-effect states them; this is them, as properties over generated worlds
 // rather than over a handful of shapes somebody thought of. A world here is a
-// tree: rooms at the leaves, sealed groups above them, and a kit of effects —
-// an erosion, a round, a deform — on any node of it.
+// tree: rooms at the leaves, sealed groups above them, and a kit of effects on
+// any node of it — a list of erosions, rounds and deforms, in any order.
 //
 // What every one of them compares is the drawing, `csg`, point for point. Not
 // an area, not a distance: the laws say *the same outline*, and an area that
@@ -17,8 +17,9 @@ import { Point } from '@ce/game/world';
 import { TOP, addPolygon, csg, grouped, sealing } from './scene';
 import { resolveGroup } from './resolve';
 import { laidAcross } from './effect';
-import { Effects, Writing, deform, erode, inSegments, round, withEffects, wrote } from './testing';
-import { Id, World, emptyWorld } from './types';
+import { added } from './effects';
+import { inSegments, wrote } from './testing';
+import { Id, Layer, World, emptyWorld } from './types';
 
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -272,38 +273,46 @@ function differing(a: readonly [Point, Point][], b: readonly [Point, Point][]): 
 // What a world is made of
 // -----------------------------------------------------------------------------
 
-/** An erosion, a round and a deform, any of which a node may be without. */
-interface Kit {
-  erode?: number
-  round?: number
-  deform?: number
+/** One layer of a kit: its kind, and the amount written for it. */
+interface Laid {
+  kind: 'erode' | 'round' | 'deform'
+  by: number
 }
 
-/** A room, or a sealed group of them with a kit of its own. */
+/** A list of layers, laid first to last: any kinds, in any order, the same
+ * kind as often as it likes. */
+type Kit = readonly Laid[];
+
+const e = (by: number): Laid => ({ kind: 'erode', by });
+const r = (by: number): Laid => ({ kind: 'round', by });
+const d = (by: number): Laid => ({ kind: 'deform', by });
+
+/** A room with a kit of its own, or a sealed group of them with one. */
 type Spec =
-  | { kind: 'room', at: Point[] }
+  | { kind: 'room', at: Point[], kit?: Kit }
   | { kind: 'group', kit: Kit, members: Spec[] };
 
 const ZIGZAG = { spacing: 25, pattern: 'zigzag' as const, seed: 1, sides: 'both' as const, jitter: 0 };
 
-const optionsOf = (k: Kit): Effects => ({
-  ...(k.round === undefined ? {} : { round: inSegments(8, k.round) }),
-  ...(k.deform === undefined ? {} : { deform: ZIGZAG }),
-});
+function optionsOf(l: Laid): Omit<Layer, 'id'> {
+  if (l.kind === 'round') return { kind: 'round', ...inSegments(8, l.by) };
+  if (l.kind === 'deform') return { kind: 'deform', ...ZIGZAG };
 
-const amountsOf = (k: Kit): Writing[] => [
-  ...(k.erode === undefined ? [] : [erode(k.erode)]),
-  ...(k.round === undefined ? [] : [round(k.round)]),
-  ...(k.deform === undefined ? [] : [deform(k.deform)]),
-];
+  return { kind: 'erode' };
+}
 
-/** `k` laid on `id`: the options it stands in, and the amounts written at the
- * first keyframe. A kit with nothing in it writes nothing at all. */
+/** `k` laid at the end of `id`'s list, each layer with a fresh id and its
+ * amount written at the first keyframe. */
 function kitted(world: World, id: Id, k: Kit): World {
-  const amounts = amountsOf(k);
-  const fx = withEffects(world, id, optionsOf(k));
+  let w = world;
 
-  return amounts.length === 0 ? fx : wrote(fx, 0, id, ...amounts);
+  for (const l of k) {
+    const made = added(w, id, optionsOf(l));
+
+    w = wrote(made.world, 0, id, { kind: 'amount', layer: made.layer, by: l.by });
+  }
+
+  return w;
 }
 
 /** A spec built into a world, handing back what stands for it. */
@@ -311,7 +320,7 @@ function built(world: World, spec: Spec): { world: World, id: Id } {
   if (spec.kind === 'room') {
     const { world: w, id } = addPolygon(world, { level: 'hollow' }, spec.at, 0, TOP);
 
-    return { world: w, id };
+    return { world: kitted(w, id, spec.kit ?? []), id };
   }
 
   let w = world;
@@ -337,7 +346,7 @@ function built(world: World, spec: Spec): { world: World, id: Id } {
  * each scope. The rooms are filled in afterwards, so that a world's rooms can
  * be made distinct from one another. */
 type Shape =
-  | { kind: 'room' }
+  | { kind: 'room', kit: Kit }
   | { kind: 'group', kit: Kit, members: Shape[] };
 
 /**
@@ -356,17 +365,20 @@ const arbRect = fc.record({
 const rectOf = (r: { x: number, y: number, w: number, h: number }) =>
   rect(r.x * 60, r.y * 60, r.w * 40, r.h * 40);
 
-const arbKit: fc.Arbitrary<Kit> = fc.record({
-  erode: fc.option(fc.integer({ min: 1, max: 20 }), { nil: undefined }),
-  round: fc.option(fc.integer({ min: 1, max: 40 }), { nil: undefined }),
-  deform: fc.option(fc.integer({ min: 1, max: 12 }), { nil: undefined }),
-});
+const arbLaid: fc.Arbitrary<Laid> = fc.oneof(
+  fc.integer({ min: 1, max: 20 }).map(e),
+  fc.integer({ min: 1, max: 40 }).map(r),
+  fc.integer({ min: 1, max: 12 }).map(d),
+);
+
+/** Nought to three layers, in any order, a kind allowed twice. */
+const arbKit: fc.Arbitrary<Kit> = fc.array(arbLaid, { maxLength: 3 });
 
 /** A room, or a group of two or three shapes one level shallower. A group
  * wants two members, so the leaves are where the recursion stops and not a
  * choice. */
 function arbShape(depth: number): fc.Arbitrary<Shape> {
-  const room = fc.constant({ kind: 'room' as const });
+  const room = arbKit.map(kit => ({ kind: 'room' as const, kit }));
 
   if (depth <= 0) return room;
 
@@ -399,7 +411,7 @@ function roomed(shape: Shape, rects: readonly { x: number, y: number, w: number,
   let next = 0;
 
   const fill = (s: Shape): Spec => (s.kind === 'room'
-    ? { kind: 'room', at: rectOf(rects[next++]) }
+    ? { kind: 'room', at: rectOf(rects[next++]), kit: s.kit }
     : { kind: 'group', kit: s.kit, members: s.members.map(fill) });
 
   return fill(shape);
@@ -423,7 +435,7 @@ const arbScope: fc.Arbitrary<Spec> = fc.record({
 /** The same, loose: several things that nothing holds together yet. */
 const arbLoose: fc.Arbitrary<Spec[]> = fc
   .array(arbShape(2), { minLength: 2, maxLength: 3 })
-  .chain(members => specOf({ kind: 'group', kit: {}, members }).map(spec => (spec as { members: Spec[] }).members));
+  .chain(members => specOf({ kind: 'group', kit: [], members }).map(spec => (spec as { members: Spec[] }).members));
 
 /** Slow properties over arrangements: enough to find a break, not so many that
  * nobody runs them. */
@@ -450,7 +462,7 @@ const SLOW = 600_000;
  * thing being compared — and a bare property passing while the effected one
  * fails says the opposite, outright.
  */
-const bare = (spec: Spec): Spec => (spec.kind === 'room' ? spec : { ...spec, kit: {}, members: spec.members.map(bare) });
+const bare = (spec: Spec): Spec => (spec.kind === 'room' ? { ...spec, kit: [] } : { ...spec, kit: [], members: spec.members.map(bare) });
 
 // -----------------------------------------------------------------------------
 // Law 1 — a scope draws what it resolves to
@@ -497,13 +509,13 @@ describe('law 1: a scope draws what it resolves to', () => {
    * drawings differed by exactly those three points.
    */
   test('and a scope whose erosion sweeps a band out past its own polygon', () => {
-    const spec: Spec = { kind: 'group', kit: { erode: 1 }, members: [
-      { kind: 'group', kit: { erode: 14, round: 1, deform: 3 }, members: [
-        { kind: 'group', kit: { erode: 11, deform: 12 }, members: [
+    const spec: Spec = { kind: 'group', kit: [e(1)], members: [
+      { kind: 'group', kit: [e(14), r(1), d(3)], members: [
+        { kind: 'group', kit: [e(11), d(12)], members: [
           { kind: 'room', at: rect(0, 0, 120, 80) },
           { kind: 'room', at: rect(0, 0, 80, 80) },
         ] },
-        { kind: 'group', kit: { round: 13 }, members: [
+        { kind: 'group', kit: [r(13)], members: [
           { kind: 'room', at: rect(0, 0, 80, 120) },
           { kind: 'room', at: rect(0, 60, 80, 80) },
         ] },
@@ -529,8 +541,8 @@ describe('law 1: a scope draws what it resolves to', () => {
    * notch and the resolution did not.
    */
   test('and a notch that touches the outline at a corner is still a hole in it', () => {
-    const spec: Spec = { kind: 'group', kit: {}, members: [
-      { kind: 'group', kit: { deform: 9 }, members: [
+    const spec: Spec = { kind: 'group', kit: [], members: [
+      { kind: 'group', kit: [d(9)], members: [
         { kind: 'room', at: rect(120, 120, 200, 200) },
         { kind: 'room', at: rect(240, 180, 120, 120) },
       ] },
@@ -561,12 +573,12 @@ describe('law 1: a scope draws what it resolves to', () => {
    * its own corner, laid them as one wall, and the teeth came out 3.7 apart.
    */
   test('and a corner two rooms touch at is two corners, each leaving by its own wall', () => {
-    const spec: Spec = { kind: 'group', kit: { deform: 2 }, members: [
-      { kind: 'group', kit: { erode: 1 }, members: [
+    const spec: Spec = { kind: 'group', kit: [d(2)], members: [
+      { kind: 'group', kit: [e(1)], members: [
         { kind: 'room', at: rect(60, 120, 120, 120) },
         { kind: 'room', at: rect(180, 240, 120, 120) },
       ] },
-      { kind: 'group', kit: { deform: 11 }, members: [
+      { kind: 'group', kit: [d(11)], members: [
         { kind: 'room', at: rect(120, 240, 120, 200) },
         { kind: 'room', at: rect(120, 240, 200, 80) },
       ] },
@@ -598,10 +610,10 @@ describe('law 1: a scope draws what it resolves to', () => {
    * resolution, whose flank is one corner's edge, laid them as one wall.
    */
   test('and a tooth laid twice under one name still carries its cut pieces as one wall', () => {
-    const spec: Spec = { kind: 'group', kit: { erode: 16, deform: 1 }, members: [
-      { kind: 'group', kit: { erode: 9, deform: 8 }, members: [
+    const spec: Spec = { kind: 'group', kit: [e(16), d(1)], members: [
+      { kind: 'group', kit: [e(9), d(8)], members: [
         { kind: 'room', at: rect(180, 0, 120, 120) },
-        { kind: 'group', kit: { erode: 1, round: 1, deform: 1 }, members: [
+        { kind: 'group', kit: [e(1), r(1), d(1)], members: [
           { kind: 'room', at: rect(180, 120, 120, 160) },
           { kind: 'room', at: rect(240, 0, 160, 120) },
         ] },
@@ -706,24 +718,24 @@ describe('law 2: sealing draws what was there', () => {
 // -----------------------------------------------------------------------------
 
 /**
- * `kit` laid on the scope, against `kit` laid on what the scope resolves to.
+ * `kit` laid at the end of the scope's list, against `kit` laid on what the
+ * scope resolves to.
  *
  * The resolution is several polygons and the effect goes on *them*, not on
  * each: sealed back into a scope of their own, which by law 1 draws what they
- * draw, and the kit put on that. A single polygon takes it outright, there
- * being no scope to make.
- *
- * The scope's own kit is left off on both sides. Laying `kit` on the scope
- * *replaces* what it had, while on the other side the resolution has already
- * baked it in and `kit` goes on top — two different worlds, and the property
- * went red on exactly that with an empty `kit`, which is no effect at all.
+ * draw, and the kit put on that. A single polygon takes it at the end of its
+ * own list, which the resolve handed it as the scope's.
  */
 function bothWays(spec: Spec, kit: Kit): void {
-  const { world, id } = built(emptyWorld(), spec.kind === 'room' ? spec : { ...spec, kit: {} });
+  expect(bothWaysDiffer(spec, kit)).toEqual([]);
+}
+
+function bothWaysDiffer(spec: Spec, kit: Kit): string[] {
+  const { world, id } = built(emptyWorld(), spec);
   const onScope = joining(kitted(world, id, kit));
   const out = resolveGroup(world, 0, id);
 
-  if (out === null) return;
+  if (out === null) return [];
 
   const after = out.ids.length < 2
     ? kitted(out.world, out.ids[0], kit)
@@ -733,39 +745,87 @@ function bothWays(spec: Spec, kit: Kit): void {
         return kitted(sealing(g.world, g.id, true), g.id, kit);
       })();
 
-  if (onScope.across && out.ids.length > 1) return;
+  if (onScope.across && out.ids.length > 1) return [];
 
-  expect(differing(drawn(after), onScope.lines)).toEqual([]);
+  return differing(drawn(after), onScope.lines);
 }
 
 describe('law 3: an effect on a scope is an effect on its resolution', () => {
   test('a round, on a scope with no effect under it', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 40 }), (spec, by) => {
-      bothWays(bare(spec), { round: by });
+      bothWays(bare(spec), [r(by)]);
     }), RUNS);
   }, SLOW);
 
   test('a round', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 40 }), (spec, by) => {
-      bothWays(spec, { round: by });
+      bothWays(spec, [r(by)]);
     }), RUNS);
   }, SLOW);
 
   test('an erosion', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 20 }), (spec, by) => {
-      bothWays(spec, { erode: by });
+      bothWays(spec, [e(by)]);
     }), RUNS);
   }, SLOW);
 
   test('a deform', () => {
     fc.assert(fc.property(arbScope, fc.integer({ min: 1, max: 12 }), (spec, by) => {
-      bothWays(spec, { deform: by });
+      bothWays(spec, [d(by)]);
     }), RUNS);
   }, SLOW);
 
-  test('all three at once', () => {
+  test('a list of them', () => {
     fc.assert(fc.property(arbScope, arbKit, (spec, kit) => {
       bothWays(spec, kit);
+    }), RUNS);
+  }, SLOW);
+});
+
+// -----------------------------------------------------------------------------
+// A list on a scope is its layers on nested scopes
+// -----------------------------------------------------------------------------
+
+/**
+ * `spec` with its top scope's list taken apart: the scope keeps none, and each
+ * of its layers is a scope of its own around the one before, first innermost.
+ *
+ * A group wants two members, so each of those scopes holds a room far off as
+ * well, and `near` crops the drawing back to where the rooms are. `together`
+ * is the list left whole, with the same far rooms standing loose beside it: a
+ * drawing's span sets the tolerance it is compared at, so both have them.
+ */
+function unnested(spec: Spec & { kind: 'group' }): { apart: World, together: World } {
+  const { world, id } = built(emptyWorld(), { ...spec, kit: [] });
+  let apart = world, top = id;
+  let together = built(emptyWorld(), spec).world;
+
+  spec.kit.forEach((l, i) => {
+    const far = rect(FAR + i * 300, 0, 60, 60);
+    const away = addPolygon(apart, { level: 'hollow' }, far, 0, TOP);
+    const g = grouped(away.world, 0, [top, away.id], TOP)!;
+
+    apart = kitted(sealing(g.world, g.id, true), g.id, [l]);
+    top = g.id;
+    together = addPolygon(together, { level: 'hollow' }, far, 0, TOP).world;
+  });
+
+  return { apart, together };
+}
+
+/** Past anything `arbRect` draws, and past its teeth. */
+const FAR = 2000;
+
+const near = (lines: [Point, Point][]) => lines.filter(([a, b]) => a.x < FAR - 100 && b.x < FAR - 100);
+
+describe('a list on a scope draws what its layers on nested scopes draw', () => {
+  test('one each, innermost first', () => {
+    fc.assert(fc.property(arbScope, spec => {
+      if (spec.kind === 'room') return;
+
+      const { apart, together } = unnested(spec);
+
+      expect(differing(near(drawn(apart)), near(drawn(together)))).toEqual([]);
     }), RUNS);
   }, SLOW);
 });
@@ -776,7 +836,8 @@ describe('law 3: an effect on a scope is an effect on its resolution', () => {
 
 /**
  * A law 1 counterexample, shrunk: `LAW_SHRINK='<spec json>' pnpm vitest run
- * laws -t shrink`. fast-check will not shrink a replayed seed, and even
+ * laws -t shrink`, or with `LAW_NEST=1` one of a list against its nesting,
+ * or with `LAW_THREE='<kit json>'` one of law 3 laying that kit. fast-check will not shrink a replayed seed, and even
  * unreplayed its shrinks keep the arrangement's shape. This one drops
  * members, lifts a group's members into its holder and lowers each amount,
  * one step at a time for as long as some scope still resolves to a different
@@ -784,6 +845,21 @@ describe('law 3: an effect on a scope is an effect on its resolution', () => {
  */
 test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample', () => {
   const diffs = (spec: Spec) => {
+    if (process.env.LAW_THREE !== undefined) {
+      const d = bothWaysDiffer(spec, JSON.parse(process.env.LAW_THREE));
+
+      return d.length > 0 ? [[-1, d] as [Id, string[]]] : [];
+    }
+
+    if (process.env.LAW_NEST !== undefined) {
+      if (spec.kind === 'room') return [];
+
+      const { apart, together } = unnested(spec);
+      const d = differing(near(drawn(apart)), near(drawn(together)));
+
+      return d.length > 0 ? [[-1, d] as [Id, string[]]] : [];
+    }
+
     const { world } = built(emptyWorld(), spec);
     const scope = joining(world);
     const out: [Id, string[]][] = [];
@@ -809,6 +885,14 @@ test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample
     }
   };
   const smaller = function* (s: Spec): Generator<Spec> {
+    for (let i = 0; i < (s.kit ?? []).length; i++) {
+      const k = s.kit!, l = k[i];
+      const kit = (by: Laid[]) => [...k.slice(0, i), ...by, ...k.slice(i + 1)];
+
+      yield { ...s, kit: kit([]) };
+      for (let v = 1; v < l.by; v++) yield { ...s, kit: kit([{ ...l, by: v }]) };
+    }
+
     if (s.kind === 'room') return;
 
     const at = (i: number, ...by: Spec[]) => [...s.members.slice(0, i), ...by, ...s.members.slice(i + 1)];
@@ -824,17 +908,6 @@ test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample
       }
 
       for (const v of smaller(m)) yield { ...s, members: at(i, v) };
-    }
-
-    for (const k of ['erode', 'round', 'deform'] as const) {
-      const by = s.kit[k];
-
-      if (by === undefined) continue;
-
-      const { [k]: _, ...rest } = s.kit;
-
-      yield { ...s, kit: rest };
-      for (let v = 1; v < by; v++) yield { ...s, kit: { ...s.kit, [k]: v } };
     }
   };
 

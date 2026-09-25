@@ -1,32 +1,17 @@
-* Next
-* TODO point 8
-* TODO point 9
-* TODO make baking faster maybe
-* TODO fix open bugs/issues
-* TODO merge into master
-
-* TODO deform edge then round corner -> chaos (one more reason for removing the corner effects)
-
-* TODO only then deal with effect order; should we skip per corner effects?
-** seems fine to me - simpler code, simpler data model, scope can be 'effect' | 'group'
-** would also simplify the UI a lot
-
 * Bugs
+* TODO copying something in a later version and pasting it should not change its shape
 * TODO copying something in a later version and pasting it should not change its shape
 
 * Low hanging fruit
+* TODO always draw first keyframe actually (also before any transform)
+* TODO insert a key before the current one + shortcut
+** do we need this really if there's always a first key in a keyframe?
 * TODO falloff in deform isn't wired up (or stopped doing something)
 * TODO remove tension from round
 * TODO noise default in deform, jitter at 100 or something
 * TODO 3d view from upper right corner and resizable
-* TODO inspector view scrollable
-* TODO offset in deform separate slider
-* TODO show amount in both deform and round in inspector view
 * TODO text in 3d view (replace up down arrows by left right)
-* TODO always draw first keyframe actually (also before any transform)
 * TODO precision in round higher -> more polys, not fewer
-* TODO insert a key before the current one + shortcut
-** do we need this really if there's always a first key in a keyframe?
 * TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
 * TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
 

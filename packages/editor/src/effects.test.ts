@@ -6,6 +6,7 @@ import { Span, spanAt, stamp } from './bake';
 import { stateAt } from './rig';
 import { resolveGroup } from './resolve';
 import {
+  added,
   applies,
   edgeRun,
   edgesBetween,
@@ -825,23 +826,31 @@ describe('an effect on a scope, and on what it resolves to', () => {
 });
 
 describe('a scope inside a scope', () => {
+  /** An erosion or a round of `by`: one layer of a scope's list. */
+  type Laid = { kind: 'erode' | 'round', by: number };
+
   /**
    * A room under `scopes`, innermost first: each seals what came before it
    * along with a room of its own out of the way, since a group wants two
-   * members, and takes its own depth and round. What it all comes to around
-   * the room itself, which is the only part the far ones can be held against.
+   * members, and lays its own list. What it all comes to around the room
+   * itself, which is the only part the far ones can be held against.
    */
-  const nested = (scopes: { depth: number, bevel: number }[]): Point[][] => {
+  const nested = (scopes: Laid[][]): Point[][] => {
     const a = room(emptyWorld(), rect(0, 0, 200, 140));
     let w = a.world, held: Id[] = [a.id];
 
-    scopes.forEach(({ depth, bevel }, i) => {
+    scopes.forEach((list, i) => {
       const away = room(w, rect(600 + i * 300, 0, 60, 60));
       const g = grouped(away.world, 0, [...held, away.id], TOP)!;
 
       w = sealing(g.world, g.id, true);
-      if (bevel > 0) w = withEffects(w, g.id, { round: inSegments(8, bevel) });
-      w = wrote(w, 0, g.id, erode(depth), round(bevel));
+
+      for (const { kind, by } of list) {
+        const made = added(w, g.id, kind === 'round' ? { kind, ...inSegments(8, by) } : { kind });
+
+        w = wrote(made.world, 0, g.id, { kind: 'amount', layer: made.layer, by });
+      }
+
       held = [g.id];
     });
 
@@ -854,34 +863,42 @@ describe('a scope inside a scope', () => {
     ...b.flat().map(p => toShape(p, a)),
   );
 
-  test('two scopes erode as one of their sum does', () => {
-    const one = nested([{ depth: 30, bevel: 0 }]);
-    const two = nested([{ depth: 10, bevel: 0 }, { depth: 20, bevel: 0 }]);
+  // Law 3 says a scope's list is its layers on nested scopes, one each: what
+  // two scopes draw is what one draws with both lists, the inner one's first.
+  // It says nothing about amounts adding, and they do not all: an erosion of an
+  // erosion is one of their sum, but a round is an opening, and an arc already
+  // at curvature `1 / 10` is untouched by an opening at twenty but for being
+  // opened again — rounds come to the larger. See PLAN-effect's laws.
+  const both = (inner: Laid[], outer: Laid[]) => {
+    const two = nested([inner, outer]);
+    const one = nested([[...inner, ...outer]]);
 
     expect(apart(one, two)).toBeLessThan(1e-9);
     expect(two.flat().length).toBe(one.flat().length);
+
+    return two;
+  };
+
+  const e = (by: number): Laid => ({ kind: 'erode', by });
+  const r = (by: number): Laid => ({ kind: 'round', by });
+
+  test('two scopes erode as one scope eroding twice, which is one of their sum', () => {
+    const two = both([e(10)], [e(20)]);
+
+    expect(apart(nested([[e(30)]]), two)).toBeLessThan(1e-9);
   });
 
-  test('two rounds two deep are one round of the larger', () => {
-    // A round is an opening, and an arc already at curvature `1 / 10` is
-    // untouched by an opening at twenty but for being opened again to twenty:
-    // rounds compose as `round(max(a, b))`, not as their sum. Law 3 says what
-    // the nesting draws, and this is that; the old summing was one particular
-    // construction's. See `rounding` and PLAN-effect's laws.
-    const one = nested([{ depth: 0, bevel: 20 }]);
-    const two = nested([{ depth: 0, bevel: 10 }, { depth: 0, bevel: 20 }]);
+  test('two scopes round as one scope rounding twice, which is one round of the larger', () => {
+    const two = both([r(10)], [r(20)]);
 
-    expect(apart(one, two)).toBeLessThan(1e-9);
-    expect(two.flat().length).toBe(one.flat().length);
+    expect(apart(nested([[r(20)]]), two)).toBeLessThan(1e-9);
   });
 
-  test('a depth and a round at each scope come to the depths\' sum and the larger round', () => {
+  test('a depth and a round at each scope are the four of them in one list', () => {
     // Eroded past the inner round's own radius, a convex corner is a mitre
     // again, and the outer round lays its own arc on it.
-    const one = nested([{ depth: 30, bevel: 20 }]);
-    const two = nested([{ depth: 10, bevel: 10 }, { depth: 20, bevel: 20 }]);
+    const two = both([e(10), r(10)], [e(20), r(20)]);
 
-    expect(apart(one, two)).toBeLessThan(1e-9);
-    expect(two.flat().length).toBe(one.flat().length);
+    expect(apart(nested([[e(30), r(20)]]), two)).toBeLessThan(1e-9);
   });
 });
