@@ -289,8 +289,7 @@ list costs anything over a record.
 
 **6. The editor.** The inspector lists a thing's layers, first to last, each
 with its options, an on/off tick and a way to move it up or down. "Add an
-effect" appends a layer. The timeline shows one amount row per layer, under the
-layer's name.
+effect" appends a layer.
 
 **7. Delete what is left.** `Effects`, `Options`' three-in-one shape,
 `REMEMBERED`'s shape if it no longer fits, and anything still reading a fixed
