@@ -2,19 +2,25 @@
 // The inspector
 //
 // On the left, under the tools, while something is picked: what the picked
-// polygons are, which of the three effects apply to the picked things, and
-// each one's options.
+// polygons are, the key the hand is on, and the picked things' effects in the
+// order they are laid, each with its amount in that key and its options.
 //
 // What a polygon is comes first, under the transform tool and nowhere else,
 // as the part it plays in each set: see `PolygonKind`. The digits already
 // retype — this is the answer to the question they leave unasked, what is it
 // now. A level with a hundred shapes in it says which kind each one is by
 // texture alone, and a texture read through a selection fill is not something
-// to be sure about. The effects follow. A box ticked is
-// an effect switched on, one fact over every keyframe; how much is in its
-// timeline, written by `d`, `e` and `b` on the canvas. Unticking switches it
-// off and takes nothing away: its options and amounts apply again when it is
-// ticked. Erosion has no options, so its box is only the switch.
+// to be sure about.
+//
+// The key is shown whether or not there is one: a number typed into none
+// writes one, at the end of the first picked thing's list at this keyframe.
+//
+// The effects follow, first laid first, then those none of them has. A box
+// ticked is an effect switched on, one fact over every keyframe; how much is
+// in its timeline, written by `d`, `e` and `b` on the canvas or typed into its
+// amount. Unticking switches it off and takes nothing away: its options and
+// amounts apply again when it is ticked. The arrows move an effect up or down
+// the list, on every picked thing that has it.
 //
 // With corners or edges picked, the pane is about the polygons they are on:
 // an effect is one amount over its whole ring, and one set of options. An
@@ -23,13 +29,14 @@
 // -----------------------------------------------------------------------------
 
 import { ObjectValue, Value } from '@incpt/kontinuum';
-import { VNode, fragment, object, show, text } from '@incpt/kontinuum-dom';
-import { div, input, label, option, select, span } from '@incpt/kontinuum-dom/html';
+import { VNode, fragment, object, ordered, show, text } from '@incpt/kontinuum-dom';
+import { button, div, input, label, option, select, span } from '@incpt/kontinuum-dom/html';
 
 import {
   EffectName,
   Switch,
   applies,
+  reordered,
   switchedOff,
   sizeOf,
   sizedFor,
@@ -38,8 +45,8 @@ import {
 } from './effects';
 import { FALLOFF, Pattern, Sides } from './geometry';
 import { Place, entryAt, lastKeys, retypedAt, timedAt } from './keys';
-import { AmountKind, Delta, NOTHING, Typed, amountIn } from './rig';
-import { kindsOf, layerOf, owning, repartedPolygons, retypable } from './scene';
+import { AMOUNT_KINDS, AmountKind, Delta, NOTHING, REST, Typed, addedBy, amountIn, idle, retyped } from './rig';
+import { keyRigOf, kindsOf, layerOf, layersOf, repartedPolygons, retypable, withKeyRig } from './scene';
 import { theme } from './theme';
 import {
   FloorPart,
@@ -69,8 +76,12 @@ type Some = 'all' | 'some' | 'none';
  * its focus and a select stays open.
  */
 interface Model {
-  /** Whether there is a key to show: see `currentKey`. */
+  /** Whether there is a key standing, rather than one a number typed in
+   * would write: see `currentPlace`. */
   key: boolean
+  /** The effects in the order the pane lists them, joined by commas: see
+   * `orderOf`. */
+  order: string
   /** What it does to the thing as a whole, in the units it is typed in:
    * degrees for the turn and the skew. Identity where it holds only corners. */
   moveX: number
@@ -259,10 +270,12 @@ function modelOf(
   };
 
   const d = shown('deform');
+  const order = orderOf(world, ids);
   const r = shown('round');
 
   return {
     key: key !== undefined,
+    order: order.join(','),
     moveX: fine(by?.move.x ?? 0),
     moveY: fine(by?.move.y ?? 0),
     angle: degrees(by?.angle ?? 0),
@@ -299,6 +312,20 @@ function modelOf(
   };
 }
 
+/** The effects as the pane lists them: each kind in the order the picked
+ * things first lay it, and then those none of them has. */
+function orderOf(world: World, ids: readonly Id[]): AmountKind[] {
+  const out: AmountKind[] = [];
+
+  for (const id of ids) {
+    for (const l of layersOf(world, id)) {
+      if (!out.includes(l.kind)) out.push(l.kind);
+    }
+  }
+
+  return [...out, ...AMOUNT_KINDS.filter(k => !out.includes(k))];
+}
+
 function body(
   m: ObjectValue<Model>,
   targets: () => Id[],
@@ -308,11 +335,25 @@ function body(
 ): VNode {
   /** Numbers typed into the key the inspector shows. Given what the key holds
    * now, so that one half of a point typed in keeps the other half exactly
-   * rather than as the box rounds it. */
+   * rather than as the box rounds it. Where there is no key, a new one at the
+   * end of the first picked thing's list, unless what is typed does nothing. */
   const typedIn = (typed: (by: Delta, world: World, owner: Id) => Typed) => update(s => {
     const p = place();
 
-    if (p === undefined) return s;
+    if (p === undefined) {
+      const id = targets()[0];
+
+      if (id === undefined) return s;
+
+      const by = retyped(NOTHING, typed(NOTHING, s.world, id));
+
+      if (idle(by)) return s;
+
+      const rig = keyRigOf(s.world, id);
+      const world = withKeyRig(s.world, id, addedBy(rig, s.keyframe, REST.t, by));
+
+      return marked({ ...s, world }, s.world);
+    }
 
     const world = retypedAt(s.world, p, typed(entryAt(s.world, p)?.by ?? NOTHING, s.world, p.id));
 
@@ -329,6 +370,21 @@ function body(
     const world = timedAt(s.world, p, t === '' || t === '∞' ? null : Number(t));
 
     return 'refused' in world ? saying(s, world.refused) : marked({ ...s, world }, s.world);
+  });
+
+  /** One effect moved a place up or down the list, on every picked thing
+   * that has it and the one it passes. */
+  const moved = (kind: AmountKind, by: -1 | 1) => update(s => {
+    const order = m.order().split(',') as AmountKind[];
+    const i = order.indexOf(kind), j = i + by;
+
+    if (i < 0 || j < 0 || j >= order.length) return s;
+
+    [order[i], order[j]] = [order[j], order[i]];
+
+    const world = reordered(s.world, targets(), order);
+
+    return world === s.world ? s : marked({ ...s, world }, s.world);
   });
 
   const radians = (deg: number) => deg * Math.PI / 180;
@@ -398,41 +454,61 @@ function body(
       ]),
     ])),
 
-    show(() => m.key(), fragment([
-      div({ style: { color: theme.muted } }, [text('Key')]),
-      div({
-        style: {
-          display: 'grid',
-          gridTemplateColumns: 'auto minmax(0, 1fr)',
-          alignItems: 'center',
-          gap: '2px 8px',
-          paddingLeft: '22px',
-          paddingBottom: '4px',
-          borderBottom: `1px solid ${theme.border}`,
-          fontVariantNumeric: 'tabular-nums',
-        },
-      }, [
-        ...field('move', pair(
-          number(m.moveX, -Infinity, v => typedIn(by => ({ move: { x: v, y: by.move.y } })), Infinity, 'any', fixed),
-          number(m.moveY, -Infinity, v => typedIn(by => ({ move: { x: by.move.x, y: v } })), Infinity, 'any', fixed),
-        )),
-        ...field('turn °', number(m.angle, -Infinity, v => typedIn(() => ({ angle: radians(v) })), Infinity, 'any', fixed)),
-        ...field('skew °', number(m.skew, -89, v => typedIn(() => ({ skew: radians(v) })), 89, 'any', fixed)),
-        // Nought would fold the thing flat, and a flat thing has no way back.
-        ...field('scale', pair(
-          number(m.scaleX, SMALLEST, v => typedIn(by => ({ scale: { x: v, y: by.scale.y } })), Infinity, 'any', fixed),
-          number(m.scaleY, SMALLEST, v => typedIn(by => ({ scale: { x: by.scale.x, y: v } })), Infinity, 'any', fixed),
-        )),
-        ...field('erode', number(m.erodes, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'erode', v)), Infinity, 'any', fixed)),
-        ...field('round', number(m.rounds, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'round', v)), Infinity, 'any', fixed)),
-        ...field('deform', number(m.deforms, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'deform', v)), Infinity, 'any', fixed)),
-        ...field('plays', times(m.times, timesIn, fixed)),
-        ...field('', span({ style: { color: theme.faded } }, [text(() => (m.cornered() ? 'and single corners' : ''))])),
-      ]),
-    ])),
+    div({ style: { color: theme.muted } }, [text('Key')]),
+    div({
+      style: {
+        display: 'grid',
+        gridTemplateColumns: 'auto minmax(0, 1fr)',
+        alignItems: 'center',
+        gap: '2px 8px',
+        paddingLeft: '22px',
+        paddingBottom: '4px',
+        borderBottom: `1px solid ${theme.border}`,
+        fontVariantNumeric: 'tabular-nums',
+      },
+    }, [
+      ...field('move', pair(
+        number(m.moveX, -Infinity, v => typedIn(by => ({ move: { x: v, y: by.move.y } })), Infinity, 'any', fixed),
+        number(m.moveY, -Infinity, v => typedIn(by => ({ move: { x: by.move.x, y: v } })), Infinity, 'any', fixed),
+      )),
+      ...field('turn °', number(m.angle, -Infinity, v => typedIn(() => ({ angle: radians(v) })), Infinity, 'any', fixed)),
+      ...field('skew °', number(m.skew, -89, v => typedIn(() => ({ skew: radians(v) })), 89, 'any', fixed)),
+      // Nought would fold the thing flat, and a flat thing has no way back.
+      ...field('scale', pair(
+        number(m.scaleX, SMALLEST, v => typedIn(by => ({ scale: { x: v, y: by.scale.y } })), Infinity, 'any', fixed),
+        number(m.scaleY, SMALLEST, v => typedIn(by => ({ scale: { x: by.scale.x, y: v } })), Infinity, 'any', fixed),
+      )),
+      // A count belongs to a key, and there is none to give it to.
+      ...field('plays', times(m.times, timesIn, () => fixed() || !m.key())),
+      ...field('', span({ style: { color: theme.faded } }, [text(() => (m.cornered() ? 'and single corners' : ''))])),
+    ]),
 
-    heading(() => 'Deform', 'd', m.deform, () => toggled('deform', m.deform())),
-    options(m.deform, [
+    // By kind, so that an effect moved keeps its controls, and whatever is
+    // being typed into them.
+    ordered(() => m.order().split(',') as AmountKind[], k => k, (index, kind) => effect(kind(), index)),
+  ]);
+
+  /** An effect's heading and, under it, its amount in the key and its
+   * options. */
+  function effect(kind: AmountKind, index: Value<number>): VNode {
+    const on = kind === 'deform' ? m.deform : kind === 'erode' ? m.erode : m.round;
+    const amount = kind === 'deform' ? m.deforms : kind === 'erode' ? m.erodes : m.rounds;
+    const last = () => index() === m.order().split(',').length - 1;
+
+    return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
+      heading(NAMES[kind], KEYS[kind], on, () => toggled(kind, on()), [
+        arrow('↑', () => index() === 0, () => moved(kind, -1)),
+        arrow('↓', last, () => moved(kind, 1)),
+      ]),
+      options(on, [
+        field('amount', number(amount, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, kind, v)), Infinity, 'any', fixed)),
+        ...(kind === 'deform' ? deformOptions() : kind === 'round' ? roundOptions() : []),
+      ]),
+    ]);
+  }
+
+  function deformOptions(): VNode[][] {
+    return [
       // A length, shown as a percentage of the thing's size so that the
       // slider has somewhere to stop: see `sizeOf`. Along the slider by its
       // logarithm, since going from 1% to 2% halves the teeth and going from
@@ -457,37 +533,62 @@ function body(
       // A seed is the noise's, the jitter's, and where each edge's teeth
       // start.
       field('seed', slider(m.seed, 0, SEEDS, (v, further) => changed('deform', { seed: Math.round(v) }, further), Infinity)),
-    ]),
+    ];
+  }
 
-    heading(() => 'Erode', 'e', m.erode, () => toggled('erode', m.erode())),
-
-    heading(() => 'Round', 'b', m.round, () => toggled('round', m.round())),
-    options(m.round, [
+  function roundOptions(): VNode[][] {
+    return [
       // How near its facets keep to its curve, as a length: finer is more of
       // them, as many as each corner's bevel needs, closest where it bends.
-      show(() => !m.chamfer(), fragment(field('precision', slider(m.precision, PRECISEST, COARSEST, (v, further) => changed('round', { precision: v }, further), Infinity, 'any')))),
+      [show(() => !m.chamfer(), fragment(field('precision', slider(m.precision, PRECISEST, COARSEST, (v, further) => changed('round', { precision: v }, further), Infinity, 'any'))))],
       // From about a circle at nought to tight in the corner at one.
-      show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05')))),
+      [show(() => !m.chamfer(), fragment(field('tension', slider(m.tension, 0, 1, (v, further) => changed('round', { tension: v }, further), 1, '0.05'))))],
       field('chamfer', tick(m.chamfer, v => changed('round', { chamfer: v }))),
-    ]),
-  ]);
+    ];
+  }
 }
 
-/** An effect's box, its name and its key. */
-function heading(name: Value<string>, key: string, on: Value<Some>, onchange: () => void): VNode {
-  return label({ style: { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, [
-    input({
-      type: 'checkbox',
-      checked: () => on() === 'all',
-      // A property kontinuum sets as one, missing from its attribute types.
-      ...({ indeterminate: () => on() === 'some' } as object),
-      onchange: (e: Event) => {
-        (e.target as HTMLInputElement).blur();
-        onchange();
-      },
-    }),
-    span({ style: { flex: '1' } }, [text(name)]),
-    span({ style: { color: theme.faded, fontSize: '11px' } }, [text(key)]),
+const NAMES: Record<AmountKind, string> = { erode: 'Erode', round: 'Round', deform: 'Deform' };
+const KEYS: Record<AmountKind, string> = { erode: 'e', round: 'b', deform: 'd' };
+
+/** A button moving an effect a place along the list. */
+function arrow(glyph: string, disabled: Value<boolean>, onclick: () => void): VNode {
+  return button({
+    disabled,
+    style: {
+      background: 'transparent',
+      color: theme.muted,
+      border: 'none',
+      padding: '0 2px',
+      font: '12px system-ui, sans-serif',
+      cursor: 'pointer',
+      opacity: () => (disabled() ? '0.3' : '1'),
+    },
+    onclick: (e: Event) => {
+      (e.currentTarget as HTMLButtonElement).blur();
+      onclick();
+    },
+  }, [text(glyph)]);
+}
+
+/** An effect's box, its name and its key, and the arrows moving it. */
+function heading(name: string, key: string, on: Value<Some>, onchange: () => void, arrows: VNode[]): VNode {
+  return div({ style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+    label({ style: { display: 'flex', flex: '1', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, [
+      input({
+        type: 'checkbox',
+        checked: () => on() === 'all',
+        // A property kontinuum sets as one, missing from its attribute types.
+        ...({ indeterminate: () => on() === 'some' } as object),
+        onchange: (e: Event) => {
+          (e.target as HTMLInputElement).blur();
+          onchange();
+        },
+      }),
+      span({ style: { flex: '1' } }, [text(name)]),
+      span({ style: { color: theme.faded, fontSize: '11px' } }, [text(key)]),
+    ]),
+    ...arrows,
   ]);
 }
 
