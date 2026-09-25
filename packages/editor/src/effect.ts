@@ -512,37 +512,54 @@ function gcd(a: number, b: number): number {
  * its arcs meet goes. That is right as morphology and wrong as a round — the
  * arcs meeting is where a round should *stop*, a square at half its width
  * being a circle. So where the erosion would leave nothing, the round is taken
- * down to the most of it that leaves something, found by halving, and a
- * square asked for more than it can take comes back the circle or the stadium
- * it tends to. Continuous in the amount, which the bake needs of it: at the
- * amount where the arcs meet, both answers are the same shape.
+ * down to what fits, and a square asked for more than it can take comes back
+ * the circle or the stadium it tends to.
+ *
+ * Not to the very most that fits, though, and that is the bake's doing. Right
+ * at the limit what the erosion leaves is next to nothing, and a halving finds
+ * the limit only to within its last step, so how much it leaves saws between
+ * that step and nought as the polygon moves. A triangle's kernel a quarter of a
+ * unit across dilates with its three short walls; one a millionth across has
+ * lost them, the three arcs have merged, and every name after them has
+ * shifted — a self-crossed quad's lobe did that between two instants 1e-16
+ * apart and the bake cut the span to a millionth of it chasing the jump. So
+ * the round stops short of the limit `r` by `r·eps/(r + eps)`: about `eps`
+ * where the polygon is large, which is what the accuracy lets go of anyway,
+ * and less the smaller it is, so that a sliver is still rounded rather than
+ * handed back with corners. What is left is a kernel whose size follows the
+ * polygon, and the limit is found closely enough (a `FINE`th of `eps`) that
+ * the halving's last step no longer shows in it.
  */
 function opened(it: Drawn, by: Amount, eps: number): Drawn {
   const inner = eroding(by)(it);
 
   if (inner.shape.length > 0) return dilating(by, eps)(inner);
 
-  let lo = 0, hi = 1, kept: Drawn | null = null;
+  let lo = 0, hi = by;
 
-  for (let k = 0; k < SHRINKS; k++) {
+  for (let k = 0; k < SHRINKS && hi - lo > eps / FINE; k++) {
     const mid = (lo + hi) / 2;
-    const tried = eroding(by * mid)(it);
 
-    if (tried.shape.length > 0) {
+    if (eroding(mid)(it).shape.length > 0) {
       lo = mid;
-      kept = tried;
     }
     else {
       hi = mid;
     }
   }
 
-  return kept === null ? it : dilating(by * lo, eps)(kept);
+  const fits = lo * lo / (lo + eps);
+  const kept = fits > 0 ? eroding(fits)(it) : null;
+
+  return kept === null || kept.shape.length === 0 ? it : dilating(fits, eps)(kept);
 }
 
-/** How many halvings the most a polygon can be rounded is found to: a part in
- * four thousand of what was asked. */
-const SHRINKS = 12;
+/** How many halvings the most a polygon can be rounded is found in, at most:
+ * a part in a million of what was asked. */
+const SHRINKS = 20;
+
+/** How closely it is found, as a share of the accuracy. */
+const FINE = 64;
 
 // -----------------------------------------------------------------------------
 // The canonical resample

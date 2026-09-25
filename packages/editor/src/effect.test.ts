@@ -390,6 +390,24 @@ describe('the round', () => {
     expect(apart(big.shape[0], circled(200, 30))).toBeLessThan(0.5);
   });
 
+  test('asked for more than a sliver can take, moves with the sliver', () => {
+    // A self-crossed quad's lobe from a saved world, rounded by the quad's
+    // own 65. It takes about 35, and what fits was found only to within a
+    // halving's last step: the kernel left under the arcs sawed between a
+    // quarter of a unit and a millionth as the lobe moved, and at a millionth
+    // its three walls were gone and three names with them.
+    const lobe = (x: number) => drawn([[{ x, y: -19.984221 }, { x: -845.686622, y: -100 }, { x: -300, y: -100 }]], 0);
+    let was = rounding(64.921875, 0.5)(lobe(-890));
+
+    for (let k = 1; k <= 400; k++) {
+      const now = rounding(64.921875, 0.5)(lobe(-890 - k / 1000));
+
+      expect(names(now)).toEqual(names(was));
+      expect(apart(now.shape[0], was.shape[0])).toBeLessThan(0.1);
+      was = now;
+    }
+  });
+
   test('and an arc already round enough is left alone', () => {
     const square = drawn([rect(0, 0, 200, 200)], 0);
     const big = rounding(30, 0.5)(square);
