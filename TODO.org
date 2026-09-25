@@ -1,6 +1,6 @@
 * Bugs
 * TODO copying something in a later version and pasting it should not change its shape
-* TODO copying something in a later version and pasting it should not change its shape
+* TODO cmd-k doesn't create a key if only effects changed
 
 * Low hanging fruit
 * TODO always draw first keyframe actually (also before any transform)
