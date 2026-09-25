@@ -2954,8 +2954,7 @@ function cornersOnly(
 ): { ring: Ring, tags: Tag[] } | null {
   const n = ring.length;
 
-  const turns = (i: number): boolean => {
-    const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+  const turnsAt = (a: Point, b: Point, c: Point): boolean => {
     const ux = b.x - a.x, uy = b.y - a.y;
     const vx = c.x - b.x, vy = c.y - b.y;
 
@@ -2965,15 +2964,49 @@ function cornersOnly(
 
     return reach > 0 && Math.abs(ux * vy - uy * vx) / reach > snap;
   };
+  const held = (i: number) => keeps?.(tags[i]) === true;
 
-  const keep: number[] = [];
+  // Each point against the last one kept, and not against its neighbour as
+  // the ring came: a corner the arrangement handed back as two points a hair
+  // apart is flat at each of them against the other — off the line by the
+  // hair times the sine of the turn — and taken out both at once, it was cut
+  // across by a chord. Measured against what is left, the second of the two
+  // is the corner. Started at a point that turns however it is measured.
+  const start = ring.findIndex((b, i) => held(i) || turnsAt(ring[(i - 1 + n) % n], b, ring[(i + 1) % n]));
 
-  for (let i = 0; i < n; i++) {
-    if (turns(i) || keeps?.(tags[i]) === true) keep.push(i);
+  if (start < 0) return null;
+
+  const keep = [start];
+
+  for (let k = 1; k < n; k++) {
+    const i = (start + k) % n;
+
+    if (held(i) || turnsAt(ring[keep[keep.length - 1]], ring[i], ring[(i + 1) % n])) keep.push(i);
+  }
+
+  // Round the join: the last kept against the first, which it was not asked
+  // about, and the first against the last.
+  let again = true;
+
+  while (again && keep.length >= 3) {
+    again = false;
+
+    const m = keep.length;
+
+    if (!held(keep[m - 1]) && !turnsAt(ring[keep[m - 2]], ring[keep[m - 1]], ring[keep[0]])) {
+      keep.pop();
+      again = true;
+    }
+    else if (!held(keep[0]) && !turnsAt(ring[keep[m - 1]], ring[keep[0]], ring[keep[1]])) {
+      keep.shift();
+      again = true;
+    }
   }
 
   if (keep.length === n) return { ring, tags };
   if (keep.length < 3) return null;
+
+  keep.sort((a, b) => a - b);
 
   return { ring: keep.map(i => ring[i]), tags: keep.map(i => tags[i]) };
 }

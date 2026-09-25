@@ -673,23 +673,27 @@ describe('law 2: sealing draws what was there', () => {
 
   test('sealing things into a scope that lays nothing does not move the outline', () => {
     fc.assert(fc.property(arbLoose, members => {
-      let loose = emptyWorld();
-      const ids: Id[] = [];
-
-      for (const m of members) {
-        const made = built(loose, m);
-
-        loose = made.world;
-        ids.push(made.id);
-      }
-
-      const g = grouped(loose, 0, ids, TOP)!;
-      const sealed = sealing(g.world, g.id, true);
-
-      expect(differing(drawn(sealed), drawn(loose))).toEqual([]);
+      expect(sealedDiffer(members)).toEqual([]);
     }), RUNS);
   }, SLOW);
 });
+
+/** `members` laid loose, against the same sealed into a scope with nothing on it. */
+function sealedDiffer(members: readonly Spec[]): string[] {
+  let loose = emptyWorld();
+  const ids: Id[] = [];
+
+  for (const m of members) {
+    const made = built(loose, m);
+
+    loose = made.world;
+    ids.push(made.id);
+  }
+
+  const g = grouped(loose, 0, ids, TOP)!;
+
+  return differing(drawn(sealing(g.world, g.id, true)), drawn(loose));
+}
 
 // -----------------------------------------------------------------------------
 // Law 3 — an effect on a scope is an effect on its resolution
@@ -813,7 +817,8 @@ describe('a list on a scope draws what its layers on nested scopes draw', () => 
 /**
  * A law 1 counterexample, shrunk: `LAW_SHRINK='<spec json>' pnpm vitest run
  * laws -t shrink`, or with `LAW_NEST=1` one of a list against its nesting,
- * or with `LAW_THREE='<kit json>'` one of law 3 laying that kit. fast-check will not shrink a replayed seed, and even
+ * or with `LAW_THREE='<kit json>'` one of law 3 laying that kit, or with
+ * `LAW_TWO=1` law 2 sealing the group's members. fast-check will not shrink a replayed seed, and even
  * unreplayed its shrinks keep the arrangement's shape. This one drops
  * members, lifts a group's members into its holder and lowers each amount,
  * one step at a time for as long as some scope still resolves to a different
@@ -823,6 +828,14 @@ test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample
   const diffs = (spec: Spec) => {
     if (process.env.LAW_THREE !== undefined) {
       const d = bothWaysDiffer(spec, JSON.parse(process.env.LAW_THREE));
+
+      return d.length > 0 ? [[-1, d] as [Id, string[]]] : [];
+    }
+
+    if (process.env.LAW_TWO !== undefined) {
+      if (spec.kind === 'room') return [];
+
+      const d = sealedDiffer(spec.members);
 
       return d.length > 0 ? [[-1, d] as [Id, string[]]] : [];
     }

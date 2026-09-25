@@ -244,18 +244,24 @@ union between them. `laidAcross` and law 1's excuse for it go.
    all — the scope's ring passes (0,120) twice as two corners, and
    `boundaryRuns` names both by the lower index (`settled`), so the resolve
    gave the piece below the wrong corner's name. The resolve now names a
-   point by the vertex the walk came through (`Whither.walked`). Seed 4
-   still has law 1 (*nor does resolving a scope inside it*), law 2 (*sealing
-   ... lays nothing*) and law 3 (*a list of them*) red. Nesting still red where an
-   inner scope's erosion meets an outer round or erosion: `[round 1, deform
-   1]` over a room and a scope `[erode 10]` over two rooms, the second
-   `[erode 2, round 19]`.
+   point by the vertex the walk came through (`Whither.walked`).
 
-   Separately, law 3's *a deform*, on no erosion at all: a scope `[round 1]`
-   over a room `[round 1, deform 1]` beside a room `[deform 2]` and a third,
-   with a deform 1 laid on the scope, draws a tooth 0.04 from its resolution.
-   Red before the erosion fix too; not yet chased. Shrink with `LAW_THREE` /
-   `LAW_NEST` and `LAW_SHRINK`.
+   Then seed 4's other three, and two causes. Law 1 (*nor does resolving a
+   scope inside it*) and law 3 (*a list of them*) were one name laid twice:
+   a tooth was `tooth(run, j)`, so a second deform along a wall named its
+   tooth 0 as the first deform's tooth 0 ten units off, and the deform after
+   read the two as pieces of one wall with a cut between. A tooth is now one
+   `generation` deeper than any name on the shape in front of it. Law 2
+   (*sealing ... lays nothing*) was `cornersOnly`: a round's corner came out
+   of the arrangement as two points 2e-6 apart, each flat against the other,
+   and both went at once, a chord cut across the corner. A point is now
+   measured against the last one kept. That also took law 3's *a deform* on
+   seed 2 (the tooth 0.04 off). Seeds 2 to 4 are green.
+
+   Nesting still red on seeds 1 and 5, where an inner scope's erosion meets
+   an outer round or erosion: `[round 1, deform 1]` over a room and a scope
+   `[erode 10]` over two rooms, the second `[erode 2, round 19]`. Shrink
+   with `LAW_NEST`, `LAW_THREE` or `LAW_TWO` and `LAW_SHRINK`.
 
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.
