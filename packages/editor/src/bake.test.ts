@@ -36,6 +36,7 @@ import {
   withRig,
 } from './scene';
 import { nudged, stateAt } from './rig';
+import { added } from './effects';
 import { Effects, Writing, deform, erode, inSegments, move, round, scaled, spun, turned as turning, withEffects, wrote } from './testing';
 import {
   EMPTY_BAKE,
@@ -45,6 +46,7 @@ import {
   PolygonId,
   PolygonKind,
   KeyframeId,
+  Layer as Effect,
   World,
   emptyWorld,
 } from './types';
@@ -2561,6 +2563,57 @@ describe('effects', () => {
     expect(drift(w)).toBeLessThan(TOLERANCE);
     expect(length(sample(span, 0))).toBeCloseTo(editorAt(w, 0), 6);
     expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+  });
+
+  // A list, not a record: any order, the same kind twice, each layer's amount
+  // its own. The ends lerp layer by layer, so a list is laid across a span as
+  // a record was.
+  const ROUNDED = { kind: 'round', ...inSegments(4, 20) } as const;
+  const TOOTHED = { kind: 'deform', ...ZIGZAG.deform! } as const;
+
+  /** `layers` added to `id`'s list, each growing from nought at v0 to its `by`
+   * at v1. */
+  function listed(world: World, id: Id, layers: [Omit<Effect, 'id'>, number][]): World {
+    let w = world;
+
+    for (const [layer, by] of layers) {
+      const made = added(w, id, layer);
+
+      w = wrote(made.world, 1, id, into => ({ world: into, op: { kind: 'amount', layer: made.layer, by } }));
+    }
+
+    return w;
+  }
+
+  test('a deform laid before a round, the editor\'s outline at both ends', () => {
+    const { world, id } = room({});
+    const w = listed(world, id, [[TOOTHED, 5], [ROUNDED, 10]]);
+    const span = run(bakeSpan(w, 0));
+
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+
+    // Seeded at the near end, as a bevel from nought always is.
+    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(10 * 1e-2);
+  });
+
+  test('two rounds, each growing on its own, the editor\'s outline at both ends', () => {
+    const { world, id } = room({});
+    const w = listed(world, id, [[ROUNDED, 10], [ROUNDED, 20]]);
+    const span = run(bakeSpan(w, 0));
+
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(span, 1))).toBeCloseTo(editorAt(w, 1), 6);
+    expect(Math.abs(length(sample(span, 0)) - editorAt(w, 0))).toBeLessThan(30 * 1e-2);
+  });
+
+  test('and a list on a scope: a deform, an erosion after it and a round', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
+    const g = sealed(world, 0, ids, TOP)!;
+    const w = listed(g.world, g.id, [[TOOTHED, 5], [{ kind: 'erode' }, 4], [ROUNDED, 10]]);
+
+    expect(drift(w)).toBeLessThan(TOLERANCE);
+    expect(length(sample(run(bakeSpan(w, 0)), 1))).toBeCloseTo(editorAt(w, 1), 6);
   });
 });
 

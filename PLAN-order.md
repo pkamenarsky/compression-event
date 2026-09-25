@@ -278,6 +278,15 @@ union between them. `laidAcross` and law 1's excuse for it go.
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.
 
+   *Done.* The shapes came with step 2: `Standing.effects`, `Moving.effected`
+   and `Cast.shapes` are `Effected`, a list of laid layers, lerped layer by
+   layer across a span. Against a46e153^ (the record), `bench/bake.bench.ts`
+   and `__perf.test.ts` make the same cuts, stretches and worst error, and
+   their times are within noise (1–3%, the benches eroding only). The bake
+   tests now lay a list out of the fixed order, the same kind twice, and a
+   list on a scope, each the editor's outline at the far end and seeded at
+   the near one.
+
 **6. The editor.** The inspector lists a thing's layers, first to last, each
 with its options, an on/off tick and a way to move it up or down. "Add an
 effect" appends a layer. The timeline shows one amount row per layer, under the

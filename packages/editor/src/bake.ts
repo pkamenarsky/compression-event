@@ -755,9 +755,9 @@ interface Moving extends Rider {
    */
   scales: [number, number]
   /**
-   * Its rounds and deforms at the two ends, over `corners`, or nothing where
-   * it has no effects. The options are the same at both ends; the amounts are
-   * lerped. See `effectsOver`.
+   * Its layers at the two ends, first to last, or nothing where it has no
+   * effects. The two lists line up layer for layer: the options are the same
+   * at both ends, and each layer's amount is lerped. See `effectsOver`.
    */
   effected: [Effected, Effected] | null
 }
