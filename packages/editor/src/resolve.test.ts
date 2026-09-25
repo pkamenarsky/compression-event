@@ -42,9 +42,9 @@ import {
 } from './types';
 import { Frame, truth } from './bake';
 import { FORMAT, restored, saved } from './save';
-import { resolveGroup, resolveInto, rings } from './resolve';
+import { flattenInto, resolveGroup, resolveInto, rings } from './resolve';
 import { stateAt } from './rig';
-import { Writing, amountAt, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, amountAt, erode, move, repeated, round, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -1194,4 +1194,85 @@ describe('the two ways to a scope agree', () => {
       }
     });
   }
+});
+
+describe('cmd-e: resolved, laid and taken apart by island', () => {
+  /** Where a shape reaches furthest left and down. */
+  const least = (world: World, v: KeyframeId, id: PolygonId) => {
+    const points = resolveAt(world, v).find(r => r.id === id)!.shape.flat();
+
+    return { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) };
+  };
+
+  test('two islands under a round are two polygons with nothing laid on them', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(200, 0, 100, 100)]);
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
+    const w = wrote(made.world, 0, made.id, round(20));
+    // What the scope draws, which Law 1 says its resolution draws: `drawnArea`
+    // reads polygons alone.
+    const before = drawnArea(resolveGroup(w, 0, made.id)!.world, 0);
+    const out = flattenInto(w, 0, [made.id], landing(w, 0, null))!;
+
+    expect(out.ids).toHaveLength(2);
+    expect(out.losing).toEqual([]);
+    expect(out.world.groups.has(made.id)).toBe(false);
+
+    for (const id of out.ids) {
+      expect(out.world.effects.get(id) ?? []).toEqual([]);
+      expect(ringsOf(out.world.polygons.get(id)!.points)).toHaveLength(1);
+    }
+
+    expect(drawnArea(out.world, 0)).toBeCloseTo(before, 6);
+    // Rounded: less than the two squares were.
+    expect(before).toBeLessThan(2 * 100 * 100);
+  });
+
+  test('a hole goes with the island it is in', () => {
+    let world = emptyWorld();
+    const ids: PolygonId[] = [];
+
+    for (const [k, r] of [
+      [{ floor: 'floor' }, rect(0, 0, 100, 100)],
+      [{ level: 'void', floor: 'void' }, rect(40, 40, 20, 20)],
+      [{ floor: 'floor' }, rect(200, 0, 50, 50)],
+    ] as [PolygonKind, Point[]][]) {
+      const made = addPolygon(world, k, r, 0, landing(world, 0, null));
+
+      world = made.world;
+      ids.push(made.id);
+    }
+
+    const out = flattenInto(world, 0, ids, landing(world, 0, null))!;
+    const rings = out.ids.map(id => ringsOf(out.world.polygons.get(id)!.points).length).sort();
+
+    expect(rings).toEqual([1, 2]);
+    expect(shapeArea(resolveAt(out.world, 0).flatMap(r => r.shape))).toBeCloseTo(100 * 100 - 20 * 20 + 50 * 50, 6);
+  });
+
+  test('one island and nothing laid is what the resolve made', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 100, 100)]);
+    const out = flattenInto(world, 0, ids, landing(world, 0, null))!;
+    const plain = resolveInto(world, 0, ids, landing(world, 0, null))!;
+
+    expect(out.ids).toEqual(plain.ids);
+    expect(out.world.polygons).toEqual(plain.world.polygons);
+  });
+
+  test('an amount that changes elsewhere is lost there, and the motion is kept', () => {
+    const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(200, 0, 100, 100)]);
+    const made = sealed(world, 0, ids, landing(world, 0, null))!;
+    const w = wrote(wrote(made.world, 2, made.id, erode(5)), 1, made.id, move(30, 0));
+    const out = flattenInto(w, 0, [made.id], landing(w, 0, null))!;
+
+    expect(out.losing).toEqual(w.keyframes.map(k => k.id).filter(k => order(k) >= 2));
+
+    for (const id of out.ids) {
+      expect(out.world.effects.get(id) ?? []).toEqual([]);
+      expect(least(out.world, 1, id).x - least(out.world, 0, id).x).toBeCloseTo(30, 6);
+    }
+
+    function order(k: KeyframeId): number {
+      return w.keyframes.findIndex(f => f.id === k);
+    }
+  });
 });

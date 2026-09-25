@@ -28,7 +28,7 @@ import {
 import { Game, play } from '@ce/game';
 import { shipped } from './export';
 import { download, upload } from './save';
-import { resolveInto } from './resolve';
+import { flattenInto } from './resolve';
 import { picker } from './picker';
 import { inspector } from './inspector';
 import { timeline } from './timeline';
@@ -851,7 +851,8 @@ function apart(s: EditorState): EditorState {
  * The whole selection at once rather than one group at a time, because that is
  * what resolving a selection means — two rooms picked together are one shape,
  * exactly as they would be if they were grouped first. Which is how it is done:
- * see `resolveInto`.
+ * see `resolveInto`. Then its effects laid in and its islands taken apart, so
+ * each can be edited on its own: see `flattenInto`.
  *
  * The one gesture here that rewrites the whole chain rather than writing into
  * the version on screen, because the thing it replaces spans the whole chain.
@@ -864,7 +865,7 @@ function flattened(s: EditorState): EditorState | null {
   const path = opened(s.world, s.inside);
   const tops = [...new Set(s.selection.polygons.map(id => reaching(s.world, id, path)))];
   const where = landing(s.world, s.keyframe, s.inside);
-  const done = resolveInto(s.world, s.keyframe, tops, where);
+  const done = flattenInto(s.world, s.keyframe, tops, where);
 
   if (done === null) return null;
   if (done.losing.length > 0 && !agreed(s, done.losing)) return null;

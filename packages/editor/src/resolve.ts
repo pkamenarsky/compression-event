@@ -93,6 +93,7 @@ import {
   contains,
   ground,
   onBoundary,
+  polygonsOf,
 } from './geometry';
 import {
   Contributed,
@@ -113,6 +114,7 @@ import {
   unplace,
   keyRigOf,
 } from './scene';
+import type { Key } from './rig';
 import { Amount, Amounts, EMPTY_RIG, KeyRig, NO_AMOUNTS, Rig, amountIn, keysOf, once, stateAt } from './rig';
 import type { Ident, Ids } from './ids';
 import { born, madeOf } from './ids';
@@ -125,6 +127,8 @@ import {
   Parent,
   Vertex,
   World,
+  kindOf,
+  parentOf,
   within,
 } from './types';
 
@@ -945,7 +949,7 @@ function written(rig: KeyRig, k: KeyframeId): boolean {
 /**
  * The picked things replaced by the polygons their union comes to.
  *
- * What the gesture actually calls. A selection is not a group and does not have
+ * What `flattenInto`, the gesture, calls. A selection is not a group and does not have
  * to be one to be read as one — but it is made one anyway, and taken apart
  * again at the end, because a group is *exactly* "these things, read together"
  * and everything that follows from that is already written. Making one costs a
@@ -1004,4 +1008,151 @@ function enclosed(world: World, ids: readonly Id[], where: Landing): {
   }
 
   return { world: joined({ ...world, groups, nextId: id + 1 }, where.into, [id]), id };
+}
+
+// -----------------------------------------------------------------------------
+// The gesture's last step: islands
+// -----------------------------------------------------------------------------
+
+/**
+ * The picked things resolved, their effects laid, and each island made a
+ * polygon of its own: what cmd-e does.
+ *
+ * `resolveInto` hands back one polygon a side of the set, carrying the scope's
+ * list, because the list folds the union whole and a polygon per island would
+ * fold each by itself — Law 3. So the islands wait until there is no list
+ * left to fold: each polygon's drawing at `v` is written down as bare
+ * geometry, and only then taken apart, an outline and its holes to a polygon.
+ * With nothing laid on any of them, each draws what it drew as a part.
+ *
+ * The corners are new and plain. What the resolve wrote about samples, twins
+ * and crossings was for the list to read, and the list is gone.
+ *
+ * A layer's amounts are one shape at `v` now, so every keyframe it stood
+ * at with other amounts joins `losing`. Its motion stays: the keys, less
+ * their amounts, go onto every island.
+ */
+export function flattenInto(
+  world: World,
+  v: KeyframeId,
+  ids: readonly Id[],
+  where: Landing,
+): Resolution | null {
+  const done = resolveInto(world, v, ids, where);
+
+  if (done === null || done.ids.some(id => !done.world.polygons.has(id))) return done;
+
+  const drawn = new Map(resolveAt(done.world, v).map(r => [r.id, r]));
+  const polygons = new Map(done.world.polygons);
+  const groups = new Map(done.world.groups);
+  const rigs = new Map(done.world.rigs);
+  const effects = new Map(done.world.effects);
+  const holder = parentOf(done.world);
+  const losing = new Set(done.losing);
+  let next = done.world.nextId;
+  const made: PolygonId[] = [];
+
+  for (const id of done.ids) {
+    const polygon = done.world.polygons.get(id)!;
+    const r = drawn.get(id);
+    const laid = (done.world.effects.get(id) ?? []).length > 0;
+    const shape = r?.shape ?? [];
+    const islands = polygonsOf(shape);
+
+    // Nothing to lay and nothing to take apart: it is already what it would
+    // be written down as.
+    if (!laid && islands.length === 1) {
+      made.push(id);
+      continue;
+    }
+
+    if (laid) {
+      const at = stateAt(done.world, id, v).amounts;
+
+      for (const k of done.world.keyframes) {
+        if (k.id === v || !standingIn(done.world, id, new Set(chain(done.world, k.id)))) continue;
+        if (!sameAmounts(stateAt(done.world, id, k.id).amounts, at)) losing.add(k.id);
+      }
+    }
+
+    const rig = rigs.get(id);
+    const still = rig === undefined ? undefined : unamounted(rig);
+    const mine: PolygonId[] = [];
+
+    for (const island of islands) {
+      const it = next++;
+      const points: Vertex[] = island.flatMap((ring, i) => shape[ring].map(p => ({
+        id: next++,
+        at: unplace(r!.frame, p),
+        ring: i,
+        birth: polygon.birth,
+        death: polygon.death,
+      })));
+
+      polygons.set(it, { ...kindOf(polygon), birth: polygon.birth, death: polygon.death, points });
+      if (still !== undefined) rigs.set(it, still);
+      mine.push(it);
+    }
+
+    polygons.delete(id);
+    rigs.delete(id);
+    effects.delete(id);
+
+    const g = holder.get(id);
+
+    if (g !== undefined) {
+      const group = groups.get(g)!;
+
+      groups.set(g, { ...group, members: group.members.flatMap(m => (m === id ? mine : [m])) });
+    }
+
+    made.push(...mine);
+  }
+
+  return {
+    ...done,
+    world: { ...done.world, polygons, groups, rigs, effects, nextId: next },
+    ids: made,
+    losing: done.world.keyframes.map(k => k.id).filter(k => losing.has(k)),
+  };
+}
+
+function sameAmounts(a: Amounts, b: Amounts): boolean {
+  const layers = new Set([...a.keys(), ...b.keys()]);
+
+  return [...layers].every(l => amountIn(a, l) === amountIn(b, l));
+}
+
+/**
+ * A rig with its amounts and corner moves taken out, and any key that said
+ * nothing else. The layers the amounts were of are laid into the geometry,
+ * and the corners moved are not the island's.
+ */
+function unamounted(rig: KeyRig): KeyRig {
+  const keys = new Map<KeyframeId, Key[]>();
+
+  for (const [k, list] of rig.keys) {
+    const kept = list.flatMap(key => {
+      const by = key.by === undefined ? undefined : { ...key.by, amounts: NO_AMOUNTS };
+      const stand = key.stand === undefined ? undefined : { ...key.stand, corners: new Map(), amounts: NO_AMOUNTS };
+      const moves = by !== undefined && (
+        by.move.x !== 0 || by.move.y !== 0 || by.angle !== 0 || by.skew !== 0 || by.scale.x !== 1 || by.scale.y !== 1
+      );
+
+      if (!moves && stand === undefined) return [];
+
+      // Without its corners, which were the old polygon's.
+      const { corners: _corners, ...rest } = key;
+
+      return [{
+        ...rest,
+        ...(by === undefined ? {} : { by }),
+        ...(stand === undefined ? {} : { stand }),
+      }];
+    });
+
+    if (kept.length > 0) keys.set(k, kept);
+  }
+
+  return { ...rig, keys };
 }
