@@ -8,9 +8,9 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { added } from './effects';
+import { added, reordered } from './effects';
 import { keyRigOf, layerOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig, writtenInto } from './scene';
-import { Amount, AmountKind, Move, amountIn, stateAt, Op, REST, addedBy, deltaOf, idle, keysAt, nextKey, nudgedBy, repeating, withKeys } from './rig';
+import { AMOUNT_KINDS, Amount, AmountKind, Move, amountIn, stateAt, Op, REST, addedBy, deltaOf, idle, keysAt, nextKey, nudgedBy, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
 import { DeformOptions, Id, KeyframeId, Layer, Options, REMEMBERED, RoundOptions, VertexId, World } from './types';
 
@@ -113,8 +113,9 @@ export function move(x: number, y: number): Move {
 
 /**
  * An amount of one kind, on the thing's first layer of that kind — given one
- * where it has none, with the options an effect starts with: what a test that
- * erodes a room it never gave an erode layer means.
+ * where it has none, with the options an effect starts with, and put where
+ * the fixed order would have it: what a test that erodes a room it never gave
+ * an erode layer means.
  */
 export function amounted(kind: AmountKind, by: number): Writing {
   return (world, _v, id) => {
@@ -123,7 +124,7 @@ export function amounted(kind: AmountKind, by: number): Writing {
       ? added(world, id, (kind === 'erode' ? { kind } : { kind, ...REMEMBERED[kind] }) as Omit<Layer, 'id'>)
       : { world, layer: had.id };
 
-    return { world: made.world, op: { kind: 'amount', layer: made.layer, by } satisfies Amount };
+    return { world: reordered(made.world, [id], AMOUNT_KINDS), op: { kind: 'amount', layer: made.layer, by } satisfies Amount };
   };
 }
 

@@ -28,6 +28,7 @@
 * TODO insert a key before the current one + shortcut
 ** do we need this really if there's always a first key in a keyframe?
 * TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
+* TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
 
 * Before the final level file format
 ** TODO level history

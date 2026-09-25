@@ -9,8 +9,7 @@
 // switched back on.
 //
 // The editor still has one layer of each kind — the first — and puts a new
-// one where the fixed order had it: erode, round, deform. Lists of its own
-// are PLAN-order's step 6.
+// one at the end of the list, to be moved from there: see `reordered`.
 //
 // Edges are named by the drawn corner they start at. A deform's teeth are not
 // drawn corners, so an edge runs from one drawn corner to the next, through
@@ -18,7 +17,7 @@
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { AMOUNT_KINDS, AmountKind } from './rig';
+import { AmountKind } from './rig';
 import { Resolved, diameterAt, layerOf, layersOf, scaleAt } from './scene';
 import { Id, KeyframeId, Layer, LayerId, Options, Point, VertexId, World } from './types';
 
@@ -48,18 +47,37 @@ export function withEffect<N extends EffectName>(world: World, id: Id, name: N, 
   return withLayer(world, id, { ...options, kind: name, id: l.id, ...(l.off === true ? { off: true } : {}) } as Layer);
 }
 
-/**
- * A new layer on a thing, with an id from the world's counter, where the
- * fixed order would have it: after every layer of its kind or before it.
- */
+/** A new layer at the end of a thing's list, with an id from the world's
+ * counter. */
 export function added(world: World, id: Id, layer: Omit<Layer, 'id'>): { world: World, layer: LayerId } {
-  const layers = layersOf(world, id);
-  const rank = (l: { kind: AmountKind }) => AMOUNT_KINDS.indexOf(l.kind);
-  const at = layers.findIndex(l => rank(l) > rank(layer));
   const made = { ...layer, id: world.nextId } as Layer;
-  const list = at < 0 ? [...layers, made] : [...layers.slice(0, at), made, ...layers.slice(at)];
+  const list = [...layersOf(world, id), made];
 
   return { world: { ...world, nextId: world.nextId + 1, effects: new Map(world.effects).set(id, list) }, layer: made.id };
+}
+
+/**
+ * Each of `ids`' layers put in the order of their kinds in `kinds`, the
+ * layers of one kind keeping theirs, and a kind not named after every one
+ * that is.
+ */
+export function reordered(world: World, ids: readonly Id[], kinds: readonly AmountKind[]): World {
+  const rank = (l: Layer) => {
+    const i = kinds.indexOf(l.kind);
+
+    return i < 0 ? kinds.length : i;
+  };
+  let effects: Map<Id, readonly Layer[]> | undefined;
+
+  for (const id of ids) {
+    const layers = layersOf(world, id);
+    const sorted = [...layers].sort((a, b) => rank(a) - rank(b));
+
+    if (sorted.some((l, i) => l !== layers[i])) (effects ??= new Map(world.effects)).set(id, sorted);
+  }
+
+  // Left as it is where nothing moved, so that nothing reads it as an edit.
+  return effects === undefined ? world : { ...world, effects };
 }
 
 /** One of a thing's layers replaced, by its id. */
