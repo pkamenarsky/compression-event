@@ -2909,7 +2909,7 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
     }
 
     if (ring.length >= 3 && Math.abs(signedArea2(ring)) > snap * snap) {
-      const kept = cornersOnly(ring, ringTag, snap, keeps);
+      const kept = cornersOnly(ring, ringTag, keeps);
 
       if (kept !== null) {
         rings.push(kept.ring);
@@ -2949,10 +2949,16 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
 function cornersOnly(
   ring: Ring,
   tags: Tag[],
-  snap: number,
   keeps?: (tag: Tag) => boolean,
 ): { ring: Ring, tags: Tag[] } | null {
   const n = ring.length;
+
+  // Off the ring's own extent, and not the arrangement's: that is whatever
+  // else was arranged with it, so a ring resolved beside a room far off was
+  // measured seven times coarser than the same ring eroded on its own, and a
+  // corner a hair across — turning by less than the one and more than the
+  // other — was two corners on the drawing and one on its resolution.
+  const snap = extentOf([ring]) * 1e-9;
 
   const turnsAt = (a: Point, b: Point, c: Point): boolean => {
     const ux = b.x - a.x, uy = b.y - a.y;
