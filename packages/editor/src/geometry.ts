@@ -358,7 +358,7 @@ export function erodedShape(shape: Shape, depth: number): Point[][] {
  * which is exactly the bug it would be there to prevent. `scaleOf` is this
  * same measure taken over segments, for the arrangement's own snap.
  */
-function extentOf(shape: Shape): number {
+function extentOf(shape: readonly (readonly Point[])[]): number {
   let lo = Infinity, hi = -Infinity;
 
   for (const ring of shape) {
@@ -2951,6 +2951,23 @@ function cornersOnly(
   tags: Tag[],
   keeps?: (tag: Tag) => boolean,
 ): { ring: Ring, tags: Tag[] } | null {
+  const keep = cornersOf(ring, keeps === undefined ? undefined : i => keeps(tags[i]));
+
+  if (keep.length === ring.length) return { ring, tags };
+  if (keep.length < 3) return null;
+
+  return { ring: keep.map(i => ring[i]), tags: keep.map(i => tags[i]) };
+}
+
+/**
+ * The indices of the points a ring turns at, in order: what `cornersOnly`
+ * keeps, and so what a ring has once it has been through an arrangement. A
+ * reader that wants to treat a ring the same whether or not it has been asks
+ * this, and not a measure of its own.
+ *
+ * `held` points are kept whether or not they turn.
+ */
+export function cornersOf(ring: readonly Point[], held: (i: number) => boolean = () => false): number[] {
   const n = ring.length;
 
   // Off the ring's own extent, and not the arrangement's: that is whatever
@@ -2970,7 +2987,6 @@ function cornersOnly(
 
     return reach > 0 && Math.abs(ux * vy - uy * vx) / reach > snap;
   };
-  const held = (i: number) => keeps?.(tags[i]) === true;
 
   // Each point against the last one kept, and not against its neighbour as
   // the ring came: a corner the arrangement handed back as two points a hair
@@ -2980,7 +2996,7 @@ function cornersOnly(
   // is the corner. Started at a point that turns however it is measured.
   const start = ring.findIndex((b, i) => held(i) || turnsAt(ring[(i - 1 + n) % n], b, ring[(i + 1) % n]));
 
-  if (start < 0) return null;
+  if (start < 0) return [];
 
   const keep = [start];
 
@@ -3009,12 +3025,7 @@ function cornersOnly(
     }
   }
 
-  if (keep.length === n) return { ring, tags };
-  if (keep.length < 3) return null;
-
-  keep.sort((a, b) => a - b);
-
-  return { ring: keep.map(i => ring[i]), tags: keep.map(i => tags[i]) };
+  return keep.sort((a, b) => a - b);
 }
 
 /**

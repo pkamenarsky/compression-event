@@ -258,10 +258,18 @@ union between them. `laidAcross` and law 1's excuse for it go.
    measured against the last one kept. That also took law 3's *a deform* on
    seed 2 (the tooth 0.04 off). Seeds 2 to 4 are green.
 
-   Nesting still red on seeds 1 and 5, where an inner scope's erosion meets
-   an outer round or erosion: `[round 1, deform 1]` over a room and a scope
-   `[erode 10]` over two rooms, the second `[erode 2, round 19]`. Shrink
-   with `LAW_NEST`, `LAW_THREE` or `LAW_TWO` and `LAW_SHRINK`.
+   Nesting on seeds 1 and 5 was three ways a drawing and its resolution
+   read one outline differently, each a point that does not turn. A tooth
+   leaned by the joints either side of its facet, and a flat point is a
+   joint leaning nowhere: a tooth rides a run's corners only now (`bent`).
+   `cornersOnly` measured a turn off the whole arrangement's extent, so a
+   ring resolved beside a far room dropped a hair corner the same ring eroded
+   alone kept: it measures off the ring's own now. And a flat point started a
+   deform's run unless the ring was held: `flatAt` asks `cornersOf`, the
+   resolve's own question, always. Seeds 1 to 5 are green.
+
+   Nesting still red on seeds 6, 9 and 10, not yet shrunk. Shrink with
+   `LAW_NEST`, `LAW_THREE` or `LAW_TWO` and `LAW_SHRINK`.
 
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.

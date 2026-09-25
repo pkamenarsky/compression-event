@@ -19,7 +19,7 @@
 
 import type { Point } from '@ce/game/world';
 import type { EdgeRun, Effecting, Shape, Sweptfrom } from './geometry';
-import { OpSubtract, OpUnion, along, patternRun, polygonsOf, sweptBand } from './geometry';
+import { OpSubtract, OpUnion, along, cornersOf, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
 import { combineIdentified, generation, keyOf, madeOf, on, shows, tooth } from './ids';
 import { holding } from './hold';
@@ -611,31 +611,18 @@ export function resampled(it: Drawn, eps: number): Drawn {
 }
 
 /**
- * Which points of a ring lie flat, where the ring is held: see `hold.ts`.
+ * Which points of a ring lie flat: the ones `cornersOf` leaves out.
  *
- * A held point that does not turn is one a still does not have at all — the
- * arrangement would have dropped it — so it may neither start a run nor hold
- * one in place, or a held fold lays its teeth and its samples from a point the
- * still's does not and the two draw different outlines. Nothing is flat where
- * nothing is held, so a still reads exactly as it did.
+ * A point that does not turn is one a scope's resolution does not have at all
+ * — the arrangement drops it — so it may neither start a run nor hold one in
+ * place. Else a round's flat midpoint started a run of its own on the drawing
+ * and not on the resolution, and the two laid a wall's teeth apart; and a held
+ * fold laid its teeth and samples from a point the still's did not.
  */
 function flatAt(ring: readonly Point[]): (i: number) => boolean {
-  if (!holding()) return () => false;
+  const corners = new Set(cornersOf(ring));
 
-  let scale = 1;
-
-  for (const p of ring) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
-
-  const snap = scale * 1e-9;
-  const n = ring.length;
-
-  return i => {
-    const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
-    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
-    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
-
-    return reach > 0 && Math.abs(ux * vy - uy * vx) / reach <= snap;
-  };
+  return i => !corners.has(i);
 }
 
 /**
