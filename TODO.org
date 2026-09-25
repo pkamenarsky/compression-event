@@ -1,11 +1,12 @@
-* Bugs
+* Next
 * TODO copying something in a later version and pasting it should not change its shape
 * TODO cmd-k doesn't create a key if only effects changed
-
-* Low hanging fruit
+* TODO no need for vertex keypoints in timeline - everything is recorded in a single one
 * TODO always draw first keyframe actually (also before any transform)
 * TODO insert a key before the current one + shortcut
-** do we need this really if there's always a first key in a keyframe?
+
+* Low hanging fruit
+* TODO multithread baking - each version in separate thread; show baked versions in timeline as they arrive
 * TODO falloff in deform isn't wired up (or stopped doing something)
 * TODO remove tension from round
 * TODO noise default in deform, jitter at 100 or something
@@ -16,6 +17,7 @@
 * TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
 
 * Before the final level file format
+** TODO bake accuracy (displayed in the editor as well) - the platform won't let you publish a level if bake accuracy isn't highest
 ** TODO level history
 ** TODO each level has different wall heights/RenderConfigs
 *** even better - different RenderConfig for each version/keyframe
