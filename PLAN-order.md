@@ -52,9 +52,15 @@ is the rig under that id — erosion, bevel or amplitude, by the layer's kind.
 Reordering moves layers and keeps their ids, so each keeps its timeline. Two
 rounds are two layers with two timelines.
 
-A list on one scope is, by law 3, the same as its layers on nested scopes, one
-each. That is written down as a property (step 4), and it is what lets an
-author say in one place what nesting would say across several.
+A list on one scope is the same as its layers on nested scopes, one each.
+That is written down as a property (step 4), and it is what lets an author
+say in one place what nesting would say across several.
+
+**The laws hold, with no exceptions.** Not a property excused where a step
+pinches an island, not law 1 excused where a wall is laid across two rings
+(`laidAcross`): a configuration a law does not hold on is a bug in the
+drawing, never a case the law is let off. Where a law and a construction
+disagree, the construction changes.
 
 ## One pipeline
 
@@ -211,20 +217,21 @@ says (see `PLAN-effect.md`).
    the fold, erosions included. Making the offset additive instead would be a
    straight skeleton, and would still not agree with the mitre limit.
 
-   *Still red: islands.* The sweep's seed is random unless `LAW_SEED` is set,
-   and across seeds the nesting property is red most of the time on a
-   different thing. `foldEach` takes a fold's islands once, before any step,
-   so a scope `[erode 5, deform 1]` whose erosion pinches its union into four
-   lays the deform across all four at once (`linesOf` joins a wall's pieces
-   across rings), while the same list taken apart has the outer scope take
-   the islands again from what the inner one drew, and deform each alone.
-   Taking the islands again before every step (and settling between steps)
-   greens the nesting property and reddens laws 1 and 3 — a resolution folds
-   the islands it started with, apart, for good, which is what `foldEach` is
-   there to match. So the nesting property and law 1 disagree whenever a step
-   splits or joins islands, and one of them has to give: the property made to
-   exempt a fold whose islands change (as law 1 exempts `laidAcross`), or the
-   islands made a per-step thing in the resolve too.
+   *Islands, still red.* The sweep's seed is random unless `LAW_SEED` is set,
+   and across seeds the nesting property is red most of the time: a scope
+   `[erode 5, deform 1]` whose erosion pinches its union into four lays the
+   deform across all four, while the same list taken apart deforms each
+   alone. The cause is the resolve making one polygon per island, and
+   `foldEach` taking the islands once, before any step, to match it — which
+   is also what `laidAcross` excuses law 1 for. The fix is step 4a.
+
+**4a. A scope resolves to one polygon.** Every ring of the union — each
+outline and its holes — in one polygon carrying the scope's list, rings
+without the scope's effects on them. Its fold is then the scope's fold over
+the same shape, whatever the list does to the islands. `foldEach` stops
+taking islands and lays each step on the whole shape (`eroding` still offsets
+polygon by polygon inside itself), so a nesting is the same steps with a
+union between them. `laidAcross` and law 1's excuse for it go.
 
    Separately, law 3's *a deform*, on no erosion at all: a scope `[round 1]`
    over a room `[round 1, deform 1]` beside a room `[deform 2]` and a third,
