@@ -1457,13 +1457,32 @@ function namedFades(shape: Shape, ids: Ids, [near, far]: [Ends, Ends], t: number
   const out: Fade[] = [];
   const kept = new Set([...handedOn(near, far), ...handedOn(far, near)]);
 
+  const gone = (end: Ends, id: Ident) => !end.all.has(id) && !kept.has(id) && !recounted(end, id);
+
   ids.forEach((ring, r) => ring.forEach((id, i) => {
-    const a = near.flat.has(id) || (!near.all.has(id) && !kept.has(id)), b = far.flat.has(id) || (!far.all.has(id) && !kept.has(id));
+    const a = near.flat.has(id) || gone(near, id), b = far.flat.has(id) || gone(far, id);
 
     if (a || b) out.push({ p: shape[r][i], v: mix(a ? 0 : 1, b ? 0 : 1, t) });
   }));
 
   return out;
+}
+
+/**
+ * Whether a name an end does not have is a sample of an arc that end lays at
+ * another count, and so is there all the same.
+ *
+ * An arc takes as many facets as its sweep asks for, and a corner moving
+ * changes its sweep: `on(e, k / 13)` at one key is `on(e, k / 12)` at the next,
+ * and not one of the names is at both ends. Read as missing, every sample of
+ * every arc went out across the span and came back at the key. The arc is
+ * there at both ends, standing; only where along it its samples fall is not,
+ * and that is a jump the cut already makes.
+ */
+function recounted(end: Ends, id: Ident): boolean {
+  const what = madeOf(id);
+
+  return what.kind === 'on' && what.t > 0 && what.t < 1 && end.arcs.has(what.edge);
 }
 
 /** Each scope side's names at both ends of the span, for the same items. */
@@ -1503,6 +1522,8 @@ interface Ends {
   /** Where the edge each name leaves ends: the next point round its ring
    * that is not one of that edge's own teeth or samples. */
   next: Map<Ident, Ident>
+  /** The arcs with samples here that turn: see `recounted`. */
+  arcs: Set<Ident>
 }
 
 /**
@@ -1590,7 +1611,15 @@ function flatIn(shape: Shape, ids: Ids): Ends {
     });
   }
 
-  return { all: new Set(ids.flat()), flat: out, next };
+  const arcs = new Set<Ident>();
+
+  for (const id of ids.flat()) {
+    const what = madeOf(id);
+
+    if (what.kind === 'on' && what.t > 0 && what.t < 1 && !out.has(id)) arcs.add(what.edge);
+  }
+
+  return { all: new Set(ids.flat()), flat: out, next, arcs };
 }
 
 /** `fadingPoints` for a polygon with no round: its corners dead at an end. */
