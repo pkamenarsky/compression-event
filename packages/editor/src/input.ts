@@ -6,9 +6,6 @@ import { Point, Update, panBy } from './types';
 /** A keyboard has two of each modifier, and nobody means one of them. */
 export const SHIFT = ['ShiftLeft', 'ShiftRight'];
 
-/** The modifiers the system takes shortcuts under. See `onKeyUp`. */
-const MODIFIERS = ['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight', 'AltLeft', 'AltRight'];
-
 // -----------------------------------------------------------------------------
 // The keyboard, as signals
 // -----------------------------------------------------------------------------
@@ -166,21 +163,6 @@ export function createInput(): Input {
     down.delete(e.code);
     kept.delete(e.code);
     keyUp.emit(e);
-
-    // A key let go under Ctrl or Cmd can be taken by the system on the way —
-    // Ctrl+Space is macOS's to switch input sources — and its release never
-    // arrives. Space would read as held for ever after, and a pan started on
-    // it would never end. So letting go of the modifier lets go of the rest;
-    // a key that really is still down says so again with its next repeat.
-    if (MODIFIERS.includes(e.code)) {
-      for (const code of [...down]) {
-        if (MODIFIERS.includes(code) || SHIFT.includes(code)) continue;
-
-        down.delete(code);
-        kept.delete(code);
-        keyUp.emit(new KeyboardEvent('keyup', { code }));
-      }
-    }
   }
 
   // In the capture phase, so that it is heard wherever it lands, whatever
