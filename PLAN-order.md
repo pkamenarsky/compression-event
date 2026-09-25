@@ -312,14 +312,28 @@ order.
   per slot — level, solid, floor. Today its effects apply to the one that is its
   outermost kind. Read `outermostSlot` before step 2 and write down what it
   does; nothing here should change it.
+
+  *Closed.* A scope's list goes on its outermost slot: the least slot any
+  member plays a part in, descending through sealed groups as well as loose
+  ones, and a void counting only where nothing but voids play another part.
+  See `outermostSlot`'s comment in `scene/reading.ts`. Nothing in this plan
+  touched it.
 - **What a long list costs.** Each layer ends in a resample, and the resamples
   are what the bake's linearity is proved for (see `PLAN-effect`'s step 1).
   More layers should change nothing there, but the linearity test should say so
   over a list.
+
+  *Closed.* `linearity.test.ts` measures lists, among them `erode → round` and
+  `round → erode → round`, the same kind twice, and passes. Step 5's benches
+  found a list costing nothing over the record it replaced.
 - **Where a remembered option comes from.** `REMEMBERED` holds one set of
   options per kind, which is what a new layer starts with. With two rounds on a
   thing, "the last round's options" is still one answer, but whether that is
   the one an author wants is a question for the editor.
+
+  *Closed.* The editor keeps one layer per kind (see step 7), so there are
+  never two rounds to choose between and one remembered set per kind is the
+  whole answer.
 
 # Later, if the resolve keeps breaking law 3
 

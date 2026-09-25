@@ -938,6 +938,7 @@ export function deforming(by: Amount, how: Effecting): Effect {
 
         // The whole wall's pattern, where this is a piece of a wall that was
         // cut: what a piece ends on at the cut. See `wallAt`.
+        if (process.env.ZZLOG && by === 1 && Math.abs(ring[from].x - 252) < 3) console.log('ZZ', r, from, JSON.stringify(ring[from]), JSON.stringify(ring[to]), String(names[from]), line && String(line.root), line?.middle, line?.span, line?.at, line?.before, line?.after, total);
         const whole = line === undefined || (line.before === undefined && line.after === undefined) || !(how.spacing > 0) || (high === 0 && !flat)
           ? null
           : patternRun(how, keyOf(line.root), high, line.span, 0, 0, how.spacing, line.middle + line.at);
