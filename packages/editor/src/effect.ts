@@ -21,7 +21,7 @@ import type { Point } from '@ce/game/world';
 import type { EdgeRun, Effecting, Shape, Sweptfrom } from './geometry';
 import { OpSubtract, OpUnion, along, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
-import { combineIdentified, keyOf, madeOf, on, shows, tooth } from './ids';
+import { combineIdentified, generation, keyOf, madeOf, on, shows, tooth } from './ids';
 import { holding } from './hold';
 
 /** A shape to a shape, carrying identity. */
@@ -876,7 +876,8 @@ function stationOf(run: readonly Point[], t: number): Point {
  * another — which is the thing rank was there to prevent.
  *
  * **The tooth keeps its place** (2.4) is the identity again: a tooth is
- * `tooth(run, j)`, counted out from the middle, and it is tooth `j` however the
+ * `tooth(run, j)`, counted out from the middle (and one deeper than any tooth
+ * already on the shape: see `generation`), and it is tooth `j` however the
  * run's ends move. There is no `reach` and no `clear` here and nothing to
  * carry a source length through an erosion — the deform is a step of the fold
  * and lays its teeth on the ring in front of it, and whatever runs after it
@@ -904,6 +905,9 @@ export function deforming(by: Amount, how: Effecting): Effect {
     const shape: Shape = [];
     const ids: Ids = [];
     const lines = linesOf(it);
+    let gen = 1;
+
+    for (const names of it.ids) for (const id of names) gen = Math.max(gen, generation(id) + 1);
 
     it.shape.forEach((ring, r) => {
       const names = it.ids[r];
@@ -968,7 +972,7 @@ export function deforming(by: Amount, how: Effecting): Effect {
           const ride = rideOf(run, lengths, lay.along[j] * total);
 
           out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
-          said.push(tooth(line?.root ?? whose, lay.teeth[j]));
+          said.push(tooth(line?.root ?? whose, lay.teeth[j], gen));
         }
 
         if (whole !== null && line!.after !== undefined) leg(total, line!.at + total, 1);

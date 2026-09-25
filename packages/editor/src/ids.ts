@@ -53,7 +53,7 @@ export type Made =
   | { kind: 'corner', member: number, vertex: number }
   | { kind: 'born', a: Ident, b: Ident }
   | { kind: 'on', edge: Ident, t: number }
-  | { kind: 'tooth', run: Ident, j: number }
+  | { kind: 'tooth', run: Ident, j: number, gen: number }
 
 const table: Made[] = [];
 const written: string[] = [];
@@ -116,9 +116,40 @@ export function on(edge: Ident, t: number): Ident {
  * with them, and tooth `j` is still tooth `j`. A fraction along would slide
  * every one of them the moment a neighbour did anything.
  */
-export function tooth(run: Ident, j: number): Ident {
-  return intern(`${written[run]}#${j}`, { kind: 'tooth', run, j });
+export function tooth(run: Ident, j: number, gen = 1): Ident {
+  return intern(gen === 1 ? `${written[run]}#${j}` : `${written[run]}#${j}^${gen}`, { kind: 'tooth', run, j, gen });
 }
+
+/**
+ * How many deforms deep a name is: the most of any tooth in it, and nought for
+ * a name no deform laid.
+ *
+ * A deform lays its teeth one deeper than the deepest name in front of it, and
+ * that is what keeps a tooth's name its own. Named by the run and the count
+ * alone, the second deform along a wall laid its tooth 0 by the same name as
+ * the first deform's tooth 0 ten units off — two points by one name, which the
+ * next deform read as two pieces of one wall with a cut between them. The
+ * depth is read off the shape and not counted along a list, so a deform on a
+ * scope and one on a scope inside it are two deep as two in one list are.
+ */
+export function generation(id: Ident): number {
+  const had = gens[id];
+
+  if (had !== undefined) return had;
+
+  const what = table[id];
+  const g = what.kind === 'tooth'
+    ? Math.max(what.gen, generation(what.run))
+    : what.kind === 'born'
+      ? Math.max(generation(what.a), generation(what.b))
+      : what.kind === 'on'
+        ? generation(what.edge)
+        : 0;
+
+  return (gens[id] = g);
+}
+
+const gens: number[] = [];
 
 /**
  * A number to key a pattern by, the same for a given name in every run of the
