@@ -131,12 +131,24 @@ export function eroding(depth: Amount): Effect {
 /** The erosion of one polygon: an outline and its holes, and nothing else in
  * the shape to reach into it. */
 function erodeOne(it: Drawn, depth: Amount): Drawn {
-  const band = sweptBand(it.shape, () => depth);
+  // Swept from the corners only, the ones a resolve keeps. A point that does
+  // not turn is where two walls lie on one line, and a band built from it has
+  // a quad and a spoke there that the resolved ring has not — next to a step a
+  // hair across, where the spokes cross, that moved the outline by 0.04.
+  // Held, the arrangement keeps every point but a crossing, and so does this.
+  const hold = holding();
+  const kept = it.shape.map((ring, r) => {
+    const k = cornersOf(ring, hold ? i => madeOf(it.ids[r][i]).kind !== 'born' : undefined);
+
+    return k.length >= 3 ? k : ring.map((_p, i) => i);
+  });
+  const band = sweptBand(kept.map((k, r) => k.map(i => it.shape[r][i])), () => depth);
+  const named = (w: Sweptfrom) => nameOf(it.ids, { ...w, index: kept[w.ring][w.index] });
 
   const side = (shape: Shape, from: Sweptfrom[][], along: Sweptfrom[][]): Drawn => ({
     shape,
-    ids: from.map(ring => ring.map(w => nameOf(it.ids, w))),
-    edges: along.map(ring => ring.map(w => nameOf(it.ids, w))),
+    ids: from.map(ring => ring.map(named)),
+    edges: along.map(ring => ring.map(named)),
   });
 
   // Which of the band's edges can never be boundary, and so need not cut

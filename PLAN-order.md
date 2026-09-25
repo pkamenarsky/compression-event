@@ -268,8 +268,12 @@ union between them. `laidAcross` and law 1's excuse for it go.
    deform's run unless the ring was held: `flatAt` asks `cornersOf`, the
    resolve's own question, always. Seeds 1 to 5 are green.
 
-   Nesting still red on seeds 6, 9 and 10, not yet shrunk. Shrink with
-   `LAW_NEST`, `LAW_THREE` or `LAW_TWO` and `LAW_SHRINK`.
+   Nesting on seeds 6, 9 and 10 was the erosion's turn at the same thing: it
+   swept a band quad and spoke from every point, flat or not, and beside a
+   step a hair across a flat point moved the eroded outline by 0.04. It
+   sweeps `cornersOf`'s corners now, holding what the arrangement holds.
+   Every law is green on seeds 1 to 10. Shrink with `LAW_NEST`, `LAW_THREE`
+   or `LAW_TWO` and `LAW_SHRINK`.
 
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.
