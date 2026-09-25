@@ -930,6 +930,8 @@ export function deforming(by: Amount, how: Effecting): Effect {
         const whose = line?.edge ?? names[from];
         const lengths = walked(run);
         const total = lengths[lengths.length - 1];
+        const ridden = bent(run);
+        const rides = walked(ridden);
         const high = by;
         const lay = !(how.spacing > 0) || (high === 0 && !flat)
           ? { along: [], across: [], teeth: [], room: [] }
@@ -941,7 +943,7 @@ export function deforming(by: Amount, how: Effecting): Effect {
           ? null
           : patternRun(how, keyOf(line.root), high, line.span, 0, 0, how.spacing, line.middle + line.at);
         const leg = (at: number, s: number, t: number) => {
-          const ride = rideOf(run, lengths, at), off = wallAt(whole!, line!.span, s);
+          const ride = rideOf(ridden, rides, at), off = wallAt(whole!, line!.span, s);
 
           out.push({ x: ride.at.x + ride.nx * off, y: ride.at.y + ride.ny * off });
           said.push(on(names[from], t));
@@ -969,7 +971,7 @@ export function deforming(by: Amount, how: Effecting): Effect {
         }
 
         for (let j = 0; j < lay.along.length; j++) {
-          const ride = rideOf(run, lengths, lay.along[j] * total);
+          const ride = rideOf(ridden, rides, lay.along[j] * total);
 
           out.push({ x: ride.at.x + ride.nx * lay.across[j], y: ride.at.y + ride.ny * lay.across[j] });
           said.push(tooth(line?.root ?? whose, lay.teeth[j], gen));
@@ -1319,6 +1321,41 @@ function walked(run: readonly Point[]): number[] {
  * scope and ten the other on its resolution, a unit apart at the tooth's tip.
  * Eased, the direction is continuous in `at` and an ulp moves it by an ulp.
  */
+/**
+ * The run with the points it does not turn at taken out: what a tooth rides.
+ *
+ * `rideOf` leans a tooth by the joints either side of the facet it stands on,
+ * and a point on a straight is a joint that leans nowhere — the facet's own
+ * normal. So a facet with a flat point in its middle leaned its teeth one way
+ * and the same facet without it another. A scope's resolution has no such
+ * points (`cornersOnly` takes them out) while the drawing it stands for may:
+ * a round laid a facet's midpoint in, and a tooth a unit off a wall on the
+ * resolution stood a thousandth from where it stood on the drawing. The ends
+ * stay, being where the run starts and stops.
+ */
+function bent(run: readonly Point[]): Point[] {
+  if (run.length < 3) return [...run];
+
+  let scale = 1;
+
+  for (const p of run) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+
+  const snap = scale * 1e-9;
+  const out = [run[0]];
+
+  for (let i = 1; i + 1 < run.length; i++) {
+    const a = out[out.length - 1], b = run[i], c = run[i + 1];
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const reach = Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy));
+
+    if (reach > 0 && Math.abs(ux * vy - uy * vx) / reach > snap) out.push(b);
+  }
+
+  out.push(run[run.length - 1]);
+
+  return out;
+}
+
 function rideOf(run: readonly Point[], lengths: readonly number[], at: number): {
   at: Point
   nx: number
