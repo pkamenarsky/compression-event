@@ -15,12 +15,13 @@
 // The key is shown whether or not there is one: a number typed into none
 // writes one, at the end of the first picked thing's list at this keyframe.
 //
-// The effects follow, first laid first, then those none of them has. A box
+// The effects follow, as the picked things' lists have them: only those every
+// one of them has, first laid first, and nothing where that is none. A box
 // ticked is an effect switched on, one fact over every keyframe; how much is
 // in its timeline, written by `d`, `e` and `b` on the canvas or typed into its
 // amount. Unticking switches it off and takes nothing away: its options and
 // amounts apply again when it is ticked. The arrows move an effect up or down
-// the list, on every picked thing that has it.
+// the list, and are there only where every picked thing's list is the same.
 //
 // With corners or edges picked, the pane is about the polygons they are on:
 // an effect is one amount over its whole ring, and one set of options. An
@@ -45,7 +46,7 @@ import {
 } from './effects';
 import { FALLOFF, Pattern, Sides } from './geometry';
 import { Place, entryAt, lastKeys, retypedAt, timedAt } from './keys';
-import { AMOUNT_KINDS, AmountKind, Delta, NOTHING, REST, Typed, addedBy, amountIn, idle, retyped } from './rig';
+import { AmountKind, Delta, NOTHING, REST, Typed, addedBy, amountIn, idle, retyped } from './rig';
 import { keyRigOf, kindsOf, layerOf, layersOf, repartedPolygons, retypable, withKeyRig } from './scene';
 import { theme } from './theme';
 import {
@@ -82,6 +83,9 @@ interface Model {
   /** The effects in the order the pane lists them, joined by commas: see
    * `orderOf`. */
   order: string
+  /** Whether every picked thing lays the same effects in the same order, so
+   * that one can be moved along all their lists at once. */
+  movable: boolean
   /** What it does to the thing as a whole, in the units it is typed in:
    * degrees for the turn and the skew. Identity where it holds only corners. */
   moveX: number
@@ -276,6 +280,7 @@ function modelOf(
   return {
     key: key !== undefined,
     order: order.join(','),
+    movable: ids.every(id => kindsIn(world, id) === kindsIn(world, ids[0])),
     moveX: fine(by?.move.x ?? 0),
     moveY: fine(by?.move.y ?? 0),
     angle: degrees(by?.angle ?? 0),
@@ -312,18 +317,19 @@ function modelOf(
   };
 }
 
-/** The effects as the pane lists them: each kind in the order the picked
- * things first lay it, and then those none of them has. */
+/** A thing's layers' kinds, in order, as one string to compare. */
+function kindsIn(world: World, id: Id): string {
+  return layersOf(world, id).map(l => l.kind).join(',');
+}
+
+/** The effects as the pane lists them: the kinds every picked thing has, in
+ * the order the first of them lays them. */
 function orderOf(world: World, ids: readonly Id[]): AmountKind[] {
-  const out: AmountKind[] = [];
+  if (ids.length === 0) return [];
 
-  for (const id of ids) {
-    for (const l of layersOf(world, id)) {
-      if (!out.includes(l.kind)) out.push(l.kind);
-    }
-  }
+  const first = [...new Set(layersOf(world, ids[0]).map(l => l.kind))];
 
-  return [...out, ...AMOUNT_KINDS.filter(k => !out.includes(k))];
+  return first.filter(k => ids.every(id => layerOf(world, id, k) !== undefined));
 }
 
 function body(
@@ -485,7 +491,7 @@ function body(
 
     // By kind, so that an effect moved keeps its controls, and whatever is
     // being typed into them.
-    ordered(() => m.order().split(',') as AmountKind[], k => k, (index, kind) => effect(kind(), index)),
+    ordered(() => (m.order() === '' ? [] : m.order().split(',') as AmountKind[]), k => k, (index, kind) => effect(kind(), index)),
   ]);
 
   /** An effect's heading and, under it, its amount in the key and its
@@ -497,8 +503,10 @@ function body(
 
     return div({ style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
       heading(NAMES[kind], KEYS[kind], on, () => toggled(kind, on()), [
-        arrow('↑', () => index() === 0, () => moved(kind, -1)),
-        arrow('↓', last, () => moved(kind, 1)),
+        show(() => m.movable(), fragment([
+          arrow('↑', () => index() === 0, () => moved(kind, -1)),
+          arrow('↓', last, () => moved(kind, 1)),
+        ])),
       ]),
       options(on, [
         field('amount', number(amount, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, kind, v)), Infinity, 'any', fixed)),
