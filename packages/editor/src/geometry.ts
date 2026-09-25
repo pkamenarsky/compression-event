@@ -224,7 +224,7 @@ export function unionAll(shapes: readonly Shape[]): Cut {
   });
 
   const raw = segments(rings, 0, ranks);
-  const snap = scaleOf(raw) * 1e-9;
+  const snap = SNAP;
 
   // One field over all of them, and a point is in the union when it is in any:
   // the same reading `covers` gives a neighbourhood's level side.
@@ -355,8 +355,8 @@ export function erodedShape(shape: Shape, depth: number): Point[][] {
  * The unit every tolerance here is written in. An absolute epsilon is a
  * statement about the units the caller happens to be working in, and the same
  * level drawn at a tenth the scale would get a tenth the answer out of it —
- * which is exactly the bug it would be there to prevent. `scaleOf` is this
- * same measure taken over segments, for the arrangement's own snap.
+ * which is exactly the bug it would be there to prevent. The arrangement's
+ * own snap is not this: see `SNAP`.
  */
 function extentOf(shape: readonly (readonly Point[])[]): number {
   let lo = Infinity, hi = -Infinity;
@@ -1478,23 +1478,19 @@ interface Param {
 }
 
 /**
- * Tolerances are relative to how big the input is: a scene measured in
- * thousands of world units needs a coarser idea of "the same point" than one
- * measured in fractions.
+ * How close two points are before an arrangement calls them one, in world
+ * units: a fixed length, and not a share of how big the input is.
+ *
+ * A share of the input is a share of whatever else was arranged with it, so a
+ * room two thousand units off made every tolerance five times coarser, and a
+ * tooth whose tip stood two millionths clear of a wall touched it beside the
+ * room and did not without it. A list on a scope and its layers on nested
+ * scopes arrange the same rings with different neighbours, and laid a wall's
+ * teeth at different phases over it. What a point is near is decided by the
+ * points near it; a world's rooms are drawn in units, and the one scale a
+ * rounding error keeps is theirs.
  */
-function scaleOf(_segs: Seg[]): number {
-  return 100;
-  let lo = Infinity, hi = -Infinity;
-
-  for (const s of segs) {
-    lo = Math.min(lo, s.a.x, s.a.y, s.b.x, s.b.y);
-    hi = Math.max(hi, s.a.x, s.a.y, s.b.x, s.b.y);
-  }
-
-  const d = hi - lo;
-
-  return Number.isFinite(d) && d > 0 ? d : 1;
-}
+const SNAP = 1e-7;
 
 /**
  * `ranks` gives each ring its owner, for a shape that is several polygons
@@ -1867,7 +1863,7 @@ export function combineTagged(
 ): TaggedShape {
   const cutters = segments(b, 1);
   const raw = [...segments(a, 0), ...(inert === undefined ? cutters : cutters.filter(s => !inert(s.edge.ring, s.edge.index)))];
-  const snap = scaleOf(raw) * 1e-9;
+  const snap = SNAP;
 
   // Prepared once and asked four times per segment, which is the whole reason
   // they exist.
@@ -1995,7 +1991,7 @@ function arranged(
   segs: Seg[],
   snap: number,
 ): Seg[] {
-  // `snap` was scaled off the input the same way, so this recovers it.
+  // What `snap` is a billionth of: the tolerances here are written in it.
   const scale = snap / 1e-9;
 
   const kept: Seg[] = [];
@@ -2296,7 +2292,7 @@ export function boundaryRuns(
   const ours = raw.filter(s => s.rank === mine);
   const rest = raw.filter(s => s.rank !== mine);
 
-  const snap = scaleOf(raw) * 1e-9;
+  const snap = SNAP;
   const shared = on ?? ground(all, slots);
 
   const inSlot = shared.map(slot => (p: Point) => covers(slot, p));
@@ -2537,7 +2533,7 @@ function cornering(
 ): boolean[][] {
   if (runs.length === 0) return [];
 
-  // `snap` was scaled off the input the same way, so this recovers it.
+  // What `snap` is a billionth of: the tolerances here are written in it.
   const scale = snap / 1e-9;
   const weld = welder(snap);
   const where = new Array<boolean>(on.length);
