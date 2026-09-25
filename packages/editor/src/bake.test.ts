@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
+import { EASINGS, REPLAY_EASE } from '@ce/game/replay';
 import { Point } from '@ce/game/world';
 import {
+  EXACT,
   EXACT_GAP,
+  FRAMES,
   Frame,
   Origin,
   Span,
@@ -9,6 +12,7 @@ import {
   TOLERANCE,
   bakeAll,
   bakeSpan,
+  limitsFrom,
   ready,
   lined,
   pruned,
@@ -201,7 +205,7 @@ function editorAt(world: World, v: KeyframeId): number {
  * caught both the signature scan's blind spot and the crossings sliding.
  */
 function drift(world: World, from = 0, steps = 40): number {
-  const span = run(bakeSpan(world, from, TOLERANCE, EXACT_GAP));
+  const span = run(bakeSpan(world, from, TOLERANCE, limitsFrom(EXACT_GAP)));
   let worst = 0;
 
   for (let i = 0; i <= steps; i++) {
@@ -227,14 +231,14 @@ function cut(span: Span): number[] {
 
 /** Where the span was cut, rounded to something a test can name. */
 function cuts(world: World, from = 0): number[] {
-  const span = run(bakeSpan(world, from, TOLERANCE, EXACT_GAP));
+  const span = run(bakeSpan(world, from, TOLERANCE, limitsFrom(EXACT_GAP)));
 
   return cut(span).slice(1).map(t => Number(t.toFixed(4)));
 }
 
 /** What the bake says its own error was, which is the number that matters. */
 function worst(world: World, from = 0): number {
-  return run(bakeSpan(world, from, TOLERANCE, EXACT_GAP)).worst;
+  return run(bakeSpan(world, from, TOLERANCE, limitsFrom(EXACT_GAP))).worst;
 }
 
 
@@ -1023,7 +1027,7 @@ describe('a turning world is no worse than it says it is', () => {
   test('at instants the bake did not choose to look at', () => {
     for (const spin of [20]) {
       const world = boxes(spin);
-      const span = run(bakeSpan(world, 0, TOLERANCE, EXACT_GAP));
+      const span = run(bakeSpan(world, 0, TOLERANCE, limitsFrom(EXACT_GAP)));
 
       let seen = 0, worst = 0;
 
@@ -1048,6 +1052,33 @@ describe('a turning world is no worse than it says it is', () => {
       expect(seen).toBeGreaterThan(700);
       expect(worst).toBeLessThanOrEqual(span.worst + 1e-9);
     }
+  }, 30_000);
+
+  test('cut to frames, the work is less and no frame is visibly further off', () => {
+    const world = boxes(20);
+    const exact = run(bakeSpan(world, 0, TOLERANCE, EXACT));
+    const frames = run(bakeSpan(world, 0, TOLERANCE, FRAMES));
+
+    expect(frames.evaluations).toBeLessThan(exact.evaluations);
+
+    // At every frame the replay draws, on the curve it draws them on, against
+    // the truth, where both bakes read it as the same arrangement — as above,
+    // the two can pin an event a hair apart and a frame fall between them.
+    const shape = (f: Frame) => f.map(r => `${r.id}:${JSON.stringify(r.whence)}`).sort().join(' ');
+
+    let seen = 0;
+
+    for (let i = 0; i <= 240; i++) {
+      const t = EASINGS[REPLAY_EASE](i / 240);
+      const a = sample(frames, t), b = sample(exact, t), c = truth(world, 0, t);
+
+      if (shape(a) !== shape(c) || shape(b) !== shape(c)) continue;
+
+      seen++;
+      expect(asSets(a, c)).toBeLessThanOrEqual(asSets(b, c) + 1);
+    }
+
+    expect(seen).toBeGreaterThan(100);
   }, 30_000);
 });
 

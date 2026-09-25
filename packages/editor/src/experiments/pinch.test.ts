@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
-import { EXACT_GAP, Span, TOLERANCE, bakeSpan, sample, truth } from '../bake';
+import { EXACT_GAP, Span, TOLERANCE, bakeSpan, limitsFrom, sample, truth } from '../bake';
 import { TOP, addPolygon, csg } from '../scene';
 import { Writing, deform, erode, inSegments, round, withEffects, wrote } from '../testing';
 import { World, emptyWorld } from '../types';
@@ -50,7 +50,7 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: the pinch', () => {
     for (const amplitude of [0, 6, 14]) {
       it(`erode to ${depth}, amplitude ${amplitude}`, () => {
         const w = world(amplitude, depth);
-        const span: Span = run(bakeSpan(w, 0, TOLERANCE, EXACT_GAP));
+        const span: Span = run(bakeSpan(w, 0, TOLERANCE, limitsFrom(EXACT_GAP)));
         const stretches = span.tracks.reduce((n, t) => n + t.stretches.length, 0);
         const jumps = span.tracks.reduce((n, t) => n + t.jumps.length, 0);
 

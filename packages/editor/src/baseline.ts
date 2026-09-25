@@ -42,7 +42,7 @@
 
 import { createHash } from 'node:crypto';
 import { Point } from '@ce/game/world';
-import { EXACT_GAP, TOLERANCE, bakeAll } from './bake';
+import { EXACT_GAP, TOLERANCE, bakeAll, limitsFrom } from './bake';
 import { shipped } from './export';
 import { nudged } from './rig';
 import {
@@ -225,7 +225,7 @@ export function digest(world: World): Record<string, string> {
   const out: Record<string, string> = {};
   // At the depth master baked to, which holds the tolerance everywhere: what
   // this compares is the bake's answer, not how finely it was asked for.
-  const g = bakeAll(world, TOLERANCE, EXACT_GAP);
+  const g = bakeAll(world, TOLERANCE, limitsFrom(EXACT_GAP));
   let step = g.next();
 
   while (!step.done) step = g.next();

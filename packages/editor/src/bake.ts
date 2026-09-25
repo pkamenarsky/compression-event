@@ -137,7 +137,7 @@
 // -----------------------------------------------------------------------------
 
 import type { BakedLevel } from '@ce/game';
-import { REPLAY_MS } from '@ce/game/replay';
+import { EASINGS, Ease, REPLAY_EASE, REPLAY_MS } from '@ce/game/replay';
 import { Point, TOLERANCE } from '@ce/game/world';
 import { AABB, Tree, build, merge, ofRings, overlaps, search } from './aabb';
 import {
@@ -2624,13 +2624,93 @@ const BEND = 1e-6;
 export interface Limits {
   gap: number
   bend: number
+  /**
+   * How narrow an interval has to be for `visible` to be what it is held to
+   * rather than the tolerance. Nought, and everything is held to the tolerance.
+   */
+  floor: number
+  /** What an interval narrower than `floor` may be wrong by and be let go. */
+  visible: number
+  /**
+   * The curve the span is played on, which all three widths are measured
+   * through: a width is a share of the playing time, not of `t`. See `played`.
+   */
+  ease: Ease
+}
+
+/**
+ * How much of the playing time lies between two instants of the span.
+ *
+ * Not `b - a`, because the span is not played at an even pace. On the curve the
+ * game plays it on, `t` leaves at three times the average speed and arrives at
+ * none, so the last frame of a transition covers a sliver of `t` and a width of
+ * `t` a frame wide at the far end is held on screen for eight. Cut to frames in
+ * `t`, that was a jump anybody could see, just where the transition settles.
+ *
+ * Linear, it is `b - a` exactly, which is what every width here meant before it
+ * was measured this way.
+ */
+function played(l: Limits, a: number, b: number): number {
+  return l.ease === 'linear' ? b - a : unease(l.ease, b) - unease(l.ease, a);
+}
+
+/** The instant of playing time at which the curve reaches `t`. Every easing is
+ * increasing and pinned at both ends, so halving finds it. */
+function unease(ease: Ease, t: number): number {
+  const curve = EASINGS[ease];
+
+  let lo = 0, hi = 1;
+
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+
+    if (curve(mid) < t) lo = mid;
+    else hi = mid;
+  }
+
+  return (lo + hi) / 2;
 }
 
 /** What a track is cut at until it gives the bake reason to go finer, starting
  * events at `gap`. */
-function limitsFrom(gap: number): Limits {
-  return { gap, bend: BEND };
+export function limitsFrom(gap: number): Limits {
+  return { gap, bend: BEND, floor: 0, visible: 0, ease: 'linear' };
 }
+
+/** The bake that holds the tolerance everywhere it can: what the tests cut at,
+ * so that an error the eye would never catch is still caught. */
+export const EXACT: Limits = limitsFrom(GAP);
+
+/** One frame of the replay, as a share of its playing time. See `played`. */
+const FRAME = FRAME_MS / REPLAY_MS;
+
+/** How far off a stretch inside one frame may be and pass: about a pixel at the
+ * editor's closest look. */
+const VISIBLE = 0.5;
+
+/**
+ * The bake the editor makes: held to the tolerance across anything wider than a
+ * frame, and to `VISIBLE` inside one.
+ *
+ * A span plays in `REPLAY_MS`, so an interval a frame wide is drawn on one
+ * frame, and what it gets wrong is on screen for that frame. Being a few
+ * hundredths off for a sixtieth of a second is nothing anybody sees, and it
+ * was what the exact bake spent most of its time chasing — a bend at a crossing
+ * racing through a stretch, cut to a millionth of the span.
+ *
+ * Being sixty units off for a sixtieth of a second is a jump anybody sees, and
+ * that is what a floor of a frame did when it stopped the search there whatever
+ * the error: a crossing moving that fast is exactly where the depth is needed.
+ * So the frame is not where the search stops. It is where the error it has to
+ * get under goes from the tolerance to `VISIBLE`, and past that the search goes
+ * as deep as the exact bake would.
+ *
+ * `worst` means something narrower here: what is wrong by more than the
+ * tolerance across more than a frame, or by more than `VISIBLE` inside one. A
+ * discontinuity `comparable` lets through is still caught by the tests, which
+ * cut at `EXACT`.
+ */
+export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VISIBLE, ease: REPLAY_EASE };
 
 /**
  * As far as a re-cut will ever go, whatever the measure says.
@@ -2711,7 +2791,19 @@ const PAYING = 0.7;
 const CHURN = 1;
 
 /** A decade deeper, both of them. */
-const finer = (l: Limits): Limits => ({ gap: l.gap / 10, bend: l.bend / 10 });
+const finer = (l: Limits): Limits => ({ ...l, gap: l.gap / 10, bend: l.bend / 10 });
+
+/** Whether an interval is inside one frame, as the limits count one. */
+const unseen = (l: Limits, a: number, b: number): boolean => played(l, a, b) <= l.floor;
+
+/** What an interval is held to: the tolerance, or `visible` inside a frame. */
+const allowed = (l: Limits, tol: number, a: number, b: number): number =>
+  unseen(l, a, b) ? Math.max(tol, l.visible) : tol;
+
+/** Whether an error is the bake's to own: anything outside a frame, and inside
+ * one only what is more than `visible`. */
+const owned = (l: Limits, off: number, a: number, b: number): boolean =>
+  !(unseen(l, a, b) && off <= l.visible);
 
 const MARGIN = 0.5;
 
@@ -3434,7 +3526,7 @@ function* fillTrack(
 
   while (stack.length > 0) {
     const [a, b] = stack.pop()!;
-    const narrow = b.t - a.t <= limits.gap;
+    const narrow = played(limits, a.t, b.t) <= limits.gap;
 
     if (!alike(a.rings, b.rings)) {
       if (!narrow) {
@@ -3455,12 +3547,13 @@ function* fillTrack(
     const m = at((a.t + b.t) / 2);
     const off = alike(a.rings, m.rings) ? drift(a.rings, b.rings, m.rings, 0.5) : Infinity;
 
-    if (off > tol * MARGIN && b.t - a.t > limits.bend) {
+    if (off > allowed(limits, tol, a.t, b.t) * MARGIN && played(limits, a.t, b.t) > limits.bend) {
       stack.push([m, b], [a, m]);
       continue;
     }
 
-    worst = Math.max(worst, Number.isFinite(off) ? off : 0);
+    if (Number.isFinite(off) && owned(limits, off, a.t, b.t)) worst = Math.max(worst, off);
+
     out.push(held(a, b));
 
     done = b.t;
@@ -3511,6 +3604,8 @@ interface Cutting {
   at: (t: number) => Taken
   riders: Map<Id, Rider>
   tol: number
+  /** Where the cut starts, for what it does not count. See `Limits.floor`. */
+  start: Limits
 }
 
 /**
@@ -3537,7 +3632,7 @@ function* bisected(
 
   while (stack.length > 0) {
     const [a, b, before] = stack.pop()!;
-    const narrow = b.t - a.t <= limits.gap;
+    const narrow = played(limits, a.t, b.t) <= limits.gap;
 
     if (!comparable(a, b)) {
       if (!narrow) {
@@ -3562,6 +3657,7 @@ function* bisected(
       comparable(a, x) ? apart(drawn(s, riders, x.t), x.out) : Infinity;
 
     const m = at((a.t + b.t) / 2);
+    const held = allowed(limits, tol, a.t, b.t) * MARGIN;
 
     let off = check(m);
 
@@ -3574,15 +3670,15 @@ function* bisected(
     // anywhere changed, so a busy neighbour's keyframes were sprinkled through
     // a quiet polygon's span and cut its curves up for it. Cutting each polygon
     // on its own takes that away, and it has to be paid for honestly.
-    if (off <= tol * MARGIN) {
+    if (off <= held) {
       for (const f of [0.25, 0.75]) {
         off = Math.max(off, check(at(a.t + (b.t - a.t) * f)));
 
-        if (off > tol * MARGIN) break;
+        if (off > held) break;
       }
     }
 
-    if (off > tol * MARGIN && b.t - a.t > limits.bend) {
+    if (off > held && played(limits, a.t, b.t) > limits.bend) {
       stack.push([m, b, off], [a, m, off]);
       continue;
     }
@@ -3598,7 +3694,7 @@ function* bisected(
     // times finer, and then a hundred, for an answer no width could improve —
     // a facet count stepping under a round, which is a jump of up to the
     // round's own accuracy wherever it happens.
-    if (!Number.isFinite(off) || (cuttingSteps && off > tol * MARGIN && off >= before * STEP)) {
+    if (!Number.isFinite(off) || (cuttingSteps && off > held && off >= before * STEP)) {
       pieces.push({ a, b, kept: [instant(a), instant(b)], off: 0, limited: true, step: Number.isFinite(off) });
 
       yield b.t;
@@ -3611,7 +3707,7 @@ function* bisected(
     // is not that. This used to be the one place a stretch was kept with no
     // check at all, and what it hid was a whole unit of pop in a level with
     // anything much turning in it.
-    pieces.push({ a, b, kept: [s], off, limited: off > tol * MARGIN });
+    pieces.push({ a, b, kept: [s], off, limited: off > held });
 
     yield b.t;
   }
@@ -3624,17 +3720,20 @@ function* bisected(
  * inside the tolerance — the ones a finer cut should go back to.
  */
 function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean[] } {
-  const { riders, tol } = c;
+  const { riders, tol, start } = c;
   const out: Stretch[] = [];
 
   // Which piece each of `out` came from.
   const whose: number[] = [];
-  const failing = pieces.map(p => p.limited && p.off > tol);
+
+  // Inside a frame, only what is more than `visible` off. See `FRAMES`.
+  const counted = pieces.map(p => owned(start, p.off, p.a.t, p.b.t));
+  const failing = pieces.map((p, k) => counted[k] && p.limited && p.off > tol);
 
   let worst = 0;
 
   pieces.forEach((p, k) => {
-    worst = Math.max(worst, p.off);
+    if (counted[k]) worst = Math.max(worst, p.off);
 
     for (const s of p.kept) {
       const last = out[out.length - 1];
@@ -3705,6 +3804,12 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
       if (stepped) continue;
 
       const off = strayed(drawn(grown, riders, t), now.out);
+
+      // Drawn only over the stretch of the gap it was handed: inside a frame,
+      // held to `visible`.
+      const edge = side < 0 ? was.t0 : was.t1;
+
+      if (!owned(start, off, Math.min(t, edge), Math.max(t, edge))) continue;
 
       worst = Math.max(worst, off);
 
@@ -4009,13 +4114,13 @@ function* chased(
   i: number,
   fill: boolean,
   tol: number,
-  gap: number,
+  start: Limits,
 ): Generator<number, Cut & { limits: Limits }, void> {
-  if (!fill) return yield* recut(at, i, tol, gap);
+  if (!fill) return yield* recut(at, i, tol, start);
 
   const { id } = at.items[i];
 
-  let limits = limitsFrom(gap);
+  let limits = start;
   let best: (Cut & { limits: Limits }) | null = null;
   let was = Infinity;
   let spent = 0;
@@ -4081,7 +4186,7 @@ function* chased(
  * because the bisection inside an interval is its own; the rest are left as the
  * coarser decade had them.
  */
-function* recut(at: Ready, i: number, tol: number, gap: number): Generator<number, Cut & { limits: Limits }, void> {
+function* recut(at: Ready, i: number, tol: number, start: Limits): Generator<number, Cut & { limits: Limits }, void> {
   const { id } = at.items[i];
   const sub = at.near[i];
 
@@ -4107,6 +4212,7 @@ function* recut(at: Ready, i: number, tol: number, gap: number): Generator<numbe
     },
     riders: at.riders,
     tol,
+    start,
   };
 
   // A piece cut again reports how far it has got, which is behind where the
@@ -4123,7 +4229,7 @@ function* recut(at: Ready, i: number, tol: number, gap: number): Generator<numbe
     }
   }
 
-  let limits = limitsFrom(gap);
+  let limits = start;
   let pieces = yield* shown(bisected(c, c.at(0), c.at(1), limits));
   let cut = settled(c, pieces);
   let best = { ...cut, limits };
@@ -4284,9 +4390,9 @@ function movement(out: unknown[], m: Moving, cast: Cast): void {
  * multiply. Over a thousand tracks the odds of one are about one in
  * thirty-seven million million.
  */
-export function signed(at: Ready, i: number, tol: number, gap: number): string {
+export function signed(at: Ready, i: number, tol: number, start: Limits): string {
   const s = at.items[i];
-  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, gap];
+  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, start.gap, start.bend, start.floor, start.ease];
   const near = at.near[i];
 
   // Its own first, in the order the cut is handed them, and the rest by id:
@@ -4320,15 +4426,15 @@ function hashed(parts: readonly unknown[]): string {
 }
 
 /** Every track of a span, hashed, in the order `ready` put its items in. */
-export function signatures(at: Ready, tol: number = TOLERANCE, gap: number = GAP): string[] {
-  return at.items.map((_unused, i) => signed(at, i, tol, gap));
+export function signatures(at: Ready, tol: number = TOLERANCE, start: Limits = EXACT): string[] {
+  return at.items.map((_unused, i) => signed(at, i, tol, start));
 }
 
 export function* cutSome(
   at: Ready,
   which: readonly number[],
   tol: number = TOLERANCE,
-  gap: number = GAP,
+  start: Limits = EXACT,
 ): Generator<number, Slice, void> {
   const began = now();
   const tracks: Track[] = [];
@@ -4343,7 +4449,7 @@ export function* cutSome(
     // above it. Everything else is its share of a boundary and is measured
     // against the CSG.
     const cut = yield* weighted(
-      chased(at, i, fill, tol, gap),
+      chased(at, i, fill, tol, start),
       k / which.length,
       1 / which.length,
     );
@@ -4356,7 +4462,7 @@ export function* cutSome(
       jumps: cut.jumps,
       worst: cut.worst,
       gap: cut.limits.gap,
-      sig: signed(at, i, tol, gap),
+      sig: signed(at, i, tol, start),
     });
 
     evaluations += cut.evaluations;
@@ -4377,14 +4483,14 @@ export function* bakeSlice(
   index: number,
   of: number,
   tol: number = TOLERANCE,
-  gap: number = GAP,
+  start: Limits = EXACT,
 ): Generator<number, Slice, void> {
   const at = ready(world, from);
   const which: number[] = [];
 
   for (let i = index; i < at.items.length; i += of) which.push(i);
 
-  const slice = yield* cutSome(at, which, tol, gap);
+  const slice = yield* cutSome(at, which, tol, start);
 
   return { ...slice, setup: at.setup };
 }
@@ -4434,7 +4540,7 @@ export function* bakeSpan(
   world: World,
   from: number,
   tol: number = TOLERANCE,
-  gap: number = GAP,
+  start: Limits = EXACT,
   was: Span | null = null,
 ): Generator<number, Span, void> {
   const at = ready(world, from);
@@ -4445,13 +4551,13 @@ export function* bakeSpan(
   at.items.forEach((_unused, i) => {
     // By signature alone, which names the polygon it is about: two tracks
     // cannot share one without being the same track of the same span.
-    const track = held.get(signed(at, i, tol, gap));
+    const track = held.get(signed(at, i, tol, start));
 
     if (track === undefined) which.push(i);
     else kept.push(track);
   });
 
-  const slice = yield* cutSome(at, which, tol, gap);
+  const slice = yield* cutSome(at, which, tol, start);
 
   return joined(world, from, ridersFrom(at, world), [{ ...slice, setup: at.setup }], tol, kept);
 }
@@ -4460,7 +4566,7 @@ export function* bakeSpan(
 export function* bakeAll(
   world: World,
   tol: number = TOLERANCE,
-  gap: number = GAP,
+  start: Limits = EXACT,
   was: Bake = EMPTY_BAKE,
 ): Generator<number, Map<number, Span>, void> {
   const out = new Map<number, Span>();
@@ -4468,7 +4574,7 @@ export function* bakeAll(
 
   for (let k = 0; k < count; k++) {
     const span = yield* weighted(
-      bakeSpan(world, k, tol, gap, reusable(was, world, k)),
+      bakeSpan(world, k, tol, start, reusable(was, world, k)),
       k / count,
       1 / count,
     );

@@ -5,7 +5,7 @@ import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg
 import { signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { Bake, bakeAll, spanAt } from './bake';
+import { Bake, FRAMES, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
@@ -1571,7 +1571,7 @@ function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: 
  * left half done because the author looked at something else is not a bake.
  */
 function start(state: Value<EditorState>, update: Update): void {
-  const job = bakeAll(state().world, undefined, undefined, state().bake);
+  const job = bakeAll(state().world, undefined, FRAMES, state().bake);
 
   const pump = () => {
     const until = performance.now() + 12;
