@@ -2636,6 +2636,12 @@ export interface Limits {
    * through: a width is a share of the playing time, not of `t`. See `played`.
    */
   ease: Ease
+  /**
+   * Whether a track outside the tolerance is cut again a decade finer. Off, the
+   * first cut is the answer, and whatever it could not get under is `worst`.
+   * See `chased`, `FAST`.
+   */
+  deepen: boolean
 }
 
 /**
@@ -2674,7 +2680,7 @@ function unease(ease: Ease, t: number): number {
 /** What a track is cut at until it gives the bake reason to go finer, starting
  * events at `gap`. */
 export function limitsFrom(gap: number): Limits {
-  return { gap, bend: BEND, floor: 0, visible: 0, ease: 'linear' };
+  return { gap, bend: BEND, floor: 0, visible: 0, ease: 'linear', deepen: true };
 }
 
 /** The bake that holds the tolerance everywhere it can: what the tests cut at,
@@ -2710,7 +2716,21 @@ const VISIBLE = 0.5;
  * discontinuity `comparable` lets through is still caught by the tests, which
  * cut at `EXACT`.
  */
-export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VISIBLE, ease: REPLAY_EASE };
+export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VISIBLE, ease: REPLAY_EASE, deepen: true };
+
+/**
+ * The bake to look at while editing, and nothing better: no interval narrower
+ * than half a frame of playing time, for events and bends alike, and no second
+ * attempt at a track that comes back outside the tolerance.
+ *
+ * This is the floor `FRAMES` gave up, because a crossing racing through a
+ * frame can sit tens of units off inside it. That is still true here, and it
+ * is the price: what it buys is a bake whose cost is bounded by the frames in
+ * a span rather than by how badly anything in it bends. A polygon that will
+ * not lerp at any depth cost `FRAMES` eight thousand stretches in one span.
+ * `worst` says what was let go.
+ */
+export const FAST: Limits = { gap: FRAME / 2, bend: FRAME / 2, floor: 0, visible: 0, ease: REPLAY_EASE, deepen: false };
 
 /**
  * As far as a re-cut will ever go, whatever the measure says.
@@ -4189,6 +4209,7 @@ function* chased(
     if (
       best.worst <= tol
       || limits.gap <= FINEST
+      || !limits.deepen
       || cut.worst > PAYING * was
       || cut.jumps.length > CHURN * cut.stretches.length
     ) {
@@ -4270,6 +4291,7 @@ function* recut(at: Ready, i: number, tol: number, start: Limits): Generator<num
     if (
       best.worst <= tol
       || limits.gap <= FINEST
+      || !limits.deepen
       || cut.worst > PAYING * was
       || cut.jumps.length > CHURN * cut.stretches.length
     ) {
@@ -4420,7 +4442,7 @@ function movement(out: unknown[], m: Moving, cast: Cast): void {
  */
 export function signed(at: Ready, i: number, tol: number, start: Limits): string {
   const s = at.items[i];
-  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, start.gap, start.bend, start.floor, start.ease];
+  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, start.gap, start.bend, start.floor, start.ease, start.deepen];
   const near = at.near[i];
 
   // Its own first, in the order the cut is handed them, and the rest by id:

@@ -5,7 +5,7 @@ import { circle, g, line, path, rect, svg, text } from '@incpt/kontinuum-dom/svg
 import { signal } from '@incpt/kontinuum-interaction';
 import { interaction } from '@incpt/kontinuum-interaction/dom';
 
-import { Bake, FRAMES, bakeAll, spanAt } from './bake';
+import { Bake, FAST, FRAMES, Limits, bakeAll, spanAt } from './bake';
 import { worldCanvas } from './canvas';
 import { preview } from './view3d';
 import { Input, createInput, inputListener, keyPressed } from './input';
@@ -1262,6 +1262,11 @@ const PANEL_WIDTH = 132;
 
 const BAKE_HEIGHT = 52;
 
+/** The gap between the two bake buttons, and how wide each is. */
+const GUTTER = 6;
+const NARROW = 48;
+const WIDE = PANEL_WIDTH - 2 * PADDING - GUTTER - NARROW;
+
 function bakeButton(
   state: Value<EditorState>,
   world: Value<World>,
@@ -1309,18 +1314,24 @@ function bakeButton(
         stroke: theme.border,
       }),
 
-      g(
+      // Two buttons: the bake held to the tolerance, and a fast one to look at
+      // while editing, which bounds the work at a frame and says what it let go.
+      // See `FAST`.
+      ...([
+        [PADDING, WIDE, label, FRAMES],
+        [PADDING + WIDE + GUTTER, NARROW, () => 'fast', FAST],
+      ] as [number, number, () => string, Limits][]).map(([x, width, says, limits]) => g(
         {
           style: { cursor: 'pointer' },
           onclick: () => {
-            if (!running()) start(state, update);
+            if (!running()) start(state, update, limits);
           },
         },
         [
           rect({
-            x: PADDING,
+            x,
             y: PADDING,
-            width: PANEL_WIDTH - 2 * PADDING,
+            width,
             height: 24,
             rx: 6,
             fill: () => (running() ? theme.border : theme.accent),
@@ -1328,17 +1339,17 @@ function bakeButton(
 
           text(
             {
-              x: PANEL_WIDTH / 2,
+              x: x + width / 2,
               y: PADDING + 16,
               'text-anchor': 'middle',
               fill: () => (running() ? theme.muted : theme.onAccent),
               'font-family': 'system-ui, sans-serif',
               'font-size': '12px',
             },
-            label,
+            says,
           ),
         ],
-      ),
+      )),
 
       // The bar reads as the spans it is filling: one tick per gap in the
       // chain, so a stalled bake says which span it stalled in.
@@ -1570,8 +1581,8 @@ function breadcrumb(world: Value<World>, inside: Value<GroupId | null>, update: 
  * pacing and the worse promise: a hidden tab stops being given them, and a bake
  * left half done because the author looked at something else is not a bake.
  */
-function start(state: Value<EditorState>, update: Update): void {
-  const job = bakeAll(state().world, undefined, FRAMES, state().bake);
+function start(state: Value<EditorState>, update: Update, limits: Limits): void {
+  const job = bakeAll(state().world, undefined, limits, state().bake);
 
   const pump = () => {
     const until = performance.now() + 12;
