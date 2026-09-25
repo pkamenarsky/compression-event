@@ -295,6 +295,17 @@ effect" appends a layer.
 `REMEMBERED`'s shape if it no longer fits, and anything still reading a fixed
 order.
 
+   *Done, and smaller than planned.* The editor keeps at most one layer of
+   each kind, on purpose: every layer is a step of the fold and a resample,
+   and the bake pays for each, so an editor list is kept to three. The
+   format and the fold still take any list, and the laws still test the same
+   kind twice. So `Options` and `REMEMBERED` (one set per kind) fit and
+   stay, and so does the editor addressing a layer by kind (`layerOf`,
+   `withEffect`, `switchedOn`). The tests' `Effects` record stays as
+   shorthand for one of each kind. What went: `optionOf`, which nothing
+   called, and the comments still describing a fixed order or calling one
+   layer per kind temporary.
+
 # Open questions
 
 - **Which slot a scope's list applies to.** A sealed scope's output is one shape

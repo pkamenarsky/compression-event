@@ -192,7 +192,6 @@ import {
   under,
   unplace,
   resolveAt,
-  optionOf,
   scaleAt,
   scaledState,
   segmentsOf,

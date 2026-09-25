@@ -67,7 +67,6 @@ import {
   Eye,
   FloorPart,
   GroupId,
-  Options,
   IconType,
   Id,
   KINDS,
@@ -272,7 +271,7 @@ export interface ArcDeform {
 /** `bevel` is in the world and `scale` is what took it there (`scaleAt`):
  * the precision is a length at the thing's own scale, as the bevel was, so a
  * thing scaled keeps the facets it had. */
-export function segmentsOf(round: Options['round'], bevel: number, scale = 1): number {
+export function segmentsOf(round: RoundOptions, bevel: number, scale = 1): number {
   return round.chamfer ? 1 : segmentsFor(bevel, round.precision * scale, round.tension);
 }
 
@@ -286,12 +285,6 @@ export function layersOf(world: World, id: Id): readonly Layer[] {
 /** The first of a thing's layers of a kind, switched on or not. */
 export function layerOf<K extends LayerKind>(world: World, id: Id, kind: K): LayerOf<K> | undefined {
   return layersOf(world, id).find((l): l is LayerOf<K> => l.kind === kind);
-}
-
-/** The options of the first layer of a kind on a thing that is switched on:
- * what the editor shows and sets while it has one layer of each. */
-export function optionOf<N extends keyof Options>(world: World, id: Id, name: N): LayerOf<N> | undefined {
-  return layersOf(world, id).find((l): l is LayerOf<N> => l.kind === name && l.off !== true);
 }
 
 /** What an owner's amounts are called, by layer: its layers' kinds. An amount
@@ -1050,8 +1043,8 @@ export const project = remembered((
 const UNEFFECTED: readonly number[] = [];
 
 /**
- * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
- * and nothing else anywhere.
+ * A polygon drawn as the fold of `PLAN-effect` draws it: its layers, first to
+ * last, and nothing else anywhere.
  *
  * Each effect is one amount over the whole ring. The names still matter: the
  * erosion closes a notch and the ring is two rings; the round makes arcs where

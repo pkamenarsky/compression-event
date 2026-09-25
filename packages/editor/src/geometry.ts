@@ -3800,7 +3800,7 @@ export const TENSION = 0.5;
  * *should* gain segments for it. What a precision cannot say is a fade:
  * `Facets` carries two counts and how far between them the corner stands, so
  * a vertical comes up smoothly as an arc gains its segments. That is the whole
- * of why this field is here. See `Facets` and `Effects['round']`.
+ * of why this field is here. See `Facets` and `RoundOptions`.
  */
 export interface Round {
   precision: number

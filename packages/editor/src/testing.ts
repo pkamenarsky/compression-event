@@ -164,8 +164,9 @@ export function inSegments(segments: number, bevel: number): Options['round'] {
     : { precision: precisionFor(segments, bevel), tension: TENSION, chamfer: false };
 }
 
-/** A thing's effects as a record, one of each: how a test says what a thing
- * has, before lists. */
+/** A thing's effects as a record, one of each kind, as the editor gives
+ * them: shorthand for a list laid erode, round, deform. A test of another
+ * order writes the list. */
 export interface Effects {
   round?: RoundOptions & { off?: boolean }
   deform?: DeformOptions & { off?: boolean }

@@ -8,8 +8,12 @@
 // nothing away: its options and its amounts stay, and apply again when it is
 // switched back on.
 //
-// The editor still has one layer of each kind — the first — and puts a new
-// one at the end of the list, to be moved from there: see `reordered`.
+// The editor gives a thing at most one layer of each kind, deliberately: every
+// layer is a step of the fold and a resample, and the bake pays for each, so a
+// list is kept to three. A new one goes at the end, to be moved from there:
+// see `reordered`. The format and the fold take any list — the laws are
+// tested over the same kind twice — but here a layer is addressed by its
+// kind, as `layerOf` finds it.
 //
 // Edges are named by the drawn corner they start at. A deform's teeth are not
 // drawn corners, so an edge runs from one drawn corner to the next, through

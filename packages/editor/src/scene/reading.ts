@@ -91,7 +91,6 @@ import {
   artefactsIn,
   chain,
   middle,
-  optionOf,
   pathAt,
   pathsIn,
   placeAt,
