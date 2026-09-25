@@ -2807,6 +2807,12 @@ const owned = (l: Limits, off: number, a: number, b: number): boolean =>
 
 const MARGIN = 0.5;
 
+/** Where in the part of a gap a stretch was grown over it is checked, as shares
+ * of the way from the stretch's own end out to the grown one. Fifths rather
+ * than quarters, so that none of them is an instant the bisection stopped on.
+ * See `settled`. */
+const GROWN = [0.2, 0.4, 0.6, 0.8, 1];
+
 /** How little a halving may bring an error down by and still be a bend: a
  * step's does not come down at all, a bend's by about four. */
 const STEP = 0.75;
@@ -3780,21 +3786,6 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
     for (const [t, side] of [[grown.t0, -1], [grown.t1, 1]] as const) {
       if (t >= was.t0 && t <= was.t1) continue;
 
-      const now = c.at(t);
-
-      // The two sides of an event genuinely differ, and the size of that is the
-      // event's own, not the replay's — the same exclusion `apart` makes by
-      // coming back infinite. Here it has to be made in so many words, because
-      // `strayed` will cheerfully measure the distance across a discontinuity
-      // and report the pop as though the replay had invented it.
-      if (signature(drawn(grown, riders, t)) !== signature(now.out)) continue;
-
-      // Nor across one the signature cannot see: the same indices, other names.
-      // See `named`.
-      const end = pieces[pieceOf(i)];
-
-      if (!comparable(side < 0 ? end.a : end.b, now)) continue;
-
       // Nor across a step, which is comparable at both ends and jumps between.
       const here = pieceOf(i), there = pieceOf(i + side);
       let stepped = false;
@@ -3803,18 +3794,55 @@ function settled(c: Cutting, pieces: readonly Piece[]): Cut & { failing: boolean
 
       if (stepped) continue;
 
-      const off = strayed(drawn(grown, riders, t), now.out);
-
-      // Drawn only over the stretch of the gap it was handed: inside a frame,
-      // held to `visible`.
       const edge = side < 0 ? was.t0 : was.t1;
+      // What either side of the gap was measured at: this stretch's own end,
+      // and the one across the gap — its neighbour's, or the span's own end.
+      const mine = side < 0 ? pieces[here].a : pieces[here].b;
+      const theirs = there < 0 ? pieces[0].a : there >= pieces.length ? pieces[pieces.length - 1].b
+        : side < 0 ? pieces[there].b : pieces[there].a;
 
-      if (!owned(start, off, Math.min(t, edge), Math.max(t, edge))) continue;
+      // Through the window, not only at its far end. What the stretch is handed
+      // is a gap the search left between two of its own, and that can hold a
+      // run of events rather than one: four in a row, each pinned to its own
+      // narrow piece, made a hole a frame wide that the neighbours were drawn
+      // across. Its far end fell on one of those events, where the drawing and
+      // the truth happen to agree, and inside it they were thirty units apart.
+      for (const f of GROWN) {
+        const u = edge + (t - edge) * f;
+        const now = c.at(u);
 
-      worst = Math.max(worst, off);
+        // Neither side's arrangement: something between the events that the
+        // bake keeps nothing of, drawn as its neighbour's. That is the replay's
+        // to own, and what a finer cut would give a stretch of its own.
+        //
+        // Not at the far end, which is the middle of the gap and so an instant
+        // the bisection stopped on. An event can sit exactly there, and at an
+        // event the arrangement is a third one that lasts no time at all; what
+        // it drew there was the event's own pop, and no depth took it away.
+        const kept = comparable(mine, now);
 
-      if (off > tol) {
-        between(Math.min(here, there), Math.max(here, there));
+        if (kept || f === 1 || comparable(theirs, now)) {
+          // The two sides of an event genuinely differ, and the size of that
+          // is the event's own, not the replay's — the same exclusion `apart`
+          // makes by coming back infinite. Here it has to be made in so many
+          // words, because `strayed` will cheerfully measure the distance
+          // across a discontinuity and report the pop as though the replay had
+          // invented it. Nor across one the signature cannot see: the same
+          // indices, other names. See `named`.
+          if (!kept || signature(drawn(grown, riders, u)) !== signature(now.out)) continue;
+        }
+
+        const off = strayed(drawn(grown, riders, u), now.out);
+
+        // Drawn only over the stretch of the gap it was handed: inside a frame,
+        // held to `visible`.
+        if (!owned(start, off, Math.min(u, edge), Math.max(u, edge))) continue;
+
+        worst = Math.max(worst, off);
+
+        if (off > tol) {
+          between(Math.min(here, there), Math.max(here, there));
+        }
       }
     }
   }
