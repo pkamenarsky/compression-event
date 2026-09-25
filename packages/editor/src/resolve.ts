@@ -190,7 +190,7 @@ function named(w: Whither): string {
 function nameOf(w: Whither, said: ReadonlyMap<Id, Ids>): Ident | null {
   const of = (p: Whence): Ident | null => said.get(p.id)?.[p.ring]?.[p.index] ?? null;
 
-  if (w.kind === 'vertex') return of(w.at);
+  if (w.kind === 'vertex') return of(w.walked ?? w.at);
 
   const a = of(w.a), b = of(w.b);
 

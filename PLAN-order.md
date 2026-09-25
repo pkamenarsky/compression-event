@@ -240,7 +240,13 @@ union between them. `laidAcross` and law 1's excuse for it go.
    (0,120,160,80) and (0,60,160,80) `[deform 1]` — one island — lays the left
    wall's teeth at another phase from its resolution. A wall cut by the
    arrangement reads as one line in the scope and not in the polygon it
-   resolves to (`linesIn`, `Vertex.crossing`). Nesting still red where an
+   resolves to (`linesIn`, `Vertex.crossing`). *Fixed:* not the lines at
+   all — the scope's ring passes (0,120) twice as two corners, and
+   `boundaryRuns` names both by the lower index (`settled`), so the resolve
+   gave the piece below the wrong corner's name. The resolve now names a
+   point by the vertex the walk came through (`Whither.walked`). Seed 4
+   still has law 1 (*nor does resolving a scope inside it*), law 2 (*sealing
+   ... lays nothing*) and law 3 (*a list of them*) red. Nesting still red where an
    inner scope's erosion meets an outer round or erosion: `[round 1, deform
    1]` over a room and a scope `[erode 10]` over two rooms, the second
    `[erode 2, round 19]`.

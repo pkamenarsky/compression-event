@@ -2209,7 +2209,12 @@ export interface Whence {
  * something this load-bearing is a bug with a schedule.
  */
 export type Whither =
-  | { kind: 'vertex', at: Whence }
+  /** `walked` is the vertex the walk actually came through, where `at` is the
+   * one `settled` names a place by. They differ only where a member's ring
+   * passes one spot twice, and there the two are the same place but need not
+   * be the same corner: a resolve names the point by `walked`, since the edge
+   * leaving it is the one leaving that vertex. */
+  | { kind: 'vertex', at: Whence, walked?: Whence }
   | { kind: 'cross', a: Whence, b: Whence }
 
 export interface BoundaryRun {
@@ -2359,11 +2364,16 @@ export function boundaryRuns(
     points: [...run.points],
     corner: [...turning[i]],
     whence: run.tags.map(tag => tag.kind === 'vertex'
-      ? { kind: 'vertex' as const, at: naming(tag.at) }
+      ? walkedAs(naming(tag.at), named(tag.at))
       : { kind: 'cross' as const, a: named(tag.a), b: named(tag.b) }),
   }));
 
   return subject.keep === undefined || subject.keep.length === 0 ? out : withKept(out, subject);
+}
+
+/** A vertex, and the one the walk came through where that is another. */
+function walkedAs(at: Whence, walked: Whence): Whither {
+  return walked.ring === at.ring && walked.index === at.index ? { kind: 'vertex', at } : { kind: 'vertex', at, walked };
 }
 
 /**
