@@ -199,16 +199,38 @@ property: a list on a scope draws what its layers on nested scopes draw, one
 each. `effects.test.ts`'s *a scope inside a scope* is rewritten to what law 3
 says (see `PLAN-effect.md`).
 
-   *Done, and red on two, both new coverage.* Law 3's *an erosion*: a polygon
-   `[erode 3, deform 1]` beside another under a scope `[erode 1]`, and one more
-   erosion laid on it, draws a tooth corner 3e-4 from where the resolution does
-   (`[erode 3, deform 1, erode 1, erode 1]` on the polygon). The nesting
-   property: a scope `[erode 2, erode 1]` over a scope `[erode 4]` over a room
-   `[round 25, erode 1]` draws one corner 0.03 from the list taken apart. Both
-   are one list split across a fold boundary — a union between two of its
-   layers — against the same list laid in one fold, and both need an erosion
-   of a ring an earlier layer made. Without a polygon's own list under it
-   neither shows. Shrink with `LAW_THREE` / `LAW_NEST` and `LAW_SHRINK`.
+   *Done.* The two reds it first found were one cause: a list's leading
+   erosions were added up into one depth, and the mitred offset is not
+   additive — a wall that runs out of room part way down (here a 0.53 wall
+   between an arc and a straight, gone at depth 2.05) takes its band with it,
+   and a mitre held at its limit is held from where it starts. So
+   `[erode 2, erode 1]` on a scope drew erode 3 while its layers on nested
+   scopes drew 2 and then 1, and law 3's scope `[erode 1, erode 1]` drew 2
+   while the resolution laid the two after a deform, one by one. Fixed by
+   making `depthOf` the first erosion only; every layer after it is a step of
+   the fold, erosions included. Making the offset additive instead would be a
+   straight skeleton, and would still not agree with the mitre limit.
+
+   *Still red: islands.* The sweep's seed is random unless `LAW_SEED` is set,
+   and across seeds the nesting property is red most of the time on a
+   different thing. `foldEach` takes a fold's islands once, before any step,
+   so a scope `[erode 5, deform 1]` whose erosion pinches its union into four
+   lays the deform across all four at once (`linesOf` joins a wall's pieces
+   across rings), while the same list taken apart has the outer scope take
+   the islands again from what the inner one drew, and deform each alone.
+   Taking the islands again before every step (and settling between steps)
+   greens the nesting property and reddens laws 1 and 3 — a resolution folds
+   the islands it started with, apart, for good, which is what `foldEach` is
+   there to match. So the nesting property and law 1 disagree whenever a step
+   splits or joins islands, and one of them has to give: the property made to
+   exempt a fold whose islands change (as law 1 exempts `laidAcross`), or the
+   islands made a per-step thing in the resolve too.
+
+   Separately, law 3's *a deform*, on no erosion at all: a scope `[round 1]`
+   over a room `[round 1, deform 1]` beside a room `[deform 2]` and a third,
+   with a deform 1 laid on the scope, draws a tooth 0.04 from its resolution.
+   Red before the erosion fix too; not yet chased. Shrink with `LAW_THREE` /
+   `LAW_NEST` and `LAW_SHRINK`.
 
 **5. The bake.** `Standing` and `Cast` as above. The perf tests say whether a
 list costs anything over a record.

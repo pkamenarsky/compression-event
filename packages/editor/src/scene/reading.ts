@@ -153,7 +153,7 @@ export interface Contributed {
 }
 
 /**
- * Every group's depth as keyframe `v` leaves it: what its erosions add up to.
+ * Every group's depth as keyframe `v` leaves it: its first erosion, `depthOf`.
  *
  * A group that is not there at `v` has no depth, whatever was written about it
  * before it was taken out. Nothing reaches its members either — they went with

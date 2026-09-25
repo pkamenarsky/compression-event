@@ -225,7 +225,7 @@ export interface Resolved {
    * `identify` and `PLAN-effect`.
    */
   readonly ids: Ids
-  /** The depth `shape` was taken at: what its erosions add up to. */
+  /** The depth `shape` was taken at: its first erosion, `depthOf`. */
   erosion: number
   /**
    * Points the projection must have as vertices even though it does not turn
@@ -258,7 +258,7 @@ export type LaidLayer =
 
 /**
  * What a thing's fold lays after the erosion it starts with: its layers past
- * the leading erode layers, first to last, each at its amount. See
+ * the first, where that is an erosion, first to last, each at its amount. See
  * `effectedOf`.
  */
 export type Effected = readonly LaidLayer[];
@@ -303,22 +303,23 @@ export function layerNamer(world: World, id: Id): (layer: LayerId) => string {
 }
 
 /**
- * How deep a thing's leading erode layers take it: the ones before its first
- * other layer switched on, added up. What its outline is offset by before
- * anything else is laid — the projection, the handles and the bake's straight
- * lines all read it — and what `effectedOf` starts after.
+ * How deep a thing's first layer takes it, where that is an erosion switched
+ * on: what its outline is offset by before anything else is laid — the
+ * projection, the handles and the bake's straight lines all read it — and what
+ * `effectedOf` starts after.
+ *
+ * **The first erosion only, and never the run of them added up.** The offset
+ * is mitred, and a mitred offset is not additive: a wall that runs out of room
+ * part way down takes the band it would have swept with it, and a mitre held
+ * at its limit is held from where it starts. So an erosion of 2 and then 1 is
+ * not one of 3, and a list that said it was would draw something its own
+ * layers on nested scopes do not — the scope above lays the second erosion as
+ * a step of its own. See PLAN-order's step 4.
  */
 export function depthOf(world: World, id: Id, amounts: Amounts): number {
-  let depth = 0;
+  const first = layersOf(world, id).find(l => l.off !== true);
 
-  for (const l of layersOf(world, id)) {
-    if (l.off === true) continue;
-    if (l.kind !== 'erode') break;
-
-    depth += amountIn(amounts, l.id);
-  }
-
-  return depth;
+  return first?.kind === 'erode' ? amountIn(amounts, first.id) : 0;
 }
 
 /** A deform layer's options, as the steps read them. */
@@ -340,7 +341,7 @@ export function effecting(d: DeformOptions): Effecting {
 }
 
 /**
- * A thing's layers after its leading erosion (`depthOf`), from its options in
+ * A thing's layers after its first erosion (`depthOf`), from its options in
  * the world and its amounts as a keyframe leaves them — or as the bake has
  * them part way along. Nothing where none of them comes to anything: then the
  * projection is its erosion alone, exactly as it always was.
@@ -357,13 +358,16 @@ export function effectedOf(
 ): Effected | null {
   const layers = layersOf(world, id);
   const out: LaidLayer[] = [];
-  let leading = true;
+  let first = true;
 
   for (const l of layers) {
     if (l.off === true) continue;
-    if (leading && l.kind === 'erode') continue;
 
-    leading = false;
+    const depth = first && l.kind === 'erode';
+
+    first = false;
+
+    if (depth) continue;
 
     const by = amountIn(amounts, l.id);
 
