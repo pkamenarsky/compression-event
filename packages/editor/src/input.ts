@@ -121,20 +121,27 @@ export function createInput(): Input {
   const grabs: { by: object, codes: readonly string[] }[] = [];
 
   /**
-   * Keys that went down while somebody had the input, and have not come up.
-   *
-   * A key held across the end of a grab is still down when the grab lets go,
-   * and the browser goes on repeating it; handing those repeats to everybody
-   * the moment the grab ended would have W, held to walk, arrive out here as a
-   * command. So a key the bus kept from everyone stays kept until it is let go.
+   * Keys whose press somebody took the browser's say over, and have not come
+   * up. Their repeats go to nobody, but the browser must not have them either:
+   * held, Space would scroll the page and Cmd+S would open a save dialog.
    */
-  const kept = new Set<string>();
+  const prevented = new Set<string>();
   const surfaces = new Map<Node, Surface>();
 
   function onKeyDown(e: KeyboardEvent) {
     // Typed into a field, it is the field's: a digit in the inspector is
     // a number, not a retype.
     if (typing(e.target)) return;
+
+    // A held key says so once. Nothing here is driven by the browser's
+    // repeats, which come at a rate the system sets, or not at all: something
+    // that goes on while a key is held reads `holding`, or waits for the
+    // release.
+    if (e.repeat) {
+      if (prevented.has(e.code)) e.preventDefault();
+
+      return;
+    }
 
     down.add(e.code);
 
@@ -143,12 +150,7 @@ export function createInput(): Input {
     // something `holding` knew about.
     const grabbed = grabs[grabs.length - 1];
 
-    if (grabbed !== undefined && !grabbed.codes.includes(e.code)) {
-      kept.add(e.code);
-      return;
-    }
-
-    if (kept.has(e.code)) return;
+    if (grabbed !== undefined && !grabbed.codes.includes(e.code)) return;
 
     let owner: object | null = null;
 
@@ -157,11 +159,13 @@ export function createInput(): Input {
     }
 
     keys.emit({ event: e, owner });
+
+    if (e.defaultPrevented) prevented.add(e.code);
   }
 
   function onKeyUp(e: KeyboardEvent) {
     down.delete(e.code);
-    kept.delete(e.code);
+    prevented.delete(e.code);
     keyUp.emit(e);
   }
 
@@ -187,7 +191,7 @@ export function createInput(): Input {
   // and would read as held for ever after.
   function onBlur() {
     down.clear();
-    kept.clear();
+    prevented.clear();
   }
 
   return {
@@ -269,8 +273,8 @@ export function inputListener(input: Input): VNode {
 
 /**
  * Waits for one of `codes` that nobody has claimed, letting the rest through to
- * whoever else is waiting. Key repeats count as presses; a loop that does not
- * want them is already past this point and waiting on something else.
+ * whoever else is waiting. A held key is one press: its repeats are never
+ * emitted.
  */
 export function* keyPressed(input: Input, ...codes: string[]): Op<KeyboardEvent> {
   while (true) {

@@ -261,7 +261,7 @@ function roaming(input: Input, state: Value<EditorState>, update: Update): VNode
     while (true) {
       const e = yield* keyPressed(input, 'Backslash');
 
-      if (e.metaKey || e.ctrlKey || e.repeat) continue;
+      if (e.metaKey || e.ctrlKey) continue;
 
       // The game has the page. `\` reaching back here used to turn the
       // editor's own walk on underneath it, so leaving the game landed the
@@ -368,8 +368,7 @@ function saving(state: Value<EditorState>, input: Input, update: Update): VNode 
       while (true) {
         const e = yield* keyPressed(input, 'KeyS', 'KeyO');
 
-        // Holding a key repeats it, and one press should be one file
-        if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
+        if (!(e.metaKey || e.ctrlKey)) continue;
 
         e.preventDefault();
 
@@ -445,7 +444,7 @@ function playing(state: Value<EditorState>, input: Input): VNode {
     while (true) {
       const e = yield* keyPressed(input, 'Backslash');
 
-      if (!(e.metaKey || e.ctrlKey) || e.repeat) continue;
+      if (!(e.metaKey || e.ctrlKey)) continue;
 
       // Already standing in it, one way or the other. The editor's walk and
       // the game are the same level from the same place, and two of them at
@@ -572,9 +571,6 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       if (e.code === 'KeyA') continue;
 
       e.preventDefault();
-
-      // Undo and redo are the two worth holding down. One copy is one copy.
-      if (e.repeat && e.code !== 'KeyZ' && e.code !== 'KeyY') continue;
 
       if (e.code === 'KeyZ') {
         // Cmd+Shift+Z is redo everywhere a Mac is involved, and Cmd+Y is redo
