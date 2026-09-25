@@ -182,7 +182,7 @@ describe('resolving a group', () => {
     }
   });
 
-  test('two rooms touching at one corner stay two rooms', () => {
+  test('two rooms touching at one corner are two outlines of one polygon', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(100, 100, 100, 100)],
@@ -191,14 +191,13 @@ describe('resolving a group', () => {
     const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
-    expect(out.ids.length).toBe(2);
+    expect(out.ids.length).toBe(1);
 
-    for (const id of out.ids) {
-      const it = resolveAt(out.world, 0).find(r => r.id === id)!;
+    const it = resolveAt(out.world, 0).find(r => r.id === out.ids[0])!;
 
-      expect(it.shape.length).toBe(1);
-      expect(shapeArea(it.shape)).toBeCloseTo(100 * 100, 6);
-    }
+    expect(it.shape.length).toBe(2);
+
+    for (const ring of it.shape) expect(shapeArea([ring])).toBeCloseTo(100 * 100, 6);
   });
 
   test('the union it draws is the union it drew, at every version', () => {
@@ -737,7 +736,7 @@ describe('the group does not survive being resolved', () => {
     expect(placeAt(out.world, dropped.id, 0)).toEqual({ x: 50, y: 50 });
   });
 
-  test('rooms that do not touch come to one polygon each', () => {
+  test('rooms that do not touch come to one polygon, an outline each', () => {
     const { world, ids } = drawn(
       ['level', rect(0, 0, 100, 100)],
       ['level', rect(300, 0, 100, 100)],
@@ -747,12 +746,13 @@ describe('the group does not survive being resolved', () => {
     const made = sealed(world, 0, ids, landing(world, 0, null))!;
     const out = resolveGroup(made.world, 0, made.id)!;
 
-    // Two of them overlap and merge; the third is nowhere near either.
+    // Two of them overlap and merge; the third is nowhere near either. One
+    // polygon still, since the scope folded the two islands as one.
     expect(out.world.groups.size).toBe(0);
-    expect(out.ids.length).toBe(2);
+    expect(out.ids.length).toBe(1);
 
-    const areas = out.ids
-      .map(id => shapeArea(resolveAt(out.world, 0).find(r => r.id === id)!.shape))
+    const areas = resolveAt(out.world, 0).find(r => r.id === out.ids[0])!.shape
+      .map(ring => shapeArea([ring]))
       .sort((a, b) => a - b);
 
     expect(areas).toEqual([
@@ -760,8 +760,8 @@ describe('the group does not survive being resolved', () => {
       expect.closeTo(100 * 160, 6),
     ]);
 
-    // And each is its own thing: picking one is picking one.
-    for (const id of out.ids) expect(enclosing(out.world, id)).toEqual([]);
+    // And it is its own thing, held by nothing.
+    expect(enclosing(out.world, out.ids[0])).toEqual([]);
   });
 
   test('the group comes apart even where it sheared what it held', () => {

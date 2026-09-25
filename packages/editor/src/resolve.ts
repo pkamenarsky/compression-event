@@ -554,9 +554,10 @@ export interface Resolution {
    * What to pick afterwards: the polygons the union came to, each its own
    * thing.
    *
-   * Several, because a union is not one shape. Two rooms that do not touch
-   * union to two rings, and a room with a pillar in it to a ring on each side
-   * of the set — and the whole point of resolving is to be able to get at them,
+   * Several, because a union is not one shape: a room with a pillar in it
+   * comes to a ring on each side of the set, and each side is a polygon. Two
+   * rooms that do not touch are one polygon of two outlines, since the scope
+   * folded them as one — and the whole point of resolving is to be able to get at them,
    * so handing them back held together in a group would be the gesture
    * pretending to have happened.
    *
@@ -659,16 +660,28 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   let next = world.nextId;
   const made: PolygonId[] = [];
 
-  // An outline and the holes in it are one polygon. A hole whose outline is not
-  // here — which the geometry cannot produce, since a hole needs something to
-  // be a hole in — would otherwise be a ring nobody draws.
+  // A side of the set is one polygon: every outline of it and the holes in
+  // each, rings of the one polygon carrying the scope's list. One, and not one
+  // an island, because the scope folds its union whole — a deform laying one
+  // wall across two islands, a round after it opening the two as one — and a
+  // polygon per island would fold each by itself and draw something else,
+  // which is Law 1. A hole whose outline is not here — which the geometry
+  // cannot produce, since a hole needs something to be a hole in — would
+  // otherwise be a ring nobody draws.
   //
   // None of them at all is an answer, not a refusal. A room swallowed by the
   // pillar standing in it makes no set, so what it resolves to is nothing, and
   // it goes. Anything else would be a gesture that did what it said on some
   // groups and quietly declined on others.
-  for (const outer of readings.filter(r => !r.hole)) {
-    const parts = [outer, ...readings.filter(r => r.hole && readings[r.owner!] === outer)];
+  const kinds = [...new Set(readings.map(r => r.kind))];
+
+  for (const kind of kinds) {
+    const outers = readings.filter(r => r.kind === kind && !r.hole);
+
+    if (outers.length === 0) continue;
+
+    const outer = outers[0];
+    const parts = outers.flatMap(o => [o, ...readings.filter(r => r.hole && readings[r.owner!] === o)]);
     const mine = next;
     const points: Vertex[] = [];
 

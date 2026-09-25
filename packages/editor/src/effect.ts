@@ -28,39 +28,6 @@ import { holding } from './hold';
 export type Effect = (it: Drawn) => Drawn
 
 /**
- * A fold's steps laid over each polygon of `it` on its own, and the parts laid
- * side by side.
- *
- * Which is what a scope resolves to: one polygon per island, each folded by
- * itself and the lot unioned when drawn. Folding the union whole agrees with
- * that only while no step joins two islands before another step reads them —
- * true of the default order, whose deform comes last, and of no other. A
- * deform first lays teeth that can reach across a gap between islands, and a
- * round or an erosion after it would then open or offset the two as one,
- * which an opening of overlapping pieces is not: round(A ∪ B) is not
- * round(A) ∪ round(B) where a circle fits across the join. So the islands are
- * the ones the fold was handed, taken once, before any step.
- */
-export function foldEach(it: Drawn, steps: readonly Effect[]): Drawn {
-  const groups = polygonsOf(it.shape);
-
-  if (groups.length < 2) return steps.reduce<Drawn>((d, fx) => fx(d), it);
-
-  const parts = groups.map(group => steps.reduce<Drawn>((d, fx) => fx(d), {
-    shape: group.map(r => it.shape[r]),
-    ids: group.map(r => it.ids[r]),
-    ...(it.edges === undefined ? {} : { edges: group.map(r => it.edges![r]) }),
-  }));
-
-  // Edges only where every part has them, as `eroding` says.
-  return {
-    shape: parts.flatMap(p => p.shape),
-    ids: parts.flatMap(p => p.ids),
-    ...(parts.every(p => p.edges !== undefined) ? { edges: parts.flatMap(p => p.edges!) } : {}),
-  };
-}
-
-/**
  * A thing's effects as a fold lays them, first to last: an erosion, a round
  * across a span of facet counts (the sagitta counts at either end and how far
  * across it: see `roundingAcross`), a deform.
@@ -72,12 +39,19 @@ export type Laying = (
 )[];
 
 /**
- * A shape through its effects, first to last, each island on its own: the one
- * pipeline a polygon's fold and a scope's both come down to, so the two can
+ * A shape through its effects, first to last, each laid on the whole shape: the
+ * one pipeline a polygon's fold and a scope's both come down to, so the two can
  * differ in their input and in nothing else.
+ *
+ * Whole, and never island by island. A deform lays teeth that can reach across
+ * a gap between islands, and a round or an erosion after it opens or offsets
+ * the two as one — so a list on a scope is the same steps as its layers on
+ * nested scopes, with a union between them, only where every step sees the
+ * whole of what the step before it made. `eroding` still offsets polygon by
+ * polygon inside itself, which is how a mitred offset of separate pieces goes.
  */
 export function effected(it: Drawn, fx: Laying): Drawn {
-  return foldEach(it, fx.map(l => {
+  return fx.map(l => {
     switch (l.kind) {
       case 'erode':
         return eroding(l.depth);
@@ -86,7 +60,7 @@ export function effected(it: Drawn, fx: Laying): Drawn {
       case 'deform':
         return deforming(l.amplitude, l.how);
     }
-  }));
+  }).reduce<Drawn>((d, step) => step(d), it);
 }
 
 /**
@@ -1042,19 +1016,6 @@ function linesOf(it: Drawn): Map<string, Line> {
   return out;
 }
 
-/**
- * How many walls have been laid across more than one ring, ever: for the laws,
- * which have to know. A scope whose union is two islands sharing a wall lays
- * the wall once across both, and resolving it makes each island a polygon of
- * its own, which cannot — so there, and only there, the resolution draws a
- * different pattern from the scope. See PLAN-effect, step 9.
- */
-let across = 0;
-
-export function laidAcross(): number {
-  return across;
-}
-
 /** One piece of a wall: the name its pattern is laid by, where the wall's
  * middle falls along the piece, and how wide the cut is at either end of it
  * where it ends in one rather than at the wall's own end. */
@@ -1306,8 +1267,6 @@ function linesIn(it: Drawn, snap: number): Map<string, Line> {
     }
 
     const middle = (lo + hi) / 2;
-
-    if (mine.some(p => p.ring !== mine[0].ring)) across++;
 
     // In order along the wall, each with the width of the cut either side of
     // it: nothing at the wall's own ends.

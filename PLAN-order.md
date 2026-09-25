@@ -233,6 +233,18 @@ taking islands and lays each step on the whole shape (`eroding` still offsets
 polygon by polygon inside itself), so a nesting is the same steps with a
 union between them. `laidAcross` and law 1's excuse for it go.
 
+   *Done, still red.* One polygon a side of the set (level, floor), all its
+   outlines and their holes. The shrunk nesting case above passes. What the
+   excuse was covering is now in view, and is not islands: a scope `[deform
+   1]` over a room (0,0,120,120) and a scope `[deform 1]` over rooms
+   (0,120,160,80) and (0,60,160,80) `[deform 1]` — one island — lays the left
+   wall's teeth at another phase from its resolution. A wall cut by the
+   arrangement reads as one line in the scope and not in the polygon it
+   resolves to (`linesIn`, `Vertex.crossing`). Nesting still red where an
+   inner scope's erosion meets an outer round or erosion: `[round 1, deform
+   1]` over a room and a scope `[erode 10]` over two rooms, the second
+   `[erode 2, round 19]`.
+
    Separately, law 3's *a deform*, on no erosion at all: a scope `[round 1]`
    over a room `[round 1, deform 1]` beside a room `[deform 2]` and a third,
    with a deform 1 laid on the scope, draws a tooth 0.04 from its resolution.

@@ -16,7 +16,6 @@ import fc from 'fast-check';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, csg, grouped, sealing } from './scene';
 import { resolveGroup } from './resolve';
-import { laidAcross } from './effect';
 import { added } from './effects';
 import { inSegments, wrote } from './testing';
 import { Id, Layer, World, emptyWorld } from './types';
@@ -211,21 +210,6 @@ function clustered(eps: number): (p: Point) => Point {
  * A multiset and not a set: a wall drawn twice in one and once in the other is
  * a difference.
  */
-/**
- * The drawing, and whether a deform in it laid one wall across two rings.
- *
- * Where it did, and the scope resolves to more than one polygon, the law does
- * not hold and is not asked to: the wall was one wall across two islands of
- * the union, and resolving makes each island a polygon that lays its own. See
- * `laidAcross`.
- */
-function joining(world: World): { lines: [Point, Point][], across: boolean } {
-  const before = laidAcross();
-  const lines = drawn(world);
-
-  return { lines, across: laidAcross() > before };
-}
-
 function differing(a: readonly [Point, Point][], b: readonly [Point, Point][]): string[] {
   const eps = spanOf([...a.flat(), ...b.flat()]) * 1e-9;
   const held = clustered(eps);
@@ -487,11 +471,9 @@ describe('law 1: a scope draws what it resolves to', () => {
 
       if (out === null) return;
 
-      const scope = joining(world);
+      const scope = drawn(world);
 
-      if (scope.across && out.ids.length > 1) return;
-
-      expect(differing(drawn(out.world), scope.lines)).toEqual([]);
+      expect(differing(drawn(out.world), scope)).toEqual([]);
     }), RUNS);
   }, SLOW);
 
@@ -550,12 +532,12 @@ describe('law 1: a scope draws what it resolves to', () => {
     ] };
 
     const { world } = built(emptyWorld(), spec);
-    const scope = joining(world);
+    const scope = drawn(world);
 
     for (const id of world.groups.keys()) {
       const out = resolveGroup(world, 0, id)!;
 
-      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+      expect([id, differing(drawn(out.world), scope)]).toEqual([id, []]);
     }
   });
 
@@ -585,14 +567,12 @@ describe('law 1: a scope draws what it resolves to', () => {
     ] };
 
     const { world } = built(emptyWorld(), spec);
-    const scope = joining(world);
+    const scope = drawn(world);
 
     for (const id of world.groups.keys()) {
       const out = resolveGroup(world, 0, id)!;
 
-      if (scope.across && out.ids.length > 1) continue;
-
-      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+      expect([id, differing(drawn(out.world), scope)]).toEqual([id, []]);
     }
   });
 
@@ -622,14 +602,12 @@ describe('law 1: a scope draws what it resolves to', () => {
     ] };
 
     const { world } = built(emptyWorld(), spec);
-    const scope = joining(world);
+    const scope = drawn(world);
 
     for (const id of world.groups.keys()) {
       const out = resolveGroup(world, 0, id)!;
 
-      if (scope.across && out.ids.length > 1) continue;
-
-      expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+      expect([id, differing(drawn(out.world), scope)]).toEqual([id, []]);
     }
   });
 
@@ -637,14 +615,14 @@ describe('law 1: a scope draws what it resolves to', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
       const inner = [...world.groups.keys()];
-      const scope = joining(world);
+      const scope = drawn(world);
 
       for (const id of inner) {
         const out = resolveGroup(world, 0, id);
 
-        if (out === null || (scope.across && out.ids.length > 1)) continue;
+        if (out === null) continue;
 
-        expect([id, differing(drawn(out.world), scope.lines)]).toEqual([id, []]);
+        expect([id, differing(drawn(out.world), scope)]).toEqual([id, []]);
       }
     }), RUNS);
   }, SLOW);
@@ -652,7 +630,7 @@ describe('law 1: a scope draws what it resolves to', () => {
   test('and resolving every scope, innermost first, leaves the same outline', () => {
     fc.assert(fc.property(arbScope, spec => {
       const { world } = built(emptyWorld(), spec);
-      const was = joining(world);
+      const was = drawn(world);
       let w = world;
 
       // Innermost first: a group holding no group is one, and resolving it
@@ -661,10 +639,10 @@ describe('law 1: a scope draws what it resolves to', () => {
         const id = [...w.groups.keys()].find(g => ![...w.groups.values()].some(h => h.members?.includes?.(g)));
         const out = id === undefined ? null : resolveGroup(w, 0, id);
 
-        if (out === null || (was.across && out.ids.length > 1)) break;
+        if (out === null) break;
 
         w = out.world;
-        expect(differing(drawn(w), was.lines)).toEqual([]);
+        expect(differing(drawn(w), was)).toEqual([]);
       }
     }), RUNS);
   }, SLOW);
@@ -732,7 +710,7 @@ function bothWays(spec: Spec, kit: Kit): void {
 
 function bothWaysDiffer(spec: Spec, kit: Kit): string[] {
   const { world, id } = built(emptyWorld(), spec);
-  const onScope = joining(kitted(world, id, kit));
+  const onScope = drawn(kitted(world, id, kit));
   const out = resolveGroup(world, 0, id);
 
   if (out === null) return [];
@@ -745,9 +723,7 @@ function bothWaysDiffer(spec: Spec, kit: Kit): string[] {
         return kitted(sealing(g.world, g.id, true), g.id, kit);
       })();
 
-  if (onScope.across && out.ids.length > 1) return [];
-
-  return differing(drawn(after), onScope.lines);
+  return differing(drawn(after), onScope);
 }
 
 describe('law 3: an effect on a scope is an effect on its resolution', () => {
@@ -861,15 +837,15 @@ test.skipIf(process.env.LAW_SHRINK === undefined)('shrink a law 1 counterexample
     }
 
     const { world } = built(emptyWorld(), spec);
-    const scope = joining(world);
+    const scope = drawn(world);
     const out: [Id, string[]][] = [];
 
     for (const id of world.groups.keys()) {
       const r = resolveGroup(world, 0, id);
 
-      if (r === null || (scope.across && r.ids.length > 1)) continue;
+      if (r === null) continue;
 
-      const d = differing(drawn(r.world), scope.lines);
+      const d = differing(drawn(r.world), scope);
 
       if (d.length > 0) out.push([id, d]);
     }
