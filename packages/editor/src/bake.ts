@@ -2637,11 +2637,13 @@ export interface Limits {
    */
   ease: Ease
   /**
-   * Whether a track outside the tolerance is cut again a decade finer. Off, the
-   * first cut is the answer, and whatever it could not get under is `worst`.
-   * See `chased`, `FAST`.
+   * How much a track outside the tolerance may spend on being cut again a decade
+   * finer, as a multiple of what its first cut cost: another decade is made only
+   * while the last one cost no more than that. Nothing, and the first cut is the
+   * answer, whatever it could not get under being `worst`. See `chased`, `FAST`,
+   * `FRAMES`.
    */
-  deepen: boolean
+  spend: number
 }
 
 /**
@@ -2680,7 +2682,7 @@ function unease(ease: Ease, t: number): number {
 /** What a track is cut at until it gives the bake reason to go finer, starting
  * events at `gap`. */
 export function limitsFrom(gap: number): Limits {
-  return { gap, bend: BEND, floor: 0, visible: 0, ease: 'linear', deepen: true };
+  return { gap, bend: BEND, floor: 0, visible: 0, ease: 'linear', spend: Infinity };
 }
 
 /** The bake that holds the tolerance everywhere it can: what the tests cut at,
@@ -2709,14 +2711,24 @@ const VISIBLE = 0.5;
  * the error: a crossing moving that fast is exactly where the depth is needed.
  * So the frame is not where the search stops. It is where the error it has to
  * get under goes from the tolerance to `VISIBLE`, and past that the search goes
- * as deep as the exact bake would.
+ * as deep as the exact bake would — while each decade costs no more than four
+ * first cuts.
+ *
+ * A decade that costs that much is following something that bends at every
+ * scale, and the next one costs as much again for less. A self-crossed quad
+ * whose lobe is born mid-span grows it like a square root, bending hardest at
+ * the instant it appears: one decade took it from 248 to 46 for eight first
+ * cuts, and the next spent as much again to come back at 66 and be thrown away,
+ * nearly half of what the level cost to bake. A crossing that only wants
+ * pinning is the other kind: each decade costs less than the one before, and
+ * one that took three came in at a hundredth, where two left it five units off.
  *
  * `worst` means something narrower here: what is wrong by more than the
  * tolerance across more than a frame, or by more than `VISIBLE` inside one. A
  * discontinuity `comparable` lets through is still caught by the tests, which
  * cut at `EXACT`.
  */
-export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VISIBLE, ease: REPLAY_EASE, deepen: true };
+export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VISIBLE, ease: REPLAY_EASE, spend: 4 };
 
 /**
  * The bake to look at while editing, and nothing better: no interval narrower
@@ -2730,7 +2742,7 @@ export const FRAMES: Limits = { gap: GAP, bend: BEND, floor: FRAME, visible: VIS
  * not lerp at any depth cost `FRAMES` eight thousand stretches in one span.
  * `worst` says what was let go.
  */
-export const FAST: Limits = { gap: FRAME / 2, bend: FRAME / 2, floor: 0, visible: 0, ease: REPLAY_EASE, deepen: false };
+export const FAST: Limits = { gap: FRAME / 2, bend: FRAME / 2, floor: 0, visible: 0, ease: REPLAY_EASE, spend: 0 };
 
 /**
  * As far as a re-cut will ever go, whatever the measure says.
@@ -4173,6 +4185,7 @@ function* chased(
   let was = Infinity;
   let spent = 0;
   let seen = 0;
+  let first: number | null = null;
 
   while (true) {
     // Its own members, and nothing else: a floor is not cut against its
@@ -4197,19 +4210,21 @@ function* chased(
     }
 
     spent += cut.evaluations;
+    first ??= cut.evaluations;
 
     // The best of the attempts, not the last. A finer cut splits in different
     // places and is not bound to beat a coarser one everywhere; what the span
     // promises is the smallest error the bake managed, so that is what it keeps.
     if (best === null || cut.worst < best.worst) best = { ...cut, limits };
 
-    // Inside the tolerance, out of width, a decade that did not pay for itself,
-    // or a track that pins more events than it keeps stretches — which is a
-    // decade nobody can afford however well it would pay. See `PAYING`, `CHURN`.
+    // Inside the tolerance, out of width, a decade that did not pay for itself
+    // or cost more than it may, or a track that pins more events than it keeps
+    // stretches — which is a decade nobody can afford however well it would
+    // pay. See `PAYING`, `Limits.spend`, `CHURN`.
     if (
       best.worst <= tol
       || limits.gap <= FINEST
-      || !limits.deepen
+      || cut.evaluations > limits.spend * first
       || cut.worst > PAYING * was
       || cut.jumps.length > CHURN * cut.stretches.length
     ) {
@@ -4281,17 +4296,21 @@ function* recut(at: Ready, i: number, tol: number, start: Limits): Generator<num
   let limits = start;
   let pieces = yield* shown(bisected(c, c.at(0), c.at(1), limits));
   let cut = settled(c, pieces);
+
+  // What the first cut cost, and what the last decade did. See `Limits.spend`.
+  const first = evaluations;
+  let before = 0;
   let best = { ...cut, limits };
   let was = Infinity;
 
   while (true) {
     // As `chased`: inside the tolerance, out of width, a decade that did not
-    // pay for itself, or a track that pins more events than it keeps
-    // stretches. See `PAYING`, `CHURN`.
+    // pay for itself or cost more than it may, or a track that pins more events
+    // than it keeps stretches. See `PAYING`, `Limits.spend`, `CHURN`.
     if (
       best.worst <= tol
       || limits.gap <= FINEST
-      || !limits.deepen
+      || evaluations - before > limits.spend * first
       || cut.worst > PAYING * was
       || cut.jumps.length > CHURN * cut.stretches.length
     ) {
@@ -4299,6 +4318,7 @@ function* recut(at: Ready, i: number, tol: number, start: Limits): Generator<num
     }
 
     was = cut.worst;
+    before = evaluations;
     limits = finer(limits);
 
     const next: Piece[] = [];
@@ -4442,7 +4462,7 @@ function movement(out: unknown[], m: Moving, cast: Cast): void {
  */
 export function signed(at: Ready, i: number, tol: number, start: Limits): string {
   const s = at.items[i];
-  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, start.gap, start.bend, start.floor, start.ease, start.deepen];
+  const out: unknown[] = [s.id, s.set, s.fill, s.slot, tol, start.gap, start.bend, start.floor, start.ease, start.spend];
   const near = at.near[i];
 
   // Its own first, in the order the cut is handed them, and the rest by id:
