@@ -16,6 +16,7 @@ import {
   hitEdge,
   hitPolygon,
   landing,
+  layerOf,
   middle,
   outlining,
   placeAt,
@@ -43,7 +44,7 @@ import { Frame, truth } from './bake';
 import { FORMAT, restored, saved } from './save';
 import { resolveGroup, resolveInto, rings } from './resolve';
 import { stateAt } from './rig';
-import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, amountAt, erode, move, repeated, scaled, spun, turned as turning, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -278,9 +279,9 @@ describe('resolving a group', () => {
     // An erosion, not the points: v0 and v1 are the shape unoffset.
     const [id] = [...out.world.polygons.keys()];
 
-    expect(listAt(out.world, 2, id).map(e => e.op)).toEqual([erode(5)]);
-    expect(stateAt(out.world, id, 0).erosion).toBe(0);
-    expect(stateAt(out.world, id, 2).erosion).toBe(5);
+    expect(listAt(out.world, 2, id).map(e => e.op)).toEqual([{ kind: 'amount', layer: layerOf(out.world, id, 'erode')!.id, by: 5 }]);
+    expect(amountAt(out.world, id, 0, 'erode')).toBe(0);
+    expect(amountAt(out.world, id, 2, 'erode')).toBe(5);
   });
 
   test('a moving group keeps its motion as a turn', () => {

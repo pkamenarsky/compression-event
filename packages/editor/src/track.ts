@@ -15,6 +15,7 @@ import {
   CORNER_MAPS,
   Key,
   KeyframeId,
+  AmountKind,
   Op,
   channelsOf,
   counted1,
@@ -23,10 +24,10 @@ import {
   keysAt,
   kindOf,
 } from './rig';
-import { artefactsAt, bornAt, hitPolygons, keyRigOf, pathsAt, resolveAt } from './scene';
-import { EditorState, Flags, Id, Selection, VertexId, World, enclosing, flagsOf, kindName } from './types';
+import { artefactsAt, bornAt, hitPolygons, keyRigOf, layerNamer, pathsAt, resolveAt } from './scene';
+import { EditorState, Flags, Id, LayerId, Selection, VertexId, World, enclosing, flagsOf, kindName } from './types';
 
-export type Kind = Op['kind'] | 'corners';
+export type Kind = Op['kind'] | AmountKind | 'corners';
 
 /**
  * A thing's row: an icon for every entry written about it, side by side in
@@ -165,7 +166,7 @@ function cellsOf(world: World, id: Id): Cell[] {
 
     return {
       places: shown.map(n => ({ id, at: f.id, key: list[n].id })),
-      kinds: shown.map(n => channelsOf(list[n]) as Kind[]),
+      kinds: shown.map(n => channelsOf(list[n], layerNamer(world, id)) as Kind[]),
       alive: i >= life.birth && i < life.death,
     };
   });
@@ -305,13 +306,16 @@ export function short(n: number): string {
 }
 
 /** A key, said in a line: everything it does, and how often. */
-export function entryLabel(e: Key): string {
+export function entryLabel(e: Key, named: (layer: LayerId) => string = () => 'amount'): string {
   const what = ((): string => {
     if (e.stand !== undefined) return 'unchained';
 
     const d = e.by;
 
     if (d === undefined) return 'corners';
+
+    const amounts = [...d.amounts];
+    let nth = 0;
 
     const said = (kind: string): string => {
       switch (kind) {
@@ -322,17 +326,16 @@ export function entryLabel(e: Key): string {
         case 'skew':
           return `skew ${short(d.skew)}`;
         case 'erode':
-          return `erode ${short(d.erode)}`;
         case 'round':
-          return `round ${short(d.round)}`;
         case 'deform':
-          return `deform ${short(d.deform)}`;
+        case 'amount':
+          return `${kind} ${short(amounts[nth++][1])}`;
         default:
           return `move ${short(d.move.x)}, ${short(d.move.y)}`;
       }
     };
 
-    return channelsOf(e).map(said).join(', ');
+    return channelsOf(e, named).map(said).join(', ');
   })();
 
   if (e.times === 1) return what;

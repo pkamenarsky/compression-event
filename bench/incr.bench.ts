@@ -19,6 +19,7 @@
 
 import { test } from 'vitest';
 import { Span, bakeSpan } from '../packages/editor/src/bake';
+import { added } from '../packages/editor/src/effects';
 import { keyed } from '../packages/editor/src/scene';
 import { PolygonId, World } from '../packages/editor/src/types';
 import { SIZES, level, version } from './level';
@@ -73,7 +74,11 @@ function spread(ids: readonly PolygonId[], n: number): PolygonId[] {
 function eroded(world: World, ids: readonly PolygonId[]): World {
   let out = world;
 
-  for (const id of ids) out = keyed(out, 1, id, [{ kind: 'erode', by: 7 }]);
+  for (const id of ids) {
+    const e = added(out, id, { kind: 'erode' });
+
+    out = keyed(e.world, 1, id, [{ kind: 'amount', layer: e.layer, by: 7 }]);
+  }
 
   return out;
 }

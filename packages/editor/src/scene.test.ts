@@ -64,7 +64,7 @@ import {
   keysOfAt,
 } from './scene';
 import { affineOf, stateAt } from './rig';
-import { Writing, erode, move, repeated, scaled, spun, turned as turning, wrote, wroteOne } from './testing';
+import { Writing, amountAt, erode, move, repeated, scaled, spun, turned as turning, wrote, wroteOne } from './testing';
 import { addPath } from './paths';
 import { unionAt } from './export';
 import {
@@ -925,9 +925,9 @@ describe('copy and paste', () => {
     const after = pasted(w, 1, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
     const copy = after.ids[0];
 
-    expect(listAt(after.world, 1, copy).map(e => [e.op.kind, e.times])).toEqual([['stand', 1], ['erode', null]]);
+    expect(listAt(after.world, 1, copy).map(e => [e.op.kind, e.times])).toEqual([['stand', 1], ['amount', null]]);
     expect(listAt(after.world, 2, copy)).toEqual([]);
-    expect([1, 2, 3].map(v => stateAt(after.world, copy, v).erosion)).toEqual([4, 8, 12]);
+    expect([1, 2, 3].map(v => amountAt(after.world, copy, v, 'erode'))).toEqual([4, 8, 12]);
   });
 
   test('a stamp stands where the copy stood, and does nothing after', () => {
@@ -936,7 +936,7 @@ describe('copy and paste', () => {
 
     const after = stamped(w, 1, copied(w, 0, [ids[0]]), { x: 0, y: 400 }, TOP);
 
-    expect([1, 2, 3].map(v => stateAt(after.world, after.ids[0], v).erosion)).toEqual([4, 4, 4]);
+    expect([1, 2, 3].map(v => amountAt(after.world, after.ids[0], v, 'erode'))).toEqual([4, 4, 4]);
   });
 
   test('a repeat already running where a copy starts carries on as one', () => {

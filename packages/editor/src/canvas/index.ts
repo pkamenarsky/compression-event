@@ -58,6 +58,7 @@ import {
   Laid,
   pathsAt,
   pathsIn,
+  layerOf,
   hitArtefact,
   movedStart,
   Handle,
@@ -785,7 +786,7 @@ export function worldCanvas(
             // vertical, at every keyframe: an option is not in the timeline.
             const each = kind !== 'deform'
               ? []
-              : targets.map(id => [id, spaced(base.effects.get(id)!.deform!, down.y - e.clientY, free(e))] as const);
+              : targets.map(id => [id, spaced(layerOf(base, id, 'deform')!, down.y - e.clientY, free(e))] as const);
 
             options = each[0]?.[1] ?? null;
 
@@ -833,8 +834,14 @@ export function worldCanvas(
                 const scale = kind === undefined ? 1 : scaleAt(was, id, v);
                 const amount = scale > 0 ? by / scale : 0;
 
-                const op = kind !== undefined
-                  ? { kind, by: amount } satisfies Amount
+                // Onto its first layer of the kind, which switching it on made
+                // sure of.
+                const layer = kind === undefined ? undefined : layerOf(world, id, kind);
+
+                if (kind !== undefined && layer === undefined) continue;
+
+                const op = layer !== undefined
+                  ? { kind: 'amount', layer: layer.id, by: amount } satisfies Amount
                   : mode(p, { pivot, from, to, alt: e.altKey, factor });
 
                 const out = writtenInto(world, v, id, hand.keys.get(id) ?? null, op);
@@ -2366,18 +2373,6 @@ export function worldCanvas(
             else if (REMOVE.includes(e.code)) {
               removing();
             }
-            // The amounts are the transforms the corner and edge tools have a
-            // use for: a depth, a bevel or an amplitude on what is picked is
-            // a corner's gesture or an edge's. Every other transform is about
-            // where a whole thing is and stays where it was.
-            else if (tool() === 'point' && AMOUNTS[e.code] !== undefined
-              && selection().vertices.length > 0) {
-              yield* transforming(e.code, TRANSFORMS[e.code]);
-            }
-            else if (tool() === 'edge' && AMOUNTS[e.code] !== undefined
-              && selection().edges.length > 0) {
-              yield* transforming(e.code, TRANSFORMS[e.code]);
-            }
             else if (tool() === 'polygon') {
               const mode = TRANSFORMS[e.code];
 
@@ -2731,6 +2726,9 @@ const AMOUNTS: Partial<Record<string, AmountKind>> = {
   KeyD: 'deform',
 };
 
+/** A mode that is never played: see the amounts in `TRANSFORMS`. */
+const NO_MODE: Mode = () => ({ kind: 'move', by: { x: 0, y: 0 } });
+
 const TRANSFORMS: Record<string, Mode> = {
   KeyT: (p, { from, to }) => moveOf(p, { x: to.x - from.x, y: to.y - from.y }),
 
@@ -2748,14 +2746,12 @@ const TRANSFORMS: Record<string, Mode> = {
   KeyX: (p, { pivot, factor }) => scaleOf(p, pivot, { x: factor.x, y: 1 }),
   KeyY: (p, { pivot, factor }) => scaleOf(p, pivot, { x: 1, y: factor.y }),
 
-  // A depth is not in any frame, and a drag that erodes has to mean the same
-  // thing whichever way a group has been turned.
-  KeyE: (_p, { from, to }) => ({ kind: 'erode', by: to.y - from.y }),
-
-  // The same for a bevel and an amplitude, which are lengths in no frame
-  // either.
-  KeyB: (_p, { from, to }) => ({ kind: 'round', by: to.y - from.y }),
-  KeyD: (_p, { from, to }) => ({ kind: 'deform', by: to.y - from.y }),
+  // The amounts, which `transforming` writes against a layer by the drag's
+  // vertical rather than through a mode: a depth, a bevel and an amplitude are
+  // lengths in no frame. Here so that the keys are transforms at all.
+  KeyE: NO_MODE,
+  KeyB: NO_MODE,
+  KeyD: NO_MODE,
 };
 
 // -----------------------------------------------------------------------------

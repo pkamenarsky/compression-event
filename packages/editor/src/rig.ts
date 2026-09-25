@@ -19,9 +19,7 @@
 //          then T(shift)
 //   skew   p = F(ref);  shear by `by` about p along the thing's first axis;
 //          then T(shift)
-//   erode  erosion += by
-//   round  bevel += by
-//   deform amplitude += by
+//   amount amounts[layer] += by
 //   stand  the state is these numbers, whatever came before
 //
 // `ref` is a painted point: a point of the thing, in its rest frame, that the
@@ -67,7 +65,7 @@ import { Point } from '@ce/game/world';
 import { Affine, compose } from './affine';
 import { CORNER_MAPS } from './cornermaps';
 import type { CornerKind } from './cornermaps';
-import { GroupId, Id, PolygonId, Structure, Vertex, VertexId, enclosing } from './types';
+import { GroupId, Id, LayerId, PolygonId, Structure, Vertex, VertexId, enclosing } from './types';
 
 export type KeyframeId = number;
 
@@ -147,73 +145,93 @@ export interface Skew {
 }
 
 /**
- * How much of something a thing has, rather than where it is: how deep it is
- * eroded, how far its corners are rounded — its bevel, how deep along each
- * edge from the corner the arc each becomes starts — and how far its edges
- * are pushed off their lines, the amplitude of the pattern each carries.
+ * How much of one of a thing's effects it has, rather than where it is: how
+ * deep an erode layer takes it, how far a round layer rounds its corners — its
+ * bevel — or how far a deform layer pushes its edges off their lines. Which of
+ * those is the layer's kind, and the layer is the owner's: see `Layer` in
+ * `types.ts`.
  *
- * One operation for the three because they *are* one operation: a number that
- * adds to a running total and commutes with the frame and with each other.
- * Nothing about a bevel, a depth or an amplitude tells them apart here; what
- * does is the geometry each drives, and that lives in `geometry.ts`. How
- * precisely a round is faceted, and what pattern a deform carries, are not
- * operations but facts about the thing, over every keyframe: see `Effects`
- * in `types.ts`.
- *
- * They were three interfaces of identical shape, and the cost of that was
- * paid everywhere but here. Every switch over `Op` carried three labels for
- * one behaviour, `merged` had three cases adding two numbers, the walk had
- * three branches incrementing three fields, and `amounted` — which is one
- * function over all three — had to cast its way back out of the union it
- * had been handed. Adding a fourth amount meant finding all of them. One
- * type with a `kind` says what the three had in common, and the places that
- * genuinely differ by kind now say so by looking a name up in `AMOUNTS`
- * rather than by branching.
+ * One operation for all of them because they *are* one operation: a number
+ * that adds to a running total and commutes with the frame and with each
+ * other. What tells a bevel from a depth is the geometry the layer drives.
  */
-export interface Amount<K extends AmountKind = AmountKind> {
-  kind: K
+export interface Amount {
+  kind: 'amount'
+  layer: LayerId
   by: number
 }
 
-/** Which amount: the one place that lists them. */
+/** The kinds of layer, which is to say of amount: the one place that lists
+ * them. */
 export const AMOUNT_KINDS = ['erode', 'round', 'deform'] as const;
 
 export type AmountKind = typeof AMOUNT_KINDS[number];
 
 /** Whether an operation is an amount. */
 export function amount(op: Op): op is Amount {
-  return (AMOUNT_KINDS as readonly string[]).includes(op.kind);
+  return op.kind === 'amount';
 }
 
-/**
- * What each amount is called where a state keeps it: its running total.
- *
- * The one place the three are named, so the walk, `stateAt` and a stand read
- * them by kind rather than by hand. See `Amount`.
- */
-export const AMOUNTS = {
-  erode: { total: 'erosion' },
-  round: { total: 'bevel' },
-  deform: { total: 'amplitude' },
-} as const satisfies { [K in AmountKind]: { total: keyof State & keyof Stand } };
+/** Running totals by layer: a thing's amounts, as a state, a stand or a delta
+ * has them. A layer with none is nought, and is left out. */
+export type Amounts = ReadonlyMap<LayerId, number>;
+
+export const NO_AMOUNTS: Amounts = new Map();
+
+/** One layer's amount. */
+export function amountIn(a: Amounts, layer: LayerId): number {
+  return a.get(layer) ?? 0;
+}
+
+/** `a` with `k` times `b` added, noughts left out. */
+export function plusAmounts(a: Amounts, b: Amounts, k = 1): Amounts {
+  if (b.size === 0 || k === 0) return a;
+
+  const out = new Map(a);
+
+  for (const [layer, by] of b) {
+    const n = (out.get(layer) ?? 0) + by * k;
+
+    if (n === 0) out.delete(layer);
+    else out.set(layer, n);
+  }
+
+  return out;
+}
+
+/** Every amount times `k`. */
+export function timesAmounts(a: Amounts, k: number): Amounts {
+  if (k === 1 || a.size === 0) return a;
+
+  return new Map([...a].map(([layer, by]) => [layer, by * k]));
+}
+
+export function sameAmounts(a: Amounts, b: Amounts): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+
+  for (const [layer, by] of a) {
+    if (b.get(layer) !== by) return false;
+  }
+
+  return true;
+}
 
 /**
  * A thing's state, outright: what unchaining writes.
  *
- * Everything the walk carries, frozen — the frame, the depth, bevel and
- * amplitude, and which corners stand and where. Played, it replaces
+ * Everything the walk carries, frozen — the frame, the amounts, and which
+ * corners stand and where. Played, it replaces
  * whatever the walk had arrived at, so a thing standing on one stops hearing
  * from anything before it.
  */
 export interface Stand {
   kind: 'stand'
   frame: Frame
-  erosion: number
   /** Where each corner stood, in the rest frame, and by which ids are in it,
    * which corners there were. */
   corners: ReadonlyMap<VertexId, Point>
-  bevel: number
-  amplitude: number
+  amounts: Amounts
 }
 
 export type Op = Move | Turn | Scale | Skew | Amount | Stand;
@@ -327,14 +345,11 @@ export interface Timeline extends Structure {
 export interface State {
   /** In the frame of whatever holds it. */
   frame: Frame
-  erosion: number
   /** The corners standing, by id, at their rest-frame positions with every
    * nudge in. Empty for anything without a ring. */
   corners: ReadonlyMap<VertexId, Point>
-  /** How far its corners are rounded, and its edges deformed: what its
-   * rounds and deforms add up to. */
-  bevel: number
-  amplitude: number
+  /** What each of its layers' amounts adds up to, by layer. */
+  amounts: Amounts
 }
 
 export const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
@@ -343,10 +358,8 @@ export const NO_CORNERS: ReadonlyMap<VertexId, Point> = new Map();
  * know is: at rest, with nothing on it. */
 export const UNBORN: State = {
   frame: REST,
-  erosion: 0,
   corners: NO_CORNERS,
-  bevel: 0,
-  amplitude: 0,
+  amounts: NO_AMOUNTS,
 };
 
 // -----------------------------------------------------------------------------
@@ -881,10 +894,8 @@ export interface Delta {
    * played part way. */
   along: number
   lean: number
-  /** Added to the running totals. */
-  erode: number
-  round: number
-  deform: number
+  /** Added to the running totals, by layer. */
+  amounts: Amounts
   /**
    * Where the delta turns about, as an offset from the painted point: the
    * point it leaves where it is.
@@ -912,9 +923,7 @@ export const NOTHING: Delta = {
   scale: { x: 1, y: 1 },
   along: 0,
   lean: 0,
-  erode: 0,
-  round: 0,
-  deform: 0,
+  amounts: NO_AMOUNTS,
 };
 
 export interface Key {
@@ -1028,7 +1037,7 @@ export function aboutOf(d: Delta): Point | null {
 }
 
 /** The numbers of a delta that can be typed in. */
-export type Typed = Partial<Pick<Delta, 'move' | 'angle' | 'skew' | 'scale' | 'erode' | 'round' | 'deform'>>;
+export type Typed = Partial<Pick<Delta, 'move' | 'angle' | 'skew' | 'scale' | 'amounts'>>;
 
 /**
  * A delta with some of its numbers typed over, and the rest kept meaning what
@@ -1200,10 +1209,8 @@ export function deltaOf(op: Op): Delta | null {
     case 'skew':
       return { ...NOTHING, skew: op.by, move: op.shift, along: op.along };
 
-    case 'erode':
-    case 'round':
-    case 'deform':
-      return { ...NOTHING, [op.kind]: op.by };
+    case 'amount':
+      return { ...NOTHING, amounts: new Map([[op.layer, op.by]]) };
 
     case 'stand':
       return null;
@@ -1265,7 +1272,7 @@ export function walkedBy(
   }));
 
   let frame = REST;
-  const totals: Record<AmountKind, number> = { erode: 0, round: 0, deform: 0 };
+  let totals = NO_AMOUNTS;
   let running: Stepping[] = [];
   let stood: { at: number, op: Stand } | null = null;
 
@@ -1277,7 +1284,7 @@ export function walkedBy(
       if (key.stand !== undefined) {
         playing.push({ ref: key.ref, stand: key.stand, key, at: wrote, step });
         frame = key.stand.frame;
-        for (const kind of AMOUNT_KINDS) totals[kind] = key.stand[AMOUNTS[kind].total];
+        totals = key.stand.amounts;
 
         return;
       }
@@ -1288,7 +1295,7 @@ export function walkedBy(
 
       playing.push({ ref: key.ref, by: d, key, at: wrote, step });
       frame = playedBy(frame, key.ref, d);
-      for (const kind of AMOUNT_KINDS) totals[kind] += d[kind];
+      totals = plusAmounts(totals, d.amounts);
     };
 
     // The steps of repeats begun earlier, oldest first. A skipped keyframe is
@@ -1325,10 +1332,8 @@ export function walkedBy(
 
     out.states[i] = {
       frame,
-      erosion: totals.erode,
       corners: none ? NO_CORNERS : standingBy(keyframes, rig, placing, stood, i),
-      bevel: totals.round,
-      amplitude: totals.deform,
+      amounts: totals,
     };
   }
 
@@ -1457,9 +1462,7 @@ export function everyOp(p: Motion): Op[] {
   const out = opsOf(p);
 
   if (p.by !== undefined) {
-    for (const kind of AMOUNT_KINDS) {
-      if (p.by[kind] !== 0) out.push({ kind, by: p.by[kind] });
-    }
+    for (const [layer, by] of p.by.amounts) out.push({ kind: 'amount', layer, by });
   }
 
   return out;
@@ -1652,7 +1655,7 @@ function sameKey(a: Key, b: Key): boolean {
 function sameDelta(a: Delta, b: Delta): boolean {
   return a.move.x === b.move.x && a.move.y === b.move.y && a.angle === b.angle && a.skew === b.skew
     && a.scale.x === b.scale.x && a.scale.y === b.scale.y && a.along === b.along && a.lean === b.lean
-    && a.erode === b.erode && a.round === b.round && a.deform === b.deform
+    && sameAmounts(a.amounts, b.amounts)
     && (a.about?.x ?? null) === (b.about?.x ?? null) && (a.about?.y ?? null) === (b.about?.y ?? null);
 }
 
@@ -1817,9 +1820,7 @@ export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
     scale: { x: was.scale.x * by.scale.x, y: was.scale.y * by.scale.y },
     along: axes.along,
     lean: axes.lean,
-    erode: was.erode + by.erode,
-    round: was.round + by.round,
-    deform: was.deform + by.deform,
+    amounts: plusAmounts(was.amounts, by.amounts),
   };
 
   delete now.about;
@@ -1853,9 +1854,7 @@ export function lessBy(both: Delta, a: Delta): Delta {
     angle: both.angle - a.angle,
     skew: both.skew - a.skew,
     scale: { x: both.scale.x / a.scale.x, y: both.scale.y / a.scale.y },
-    erode: both.erode - a.erode,
-    round: both.round - a.round,
-    deform: both.deform - a.deform,
+    amounts: plusAmounts(both.amounts, a.amounts, -1),
   };
 
   delete out.about;
@@ -1900,9 +1899,7 @@ export function channelOf(d: Delta): string | null {
     d.angle !== 0 ? 'turn' : '',
     d.scale.x !== 1 || d.scale.y !== 1 ? 'scale' : '',
     d.skew !== 0 ? 'skew' : '',
-    d.erode !== 0 ? 'erode' : '',
-    d.round !== 0 ? 'round' : '',
-    d.deform !== 0 ? 'deform' : '',
+    ...[...d.amounts.keys()].map(() => 'amount'),
   ].filter(k => k !== '');
   const moved = d.move.x !== 0 || d.move.y !== 0;
 
@@ -1911,7 +1908,7 @@ export function channelOf(d: Delta): string | null {
 
   // An amount does not take the painted point anywhere; a turn, a stretch and
   // a shear do, and that is theirs.
-  return moved && (held[0] === 'erode' || held[0] === 'round' || held[0] === 'deform') ? null : held[0];
+  return moved && held[0] === 'amount' ? null : held[0];
 }
 
 /** Which of a key's corner maps a kind of corner writing is in. */
@@ -1926,9 +1923,10 @@ export function heldOf(_kind: CornerKind): 'corners' {
  * One name for most keys, since most are one gesture; several where a hand did
  * several things at a keyframe without saying it was finished with the first.
  * Empty for a key about single corners alone, which the thing's own row does
- * not draw — see `Cell` in `track.ts`.
+ * not draw — see `Cell` in `track.ts`. An amount is named by its layer's
+ * kind, which the owner's list says and a key does not: `named` is that.
  */
-export function channelsOf(key: Key): string[] {
+export function channelsOf(key: Key, named: (layer: LayerId) => string = () => 'amount'): string[] {
   if (key.stand !== undefined) return ['stand'];
 
   const d = key.by;
@@ -1940,9 +1938,7 @@ export function channelsOf(key: Key): string[] {
     d.scale.x !== 1 || d.scale.y !== 1 ? 'scale' : '',
     d.angle !== 0 ? 'turn' : '',
     d.move.x !== 0 || d.move.y !== 0 ? 'move' : '',
-    d.erode !== 0 ? 'erode' : '',
-    d.round !== 0 ? 'round' : '',
-    d.deform !== 0 ? 'deform' : '',
+    ...[...d.amounts.keys()].map(named),
   ].filter(k => k !== '');
 }
 
@@ -1966,7 +1962,7 @@ export function keyOnce(id: number, ref: Point, by: Delta): Key {
 export function idle(d: Delta): boolean {
   return d.move.x === 0 && d.move.y === 0 && d.angle === 0 && d.skew === 0
     && d.scale.x === 1 && d.scale.y === 1
-    && d.erode === 0 && d.round === 0 && d.deform === 0;
+    && d.amounts.size === 0;
 }
 
 /**

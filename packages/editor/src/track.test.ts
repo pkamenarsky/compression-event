@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, broken, grouped, keysOfAt, listAt, reachable, rigOf, unchained, withRig } from './scene';
+import { TOP, addPolygon, broken, grouped, keysOfAt, layerNamer, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, nudged, repeating, stateAt } from './rig';
 import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
 import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, steppedKey, timesTo } from './track';
@@ -211,7 +211,7 @@ describe('whole keyframes', () => {
     const there = ok(pushed(w, id, 2, 'all'));
 
     expect(listAt(there, 2, id)).toEqual([]);
-    expect(listAt(there, 3, id).map(e => e.op.kind)).toEqual(['move', 'erode']);
+    expect(listAt(there, 3, id).map(e => e.op.kind)).toEqual(['move', 'amount']);
   });
 });
 
@@ -286,7 +286,7 @@ describe('what a key is drawn as', () => {
     expect(cell.kinds).toEqual([['turn', 'move', 'erode']]);
     // The move is where the turn and the drag together take the painted
     // point, which is not the drag alone: one key, one motion.
-    expect(entryLabel(keysOfAt(w, 1, id)[0])).toMatch(/^turn 22.9°, move [-\d., ]+, erode 2$/);
+    expect(entryLabel(keysOfAt(w, 1, id)[0], layerNamer(w, id))).toMatch(/^turn 22.9°, move [-\d., ]+, erode 2$/);
   });
 
   test('and a key about corners alone is not in the thing\'s own row', () => {

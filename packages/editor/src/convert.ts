@@ -11,7 +11,10 @@
 // thing's own scale (`relative`); a 25, whose kinds are a type and a mask,
 // which it makes a 26, whose kinds are a part per set (`unmasked`); and a 26,
 // whose effects could be written about single corners and edges, which it
-// makes a 27, where they cannot (`uncornered`). See `FORMAT` in `save.ts` for
+// makes a 27, where they cannot (`uncornered`); and a 27, whose effects are a
+// record and whose amounts are three numbers, which it makes a 28, whose
+// effects are a list of layers and whose amounts are by layer (`layered`).
+// See `FORMAT` in `save.ts` for
 // what each of those said, and `convert-19-20.ts` for what takes a 19 to a
 // 21.
 //
@@ -27,8 +30,11 @@
 
 import { Point, PolygonKind } from '@ce/game/world';
 import {
+  Amounts,
+  Delta,
   Entry,
   Frame,
+  KeyRig,
   KeyframeId,
   Move,
   Op,
@@ -36,11 +42,88 @@ import {
   Stand,
   keysOf,
   stateAt,
+  timesAmounts,
 } from './rig';
-import { FORMAT, Saved, SavedKey, restored, saved, savedKeyRig } from './save';
+import { FORMAT, Saved, SavedKey, SavedStand, restored, saved } from './save';
 import { chain, scaleAt, standingIn } from './scene';
 import { Key } from './rig';
-import { Effects, Id, Options, Polygon, PolygonId, REMEMBERED, VertexId, World } from './types';
+import { DeformOptions, Id, Layer, LayerId, Options, Polygon, PolygonId, REMEMBERED, RoundOptions, VertexId, World } from './types';
+
+/** A thing's effects as a 27 and older wrote them: one of each, in the fixed
+ * order, and an erosion that applied unless switched off. */
+export interface Effects {
+  round?: RoundOptions & { off?: boolean }
+  deform?: DeformOptions & { off?: boolean }
+  erode?: { off: boolean }
+}
+
+/** A delta as a 27 wrote it: three amounts by name. */
+type Delta27 = Omit<Delta, 'amounts'> & { erode: number, round: number, deform: number };
+
+/** A stand as a 27 wrote it. */
+interface SavedStand27 {
+  kind: 'stand'
+  frame: Frame
+  erosion: number
+  corners: [VertexId, Point][]
+  bevel: number
+  amplitude: number
+}
+
+/** A key as a 27 wrote it. */
+export interface SavedKey27 extends Omit<SavedKey, 'by' | 'stand'> {
+  by?: Partial<Delta27>
+  stand?: SavedStand27
+}
+
+/** A file as a 24 to a 27 wrote it: its effects a record, its amounts three
+ * numbers. */
+export interface Saved27 extends Omit<Saved, 'world'> {
+  world: Omit<Saved['world'], 'rigs' | 'effects'> & {
+    rigs: [Id, { keys: [KeyframeId, SavedKey27[]][] }][]
+    effects: [Id, Effects][]
+  }
+}
+
+/**
+ * The three amounts of a 27, carried through the editor's walk by the layers
+ * they would be — a converter's own, never a world's: every id a world makes
+ * is from nought up.
+ */
+const ERODE = -1, ROUND = -2, DEFORM = -3;
+
+/** An amount operation as a 23 and older wrote it. */
+type OldAmount = { kind: 'erode' | 'round' | 'deform', by: number };
+
+const AS_LAYER = { erode: ERODE, round: ROUND, deform: DEFORM } as const;
+
+/** A timeline of keys as a 27 writes it, from one walked with the stand-in
+ * layers. */
+function savedKeyRig27(rig: KeyRig): { keys: [KeyframeId, SavedKey27[]][] } {
+  const three = (a: Amounts) => ({ erode: a.get(ERODE) ?? 0, round: a.get(ROUND) ?? 0, deform: a.get(DEFORM) ?? 0 });
+
+  return {
+    keys: [...rig.keys].map(([k, list]) => [k, list.map((key): SavedKey27 => {
+      const { by, stand, corners, skip, ...rest } = key;
+
+      return {
+        ...rest,
+        ...(by === undefined ? {} : { by: (({ amounts, ...d }) => ({ ...d, ...three(amounts) }))(by) }),
+        ...(corners === undefined || corners.size === 0 ? {} : { corners: [...corners] }),
+        ...(skip === undefined || skip.size === 0 ? {} : { skip: [...skip] }),
+        ...(stand === undefined ? {} : {
+          stand: (({ amounts, corners: c, ...st }) => ({
+            ...st,
+            corners: [...c],
+            erosion: amounts.get(ERODE) ?? 0,
+            bevel: amounts.get(ROUND) ?? 0,
+            amplitude: amounts.get(DEFORM) ?? 0,
+          }))(stand),
+        }),
+      };
+    })]),
+  };
+}
 
 /** A timeline as a 23 and older wrote it: its lists, and a map per corner.
  * The amounts on single corners are read and dropped: see `uncornered`. */
@@ -79,12 +162,12 @@ interface OldStand {
   radii?: [VertexId, number][]
 }
 
-type OldOp = Exclude<Op, { kind: 'stand' }> | OldStand;
+type OldOp = Exclude<Op, { kind: 'stand' | 'amount' }> | OldAmount | OldStand;
 
 /** A file as a 23 and older wrote it: everything a 24 has, with timelines of
  * operations and the fields that came later missing. */
-export interface Old extends Omit<Saved, 'world'> {
-  world: Omit<Saved['world'], 'rigs' | 'flags' | 'effects'> & {
+export interface Old extends Omit<Saved27, 'world'> {
+  world: Omit<Saved27['world'], 'rigs' | 'flags' | 'effects'> & {
     rigs: [Id, OldRig][]
     flags?: [Id, Flags][]
     effects?: [Id, Effects][]
@@ -99,19 +182,19 @@ type Flags = Saved['world']['flags'][number][1];
 export const OLDEST = 20, NEWEST = 23;
 
 /** A file of operations as a file of keys, or why it cannot be one. */
-export function converted(file: Old): Saved | { refused: string } {
+export function converted(file: Old): Saved27 | { refused: string } {
   if (file.format < OLDEST || file.format > NEWEST) {
     return { refused: `format ${file.format}, and this takes ${OLDEST} to ${NEWEST}` };
   }
 
   const rigs = file.world.rigs.map(([id, rig]) => [id, keysOf(restoredRig(rig))] as const);
 
-  const out: Saved = {
+  const out: Saved27 = {
     ...file,
     format: 24,
     world: {
       ...file.world,
-      rigs: rigs.map(([id, rig]) => [id, savedKeyRig(rig)]),
+      rigs: rigs.map(([id, rig]) => [id, savedKeyRig27(rig)]),
       flags: file.world.flags ?? [],
       effects: (file.world.effects ?? []).map(([id, fx]) => [id, optioned(fx)]),
     },
@@ -163,9 +246,12 @@ function restoredRig(rig: OldRig): Rig {
 
 function restoredEntry(e: OldEntry): Entry {
   // A 20 has no skews: absent is nought.
-  const op: Op = e.op.kind === 'stand'
-    ? restoredStand(e.op)
-    : e.op.kind === 'scale' ? { ...e.op, lean: e.op.lean ?? 0 } : e.op;
+  const was = e.op;
+  const op: Op = was.kind === 'stand'
+    ? restoredStand(was)
+    : 'layer' in was || !(was.kind in AS_LAYER)
+      ? was.kind === 'scale' ? { ...was, lean: was.lean ?? 0 } : was as Op
+      : { kind: 'amount', layer: AS_LAYER[was.kind as OldAmount['kind']], by: (was as OldAmount).by };
 
   const out: Entry = e.skip === undefined || e.skip.length === 0
     ? { op, times: e.times }
@@ -178,10 +264,8 @@ function restoredStand(op: OldStand): Stand {
   return {
     kind: 'stand',
     frame: { ...op.frame, skew: op.frame.skew ?? 0 },
-    erosion: op.erosion,
     corners: new Map(op.corners),
-    bevel: op.bevel ?? op.radius ?? 0,
-    amplitude: op.amplitude ?? 0,
+    amounts: new Map([[ERODE, op.erosion], [ROUND, op.bevel ?? op.radius ?? 0], [DEFORM, op.amplitude ?? 0]]),
   };
 }
 
@@ -201,8 +285,8 @@ function optioned<E extends Partial<Effects>>(fx: E): E {
  * chamfer where that was one and as the precision a round starts with
  * otherwise, and one without a `tension` reads at the one it starts with.
  */
-function rounding(round: Effects['round'] & object): Options['round'] {
-  const was = round as Partial<Options['round']> & { segments?: number };
+function rounding(round: Effects['round'] & object): Options['round'] & { off?: boolean } {
+  const was = round as Partial<Options['round']> & { segments?: number, off?: boolean };
 
   return {
     precision: was.precision ?? REMEMBERED.round.precision,
@@ -213,11 +297,11 @@ function rounding(round: Effects['round'] & object): Options['round'] {
 }
 
 /** A 26's key, with what a key could say about single corners' amounts. */
-interface CorneredKey extends SavedKey {
+interface CorneredKey extends SavedKey27 {
   depths?: [VertexId, number][]
   rounds?: [VertexId, number][]
   deforms?: [VertexId, number][]
-  stand?: SavedKey['stand'] & {
+  stand?: SavedKey27['stand'] & {
     depths?: [VertexId, number][]
     bevels?: [VertexId, number][]
     amplitudes?: [VertexId, number][]
@@ -235,13 +319,13 @@ interface CorneredKey extends SavedKey {
  * drawing changes, and the bake with it, which is dropped where anything was.
  * Nothing else about the file is touched.
  */
-export function uncornered(file: Saved): Saved | { refused: string } {
+export function uncornered(file: Saved27): Saved27 | { refused: string } {
   if (file.format !== 26) return { refused: `format ${file.format}, and this takes 26` };
 
   let lost = false;
 
   const some = (m: readonly unknown[] | undefined): boolean => m !== undefined && m.length > 0;
-  const key = (was: SavedKey): SavedKey => {
+  const key = (was: SavedKey27): SavedKey27 => {
     const { depths, rounds, deforms, stand, ...rest } = was as CorneredKey;
 
     if (some(depths) || some(rounds) || some(deforms)) lost = true;
@@ -254,11 +338,11 @@ export function uncornered(file: Saved): Saved | { refused: string } {
     return { ...rest, stand: kept };
   };
 
-  const { cornerEffects, ...world } = file.world as Saved['world'] & { cornerEffects?: unknown[] };
+  const { cornerEffects, ...world } = file.world as Saved27['world'] & { cornerEffects?: unknown[] };
 
   if (some(cornerEffects)) lost = true;
 
-  const rigs = world.rigs.map(([id, rig]): Saved['world']['rigs'][number] => [
+  const rigs = world.rigs.map(([id, rig]): Saved27['world']['rigs'][number] => [
     id,
     { keys: rig.keys.map(([k, list]) => [k, list.map(key)]) },
   ]);
@@ -272,6 +356,9 @@ export function uncornered(file: Saved): Saved | { refused: string } {
 }
 
 export type { SavedKey };
+
+/** A 27's stand, for what reads one. */
+export type { SavedStand };
 
 /** A polygon's kind as a 25 and older wrote it. */
 interface OldKind {
@@ -288,7 +375,7 @@ interface OldKind {
  * is a void in each set its mask named. A polygon without a `type` is taken
  * to be one already.
  */
-export function kinded(file: Saved): Saved {
+export function kinded(file: Saved27): Saved27 {
   const kind = (old: OldKind): PolygonKind => {
     if (old.type === 'void') {
       const from = old.from ?? 1;
@@ -316,16 +403,95 @@ export function kinded(file: Saved): Saved {
 }
 
 /** A 25 as a 26: see `kinded`. */
-export function unmasked(file: Saved): Saved | { refused: string } {
+export function unmasked(file: Saved27): Saved27 | { refused: string } {
   if (file.format !== 25) return { refused: `format ${file.format}, and this takes 25` };
 
   return { ...kinded(file), format: 26 };
 }
 
 /**
- * A 24 as a 27: every amount — depths, bevels, a deform's spacing and its
+ * A 27 as a 28: each thing's effects as a list of layers, in the order the
+ * fold laid them — erode, round, deform — each with an id from the file's
+ * counter; and its amounts by layer.
+ *
+ * An erosion applied unless switched off, so a thing gets an erode layer
+ * wherever it had one switched off or any depth written. A bevel or an
+ * amplitude with no round or deform to be about did nothing, and goes.
+ * Nothing drawn changes, and the bake stays.
+ */
+export function layered(file: Saved27): Saved | { refused: string } {
+  if (file.format !== 27) return { refused: `format ${file.format}, and this takes 27` };
+
+  let next = file.world.nextId;
+  const effects = new Map(file.world.effects);
+  const rigs = new Map(file.world.rigs);
+  const lists = new Map<Id, Layer[]>();
+
+  for (const id of new Set([...effects.keys(), ...rigs.keys()])) {
+    const fx = effects.get(id) ?? {};
+    const keys = (rigs.get(id)?.keys ?? []).flatMap(([, list]) => list);
+    const eroded = keys.some(k => (k.by?.erode ?? 0) !== 0 || (k.stand?.erosion ?? 0) !== 0);
+    const list: Layer[] = [];
+
+    if (fx.erode !== undefined || eroded) list.push({ id: next++, kind: 'erode', ...(fx.erode?.off === true ? { off: true } : {}) });
+    if (fx.round !== undefined) list.push({ ...fx.round, id: next++, kind: 'round' });
+    if (fx.deform !== undefined) list.push({ ...fx.deform, id: next++, kind: 'deform' });
+
+    if (list.length > 0) lists.set(id, list);
+  }
+
+  const idOf = (id: Id, kind: Layer['kind']): LayerId | undefined => lists.get(id)?.find(l => l.kind === kind)?.id;
+
+  const amounts = (id: Id, three: { erode?: number, round?: number, deform?: number }): [LayerId, number][] | undefined => {
+    const out: [LayerId, number][] = [];
+
+    for (const kind of ['erode', 'round', 'deform'] as const) {
+      const layer = idOf(id, kind), by = three[kind] ?? 0;
+
+      if (layer !== undefined && by !== 0) out.push([layer, by]);
+    }
+
+    return out.length === 0 ? undefined : out;
+  };
+
+  const key = (id: Id) => (was: SavedKey27): SavedKey => {
+    const { by, stand, ...rest } = was;
+    const out: SavedKey = { ...rest };
+
+    if (by !== undefined) {
+      const { erode, round, deform, ...d } = by;
+      const a = amounts(id, { erode, round, deform });
+
+      out.by = a === undefined ? d : { ...d, amounts: a };
+    }
+
+    if (stand !== undefined) {
+      const { erosion, bevel, amplitude, ...st } = stand;
+      const a = amounts(id, { erode: erosion, round: bevel, deform: amplitude });
+
+      out.stand = a === undefined ? st : { ...st, amounts: a };
+    }
+
+    return out;
+  };
+
+  return {
+    ...file,
+    format: 28,
+    world: {
+      ...file.world,
+      nextId: next,
+      rigs: file.world.rigs.map(([id, rig]) => [id, { keys: rig.keys.map(([k, list]) => [k, list.map(key(id))]) }]),
+      effects: [...lists],
+    },
+  };
+}
+
+/**
+ * A 24 as a 28: every amount — depths, bevels, a deform's spacing and its
  * amplitudes — which was a length in the world, as a length at the thing's
- * own scale, which the world multiplies by `scaleAt`.
+ * own scale, which the world multiplies by `scaleAt`; and then everything a
+ * 25 to a 27 changed, through `layered`.
  *
  * Taken at the first keyframe the thing stands at, which is where it was
  * made. The amounts add up, so dividing every one of them divides what they
@@ -334,14 +500,21 @@ export function unmasked(file: Saved): Saved | { refused: string } {
  * the point of the change. At scale one, which is nearly everything, nothing
  * changes at all.
  */
-export function relative(file: Saved): Saved | { refused: string } {
+export function relative(file: Saved27): Saved | { refused: string } {
   if (file.format !== 24) return { refused: `format ${file.format}, and this takes 24` };
 
-  // Its kinds made a 26's first, since what reads it is the editor, and the
-  // editor reads nothing else. What comes out is a 27 whole: the editor reads
-  // no amounts on single corners either, so they are dropped on the way, as
-  // `uncornered` drops them.
-  const state = restored({ ...kinded(file), format: FORMAT });
+  // Made a 28 first, since what reads it is the editor, and the editor reads
+  // nothing else: its kinds a 26's, its amounts on single corners dropped as
+  // `uncornered` drops them, and its effects layers.
+  const cornerless = uncornered({ ...kinded(file), format: 26 });
+
+  if ('refused' in cornerless) return cornerless;
+
+  const now = layered({ ...cornerless, format: 27 });
+
+  if ('refused' in now) return now;
+
+  const state = restored({ ...now, format: FORMAT });
   const world = state.world;
   const effects = new Map(world.effects);
   const rigs = new Map(world.rigs);
@@ -354,23 +527,12 @@ export function relative(file: Saved): Saved | { refused: string } {
 
     const fx = world.effects.get(id);
 
-    if (fx?.deform !== undefined) effects.set(id, { ...fx, deform: { ...fx.deform, spacing: fx.deform.spacing / k } });
+    if (fx !== undefined) effects.set(id, fx.map(l => (l.kind === 'deform' ? { ...l, spacing: l.spacing / k } : l)));
 
     const key = (key: Key): Key => ({
       ...key,
-      ...(key.by === undefined
-        ? {}
-        : { by: { ...key.by, erode: key.by.erode / k, round: key.by.round / k, deform: key.by.deform / k } }),
-      ...(key.stand === undefined
-        ? {}
-        : {
-          stand: {
-            ...key.stand,
-            erosion: key.stand.erosion / k,
-            bevel: key.stand.bevel / k,
-            amplitude: key.stand.amplitude / k,
-          },
-        }),
+      ...(key.by === undefined ? {} : { by: { ...key.by, amounts: timesAmounts(key.by.amounts, 1 / k) } }),
+      ...(key.stand === undefined ? {} : { stand: { ...key.stand, amounts: timesAmounts(key.stand.amounts, 1 / k) } }),
     });
 
     rigs.set(id, { ...rig, keys: new Map([...rig.keys].map(([at, keys]) => [at, keys.map(key)])) });

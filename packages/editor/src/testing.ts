@@ -8,14 +8,33 @@
 // -----------------------------------------------------------------------------
 
 import { Point } from '@ce/game/world';
-import { keyRigOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig, writtenInto } from './scene';
-import { Amount, Move, Op, REST, addedBy, deltaOf, idle, keysAt, nextKey, nudgedBy, repeating, withKeys } from './rig';
+import { added } from './effects';
+import { keyRigOf, layerOf, middleOf, moveOf, painted, rigOf, scaleOf, turnOf, withKeyRig, withRig, writtenInto } from './scene';
+import { Amount, AmountKind, Move, amountIn, stateAt, Op, REST, addedBy, deltaOf, idle, keysAt, nextKey, nudgedBy, repeating, withKeys } from './rig';
 import { TENSION, precisionFor } from './geometry';
-import { Id, KeyframeId, Options, VertexId, World } from './types';
+import { DeformOptions, Id, KeyframeId, Layer, Options, REMEMBERED, RoundOptions, VertexId, World } from './types';
 
 /** An operation, or one worked out from the world as it stands when it is
- * written — which is what a gesture's is. */
-export type Writing = Op | ((world: World, v: KeyframeId, id: Id) => Op);
+ * written — which is what a gesture's is — perhaps with the world changed to
+ * have what it is written against: an amount's layer. */
+export type Writing = Op | ((world: World, v: KeyframeId, id: Id) => Op | Wrote | Writing);
+
+export interface Wrote {
+  world: World
+  op: Op
+}
+
+/** A writing worked out against `world`: the world it is written into, and
+ * the operation. */
+export function worked(world: World, v: KeyframeId, id: Id, op: Writing): Wrote {
+  if (typeof op !== 'function') return { world, op };
+
+  const out = op(world, v, id);
+
+  if (typeof out === 'function') return worked(world, v, id, out);
+
+  return 'kind' in out ? { world, op: out } : out;
+}
 
 /** Corners of a polygon moved at `v` by one gesture, in one key: what a drag
  * of several picked corners writes. */
@@ -41,8 +60,10 @@ export function wrote(world: World, v: KeyframeId, id: Id, ...ops: Writing[]): W
   let out = world;
 
   for (const op of ops) {
-    const written = typeof op === 'function' ? op(out, v, id) : op;
+    const { world: into, op: written } = worked(out, v, id, op);
     const by = deltaOf(written);
+
+    out = into;
 
     if (by === null || idle(by)) continue;
 
@@ -60,7 +81,8 @@ export function wroteOne(world: World, v: KeyframeId, id: Id, ...ops: Writing[])
   let key = keysAt(keyRigOf(world, id), v).at(-1)?.id ?? null;
 
   for (const op of ops) {
-    const written = writtenInto(out, v, id, key, typeof op === 'function' ? op(out, v, id) : op);
+    const w = worked(out, v, id, op);
+    const written = writtenInto(w.world, v, id, key, w.op);
 
     out = written.world;
     key = written.key ?? key;
@@ -72,10 +94,11 @@ export function wroteOne(world: World, v: KeyframeId, id: Id, ...ops: Writing[])
 /** `op` added to the end of what `v` does to `id` as a repeat: `times` in
  * all, or to the end. */
 export function repeated(world: World, v: KeyframeId, id: Id, op: Writing, times: number | null = null): World {
-  const rig = rigOf(world, id);
-  const entry = repeating(typeof op === 'function' ? op(world, v, id) : op, times);
+  const w = worked(world, v, id, op);
+  const rig = rigOf(w.world, id);
+  const entry = repeating(w.op, times);
 
-  return withRig(world, id, withKeys(rig, v, [...(rig.keys.get(v) ?? []), entry]));
+  return withRig(w.world, id, withKeys(rig, v, [...(rig.keys.get(v) ?? []), entry]));
 }
 
 /** A move by a world-space step. */
@@ -88,8 +111,32 @@ export function move(x: number, y: number): Move {
   return { kind: 'move', by: { x, y } };
 }
 
-export function erode(by: number): Amount {
-  return { kind: 'erode', by };
+/**
+ * An amount of one kind, on the thing's first layer of that kind — given one
+ * where it has none, with the options an effect starts with: what a test that
+ * erodes a room it never gave an erode layer means.
+ */
+export function amounted(kind: AmountKind, by: number): Writing {
+  return (world, _v, id) => {
+    const had = layerOf(world, id, kind);
+    const made = had === undefined
+      ? added(world, id, (kind === 'erode' ? { kind } : { kind, ...REMEMBERED[kind] }) as Omit<Layer, 'id'>)
+      : { world, layer: had.id };
+
+    return { world: made.world, op: { kind: 'amount', layer: made.layer, by } satisfies Amount };
+  };
+}
+
+export function erode(by: number): Writing {
+  return amounted('erode', by);
+}
+
+export function round(by: number): Writing {
+  return amounted('round', by);
+}
+
+export function deform(by: number): Writing {
+  return amounted('deform', by);
 }
 
 /** A turn about a world-space point: the origin, unless said otherwise. */
@@ -114,4 +161,58 @@ export function inSegments(segments: number, bevel: number): Options['round'] {
   return segments === 1
     ? { precision: 1, tension: TENSION, chamfer: true }
     : { precision: precisionFor(segments, bevel), tension: TENSION, chamfer: false };
+}
+
+/** A thing's effects as a record, one of each: how a test says what a thing
+ * has, before lists. */
+export interface Effects {
+  round?: RoundOptions & { off?: boolean }
+  deform?: DeformOptions & { off?: boolean }
+  erode?: { off: boolean }
+}
+
+/**
+ * A thing's effects set from a record, as layers in the order the fold used
+ * to lay them: erode, round, deform. A kind it has a layer of already keeps
+ * that layer's id, and so the amounts written against it.
+ */
+export function withEffects(world: World, id: Id, fx: Effects): World {
+  let next = world.nextId;
+  const list: Layer[] = [];
+
+  for (const kind of ['erode', 'round', 'deform'] as const) {
+    const had = layerOf(world, id, kind);
+    const o = fx[kind];
+
+    if (o === undefined) {
+      if (kind === 'erode' && had !== undefined) list.push(had);
+
+      continue;
+    }
+
+    list.push({ ...o, kind, id: had?.id ?? next++ } as Layer);
+  }
+
+  const effects = new Map(world.effects);
+
+  if (list.length === 0) effects.delete(id);
+  else effects.set(id, list);
+
+  return { ...world, nextId: next, effects };
+}
+
+/** A thing's amount of one kind at `v`: its first layer of that kind's, and
+ * nought where it has none. What a test reads where a state had an erosion, a
+ * bevel and an amplitude. */
+export function amountAt(world: World, id: Id, v: KeyframeId, kind: AmountKind): number {
+  const l = layerOf(world, id, kind);
+
+  return l === undefined ? 0 : amountIn(stateAt(world, id, v).amounts, l.id);
+}
+
+/** `writtenInto` for a writing: what the canvas does with the hand on `key`. */
+export function writing(world: World, v: KeyframeId, id: Id, key: number | null, op: Writing): ReturnType<typeof writtenInto> {
+  const w = worked(world, v, id, op);
+
+  return writtenInto(w.world, v, id, key, w.op);
 }

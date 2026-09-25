@@ -8,6 +8,7 @@ import {
   grouped,
   handed,
   keyed,
+  layerOf,
   placeAt,
   removeAt,
   resolveAt,
@@ -20,6 +21,7 @@ import {
   Op,
   Rig,
   Timeline,
+  amountIn,
   nudged,
   once,
   repeating,
@@ -28,7 +30,7 @@ import {
 } from './rig';
 import { NOTHING, entriesOf, keysOf, walkedBy } from './rig';
 import { EditorState, Id, emptyWorld, gestured, initialState, PolygonKind, Vertex } from './types';
-import { erode, move, scaled, spun, wrote } from './testing';
+import { deform, erode, move, round, scaled, spun, withEffects, worked, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -62,7 +64,9 @@ function world(): EditorState {
 
   let w = wrote(b.world, 2, b.id, move(3, -2), spun(0.25), scaled(1.5, 0.75), erode(2));
 
-  w = keyed(w, 3, a.id, [repeating({ kind: 'erode', by: 1 }, null)]);
+  const eroded = worked(w, 3, a.id, erode(1));
+
+  w = keyed(eroded.world, 3, a.id, [repeating(eroded.op, null)]);
   w = withRig(w, b.id, nudged(rigOf(w, b.id), corners[1].id, 2, { x: 1, y: -1 }));
   w = gestured(w, a.world);
 
@@ -112,7 +116,7 @@ describe('save', () => {
     const repeat = [...after.world.rigs.values()].flatMap(r => [...r.keys.values()].flat())
       .find(e => e.times === null)!;
 
-    expect(repeat.by?.erode).toBe(1);
+    expect([...repeat.by!.amounts.values()]).toEqual([1]);
   });
 
   test('a stand comes back with its maps', () => {
@@ -131,20 +135,18 @@ describe('save', () => {
   test('effects survive the trip: options, amounts, and a stand\'s', () => {
     const before = world();
     const [a, b] = [...before.world.polygons.keys()];
-    let w = wrote(before.world, 1, b, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
+    let w = wrote(before.world, 1, b, round(4), deform(2));
 
-    w = {
-      ...w,
-      effects: new Map([
-        [b, { round: { precision: 0.3, tension: 0.8, chamfer: false }, deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true } }],
-        [a, { erode: { off: true } }],
-      ]),
-    };
+    w = withEffects(w, b, {
+      round: { precision: 0.3, tension: 0.8, chamfer: false },
+      deform: { spacing: 12, pattern: 'noise', seed: 7, sides: 'in', jitter: 0, off: true },
+    });
+    w = withEffects(w, a, { erode: { off: true } });
     w = keyed(w, 4, b, [once(handed(w, 4, b))]);
 
     const stood = rigOf(w, b).keys.get(4)![0].op;
 
-    expect(stood.kind === 'stand' && stood.bevel).toBe(4);
+    expect(stood.kind === 'stand' && amountIn(stood.amounts, layerOf(w, b, 'round')!.id)).toBe(4);
 
     const after = trip({ ...before, world: w });
 
@@ -279,17 +281,15 @@ describe('keys in a file', () => {
 
     rig = withKeys(rig, 1, [
       repeating<Op>({ kind: 'scale', by: { x: 1.3, y: 0.7 }, ref: { x: 3, y: 1 }, shift: { x: 2, y: -1 }, along: 0.2, lean: 0.1 }, null, new Set([3])),
-      once(erode(2)),
+      once<Op>({ kind: 'amount', layer: 1, by: 2 }),
     ]);
 
     rig = withKeys(rig, 2, [
       once<Op>({
         kind: 'stand',
         frame: { t: { x: 5, y: 6 }, angle: 0.3, skew: 0.1, scale: { x: 1.2, y: 0.9 } },
-        erosion: 1,
         corners: new Map([[10, { x: 1, y: 1 }]]),
-        bevel: 0.25,
-        amplitude: 0.75,
+        amounts: new Map([[1, 1], [2, 0.25], [3, 0.75]]),
       }),
     ]);
 
@@ -326,10 +326,10 @@ describe('keys in a file', () => {
   });
 
   test('a delta saved without a field reads as one that does not do it', () => {
-    const key = restoredKeyRig({ keys: [[0, [{ id: 0, ref: { x: 0, y: 0 }, by: { erode: 3 }, times: 1 }]]] })
+    const key = restoredKeyRig({ keys: [[0, [{ id: 0, ref: { x: 0, y: 0 }, by: { amounts: [[1, 3]] }, times: 1 }]]] })
       .keys.get(0)![0];
 
-    expect(key.by).toEqual({ ...NOTHING, erode: 3 });
+    expect(key.by).toEqual({ ...NOTHING, amounts: new Map([[1, 3]]) });
   });
 
   test('a timeline read back out of a file plays what it played', () => {
@@ -357,9 +357,9 @@ describe('keys in a file', () => {
       expect(ours.frame.skew, `v${i}: skew`).toBeCloseTo(theirs.frame.skew, 12);
       expect(ours.frame.scale.x, `v${i}: scale.x`).toBeCloseTo(theirs.frame.scale.x, 12);
       expect(ours.frame.scale.y, `v${i}: scale.y`).toBeCloseTo(theirs.frame.scale.y, 12);
-      expect(ours.erosion, `v${i}: erosion`).toBeCloseTo(theirs.erosion, 9);
-      expect(ours.bevel, `v${i}: bevel`).toBeCloseTo(theirs.bevel, 9);
-      expect(ours.amplitude, `v${i}: amplitude`).toBeCloseTo(theirs.amplitude, 9);
+      for (const layer of [1, 2, 3]) {
+        expect(amountIn(ours.amounts, layer), `v${i}: layer ${layer}`).toBeCloseTo(amountIn(theirs.amounts, layer), 9);
+      }
       expect([...ours.corners.keys()].sort(), `v${i}: which corners`).toEqual([...theirs.corners.keys()].sort());
 
       for (const [id, p] of theirs.corners) {

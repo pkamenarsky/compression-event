@@ -17,7 +17,7 @@ import {
   upto,
 } from './scene';
 import { Frame, NOTHING, framed, playingAt, playingOn, stateAt, worldFrame } from './rig';
-import { erode, move, moved, repeated, scaled, turned, wrote, wroteOne } from './testing';
+import { Writing, erode, move, moved, repeated, scaled, turned, worked, wrote, wroteOne } from './testing';
 import { Id, KeyframeId, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -46,14 +46,21 @@ function edit(world: World, k: KeyframeId, id: Id, index: number, gesture: Param
   const e = keysOfAt(world, k, id)[index];
   const { paint, pivot } = editedAt(world, k, id, e)!;
 
-  return refolded(world, k, id, index, editedWith(gesture, paint, pivot));
+  return refoldedWith(world, k, id, index, editedWith(gesture, paint, pivot));
+}
+
+/** `refolded`, for a writing worked out against the world first. */
+function refoldedWith(world: World, k: KeyframeId, id: Id, index: number, op: Writing): World {
+  const w = worked(world, k, id, op);
+
+  return refolded(w.world, k, id, index, w.op);
 }
 
 function editedWith(
   g: { turn: number } | { scale: { x: number, y: number } } | { move: Point } | { erode: number },
   paint: Parameters<typeof turnOf>[0],
   pivot: Point,
-) {
+): Writing {
   if ('turn' in g) return turnOf(paint, pivot, g.turn);
   if ('scale' in g) return scaleOf(paint, pivot, g.scale);
   if ('move' in g) return moveOf(paint, g.move);
@@ -226,7 +233,7 @@ describe('break and split', () => {
     const w = wrote(world, 1, id, move(10, 0), move(0, 20));
     const first = keysOfAt(w, 1, id)[0];
     const { paint, pivot } = editedAt(w, 1, id, first)!;
-    const now = refolded(w, 1, id, 0, editedWith({ turn: 0.4 }, paint, pivot));
+    const now = refoldedWith(w, 1, id, 0, editedWith({ turn: 0.4 }, paint, pivot));
     const apart = split(now, w, 1, [id], new Map([[id, first.id]]));
     const keys = keysOfAt(apart, 1, id);
 
@@ -351,7 +358,7 @@ describe('a gesture while standing on a key', () => {
     // leaves it and folded back into it. See `editedAt` and `refolded`.
     const key = keysOfAt(w, 1, id)[0];
     const { paint, pivot } = editedAt(w, 1, id, key)!;
-    const after = refolded(w, 1, id, 0, editedWith({ move: { x: 5, y: 0 } }, paint, pivot));
+    const after = refoldedWith(w, 1, id, 0, editedWith({ move: { x: 5, y: 0 } }, paint, pivot));
     const keys = keysOfAt(after, 1, id);
 
     expect(keys).toHaveLength(2);
@@ -376,7 +383,7 @@ describe('a gesture while standing on a key', () => {
     expect(read.pivot.x).toBeCloseTo(end.x, 6);
     expect(read.pivot.y).toBeCloseTo(end.y - 40, 6);
 
-    const after = refolded(w, 1, id, 0, editedWith({ turn: 0.25 }, read.paint, read.pivot));
+    const after = refoldedWith(w, 1, id, 0, editedWith({ turn: 0.25 }, read.paint, read.pivot));
 
     expect(keysOfAt(after, 1, id)[0].by!.angle).toBeCloseTo(0.75, 9);
   });

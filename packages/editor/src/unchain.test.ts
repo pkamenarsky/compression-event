@@ -23,7 +23,7 @@ import {
   withRig,
 } from './scene';
 import { nudged as nudging, repeating, stateAt } from './rig';
-import { Writing, erode, move, turned as turning, wrote } from './testing';
+import { Writing, amountAt, deform, erode, move, round, turned as turning, wrote } from './testing';
 import {
   ArtefactId,
   PolygonId,
@@ -176,18 +176,16 @@ describe('unchaining', () => {
 
   test('so do upstream rounds and deforms, and the amounts they came to are kept', () => {
     const { world, id } = square();
-    const shaped = wrote(world, 1, id, { kind: 'round', by: 4 }, { kind: 'deform', by: 2 });
+    const shaped = wrote(world, 1, id, round(4), deform(2));
 
     const loose = unchained(shaped, 3, [id]);
-    const later = wrote(loose, 1, id, { kind: 'round', by: 10 });
+    const later = wrote(loose, 1, id, round(10));
 
     for (const w of [loose, later]) {
-      const state = stateAt(w, id, 3);
-
-      expect([state.bevel, state.amplitude]).toEqual([4, 2]);
+      expect([amountAt(w, id, 3, 'round'), amountAt(w, id, 3, 'deform')]).toEqual([4, 2]);
     }
 
-    expect(stateAt(later, id, 1).bevel).toBe(14);
+    expect(amountAt(later, id, 1, 'round')).toBe(14);
   });
 
   test('a corner an upstream version deletes afterwards stays', () => {

@@ -271,6 +271,12 @@ function hashed(value: unknown): string {
     if ((key === 'bevel' || key === 'amplitude') && v === 0) return undefined;
     if ((key === 'bevels' || key === 'amplitudes') && v instanceof Map && v.size === 0) return undefined;
 
+    // Amounts by layer, as master wrote them: by name. A world here has no
+    // effects but erosion, so every layer is an erode.
+    if (typeof v === 'object' && v !== null && 'amounts' in v && v.amounts instanceof Map) {
+      return asMaster(v as { amounts: Map<number, number> });
+    }
+
     if (v instanceof Map) return { map: [...v] };
     if (v instanceof Set) return { set: [...v] };
     if (ArrayBuffer.isView(v)) return { typed: Array.from(v as unknown as ArrayLike<number>) };
@@ -279,6 +285,27 @@ function hashed(value: unknown): string {
   });
 
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/** A delta or a stand with its amounts under master's names, where master had
+ * them: a delta's erode, round and deform after its lean, a stand's erosion
+ * after its frame. */
+function asMaster(v: { amounts: Map<number, number> }): object {
+  const erosion = [...v.amounts.values()].reduce((a, b) => a + b, 0);
+  const out: Record<string, unknown> = {};
+
+  for (const [k, x] of Object.entries(v)) {
+    if (k === 'amounts') {
+      if (!('kind' in v)) Object.assign(out, { erode: erosion, round: 0, deform: 0 });
+    }
+    else {
+      out[k] = x;
+    }
+
+    if (k === 'frame' && 'kind' in v) out.erosion = erosion;
+  }
+
+  return out;
 }
 
 /** Whether a replacer's holder is one of the bake's tracks. */

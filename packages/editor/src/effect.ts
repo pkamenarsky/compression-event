@@ -61,17 +61,15 @@ export function foldEach(it: Drawn, steps: readonly Effect[]): Drawn {
 }
 
 /**
- * A thing's effects as a fold lays them: an erosion, a round across a span of
- * facet counts, a deform. Today's fixed three, in their fixed order; see
- * PLAN-order, whose step 2 makes it a list.
+ * A thing's effects as a fold lays them, first to last: an erosion, a round
+ * across a span of facet counts (the sagitta counts at either end and how far
+ * across it: see `roundingAcross`), a deform.
  */
-export interface Laying {
-  erosion: number
-  /** The round, with the sagitta counts at either end of a span and how far
-   * across it: see `roundingAcross`. Null where nothing is rounded. */
-  round: { bevel: number, from: number, to: number, at: number } | null
-  deform: { amplitude: number, how: Effecting } | null
-}
+export type Laying = (
+  | { kind: 'erode', depth: number }
+  | { kind: 'round', bevel: number, from: number, to: number, at: number }
+  | { kind: 'deform', amplitude: number, how: Effecting }
+)[];
 
 /**
  * A shape through its effects, first to last, each island on its own: the one
@@ -79,13 +77,16 @@ export interface Laying {
  * differ in their input and in nothing else.
  */
 export function effected(it: Drawn, fx: Laying): Drawn {
-  const { erosion, round, deform } = fx;
-
-  return foldEach(it, [
-    ...(erosion === 0 ? [] : [eroding(erosion)]),
-    ...(round === null ? [] : [roundingAcross(round.bevel, sagitta(round.bevel, round.from), sagitta(round.bevel, round.to), round.at)]),
-    ...(deform === null ? [] : [deforming(deform.amplitude, deform.how)]),
-  ]);
+  return foldEach(it, fx.map(l => {
+    switch (l.kind) {
+      case 'erode':
+        return eroding(l.depth);
+      case 'round':
+        return roundingAcross(l.bevel, sagitta(l.bevel, l.from), sagitta(l.bevel, l.to), l.at);
+      case 'deform':
+        return deforming(l.amplitude, l.how);
+    }
+  }));
 }
 
 /**

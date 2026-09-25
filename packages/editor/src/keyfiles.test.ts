@@ -13,7 +13,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import { NEWEST, OLDEST, Old, converted, relative } from './convert';
+import { NEWEST, OLDEST, Old, Saved27, converted, relative } from './convert';
 import { Saved, restored } from './save';
 import { stateAt } from './rig';
 import { Id, World, standing } from './types';
@@ -47,7 +47,7 @@ describe('a world converts and opens', () => {
 
       expect(keyed, name).not.toHaveProperty('refused');
 
-      const out = relative(JSON.parse(JSON.stringify(keyed)) as Saved);
+      const out = relative(JSON.parse(JSON.stringify(keyed)) as Saved27);
 
       expect(out, name).not.toHaveProperty('refused');
 

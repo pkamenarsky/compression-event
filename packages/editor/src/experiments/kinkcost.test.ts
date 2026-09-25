@@ -30,12 +30,10 @@ import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOLERANCE, bakeSpan, sample, truth } from '../bake';
 import { TOP, addPolygon } from '../scene';
-import { Writing, erode, inSegments, wrote } from '../testing';
-import { Effects, World, emptyWorld } from '../types';
+import { Effects, Writing, deform, erode, inSegments, round, withEffects, wrote } from '../testing';
+import { World, emptyWorld } from '../types';
 
 const SEGMENTS = 4;
-const round = (by: number): Writing => ({ kind: 'round', by });
-const deform = (by: number): Writing => ({ kind: 'deform', by });
 
 /** `deformlast`'s room, so the figures line up with its table: the kinks are
  * at a depth of 18.69 and 22.10. */
@@ -56,7 +54,7 @@ function spanning(depth: number, bevel: number, amplitude: number): World {
     round: inSegments(SEGMENTS, 20),
     deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 },
   };
-  const w: World = { ...added.world, effects: new Map([[added.id, fx]]) };
+  const w: World = withEffects(added.world, added.id, fx);
   const at0 = wrote(w, 0, added.id, round(bevel), deform(amplitude), erode(0));
 
   return wrote(at0, 1, added.id, erode(depth));

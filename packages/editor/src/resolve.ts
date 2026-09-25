@@ -113,7 +113,7 @@ import {
   unplace,
   keyRigOf,
 } from './scene';
-import { EMPTY_RIG, Entry, KeyRig, Rig, keysOf, once, stateAt } from './rig';
+import { Amount, Amounts, EMPTY_RIG, KeyRig, NO_AMOUNTS, Rig, amountIn, keysOf, once, stateAt } from './rig';
 import type { Ident, Ids } from './ids';
 import { born, madeOf } from './ids';
 import {
@@ -857,25 +857,26 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   // of `readingAt` is added, holes included, so every one of them erodes
   // inward.
   //
-  // Its rounds and deforms go the same way, and its effects with them: the
-  // ring is the union they rounded and deformed.
-  const eroding = new Map<KeyframeId, readonly Entry[]>();
-  const fx = world.effects.get(id);
-  let was = { erosion: 0, bevel: 0, amplitude: 0 };
+  // Its rounds and deforms go the same way, and its layers with them: the
+  // ring is the union they rounded and deformed. Each ring gets the group's
+  // list with layer ids of its own, since an amount is its layer's and two
+  // rings sharing a layer would share an edit to it; and the group's amounts
+  // written onto those ids, at every keyframe they change at.
+  const fx = world.effects.get(id) ?? [];
+  const changes = new Map<KeyframeId, [number, number][]>();
+  let was: Amounts = NO_AMOUNTS;
 
   for (const k of standing) {
-    const state = stateAt(world, id, k);
-    const now = {
-      erosion: depths(world, k).get(id) ?? 0,
-      bevel: fx === undefined ? 0 : state.bevel,
-      amplitude: fx === undefined ? 0 : state.amplitude,
-    };
-    const list: Entry[] = [];
+    const now = stateAt(world, id, k).amounts;
+    const list: [number, number][] = [];
 
-    if (now.erosion !== was.erosion) list.push(once({ kind: 'erode', by: now.erosion - was.erosion }));
-    if (now.bevel !== was.bevel) list.push(once({ kind: 'round', by: now.bevel - was.bevel }));
-    if (now.amplitude !== was.amplitude) list.push(once({ kind: 'deform', by: now.amplitude - was.amplitude }));
-    if (list.length > 0) eroding.set(k, list);
+    fx.forEach((l, i) => {
+      const by = amountIn(now, l.id) - amountIn(was, l.id);
+
+      if (by !== 0) list.push([i, by]);
+    });
+
+    if (list.length > 0) changes.set(k, list);
 
     was = now;
   }
@@ -883,10 +884,15 @@ export function resolveGroup(world: World, v: KeyframeId, id: GroupId): Resoluti
   const effects = new Map(world.effects);
 
   for (const m of made) {
-    const rig: Rig = { ...EMPTY_RIG, keys: eroding };
+    const layers = fx.map(l => ({ ...l, id: next++ }));
+    const keys = new Map([...changes].map(([k, list]) => [
+      k,
+      list.map(([i, by]) => once<Amount>({ kind: 'amount', layer: layers[i].id, by })),
+    ]));
+    const rig: Rig = { ...EMPTY_RIG, keys };
 
-    if (eroding.size > 0) rigs.set(m, keysOf(rig));
-    if (fx !== undefined) effects.set(m, fx);
+    if (keys.size > 0) rigs.set(m, keysOf(rig));
+    if (layers.length > 0) effects.set(m, layers);
   }
 
   // The rings go in where the members were, and the group comes apart round

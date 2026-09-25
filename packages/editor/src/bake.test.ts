@@ -36,12 +36,11 @@ import {
   withRig,
 } from './scene';
 import { nudged, stateAt } from './rig';
-import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Effects, Writing, deform, erode, inSegments, move, round, scaled, spun, turned as turning, withEffects, wrote } from './testing';
 import {
   EMPTY_BAKE,
 } from './bake';
 import {
-  Effects,
   Id,
   PolygonId,
   PolygonKind,
@@ -2201,13 +2200,11 @@ describe('a polygon grown into a neighbour its source never reaches', () => {
 describe('effects', () => {
   const ROUND: Effects = { round: inSegments(4, 20) };
   const ZIGZAG: Effects = { deform: { spacing: 66, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
-  const round = (by: number): Writing => ({ kind: 'round', by });
-  const deform = (by: number): Writing => ({ kind: 'deform', by });
 
   function room(fx: Effects): { world: World, id: PolygonId } {
     const { world, ids } = drawn(['level', rect(-100, -100, 200, 200)]);
 
-    return { world: { ...world, effects: new Map([[ids[0], fx]]) }, id: ids[0] };
+    return { world: withEffects(world, ids[0], fx), id: ids[0] };
   }
 
   /** How many points the span draws at `t`. */
@@ -2405,7 +2402,7 @@ describe('effects', () => {
     // passes another, a crossing comes or goes, which the bake pins.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    let w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
+    let w = wrote(withEffects(g.world, g.id, ZIGZAG), 0, g.id, deform(5));
 
     w = wrote(w, 1, g.id, scaled(1.8, 1.8, { x: 100, y: 50 }));
 
@@ -2428,7 +2425,7 @@ describe('effects', () => {
     // nothing complains and the events between them are simply never looked
     // for. See PLAN-bevel 3.3.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(112, -22, 100, 100)]);
-    let w: World = { ...world, effects: new Map(ids.map(id => [id, ZIGZAG] as const)) };
+    let w: World = ids.reduce((out, id) => withEffects(out, id, ZIGZAG), world);
 
     // Nothing moves: the amplitude alone comes up, so the boxes are the two
     // rects and the probes' own step is nought.
@@ -2446,7 +2443,7 @@ describe('effects', () => {
     // nought height. See PLAN-bevel, phase 2.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    let w = wrote({ ...g.world, effects: new Map([[g.id, { ...ROUND, ...ZIGZAG }]]) }, 0, g.id, round(10), deform(5));
+    let w = wrote(withEffects(g.world, g.id, { ...ROUND, ...ZIGZAG }), 0, g.id, round(10), deform(5));
 
     w = wrote(w, 1, g.id, erode(30));
 
@@ -2468,7 +2465,7 @@ describe('effects', () => {
     // its points across the span and each line comes up as its tooth does.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    const w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 1, g.id, deform(5));
+    const w = wrote(withEffects(g.world, g.id, ZIGZAG), 1, g.id, deform(5));
     const span = run(bakeSpan(w, 0));
     const s = span.tracks[0].stretches[0];
 
@@ -2492,7 +2489,7 @@ describe('effects', () => {
     // nought — and nothing else.
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    const w = wrote({ ...g.world, effects: new Map([[g.id, ZIGZAG]]) }, 0, g.id, deform(5));
+    const w = wrote(withEffects(g.world, g.id, ZIGZAG), 0, g.id, deform(5));
 
     // Nothing is arriving here: the deform is the same at both ends.
     const span = run(bakeSpan(w, 0));
@@ -2522,7 +2519,7 @@ describe('effects', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 200, 100)], ['level', diamond]);
     const g = sealed(world, 0, ids, TOP)!;
     const fx: Effects = { deform: { spacing: 20, pattern: 'zigzag', seed: 0, sides: 'both', jitter: 0 } };
-    let w = wrote({ ...g.world, effects: new Map([[g.id, fx]]) }, 0, g.id, deform(5));
+    let w = wrote(withEffects(g.world, g.id, fx), 0, g.id, deform(5));
 
     w = wrote(w, 1, ids[1], move(0, 60));
 
@@ -2544,7 +2541,7 @@ describe('effects', () => {
   test('a group\'s bevel growing from nought, on its union', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    const w = wrote({ ...g.world, effects: new Map([[g.id, ROUND]]) }, 1, g.id, round(20));
+    const w = wrote(withEffects(g.world, g.id, ROUND), 1, g.id, round(20));
     const span = run(bakeSpan(w, 0));
 
     expect(count(span, 0)).toEqual(count(span, 1));
@@ -2555,7 +2552,7 @@ describe('effects', () => {
   test('and growing finer on its union, the editor\'s outline at both ends', () => {
     const { world, ids } = drawn(['level', rect(0, 0, 100, 100)], ['level', rect(60, 0, 140, 100)]);
     const g = sealed(world, 0, ids, TOP)!;
-    const fx = { ...g.world, effects: new Map([[g.id, { round: inSegments(4, 20) }]]) };
+    const fx = withEffects(g.world, g.id, { round: inSegments(4, 20) });
     const w = wrote(wrote(fx, 0, g.id, round(10)), 1, g.id, round(30));
     const span = run(bakeSpan(w, 0));
 

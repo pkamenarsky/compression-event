@@ -2,17 +2,15 @@
 // Editing effects
 //
 // Which effects a thing has is one fact about it over every keyframe, and how
-// much is its timeline — see `Effects`. So there are two kinds of edit here:
-// an effect switched on or off, which is the fact, and an amount written at a
-// keyframe, which is an entry like any erosion. Switching one off takes
+// much is its timeline — see `Layer`. So there are two kinds of edit here: an
+// effect switched on or off, which is the fact, and an amount written at a
+// keyframe, which is an entry against the layer's id. Switching one off takes
 // nothing away: its options and its amounts stay, and apply again when it is
 // switched back on.
 //
-// Erosion is the odd one: it has no options, so it applies unless switched
-// off, and there is nothing to give it.
-//
-// An effect is one amount over its whole ring, and one set of options: there
-// is nothing here about single corners or edges.
+// The editor still has one layer of each kind — the first — and puts a new
+// one where the fixed order had it: erode, round, deform. Lists of its own
+// are PLAN-order's step 6.
 //
 // Edges are named by the drawn corner they start at. A deform's teeth are not
 // drawn corners, so an edge runs from one drawn corner to the next, through
@@ -20,9 +18,9 @@
 // -----------------------------------------------------------------------------
 
 import { nextOf } from './geometry';
-import { AmountKind } from './rig';
-import { Resolved, diameterAt, scaleAt } from './scene';
-import { Effects, Id, KeyframeId, Options, Point, VertexId, World } from './types';
+import { AMOUNT_KINDS, AmountKind } from './rig';
+import { Resolved, diameterAt, layerOf, layersOf, scaleAt } from './scene';
+import { Id, KeyframeId, Layer, LayerId, Options, Point, VertexId, World } from './types';
 
 export type { AmountKind };
 
@@ -30,25 +28,45 @@ export type { AmountKind };
 export type EffectName = keyof Options;
 
 /** What a box in the pane switches: an effect, or the erosion. */
-export type Switch = EffectName | 'erode';
+export type Switch = AmountKind;
 
-/** Whether a switch applies to a thing: an effect it has, not switched off,
- * or its erosion, unless that is. */
+/** Whether a switch applies to a thing: a layer of that kind it has, not
+ * switched off. */
 export function applies(world: World, id: Id, name: Switch): boolean {
-  const fx = world.effects.get(id);
+  const l = layerOf(world, id, name);
 
-  if (name === 'erode') return fx?.erode?.off !== true;
-
-  return fx?.[name] !== undefined && fx[name].off !== true;
+  return l !== undefined && l.off !== true;
 }
 
-/** An effect's options on a thing, given or changed. */
+/** An effect's options on a thing, given or changed: its first layer of that
+ * kind, or a new one. */
 export function withEffect<N extends EffectName>(world: World, id: Id, name: N, options: Options[N]): World {
-  const effects = new Map(world.effects);
+  const l: Layer | undefined = layerOf(world, id, name as EffectName);
 
-  effects.set(id, { ...world.effects.get(id), [name]: options });
+  if (l === undefined) return added(world, id, { kind: name, ...options } as Omit<Layer, 'id'>).world;
 
-  return { ...world, effects };
+  return withLayer(world, id, { ...options, kind: name, id: l.id, ...(l.off === true ? { off: true } : {}) } as Layer);
+}
+
+/**
+ * A new layer on a thing, with an id from the world's counter, where the
+ * fixed order would have it: after every layer of its kind or before it.
+ */
+export function added(world: World, id: Id, layer: Omit<Layer, 'id'>): { world: World, layer: LayerId } {
+  const layers = layersOf(world, id);
+  const rank = (l: { kind: AmountKind }) => AMOUNT_KINDS.indexOf(l.kind);
+  const at = layers.findIndex(l => rank(l) > rank(layer));
+  const made = { ...layer, id: world.nextId } as Layer;
+  const list = at < 0 ? [...layers, made] : [...layers.slice(0, at), made, ...layers.slice(at)];
+
+  return { world: { ...world, nextId: world.nextId + 1, effects: new Map(world.effects).set(id, list) }, layer: made.id };
+}
+
+/** One of a thing's layers replaced, by its id. */
+function withLayer(world: World, id: Id, layer: Layer): World {
+  const list = layersOf(world, id).map(l => (l.id === layer.id ? layer : l));
+
+  return { ...world, effects: new Map(world.effects).set(id, list) };
 }
 
 /** A deform's first spacing, as a share of the size of what it goes on:
@@ -83,9 +101,8 @@ export function sizedFor(world: World, v: KeyframeId, ids: readonly Id[], option
 }
 
 /**
- * A switch on for every one of `ids`: an effect it has switched back on with
- * its options as they were, one it has never had given `options`, and its
- * erosion let apply.
+ * A switch on for every one of `ids`: a layer it has switched back on with its
+ * options as they were, and one it has never had given `options`.
  */
 export function switchedOn(world: World, ids: readonly Id[], name: Switch, options: Options): World {
   let w = world;
@@ -93,15 +110,15 @@ export function switchedOn(world: World, ids: readonly Id[], name: Switch, optio
   for (const id of ids) {
     if (applies(w, id, name)) continue;
 
-    const fx = w.effects.get(id);
+    const l = layerOf(w, id, name);
 
-    if (name === 'erode') {
-      w = withEffects(w, id, { ...fx, erode: undefined });
+    if (l !== undefined) {
+      const { off: _off, ...on } = l;
+
+      w = withLayer(w, id, on as Layer);
     }
     else {
-      const { off: _off, ...was } = fx?.[name] ?? options[name];
-
-      w = withEffect(w, id, name, was as Options[typeof name]);
+      w = added(w, id, (name === 'erode' ? { kind: 'erode' } : { kind: name, ...options[name] }) as Omit<Layer, 'id'>).world;
     }
   }
 
@@ -118,25 +135,10 @@ export function switchedOff(world: World, ids: readonly Id[], name: Switch): Wor
   for (const id of ids) {
     if (!applies(w, id, name)) continue;
 
-    const fx = w.effects.get(id);
-
-    w = name === 'erode'
-      ? withEffects(w, id, { ...fx, erode: { off: true } })
-      : withEffect(w, id, name, { ...fx![name]!, off: true } as Options[typeof name]);
+    w = withLayer(w, id, { ...layerOf(w, id, name)!, off: true });
   }
 
   return w;
-}
-
-/** A thing's effects replaced, and taken out of the map where none is left. */
-function withEffects(world: World, id: Id, fx: Effects): World {
-  const effects = new Map(world.effects);
-  const kept = Object.fromEntries(Object.entries(fx).filter(([, v]) => v !== undefined)) as Effects;
-
-  if (Object.keys(kept).length === 0) effects.delete(id);
-  else effects.set(id, kept);
-
-  return { ...world, effects };
 }
 
 // -----------------------------------------------------------------------------

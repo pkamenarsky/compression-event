@@ -21,10 +21,9 @@ import { Point } from '@ce/game/world';
 import { EXACT_GAP, Frame, Span, TOLERANCE, bakeSpan, sample, truth } from '../bake';
 import { Shape } from '../geometry';
 import { TOP, addPolygon, csg, grouped, sealing } from '../scene';
-import { Writing, inSegments, wrote } from '../testing';
+import { Writing, inSegments, round, withEffects, wrote } from '../testing';
 import { World, emptyWorld } from '../types';
 
-const round = (by: number): Writing => ({ kind: 'round', by });
 
 /** A room, and a second far enough away to have nothing to do with it: what a
  * group needs two of. Only the first is measured. */
@@ -67,8 +66,8 @@ function composed(room: Point[], member: number, group: number): World {
   const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
   let w = sealing(g.world, g.id, true);
 
-  w = { ...w, effects: new Map(w.effects).set(g.id, { round: inSegments(8, group) }) };
-  w = { ...w, effects: new Map(w.effects).set(a.id, { round: inSegments(8, member) }) };
+  w = withEffects(w, g.id, { round: inSegments(8, group) });
+  w = withEffects(w, a.id, { round: inSegments(8, member) });
   w = wrote(w, 0, a.id, round(member));
   w = wrote(w, 0, g.id, round(group));
 
@@ -78,7 +77,7 @@ function composed(room: Point[], member: number, group: number): World {
 /** What the ordering promises it becomes: one polygon, one round, one amount. */
 function outright(room: Point[], bevel: number): World {
   const a = addPolygon(emptyWorld(), { level: 'hollow' }, room, 0, TOP);
-  let w: World = { ...a.world, effects: new Map(a.world.effects).set(a.id, { round: inSegments(8, bevel) }) };
+  let w: World = withEffects(a.world, a.id, { round: inSegments(8, bevel) });
 
   w = wrote(w, 0, a.id, round(bevel));
 
@@ -144,8 +143,8 @@ describe.skipIf(!process.env.EXPERIMENT)('experiment: two rounds at one corner',
     const g = grouped(b.world, 0, [a.id, b.id], TOP)!;
     let w: World = sealing(g.world, g.id, true);
 
-    w = { ...w, effects: new Map(w.effects).set(g.id, { round: inSegments(8, 30) }) };
-    w = { ...w, effects: new Map(w.effects).set(a.id, { round: inSegments(8, 10) }) };
+    w = withEffects(w, g.id, { round: inSegments(8, 30) });
+    w = withEffects(w, a.id, { round: inSegments(8, 10) });
     w = wrote(w, 0, g.id, round(30));
     w = wrote(w, 1, a.id, round(10));
 

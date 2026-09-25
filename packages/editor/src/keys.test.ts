@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, copied, grouped, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
+import { TOP, addPolygon, copied, grouped, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
 import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
-import { erode, move, moved, repeated, scaled, spun, turned, wrote } from './testing';
+import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
 
@@ -47,7 +47,7 @@ describe('entries', () => {
     const w = wrote(world, 2, id, move(1, 0), erode(3), move(0, 1), turned(0.5));
 
     expect(listAt(dropped(w, id, 2, 1), 2, id).map(e => e.op.kind)).toEqual(['move', 'move', 'turn']);
-    expect(listAt(dropped(w, id, 2, 'move'), 2, id).map(e => e.op.kind)).toEqual(['erode', 'turn']);
+    expect(listAt(dropped(w, id, 2, 'move'), 2, id).map(e => e.op.kind)).toEqual(['amount', 'turn']);
   });
 
   test('push goes to the front of the next keyframe, and pull brings it back to the end', () => {
@@ -178,18 +178,18 @@ describe('keyframes', () => {
 
   test('a paste carries the amounts', () => {
     const { world, id } = room();
-    let w = wrote(world, 0, id, { kind: 'round', by: 4 });
+    let w = wrote(world, 0, id, round(4));
 
-    w = wrote(w, 1, id, { kind: 'deform', by: 2 });
-    w = wrote(w, 2, id, { kind: 'round', by: 1 });
+    w = wrote(w, 1, id, deform(2));
+    w = wrote(w, 2, id, round(1));
 
     const { world: out, ids } = pasted(w, 3, copied(w, 1, [id]), { x: 0, y: 0 }, TOP);
     const copy = ids[0];
 
     for (const [from, to] of [[1, 3], [2, 4]]) {
-      const was = stateAt(w, id, from), now = stateAt(out, copy, to);
+      const was = [amountAt(w, id, from, 'round'), amountAt(w, id, from, 'deform')];
 
-      expect([now.bevel, now.amplitude]).toEqual([was.bevel, was.amplitude]);
+      expect([amountAt(out, copy, to, 'round'), amountAt(out, copy, to, 'deform')]).toEqual(was);
     }
   });
 
@@ -308,7 +308,7 @@ describe('places', () => {
     // wrote follow it: a corner's writing is a key like any other.
     const out = droppedAt(w, [listedAt(w, id, 1, 1), listedAt(w, id, 1, 3), { id, at: 1, corner: corners[0], kind: 'move' }]);
 
-    expect(listAt(out, 1, id).map(e => e.op)).toEqual([erode(1)]);
+    expect(listAt(out, 1, id).map(e => e.op)).toEqual([{ kind: 'amount', layer: layerOf(w, id, 'erode')!.id, by: 1 }]);
 
     // The corner's nudge is out, and with it the key it was all of.
     expect(stateAt(out, id, 1).corners.get(corners[0])!.x).toBe(w.polygons.get(id)!.points[0].at.x);

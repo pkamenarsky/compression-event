@@ -192,7 +192,6 @@ import {
   under,
   unplace,
   resolveAt,
-  groupDeform,
   optionOf,
   scaleAt,
   scaledState,
@@ -221,7 +220,7 @@ import {
   ringsOf,
   slotOf,
 } from './types';
-import { CORNER_MAPS, Frame as Pose, Motion, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
+import { Amounts, CORNER_MAPS, NO_AMOUNTS, Frame as Pose, Motion, REST, State, affineOf, flying, playingAt, playingOn, stateAt } from './rig';
 import { WorldSet, pieces } from './worldset';
 import { held } from './hold';
 import type { Ident, Ids } from './ids';
@@ -1193,7 +1192,7 @@ function moving(world: World, from: number): Moving[] {
 }
 
 /** A thing's amounts where it is not there: none. */
-const NOTHING: Pick<State, 'bevel' | 'amplitude'> = { bevel: 0, amplitude: 0 };
+const NOTHING: Amounts = NO_AMOUNTS;
 
 /**
  * A polygon's round and deform at both ends of a span. Nothing where it has
@@ -1219,34 +1218,40 @@ function effectsOver(
   scales: [number, number],
 ): Pick<Moving, 'effected'> {
   const none = { effected: null };
-  const two = ([0, 1] as const).map(i => effectedOf(world, id, ends[i] ?? NOTHING, scales[i])) as [Effected | null, Effected | null];
+  const two = ([0, 1] as const).map(i => effectedOf(world, id, ends[i]?.amounts ?? NOTHING, scales[i])) as [Effected | null, Effected | null];
 
   if (two[0] === null && two[1] === null) return none;
 
   // Where it has no effects at one end, it has them at nought there: the
-  // options are a fact about the thing, and the same at both.
-  const bare = (e: Effected | null, other: Effected): Effected => e ?? {
-    facets: other.facets.n > 0 ? facetsOf(1, other.facets.tension) : other.facets,
-    bevel: 0,
-    deform: other.deform === null ? null : { ...other.deform, amplitude: 0 },
-  };
+  // layers are a fact about the thing, and the same at both — which is also
+  // why the two lists line up layer for layer.
+  const bare = (e: Effected | null, other: Effected): Effected => e ?? other.map(l => {
+    if (l.kind === 'erode') return { ...l, depth: 0 };
+    if (l.kind === 'round') return { ...l, facets: l.facets.n > 0 ? facetsOf(1, l.facets.tension) : l.facets, bevel: 0 };
+
+    return { ...l, amplitude: 0 };
+  });
   const a = bare(two[0], two[1]!), b = bare(two[1], two[0]!);
 
-  // One count for the span, laid as each end's own at that end.
-  const spanned = (f: Facets, g: Facets, at: number): Facets => ({ n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension });
-  const ended = (e: Effected, at: number): Effected => ({
-    ...e,
-    facets: spanned(a.facets, b.facets, at),
-  });
-
+  // One count for the span, laid as each end's own at that end; and a bevel
+  // seeded where it is nought at one end only.
   const seed = (x: number, y: number): number => (x <= 0 && y > 0 ? y * SEEDING : x);
-  const seeded = (e: Effected, o: Effected): Effected => ({
-    ...e,
-    bevel: e.facets.n > 0 ? seed(e.bevel, o.bevel) : e.bevel,
+  const ended = (e: Effected, o: Effected, at: number): Effected => e.map((l, i) => {
+    const m = o[i];
+
+    if (l.kind !== 'round' || m.kind !== 'round') return l;
+
+    const [f, g] = at === 0 ? [l.facets, m.facets] : [m.facets, l.facets];
+
+    return {
+      ...l,
+      facets: { n: Math.max(f.n, g.n), from: f.n, to: g.n, at, tension: f.tension },
+      bevel: l.facets.n > 0 ? seed(l.bevel, m.bevel) : l.bevel,
+    };
   });
 
   return {
-    effected: [ended(seeded(a, b), 0), ended(seeded(b, a), 1)],
+    effected: [ended(a, b, 0), ended(b, a, 1)],
   };
 }
 
@@ -1255,15 +1260,20 @@ function effectedAt(e: [Effected, Effected], t: number): Effected {
   if (t === 0) return e[0];
   if (t === 1) return e[1];
 
-  const [d0, d1] = [e[0].deform, e[1].deform];
+  return e[0].map((l, i) => {
+    const m = e[1][i];
 
-  return {
-    facets: { ...e[0].facets, at: weighed(e[0].bevel, e[1].bevel, t) },
-    bevel: mix(e[0].bevel, e[1].bevel, t),
-    deform: d0 === null || d1 === null
-      ? d0 ?? d1
-      : { ...d0, amplitude: mix(d0.amplitude, d1.amplitude, t) },
-  };
+    if (l.kind === 'erode' && m.kind === 'erode') return { ...l, depth: mix(l.depth, m.depth, t) };
+    if (l.kind === 'round' && m.kind === 'round') {
+      return { ...l, facets: { ...l.facets, at: weighed(l.bevel, m.bevel, t) }, bevel: mix(l.bevel, m.bevel, t) };
+    }
+    if (l.kind === 'deform' && m.kind === 'deform') {
+      // The spacing too: a deform's goes with its owner's scale.
+      return { ...l, e: { ...l.e, spacing: mix(l.e.spacing, m.e.spacing, t) }, amplitude: mix(l.amplitude, m.amplitude, t) };
+    }
+
+    return l;
+  });
 }
 
 /**
@@ -1782,13 +1792,9 @@ export interface Cast {
   /** Group to its depth at each end of the span, for the groups that have one
    * at either end. A depth arriving is a depth in flight like any other. */
   scopes: Map<GroupId, [number, number]>
-  /** Each scope's effects: its options, and its bevel and amplitude at each
-   * end, seeded where one end has nought. Absent is none. */
-  shapes: Map<GroupId, {
-    facets: Facets
-    bevel: [number, number]
-    deform: { e: Effecting, spacing: [number, number], amplitude: [number, number] } | null
-  }>
+  /** Each scope's layers after its depth at each end, laid as a polygon's
+   * are across a span: see `effectsOver`. Absent is none. */
+  shapes: Map<GroupId, [Effected, Effected]>
   /**
    * What each eroding group's own points ride: its own flight over the span,
    * and whatever holds it.
@@ -1834,31 +1840,16 @@ function casting(world: World, from: number): Cast {
     if (group.sealed) scopes.set(id, [a.get(id) ?? 0, b.get(id) ?? 0]);
   }
 
-  // A union has no slots to put back, so an end at nought is seeded: the arc
-  // turns, however little, and the ring keeps its length.
+  // Laid as a polygon's are across a span, by the same function: a union has
+  // no slots to put back, so an end at nought is seeded and the ring keeps its
+  // length.
   const shapes: Cast['shapes'] = new Map();
-  const seed = (x: number, y: number): number => (x === 0 && y !== 0 ? y * SEEDING : x);
 
   for (const id of scopes.keys()) {
-    const round = optionOf(world.effects.get(id), 'round');
-    const was = scaledState(world, id, near), now = scaledState(world, id, far);
+    const ends: [State, State] = [scaledState(world, id, near), scaledState(world, id, far)];
+    const fx = effectsOver(world, id, ends, [scaleAt(world, id, near), scaleAt(world, id, far)]).effected;
 
-    // The group's own deform, laid on its fold, in the world: its spacing
-    // goes with its scale, as its members' corners do. See `groupDeform`.
-    const d = groupDeform(world, id, was.amplitude, scaleAt(world, id, near));
-    const dTo = groupDeform(world, id, now.amplitude, scaleAt(world, id, far));
-
-    if (round === undefined && d === null) continue;
-
-    // Laid as a polygon's corners are across a span: see `effectsOver`.
-    const from = round === undefined ? 0 : segmentsOf(round, was.bevel, scaleAt(world, id, near));
-    const to = round === undefined ? 0 : segmentsOf(round, now.bevel, scaleAt(world, id, far));
-
-    shapes.set(id, {
-      facets: { n: Math.max(from, to), from, to, at: 0, tension: round?.tension ?? 0.5 },
-      bevel: round === undefined ? [0, 0] : [seed(was.bevel, now.bevel), seed(now.bevel, was.bevel)],
-      deform: d === null ? null : { e: d.e, spacing: [d.e.spacing, dTo?.e.spacing ?? d.e.spacing], amplitude: [was.amplitude, now.amplitude] },
-    });
+    if (fx !== null) shapes.set(id, fx);
   }
 
   const there = new Set(chain(world, far));
@@ -1911,18 +1902,7 @@ function folded(cast: Cast, at: Resolved[], t: number): Contributed[] {
       return {
         depth: mix(both[0], both[1], t),
         frame: riding(cast.riders.get(id)!, t),
-        ...(fx === undefined ? {} : {
-          effects: {
-            facets: { ...fx.facets, at: weighed(fx.bevel[0], fx.bevel[1], t) },
-            bevel: mix(fx.bevel[0], fx.bevel[1], t),
-            ...(fx.deform === null ? {} : {
-              deform: {
-                e: { ...fx.deform.e, spacing: mix(fx.deform.spacing[0], fx.deform.spacing[1], t) },
-                amplitude: mix(fx.deform.amplitude[0], fx.deform.amplitude[1], t),
-              },
-            }),
-          },
-        }),
+        ...(fx === undefined ? {} : { effects: effectedAt(fx, t) }),
       };
     },
     held,
@@ -2224,7 +2204,9 @@ function grown(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>, frame:
  * corners already bound.
  */
 function toothy(e: Effected | null): number {
-  return e?.deform == null ? 0 : Math.abs(e.deform.amplitude);
+  // An erosion laid after the first other layer can grow the outline as well,
+  // by as much as its depth.
+  return (e ?? []).reduce((out, l) => out + (l.kind === 'deform' ? Math.abs(l.amplitude) : l.kind === 'erode' ? Math.abs(l.depth) : 0), 0);
 }
 
 function reach(m: Moving, scopes: ReadonlyMap<GroupId, [number, number]>): AABB {

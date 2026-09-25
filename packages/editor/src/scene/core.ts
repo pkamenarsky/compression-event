@@ -58,7 +58,12 @@ import {
   ArtefactId,
   ArtefactType,
   Clipping,
-  Effects,
+  DeformOptions,
+  Layer,
+  LayerId,
+  LayerKind,
+  LayerOf,
+  RoundOptions,
   Eye,
   FloorPart,
   GroupId,
@@ -104,6 +109,11 @@ import { Affine, IDENTITY, compose, place, unplace } from '../affine';
 import {
   EMPTY_RIG,
   Amount,
+  Amounts,
+  NO_AMOUNTS,
+  amountIn,
+  plusAmounts,
+  timesAmounts,
   Entry,
   Frame,
   Move,
@@ -237,19 +247,23 @@ export interface Resolved {
 }
 
 /**
- * What a polygon's fold lays after its erosion: its round's facets and the
- * bevel it asks for, and the deform. One of each for the whole ring, an effect
- * being one amount over its ring and one set of options.
- *
- * Lengths, so a frame that scales divides them the way it divides a depth.
+ * One of a thing's layers as its fold lays it: an erosion's depth, a round's
+ * facets and bevel, a deform's options and amplitude. Lengths, so a frame that
+ * scales divides them the way it divides a depth.
  */
-export interface Effected {
-  facets: Facets
-  bevel: number
-  deform: ArcDeform | null
-}
+export type LaidLayer =
+  | { kind: 'erode', depth: number }
+  | { kind: 'round', facets: Facets, bevel: number }
+  | ({ kind: 'deform' } & ArcDeform);
 
-/** A polygon's deform: its options, and the amplitude it is laid at. */
+/**
+ * What a thing's fold lays after the erosion it starts with: its layers past
+ * the leading erode layers, first to last, each at its amount. See
+ * `effectedOf`.
+ */
+export type Effected = readonly LaidLayer[];
+
+/** A deform: its options, and the amplitude it is laid at. */
 export interface ArcDeform {
   e: Effecting
   amplitude: number
@@ -262,108 +276,154 @@ export function segmentsOf(round: Options['round'], bevel: number, scale = 1): n
   return round.chamfer ? 1 : segmentsFor(bevel, round.precision * scale, round.tension);
 }
 
+const NO_LAYERS: readonly Layer[] = [];
+
+/** A thing's layers, first to last: none where it has no list. */
+export function layersOf(world: World, id: Id): readonly Layer[] {
+  return world.effects.get(id) ?? NO_LAYERS;
+}
+
+/** The first of a thing's layers of a kind, switched on or not. */
+export function layerOf<K extends LayerKind>(world: World, id: Id, kind: K): LayerOf<K> | undefined {
+  return layersOf(world, id).find((l): l is LayerOf<K> => l.kind === kind);
+}
+
+/** The options of the first layer of a kind on a thing that is switched on:
+ * what the editor shows and sets while it has one layer of each. */
+export function optionOf<N extends keyof Options>(world: World, id: Id, name: N): LayerOf<N> | undefined {
+  return layersOf(world, id).find((l): l is LayerOf<N> => l.kind === name && l.off !== true);
+}
+
+/** What an owner's amounts are called, by layer: its layers' kinds. An amount
+ * whose layer is gone is just an amount. */
+export function layerNamer(world: World, id: Id): (layer: LayerId) => string {
+  const kinds = new Map(layersOf(world, id).map(l => [l.id, l.kind]));
+
+  return layer => kinds.get(layer) ?? 'amount';
+}
+
 /**
- * The options of one effect on a thing, and nothing where it is switched off.
- *
- * One function for both effects with options: they differ in nothing but
- * which key they read. See `Effects` in `types.ts`.
+ * How deep a thing's leading erode layers take it: the ones before its first
+ * other layer switched on, added up. What its outline is offset by before
+ * anything else is laid — the projection, the handles and the bake's straight
+ * lines all read it — and what `effectedOf` starts after.
  */
-export function optionOf<N extends keyof Options>(fx: Effects | undefined, name: N): Options[N] | undefined {
-  const mine = fx?.[name] as Options[N] | undefined;
+export function depthOf(world: World, id: Id, amounts: Amounts): number {
+  let depth = 0;
 
-  return mine?.off === true ? undefined : mine;
+  for (const l of layersOf(world, id)) {
+    if (l.off === true) continue;
+    if (l.kind !== 'erode') break;
+
+    depth += amountIn(amounts, l.id);
+  }
+
+  return depth;
 }
 
-/** Whether a thing's erosion applies: it does unless switched off. */
-export function eroding(world: World, id: Id): boolean {
-  return world.effects.get(id)?.erode?.off !== true;
-}
-
-/** A thing's options. */
-export function effecting(fx: Effects | undefined): Effecting {
-  const deform = optionOf(fx, 'deform');
-
+/** A deform layer's options, as the steps read them. */
+export function effecting(d: DeformOptions): Effecting {
   return {
-    spacing: deform?.spacing ?? 0,
-    pattern: deform?.pattern ?? PLAIN.pattern,
-    seed: deform?.seed ?? 0,
-    sides: deform?.sides ?? PLAIN.sides,
-    jitter: deform?.jitter ?? 0,
-    falloff: deform?.falloff ?? FALLOFF,
+    spacing: d.spacing,
+    pattern: d.pattern ?? PLAIN.pattern,
+    seed: d.seed ?? 0,
+    sides: d.sides ?? PLAIN.sides,
+    jitter: d.jitter ?? 0,
+    falloff: d.falloff ?? FALLOFF,
 
     // Absent, a run's teeth are centred on the run: see
-    // `Effects['deform'].offset`. It is one default because there is one
+    // `DeformOptions.offset`. It is one default because there is one
     // pipeline — a ring is a ring, and which thing carried the effect onto it
     // is not a question the deform gets to ask.
-    offset: deform?.offset ?? false,
+    offset: d.offset ?? false,
   };
 }
 
 /**
- * A polygon's round, from its options in the world and its amounts as a
- * keyframe leaves them — or as the bake has them part way along — and the
- * deform. Nothing where it is not rounded or deformed, or not by anything
- * there: then the projection is its erosion alone, exactly as it always was.
+ * A thing's layers after its leading erosion (`depthOf`), from its options in
+ * the world and its amounts as a keyframe leaves them — or as the bake has
+ * them part way along. Nothing where none of them comes to anything: then the
+ * projection is its erosion alone, exactly as it always was.
+ *
+ * The same for a polygon and a scope: the one pipeline's input, built one
+ * way.
  */
 export function effectedOf(
   world: World,
   id: Id,
-  amounts: Pick<State, 'bevel' | 'amplitude'>,
+  amounts: Amounts,
   /** What took the amounts into the world: see `segmentsOf`. */
   scale = 1,
 ): Effected | null {
-  const fx = world.effects.get(id);
-  const deform = arcDeform(world, id, amounts.amplitude, scale);
-  const round = optionOf(fx, 'round');
+  const layers = layersOf(world, id);
+  const out: LaidLayer[] = [];
+  let leading = true;
 
-  // A deform with no round still has somewhere to be: the teeth are laid on
-  // the eroded outline and the round is only one more thing that happens to
-  // it first. See PLAN-bevel 3.1.
-  if (round === undefined && deform === null) return null;
+  for (const l of layers) {
+    if (l.off === true) continue;
+    if (leading && l.kind === 'erode') continue;
 
-  // The round is drawn after the erosion — see PLAN-bevel's step 6 — so the
-  // bevel is the one asked for, at any depth.
-  const bevel = round === undefined ? 0 : Math.max(0, amounts.bevel);
+    leading = false;
 
-  // A count written down wins over the precision: it is there because a fold
-  // drew this very ring in it and a resolve wrote it back, and the whole point
-  // of writing it was that the precision would not say the same. Only where
-  // the bevel is still the one it was taken at: see `Effects['round']`.
-  const faceted = (round: Options['round']): Facets => {
-    const kept = round.facets !== undefined
-      && round.facetsAt !== undefined
-      && Math.abs(round.facetsAt - bevel) < 1e-9 * Math.max(1, Math.abs(bevel));
+    const by = amountIn(amounts, l.id);
 
-    return kept ? round.facets! : facetsOf(segmentsOf(round, bevel, scale), round.tension);
-  };
+    if (l.kind === 'erode') {
+      out.push({ kind: 'erode', depth: by });
+    }
+    else if (l.kind === 'round') {
+      // The round is drawn after the erosion — see PLAN-bevel's step 6 — so
+      // the bevel is the one asked for, at any depth.
+      const bevel = Math.max(0, by);
 
-  return shaping({ facets: round === undefined ? SQUARE : faceted(round), bevel, deform });
+      out.push({ kind: 'round', facets: faceted(l, bevel, scale), bevel });
+    }
+    else if (l.spacing > 0) {
+      // Nought where the timeline never deforms it, so a polygon has its teeth
+      // at every keyframe — flat where its amplitude is nought — and they
+      // never come or go with it.
+      const e = effecting(l);
+
+      out.push({
+        kind: 'deform',
+        e: { ...e, spacing: e.spacing * scale },
+        amplitude: everAmounted(keyRigOf(world, id), l.id) ? by : 0,
+      });
+    }
+  }
+
+  return shaping(out);
 }
 
 /**
- * The deform a polygon takes: its own, at its amplitude — nought where the
- * timeline never deforms it. A group's deform is its members' alone.
+ * A round's facets at a bevel. A count written down wins over the precision:
+ * it is there because a fold drew this very ring in it and a resolve wrote it
+ * back, and the whole point of writing it was that the precision would not say
+ * the same. Only where the bevel is still the one it was taken at: see
+ * `RoundOptions`.
  */
-function arcDeform(world: World, id: Id, amplitude: number, scale: number): ArcDeform | null {
-  const deform = optionOf(world.effects.get(id), 'deform');
+function faceted(round: RoundOptions, bevel: number, scale: number): Facets {
+  const kept = round.facets !== undefined
+    && round.facetsAt !== undefined
+    && Math.abs(round.facetsAt - bevel) < 1e-9 * Math.max(1, Math.abs(bevel));
 
-  if (deform === undefined || !(deform.spacing > 0)) return null;
-
-  const e = effecting(world.effects.get(id));
-
-  return {
-    e: { ...e, spacing: e.spacing * scale },
-    amplitude: everDeformed(keyRigOf(world, id)) ? amplitude : 0,
-  };
+  return kept ? round.facets! : facetsOf(segmentsOf(round, bevel, scale), round.tension);
 }
 
-/** Kept only where it does something: a round that rounds, or a deform whose
- * teeth stand anywhere. */
+/** Kept only where something does something: a round that rounds, a deform
+ * whose teeth stand anywhere, an erosion with a depth. */
 export function shaping(e: Effected): Effected | null {
-  const any = e.facets.n > 0 && e.bevel > 0;
-  const toothed = e.deform !== null && e.deform.amplitude !== 0;
+  return e.some(does) ? e : null;
+}
 
-  return any || toothed ? e : null;
+function does(l: LaidLayer): boolean {
+  if (l.kind === 'erode') return l.depth !== 0;
+  if (l.kind === 'round') return rounds(l);
+
+  return l.amplitude !== 0;
+}
+
+function rounds(l: LaidLayer & { kind: 'round' }): boolean {
+  return l.facets.n > 0 && l.bevel > 0;
 }
 
 /**
@@ -372,31 +432,60 @@ export function shaping(e: Effected): Effected | null {
  * built by this one function so that the two cannot say different things
  * about the same effects. `layingOf` reads it back.
  *
- * The facets and the bevel, zero where nothing is rounded; then the deform's
- * options and amplitude where it has one.
+ * Layer after layer, each its kind's tag and then its numbers. An erosion
+ * with no depth and a round that does not round are left out: they lay
+ * nothing. A deform at nought is kept, since held it lays its teeth flat.
  */
-export function effectKey(e: Omit<Effected, 'deform'> & { deform?: ArcDeform | null } | undefined, s = 1): number[] {
-  const round = e !== undefined && e.facets.n > 0 && e.bevel > 0;
-  const d = e?.deform ?? null;
+export function effectKey(e: Effected | null | undefined, s = 1): number[] {
+  const out: number[] = [];
 
-  return [
-    ...facetKey(round ? e!.facets : SQUARE), round ? e!.bevel / s : 0,
-    ...(d === null ? [] : [d.e.spacing / s, PATTERNS.indexOf(d.e.pattern), d.e.seed, SIDES.indexOf(d.e.sides), d.e.jitter, d.e.falloff, d.amplitude / s, Number(d.e.offset)]),
-  ];
+  for (const l of e ?? []) {
+    if (l.kind === 'erode') {
+      if (l.depth !== 0) out.push(0, l.depth / s);
+    }
+    else if (l.kind === 'round') {
+      if (rounds(l)) out.push(1, ...facetKey(l.facets), l.bevel / s);
+    }
+    else {
+      const d = l.e;
+
+      out.push(2, d.spacing / s, PATTERNS.indexOf(d.pattern), d.seed, SIDES.indexOf(d.sides), d.jitter, d.falloff, l.amplitude / s, Number(d.offset));
+    }
+  }
+
+  return out;
 }
 
 /** What `effectKey` wrote, with an erosion in front: what `effected` lays. */
 export function layingOf(erosion: number, key: readonly number[]): Laying {
-  const [n, from, to, at, , bevel, spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key;
+  const out: Laying = erosion === 0 ? [] : [{ kind: 'erode', depth: erosion }];
 
-  return {
-    erosion,
-    round: n > 0 && bevel > 0 ? { bevel, from, to, at } : null,
-    deform: spacing === undefined ? null : {
-      amplitude,
-      how: { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 },
-    },
-  };
+  for (let i = 0; i < key.length;) {
+    const tag = key[i];
+
+    if (tag === 0) {
+      out.push({ kind: 'erode', depth: key[i + 1] });
+      i += 2;
+    }
+    else if (tag === 1) {
+      const [, from, to, at, , bevel] = key.slice(i + 1, i + 7);
+
+      out.push({ kind: 'round', bevel, from, to, at });
+      i += 7;
+    }
+    else {
+      const [spacing, pattern, seed, sides, jitter, falloff, amplitude, offset] = key.slice(i + 1, i + 9);
+
+      out.push({
+        kind: 'deform',
+        amplitude,
+        how: { spacing, pattern: PATTERNS[pattern], seed, sides: SIDES[sides], jitter, falloff, offset: offset === 1 },
+      });
+      i += 9;
+    }
+  }
+
+  return out;
 }
 
 export const PATTERNS: readonly Effecting['pattern'][] = ['zigzag', 'sine', 'noise'];
@@ -954,7 +1043,7 @@ export const project = remembered((
 
 /** No facets, no bevel and no deform: the fold with nothing to lay but the
  * erosion. */
-const UNEFFECTED: readonly number[] = effectKey(undefined);
+const UNEFFECTED: readonly number[] = [];
 
 /**
  * A polygon drawn as the fold of `PLAN-effect` draws it: erode, round, deform,
@@ -1249,31 +1338,7 @@ export function scaledState(world: World, id: Id, v: KeyframeId): State {
 
   if (k === 1) return state;
 
-  return {
-    ...state,
-    erosion: state.erosion * k,
-    bevel: state.bevel * k,
-    amplitude: state.amplitude * k,
-  };
-}
-
-/**
- * A sealed group's own deform, which is laid along its fold rather than its
- * members' edges: see `foldShaped`. Nothing where it has none, or where its
- * timeline never deforms the whole of it — a union's edges have no ids for an
- * amount to be written about one of them by.
- */
-export function groupDeform(world: World, id: Id, amplitude: number, scale: number): { e: Effecting, amplitude: number } | null {
-  const fx = world.effects.get(id);
-
-  if (fx?.deform === undefined || fx.deform.off === true || !(fx.deform.spacing > 0)) return null;
-  if (!everDeformed(keyRigOf(world, id))) return null;
-
-  const e = effecting(fx);
-
-  // A fold's teeth start at the run's middle unless it says otherwise: two
-  // members' teeth along one wall would otherwise fall wherever they fall.
-  return { e: { ...e, spacing: e.spacing * scale, offset: fx.deform.offset ?? false }, amplitude };
+  return { ...state, amounts: timesAmounts(state.amounts, k) };
 }
 
 /** What `diameterAt` has answered, for each world it was asked about. */
@@ -1316,14 +1381,14 @@ export function diameterAt(world: World, v: KeyframeId, id: Id): number {
 }
 
 /**
- * Whether a thing's timeline ever deforms it. Over every keyframe rather than
- * at one, so a polygon has its teeth at each — flat where its amplitude is
- * nought — and they never come or go with it.
+ * Whether a thing's timeline ever gives one of its layers an amount. Over every
+ * keyframe rather than at one, so a deform has its teeth at each — flat where
+ * its amplitude is nought — and they never come or go with it.
  */
-function everDeformed(rig: KeyRig): boolean {
+function everAmounted(rig: KeyRig, layer: LayerId): boolean {
   for (const list of rig.keys.values()) {
     for (const key of list) {
-      if ((key.by?.deform ?? 0) !== 0 || (key.stand?.amplitude ?? 0) !== 0) return true;
+      if (amountIn(key.by?.amounts ?? NO_AMOUNTS, layer) !== 0 || amountIn(key.stand?.amounts ?? NO_AMOUNTS, layer) !== 0) return true;
     }
   }
 
@@ -1407,7 +1472,7 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
     .sort(([, p], [, q]) => born(p) - born(q));
 
   for (const [id, polygon] of here) {
-    const state = erodingOnly(world, id, scaledState(world, id, v));
+    const state = scaledState(world, id, v);
     const corners = surviving(polygon.points, c => state.corners.has(c.id));
 
     // A polygon whose outline has gone is not geometry any more. It cannot
@@ -1425,8 +1490,8 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
       local,
       frame,
       source: place(frame, local),
-      erosion: state.erosion,
-      effected: effectedOf(world, id, state, scaleAt(world, id, v)),
+      erosion: depthOf(world, id, state.amounts),
+      effected: effectedOf(world, id, state.amounts, scaleAt(world, id, v)),
     }));
   }
 
@@ -1447,11 +1512,6 @@ export function resolveAt(world: World, v: KeyframeId): Resolved[] {
 // long it went on. See `appending` in `rig.ts` for when it folds into the
 // entry before it instead.
 // -----------------------------------------------------------------------------
-
-/** A state with its erosion taken out where the thing's is switched off. */
-function erodingOnly(world: World, id: Id, state: State): State {
-  return eroding(world, id) ? state : { ...state, erosion: 0 };
-}
 
 /** Everything written about a thing, as keys: what the world holds. */
 export function keyRigOf(world: World, id: Id): KeyRig {
@@ -1782,14 +1842,10 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
   const steps = base === null ? [] : playingAt(world, id, v).filter(p => p.at !== v).flatMap(everyOp);
 
   let frame = base === null ? REST : before.frame;
-  let erosion = base === null ? 0 : before.erosion;
-  let bevel = base === null ? 0 : before.bevel;
-  let amplitude = base === null ? 0 : before.amplitude;
+  let amounts = base === null ? NO_AMOUNTS : before.amounts;
 
   for (const op of steps) {
-    if (op.kind === 'erode') erosion += op.by;
-    else if (op.kind === 'round') bevel += op.by;
-    else if (op.kind === 'deform') amplitude += op.by;
+    if (op.kind === 'amount') amounts = plusAmounts(amounts, new Map([[op.layer, op.by]]));
     else frame = played(frame, op);
   }
 
@@ -1817,7 +1873,7 @@ export function handed(world: World, v: KeyframeId, id: Id): Stand {
     return [c, { x: p.x - own.x, y: p.y - own.y }];
   }));
 
-  return { kind: 'stand', frame, erosion, corners, bevel, amplitude };
+  return { kind: 'stand', frame, corners, amounts };
 }
 
 /**
@@ -2197,9 +2253,7 @@ export function outward(op: Op, outer: Frame, inner: Frame | null): Op[] | null 
       }];
     }
 
-    case 'erode':
-    case 'round':
-    case 'deform':
+    case 'amount':
       return [op];
 
     case 'stand': {
@@ -2565,9 +2619,7 @@ function inward1(
       return [op];
 
     // A group's amounts are its union's, and never its members'.
-    case 'erode':
-    case 'round':
-    case 'deform':
+    case 'amount':
       return [];
 
     case 'turn': {
@@ -2617,9 +2669,7 @@ function inward1(
       return [{
         ...held,
         frame,
-        erosion: inner.erosion,
-        bevel: inner.bevel,
-        amplitude: inner.amplitude,
+        amounts: inner.amounts,
       }];
     }
   }
@@ -3202,14 +3252,10 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
 
     return {
       start: frame,
-      erosion: stand?.erosion ?? was?.erosion ?? 0,
-      bevel: stand?.bevel ?? was?.bevel ?? 0,
-      amplitude: stand?.amplitude ?? was?.amplitude ?? 0,
+      amounts: stand?.amounts ?? was?.amounts ?? NO_AMOUNTS,
       stood: {
         frame: outermost ? unheld(worldFrame(world, id, v)) : state.frame,
-        erosion: state.erosion,
-        bevel: state.bevel,
-        amplitude: state.amplitude,
+        amounts: state.amounts,
       },
       keys,
       // What the fold took apart matters only where it goes on past the copy.
@@ -3417,13 +3463,32 @@ function written(
 ): World {
   const start = into === null ? clip.start : unheld(compose(into, affineOf(clip.start)));
 
+  // The copy's amounts are by the original's layers, and the paste has layers
+  // of its own, one for one: see `effectsPasted`.
+  const mine = world.effects.get(id) ?? [];
+  const names = new Map((clip.effects ?? []).map((l, i) => [l.id, mine[i]?.id]));
+  const renamed = (a: Amounts): Amounts => {
+    const out = new Map<LayerId, number>();
+
+    for (const [layer, by] of a) {
+      const now = names.get(layer);
+
+      if (now !== undefined) out.set(now, by);
+    }
+
+    return out;
+  };
+  const rekeyed = (key: RigKey): RigKey => ({
+    ...key,
+    ...(key.by === undefined ? {} : { by: { ...key.by, amounts: renamed(key.by.amounts) } }),
+    ...(key.stand === undefined ? {} : { stand: { ...key.stand, amounts: renamed(key.stand.amounts) } }),
+  });
+
   const stand: Stand = {
     kind: 'stand',
     frame: start,
-    erosion: clip.erosion,
     corners,
-    bevel: clip.bevel ?? 0,
-    amplitude: clip.amplitude ?? 0,
+    amounts: renamed(clip.amounts),
   };
 
   let made = 0;
@@ -3440,15 +3505,21 @@ function written(
 
     // A skip names the keyframe it was meant for, and stays on it where the
     // paste still reaches it. What the copy keyframe did plays over the stand.
-    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, { ...e, id: made++ }, k))]);
+    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, { ...rekeyed(e), id: made++ }, k))]);
   }
 
   return withKeyRig(world, id, { keys });
 }
 
-/** A pasted thing's effects, where it has some. */
-function effectsPasted(world: World, id: Id, fx: Effects | undefined): World {
-  return fx === undefined ? world : { ...world, effects: new Map(world.effects).set(id, fx) };
+/** A pasted thing's effects, where it has some: the copy's layers, each with
+ * an id of its own, since a layer's amounts are its owner's by its id. */
+function effectsPasted(world: World, id: Id, fx: readonly Layer[] | undefined): World {
+  if (fx === undefined) return world;
+
+  let next = world.nextId;
+  const layers = fx.map(l => ({ ...l, id: next++ }));
+
+  return { ...world, nextId: next, effects: new Map(world.effects).set(id, layers) };
 }
 
 /**
@@ -3697,8 +3768,8 @@ export function stamped(
   return pasted(world, v, clips.map(now), by, where);
 }
 
-function still(clip: Timed): Pick<Timed, 'start' | 'erosion' | 'bevel' | 'amplitude'> {
-  return { start: clip.stood.frame, erosion: clip.stood.erosion, bevel: clip.stood.bevel, amplitude: clip.stood.amplitude };
+function still(clip: Timed): Pick<Timed, 'start' | 'amounts'> {
+  return { start: clip.stood.frame, amounts: clip.stood.amounts };
 }
 
 /** Everything with a source vertex inside the box, which is enough for a

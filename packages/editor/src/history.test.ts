@@ -10,10 +10,10 @@
 // -----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
-import { TOP, addPolygon, broken, editedAt, keyRigOf, keysOfAt, moveOf, rigOf, withKeyRig, writtenInto } from './scene';
+import { TOP, addPolygon, broken, editedAt, keyRigOf, keysOfAt, layerOf, moveOf, rigOf, withKeyRig, writtenInto } from './scene';
 import { aimed, aiming, timed } from './keys';
 import { NOTHING, withKeysAt } from './rig';
-import { erode, move, nudge, turned, wrote } from './testing';
+import { erode, move, nudge, turned, writing, wrote } from './testing';
 import {
   EMPTY_SELECTION,
   EditorState,
@@ -181,7 +181,7 @@ describe('gestures', () => {
 
     const t = step(s, out);
 
-    expect(rigOf(t.world, ids[0]).keys.get(0)![0]).toEqual({ op: erode(1), times: null, gesture: was });
+    expect(rigOf(t.world, ids[0]).keys.get(0)![0]).toEqual({ op: { kind: 'amount', layer: layerOf(s.world, ids[0], 'erode')!.id, by: 1 }, times: null, gesture: was });
     expect(t.world.nextId).toEqual(s.world.nextId);
   });
 });
@@ -219,7 +219,7 @@ describe('the keys the hand is on', () => {
     const now = withKeyRig(s.world, id, withKeysAt(
       keyRigOf(s.world, id),
       1,
-      [{ id: 99, ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 1 }, times: 1 }, ...keysOfAt(s.world, 1, id)],
+      [{ id: 99, ref: { x: 0, y: 0 }, by: { ...NOTHING, amounts: new Map([[999, 1]]) }, times: 1 }, ...keysOfAt(s.world, 1, id)],
     ));
 
     expect(aimed(step(s, now)).target).toBe(s.target);
@@ -257,13 +257,13 @@ describe('a gesture', () => {
     // A turn after a move, and an erosion after both: no rule of its own
     // splits them off.
     const turn = turned(0.3, { x: 50, y: 0 });
-    const second = writtenInto(first.world, 1, id, first.key, typeof turn === 'function' ? turn(first.world, 1, id) : turn);
-    const third = writtenInto(second.world, 1, id, first.key, erode(1));
+    const second = writing(first.world, 1, id, first.key, turn);
+    const third = writing(second.world, 1, id, first.key, erode(1));
     const keys = keysOfAt(third.world, 1, id);
 
     expect(keys).toHaveLength(2);
     expect(keys[1].by!.angle).toBeCloseTo(0.3, 12);
-    expect(keys[1].by!.erode).toBe(1);
+    expect([...keys[1].by!.amounts.values()]).toEqual([1]);
   });
 
   test('into a key that repeats adjusts every step of it, and a new key does not repeat', () => {
@@ -274,8 +274,8 @@ describe('a gesture', () => {
 
     const w = timedOut;
     const key = keysOfAt(w, 1, id)[0];
-    const into = writtenInto(w, 1, id, key.id, erode(1));
-    const fresh = writtenInto(w, 1, id, null, erode(1));
+    const into = writing(w, 1, id, key.id, erode(1));
+    const fresh = writing(w, 1, id, null, erode(1));
 
     expect(keysOfAt(into.world, 1, id)[0].times).toBe(3);
     expect(keysOfAt(fresh.world, 1, id)[1].times).toBe(1);

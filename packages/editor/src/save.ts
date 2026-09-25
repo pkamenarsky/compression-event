@@ -14,7 +14,6 @@
 import {
   Artefact,
   ArtefactId,
-  Effects,
   EMPTY_HISTORY,
   EditorState,
   Flags,
@@ -23,6 +22,8 @@ import {
   Id,
   Keyframe,
   KeyframeId,
+  Layer,
+  LayerId,
   PathId,
   Path,
   Polygon,
@@ -42,7 +43,7 @@ import {
 import { packed, unpacked } from '@ce/game';
 import { stampAll } from './bake';
 import { bakedLevel } from './export';
-import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
+import { Amounts, Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
 
 /**
  * The format this reads and writes, and the only one it does.
@@ -69,9 +70,15 @@ import { Delta, Frame, Key, KeyRig, NOTHING, Stand } from './rig';
  * deform options, `cornerEffects`, are gone. `convert.ts` takes a 26 across,
  * dropping them, which changes the drawing wherever they were used.
  *
+ * 28: a thing's effects are a list of layers, laid first to last, each with
+ * an id; and its amounts are by layer — a delta's and a stand's `amounts`,
+ * pairs of a layer and a number — rather than an erosion, a bevel and an
+ * amplitude. See `Layer`; `convert.ts` takes a 27 across, the list in the
+ * order the fold laid it: erode, round, deform.
+ *
  * A file is one shape, and this is the shape.
  */
-export const FORMAT = 27;
+export const FORMAT = 28;
 
 /**
  * The oldest this reads, which is the one it writes.
@@ -115,7 +122,7 @@ export interface Saved {
     keyframes: Keyframe[]
     rigs: [Id, SavedKeyRig][]
     flags: [Id, Flags][]
-    effects: [Id, Effects][]
+    effects: [Id, Layer[]][]
   }
   /**
    * The bake, where there was one: every span of it that still stood when the
@@ -137,7 +144,7 @@ export interface SavedKey {
   id: number
   ref: Point
   /** Absent where the key is about single corners alone. */
-  by?: Partial<Delta>
+  by?: SavedDelta
   corners?: [VertexId, Point][]
   times: number | null
   /** Absent is none. */
@@ -168,7 +175,7 @@ export function saved(state: EditorState): Saved {
       keyframes: state.world.keyframes,
       rigs: [...state.world.rigs].map(([id, rig]) => [id, savedKeyRig(rig)]),
       flags: [...state.world.flags],
-      effects: [...state.world.effects],
+      effects: [...state.world.effects].map(([id, list]) => [id, [...list]]),
     },
   };
 }
@@ -344,14 +351,12 @@ function only<T extends object>(o: T): T {
 
 /** A stand's maps written out, which is all that stops one from being JSON. */
 function savedStand(op: Stand): SavedStand {
-  return {
+  return only({
     kind: 'stand',
     frame: op.frame,
-    erosion: op.erosion,
     corners: [...op.corners],
-    bevel: op.bevel,
-    amplitude: op.amplitude,
-  };
+    amounts: savedAmounts(op.amounts),
+  });
 }
 
 /** A stand read back, maps and all. */
@@ -359,22 +364,28 @@ function restoredStand(op: SavedStand): Stand {
   return {
     kind: 'stand',
     frame: op.frame,
-    erosion: op.erosion,
     corners: new Map(op.corners),
-    bevel: op.bevel,
-    amplitude: op.amplitude,
+    amounts: new Map(op.amounts ?? []),
   };
+}
+
+/** Amounts as pairs, and nothing where there are none. */
+function savedAmounts(a: Amounts): [LayerId, number][] | undefined {
+  return a.size === 0 ? undefined : [...a];
 }
 
 /** A stand with its maps written out as entries. */
 export interface SavedStand {
   kind: 'stand'
   frame: Frame
-  erosion: number
   corners: [VertexId, Point][]
-  bevel: number
-  amplitude: number
+  /** Absent is none. */
+  amounts?: [LayerId, number][]
 }
+
+/** A delta with its amounts written out as pairs. Any field may be absent,
+ * and reads as doing nothing. */
+export type SavedDelta = Partial<Omit<Delta, 'amounts'>> & { amounts?: [LayerId, number][] };
 
 /** The timelines as a 24 keeps them: a key is nearly JSON as it stands, so
  * only its maps, its set and its stand are written out. */
@@ -390,7 +401,7 @@ function savedKey(key: Key): SavedKey {
   return only({
     id: key.id,
     ref: key.ref,
-    by: key.by,
+    by: key.by === undefined ? undefined : only({ ...key.by, amounts: savedAmounts(key.by.amounts) }),
     corners: pairs(key.corners),
     times: key.times,
     skip: key.skip === undefined || key.skip.size === 0 ? undefined : [...key.skip],
@@ -409,7 +420,7 @@ function restoredKey(key: SavedKey): Key {
     ref: key.ref,
     // Field by field over the delta that does nothing, so that a delta saved
     // before a field existed reads as not doing it.
-    by: key.by === undefined ? undefined : { ...NOTHING, ...key.by },
+    by: key.by === undefined ? undefined : { ...NOTHING, ...key.by, amounts: new Map(key.by.amounts ?? []) },
     corners: key.corners === undefined ? undefined : new Map(key.corners),
     times: key.times,
     skip: key.skip === undefined || key.skip.length === 0 ? undefined : new Set(key.skip),

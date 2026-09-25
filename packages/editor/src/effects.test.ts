@@ -14,8 +14,8 @@ import {
   switchedOff,
   switchedOn,
 } from './effects';
-import { Writing, erode, inSegments, move, scaled, turned, wrote } from './testing';
-import { Effects, Id, PolygonId, REMEMBERED, World, emptyWorld } from './types';
+import { Effects, Writing, amountAt, deform, erode, inSegments, move, round, scaled, turned, withEffects, wrote } from './testing';
+import { Id, PolygonId, REMEMBERED, World, emptyWorld } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -25,12 +25,6 @@ function room(world: World = emptyWorld(), at: Point[] = rect(0, 0, 100, 100)): 
   return addPolygon(world, { level: 'hollow' }, at, 0, TOP);
 }
 
-function withEffects(world: World, id: Id, fx: Effects): World {
-  return { ...world, effects: new Map(world.effects).set(id, fx) };
-}
-
-const round = (by: number) => ({ kind: 'round' as const, by });
-const deform = (by: number) => ({ kind: 'deform' as const, by });
 
 /** A `w` by `h` rectangle's area with its four corners rounded `r` deep:
  * each a quarter circle, as the opening draws it, in `segments` chords. */
@@ -63,6 +57,13 @@ function shapeOf(world: World, id: Id) {
 
 const ROUND: Effects = { round: inSegments(8, 5) };
 
+/** A record as the list a thing holds: its layers in the order the fold laid
+ * them, whatever their ids. */
+function listed(fx: Effects): unknown[] {
+  return (['erode', 'round', 'deform'] as const).flatMap(kind =>
+    (fx[kind] === undefined ? [] : [{ ...fx[kind], kind, id: expect.any(Number) }]));
+}
+
 describe('a polygon\'s effects', () => {
   test('a rounded room is its arcs, drawn on what the erosion leaves', () => {
     const { world, id } = room();
@@ -86,7 +87,7 @@ describe('a polygon\'s effects', () => {
     const { world, id } = room(emptyWorld(), rect(0, 0, 1000, 1000));
     const fx: Effects = { round: { precision: 2, tension: 0.5, chamfer: false } };
     const facets = (depth: number) => resolveAt(wrote(withEffects(world, id, fx), 0, id, erode(depth), round(300)), 0)
-      .find(it => it.id === id)!.effected!.facets.n;
+      .find(it => it.id === id)!.effected!.flatMap(l => (l.kind === 'round' ? [l.facets.n] : []))[0];
 
     // Drawn at 300 and at 400, the same round of 300 once eroded, and so the
     // same facets: a facet more would be a line fading in for nothing.
@@ -98,7 +99,8 @@ describe('a polygon\'s effects', () => {
     const plain = wrote(world, 0, id, erode(10));
 
     expect(shapeOf(withEffects(plain, id, ROUND), id)).toEqual(shapeOf(plain, id));
-    expect(shapeOf(wrote(plain, 0, id, round(5)), id)).toEqual(shapeOf(plain, id));
+    // And an amount against a layer the thing does not have does nothing.
+    expect(shapeOf(wrote(plain, 0, id, { kind: 'amount', layer: 999, by: 5 }), id)).toEqual(shapeOf(plain, id));
   });
 
   test('a bevel is a length at the room\'s own scale, as a depth is, however the room is carried', () => {
@@ -137,7 +139,7 @@ describe('a polygon\'s effects', () => {
     const after = pasted(w, 0, copied(w, 0, [id]), { x: 300, y: 0 }, TOP);
     const copy = after.ids[0];
 
-    expect(after.world.effects.get(copy)).toEqual(ROUND);
+    expect(after.world.effects.get(copy)).toEqual(listed(ROUND));
     expect(shapeArea(shapeOf(after.world, copy))).toBeCloseTo(shapeArea(shapeOf(w, id)), 9);
   });
 });
@@ -422,8 +424,8 @@ describe('a group\'s effects', () => {
     const out = resolveGroup(world, 0, id)!;
     const made = out.ids[0];
 
-    expect(out.world.effects.get(made)).toEqual({ round: inSegments(8, 10) });
-    expect(stateAt(out.world, made, 0).bevel).toBe(10);
+    expect(out.world.effects.get(made)).toEqual(listed({ round: inSegments(8, 10) }));
+    expect(amountAt(out.world, made, 0, 'round')).toBe(10);
     expect(shapeArea(csg(out.world, 0))).toBeCloseTo(shapeArea(csg(world, 0)), 6);
   });
 });
@@ -668,8 +670,8 @@ describe('editing effects', () => {
     const other = room(world, rect(200, 0, 50, 50));
     const w = switchedOn(withEffects(other.world, id, { round: inSegments(2, 5) }), [id, other.id], 'round', REMEMBERED);
 
-    expect(w.effects.get(id)).toEqual({ round: inSegments(2, 5) });
-    expect(w.effects.get(other.id)).toEqual({ round: REMEMBERED.round });
+    expect(w.effects.get(id)).toEqual(listed({ round: inSegments(2, 5) }));
+    expect(w.effects.get(other.id)).toEqual(listed({ round: REMEMBERED.round }));
   });
 
   test('switched off, an effect does nothing and keeps everything, and switched on is as it was', () => {
@@ -692,9 +694,10 @@ describe('editing effects', () => {
     const off = switchedOff(w, [id], 'erode');
 
     expect(shapeOf(off, id)).toEqual(shapeOf(world, id));
-    expect(stateAt(off, id, 0).erosion).toBe(5);
+    expect(amountAt(off, id, 0, 'erode')).toBe(5);
     expect(shapeOf(switchedOn(off, [id], 'erode', REMEMBERED), id)).toEqual(shapeOf(w, id));
-    expect(switchedOn(off, [id], 'erode', REMEMBERED).effects.has(id)).toBe(false);
+    // Its layer stays, being what the timeline's amounts are written against.
+    expect(switchedOn(off, [id], 'erode', REMEMBERED).effects.get(id)).toEqual([{ id: expect.any(Number), kind: 'erode' }]);
   });
 
   test('an edge runs from its drawn corner to the next, and its teeth are in the shape', () => {

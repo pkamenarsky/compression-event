@@ -12,6 +12,7 @@
 
 import { Point } from '../packages/game/src/world';
 import { TOP, addPolygon, keyed, middle, resolveAt, rigOf, withRig } from '../packages/editor/src/scene';
+import { added } from '../packages/editor/src/effects';
 import { Op, nudged } from '../packages/editor/src/rig';
 import {
   PolygonId,
@@ -100,7 +101,12 @@ export function version(
     const roll = rnd();
     const ops: Op[] = [];
 
-    if (roll < 0.7) ops.push({ kind: 'erode', by: 4 + rnd() * 8 });
+    if (roll < 0.7) {
+      const e = added(out, id, { kind: 'erode' });
+
+      out = e.world;
+      ops.push({ kind: 'amount', layer: e.layer, by: 4 + rnd() * 8 });
+    }
     if (roll < 0.5) ops.push({ kind: 'move', by: { x: (rnd() - 0.5) * 24, y: (rnd() - 0.5) * 24 } });
 
     // A spin in place, about the middle of the room as it stands.

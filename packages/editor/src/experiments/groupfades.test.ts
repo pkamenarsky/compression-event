@@ -20,11 +20,9 @@ import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
 import { EXACT_GAP, Frame, Span, TOLERANCE, bakeSpan, sample, truth } from '../bake';
 import { TOP, addPolygon, grouped, sealing } from '../scene';
-import { Writing, erode, inSegments, wrote } from '../testing';
-import { Effects, PolygonId, World, emptyWorld } from '../types';
+import { Effects, Writing, deform, erode, inSegments, round, withEffects, wrote } from '../testing';
+import { PolygonId, World, emptyWorld } from '../types';
 
-const round = (by: number): Writing => ({ kind: 'round', by });
-const deform = (by: number): Writing => ({ kind: 'deform', by });
 const ZIGZAG = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
@@ -66,7 +64,7 @@ function world(bevel: number, first: Writing[], ops: Writing[]): { world: World,
   const fx: Effects = { round: inSegments(8, bevel), deform: ZIGZAG };
   let w = sealing(g.world, g.id, true);
 
-  w = { ...w, effects: new Map(w.effects).set(g.id, fx) };
+  w = withEffects(w, g.id, fx);
   w = wrote(w, 0, g.id, round(bevel), ...first);
   w = wrote(w, 1, g.id, ...ops);
 

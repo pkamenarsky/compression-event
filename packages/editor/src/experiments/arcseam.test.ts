@@ -18,11 +18,9 @@ import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
 import { Frame, truth } from '../bake';
 import { TOP, addPolygon } from '../scene';
-import { Writing, erode, inSegments, wrote } from '../testing';
+import { Writing, deform, erode, inSegments, round, withEffects, wrote } from '../testing';
 import { World, emptyWorld } from '../types';
 
-const round = (by: number): Writing => ({ kind: 'round', by });
-const deform = (by: number): Writing => ({ kind: 'deform', by });
 const ZIGZAG = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
 const ROOM: Point[] = [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 200 }, { x: 0, y: 200 }];
 
@@ -47,7 +45,7 @@ function apart(a: Frame, b: Frame): number {
  * `amplitude` on it throughout, and optionally eroding as well. */
 function world(from: number, to: number, amplitude: number, depth = 0): World {
   const a = addPolygon(emptyWorld(), { level: 'hollow' }, ROOM, 0, TOP);
-  let w: World = { ...a.world, effects: new Map(a.world.effects).set(a.id, { round: inSegments(8, Math.max(from, to)), deform: ZIGZAG }) };
+  let w: World = withEffects(a.world, a.id, { round: inSegments(8, Math.max(from, to)), deform: ZIGZAG });
 
   w = wrote(w, 0, a.id, round(from), ...(amplitude > 0 ? [deform(amplitude)] : []));
   w = wrote(w, 1, a.id, round(to - from), ...(depth > 0 ? [erode(depth)] : []));

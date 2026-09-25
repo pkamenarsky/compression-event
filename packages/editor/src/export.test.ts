@@ -63,7 +63,7 @@ import {
   ungrouped,
 } from './scene';
 import { ArtefactId, Id, PolygonId, PolygonKind, KeyframeId, World, emptyWorld } from './types';
-import { Writing, erode, inSegments, move, scaled, spun, turned as turning, wrote } from './testing';
+import { Writing, erode, inSegments, move, round, scaled, spun, turned as turning, withEffects, wrote } from './testing';
 
 /**
  * A polygon kind by the short name these tests call it: a room, a pillar, a
@@ -1231,9 +1231,9 @@ describe('the standing walls and the bake agree about every vertical', () => {
 
   /** A round of four segments, thirty deep, on the one thing `made` names. */
   function rounded(made: { world: World, id: Id }): World {
-    const world = { ...made.world, effects: new Map([[made.id, { round: inSegments(4, 30) }]]) };
+    const world = withEffects(made.world, made.id, { round: inSegments(4, 30) });
 
-    return wrote(world, 0, made.id, { kind: 'round', by: 30 });
+    return wrote(world, 0, made.id, round(30));
   }
 
   const room = () => {
@@ -1254,7 +1254,7 @@ describe('the standing walls and the bake agree about every vertical', () => {
 
   test('a rounded room whose bevel grows finer over the span', () => {
     const made = room();
-    const w = wrote(rounded(made), 1, made.id, { kind: 'round', by: 30 });
+    const w = wrote(rounded(made), 1, made.id, round(30));
 
     // Thirty deep, then sixty: the near end draws its own arcs, and the
     // span's points over them lie on their facets, standing no vertical.

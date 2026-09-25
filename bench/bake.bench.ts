@@ -12,6 +12,7 @@
 import { test } from 'vitest';
 import { Span, bakeSpan, sample } from '../packages/editor/src/bake';
 import { TOP, grouped, keyed, painted } from '../packages/editor/src/scene';
+import { added } from '../packages/editor/src/effects';
 import { Op } from '../packages/editor/src/rig';
 import { World } from '../packages/editor/src/types';
 import { SIZES, level, version, weight } from './level';
@@ -70,13 +71,19 @@ test('what an eroding group adds', () => {
     if (made === null) throw new Error('a group needs two');
 
     const ops: Op[] = [];
+    let into = made.world;
 
-    if (t.erosion !== undefined) ops.push({ kind: 'erode', by: t.erosion });
+    if (t.erosion !== undefined) {
+      const e = added(into, made.id, { kind: 'erode' });
+
+      into = e.world;
+      ops.push({ kind: 'amount', layer: e.layer, by: t.erosion });
+    }
     if (t.rotation !== undefined) {
       ops.push({ kind: 'turn', angle: t.rotation, ref: painted(made.world, 1, made.id).ref, about: { x: 0, y: 0 } });
     }
 
-    return keyed(made.world, 1, made.id, ops);
+    return keyed(into, 1, made.id, ops);
   };
 
   const { world, ids } = level(rooms);

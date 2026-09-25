@@ -18,11 +18,9 @@ import { describe, expect, it } from 'vitest';
 import { Point } from '@ce/game/world';
 import { EXACT_GAP, Span, TOLERANCE, bakeSpan, sample, truth } from '../bake';
 import { TOP, addPolygon, csg } from '../scene';
-import { Writing, erode, inSegments, wrote } from '../testing';
+import { Writing, deform, erode, inSegments, round, withEffects, wrote } from '../testing';
 import { World, emptyWorld } from '../types';
 
-const round = (by: number): Writing => ({ kind: 'round', by });
-const deform = (by: number): Writing => ({ kind: 'deform', by });
 const ZIGZAG = { spacing: 20, pattern: 'zigzag' as const, seed: 0, sides: 'both' as const, jitter: 0 };
 const ROOM: Point[] = [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 200 }, { x: 0, y: 200 }];
 
@@ -37,7 +35,7 @@ function run<T>(g: Generator<number, T, void>): T {
 /** A room with a round, an amplitude and a span that erodes it to `depth`. */
 function world(amplitude: number, depth: number): World {
   const a = addPolygon(emptyWorld(), { level: 'hollow' }, ROOM, 0, TOP);
-  let w: World = { ...a.world, effects: new Map(a.world.effects).set(a.id, { round: inSegments(8, 20), deform: ZIGZAG }) };
+  let w: World = withEffects(a.world, a.id, { round: inSegments(8, 20), deform: ZIGZAG });
 
   w = wrote(w, 0, a.id, round(20), ...(amplitude > 0 ? [deform(amplitude)] : []));
   w = wrote(w, 1, a.id, erode(depth));

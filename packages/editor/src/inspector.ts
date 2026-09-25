@@ -38,8 +38,8 @@ import {
 } from './effects';
 import { FALLOFF, Pattern, Sides } from './geometry';
 import { Place, entryAt, lastKeys, retypedAt, timedAt } from './keys';
-import { Delta, NOTHING, Typed } from './rig';
-import { kindsOf, owning, repartedPolygons, retypable } from './scene';
+import { AmountKind, Delta, NOTHING, Typed, amountIn } from './rig';
+import { kindsOf, layerOf, owning, repartedPolygons, retypable } from './scene';
 import { theme } from './theme';
 import {
   FloorPart,
@@ -133,6 +133,14 @@ const PRECISEST = 0.01;
 const SPACING = 100;
 const SEEDS = 100;
 const COARSEST = 2;
+
+/** A key's amount of one kind typed in: on its owner's first layer of that
+ * kind, and nothing where it has none. */
+function amountTyped(by: Delta, world: World, owner: Id, kind: AmountKind, v: number): Typed {
+  const l = layerOf(world, owner, kind);
+
+  return l === undefined ? {} : { amounts: new Map(by.amounts).set(l.id, v) };
+}
 
 /** What the pane is about: the things picked, and only under the polygon
  * tool — a corner or an edge has no effects of its own. */
@@ -238,9 +246,16 @@ function modelOf(
   // The first picked thing's that has one, switched on or not, and otherwise
   // what is remembered.
   const shown = <N extends EffectName>(name: N): Options[N] => {
-    const id = ids.find(i => world.effects.get(i)?.[name] !== undefined);
+    const id = ids.find(i => layerOf(world, i, name as EffectName) !== undefined);
 
-    return id === undefined ? remembered[name] : world.effects.get(id)![name]! as Options[N];
+    return id === undefined ? remembered[name] : layerOf(world, id, name as EffectName) as unknown as Options[N];
+  };
+
+  // A key's amount of each kind: its owner's first layer of that kind.
+  const amountOf = (kind: AmountKind): number => {
+    const l = place === undefined ? undefined : layerOf(world, place.id, kind);
+
+    return l === undefined || by === undefined ? 0 : amountIn(by.amounts, l.id);
   };
 
   const d = shown('deform');
@@ -254,9 +269,9 @@ function modelOf(
     skew: degrees(by?.skew ?? 0),
     scaleX: fine(by?.scale.x ?? 1),
     scaleY: fine(by?.scale.y ?? 1),
-    erodes: fine(by?.erode ?? 0),
-    rounds: fine(by?.round ?? 0),
-    deforms: fine(by?.deform ?? 0),
+    erodes: fine(amountOf('erode')),
+    rounds: fine(amountOf('round')),
+    deforms: fine(amountOf('deform')),
     times: key === undefined || key.times === null ? '' : String(key.times),
     stand: key?.stand !== undefined,
     cornered: key?.corners !== undefined && key.corners.size > 0,
@@ -294,12 +309,12 @@ function body(
   /** Numbers typed into the key the inspector shows. Given what the key holds
    * now, so that one half of a point typed in keeps the other half exactly
    * rather than as the box rounds it. */
-  const typedIn = (typed: (by: Delta) => Typed) => update(s => {
+  const typedIn = (typed: (by: Delta, world: World, owner: Id) => Typed) => update(s => {
     const p = place();
 
     if (p === undefined) return s;
 
-    const world = retypedAt(s.world, p, typed(entryAt(s.world, p)?.by ?? NOTHING));
+    const world = retypedAt(s.world, p, typed(entryAt(s.world, p)?.by ?? NOTHING, s.world, p.id));
 
     return 'refused' in world ? saying(s, world.refused) : marked({ ...s, world }, s.world);
   });
@@ -343,9 +358,9 @@ function body(
     let world = s.world;
 
     for (const id of targets()) {
-      const was = world.effects.get(id)?.[name];
+      const was = layerOf(world, id, name as EffectName);
 
-      if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as Options[N]);
+      if (was !== undefined) world = withEffect(world, id, name, { ...was, ...patch } as unknown as Options[N]);
     }
 
     const shown = name === 'round'
@@ -408,9 +423,9 @@ function body(
           number(m.scaleX, SMALLEST, v => typedIn(by => ({ scale: { x: v, y: by.scale.y } })), Infinity, 'any', fixed),
           number(m.scaleY, SMALLEST, v => typedIn(by => ({ scale: { x: by.scale.x, y: v } })), Infinity, 'any', fixed),
         )),
-        ...field('erode', number(m.erodes, -Infinity, v => typedIn(() => ({ erode: v })), Infinity, 'any', fixed)),
-        ...field('round', number(m.rounds, -Infinity, v => typedIn(() => ({ round: v })), Infinity, 'any', fixed)),
-        ...field('deform', number(m.deforms, -Infinity, v => typedIn(() => ({ deform: v })), Infinity, 'any', fixed)),
+        ...field('erode', number(m.erodes, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'erode', v)), Infinity, 'any', fixed)),
+        ...field('round', number(m.rounds, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'round', v)), Infinity, 'any', fixed)),
+        ...field('deform', number(m.deforms, -Infinity, v => typedIn((by, w, owner) => amountTyped(by, w, owner, 'deform', v)), Infinity, 'any', fixed)),
         ...field('plays', times(m.times, timesIn, fixed)),
         ...field('', span({ style: { color: theme.faded } }, [text(() => (m.cornered() ? 'and single corners' : ''))])),
       ]),

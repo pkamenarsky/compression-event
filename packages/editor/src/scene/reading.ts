@@ -82,13 +82,14 @@ import { placed, stateAt, worldFrame } from '../rig';
 
 import {
   effectKey,
-  groupDeform,
+  Effected,
+  depthOf,
+  effectedOf,
   layingOf,
   Painted,
   Resolved,
   artefactsIn,
   chain,
-  eroding,
   middle,
   optionOf,
   pathAt,
@@ -166,7 +167,7 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   for (const id of world.groups.keys()) {
     if (!standingIn(world, id, from)) continue;
 
-    const d = eroding(world, id) ? scaledState(world, id, v).erosion : 0;
+    const d = depthOf(world, id, scaledState(world, id, v).amounts);
 
     if (d !== 0) out.set(id, d);
   }
@@ -174,20 +175,10 @@ export function depths(world: World, v: KeyframeId): Map<Id, number> {
   return out;
 }
 
-/** A group's round and deform as keyframe `v` leaves them. Nothing where it
- * has neither. */
+/** A group's layers after its depth as keyframe `v` leaves them: see
+ * `effectedOf`. Nothing where none of them comes to anything. */
 export function groupEffects(world: World, v: KeyframeId, id: GroupId): Standing['effects'] {
-  const round = optionOf(world.effects.get(id), 'round');
-  const state = scaledState(world, id, v), scale = scaleAt(world, id, v);
-  const deform = groupDeform(world, id, state.amplitude, scale);
-
-  if (round === undefined && deform === null) return undefined;
-
-  return {
-    facets: round === undefined ? SQUARE : facetsOf(segmentsOf(round, state.bevel, scale), round.tension),
-    bevel: round === undefined ? 0 : state.bevel,
-    ...(deform === null ? {} : { deform }),
-  };
+  return effectedOf(world, id, scaledState(world, id, v).amounts, scaleAt(world, id, v)) ?? undefined;
 }
 
 /**
@@ -384,9 +375,9 @@ function underfootDrawn(floor: Drawn, level: Drawn): Drawn {
 
 export interface Standing {
   depth: number
-  /** Its round and its deform, on its fold after the depth: see
-   * `foldShaped`. Absent is neither. */
-  effects?: { facets: Facets, bevel: number, deform?: { e: Effecting, amplitude: number } }
+  /** Its layers after the depth, on its fold: see `foldShaped`. Absent is
+   * none. */
+  effects?: Effected
   /**
    * The frame to keep the union's points in.
    *

@@ -53,6 +53,10 @@ const REFS: Point[] = [
   { x: -40, y: 25 },
 ];
 
+/** An amount on layer 1, 2 or 3: an erosion, a bevel and an amplitude, as
+ * far as the rig can tell. */
+const amt = (layer: number, by: number): Op => ({ kind: 'amount', layer, by });
+
 const OPS: Op[] = [
   { kind: 'move', by: { x: 15, y: -3 } },
   { kind: 'turn', angle: 0.5, ref: { x: 0, y: 0 }, about: { x: 0, y: 0 } },
@@ -60,9 +64,9 @@ const OPS: Op[] = [
   { kind: 'scale', by: { x: 1.4, y: 0.8 }, ref: { x: 13, y: -7 }, shift: { x: 0, y: 0 }, along: 0, lean: 0 },
   { kind: 'scale', by: { x: 0.6, y: 1.9 }, ref: { x: -40, y: 25 }, shift: { x: 11, y: -4 }, along: 0.7, lean: 0.2 },
   { kind: 'skew', by: 0.35, ref: { x: 13, y: -7 }, shift: { x: -6, y: 2 }, along: 0.9 },
-  { kind: 'erode', by: 3 },
-  { kind: 'round', by: 1.5 },
-  { kind: 'deform', by: 0.25 },
+  amt(1, 3),
+  amt(2, 1.5),
+  amt(3, 0.25),
 ];
 
 /** The painted point a delta is played about: the operation's, where it has
@@ -135,7 +139,7 @@ describe('a run of steps lands where a run of steps lands', () => {
 
 describe('several deltas in a row say what several operations say', () => {
   test('a turn, a stretch, a shear and a move, in every order', () => {
-    const list = OPS.filter(op => op.kind !== 'erode' && op.kind !== 'round' && op.kind !== 'deform');
+    const list = OPS.filter(op => op.kind !== 'amount');
 
     for (const a of list) {
       for (const b of list) {
@@ -167,7 +171,7 @@ function wroteAt(f: Frame): Op[] {
     // other, which is the case a matrix inverse cannot see.
     { kind: 'scale', by: { x: 2.2, y: 1 }, ref: { x: 13, y: -7 }, shift: { x: 9, y: 5 }, along: f.angle, lean: f.skew },
     { kind: 'skew', by: 0.35, ref: { x: 13, y: -7 }, shift: { x: -6, y: 2 }, along: f.angle },
-    { kind: 'erode', by: 3 },
+    amt(1, 3),
   ];
 }
 
@@ -288,9 +292,9 @@ function someRig(seed: number): Rig {
           lean: (roll() - 0.5) * 0.5,
         }),
         () => ({ kind: 'skew', by: (roll() - 0.5), ref, shift: { x: span(), y: span() }, along: (roll() - 0.5) * 2 }),
-        () => ({ kind: 'erode', by: roll() * 4 }),
-        () => ({ kind: 'round', by: roll() * 2 }),
-        () => ({ kind: 'deform', by: roll() }),
+        () => (amt(1, roll() * 4)),
+        () => (amt(2, roll() * 2)),
+        () => (amt(3, roll())),
       ])();
 
       const times = pick([1, 1, 2, 3, null]);
@@ -308,10 +312,8 @@ function someRig(seed: number): Rig {
       list.push(once<Stand>({
         kind: 'stand',
         frame: { t: { x: span(), y: span() }, angle: roll() * 2, skew: roll() * 0.4, scale: { x: 0.8, y: 1.3 } },
-        erosion: roll() * 3,
+        amounts: new Map([[1, roll() * 3]]),
         corners: new Map(held.map(c => [c.id, { x: span(), y: span() }])),
-        bevel: roll(),
-        amplitude: roll(),
       }));
     }
 
@@ -368,9 +370,9 @@ describe('the walk over keys is the walk over entries', () => {
         expect(ours, `v${at}: a state`).toBeDefined();
         near(ours!.frame, theirs.frame, `v${at}`);
 
-        expect(ours!.erosion, `v${at}: erosion`).toBeCloseTo(theirs.erosion, 9);
-        expect(ours!.bevel, `v${at}: bevel`).toBeCloseTo(theirs.bevel, 9);
-        expect(ours!.amplitude, `v${at}: amplitude`).toBeCloseTo(theirs.amplitude, 9);
+        for (const layer of [1, 2, 3]) {
+          expect(ours!.amounts.get(layer) ?? 0, `v${at}: amount ${layer}`).toBeCloseTo(theirs.amounts.get(layer) ?? 0, 9);
+        }
 
         expect([...ours!.corners.keys()].sort(), `v${at}: which corners stand`)
           .toEqual([...theirs.corners.keys()].sort());
@@ -400,7 +402,7 @@ describe('a key as the operations it is made of', () => {
         const ref = refsFor(op)[0];
         const back = opsOf({ ref, by: d });
 
-        if (op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform') {
+        if (op.kind === 'amount') {
           expect(back, 'an amount does not move the frame').toEqual([]);
           continue;
         }
@@ -413,7 +415,7 @@ describe('a key as the operations it is made of', () => {
   test('and so does every step of its repeat', () => {
     for (const f of FRAMES) {
       for (const op of wroteAt(f)) {
-        if (op.kind === 'erode' || op.kind === 'round' || op.kind === 'deform') continue;
+        if (op.kind === 'amount') continue;
 
         const d = deltaOf(op)!;
         const ref = refsFor(op)[0];
@@ -454,16 +456,14 @@ describe('a key as the operations it is made of', () => {
     const stand: Stand = {
       kind: 'stand',
       frame: { t: { x: 1, y: 2 }, angle: 0.5, skew: 0, scale: { x: 1, y: 1 } },
-      erosion: 0,
       corners: new Map(),
-      bevel: 0,
-      amplitude: 0,
+      amounts: new Map(),
     };
     const p = { ref: { x: 0, y: 0 }, stand };
 
     expect(opsOf(p)).toEqual([stand]);
     expect(flying(p)).toBe(true);
-    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, erode: 3 } })).toBe(false);
+    expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, amounts: new Map([[1, 3]]) } })).toBe(false);
     expect(flying({ ref: { x: 0, y: 0 }, by: { ...NOTHING, move: { x: 1, y: 0 } } })).toBe(true);
   });
 });
@@ -521,6 +521,6 @@ describe('numbers typed into a delta', () => {
   test('an amount typed in is only that', () => {
     const d: Delta = { ...NOTHING, angle: 1, move: { x: 2, y: 3 }, about: { x: 1, y: 1 } };
 
-    expect(retyped(d, { erode: 4 })).toEqual({ ...d, erode: 4 });
+    expect(retyped(d, { amounts: new Map([[1, 4]]) })).toEqual({ ...d, amounts: new Map([[1, 4]]) });
   });
 });

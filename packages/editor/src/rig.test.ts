@@ -121,7 +121,9 @@ const turn = (degrees: number, ref: Point, about: Point = { x: 0, y: 0 }): Op =>
   about,
 });
 
-const erode = (by: number): Op => ({ kind: 'erode', by });
+/** An amount on layer 1, 2 or 3: what the rig says of an erosion, a bevel and
+ * an amplitude, whose kinds are the owner's to know. */
+const amt = (layer: number, by: number): Op => ({ kind: 'amount', layer, by });
 
 /**
  * A scale about `c` as the gesture writes it: `by` along the thing's axes, which
@@ -496,9 +498,9 @@ describe('repeats', () => {
   });
 
   test('stacked erosion', () => {
-    const tl = keyed(room, 1, P, [repeating(erode(5), null)]);
+    const tl = keyed(room, 1, P, [repeating(amt(1, 5), null)]);
 
-    expect([0, 1, 2, 3].map(k => stateAt(tl, P, k).erosion)).toEqual([0, 5, 10, 15]);
+    expect([0, 1, 2, 3].map(k => (stateAt(tl, P, k).amounts.get(1) ?? 0))).toEqual([0, 5, 10, 15]);
   });
 
   test('what a keyframe plays is the keyframe before carried to it', () => {
@@ -555,22 +557,20 @@ describe('corners', () => {
   });
 });
 
-const round = (by: number): Op => ({ kind: 'round', by });
-const deform = (by: number): Op => ({ kind: 'deform', by });
 
 describe('effect amounts', () => {
   test('rounds and deforms add up, and a repeat grows the amount', () => {
-    let tl = keyed(room, 0, P, [round(2), deform(1), round(3)]);
+    let tl = keyed(room, 0, P, [amt(2, 2), amt(3, 1), amt(2, 3)]);
 
-    tl = keyed(tl, 2, P, [repeating(round(1), null), repeating(deform(0.5), 2)]);
+    tl = keyed(tl, 2, P, [repeating(amt(2, 1), null), repeating(amt(3, 0.5), 2)]);
 
-    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).bevel)).toEqual([5, 5, 6, 7, 8]);
-    expect([0, 1, 2, 3, 4].map(k => stateAt(tl, P, k).amplitude)).toEqual([1, 1, 1.5, 2, 2]);
+    expect([0, 1, 2, 3, 4].map(k => (stateAt(tl, P, k).amounts.get(2) ?? 0))).toEqual([5, 5, 6, 7, 8]);
+    expect([0, 1, 2, 3, 4].map(k => (stateAt(tl, P, k).amounts.get(3) ?? 0))).toEqual([1, 1, 1.5, 2, 2]);
   });
 
   test('they commute with the frame: where they sit in a list moves nothing', () => {
-    const a = keyed(room, 1, P, [round(2), turn(30, MIDDLE), deform(1), move(3, 4)]);
-    const b = keyed(room, 1, P, [turn(30, MIDDLE), move(3, 4), deform(1), round(2)]);
+    const a = keyed(room, 1, P, [amt(2, 2), turn(30, MIDDLE), amt(3, 1), move(3, 4)]);
+    const b = keyed(room, 1, P, [turn(30, MIDDLE), move(3, 4), amt(3, 1), amt(2, 2)]);
 
     expect(stateAt(a, P, 1)).toEqual(stateAt(b, P, 1));
   });
@@ -584,50 +584,47 @@ describe('effect amounts', () => {
       return keysAt(rig, 0);
     };
 
-    expect(writing(round(2), round(3))[0].by!.round).toBe(5);
-    expect(writing(deform(2), deform(-2))).toEqual([]);
+    expect(writing(amt(2, 2), amt(2, 3))[0].by!.amounts.get(2)).toBe(5);
+    expect(writing(amt(3, 2), amt(3, -2))).toEqual([]);
 
     // Two kinds at once is one key: what a hand does at a keyframe is what
     // that keyframe does, until it says otherwise.
-    const both = writing(round(2), deform(2));
+    const both = writing(amt(2, 2), amt(3, 2));
 
     expect(both).toHaveLength(1);
-    expect(both[0].by!.round).toBe(2);
-    expect(both[0].by!.deform).toBe(2);
-    expect(writing(erode(2), round(0))[0].by!.erode).toBe(2);
-    expect(writing(erode(2), round(0))).toHaveLength(1);
+    expect(both[0].by!.amounts.get(2)).toBe(2);
+    expect(both[0].by!.amounts.get(3)).toBe(2);
+    expect(writing(amt(1, 2), amt(2, 0))[0].by!.amounts.get(1)).toBe(2);
+    expect(writing(amt(1, 2), amt(2, 0))).toHaveLength(1);
   });
 
   test('a stand holds them, and a repeat begun before it goes on growing them', () => {
-    let tl = keyed(room, 0, P, [round(9), repeating(deform(1), null)]);
+    let tl = keyed(room, 0, P, [amt(2, 9), repeating(amt(3, 1), null)]);
 
     tl = keyed(tl, 3, P, [{
       ...NOTHING_STANDS,
       corners: stateAt(tl, P, 2).corners,
-      bevel: 2,
-      amplitude: 1,
+      amounts: new Map([[2, 2], [3, 1]]),
     }]);
 
-    expect(stateAt(tl, P, 3).bevel).toBe(2);
-    expect(stateAt(tl, P, 3).amplitude).toBe(1);
-    expect(stateAt(tl, P, 5).amplitude).toBe(3);
+    expect((stateAt(tl, P, 3).amounts.get(2) ?? 0)).toBe(2);
+    expect((stateAt(tl, P, 3).amounts.get(3) ?? 0)).toBe(1);
+    expect((stateAt(tl, P, 5).amounts.get(3) ?? 0)).toBe(3);
   });
 
   test('none of them moves the frame', () => {
     const f: Frame = { t: { x: 3, y: -2 }, angle: 0.4, skew: 0.1, scale: { x: 1.5, y: 0.5 } };
 
-    expect(played(f, round(4), 0.5)).toEqual(f);
-    expect(played(f, deform(4))).toEqual(f);
+    expect(played(f, amt(2, 4), 0.5)).toEqual(f);
+    expect(played(f, amt(3, 4))).toEqual(f);
   });
 });
 
 const NOTHING_STANDS: Stand = {
   kind: 'stand',
   frame: REST,
-  erosion: 0,
   corners: new Map(),
-  bevel: 0,
-  amplitude: 0,
+  amounts: new Map(),
 };
 
 describe('stands', () => {
@@ -637,34 +634,32 @@ describe('stands', () => {
   const stand: Op = {
     kind: 'stand',
     frame: held,
-    erosion: 4,
     corners: new Map([[100, { x: 0, y: 0 }], [101, { x: 20, y: 0 }], [102, { x: 20, y: 20 }]]),
-    bevel: 0,
-    amplitude: 0,
+    amounts: new Map([[1, 4]]),
   };
 
   test('a stand is what it says, and upstream stops being heard', () => {
-    let tl = keyed(room, 0, P, [move(20, 0), erode(2)]);
+    let tl = keyed(room, 0, P, [move(20, 0), amt(1, 2)]);
 
     tl = keyed(tl, 3, P, [stand, move(1, 0)]);
 
     expect(stateAt(tl, P, 3).frame).toEqual({ ...held, t: { x: 8, y: 8 } });
     expect(stateAt(tl, P, 4).frame).toEqual({ ...held, t: { x: 8, y: 8 } });
-    expect(stateAt(tl, P, 4).erosion).toBe(4);
+    expect((stateAt(tl, P, 4).amounts.get(1) ?? 0)).toBe(4);
 
-    const edited = keyed(tl, 0, P, [move(500, 500), erode(7)]);
+    const edited = keyed(tl, 0, P, [move(500, 500), amt(1, 7)]);
 
     expect(stateAt(edited, P, 4)).toEqual(stateAt(tl, P, 4));
   });
 
   test('a repeat begun before a stand goes on stepping after it', () => {
-    let tl = keyed(room, 0, P, [repeating(move(10, 0), null), repeating(erode(1), null)]);
+    let tl = keyed(room, 0, P, [repeating(move(10, 0), null), repeating(amt(1, 1), null)]);
 
     tl = keyed(tl, 3, P, [stand]);
 
     expect(stateAt(tl, P, 3).frame).toEqual(held);
     expect(stateAt(tl, P, 5).frame.t).toEqual({ x: 27, y: 8 });
-    expect(stateAt(tl, P, 5).erosion).toBe(6);
+    expect((stateAt(tl, P, 5).amounts.get(1) ?? 0)).toBe(6);
   });
 
   test('so does a corner\'s, from what the stand holds', () => {

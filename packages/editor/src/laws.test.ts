@@ -17,18 +17,12 @@ import { Point } from '@ce/game/world';
 import { TOP, addPolygon, csg, grouped, sealing } from './scene';
 import { resolveGroup } from './resolve';
 import { laidAcross } from './effect';
-import { Writing, erode, inSegments, wrote } from './testing';
-import { Effects, Id, World, emptyWorld } from './types';
+import { Effects, Writing, deform, erode, inSegments, round, withEffects, wrote } from './testing';
+import { Id, World, emptyWorld } from './types';
 
-const round = (by: number) => ({ kind: 'round' as const, by });
-const deform = (by: number) => ({ kind: 'deform' as const, by });
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
-}
-
-function withEffects(world: World, id: Id, fx: Effects): World {
-  return { ...world, effects: new Map(world.effects).set(id, fx) };
 }
 
 /**

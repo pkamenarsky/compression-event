@@ -70,7 +70,7 @@ import {
   timedAt,
 } from './keys';
 import { KeyframeId } from './rig';
-import { order, unchainedAt } from './scene';
+import { layerNamer, order, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Flags, Selection, Target, Update, World, flagged, marked, saying, within } from './types';
@@ -685,6 +685,8 @@ const ICONS: Record<Kind, string> = {
   // An outline and the one taken in from it.
   erode: 'M1.5 1.5 H12.5 V12.5 H1.5 Z M4.5 4.5 H9.5 V9.5 H4.5 Z',
   stand: 'M3 2 V12 M11 2 V12',
+  // An amount on a layer the owner no longer lists.
+  amount: 'M3 7 H11',
 };
 
 /**
@@ -803,9 +805,10 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
 /** What an entry does, read when the pointer is over it rather than kept in
  * the model, where its numbers would rebuild the view on every drag. */
 function entryTitle(ctx: Ctx, place: Place): string {
-  const e = entryAt(ctx.state().world, place);
+  const world = ctx.state().world;
+  const e = entryAt(world, place);
 
-  return e === undefined ? '' : entryLabel(e);
+  return e === undefined ? '' : entryLabel(e, layerNamer(world, place.id));
 }
 
 /**

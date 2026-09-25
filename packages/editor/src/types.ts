@@ -25,7 +25,7 @@ import {
 import type { Bake } from './bake';
 import type { Place } from './keys';
 import type { Facets, Pattern, Sides } from './geometry';
-import type { Amount, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
+import type { Amount, Amounts, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, Move } from './rig';
 // From the leaf, not from `./rig`: `rig.ts` reads this file for `enclosing`,
 // so importing a value back out of it would be a runtime cycle. See
 // `cornermaps.ts`.
@@ -630,24 +630,33 @@ export interface World {
   /** What the timeline's row headers say about each thing: hidden, locked,
    * soloed. Absent is none of them. See `Flags`. */
   flags: ReadonlyMap<Id, Flags>
-  /** Which effects each polygon or group has, and how: one fact over every
-   * keyframe. How much is in its timeline. Absent is none. See `Effects`. */
-  effects: ReadonlyMap<Id, Effects>
+  /** The effects on each polygon or sealed group, as a list laid first to
+   * last: one fact over every keyframe. How much of each is in the owner's
+   * timeline, by the layer's id. Absent is none. See `Layer`. */
+  effects: ReadonlyMap<Id, readonly Layer[]>
 }
 
+export type LayerId = number;
+
 /**
- * The effects on a thing, around its erosion and always in this order: its
- * edges deformed, then eroded, then its corners rounded.
+ * One effect on a thing: one entry of its list, laid in the list's order, the
+ * same kind as often as it is written. See PLAN-order.
  *
- * An effect switched `off` is kept, options and amounts and all, and does
- * nothing: unticking one in the pane is a question of whether it applies, and
- * its timeline is still there when it is ticked again.
+ * Its id is from the world's one counter, and it is what its amount is written
+ * against in the owner's timeline — an erosion, a bevel or an amplitude by its
+ * kind (see `Amounts` in `rig.ts`). Moving a layer keeps its id and so its
+ * timeline, and two rounds are two ids and two timelines.
  *
- * Not passes but facts. Nothing is ever rounded twice or deformed twice: which
- * effects a thing has, and how, is one fact about it over every keyframe, as
- * its shape is, and how much — the bevel, the amplitude — is an operation,
- * like erosion. A count, a pattern or a seed does not change over time.
+ * A layer switched `off` is kept, options and amounts and all, and does
+ * nothing: unticking one is a question of whether it applies, and its
+ * timeline is still there when it is ticked again.
  *
+ * Not passes but facts: which effects a thing has, and how, is one fact about
+ * it over every keyframe, as its shape is, and how much is an operation. A
+ * count, a pattern or a seed does not change over time.
+ *
+ * - `erode`: the outline offset inwards by its amount, outwards where that is
+ *   negative. No options.
  * - `round`: each corner an arc starting as deep along each edge as its
  *   bevel, along a curve that leaves the edges with no curvature, in as many
  *   segments as keep it within `precision` of that curve — closer where it
@@ -657,55 +666,64 @@ export interface World {
  *   one (see `curveOf`).
  * - `deform`: points put into each edge every `spacing` of its length, the
  *   gaps between them stretched and squeezed by `jitter`, and pushed off it by
- *   the pattern. `seed` is the noise's and the jitter's. The teeth stop short
- *   of a polygon's rounds, whose arcs take teeth of their own: see
- *   `outlineOf`.
+ *   the pattern. `seed` is the noise's and the jitter's.
  */
-export interface Effects {
-  /**
-   * `facets` is a count written down rather than asked for, and it wins over
-   * the precision where it is there. Nothing an author sets: the precision is
-   * the knob, and it is the better one, being bevel-independent. A count is
-   * here because a *fade* — two counts and how far between them — is what a
-   * precision cannot say, and a resolve has to hand on the fade a fold had in
-   * flight. See `Round.facets` and `publishing` in `resolve.ts`.
-   *
-   * `facetsAt` is the bevel that count was taken at, and the count only holds
-   * there. A bevel is an amount and an author may add to it; a count taken at
-   * the smaller one would then be drawn at the bigger, and the corner would
-   * come out coarser than the precision asks — which is the round a scope
-   * would have laid on the same ring. Past it the precision takes over again.
-   */
-  round?: { precision: number, tension: number, chamfer: boolean, off?: boolean, facets?: Facets, facetsAt?: number }
-  /**
-   * `falloff` is how far a tooth reaches along an arc: see
-   * `Effecting.falloff`.
-   *
-   * `offset` is whether each run's teeth start off its middle by a share of
-   * the spacing its seed gives it — see `Effecting.offset`. Absent, they do
-   * not: they are centred on the run. One default, because there is one
-   * pipeline — a deform is a ring to a ring, and it cannot read off which kind
-   * of thing carried it there. A polygon's used to be offset and a scope's
-   * fold's centred, and a resolve had to write the difference down onto the
-   * ring it made to keep the two agreeing; that is law 3, and the fix is the
-   * default rather than the writing down.
-   */
-  deform?: {
-    spacing: number
-    pattern: Pattern
-    seed: number
-    sides: Sides
-    jitter: number
-    falloff?: number
-    offset?: boolean
-    off?: boolean
-  }
-  /** Erosion has no options, so it is here only to be switched off. */
-  erode?: { off: boolean }
+export type Layer = { id: LayerId, off?: boolean } & (
+  | { kind: 'erode' }
+  | ({ kind: 'round' } & RoundOptions)
+  | ({ kind: 'deform' } & DeformOptions)
+);
+
+export type LayerKind = Layer['kind'];
+
+/** One kind of layer. */
+export type LayerOf<K extends LayerKind> = Extract<Layer, { kind: K }>;
+
+/**
+ * `facets` is a count written down rather than asked for, and it wins over
+ * the precision where it is there. Nothing an author sets: the precision is
+ * the knob, and it is the better one, being bevel-independent. A count is
+ * here because a *fade* — two counts and how far between them — is what a
+ * precision cannot say, and a resolve has to hand on the fade a fold had in
+ * flight. See `Round.facets` and `publishing` in `resolve.ts`.
+ *
+ * `facetsAt` is the bevel that count was taken at, and the count only holds
+ * there. A bevel is an amount and an author may add to it; a count taken at
+ * the smaller one would then be drawn at the bigger, and the corner would
+ * come out coarser than the precision asks — which is the round a scope
+ * would have laid on the same ring. Past it the precision takes over again.
+ */
+export interface RoundOptions {
+  precision: number
+  tension: number
+  chamfer: boolean
+  facets?: Facets
+  facetsAt?: number
 }
 
-/** The options of the effects that have them. */
-export type Options = Required<Pick<Effects, 'round' | 'deform'>>;
+/**
+ * `falloff` is how far a tooth reaches along an arc: see `Effecting.falloff`.
+ *
+ * `offset` is whether each run's teeth start off its middle by a share of the
+ * spacing its seed gives it — see `Effecting.offset`. Absent, they do not:
+ * they are centred on the run. One default, because there is one pipeline.
+ */
+export interface DeformOptions {
+  spacing: number
+  pattern: Pattern
+  seed: number
+  sides: Sides
+  jitter: number
+  falloff?: number
+  offset?: boolean
+}
+
+/** The options of the effects that have them: what a new layer of each kind
+ * starts with. */
+export interface Options {
+  round: RoundOptions
+  deform: DeformOptions
+}
 
 /** The options an effect starts with before any has been chosen. */
 export const REMEMBERED: Options = {
@@ -1051,17 +1069,15 @@ export interface Timed {
   death?: number
   /** Where it starts: where the keyframe before the copy left it. */
   start: Frame
-  erosion: number
-  /** Its bevel and amplitude there, as `erosion`. Absent is nought. */
-  bevel?: number
-  amplitude?: number
+  /** Its amounts there, by the layer of `effects` each is of. */
+  amounts: Amounts
   /** Where it stood at the copy keyframe, everything there in: what a stamp
    * starts at. */
-  stood: { frame: Frame, erosion: number, bevel?: number, amplitude?: number }
+  stood: { frame: Frame, amounts: Amounts }
   /** Each keyframe's keys from the copy on, by offset. */
   keys: [number, Key[]][]
   /** Its effects. Absent is none. */
-  effects?: Effects
+  effects?: readonly Layer[]
   /** The repeats that came across as single entries. */
   unrolled: Unrolled[]
 }
