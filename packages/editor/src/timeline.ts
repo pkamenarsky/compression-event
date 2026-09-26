@@ -39,7 +39,7 @@
 // keyframe and all that is written at it — and Delete alone is the canvas'.
 // Dragging an icon a keyframe along pushes or pulls it, and what is picked
 // with it; let go on another key of its row, it merges into that one. A
-// keyframe's heading dragged onto the one beside merges the two. The grip at the start of a thing's life drags its birth along, and
+// keyframe's name dragged onto the one beside merges the two. The grip at the start of a thing's life drags its birth along, and
 // its story with it; the one at the end drags its death. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
@@ -87,7 +87,8 @@ const ROW = 24;
 /** A repeat's lane under its row. */
 const LANE = 14;
 const ICON = 14;
-const HEAD = 46;
+/** The bar over the rows, for the chips. */
+const HEAD = 36;
 const FONT = '11px system-ui, sans-serif';
 
 /** One entry's room in a column, and the room at its sides. */
@@ -308,7 +309,7 @@ function unchains(world: World, k: KeyframeId, selection: Selection): boolean {
 // -----------------------------------------------------------------------------
 // Drawing
 //
-// A heading row stuck to the top and a label column stuck to the left, over
+// A bar of chips stuck to the top and a label column stuck to the left, over
 // everything else, which scrolls under them.
 // -----------------------------------------------------------------------------
 
@@ -410,6 +411,12 @@ function body(ctx: Ctx, m: Model): VNode {
         pointerEvents: 'none',
       }),
 
+      // Where something picked stops hearing from upstream: a break in the
+      // column's left edge.
+      ...m.keyframes.flatMap((f, i) => (f.unchains
+        ? [box({ left: `${m.xs[i] - 1}px`, top: `${HEAD}px`, width: '3px', height: `${height - HEAD}px`, background: theme.gone, borderRadius: '2px' }, [], { title: 'Unchained here' })]
+        : [])),
+
       ...m.xs.map(x => box({ left: `${x}px`, top: '0', width: '1px', height: `${height}px`, background: theme.border, opacity: 0.5 })),
 
       head(ctx, m, width),
@@ -468,7 +475,7 @@ function pinned(children: VNode[], style: Style = {}): VNode {
 function chip(s: string, left: number, onclick: () => void, on = false, title = ''): VNode {
   return label(s, {
     left: `${left}px`,
-    top: '12px',
+    top: '6px',
     height: `${ROW}px`,
     padding: '0 7px',
     borderRadius: '5px',
@@ -478,8 +485,8 @@ function chip(s: string, left: number, onclick: () => void, on = false, title = 
   }, { onclick, title });
 }
 
-/** The headings, stuck to the top: keyframes in and out and what the rows
- * are of over the labels, and each keyframe over its column. */
+/** The bar stuck to the top, with the chips that put keyframes in and take
+ * them out. The keyframes are named in the rows themselves. */
 function head(ctx: Ctx, m: Model, width: number): VNode {
   return div({
     style: {
@@ -493,8 +500,6 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
       boxSizing: 'border-box',
     },
   }, [
-    ...m.keyframes.map((f, i) => column(ctx, m, f, i)),
-
     pinned([
       chip('+ insert', 8, () => ctx.update(keyframeInsertedHere), false, 'A keyframe before the one on screen, where nothing happens'),
       chip('− delete', 70, () => ctx.update(droppedHere), false, 'What the needle is on, dropped (⌥⌫)'),
@@ -502,9 +507,9 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
   ]);
 }
 
-/** A keyframe's heading: its name, which stands in it, and its eye. */
+/** A keyframe's name in a row, before its keys: where the needle is when it
+ * is on the keyframe itself. */
 function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): VNode {
-  const x = m.xs[i];
   const current = () => i === ctx.current();
   // The needle on the keyframe itself rather than on a key of it.
   const on = () => current() && ctx.state().target === null;
@@ -513,9 +518,10 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
   return fragment([
     label(f.name, {
       left: `${mid}px`,
-      top: '12px',
+      top: '0',
       transform: 'translateX(-50%)',
       padding: '0 4px',
+      zIndex: 3,
       borderRadius: '5px',
       cursor: 'grab',
       background: () => (on() ? theme.accent : 'transparent'),
@@ -542,11 +548,6 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
       },
     }),
 
-    // Where something picked stops hearing from upstream: a break in the
-    // column's left edge.
-    ...(f.unchains
-      ? [box({ left: `${x - 1}px`, top: '6px', width: '3px', height: `${HEAD - 12}px`, background: theme.gone, borderRadius: '2px' }, [], { title: 'Unchained here' })]
-      : []),
   ]);
 }
 
@@ -555,6 +556,9 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
   return line([
     ...r.cells.map((c, col) => cell(ctx, m, r, col, c)),
+
+    // Each keyframe's name in the row, before its keys.
+    ...m.keyframes.map((f, i) => column(ctx, m, f, i)),
 
     ...r.bars.map((b, lane) => bar(ctx, m, r, b, lane)),
 
