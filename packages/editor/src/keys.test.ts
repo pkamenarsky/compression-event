@@ -104,33 +104,15 @@ describe('keyframes', () => {
     expect(out.world.keyframes.length).toBe(w.keyframes.length + 1);
     expect(out.world.keyframes[3].id).toBe(out.key);
     expect(out.world.keyframes.map(f => f.name)).toEqual(out.world.keyframes.map((_f, i) => `v${i}`));
+    // Nothing written moves, and up to the new one nothing changes.
+    expect(out.world.rigs).toEqual(w.rigs);
+
     for (const k of [0, 1, 2]) expectFrame(stateAt(out.world, id, k).frame, stateAt(w, id, k).frame);
-
-    // One more for the repeat of five, which steps at the new one.
-    expect(listAt(out.world, 0, id).map(e => e.times)).toEqual([6]);
   });
 
-  test('a repeat stops where it stopped across an inserted keyframe', () => {
+  test('deleting an inserted keyframe gives back what there was, a repeat to the end', () => {
     const { world, id } = room();
-    const w = repeated(world, 1, id, move(10, 0), 3);
-    const out = inserted(w, 2)!;
-
-    const x = (k: KeyframeId): number => stateAt(out.world, id, k).frame.t.x;
-
-    // Its last step is still at v3, which is now a step further on.
-    expect([x(1), x(2), x(out.key), x(3), x(4)]).toEqual([10, 20, 30, 40, 40]);
-  });
-
-  test('a repeat that has run out by then is left alone', () => {
-    const { world, id } = room();
-    const w = repeated(world, 1, id, move(10, 0), 2);
-
-    expect(listAt(inserted(w, 3)!.world, 1, id)).toEqual(listAt(w, 1, id));
-  });
-
-  test('deleting an inserted keyframe gives back what there was', () => {
-    const { world, id } = room();
-    const w = repeated(repeated(world, 1, id, spun(0.3), null), 1, id, move(5, 0), 4);
+    const w = repeated(world, 1, id, spun(0.3), null);
     const out = inserted(w, 2)!;
     const back = ok(deleted(out.world, out.key));
 

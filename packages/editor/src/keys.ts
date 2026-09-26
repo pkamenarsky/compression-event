@@ -11,8 +11,8 @@
 // order they were already in. See `PLAN-keys.md`.
 //
 // Keyframes come and go the same way. An inserted one is a keyframe where
-// nothing is written, and a repeat running across it takes a step there and
-// one more, so it ends where it ended. A deleted one
+// nothing is written, and a repeat running across it counts it like any
+// other. A deleted one
 // hands what it does, and what is born and dies there, to the next, and a
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
@@ -592,10 +592,10 @@ export interface Inserted {
  * A keyframe put in after `after`, with nothing written at it.
  *
  * A repeat means so many keyframes from where it is written, and the new one
- * is one of them: a repeat running across it takes a step there, and is given
- * one more so that it ends where it ended — `deleted` the other way round.
- * What goes on at the new one is brought in by hand — pulled from the next
- * keyframe, pushed from the one before, or done there.
+ * is one of them: a repeat running across it takes a step there, and one that
+ * runs out ends a keyframe sooner than it did. What goes on at the new one is
+ * brought in by hand — pulled from the next keyframe, pushed from the one
+ * before, or done there.
  */
 export function inserted(world: World, after: KeyframeId): Inserted | null {
   const keyframes = world.keyframes;
@@ -605,18 +605,9 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
 
   const key = Math.max(...keyframes.map(f => f.id)) + 1;
 
-  // Written up to `after` and with steps left past it: one more, for the
-  // step it now takes at the new one.
-  const lengthened = (e: Key, at: KeyframeId): Key => {
-    const i = indexIn(keyframes, at);
-
-    return i <= j && e.times !== null && going(e, i, j) ? { ...e, times: e.times + 1 } : e;
-  };
-
-  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, everyKey(rig, lengthened)]));
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
-  return { world: { ...world, keyframes: order, rigs }, key };
+  return { world: { ...world, keyframes: order }, key };
 }
 
 /**
