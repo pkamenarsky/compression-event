@@ -1144,7 +1144,9 @@ function moveOn(d: Delta, n: number): Point {
   const stretches = d.scale.x !== 1 || d.scale.y !== 1;
   const shears = d.skew !== 0;
 
-  if (turns && !stretches && !shears) {
+  // A turn too small for its centre to be solved, or a whole one with none
+  // written, takes the multiplication below, which needs no centre.
+  if (turns && !stretches && !shears && aboutOf(d) !== null) {
     // Round the anchor `n` steps on, which is where the point has swung to.
     const about = stepAbout(d, n);
     const to = spun(about, d.angle);
@@ -1172,11 +1174,10 @@ function moveOn(d: Delta, n: number): Point {
 }
 
 /** A whole turn's centre, `n` steps on: it rides the painted point, and the
- * painted point is where the steps before left it. Worked out where the delta
- * does not carry it; a whole turn that cannot say turns about anywhere alike,
- * its move being nought. */
+ * painted point is where the steps before left it. Solved where the delta
+ * does not carry it; asked only of one that has a centre, written or solved. */
 function stepAbout(d: Delta, n: number): Point {
-  return spun(aboutOf(d) ?? { x: 0, y: 0 }, d.angle * n);
+  return spun(aboutOf(d)!, d.angle * n);
 }
 
 /**

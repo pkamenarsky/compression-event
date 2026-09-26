@@ -850,4 +850,9 @@ test('a repeating turn with no centre written steps about the one it solves to',
   expect(a.x).toBeCloseTo(b.x);
   expect(a.y).toBeCloseTo(b.y);
   expect(steppedBy({ ...NOTHING, angle: 2 * Math.PI }, 2).move.x).toBeCloseTo(0);
+
+  // Too small a turn to solve a centre from: the move still goes along.
+  const tiny = steppedBy({ ...NOTHING, angle: 1e-9, move: { x: 3, y: 0 } }, 2).move;
+
+  expect(tiny.x).toBeCloseTo(3);
 });
