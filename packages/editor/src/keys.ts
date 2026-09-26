@@ -12,9 +12,9 @@
 //
 // Keyframes come and go the same way. An inserted one is a keyframe where
 // nothing is written, and a repeat running across it counts it like any
-// other. A deleted one
-// hands what it does, and what is born and dies there, to the next, and a
-// repeat that stepped there takes a step fewer, so it ends where it ended.
+// other. A deleted one hands what it does, and what is born and dies there, to
+// the next, and a repeat running across it counts the keyframes that are left,
+// ending a keyframe later.
 // -----------------------------------------------------------------------------
 
 import {
@@ -28,7 +28,6 @@ import {
   Repeat,
   Typed,
   blankKeys,
-  counted1,
   foldedBy,
   heldOf,
   indexIn,
@@ -567,22 +566,6 @@ function numbered(keyframes: readonly Keyframe[]): Keyframe[] {
   return keyframes.map((f, i) => (/^v\d+$/.test(f.name) || f.name === '' ? { ...f, name: `v${i}` } : f));
 }
 
-/** Whether a key written at index `j` has steps left to take after index
- * `i`. */
-function going(e: Repeat, j: number, i: number): boolean {
-  return e.times === null || counted1(e, j, i) < e.times;
-}
-
-/** Whether a key written at index `j` takes a step at index `i`. */
-function stepsAt(e: Repeat, j: number, i: number): boolean {
-  return i > j && going(e, j, i - 1);
-}
-
-/** Every key of a rig, through `f`. */
-function everyKey(rig: KeyRig, f: (key: Key, k: KeyframeId) => Key): KeyRig {
-  return { keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(key => f(key, k))])) };
-}
-
 export interface Inserted {
   world: World
   key: KeyframeId
@@ -644,8 +627,8 @@ export function insertedBefore(world: World, k: KeyframeId): Inserted | null {
  * keyframe's list; `'dropped'`, it goes with it; `'merged'`, it is handed on
  * and what is born at it is born at the next instead of going with it.
  * what dies at it dies at the next, and what is born at it goes with it. A
- * repeat that stepped there has one step fewer, so it ends where it ended. The
- * last keyframe's writing goes with it, and what dies there lives to the end.
+ * repeat is left as it is, counting the keyframes that are left — `inserted`
+ * the other way round. The last keyframe's writing goes with it, and what dies there lives to the end.
  *
  * Refused where one corner would end up with two repeats at one keyframe,
  * which a corner has no room for, and for the only keyframe there is.
@@ -660,17 +643,6 @@ export function deleted(world: World, k: KeyframeId, how: 'handed' | 'dropped' |
   const next = keyframes[d + 1]?.id ?? null;
   const left = keyframes.filter(f => f.id !== k);
 
-  // Written before it and stepping there, or written there and stepping at
-  // the next, which is now where it begins: a step fewer either way.
-  const shortened = (e: Key, at: KeyframeId): Key => {
-    const i = indexIn(keyframes, at);
-    const lost = i < d
-      ? stepsAt(e, i, d)
-      : i === d && next !== null && stepsAt(e, d, d + 1);
-
-    return lost && e.times !== null ? { ...e, times: e.times - 1 } : e;
-  };
-
   const rigs = new Map<Id, KeyRig>();
 
   // What the keyframe did is handed to the next, in front of what that one
@@ -678,8 +650,7 @@ export function deleted(world: World, k: KeyframeId, how: 'handed' | 'dropped' |
   // keys at one keyframe each holding some of a corner's writing add up the
   // way they did when they were a keyframe apart.
   for (const [id, was] of world.rigs) {
-    const rig = everyKey(was, shortened);
-    const keys = new Map(rig.keys);
+    const keys = new Map(was.keys);
     const mine = keys.get(k) ?? [];
 
     keys.delete(k);

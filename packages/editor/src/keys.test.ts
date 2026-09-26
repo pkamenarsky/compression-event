@@ -110,9 +110,9 @@ describe('keyframes', () => {
     for (const k of [0, 1, 2]) expectFrame(stateAt(out.world, id, k).frame, stateAt(w, id, k).frame);
   });
 
-  test('deleting an inserted keyframe gives back what there was, a repeat to the end', () => {
+  test('deleting an inserted keyframe gives back what there was', () => {
     const { world, id } = room();
-    const w = repeated(world, 1, id, spun(0.3), null);
+    const w = repeated(repeated(world, 1, id, spun(0.3), null), 1, id, move(5, 0), 4);
     const out = inserted(w, 2)!;
     const back = ok(deleted(out.world, out.key));
 
@@ -339,22 +339,24 @@ describe('keyframes', () => {
     expect(out.polygons.has(late.id)).toBe(false);
   });
 
-  test('a repeat a deleted keyframe was inside loses a step, and ends where it ended', () => {
+  test('a repeat a deleted keyframe was inside keeps its count, and ends a keyframe later', () => {
     const { world, id } = room();
     const w = repeated(world, 1, id, move(10, 0), 4);
     const out = ok(deleted(w, 2));
 
-    expect(listAt(out, 1, id)[0].times).toBe(3);
+    expect(listAt(out, 1, id)[0].times).toBe(4);
     expect(stateAt(out, id, 4).frame.t.x).toBe(30);
+    expect(stateAt(out, id, 5).frame.t.x).toBe(40);
   });
 
-  test('a repeat begun at a deleted keyframe begins at the next', () => {
+  test('a repeat begun at a deleted keyframe begins at the next, with its count', () => {
     const { world, id } = room();
     const out = ok(deleted(repeated(world, 2, id, move(10, 0), 3), 2));
 
-    expect(listAt(out, 3, id)[0].times).toBe(2);
+    expect(listAt(out, 3, id)[0].times).toBe(3);
     expect(stateAt(out, id, 4).frame.t.x).toBe(20);
-    expect(stateAt(out, id, 5).frame.t.x).toBe(20);
+    expect(stateAt(out, id, 5).frame.t.x).toBe(30);
+    expect(stateAt(out, id, 6).frame.t.x).toBe(30);
   });
 
   test('corner nudges at a deleted keyframe add to the next', () => {
