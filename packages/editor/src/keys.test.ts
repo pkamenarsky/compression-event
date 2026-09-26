@@ -92,7 +92,7 @@ describe('entries', () => {
 });
 
 describe('keyframes', () => {
-  test('an inserted keyframe is the one before over again, and nothing after it moves', () => {
+  test('an inserted keyframe is counted by the repeats running across it', () => {
     const { world, id } = room();
     let w = wrote(world, 2, id, turned(1, { x: 300, y: 0 }), moved(40, 0), scaled(2, 1));
 
@@ -104,43 +104,19 @@ describe('keyframes', () => {
     expect(out.world.keyframes.length).toBe(w.keyframes.length + 1);
     expect(out.world.keyframes[3].id).toBe(out.key);
     expect(out.world.keyframes.map(f => f.name)).toEqual(out.world.keyframes.map((_f, i) => `v${i}`));
-    expectSame(w, out.world, id);
-    expectFrame(stateAt(out.world, id, out.key).frame, stateAt(w, id, 2).frame);
-    expectFrame(stateAt(out.world, id, out.world.keyframes[4].id).frame, stateAt(w, id, 3).frame);
-    // Cut in two: up to v2, and the rest at the head of the keyframe after.
-    expect(listAt(out.world, 1, id)[0].times).toBe(2);
-    expect(listAt(out.world, 3, id).map(e => e.times)).toEqual([2, null]);
+    // Nothing written moves, and up to the new one nothing changes.
+    expect(out.world.rigs).toEqual(w.rigs);
+
+    for (const k of [0, 1, 2]) expectFrame(stateAt(out.world, id, k).frame, stateAt(w, id, k).frame);
   });
 
-  test('a repeat that has run out by then is left alone', () => {
+  test('deleting an inserted keyframe gives back what there was, a repeat to the end', () => {
     const { world, id } = room();
-    const w = repeated(world, 1, id, move(10, 0), 2);
-    const out = inserted(w, 3)!;
-
-    expect(listAt(out.world, 1, id)).toEqual(listAt(w, 1, id));
-    expect(listAt(out.world, 4, id)).toEqual([]);
-  });
-
-  test('a repeating corner nudge is cut in two too', () => {
-    const { world, id } = room();
-    const corner = world.polygons.get(id)!.points[0].id;
-    const rig = { ...rigOf(world, id), nudges: new Map([[corner, new Map([[1, repeating(move(5, 0), null)]])]]) };
-    const w = withRig(world, id, rig);
-    const out = inserted(w, 2)!;
-
-    for (const f of w.keyframes) {
-      expect(stateAt(out.world, id, f.id).corners.get(corner)).toEqual(stateAt(w, id, f.id).corners.get(corner));
-    }
-
-    expect(stateAt(out.world, id, out.key).corners.get(corner)).toEqual(stateAt(w, id, 2).corners.get(corner));
-  });
-
-  test('deleting an inserted keyframe gives back what there was', () => {
-    const { world, id } = room();
-    const w = repeated(world, 1, id, spun(0.3), 4);
+    const w = repeated(world, 1, id, spun(0.3), null);
     const out = inserted(w, 2)!;
     const back = ok(deleted(out.world, out.key));
 
+    expect(listAt(back, 1, id)).toEqual(listAt(w, 1, id));
     expectSame(w, back, id);
   });
 

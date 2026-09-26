@@ -11,8 +11,8 @@
 // order they were already in. See `PLAN-keys.md`.
 //
 // Keyframes come and go the same way. An inserted one is a keyframe where
-// nothing happens: every repeat running across it stops before it and carries
-// on after it, as a key of its own. A deleted one
+// nothing is written, and a repeat running across it counts it like any
+// other. A deleted one
 // hands what it does, and what is born and dies there, to the next, and a
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
@@ -583,59 +583,18 @@ function everyKey(rig: KeyRig, f: (key: Key, k: KeyframeId) => Key): KeyRig {
   return { keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(key => f(key, k))])) };
 }
 
-/**
- * Every repeat of a rig running past index `j` stopped there, and the rest of
- * it written at `next`, first in its list, from the step it had reached. At
- * the end of the keyframes, where there is no `next`, it just stops.
- */
-function cut(keyframes: readonly Keyframe[], rig: KeyRig, j: number, next: KeyframeId | undefined): KeyRig {
-  const keys = new Map<KeyframeId, readonly Key[]>(rig.keys);
-  const rest: Key[] = [];
-  let made = nextKey(rig);
-
-  // Oldest first, which is the order the steps play in.
-  const written = [...rig.keys].sort(([a], [b]) => indexIn(keyframes, a) - indexIn(keyframes, b));
-
-  for (const [k, list] of written) {
-    const i = indexIn(keyframes, k);
-
-    if (i > j) continue;
-
-    keys.set(k, list.map(e => {
-      if (e.stand !== undefined || !going(e, i, j)) return e;
-
-      const step = counted1(e, i, j);
-
-      rest.push({
-        ...e,
-        id: made++,
-        ...(e.by === undefined ? {} : { by: steppedBy(e.by, step) }),
-        times: e.times === null ? null : e.times - step,
-      });
-
-      return { ...e, times: step };
-    }));
-  }
-
-  if (next !== undefined && rest.length > 0) keys.set(next, [...rest, ...(keys.get(next) ?? [])]);
-
-  return { keys };
-}
-
 export interface Inserted {
   world: World
   key: KeyframeId
 }
 
 /**
- * A keyframe put in after `after`, where nothing happens.
+ * A keyframe put in after `after`, with nothing written at it.
  *
- * It is the keyframe before it over again, and every keyframe after it is
- * where it was: nothing is written there, and every repeat running across it
- * is cut in two — the steps up to `after`, and the rest as a key of its own at
- * the head of the keyframe after the new one, starting from the step it had
- * reached, so it plays first there as it did. What goes on at the new one is
- * then brought in by hand — pulled from the next keyframe, pushed from the one
+ * A repeat means so many keyframes from where it is written, and the new one
+ * is one of them: a repeat running across it takes a step there, and one that
+ * runs out ends a keyframe sooner than it did. What goes on at the new one is
+ * brought in by hand — pulled from the next keyframe, pushed from the one
  * before, or done there.
  */
 export function inserted(world: World, after: KeyframeId): Inserted | null {
@@ -646,11 +605,9 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
 
   const key = Math.max(...keyframes.map(f => f.id)) + 1;
 
-  const next = keyframes[j + 1]?.id;
-  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, cut(keyframes, rig, j, next)]));
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
-  return { world: { ...world, keyframes: order, rigs }, key };
+  return { world: { ...world, keyframes: order }, key };
 }
 
 /**
