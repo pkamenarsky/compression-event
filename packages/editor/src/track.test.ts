@@ -38,38 +38,38 @@ describe('rows', () => {
     expect(listAt(w, 2, made.id).map(e => e.op.kind)).toEqual(['stand']);
   });
 
-  test('the first key where a thing is born is folded into it, and a break there is shown', () => {
+  test('the first key where a thing is born is shown, and a break there shows the next beside it', () => {
     const { world, id } = room(emptyWorld(), 2);
     const made = wroteOne(world, 2, id, move(10, 0));
 
     expect(keysOfAt(made, 2, id)).toHaveLength(1);
-    expect(rowsOf(made, [id])[0].cells[2].places).toHaveLength(0);
+    expect(rowsOf(made, [id])[0].cells[2].places).toHaveLength(1);
 
     const cut = broken(made, 2, [id]);
 
-    expect(rowsOf(cut, [id])[0].cells[2].places).toHaveLength(1);
+    expect(rowsOf(cut, [id])[0].cells[2].places).toHaveLength(2);
 
-    // Broken before anything was written, the hidden key is made first.
+    // Broken before anything was written, the first key is made too.
     const bare = broken(world, 2, [id]);
 
     expect(keysOfAt(bare, 2, id)).toHaveLength(2);
-    expect(rowsOf(bare, [id])[0].cells[2].places).toHaveLength(1);
+    expect(rowsOf(bare, [id])[0].cells[2].places).toHaveLength(2);
   });
 
-  test('a group hides its first key where it was made, and a break there is shown', () => {
+  test('a group shows its first key where it was made', () => {
     const a = room();
     const b = room(a.world);
     const made = grouped(b.world, 3, [a.id, b.id], TOP)!;
     const moved = wroteOne(made.world, 3, made.id, move(10, 0));
 
-    expect(rowsOf(moved, [made.id])[0].cells[3].places).toHaveLength(0);
-    expect(rowsOf(broken(moved, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(1);
-    expect(rowsOf(broken(made.world, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(1);
+    expect(rowsOf(moved, [made.id])[0].cells[3].places).toHaveLength(1);
+    expect(rowsOf(broken(moved, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(2);
+    expect(rowsOf(broken(made.world, 3, [made.id]), [made.id])[0].cells[3].places).toHaveLength(2);
 
     // Made at the first keyframe, as every group kept before it said.
     const first = grouped(b.world, 0, [a.id, b.id], TOP)!;
 
-    expect(rowsOf(broken(first.world, 0, [first.id]), [first.id])[0].cells[0].places).toHaveLength(1);
+    expect(rowsOf(broken(first.world, 0, [first.id]), [first.id])[0].cells[0].places).toHaveLength(2);
   });
 
   test('the rightmost repeat has the nearest lane', () => {

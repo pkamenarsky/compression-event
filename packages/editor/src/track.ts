@@ -24,7 +24,7 @@ import {
   keysAt,
   kindOf,
 } from './rig';
-import { artefactsAt, bornAt, hitPolygons, keyRigOf, layerNamer, pathsAt, resolveAt } from './scene';
+import { artefactsAt, hitPolygons, keyRigOf, layerNamer, pathsAt, resolveAt } from './scene';
 import { EditorState, Flags, Id, LayerId, Selection, VertexId, World, enclosing, flagsOf, kindName } from './types';
 
 export type Kind = Op['kind'] | AmountKind | 'corners';
@@ -159,10 +159,9 @@ function cellsOf(world: World, id: Id): Cell[] {
 
   return world.keyframes.map((f, i) => {
     const list = keysAt(rig, f.id);
-    // The first key where it is born is folded into it rather than shown: it
-    // is how the thing was made, not something it does. See `broken`.
-    const hidden = f.id === bornAt(world, id) ? 0 : -1;
-    const shown = list.flatMap((key, n) => (n !== hidden && key.stand === undefined && key.by !== undefined ? [n] : []));
+    // The first key where it is born is shown like any other: it is how the
+    // thing was made, and after a break it is still there to be adjusted.
+    const shown = list.flatMap((key, n) => (key.stand === undefined && key.by !== undefined ? [n] : []));
 
     return {
       places: shown.map(n => ({ id, at: f.id, key: list[n].id })),
