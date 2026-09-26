@@ -3,12 +3,12 @@
 * TODO remove tension from round
 * TODO noise default in deform, jitter at 100 or something
 * TODO precision in round higher -> more polys, not fewer
-
 * TODO text in 3d view (replace up down arrows by left right)
+* TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor and labeling the two amounts clearly, it's very confusing currently
+* TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
+
 * TODO multithread baking - each version in separate thread; show baked versions in timeline as they arrive
 * TODO 3d view from upper right corner and resizable
-* TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
-* TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
 
 * Before the final level file format
 ** TODO bake accuracy (displayed in the editor as well) - the platform won't let you publish a level if bake accuracy isn't highest
