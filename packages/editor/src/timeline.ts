@@ -38,7 +38,7 @@
 // of the keyframe on screen. ⌥Delete drops what it is on — the keys, or the
 // keyframe and all that is written at it — and Delete alone is the canvas'.
 // Dragging an icon a keyframe along pushes or pulls it, and what is picked
-// with it. The grip at the start of a thing's life drags its birth along, and
+// with it; let go on another key of its row, it merges into that one. The grip at the start of a thing's life drags its birth along, and
 // its story with it; the one at the end drags its death. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
@@ -64,6 +64,7 @@ import {
   entryAt,
   insertedBefore,
   keyInserted,
+  merged,
   pulledAt,
   pushedAt,
   reborn,
@@ -770,15 +771,24 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
       // Where the icon was let go rather than the pointer, which holds it off
       // centre and can be past where the icon was held back to.
       const x = placed(m, r, col, i);
+      //
+      // Let go on another key of its row, it merges into that one instead.
       const moved = (_up: PointerEvent, dx: number) => {
         const w = ctx.state().world;
+        const onto = keyUnder(m, r, x + dx, place);
+
+        if (onto !== null) {
+          if ('key' in place && 'key' in onto) ctx.acted(merged(w, place, onto));
+          return;
+        }
+
         const to = colIn(m, x + dx);
         const going = picked && m.picked !== null ? m.picked.all : [place];
 
-        if (to > col) {
+        if (to === col + 1) {
           ctx.acted(pushedAt(w, going));
         }
-        else if (to < col) {
+        else if (to === col - 1) {
           ctx.acted(pulledAt(w, going));
         }
       };
@@ -799,13 +809,7 @@ function cell(ctx: Ctx, m: Model, r: Row, col: number, c: Cell): VNode {
         onpointerenter: (e: PointerEvent) => {
           (e.currentTarget as HTMLElement).title = entryTitle(ctx, place);
         },
-        onpointerdown: (e: PointerEvent) => {
-          const w = ctx.state().world;
-          const going = picked && m.picked !== null ? m.picked.all : [place];
-          const ok = (c: number) => takes(c > col ? pushedAt(w, going) : pulledAt(w, going));
-
-          dragged(e, click, moved, reach(m, r, col, x, reachable(m, col, c => Math.abs(c - col) === 1 && ok(c))));
-        },
+        onpointerdown: (e: PointerEvent) => dragged(e, click, moved, alongRow(m, x)),
       });
     }),
   ]);
@@ -820,22 +824,24 @@ function entryTitle(ctx: Ctx, place: Place): string {
   return e === undefined ? '' : entryLabel(e, layerNamer(world, place.id));
 }
 
-/**
- * How far a key at `x` in `col` can be dragged and still land somewhere: back
- * to after the last key of the keyframe before, on to before the first of the
- * one after — a drop is a pull or a push by one keyframe, and nothing further.
- * Where `can` does not reach that way, no further than its own.
- */
-function reach(m: Model, r: Row, col: number, x: number, can: { a: number, b: number }): { lo: number, hi: number } {
-  const n = r.cells[col - 1]?.places.length ?? 0;
-  const lo = can.a === col
-    ? m.xs[col] + 1
-    : Math.min(m.xs[col - 1] + m.widths[col - 1] - 1, n === 0 ? slot(m, col - 1, 0) : placed(m, r, col - 1, n - 1) + SLOT / 2);
-  const hi = can.b === col
-    ? m.xs[col] + m.widths[col] - 1
-    : Math.max(m.xs[col + 1] + 1, slot(m, col + 1, 0) - SLOT / 2);
+/** How far a key at `x` can be dragged: anywhere along the columns, since
+ * any key of its row can be merged into. */
+function alongRow(m: Model, x: number): { lo: number, hi: number } {
+  const n = m.xs.length - 1;
 
-  return { lo: lo - x, hi: hi - x };
+  return { lo: m.xs[0] + 1 - x, hi: m.xs[n] + m.widths[n] - 1 - x };
+}
+
+/** The key of row `r` under a point along the timeline, other than `self`,
+ * or nothing. */
+function keyUnder(m: Model, r: Row, x: number, self: Place): Place | null {
+  for (const [col, c] of r.cells.entries()) {
+    for (const [i, p] of c.places.entries()) {
+      if (!samePlace(p, self) && Math.abs(placed(m, r, col, i) - x) <= SLOT / 2) return p;
+    }
+  }
+
+  return null;
 }
 
 /**

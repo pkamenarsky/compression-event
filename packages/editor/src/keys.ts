@@ -28,6 +28,7 @@ import {
   Typed,
   blankKeys,
   counted1,
+  foldedBy,
   heldOf,
   indexIn,
   keyOnce,
@@ -526,6 +527,64 @@ export function keyInserted(world: World, id: Id, k: KeyframeId, index: number):
     world: withKeyRig(world, id, withKeysAt(rig, k, [...list.slice(0, at), key, ...list.slice(at)])),
     place: { id, at: k, key: key.id },
   };
+}
+
+/**
+ * The key at `from` merged into the one at `into`, of the same thing: one key
+ * where `into` was, doing what the two did, the one earlier in the timeline
+ * first. Refused where they cannot be one — a repeat or an unchaining, or two
+ * that turn or stretch about different points or axes. See `foldedBy`.
+ */
+export function merged(world: World, from: Listed, into: Listed): World | Refused {
+  if (from.id !== into.id) return { refused: 'a key merges only with a key of the same thing' };
+  if (samePlace(from, into)) return world;
+
+  const a = entryAt(world, from), b = entryAt(world, into);
+
+  if (a === undefined || b === undefined) return world;
+  if (a.stand !== undefined || b.stand !== undefined) return { refused: 'an unchaining does not merge' };
+  if (a.times !== 1 || b.times !== 1 || a.skip !== undefined || b.skip !== undefined) {
+    return { refused: 'a repeating key does not merge' };
+  }
+
+  const i = indexIn(world.keyframes, from.at), j = indexIn(world.keyframes, into.at);
+  const [first, then] = i < j || (i === j && placed(world, from) < placed(world, into)) ? [a, b] : [b, a];
+
+  let ref = first.ref;
+  let by = first.by;
+
+  if (by === undefined) {
+    ref = then.ref;
+    by = then.by;
+  }
+  else if (then.by !== undefined) {
+    const both = foldedBy(first, then.ref, then.by);
+
+    if (both === null) return { refused: 'these two keys do not make one' };
+
+    ref = both === 'gone' ? first.ref : both.ref;
+    by = both === 'gone' ? NOTHING : both.by;
+  }
+
+  const corners = new Map(first.corners ?? []);
+
+  for (const [v, d] of then.corners ?? []) {
+    const there = corners.get(v);
+
+    corners.set(v, there === undefined ? d : { x: there.x + d.x, y: there.y + d.y });
+  }
+
+  const key: Key = {
+    ...b,
+    ref,
+    ...(by === undefined ? {} : { by }),
+    ...(corners.size === 0 ? {} : { corners }),
+  };
+
+  if (by === undefined) delete key.by;
+  if (corners.size === 0) delete key.corners;
+
+  return rewritten(rewritten(world, into, key), from, null);
 }
 
 // -----------------------------------------------------------------------------

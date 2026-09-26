@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, merged, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -249,6 +249,32 @@ describe('keyframes', () => {
     expect(list[1].id).toBe(out.place.key);
     expectFrame(stateAt(out.world, id, 2).frame, stateAt(w, id, 2).frame);
     expect('refused' in keyInserted(w, id, 1, 0)).toBe(true);
+  });
+
+  test('two keys of a thing merge into one where the later was, doing both', () => {
+    const { world, id } = room();
+    const w = wrote(wrote(world, 1, id, move(5, 0), turned(0.3)), 2, id, move(0, 9));
+    const [m, t] = keysOfAt(w, 1, id);
+    const out = ok(merged(w, { id, at: 1, key: m.id }, { id, at: 1, key: t.id }));
+
+    expect(keysOfAt(out, 1, id).map(k => k.id)).toEqual([t.id]);
+    expectFrame(stateAt(out, id, 1).frame, stateAt(w, id, 1).frame);
+
+    const n = keysOfAt(w, 2, id)[0];
+    const across = ok(merged(w, { id, at: 2, key: n.id }, { id, at: 1, key: m.id }));
+
+    expect(keysOfAt(across, 2, id)).toHaveLength(0);
+    expect(keysOfAt(across, 1, id)).toHaveLength(2);
+    expectFrame(stateAt(across, id, 2).frame, stateAt(w, id, 2).frame);
+  });
+
+  test('keys of different things do not merge', () => {
+    const a = room();
+    const b = room(a.world);
+    const w = wrote(wrote(b.world, 1, a.id, move(5, 0)), 1, b.id, move(1, 0));
+    const out = merged(w, { id: a.id, at: 1, key: keysOfAt(w, 1, a.id)[0].id }, { id: b.id, at: 1, key: keysOfAt(w, 1, b.id)[0].id });
+
+    expect('refused' in out).toBe(true);
   });
 
   test('a keyframe dropped rather than handed on takes what it does with it', () => {
