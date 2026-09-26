@@ -389,7 +389,7 @@ function body(ctx: Ctx, m: Model): VNode {
 
   const n = m.keyframes.length;
   const width = m.xs[n - 1] + m.widths[n - 1] + 8;
-  const height = HEAD + (m.rows.length === 0 ? ROW : m.rows.reduce((h, r) => h + heightOf(r), 0)) + 4;
+  const height = HEAD + (m.rows.length === 0 ? ROW : m.rows.reduce((h, r) => h + heightOf(r), 0)) + 12;
 
   return div(
     {
