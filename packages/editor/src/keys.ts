@@ -505,6 +505,21 @@ function sameRepeat(a: Repeat, b: Repeat): boolean {
 }
 
 /**
+ * A thing just made, with its first key open where it is born: empty, drawn
+ * in its row from the start, and what its first gesture goes into. `world`
+ * itself where it has one there already.
+ */
+export function firstKeyed(world: World, id: Id): World {
+  const born = world.keyframes[bornAt(world, id)]?.id;
+
+  if (born === undefined || listOf(world, id, born).length > 0) return world;
+
+  const rig = keyRigOf(world, id);
+
+  return withKeyRig(world, id, withKeysAt(rig, born, [keyOnce(nextKey(rig), REST.t, NOTHING)]));
+}
+
+/**
  * An empty key put in `id`'s list at `k`, before the `index`-th — at the end
  * where that is past the last, and never ahead of a stand, which is the
  * list's head. Its place, or why there is none: a thing takes no key where it

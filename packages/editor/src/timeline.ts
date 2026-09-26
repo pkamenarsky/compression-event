@@ -63,6 +63,7 @@ import {
   deleted,
   droppedAt,
   entryAt,
+  inserted,
   insertedBefore,
   keyInserted,
   merged,
@@ -1134,14 +1135,14 @@ export function keyframeInsertedHere(s: EditorState): EditorState {
 }
 
 /**
- * An empty key put in before what the needle is on, and the hand on it.
+ * An empty key put in beside what the needle is on, and the hand on it.
  *
- * On keys, one before each of them. On a keyframe, which is before its keys,
- * one at the end of the keyframe before for each thing picked — and where
- * there is none before, a keyframe is put in front of it first. See
- * `keyInserted` in `keys.ts`.
+ * On keys, one before or after each of them. On a keyframe, which is before
+ * its keys: after is at the front of its own list for each thing picked, and
+ * before is at the end of the keyframe before — where there is none, a
+ * keyframe is put in front of it first. See `keyInserted` in `keys.ts`.
  */
-export function keyInsertedHere(s: EditorState): EditorState {
+export function keyInsertedHere(s: EditorState, after: boolean): EditorState {
   const t = s.target;
 
   if (t !== null) {
@@ -1152,7 +1153,7 @@ export function keyInsertedHere(s: EditorState): EditorState {
       if (!('key' in p)) continue;
 
       const index = keysAt(keyRigOf(world, p.id), p.at).findIndex(key => key.id === p.key);
-      const out = keyInserted(world, p.id, p.at, index);
+      const out = keyInserted(world, p.id, p.at, after ? index + 1 : index);
 
       if ('refused' in out) return saying(s, out.refused);
 
@@ -1172,7 +1173,7 @@ export function keyInsertedHere(s: EditorState): EditorState {
   if (ids.length === 0) return saying(s, 'nothing picked to take a key');
 
   let world = s.world;
-  let at = s.world.keyframes[order(s.world, s.keyframe) - 1]?.id;
+  let at: KeyframeId | undefined = after ? s.keyframe : s.world.keyframes[order(s.world, s.keyframe) - 1]?.id;
 
   if (at === undefined) {
     const out = insertedBefore(world, s.keyframe);
@@ -1186,7 +1187,7 @@ export function keyInsertedHere(s: EditorState): EditorState {
   const made: Place[] = [];
 
   for (const id of ids) {
-    const out = keyInserted(world, id, at, Infinity);
+    const out = keyInserted(world, id, at, after ? 0 : Infinity);
 
     if ('refused' in out) continue;
 
@@ -1194,9 +1195,21 @@ export function keyInsertedHere(s: EditorState): EditorState {
     made.push(out.place);
   }
 
-  if (made.length === 0) return saying(s, 'nothing picked is there in the keyframe before');
+  if (made.length === 0) return saying(s, 'nothing picked is there to take a key');
 
   return marked({ ...s, world, keyframe: at, target: { lead: made[0], all: made }, replay: null }, s.world);
+}
+
+/**
+ * A keyframe put in after the one on screen, and stood in: one where nothing
+ * happens yet. See `inserted` in `keys.ts`.
+ */
+export function keyframeInsertedAfter(s: EditorState): EditorState {
+  const out = inserted(s.world, s.keyframe);
+
+  if (out === null) return s;
+
+  return marked({ ...s, world: out.world, keyframe: out.key, target: null, replay: null }, s.world);
 }
 
 /**

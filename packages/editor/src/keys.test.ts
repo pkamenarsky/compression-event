@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, merged, mergedKeyframes, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, firstKeyed, inserted, insertedBefore, keyInserted, listedAt, merged, mergedKeyframes, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -292,6 +292,15 @@ describe('keyframes', () => {
     }
 
     expect('refused' in mergedKeyframes(w, 1, 3)).toBe(true);
+  });
+
+  test('a thing just made has its first key open and empty where it is born, once', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const out = firstKeyed(world, id);
+
+    expect(keysOfAt(out, 2, id)).toHaveLength(1);
+    expectFrame(stateAt(out, id, 2).frame, stateAt(world, id, 2).frame);
+    expect(firstKeyed(out, id)).toBe(out);
   });
 
   test('a keyframe dropped rather than handed on takes what it does with it', () => {

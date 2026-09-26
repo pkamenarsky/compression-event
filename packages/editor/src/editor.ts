@@ -22,7 +22,6 @@ import {
   stamped,
   unchained,
   ungrouping,
-  broken,
   split,
 } from './scene';
 import { Game, play } from '@ce/game';
@@ -31,7 +30,7 @@ import { download, upload } from './save';
 import { flattenInto } from './resolve';
 import { picker } from './picker';
 import { inspector } from './inspector';
-import { droppedHere, keyInsertedHere, timeline } from './timeline';
+import { droppedHere, keyInsertedHere, keyframeInsertedAfter, keyframeInsertedHere, timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
@@ -63,7 +62,7 @@ import {
   within,
   picks,
 } from './types';
-import { aimed, aiming, lastKeys, newKeys, reborn } from './keys';
+import { aimed, aiming, firstKeyed, newKeys, reborn } from './keys';
 import { steppedKey } from './track';
 
 /**
@@ -589,8 +588,8 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       e.preventDefault();
 
       if (e.code === 'KeyI') {
-        // A key before the needle's — see `keyInsertedHere`.
-        update(keyInsertedHere);
+        // A keyframe after the one on screen, or with ⇧ before it.
+        update(e.shiftKey ? keyframeInsertedHere : keyframeInsertedAfter);
       }
       else if (e.code === 'KeyZ') {
         // Cmd+Shift+Z is redo everywhere a Mac is involved, and Cmd+Y is redo
@@ -610,7 +609,9 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
         update(s => shut(s, !e.shiftKey));
       }
       else if (e.code === 'KeyK') {
-        update(s => (e.shiftKey ? cut(s) : ended(s)));
+        // A key after what the needle is on, or with ⇧ before it — see
+        // `keyInsertedHere`.
+        update(s => keyInsertedHere(s, !e.shiftKey));
       }
       else if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
         update(s => rebirthed(s, e.code === 'BracketRight' ? 1 : -1));
@@ -667,30 +668,6 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       }
     }
   });
-}
-
-/**
- * The picked things' key at the keyframe on screen closed: what is done next
- * there is a key of its own rather than more of this one. See `broken`.
- *
- * Not an edit of what the world does — a closed key plays exactly as it did —
- * so it is not a gesture and writes no gesture id. It is in the history all
- * the same: undo takes back the break.
- */
-function ended(s: EditorState): EditorState {
-  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
-  const world = broken(s.world, s.keyframe, ids);
-
-  // On the empty keys: the next thing done fills them.
-  return world === s.world
-    ? s
-    : {
-      ...s,
-      world,
-      target: aiming(lastKeys(world, s.keyframe, ids)),
-      status: null,
-      history: { past: [...s.history.past, s.world], future: [] },
-    };
 }
 
 /**
@@ -800,7 +777,7 @@ function joining(s: EditorState, sealed: boolean): EditorState | null {
   return marked(
     {
       ...s,
-      world: sealed ? sealing(made.world, made.id, true) : made.world,
+      world: firstKeyed(sealed ? sealing(made.world, made.id, true) : made.world, made.id),
       selection: {
         ...s.selection,
         polygons: [made.id],

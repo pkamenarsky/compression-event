@@ -97,7 +97,7 @@ import {
   setPath,
 } from '../paths';
 import { beneath } from '../track';
-import { Listed, aiming } from '../keys';
+import { Listed, aiming, firstKeyed } from '../keys';
 import { Amount, Op as Operation } from '../rig';
 import {
   AmountKind,
@@ -915,7 +915,7 @@ export function worldCanvas(
         );
 
         return marked(
-          { ...s, world, selection: { ...dropped(s.selection), artefacts: [id] } },
+          { ...s, world: firstKeyed(world, id), selection: { ...dropped(s.selection), artefacts: [id] } },
           s.world,
         );
       });
@@ -960,7 +960,7 @@ export function worldCanvas(
         );
 
         return marked(
-          { ...s, world, selection: { ...s.selection, polygons: [id] } },
+          { ...s, world: firstKeyed(world, id), selection: { ...s.selection, polygons: [id] } },
           s.world,
         );
       });
@@ -1278,18 +1278,23 @@ export function worldCanvas(
         // way a dropped artefact is; one being carried on with is placed by
         // the frame it already stands in.
         const world = w.id === null
-          ? addPath(
+          ? laidOut(addPath(
             s.world,
             w.points,
             s.keyframe,
             landing(s.world, s.keyframe, s.inside),
-          ).world
+          ))
           : setPath(s.world, w.id, own(s, w.id, w.points));
 
         return marked({ ...s, world }, s.world);
       });
 
       dropWalk();
+    }
+
+    /** A path just laid, with its first key open. See `firstKeyed`. */
+    function laidOut({ world, id }: { world: World, id: PathId }): World {
+      return firstKeyed(world, id);
     }
 
     /** The paths as the version on screen leaves them: where they run, which
