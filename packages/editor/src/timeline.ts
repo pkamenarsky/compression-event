@@ -417,8 +417,6 @@ function body(ctx: Ctx, m: Model): VNode {
         ? [box({ left: `${m.xs[i] - 1}px`, top: `${HEAD}px`, width: '3px', height: `${height - HEAD}px`, background: theme.gone, borderRadius: '2px' }, [], { title: 'Unchained here' })]
         : [])),
 
-      ...m.xs.map(x => box({ left: `${x}px`, top: '0', width: '1px', height: `${height}px`, background: theme.border, opacity: 0.5 })),
-
       head(ctx, m, width),
 
       ...m.rows.map(r => row(ctx, m, r)),
@@ -498,7 +496,6 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
       width: `${width}px`,
       height: `${HEAD}px`,
       background: theme.panel,
-      borderBottom: `1px solid ${theme.border}`,
       zIndex: 3,
       boxSizing: 'border-box',
     },
