@@ -184,11 +184,11 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
   };
 
   // Merged first, where there are enough pieces for their crossings to be
-  // the cost; see `mergeBands`. What is merged has no inert edges left to name:
+  // the cost; see `MERGED`. What is merged has no inert edges left to name:
   // a spoke with band both sides is gone, and a wall where it stood is the
   // shape's own edge again, which the cut settles as a shared edge.
   const cut = (out: Drawn, pieces: Shape, from: Sweptfrom[][], along: Sweptfrom[][], op: Op): Drawn => {
-    if (mergingBands && pieces.length >= MERGED) {
+    if (pieces.length >= MERGED) {
       let rank = 0;
       const band = merged(pieces.map((ring, r) => ({
         drawn: side([ring], [from[r]], [along[r]]),
@@ -221,14 +221,6 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
  * and what reaches the cut is those runs' outlines.
  */
 const MERGED = 16;
-
-/** Whether bands are merged at all. Off, a band is cut whole as it always was:
- * here to measure the two against each other. */
-let mergingBands = true;
-
-export function mergeBands(on: boolean): void {
-  mergingBands = on;
-}
 
 /**
  * The pieces merged a run of `CHUNK` neighbours at a time, since a band's

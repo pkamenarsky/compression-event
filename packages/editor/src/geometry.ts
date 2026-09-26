@@ -1217,55 +1217,6 @@ interface Strips {
   h: number
   start: Int32Array
   items: Int32Array
-  /** Where the edges of strip `s` that cross it whole begin: before it, those
-   * to ask one by one. See `CROWDED`. */
-  mid: Int32Array
-  /** Of an edge crossing its strip whole, the least and most `x` it takes
-   * there, widened a little, and which way it goes. Beside `items`. */
-  xlo: Float64Array
-  xhi: Float64Array
-  dir: Int8Array
-  /** Per crowded strip, its whole edges filed by `xlo` into columns. */
-  cols: (Columns | undefined)[]
-  /** How far an `x` is widened to be sure of its side. */
-  mx: number
-}
-
-/**
- * A crowded strip's whole edges by where they begin: column `c` is
- * `items[start[c]]` up to `items[start[c + 1]]`, those whose `xlo` falls in
- * `x0 + c * w` onwards, and `right[c]` is what columns `c` onwards add to a
- * ray starting left of them all.
- */
-interface Columns {
-  x0: number
-  w: number
-  start: Int32Array
-  right: Int32Array
-  /** The widest of them. */
-  reach: number
-}
-
-/** How many edges a strip holds before those crossing it whole are filed
- * rather than walked.
- *
- * An erosion's band is spokes standing on each other, a strip of it held a
- * hundred and eighty of them, and every piece of the arrangement read it twice
- * over. An edge that crosses the strip from below to above counts for any `p`
- * in it as its direction if it passes wholly to the right of `p`, and nothing
- * if wholly to the left; only those passing `p` itself need `turn`. So they are
- * filed by where they begin, in columns about one edge wide; the columns right
- * of `p`'s are counted in one read, and the few in its column or reaching it
- * from further left are asked as before. The margins make "wholly" mean it: an edge
- * whose side of `p` a rounding could change is asked. */
-const CROWDED = 32;
-
-/** Whether crowded strips are filed at all. Off, every strip is walked edge by
- * edge as it always was: here to measure the two against each other. */
-let filingCrowds = true;
-
-export function fileCrowds(on: boolean): void {
-  filingCrowds = on;
 }
 
 /** How many strips, for `n` edges: few enough that a tall edge is not filed a
@@ -1305,104 +1256,7 @@ function stripsOf(boxes: Float64Array, n: number): Strips {
     for (let s = of(boxes[i * 4 + 1]), e = of(boxes[i * 4 + 3]); s <= e; s++) items[at[s]++] = i;
   }
 
-  let left = Infinity, right = -Infinity;
-
-  for (let i = 0; i < n; i++) {
-    left = Math.min(left, boxes[i * 4]);
-    right = Math.max(right, boxes[i * 4 + 2]);
-  }
-
-  // Crowded strips are sorted when a point first lands in one: a field is
-  // often made for a handful of questions, and most of its strips are never
-  // asked. `-1` is not yet.
-  const mid = new Int32Array(count);
-
-  for (let s = 0; s < count; s++) mid[s] = !filingCrowds || start[s + 1] - start[s] < CROWDED ? start[s + 1] : -1;
-
-  const empty = new Float64Array(0);
-
-  return {
-    lo, h, start, items, mid,
-    xlo: empty, xhi: empty, dir: new Int8Array(0), cols: [],
-    mx: 1e-7 * (1 + (hi - lo) + (right - left)),
-  };
-}
-
-/** Strip `s` split into the asked and the filed whole. See `CROWDED`. */
-function crowd(st: Strips, edges: Float64Array, s: number): void {
-  const { lo, h, start, items, mid, mx } = st;
-
-  if (st.xlo.length === 0) {
-    st.xlo = new Float64Array(items.length);
-    st.xhi = new Float64Array(items.length);
-    st.dir = new Int8Array(items.length);
-  }
-
-  const { xlo, xhi, dir } = st;
-  const from = start[s], to = start[s + 1];
-  const my = h * 1e-6;
-  const y0 = lo + s * h - my, y1 = lo + (s + 1) * h + my;
-  // The asked from the front and the whole from the back, in place: the
-  // strip's own slice of `items` is exactly big enough for both.
-  const was = items.slice(from, to);
-  let front = from, back = to, least = Infinity, most = -Infinity, reach = 0;
-
-  for (let k = 0; k < was.length; k++) {
-    const i = was[k], at = i * 4;
-    const ax = edges[at], ay = edges[at + 1], bx = edges[at + 2], by = edges[at + 3];
-
-    if (Math.min(ay, by) < y0 && Math.max(ay, by) > y1) {
-      const x0 = ax + (bx - ax) * ((y0 - ay) / (by - ay));
-      const x1 = ax + (bx - ax) * ((y1 - ay) / (by - ay));
-      const a = Math.min(x0, x1) - mx, b = Math.max(x0, x1) + mx;
-
-      if (b - a <= 4 * h) {
-        back--;
-        items[back] = i;
-        xlo[back] = a;
-        xhi[back] = b;
-        dir[back] = ay < by ? 1 : -1;
-        least = Math.min(least, a);
-        most = Math.max(most, a);
-        reach = Math.max(reach, b - a);
-        continue;
-      }
-    }
-
-    items[front++] = i;
-  }
-
-  mid[s] = back;
-
-  const n = to - back;
-  const count = Math.max(1, n);
-  const w = most > least ? (most - least) / count : 1;
-  const of = (x: number) => Math.min(count - 1, Math.max(0, Math.floor((x - least) / w)));
-  const cols = new Int32Array(count + 1);
-
-  for (let k = back; k < to; k++) cols[of(xlo[k]) + 1]++;
-
-  for (let c = 0; c < count; c++) cols[c + 1] += cols[c];
-
-  const at = cols.slice(0, count);
-  const ids = items.slice(back, to), los = xlo.slice(back, to), his = xhi.slice(back, to), ds = dir.slice(back, to);
-  const right = new Int32Array(count + 1);
-
-  for (let k = 0; k < n; k++) {
-    const c = of(los[k]), j = back + at[c]++;
-
-    items[j] = ids[k];
-    xlo[j] = los[k];
-    xhi[j] = his[k];
-    dir[j] = ds[k];
-    right[c] += ds[k];
-  }
-
-  for (let c = count - 1; c >= 0; c--) right[c] += right[c + 1];
-
-  for (let c = 0; c <= count; c++) cols[c] += back;
-
-  st.cols[s] = { x0: least, w, start: cols, right, reach };
+  return { lo, h, start, items };
 }
 
 export function field(shape: Shape): Field {
@@ -1438,73 +1292,34 @@ export function field(shape: Shape): Field {
 
 export function fieldWinding(f: Field, p: Point): number {
   const e = f.edges;
-  const st = f.strips;
-  const { lo, h, start, items, mid } = st;
+  const { lo, h, start, items } = f.strips;
   const px = p.x, py = p.y;
   const count = start.length - 1;
   const s = Math.min(count - 1, Math.max(0, Math.floor((py - lo) / h)));
-
-  if (mid[s] < 0) crowd(st, e, s);
-
-  const through = mid[s];
   let w = 0;
 
-  // The edges crossing the strip whole: the columns right of `p`'s counted in
-  // one read, since everything filed there begins right of it, and the rest
-  // asked back as far as the widest could reach from. See `CROWDED`.
-  const cs = st.cols[s];
+  // Every edge the ray could meet is in this strip. `turn`, written out: this
+  // is asked twice for every piece of every arrangement, and the two points it
+  // wanted per edge were a good part of what it cost. Its arithmetic to the
+  // letter.
+  for (let k = start[s], stop = start[s + 1]; k < stop; k++) {
+    const at = items[k] * 4;
+    const ax = e[at], ay = e[at + 1], bx = e[at + 2], by = e[at + 3];
 
-  if (cs !== undefined) {
-    const { xlo, xhi, dir } = st;
-    const last = cs.start.length - 2;
-    const of = (x: number) => Math.floor((x - cs.x0) / cs.w);
-    const c = of(px);
+    // Behind the ray's start, which the tree never handed over. Mathematically
+    // `turn` says nought to these anyway; with `p` a rounding to the right of
+    // an end it might not, and the tree's answer is the one to keep.
+    if (ax < px && bx < px) continue;
 
-    if (c < 0) {
-      w += cs.right[0];
+    if (ay <= py) {
+      if (by > py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) > 0) w += 1;
     }
     else {
-      const here = Math.min(c, last);
-
-      w += cs.right[here + 1];
-
-      for (let j = cs.start[here + 1] - 1, stop = cs.start[Math.max(0, Math.min(last, of(px - cs.reach)))]; j >= stop; j--) {
-        if (xlo[j] > px) {
-          w += dir[j];
-        }
-        else if (xhi[j] >= px) {
-          w += across(e, items[j] * 4, px, py);
-        }
-      }
+      if (by <= py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) < 0) w -= 1;
     }
   }
 
-  // Every other edge the ray could meet is in this strip.
-  for (let j = start[s]; j < through; j++) w += across(e, items[j] * 4, px, py);
-
   return w;
-}
-
-/** What the edge at `at` adds to the winding of `p`: `turn`, written out. This
- * is asked twice for every piece of every arrangement, and the two points it
- * wanted per edge were a good part of what it cost. Its arithmetic to the
- * letter. */
-function across(e: Float64Array, at: number, px: number, py: number): number {
-  const ax = e[at], ay = e[at + 1], bx = e[at + 2], by = e[at + 3];
-
-  // Behind the ray's start, which the tree never handed over. Mathematically
-  // `turn` says nought to these anyway; with `p` a rounding to the right of
-  // an end it might not, and the tree's answer is the one to keep.
-  if (ax < px && bx < px) return 0;
-
-  if (ay <= py) {
-    if (by > py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) > 0) return 1;
-  }
-  else {
-    if (by <= py && (bx - ax) * (py - ay) - (px - ax) * (by - ay) < 0) return -1;
-  }
-
-  return 0;
 }
 
 /** Nonzero fill, over a prepared shape. */
@@ -2081,7 +1896,7 @@ export function combineTagged(
  * edge order. A shape merged ahead of the arrangement hands over the same
  * pieces in another order, and the same rings come back started elsewhere and
  * in another order — which is not nothing, since a resolve numbers what it
- * meets in the order it meets it. See `mergeBands`.
+ * meets in the order it meets it. See `MERGED` in `effect.ts`.
  */
 export type Origin = (edge: SourceRef) => { rank: number, from: Point }
 
