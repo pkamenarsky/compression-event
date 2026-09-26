@@ -389,7 +389,7 @@ function body(ctx: Ctx, m: Model): VNode {
 
   const n = m.keyframes.length;
   const width = m.xs[n - 1] + m.widths[n - 1] + 8;
-  const height = HEAD + m.rows.reduce((h, r) => h + heightOf(r), 0) + 4;
+  const height = HEAD + (m.rows.length === 0 ? ROW : m.rows.reduce((h, r) => h + heightOf(r), 0)) + 4;
 
   return div(
     {
@@ -422,6 +422,9 @@ function body(ctx: Ctx, m: Model): VNode {
       head(ctx, m, width),
 
       ...m.rows.map(r => row(ctx, m, r)),
+
+      // With nothing picked, the keyframes are still there to be named.
+      ...(m.rows.length === 0 ? [line(m.keyframes.map((f, i) => column(ctx, m, f, i)))] : []),
     ],
   );
 }
@@ -579,7 +582,7 @@ function row(ctx: Ctx, m: Model, r: Row): VNode {
 
       ...(r.corner === null ? switches(ctx, r) : []),
     ]),
-  ], { height: `${heightOf(r)}px`, borderTop: `1px solid ${theme.border}`, boxSizing: 'border-box' });
+  ], { height: `${heightOf(r)}px` });
 }
 
 /**
