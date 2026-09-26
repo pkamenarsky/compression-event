@@ -28,6 +28,7 @@ import {
   Typed,
   blankKeys,
   counted1,
+  emptyBeside,
   foldedBy,
   heldOf,
   indexIn,
@@ -536,6 +537,10 @@ export function keyInserted(world: World, id: Id, k: KeyframeId, index: number):
   const rig = keyRigOf(world, id);
   const list = keysAt(rig, k);
   const at = Math.max(stands(list), Math.min(index, list.length));
+  const there = emptyBeside(list, at);
+
+  if (there !== undefined) return { world, place: { id, at: k, key: there.id } };
+
   const key = keyOnce(nextKey(rig), REST.t, NOTHING);
 
   return {

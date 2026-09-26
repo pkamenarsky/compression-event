@@ -251,6 +251,23 @@ describe('keyframes', () => {
     expect('refused' in keyInserted(w, id, 1, 0)).toBe(true);
   });
 
+  test('an empty key beside another empty one is that one, before it or after it', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const w = wrote(world, 2, id, move(5, 0));
+    const made = keyInserted(w, id, 2, 1);
+
+    if ('refused' in made) throw new Error(made.refused);
+
+    for (const index of [1, 2]) {
+      const again = keyInserted(made.world, id, 2, index);
+
+      if ('refused' in again) throw new Error(again.refused);
+
+      expect(again.world).toBe(made.world);
+      expect(again.place).toEqual(made.place);
+    }
+  });
+
   test('two keys of a thing merge into one where the later was, doing both', () => {
     const { world, id } = room();
     const w = wrote(wrote(world, 1, id, move(5, 0), turned(0.3)), 2, id, move(0, 9));
