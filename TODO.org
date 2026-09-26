@@ -1,18 +1,12 @@
-* Next
-* TODO copying something in a later version and pasting it should not change its shape
-* TODO cmd-k doesn't create a key if only effects changed
-* TODO no need for vertex keypoints in timeline - everything is recorded in a single one
-* TODO always draw first keyframe actually (also before any transform)
-* TODO insert a key before the current one + shortcut
-
 * Low hanging fruit
-* TODO multithread baking - each version in separate thread; show baked versions in timeline as they arrive
 * TODO falloff in deform isn't wired up (or stopped doing something)
 * TODO remove tension from round
 * TODO noise default in deform, jitter at 100 or something
-* TODO 3d view from upper right corner and resizable
-* TODO text in 3d view (replace up down arrows by left right)
 * TODO precision in round higher -> more polys, not fewer
+
+* TODO text in 3d view (replace up down arrows by left right)
+* TODO multithread baking - each version in separate thread; show baked versions in timeline as they arrive
+* TODO 3d view from upper right corner and resizable
 * TODO fix the 2d gestures by drawing a line (or two axes) from the starting point to the cursor to see the two amounts clearly, it's very confusing currently
 * TODO default shortcuts on windows/mac (e.g. cmd-z/ctrl-z etc)
 

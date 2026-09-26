@@ -1077,6 +1077,9 @@ export interface Timed {
   stood: { frame: Frame, amounts: Amounts }
   /** Each keyframe's keys from the copy on, by offset. */
   keys: [number, Key[]][]
+  /** Where the copy was taken, by index: what a skip is read against, so
+   * that it lands as far past the paste as it was past the copy. */
+  taken: number
   /** Its effects. Absent is none. */
   effects?: readonly Layer[]
   /** The repeats that came across as single entries. */

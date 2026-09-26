@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, copied, grouped, keyRigOf, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withKeyRig, withRig } from './scene';
+import { TOP, addPolygon, copied, resolveAt, grouped, keyRigOf, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withKeyRig, withRig } from './scene';
 import { Frame, NOTHING, REST, framed, keyOnce, nudged, repeating, stateAt, withKeysAt, worldFrame } from './rig';
 import { Place, Refused, deleted, droppedAt, dropped, entryAt, firstKeyed, inserted, insertedBefore, keyInserted, listedAt, merged, mergedKeyframes, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
@@ -193,17 +193,18 @@ describe('keyframes', () => {
     }
   });
 
-  test('a pasted repeat keeps its skip on the keyframe it names, where it reaches it', () => {
+  test('a pasted repeat takes its skip as far past the paste as it was past the copy', () => {
     const { world, id } = room();
     const out = inserted(repeated(world, 1, id, move(10, 0), null), 3)!;
     const clips = copied(out.world, 1, [id]);
     const at = (i: number): KeyframeId => out.world.keyframes[i].id;
+    const skipped = out.world.keyframes.findIndex(f => f.id === out.key);
     const early = pasted(out.world, at(0), clips, { x: 0, y: 0 }, TOP);
-    const late = pasted(out.world, at(5), clips, { x: 0, y: 0 }, TOP);
+    const late = pasted(out.world, at(out.world.keyframes.length - 1), clips, { x: 0, y: 0 }, TOP);
     const a = early.ids[0], b = late.ids[0];
 
-    expect(listAt(early.world, at(0), a).find(e => e.times === null)!.skip).toEqual(new Set([out.key]));
-    expect(listAt(late.world, at(5), b).find(e => e.times === null)!.skip).toBe(undefined);
+    expect(listAt(early.world, at(0), a).find(e => e.times === null)!.skip).toEqual(new Set([at(skipped - 1)]));
+    expect(listAt(late.world, at(out.world.keyframes.length - 1), b).find(e => e.times === null)!.skip).toBe(undefined);
   });
 
   test('a deleted keyframe hands what it does to the next', () => {
@@ -546,5 +547,77 @@ describe('death', () => {
     expect(w.polygons.get(id)!.death).toBe(3);
     expect(ok(redied(w, id, null)).polygons.get(id)!.death).toBe(null);
     expect(redied(w, id, 1)).toEqual({ refused: 'it would be gone before it is born' });
+  });
+});
+
+describe('a paste looks like what was copied', () => {
+  /** Copied at every keyframe and pasted at every keyframe: the copy, from
+   * where it lands on, is the original from where it was taken on. */
+  function expectFaithful(world: World, id: Id): void {
+    const n = world.keyframes.length;
+    const at = (i: number): KeyframeId => world.keyframes[i].id;
+    const shape = (w: World, v: KeyframeId, p: Id): Point[] =>
+      resolveAt(w, v).find(it => it.id === p)!.source;
+
+    for (let k = 0; k < n; k++) {
+      const clips = copied(world, at(k), [id]);
+
+      for (let p = 0; p < n; p++) {
+        const { world: out, ids } = pasted(world, at(p), clips, { x: 0, y: 0 }, TOP);
+
+        for (let j = 0; k + j < n && p + j < n; j++) {
+          const want = shape(world, at(k + j), id);
+          const got = shape(out, at(p + j), ids[0]);
+
+          got.forEach((q, i) => {
+            expect(q.x, `copied at ${k}, pasted at ${p}, ${j} on`).toBeCloseTo(want[i].x, 6);
+            expect(q.y, `copied at ${k}, pasted at ${p}, ${j} on`).toBeCloseTo(want[i].y, 6);
+          });
+        }
+      }
+    }
+  }
+
+  function long(world: World): World {
+    let w = world;
+
+    while (w.keyframes.length < 9) w = inserted(w, w.keyframes[w.keyframes.length - 1].id)!.world;
+
+    return w;
+  }
+
+  test('a corner moved over and over', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[1].id;
+    const w = withKeyRig(long(world), id, {
+      keys: new Map([[0, [{ id: 0, ref: { x: 0, y: 0 }, corners: new Map([[corner, { x: -40, y: 20 }]]), times: 3 }]]]),
+    });
+
+    expectFaithful(w, id);
+  });
+
+  test('a move over and over, and a corner once', () => {
+    const { world, id } = room();
+    const corner = world.polygons.get(id)!.points[2].id;
+    const w = withKeyRig(repeated(long(world), 1, id, move(10, 5), 3), id, {
+      keys: new Map([
+        ...keyRigOf(repeated(long(world), 1, id, move(10, 5), 3), id).keys,
+        [2, [{ id: 9, ref: { x: 0, y: 0 }, corners: new Map([[corner, { x: 7, y: 0 }]]), times: 1 }]],
+      ]),
+    });
+
+    expectFaithful(w, id);
+  });
+
+  test('inside a group that turns over and over', () => {
+    const one = room(long(emptyWorld()));
+    const two = addPolygon(one.world, { level: 'solid' }, rect(20, 20, 10, 10), 0, TOP);
+    const made = grouped(two.world, 0, [one.id, two.id], TOP)!;
+    const corner = made.world.polygons.get(two.id)!.points[0].id;
+    const w = withKeyRig(repeated(made.world, 1, made.id, spun(0.2), 3), two.id, {
+      keys: new Map([[2, [{ id: 0, ref: { x: 0, y: 0 }, corners: new Map([[corner, { x: 3, y: 0 }]]), times: null }]]]),
+    });
+
+    expectFaithful(w, two.id);
   });
 });
