@@ -2049,6 +2049,8 @@ export function combineTagged(
   inert?: (ring: number, index: number) => boolean,
   /** Points kept although they do not turn: see `hold.ts`. */
   keeps?: (tag: Tag) => boolean,
+  /** Where each edge of `b` stood in a shape it was made of: see `Origin`. */
+  origin?: Origin,
 ): TaggedShape {
   const cutters = segments(b, 1);
   const raw = [...segments(a, 0), ...(inert === undefined ? cutters : cutters.filter(s => !inert(s.edge.ring, s.edge.index)))];
@@ -2062,12 +2064,40 @@ export function combineTagged(
     arranged(
       [p => fill(fa, p), p => fill(fb, p)],
       on => op(on[0], on[1]),
-      split(raw, snap),
+      origin === undefined ? split(raw, snap) : inOriginOrder(split(raw, snap), origin),
       snap,
     ),
     snap,
     keeps,
   );
+}
+
+/**
+ * An edge of `b` as an edge of what `b` was merged from: that edge's place
+ * in the order its shape laid its edges, and the point it started at.
+ *
+ * The walk starts each ring at the first piece of it the input handed over,
+ * so which point a ring starts at and which ring comes first are the input's
+ * edge order. A shape merged ahead of the arrangement hands over the same
+ * pieces in another order, and the same rings come back started elsewhere and
+ * in another order — which is not nothing, since a resolve numbers what it
+ * meets in the order it meets it. See `mergeBands`.
+ */
+export type Origin = (edge: SourceRef) => { rank: number, from: Point }
+
+/** `b`'s pieces handed over as the shape `b` was merged from would have: by
+ * the edge each lies on there, and along it from where that edge began. */
+function inOriginOrder(segs: Seg[], origin: Origin): Seg[] {
+  const own = segs.filter(s => s.edge.shape === 0);
+  const theirs = segs.filter(s => s.edge.shape !== 0).map(s => {
+    const o = origin(s.edge);
+
+    return { s, rank: o.rank, far: Math.hypot((s.a.x + s.b.x) / 2 - o.from.x, (s.a.y + s.b.y) / 2 - o.from.y) };
+  });
+
+  theirs.sort((p, q) => p.rank - q.rank || p.far - q.far);
+
+  return [...own, ...theirs.map(t => t.s)];
 }
 
 /**

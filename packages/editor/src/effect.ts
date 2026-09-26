@@ -189,7 +189,13 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
   // shape's own edge again, which the cut settles as a shared edge.
   const cut = (out: Drawn, pieces: Shape, from: Sweptfrom[][], along: Sweptfrom[][], op: Op): Drawn => {
     if (mergingBands && pieces.length >= MERGED) {
-      return combineIdentified(out, merged(pieces.map((ring, r) => side([ring], [from[r]], [along[r]]))), op);
+      let rank = 0;
+      const band = merged(pieces.map((ring, r) => ({
+        drawn: side([ring], [from[r]], [along[r]]),
+        stood: [ring.map(p => ({ rank: rank++, from: p }))],
+      })));
+
+      return combineIdentified(out, band.drawn, op, undefined, e => band.stood[e.ring][e.index]);
     }
 
     return combineIdentified(out, side(pieces, from, along), op, inertIn(pieces, from));
@@ -233,14 +239,22 @@ export function mergeBands(on: boolean): void {
  * twice what it saved. Eight measured best, against four, sixteen and
  * thirty-two.
  */
-function merged(pieces: Drawn[]): Drawn {
-  const runs: Drawn[] = [];
+function merged(pieces: Laid[]): Laid {
+  const runs: Laid[] = [];
 
   for (let i = 0; i < pieces.length; i += CHUNK) {
     const run = pieces.slice(i, i + CHUNK);
     const half = Math.ceil(run.length / 2);
 
-    runs.push(run.length === 1 ? run[0] : mergedIdentified(joined(run.slice(0, half)), joined(run.slice(half))));
+    if (run.length === 1) {
+      runs.push(run[0]);
+      continue;
+    }
+
+    const a = joined(run.slice(0, half)), b = joined(run.slice(half));
+    const { merged, along } = mergedIdentified(a.drawn, b.drawn);
+
+    runs.push({ drawn: merged, stood: along.map(refs => refs.map(e => (e.shape === 0 ? a : b).stood[e.ring][e.index])) });
   }
 
   return joined(runs);
@@ -248,12 +262,26 @@ function merged(pieces: Drawn[]): Drawn {
 
 const CHUNK = 8;
 
+/**
+ * Band laid down, and where each of its edges stood in the band as it was
+ * swept: which edge, counting through the quads in order, and where that edge
+ * began. The cut walks what it is handed in that order and so starts its
+ * rings where the band whole would have. See `Origin`.
+ */
+interface Laid {
+  drawn: Drawn
+  stood: { rank: number, from: Point }[][]
+}
+
 /** Drawn shapes side by side as one, nothing arranged. */
-function joined(parts: Drawn[]): Drawn {
+function joined(parts: Laid[]): Laid {
   return {
-    shape: parts.flatMap(p => p.shape),
-    ids: parts.flatMap(p => p.ids),
-    edges: parts.flatMap(p => p.edges!),
+    drawn: {
+      shape: parts.flatMap(p => p.drawn.shape),
+      ids: parts.flatMap(p => p.drawn.ids),
+      edges: parts.flatMap(p => p.drawn.edges!),
+    },
+    stood: parts.flatMap(p => p.stood),
   };
 }
 
