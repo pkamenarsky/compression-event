@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, copied, grouped, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, merged, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, merged, mergedKeyframes, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -277,10 +277,27 @@ describe('keyframes', () => {
     expect('refused' in out).toBe(true);
   });
 
+  test('a keyframe merged into the one beside it, either way, does both in order and keeps what is born there', () => {
+    const { world, id } = room();
+    const b = room(world, 2);
+    const w = wrote(wrote(b.world, 2, id, move(5, 0), turned(0.3)), 3, id, move(0, 9));
+
+    for (const [from, into] of [[2, 3], [3, 2]]) {
+      const out = ok(mergedKeyframes(w, from, into));
+
+      expect(out.keyframes.some(f => f.id === 2)).toBe(false);
+      expect(listAt(out, 3, id).map(e => e.op.kind)).toEqual(['move', 'turn', 'move']);
+      expect(out.polygons.get(b.id)!.birth).toBe(3);
+      expectFrame(stateAt(out, id, 3).frame, stateAt(w, id, 3).frame);
+    }
+
+    expect('refused' in mergedKeyframes(w, 1, 3)).toBe(true);
+  });
+
   test('a keyframe dropped rather than handed on takes what it does with it', () => {
     const { world, id } = room();
     const w = wrote(wrote(world, 2, id, move(5, 0), turned(0.3)), 3, id, move(0, 9));
-    const out = ok(deleted(w, 2, false));
+    const out = ok(deleted(w, 2, 'dropped'));
 
     expect(out.keyframes.some(f => f.id === 2)).toBe(false);
     expect(listAt(out, 3, id).map(e => e.op.kind)).toEqual(['move']);

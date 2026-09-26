@@ -38,7 +38,8 @@
 // of the keyframe on screen. ⌥Delete drops what it is on — the keys, or the
 // keyframe and all that is written at it — and Delete alone is the canvas'.
 // Dragging an icon a keyframe along pushes or pulls it, and what is picked
-// with it; let go on another key of its row, it merges into that one. The grip at the start of a thing's life drags its birth along, and
+// with it; let go on another key of its row, it merges into that one. A
+// keyframe's heading dragged onto the one beside merges the two. The grip at the start of a thing's life drags its birth along, and
 // its story with it; the one at the end drags its death. See `keys.ts`.
 //
 // The row header's switches — hide, lock, solo — are flags on the thing, and
@@ -65,6 +66,7 @@ import {
   insertedBefore,
   keyInserted,
   merged,
+  mergedKeyframes,
   pulledAt,
   pushedAt,
   reborn,
@@ -503,15 +505,27 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
       top: '4px',
       width: `${w}px`,
       textAlign: 'center',
-      cursor: 'pointer',
+      cursor: 'grab',
       color: () => (current() ? theme.accent : theme.text),
       fontWeight: () => (current() ? '600' : '400'),
     }, {
-      // The keyframe itself, as it ends: whatever key was picked is let go,
-      // the one on screen included.
-      onclick: () => {
-        ctx.letGo();
-        ctx.go(f.id);
+      title: 'Drag onto the keyframe beside to merge them',
+      // Clicked, the keyframe itself, as it ends: whatever key was picked is
+      // let go, the one on screen included. Dragged onto the one beside, the
+      // two merge. See `mergedKeyframes`.
+      onpointerdown: (e: PointerEvent) => {
+        const click = () => {
+          ctx.letGo();
+          ctx.go(f.id);
+        };
+        const done = (_up: PointerEvent, dx: number) => {
+          const to = colIn(m, centre(m, i) + dx);
+
+          if (Math.abs(to - i) === 1) ctx.update(s => keyframesMerged(s, f.id, m.keyframes[to].id));
+        };
+        const a = Math.max(0, i - 1), b = Math.min(m.xs.length - 1, i + 1);
+
+        dragged(e, click, done, over(m, { a, b }, centre(m, i)));
       },
     }),
 
@@ -1193,7 +1207,7 @@ export function keyInsertedHere(s: EditorState): EditorState {
 export function droppedHere(s: EditorState): EditorState {
   if (s.target !== null) return marked({ ...s, world: droppedAt(s.world, s.target.all), target: null }, s.world);
 
-  const out = deleted(s.world, s.keyframe, false);
+  const out = deleted(s.world, s.keyframe, 'dropped');
 
   if ('refused' in out) return saying(s, out.refused);
 
@@ -1201,4 +1215,16 @@ export function droppedHere(s: EditorState): EditorState {
   const to = s.world.keyframes[i + 1] ?? s.world.keyframes[i - 1];
 
   return marked({ ...s, world: out, keyframe: to.id, replay: null }, s.world);
+}
+
+/** Keyframe `from` merged into `into`, and stood in what is left of them. See
+ * `mergedKeyframes` in `keys.ts`. */
+function keyframesMerged(s: EditorState, from: KeyframeId, into: KeyframeId): EditorState {
+  const out = mergedKeyframes(s.world, from, into);
+
+  if ('refused' in out) return saying(s, out.refused);
+
+  const left = out.keyframes.some(f => f.id === into) ? into : from;
+
+  return marked({ ...s, world: out, keyframe: left, target: null, replay: null }, s.world);
 }

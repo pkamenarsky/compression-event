@@ -677,8 +677,9 @@ export function insertedBefore(world: World, k: KeyframeId): Inserted | null {
 /**
  * Keyframe `k` taken out.
  *
- * With `handed`, what it does to each thing goes to the front of the next
- * keyframe's list; without, it goes with it.
+ * `'handed'`, what it does to each thing goes to the front of the next
+ * keyframe's list; `'dropped'`, it goes with it; `'merged'`, it is handed on
+ * and what is born at it is born at the next instead of going with it.
  * what dies at it dies at the next, and what is born at it goes with it. A
  * repeat that stepped there has one step fewer, so it ends where it ended. The
  * last keyframe's writing goes with it, and what dies there lives to the end.
@@ -686,7 +687,7 @@ export function insertedBefore(world: World, k: KeyframeId): Inserted | null {
  * Refused where one corner would end up with two repeats at one keyframe,
  * which a corner has no room for, and for the only keyframe there is.
  */
-export function deleted(world: World, k: KeyframeId, handed = true): World | Refused {
+export function deleted(world: World, k: KeyframeId, how: 'handed' | 'dropped' | 'merged' = 'handed'): World | Refused {
   const keyframes = world.keyframes;
   const d = indexIn(keyframes, k);
 
@@ -722,17 +723,21 @@ export function deleted(world: World, k: KeyframeId, handed = true): World | Ref
 
     keys.delete(k);
 
-    if (handed && next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
+    if (how !== 'dropped' && next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
 
     rigs.set(id, { keys });
   }
   // A death moved off `k`, or nothing for what was born there.
   const life = <T extends { birth: KeyframeId, death: KeyframeId | null }>(it: T): T | null => {
-    if (it.birth === k) return null;
+    if (it.birth === k && (how !== 'merged' || next === null)) return null;
 
+    const birth = it.birth === k ? next! : it.birth;
     const death = it.death === k ? next : it.death;
 
-    return death === it.death ? it : { ...it, death };
+    // Born at `k` and gone by the next, it lived in `k` alone.
+    if (birth === death) return null;
+
+    return death === it.death && birth === it.birth ? it : { ...it, birth, death };
   };
 
   const gone = new Set<Id>();
@@ -809,6 +814,30 @@ export function deleted(world: World, k: KeyframeId, handed = true): World | Ref
   };
 
   return gone.size === 0 ? out : without(out, gone);
+}
+
+/**
+ * Keyframe `from` merged into `into`, the one beside it: one keyframe doing
+ * what the two did, in the order they did it, and what is born or dies at
+ * either born or dying there. Only beside: past keyframes between, what they
+ * do would have to play in another order.
+ *
+ * Either way it is the earlier of the two handed on to the later — see
+ * `deleted` — and the one left is named and shown as `into` was.
+ */
+export function mergedKeyframes(world: World, from: KeyframeId, into: KeyframeId): World | Refused {
+  const i = indexIn(world.keyframes, from), j = indexIn(world.keyframes, into);
+
+  if (i < 0 || j < 0 || i === j) return world;
+  if (Math.abs(i - j) !== 1) return { refused: 'a keyframe merges only with the one beside it' };
+
+  const early = world.keyframes[Math.min(i, j)], late = world.keyframes[Math.max(i, j)];
+  const out = deleted(world, early.id, 'merged');
+
+  if ('refused' in out || into === late.id) return out;
+
+  // Left as the later, shown as the earlier it was dropped on.
+  return { ...out, keyframes: out.keyframes.map(f => (f.id === late.id ? { ...f, name: early.name, visible: early.visible } : f)) };
 }
 
 /**
