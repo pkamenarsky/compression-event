@@ -93,6 +93,9 @@ const FONT = '11px system-ui, sans-serif';
 /** One entry's room in a column, and the room at its sides. */
 const SLOT = 19;
 const PAD = 10;
+/** The room at a column's left for its keyframe's name: a stop of its own
+ * before the keys, where the needle is when it is on the keyframe. */
+const VER = 26;
 
 /** A column holds this many entries side by side before it widens. */
 const ROOMY = 5;
@@ -108,7 +111,7 @@ interface Local {
 }
 
 interface Model {
-  keyframes: { id: KeyframeId, name: string, visible: boolean, unchains: boolean }[]
+  keyframes: { id: KeyframeId, name: string, unchains: boolean }[]
   /** Where each column starts, from the left of the view, and how wide it is. */
   xs: number[]
   widths: number[]
@@ -266,7 +269,7 @@ function modelOf(world: World, selection: Selection, picked: Target | null, corn
   // never narrower than a handful.
   const arrowIn = (r: Row, col: number) => picked !== null && r.cells[col].places.some(p => samePlace(p, picked.lead));
   const widths = world.keyframes.map((_f, col) =>
-    Math.max(ROOMY, ...rows.map(r => r.cells[col].places.length + (arrowIn(r, col) ? 1 : 0))) * SLOT + 2 * PAD);
+    Math.max(ROOMY, ...rows.map(r => r.cells[col].places.length + (arrowIn(r, col) ? 1 : 0))) * SLOT + 2 * PAD + VER);
   const xs: number[] = [];
   let x = LABEL;
 
@@ -279,7 +282,6 @@ function modelOf(world: World, selection: Selection, picked: Target | null, corn
     keyframes: world.keyframes.map(f => ({
       id: f.id,
       name: f.name,
-      visible: f.visible,
       unchains: unchains(world, f.id, selection),
     })),
     xs,
@@ -333,7 +335,7 @@ function centre(m: Model, col: number): number {
  * the arrow moves, and a second click lands where the first did.
  */
 function slot(m: Model, col: number, i: number): number {
-  return m.xs[col] + PAD + i * SLOT + SLOT / 2;
+  return m.xs[col] + VER + PAD + i * SLOT + SLOT / 2;
 }
 
 /** Where the picked entry is among a cell's icons, or -1. */
@@ -397,7 +399,7 @@ function body(ctx: Ctx, m: Model): VNode {
     },
     [
       // The needle, down the whole view: on the key the hand leads with, or
-      // at the start of the keyframe on screen, before its keys.
+      // on the name of the keyframe on screen, before its keys.
       box({
         left: () => `${needle(m, ctx.current()) - 1}px`,
         top: '0',
@@ -418,7 +420,7 @@ function body(ctx: Ctx, m: Model): VNode {
 }
 
 /** Where the needle is along the view: the lead key's slot where the hand is
- * on one in column `col`, and just inside the column's left edge otherwise. */
+ * on one in column `col`, and on the keyframe's name otherwise. */
 function needle(m: Model, col: number): number {
   const p = m.picked;
 
@@ -430,7 +432,12 @@ function needle(m: Model, col: number): number {
     }
   }
 
-  return (m.xs[col] ?? 0) + PAD / 2 + 2;
+  return named(m, col);
+}
+
+/** The middle of a column's name, before its keys. */
+function named(m: Model, col: number): number {
+  return (m.xs[col] ?? 0) + (VER + PAD) / 2;
 }
 
 /** A row and the lanes of its repeats. */
@@ -497,17 +504,22 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
 
 /** A keyframe's heading: its name, which stands in it, and its eye. */
 function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): VNode {
-  const x = m.xs[i], w = m.widths[i];
+  const x = m.xs[i];
   const current = () => i === ctx.current();
+  // The needle on the keyframe itself rather than on a key of it.
+  const on = () => current() && ctx.state().target === null;
+  const mid = named(m, i);
 
   return fragment([
     label(f.name, {
-      left: `${x}px`,
-      top: '4px',
-      width: `${w}px`,
-      textAlign: 'center',
+      left: `${mid}px`,
+      top: '12px',
+      transform: 'translateX(-50%)',
+      padding: '0 4px',
+      borderRadius: '5px',
       cursor: 'grab',
-      color: () => (current() ? theme.accent : theme.text),
+      background: () => (on() ? theme.accent : 'transparent'),
+      color: () => (on() ? theme.onAccent : current() ? theme.accent : theme.text),
       fontWeight: () => (current() ? '600' : '400'),
     }, {
       title: 'Drag onto the keyframe beside to merge them',
@@ -520,33 +532,14 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
           ctx.go(f.id);
         };
         const done = (_up: PointerEvent, dx: number) => {
-          const to = colIn(m, centre(m, i) + dx);
+          const to = colIn(m, mid + dx);
 
           if (Math.abs(to - i) === 1) ctx.update(s => keyframesMerged(s, f.id, m.keyframes[to].id));
         };
         const a = Math.max(0, i - 1), b = Math.min(m.xs.length - 1, i + 1);
 
-        dragged(e, click, done, over(m, { a, b }, centre(m, i)));
+        dragged(e, click, done, over(m, { a, b }, mid));
       },
-    }),
-
-    // Whether it draws as a ghost while another is on screen. Through the
-    // history like every other write to the world: left out, an undo of the
-    // edit before takes the toggle back with it.
-    label(f.visible ? '◉' : '○', {
-      left: `${x}px`,
-      top: '22px',
-      width: `${w}px`,
-      textAlign: 'center',
-      cursor: 'pointer',
-      color: f.visible ? theme.muted : theme.faded,
-    }, {
-      title: 'Drawn as a ghost from other keyframes',
-      onclick: () => ctx.update(s => {
-        const keyframes = s.world.keyframes.map(g => (g.id === f.id ? { ...g, visible: !g.visible } : g));
-
-        return marked({ ...s, world: { ...s.world, keyframes } }, s.world);
-      }),
     }),
 
     // Where something picked stops hearing from upstream: a break in the

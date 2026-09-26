@@ -310,7 +310,7 @@ describe('stepping from key to key', () => {
     return { s, id, key };
   };
 
-  test('back from a keyframe is the last key of the one before, and on along it', () => {
+  test('back from a keyframe is the last key of the one before, and on along it to that keyframe', () => {
     const { s, id, key } = at1();
     const t = steppedKey({ ...s, keyframe: 2 }, -1);
 
@@ -320,20 +320,27 @@ describe('stepping from key to key', () => {
     const u = steppedKey(t, -1);
 
     expect(u.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
-    expect(steppedKey(u, -1)).toBe(u);
+
+    const v = steppedKey(u, -1);
+
+    expect(v.keyframe).toBe(1);
+    expect(v.target).toBeNull();
   });
 
-  test('on from a keyframe is its first key, and then into the next one\'s first', () => {
+  test('on from a keyframe is its first key, then the next keyframe, then its first', () => {
     const { s, id, key } = at1();
     const first = steppedKey(s, 1);
     const second = steppedKey(first, 1);
     const third = steppedKey(second, 1);
+    const fourth = steppedKey(third, 1);
 
     expect(first.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
     expect(second.target!.lead).toEqual({ id, at: 1, key: key(1, 1) });
     expect(third.keyframe).toBe(2);
-    expect(third.target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
-    expect(steppedKey(third, 1)).toBe(third);
+    expect(third.target).toBeNull();
+    expect(fourth.keyframe).toBe(2);
+    expect(fourth.target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
+    expect(steppedKey(third, -1).target!.lead).toEqual({ id, at: 1, key: key(1, 1) });
   });
 
   test('a slot is that key of every thing shown', () => {

@@ -387,15 +387,12 @@ export function beneath(world: World, k: KeyframeId, p: Point, reach: number): B
 }
 
 /**
- * The needle moved to the key slot before or after the one it is on, `by` −1
- * or 1: along its keyframe, and on into the one beside where that has no more.
- * A slot is the `i`-th key of every thing whose row is shown, and the hand
- * goes on all of them, led by the key of the thing it was led by.
- *
- * On nothing, the needle is on the keyframe itself, before its keys: on goes
- * to its first slot, back to the last slot of the one before. Keyframes with
- * no keys are stepped over. `s` itself where there is nowhere to go. The
- * keyframe it lands in is the result's, for the caller to switch to.
+ * The needle moved to the stop before or after the one it is on, `by` −1 or
+ * 1. The stops are each keyframe and then its key slots, in order: a slot is
+ * the `i`-th key of every thing whose row is shown, and the hand goes on all
+ * of them, led by the key of the thing it was led by. On a keyframe the hand
+ * is on nothing. `s` itself where there is nowhere to go. The keyframe it lands
+ * in is the result's, for the caller to switch to.
  */
 export function steppedKey(s: EditorState, by: 1 | -1): EditorState {
   const w = s.world;
@@ -407,21 +404,20 @@ export function steppedKey(s: EditorState, by: 1 | -1): EditorState {
   const lead = s.target?.lead;
   const led = lead === undefined ? undefined : rows.find(r => r.id === lead.id);
   let col = indexIn(w.keyframes, s.keyframe);
-  const on = lead === undefined || led === undefined ? -1 : led.cells[col].places.findIndex(p => samePlace(p, lead));
-  let i = on >= 0 ? on + by : by > 0 ? 0 : -1;
+  // −1 is the keyframe itself.
+  let i = (lead === undefined || led === undefined ? -1 : led.cells[col].places.findIndex(p => samePlace(p, lead))) + by;
 
-  while (i < 0 || i >= width(col)) {
-    if (i < 0) {
-      col--;
-      if (col < 0) return s;
-      i = width(col) - 1;
-    }
-    else {
-      col++;
-      if (col >= w.keyframes.length) return s;
-      i = 0;
-    }
+  if (i >= width(col)) {
+    col++;
+    i = -1;
   }
+  else if (i < -1) {
+    col--;
+    i = col < 0 ? -1 : width(col) - 1;
+  }
+
+  if (col < 0 || col >= w.keyframes.length) return s;
+  if (i < 0) return { ...s, keyframe: w.keyframes[col].id, target: null };
 
   const all = rows.flatMap(r => r.cells[col].places[i] ?? []);
   const first = led?.cells[col].places[i] ?? all[0];
