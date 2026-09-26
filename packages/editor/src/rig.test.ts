@@ -43,6 +43,7 @@ import {
   KeyRig,
   idle,
   withKeysAt,
+  steppedBy,
 } from './rig';
 import { Id, Vertex } from './types';
 
@@ -838,4 +839,15 @@ describe('skew', () => {
       expect(stateAt(tl, P, k).frame.skew).toBeCloseTo(0.4 * k, 12);
     }
   });
+});
+
+test('a repeating turn with no centre written steps about the one it solves to', () => {
+  const d: Delta = { ...NOTHING, angle: Math.PI / 2, move: { x: 2, y: 0 } };
+  const e: Delta = { ...d, about: { x: 1, y: 1 } };
+
+  const a = steppedBy(d, 3).move, b = steppedBy(e, 3).move;
+
+  expect(a.x).toBeCloseTo(b.x);
+  expect(a.y).toBeCloseTo(b.y);
+  expect(steppedBy({ ...NOTHING, angle: 2 * Math.PI }, 2).move.x).toBeCloseTo(0);
 });

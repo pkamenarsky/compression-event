@@ -281,6 +281,29 @@ describe('keyframes', () => {
     expect(s.target!.lead).toEqual({ id, at: 2, key: 100 });
   });
 
+  test('two half turns merged make a whole one that still turns about somewhere', () => {
+    const { world, id } = room();
+    const w = wrote(wrote(world, 1, id, turned(Math.PI)), 2, id, turned(Math.PI));
+    const m = keysOfAt(w, 1, id).at(-1)!, n = keysOfAt(w, 2, id).at(-1)!;
+    const out = ok(merged(w, { id, at: 1, key: m.id }, { id, at: 2, key: n.id }));
+
+    expect(entryAt(out, { id, at: 2, key: n.id })!.by!.about).toBeDefined();
+    expect(() => stateAt(out, id, 3)).not.toThrow();
+  });
+
+  test('an empty key merged with a whole turn keeps its centre', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const w = wrote(world, 2, id, turned(2 * Math.PI));
+    const made = keyInserted(w, id, 2, 0);
+
+    if ('refused' in made) throw new Error(made.refused);
+
+    const turn = keysOfAt(w, 2, id).at(-1)!;
+    const out = ok(merged(made.world, made.place, { id, at: 2, key: turn.id }));
+
+    expect(() => stateAt(out, id, 3)).not.toThrow();
+  });
+
   test('two keys of a thing merge into one where the later was, doing both', () => {
     const { world, id } = room();
     const w = wrote(wrote(world, 1, id, move(5, 0), turned(0.3)), 2, id, move(0, 9));

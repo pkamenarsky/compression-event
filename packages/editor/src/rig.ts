@@ -1172,9 +1172,11 @@ function moveOn(d: Delta, n: number): Point {
 }
 
 /** A whole turn's centre, `n` steps on: it rides the painted point, and the
- * painted point is where the steps before left it. */
+ * painted point is where the steps before left it. Worked out where the delta
+ * does not carry it; a whole turn that cannot say turns about anywhere alike,
+ * its move being nought. */
 function stepAbout(d: Delta, n: number): Point {
-  return spun(d.about!, d.angle * n);
+  return spun(aboutOf(d) ?? { x: 0, y: 0 }, d.angle * n);
 }
 
 /**
@@ -1827,12 +1829,12 @@ export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
 
   // Where it turns about, worked out again from what the two of them come to.
   // A turn by a whole number of turns cannot say, so it keeps the centre the
-  // first of them went round — see `Delta.about`.
+  // first of them that turns went round — see `Delta.about`. Two half turns
+  // make a whole one, and an empty key has no centre to give.
   if (now.angle !== 0) {
-    const solved = aboutOf(now);
+    const about = aboutOf(now) ?? aboutOf(was) ?? aboutOf(by);
 
-    if (solved !== null) now.about = solved;
-    else if (was.about !== undefined) now.about = was.about;
+    if (about !== null) now.about = about;
   }
 
   // The painted point is the one that has one: a move folded with a turn is
