@@ -31,7 +31,7 @@ import { download, upload } from './save';
 import { flattenInto } from './resolve';
 import { picker } from './picker';
 import { inspector } from './inspector';
-import { timeline } from './timeline';
+import { droppedHere, timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
@@ -100,6 +100,7 @@ export function editor(initial: World): VNode {
           replaying(s.keyframe, state, update),
           roaming(input, state, update),
           versions(input, update),
+          dropping(input, state, update),
 
           // The canvas and the panel, and one cell between them: where whoever
           // is standing in the 3D view is standing. The panel writes it every
@@ -315,6 +316,24 @@ function versions(input: Input, update: Update): VNode {
       }
 
       update(s => switched(s, clamped(s.world, order(s.world, s.keyframe) + by)));
+    }
+  });
+}
+
+/**
+ * ⌥Delete drops what the keyframe view's needle is on: the keys the hand is
+ * on, or the keyframe on screen. Delete alone is the canvas', for what is
+ * picked there, so the two never have to guess which was meant.
+ */
+function dropping(input: Input, state: Value<EditorState>, update: Update): VNode {
+  return interaction(function* () {
+    while (true) {
+      const e = yield* keyPressed(input, 'Backspace', 'Delete');
+
+      if (!e.altKey || e.metaKey || e.ctrlKey || state().roaming || afoot !== null) continue;
+
+      e.preventDefault();
+      update(droppedHere);
     }
   });
 }

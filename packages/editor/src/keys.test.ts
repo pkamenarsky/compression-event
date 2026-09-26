@@ -217,6 +217,15 @@ describe('keyframes', () => {
     expect(out.keyframes.map(f => f.name)).toEqual(out.keyframes.map((_f, i) => `v${i}`));
   });
 
+  test('a keyframe dropped rather than handed on takes what it does with it', () => {
+    const { world, id } = room();
+    const w = wrote(wrote(world, 2, id, move(5, 0), turned(0.3)), 3, id, move(0, 9));
+    const out = ok(deleted(w, 2, false));
+
+    expect(out.keyframes.some(f => f.id === 2)).toBe(false);
+    expect(listAt(out, 3, id).map(e => e.op.kind)).toEqual(['move']);
+  });
+
   test('what is born at a deleted keyframe goes with it; what dies there dies at the next', () => {
     let { world, id: a } = room(emptyWorld(), 2);
     const b = room(world, 1);

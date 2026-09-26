@@ -565,7 +565,8 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
 /**
  * Keyframe `k` taken out.
  *
- * What it does to each thing goes to the front of the next keyframe's list,
+ * With `handed`, what it does to each thing goes to the front of the next
+ * keyframe's list; without, it goes with it.
  * what dies at it dies at the next, and what is born at it goes with it. A
  * repeat that stepped there has one step fewer, so it ends where it ended. The
  * last keyframe's writing goes with it, and what dies there lives to the end.
@@ -573,7 +574,7 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
  * Refused where one corner would end up with two repeats at one keyframe,
  * which a corner has no room for, and for the only keyframe there is.
  */
-export function deleted(world: World, k: KeyframeId): World | Refused {
+export function deleted(world: World, k: KeyframeId, handed = true): World | Refused {
   const keyframes = world.keyframes;
   const d = indexIn(keyframes, k);
 
@@ -609,7 +610,7 @@ export function deleted(world: World, k: KeyframeId): World | Refused {
 
     keys.delete(k);
 
-    if (next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
+    if (handed && next !== null && mine.length > 0) keys.set(next, [...mine, ...(keys.get(next) ?? [])]);
 
     rigs.set(id, { keys });
   }

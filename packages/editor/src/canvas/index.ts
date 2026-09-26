@@ -2371,6 +2371,9 @@ export function worldCanvas(
               leaving();
             }
             else if (REMOVE.includes(e.code)) {
+              // With ⌥ it is the keyframe view's: what its needle is on.
+              if (e.altKey) continue;
+
               removing();
             }
             else if (tool() === 'polygon') {

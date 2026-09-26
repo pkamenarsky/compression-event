@@ -34,8 +34,10 @@
 // clicking a dot on it picks the same and does the same to all of them. With
 // ⌥ held, each is about its own key only.
 //
-// Delete drops what is picked, ⌥Delete pushes it to the next keyframe, and
-// dragging an icon a keyframe along pushes or pulls it, and what is picked
+// A needle runs down the view: on the key the hand leads with, or at the start
+// of the keyframe on screen. ⌥Delete drops what it is on — the keys, or the
+// keyframe and all that is written at it — and Delete alone is the canvas'.
+// Dragging an icon a keyframe along pushes or pulls it, and what is picked
 // with it. The grip at the start of a thing's life drags its birth along, and
 // its story with it; the one at the end drags its death. See `keys.ts`.
 //
@@ -90,8 +92,8 @@ const PAD = 10;
 /** A column holds this many entries side by side before it widens. */
 const ROOMY = 5;
 
-/** What Delete and Escape mean while an entry is picked. */
-const KEYS = ['Backspace', 'Delete', 'Escape'];
+/** What Escape means while an entry is picked. */
+const KEYS = ['Escape'];
 
 /** The view's own state: not the world's, not in the history, not saved. */
 interface Local {
@@ -192,7 +194,7 @@ export function timeline(
         },
       },
       [
-        // Delete is the picked keys' for as long as they are the view's.
+        // Escape is the picked keys' for as long as they are the view's.
         effect(
           () => local().held && state().target !== null,
           on => (on ? input.claim(ctx, ...KEYS) : undefined),
@@ -235,24 +237,13 @@ interface Ctx {
 function keys(ctx: Ctx, input: Input): VNode {
   return interaction(function* () {
     while (true) {
-      // Claimed while an entry is picked, and stamped as it was pressed: the
-      // pick let go of as this one is acted on hands the next Delete back to
-      // the canvas, and not this one.
-      const e = yield* keyOwned(input, ctx);
-      const picked = ctx.state().target;
+      // Claimed while an entry is picked here: Escape lets it go. Delete is
+      // the canvas' alone, and ⌥Delete the needle's — see `droppedHere`.
+      yield* keyOwned(input, ctx);
 
-      if (picked === null || ctx.state().roaming) continue;
+      if (ctx.state().target === null || ctx.state().roaming) continue;
 
-      e.preventDefault();
-
-      if (e.code === 'Escape') {
-        ctx.letGo();
-        continue;
-      }
-
-      const w = ctx.state().world;
-
-      ctx.acted(e.altKey ? pushedAt(w, picked.all) : droppedAt(w, picked.all));
+      ctx.letGo();
     }
   });
 }
@@ -494,7 +485,7 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
 
     pinned([
       chip('+ insert', 8, () => ctx.update(insertedAfter), false, 'A keyframe after the one on screen, where nothing happens'),
-      chip('− delete', 70, () => ctx.update(deletedHere), false, 'The keyframe on screen, its writing handed to the next'),
+      chip('− delete', 70, () => ctx.update(droppedHere), false, 'What the needle is on, dropped (⌥⌫)'),
     ]),
   ]);
 }
@@ -1121,10 +1112,15 @@ function insertedAfter(s: EditorState): EditorState {
   return marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
 }
 
-/** The keyframe on screen taken out, standing in the one after it — or before
- * it, for the last. See `deleted` in `keys.ts`. */
-function deletedHere(s: EditorState): EditorState {
-  const out = deleted(s.world, s.keyframe);
+/**
+ * What the needle is on dropped: the keys the hand is on, or where it is on
+ * none, the keyframe on screen and everything written at it, standing in the
+ * one after it — or before it, for the last. See `deleted` in `keys.ts`.
+ */
+export function droppedHere(s: EditorState): EditorState {
+  if (s.target !== null) return marked({ ...s, world: droppedAt(s.world, s.target.all), target: null }, s.world);
+
+  const out = deleted(s.world, s.keyframe, false);
 
   if ('refused' in out) return saying(s, out.refused);
 
