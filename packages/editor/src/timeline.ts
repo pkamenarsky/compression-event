@@ -62,7 +62,8 @@ import {
   deleted,
   droppedAt,
   entryAt,
-  inserted,
+  insertedBefore,
+  keyInserted,
   pulledAt,
   pushedAt,
   reborn,
@@ -71,8 +72,8 @@ import {
   skipToggledAt,
   timedAt,
 } from './keys';
-import { KeyframeId } from './rig';
-import { layerNamer, order, unchainedAt } from './scene';
+import { KeyframeId, keysAt } from './rig';
+import { keyRigOf, layerNamer, order, unchainedAt } from './scene';
 import { theme } from './theme';
 import { Bar, Cell, Kind, Row, barOf, entryLabel, gestureOf, rootsOf, rowsOf, timesTo } from './track';
 import { EditorState, Flags, Selection, Target, Update, World, flagged, marked, saying, within } from './types';
@@ -484,7 +485,7 @@ function head(ctx: Ctx, m: Model, width: number): VNode {
     ...m.keyframes.map((f, i) => column(ctx, m, f, i)),
 
     pinned([
-      chip('+ insert', 8, () => ctx.update(insertedAfter), false, 'A keyframe after the one on screen, where nothing happens'),
+      chip('+ insert', 8, () => ctx.update(keyframeInsertedHere), false, 'A keyframe before the one on screen, where nothing happens'),
       chip('− delete', 70, () => ctx.update(droppedHere), false, 'What the needle is on, dropped (⌥⌫)'),
     ]),
   ]);
@@ -1101,15 +1102,81 @@ function skipsToggled(world: World, places: readonly Place[], lead: Place, k: Ke
 // -----------------------------------------------------------------------------
 
 /**
- * A keyframe put in after the one on screen, and stood in: one where nothing
- * happens yet. See `inserted` in `keys.ts`.
+ * A keyframe put in before the one on screen, and stood in: one where nothing
+ * happens yet. See `insertedBefore` in `keys.ts`.
  */
-function insertedAfter(s: EditorState): EditorState {
-  const out = inserted(s.world, s.keyframe);
+export function keyframeInsertedHere(s: EditorState): EditorState {
+  const out = insertedBefore(s.world, s.keyframe);
 
   if (out === null) return s;
 
-  return marked({ ...s, world: out.world, keyframe: out.key, replay: null }, s.world);
+  return marked({ ...s, world: out.world, keyframe: out.key, target: null, replay: null }, s.world);
+}
+
+/**
+ * An empty key put in before what the needle is on, and the hand on it.
+ *
+ * On keys, one before each of them. On a keyframe, which is before its keys,
+ * one at the end of the keyframe before for each thing picked — and where
+ * there is none before, a keyframe is put in front of it first. See
+ * `keyInserted` in `keys.ts`.
+ */
+export function keyInsertedHere(s: EditorState): EditorState {
+  const t = s.target;
+
+  if (t !== null) {
+    let world = s.world;
+    const made: Place[] = [];
+
+    for (const p of t.all) {
+      if (!('key' in p)) continue;
+
+      const index = keysAt(keyRigOf(world, p.id), p.at).findIndex(key => key.id === p.key);
+      const out = keyInserted(world, p.id, p.at, index);
+
+      if ('refused' in out) return saying(s, out.refused);
+
+      world = out.world;
+      made.push(out.place);
+    }
+
+    if (made.length === 0) return s;
+
+    const lead = made.find(p => p.id === t.lead.id) ?? made[0];
+
+    return marked({ ...s, world, target: { lead, all: [lead, ...made.filter(p => p !== lead)] } }, s.world);
+  }
+
+  const ids = [...s.selection.polygons, ...s.selection.artefacts, ...s.selection.paths];
+
+  if (ids.length === 0) return saying(s, 'nothing picked to take a key');
+
+  let world = s.world;
+  let at = s.world.keyframes[order(s.world, s.keyframe) - 1]?.id;
+
+  if (at === undefined) {
+    const out = insertedBefore(world, s.keyframe);
+
+    if (out === null) return s;
+
+    world = out.world;
+    at = out.key;
+  }
+
+  const made: Place[] = [];
+
+  for (const id of ids) {
+    const out = keyInserted(world, id, at, Infinity);
+
+    if ('refused' in out) continue;
+
+    world = out.world;
+    made.push(out.place);
+  }
+
+  if (made.length === 0) return saying(s, 'nothing picked is there in the keyframe before');
+
+  return marked({ ...s, world, keyframe: at, target: { lead: made[0], all: made }, replay: null }, s.world);
 }
 
 /**

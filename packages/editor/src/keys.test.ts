@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, copied, grouped, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
+import { TOP, addPolygon, copied, grouped, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
 import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
-import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
+import { Place, Refused, deleted, droppedAt, dropped, entryAt, inserted, insertedBefore, keyInserted, listedAt, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
 import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
@@ -215,6 +215,40 @@ describe('keyframes', () => {
     expect(listAt(out, 3, id).map(e => e.op.kind)).toEqual(['move', 'turn', 'move']);
     expectFrame(stateAt(out, id, 3).frame, stateAt(w, id, 3).frame);
     expect(out.keyframes.map(f => f.name)).toEqual(out.keyframes.map((_f, i) => `v${i}`));
+  });
+
+  test('a keyframe put in before the first is where things are made, and what the first did stays there', () => {
+    const { world, id } = room();
+    const w = wrote(world, 0, id, move(5, 0));
+    const out = insertedBefore(w, 0)!;
+
+    expect(out.world.keyframes[0].id).toBe(out.key);
+    expect(out.world.polygons.get(id)!.birth).toBe(out.key);
+    expect(out.world.polygons.get(id)!.points.every(c => c.birth === out.key)).toBe(true);
+    expect(listAt(out.world, 0, id).map(e => e.op.kind)).toEqual(['move']);
+    expectFrame(stateAt(out.world, id, 0).frame, stateAt(w, id, 0).frame);
+  });
+
+  test('a keyframe put in before any other is put in after the one before it', () => {
+    const { world } = room();
+    const out = insertedBefore(world, 3)!;
+
+    expect(out.world.keyframes.map(f => f.id).indexOf(out.key)).toBe(3);
+  });
+
+  test('an empty key goes in before the one named, and nowhere a thing is not there', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const w = wrote(world, 2, id, move(5, 0), turned(0.3));
+    const out = keyInserted(w, id, 2, 1);
+
+    if ('refused' in out) throw new Error(out.refused);
+
+    const list = keysOfAt(out.world, 2, id);
+
+    expect(list).toHaveLength(3);
+    expect(list[1].id).toBe(out.place.key);
+    expectFrame(stateAt(out.world, id, 2).frame, stateAt(w, id, 2).frame);
+    expect('refused' in keyInserted(w, id, 1, 0)).toBe(true);
   });
 
   test('a keyframe dropped rather than handed on takes what it does with it', () => {

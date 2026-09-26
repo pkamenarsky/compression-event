@@ -1598,9 +1598,9 @@ export function broken(world: World, v: KeyframeId, ids: readonly Id[]): World {
     const list = keysAt(rig, v);
     const last = list[list.length - 1];
 
-    // The first key where a thing is born is not shown — what it does there
-    // is its shape, not a motion — so a break before anything was written
-    // there makes that one and then the empty one it asked for.
+    // A break before anything was written where a thing is born makes the
+    // first key, which is how it was made, and then the empty one it asked
+    // for: one key alone there is that first one, not the next.
     const birth = bornAt(out, id) === v;
     const first = last === undefined && birth;
 

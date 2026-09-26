@@ -30,6 +30,7 @@ import {
   counted1,
   heldOf,
   indexIn,
+  keyOnce,
   keysAt,
   nextKey,
   retyped,
@@ -502,6 +503,31 @@ function sameRepeat(a: Repeat, b: Repeat): boolean {
   return x.size === y.size && [...x].every(k => y.has(k));
 }
 
+/**
+ * An empty key put in `id`'s list at `k`, before the `index`-th — at the end
+ * where that is past the last, and never ahead of a stand, which is the
+ * list's head. Its place, or why there is none: a thing takes no key where it
+ * is not there.
+ */
+export function keyInserted(world: World, id: Id, k: KeyframeId, index: number): { world: World, place: Listed } | Refused {
+  const i = indexIn(world.keyframes, k);
+  const born = bornAt(world, id);
+  const it = world.polygons.get(id) ?? world.artefacts.get(id) ?? world.paths.get(id);
+  const death = it?.death == null ? world.keyframes.length : indexIn(world.keyframes, it.death);
+
+  if (i < 0 || born < 0 || born > i || i >= death) return { refused: 'not there to take a key' };
+
+  const rig = keyRigOf(world, id);
+  const list = keysAt(rig, k);
+  const at = Math.max(stands(list), Math.min(index, list.length));
+  const key = keyOnce(nextKey(rig), REST.t, NOTHING);
+
+  return {
+    world: withKeyRig(world, id, withKeysAt(rig, k, [...list.slice(0, at), key, ...list.slice(at)])),
+    place: { id, at: k, key: key.id },
+  };
+}
+
 // -----------------------------------------------------------------------------
 // Keyframes
 // -----------------------------------------------------------------------------
@@ -560,6 +586,33 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
   return { world: { ...world, keyframes: order, rigs }, key };
+}
+
+/**
+ * A keyframe put in before `k`, where nothing happens: `inserted` after the
+ * one before it, or in front of the first.
+ *
+ * In front of the first there is no keyframe before to be over again, so it is
+ * where things are made: what was born at `k` is born there instead, and what
+ * `k` does to it is then the first thing it does rather than how it was made.
+ */
+export function insertedBefore(world: World, k: KeyframeId): Inserted | null {
+  const keyframes = world.keyframes;
+  const j = indexIn(keyframes, k);
+
+  if (j < 0) return null;
+  if (j > 0) return inserted(world, keyframes[j - 1].id);
+
+  const key = Math.max(...keyframes.map(f => f.id)) + 1;
+  const moved = <T extends { birth?: KeyframeId }>(it: T): T => (it.birth === k ? { ...it, birth: key } : it);
+
+  const polygons = new Map([...world.polygons].map(([id, p]) => [id, { ...moved(p), points: p.points.map(moved) }]));
+  const artefacts = new Map([...world.artefacts].map(([id, a]) => [id, moved(a)]));
+  const paths = new Map([...world.paths].map(([id, p]) => [id, moved(p)]));
+  const groups = new Map([...world.groups].map(([id, g]) => [id, moved(g)]));
+  const order = numbered([{ id: key, name: '', visible: true }, ...keyframes]);
+
+  return { world: { ...world, keyframes: order, polygons, artefacts, paths, groups }, key };
 }
 
 /**

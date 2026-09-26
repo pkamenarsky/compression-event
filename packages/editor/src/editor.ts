@@ -31,7 +31,7 @@ import { download, upload } from './save';
 import { flattenInto } from './resolve';
 import { picker } from './picker';
 import { inspector } from './inspector';
-import { droppedHere, timeline } from './timeline';
+import { droppedHere, keyInsertedHere, timeline } from './timeline';
 import { theme } from './theme';
 import {
   EditorState,
@@ -582,16 +582,17 @@ function shortcuts(state: Value<EditorState>, input: Input, update: Update): VNo
       // Cmd+W closes the window, which is emphatically not a tool switch.
       if (e.code === 'KeyW') continue;
 
-      // Cmd+I is the browser's, and there is nothing here it would mean.
-      if (e.code === 'KeyI') continue;
-
       // Cmd+A is select-all, which this does not have; leave it to the browser
       // rather than swallowing it into a tool switch.
       if (e.code === 'KeyA') continue;
 
       e.preventDefault();
 
-      if (e.code === 'KeyZ') {
+      if (e.code === 'KeyI') {
+        // A key before the needle's — see `keyInsertedHere`.
+        update(keyInsertedHere);
+      }
+      else if (e.code === 'KeyZ') {
         // Cmd+Shift+Z is redo everywhere a Mac is involved, and Cmd+Y is redo
         // everywhere else. Both, since both hands turn up.
         update(e.shiftKey ? redone : undone);
