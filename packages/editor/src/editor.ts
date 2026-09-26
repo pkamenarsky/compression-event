@@ -314,7 +314,10 @@ function versions(input: Input, update: Update): VNode {
         continue;
       }
 
-      update(s => switched(s, clamped(s.world, order(s.world, s.keyframe) + by)));
+      // Back from a key is its own keyframe first, the way ⌥← gets there.
+      update(s => (by < 0 && s.target !== null
+        ? { ...s, target: null }
+        : switched(s, clamped(s.world, order(s.world, s.keyframe) + by))));
     }
   });
 }
