@@ -161,6 +161,10 @@ export type Tag =
 export interface TaggedShape {
   rings: Ring[]
   tags: Tag[][]
+  /** The input edge each point's outgoing edge is a piece of: `along[r][i]`
+   * is under `rings[r][i]` to `rings[r][i + 1]`. Only where no point was taken
+   * out for not turning; otherwise which piece a run stands for is not one. */
+  along: SourceRef[][]
 }
 
 export const OpUnion: Op = (a, b) => a || b;
@@ -3071,18 +3075,21 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
   const used = segs.map(() => false);
   const rings: Ring[] = [];
   const ringTags: Tag[][] = [];
+  const alongs: SourceRef[][] = [];
 
   for (let start = 0; start < segs.length; start++) {
     if (used[start]) continue;
 
     const ring: Ring = [];
     const ringTag: Tag[] = [];
+    const ringAlong: SourceRef[] = [];
     let e = start;
 
     while (true) {
       used[e] = true;
       ring.push(nodes[from[e]]);
       ringTag.push(leaves(segs[e], tags[from[e]]));
+      ringAlong.push(segs[e].edge);
 
       const next = successor(e, to[e], out, used, nodes, from, to);
       if (next < 0 || next === start || used[next]) break;
@@ -3096,11 +3103,13 @@ function chain(segs: Seg[], snap: number, keeps?: (tag: Tag) => boolean): Tagged
       if (kept !== null) {
         rings.push(kept.ring);
         ringTags.push(kept.tags);
+        ringAlong.length = kept.ring === ring ? ringAlong.length : 0;
+        alongs.push(ringAlong);
       }
     }
   }
 
-  return { rings, tags: ringTags };
+  return { rings, tags: ringTags, along: alongs };
 }
 
 /**

@@ -18,10 +18,10 @@
 // -----------------------------------------------------------------------------
 
 import type { Point } from '@ce/game/world';
-import type { EdgeRun, Effecting, Shape, Sweptfrom } from './geometry';
+import type { EdgeRun, Effecting, Op, Shape, Sweptfrom } from './geometry';
 import { OpSubtract, OpUnion, along, cornersOf, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
-import { combineIdentified, generation, keyOf, madeOf, on, shows, tooth } from './ids';
+import { combineIdentified, generation, keyOf, madeOf, mergedIdentified, on, shows, tooth } from './ids';
 import { holding } from './hold';
 
 /** A shape to a shape, carrying identity. */
@@ -183,27 +183,78 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
     };
   };
 
+  // Merged first, where there are enough pieces for their crossings to be
+  // the cost; see `mergeBands`. What is merged has no inert edges left to name:
+  // a spoke with band both sides is gone, and a wall where it stood is the
+  // shape's own edge again, which the cut settles as a shared edge.
+  const cut = (out: Drawn, pieces: Shape, from: Sweptfrom[][], along: Sweptfrom[][], op: Op): Drawn => {
+    if (mergingBands && pieces.length >= MERGED) {
+      return combineIdentified(out, merged(pieces.map((ring, r) => side([ring], [from[r]], [along[r]]))), op);
+    }
+
+    return combineIdentified(out, side(pieces, from, along), op, inertIn(pieces, from));
+  };
+
   let out: Drawn = it;
 
-  if (band.inward.length > 0) {
-    out = combineIdentified(
-      out,
-      side(band.inward, band.inwardFrom, band.inwardAlong),
-      OpSubtract,
-      inertIn(band.inward, band.inwardFrom),
-    );
-  }
-
-  if (band.outward.length > 0) {
-    out = combineIdentified(
-      out,
-      side(band.outward, band.outwardFrom, band.outwardAlong),
-      OpUnion,
-      inertIn(band.outward, band.outwardFrom),
-    );
-  }
+  if (band.inward.length > 0) out = cut(out, band.inward, band.inwardFrom, band.inwardAlong, OpSubtract);
+  if (band.outward.length > 0) out = cut(out, band.outward, band.outwardFrom, band.outwardAlong, OpUnion);
 
   return out;
+}
+
+/**
+ * How many pieces a band has before they are merged ahead of the cut.
+ *
+ * A band is a quad per wall, and where the depth is more than the walls are
+ * long the quads lie on each other many deep: a noise deform's teeth fifteen
+ * apart eroded by thirty-five made a band of three hundred and seventy pieces
+ * whose thousand edges cut each other into twenty-seven thousand, and every one
+ * of those was read, walked and chained in the cut. Merged a few neighbours at
+ * a time first, most crossings are paid once in arrangements a few quads big,
+ * and what reaches the cut is those runs' outlines.
+ */
+const MERGED = 16;
+
+/** Whether bands are merged at all. Off, a band is cut whole as it always was:
+ * here to measure the two against each other. */
+let mergingBands = true;
+
+export function mergeBands(on: boolean): void {
+  mergingBands = on;
+}
+
+/**
+ * The pieces merged a run of `CHUNK` neighbours at a time, since a band's
+ * pieces come in the order of the walls they swept and a wall's quad lies on
+ * those of the walls either side of it. The runs are handed on side by side and
+ * not merged again: a tree taking them all the way up paid for the band's whole
+ * outline at every level, which cost a level of teeth that barely overlapped
+ * twice what it saved. Eight measured best, against four, sixteen and
+ * thirty-two.
+ */
+function merged(pieces: Drawn[]): Drawn {
+  const runs: Drawn[] = [];
+
+  for (let i = 0; i < pieces.length; i += CHUNK) {
+    const run = pieces.slice(i, i + CHUNK);
+    const half = Math.ceil(run.length / 2);
+
+    runs.push(run.length === 1 ? run[0] : mergedIdentified(joined(run.slice(0, half)), joined(run.slice(half))));
+  }
+
+  return joined(runs);
+}
+
+const CHUNK = 8;
+
+/** Drawn shapes side by side as one, nothing arranged. */
+function joined(parts: Drawn[]): Drawn {
+  return {
+    shape: parts.flatMap(p => p.shape),
+    ids: parts.flatMap(p => p.ids),
+    edges: parts.flatMap(p => p.edges!),
+  };
 }
 
 /** The name of the corner a band point came of, or of the place along its wall

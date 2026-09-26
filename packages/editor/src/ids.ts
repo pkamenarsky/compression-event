@@ -37,7 +37,7 @@
 // -----------------------------------------------------------------------------
 
 import type { Cut, Op, Shape, SourceRef, Tag } from './geometry';
-import { combineTagged } from './geometry';
+import { OpUnion, combineTagged } from './geometry';
 import { holding } from './hold';
 
 declare const ident: unique symbol;
@@ -295,6 +295,9 @@ export function combineIdentified(
   b: Drawn,
   op: Op,
   inert?: (ring: number, index: number) => boolean,
+  /** Every point kept, turning or not, and each edge named after the input
+   * edge it is a piece of: see `mergedIdentified`. */
+  whole = false,
 ): Drawn {
   const at = (ref: SourceRef): Ident => {
     const got = (ref.shape === 0 ? a : b).ids[ref.ring]?.[ref.index];
@@ -314,7 +317,7 @@ export function combineIdentified(
 
   // Held, everything a construction laid and nothing an arrangement made: a
   // crossing turns by construction and needs no holding. See `hold.ts`.
-  const keeps = holding() ? (tag: Tag) => tag.kind === 'vertex' && madeOf(at(tag.at)).kind !== 'born' : undefined;
+  const keeps = whole ? () => true : holding() ? (tag: Tag) => tag.kind === 'vertex' && madeOf(at(tag.at)).kind !== 'born' : undefined;
   const tagged = combineTagged(a.shape, b.shape, op, undefined, inert, keeps);
 
   const named = (tag: Tag): Ident =>
@@ -323,5 +326,22 @@ export function combineIdentified(
   return {
     shape: tagged.rings as Cut,
     ids: tagged.tags.map(tags => tags.map(named)),
+    ...(whole ? { edges: tagged.along.map(refs => refs.map(leaving)) } : {}),
   };
+}
+
+/**
+ * The union of two drawn shapes that is still, point for point and edge for
+ * edge, what went in: every point kept whether it turns or not, and every edge
+ * named after the input edge it lies on.
+ *
+ * What a later arrangement names by is exactly that — a point by its own name,
+ * a crossing by the two edges that made it — so cutting against this names its
+ * output as cutting against the two operands would have, and pays for the
+ * crossings between them once, here, rather than again in every arrangement
+ * they were handed to together. See `eroding`, whose band is quads laid on
+ * each other by the hundred.
+ */
+export function mergedIdentified(a: Drawn, b: Drawn): Drawn {
+  return combineIdentified(a, b, OpUnion, undefined, true);
 }
