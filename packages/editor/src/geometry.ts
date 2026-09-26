@@ -1256,6 +1256,14 @@ interface Columns {
  * whose side of `p` a rounding could change is asked. */
 const CROWDED = 32;
 
+/** Whether crowded strips are filed at all. Off, every strip is walked edge by
+ * edge as it always was: here to measure the two against each other. */
+let filingCrowds = true;
+
+export function fileCrowds(on: boolean): void {
+  filingCrowds = on;
+}
+
 /** How many strips, for `n` edges: few enough that a tall edge is not filed a
  * thousand times over, many enough that a strip holds a handful.
  *
@@ -1305,7 +1313,7 @@ function stripsOf(boxes: Float64Array, n: number): Strips {
   // asked. `-1` is not yet.
   const mid = new Int32Array(count);
 
-  for (let s = 0; s < count; s++) mid[s] = start[s + 1] - start[s] < CROWDED ? start[s + 1] : -1;
+  for (let s = 0; s < count; s++) mid[s] = !filingCrowds || start[s + 1] - start[s] < CROWDED ? start[s + 1] : -1;
 
   const empty = new Float64Array(0);
 
