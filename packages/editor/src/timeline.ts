@@ -73,7 +73,6 @@ import {
   reborn,
   redied,
   samePlace,
-  skipToggledAt,
   timedAt,
 } from './keys';
 import { KeyframeId, keysAt } from './rig';
@@ -933,11 +932,11 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
       top: `${y - 1}px`,
       width: `${Math.max(0, x1 - prev)}px`,
       height: '0',
-      borderTop: s.skip ? `1px dashed ${theme.faded}` : `2px solid ${colour}`,
+      borderTop: `2px solid ${colour}`,
       pointerEvents: 'none',
     }));
 
-    const size = s.skip ? 8 : 6;
+    const size = 6;
 
     out.push(box({
       left: `${centre(m, s.col) - size / 2}px`,
@@ -945,13 +944,9 @@ function bar(ctx: Ctx, m: Model, r: Row, b: Bar, lane: number): VNode {
       width: `${size}px`,
       height: `${size}px`,
       borderRadius: '50%',
-      background: s.skip ? theme.panel : colour,
-      border: s.skip ? `1px solid ${theme.faded}` : 'none',
-      cursor: 'pointer',
+      background: colour,
+      pointerEvents: 'none',
       zIndex: 1,
-    }, [], {
-      title: s.skip ? 'Waits here: click to step' : 'Steps here: click to wait',
-      onclick: (e: MouseEvent) => acting(ctx, m, b.place, e.altKey, (w, all) => skipsToggled(w, all, b.place, m.keyframes[s.col].id)),
     }));
 
     prev = centre(m, s.col) + 5;
@@ -1063,7 +1058,7 @@ function acting(
 
   ctx.acted(f(w, all));
 
-  // Told how often to repeat or where to wait, every entry is where it was.
+  // Told how often to repeat, every entry is where it was.
   ctx.aim({ lead: place, all });
 }
 
@@ -1090,25 +1085,6 @@ function repeatedTo(world: World, places: readonly Place[], from: number, to: nu
     const e = entryAt(w, q);
 
     if (e !== undefined) w = timedAt(w, q, timesTo(w, e, from, to));
-    if ('refused' in w) break;
-  }
-
-  return w;
-}
-
-/** Every entry at `places` waiting over keyframe `k`, or stepping there,
- * whichever the one at `lead` is turning to: the ones already there stay, and
- * so do the ones whose repeat does not reach it. */
-function skipsToggled(world: World, places: readonly Place[], lead: Place, k: KeyframeId): World | Refused {
-  const waits = entryAt(world, lead)?.skip?.has(k) ?? false;
-  const col = order(world, k);
-  let w: World | Refused = world;
-
-  for (const q of places) {
-    const e = entryAt(w, q);
-    const reaches = e !== undefined && (barOf(w, e, order(w, q.at), q)?.steps.some(s => s.col === col) ?? false);
-
-    if (reaches && (e.skip?.has(k) ?? false) === waits) w = skipToggledAt(w, q, k);
     if ('refused' in w) break;
   }
 

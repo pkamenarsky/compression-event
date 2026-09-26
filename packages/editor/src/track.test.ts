@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
 import { TOP, addPolygon, broken, grouped, keysOfAt, layerNamer, listAt, reachable, rigOf, unchained, withRig } from './scene';
 import { deltaOf, nudged, repeating, stateAt } from './rig';
-import { Refused, dropped, listedAt, pushed, skipToggled } from './keys';
+import { Refused, dropped, listedAt, pushed } from './keys';
 import { barOf, beneath, entryLabel, gestureOf, rootsOf, rowsOf, steppedKey, timesTo } from './track';
 import { erode, move, nudge, repeated, scaled, turned as turning, wrote, wroteOne } from './testing';
 import { restored, saved } from './save';
@@ -142,29 +142,6 @@ describe('gestures', () => {
 });
 
 describe('bars', () => {
-  test('a repeat runs to its last step, waiting over what it skips', () => {
-    const { world, id } = room();
-    const w = repeated(world, 1, id, move(1, 0), 4);
-    const e = keysOfAt(w, 1, id)[0];
-
-    expect(barOf(w, e, 1, listedAt(w, id, 1, 0))).toMatchObject({ end: 4, forever: false });
-
-    // Waiting over a step leaves where it stops alone.
-    const skipped = ok(skipToggled(w, id, 1, 0, 2));
-    const bar = barOf(skipped, keysOfAt(skipped, 1, id)[0], 1, listedAt(skipped, id, 1, 0))!;
-
-    expect(bar.steps).toEqual([{ col: 2, skip: true }, { col: 3, skip: false }, { col: 4, skip: false }]);
-    expect(bar.end).toBe(4);
-    expect(stateAt(skipped, id, 2).frame.t.x).toBe(1);
-    expect(stateAt(skipped, id, 4).frame.t.x).toBe(3);
-
-    // And back, to where it was.
-    expect(keysOfAt(ok(skipToggled(skipped, id, 1, 0, 2)), 1, id)[0]).toEqual(e);
-
-    // The last step taken out ends it at the one before.
-    expect(barOf(w, keysOfAt(ok(skipToggled(w, id, 1, 0, 4)), 1, id)[0], 1, listedAt(w, id, 1, 0))!.end).toBe(3);
-  });
-
   test('once has no bar, and to the end runs to the last column', () => {
     const { world, id } = room();
     const w = repeated(world, 6, id, move(1, 0), null);
@@ -182,22 +159,13 @@ describe('bars', () => {
 
   test('dragging the end counts the columns it steps at', () => {
     const { world, id } = room();
-    const w = ok(skipToggled(repeated(world, 1, id, move(1, 0), 2), id, 1, 0, 2));
+    const w = repeated(world, 1, id, move(1, 0), 2);
     const e = keysOfAt(w, 1, id)[0];
 
     expect(timesTo(w, e, 1, 1)).toBe(1);
     expect(timesTo(w, e, 1, 0)).toBe(1);
-    // Column 2 is waited over, so column 4 is the third time.
-    expect(timesTo(w, e, 1, 4)).toBe(3);
+    expect(timesTo(w, e, 1, 4)).toBe(4);
     expect(timesTo(w, e, 1, 8)).toBeNull();
-  });
-
-  test('a skip is only after the entry', () => {
-    const { world, id } = room();
-    const w = repeated(world, 3, id, move(1, 0), null);
-
-    expect('refused' in skipToggled(w, id, 3, 0, 3)).toBe(true);
-    expect('refused' in skipToggled(w, id, 3, 0, 1)).toBe(true);
   });
 });
 

@@ -134,7 +134,6 @@ import {
   placed,
   played,
   sheared,
-  skipping,
   spun,
   stepped,
   stateAt,
@@ -2521,7 +2520,7 @@ function carried(
       else if (heads.has(c)) {
         const times = e.times === null ? null : e.times - c.source.step;
 
-        list.push(skipping(world.keyframes, { ...carriedKey(e.id, c.source.ref, c.ops[0]), times, skip: e.skip }, at));
+        list.push({ ...carriedKey(e.id, c.source.ref, c.ops[0]), times });
       }
     }
 
@@ -2560,7 +2559,6 @@ function onlyCorners(key: RigKey): RigKey | null {
     id: key.id,
     ref: key.ref,
     times: key.times,
-    ...(key.skip === undefined ? {} : { skip: key.skip }),
     ...(key.group === undefined ? {} : { group: key.group }),
     corners: key.corners,
   };
@@ -3202,13 +3200,12 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     const mine = keysAt(rig, v);
 
     // A repeat's step, as a key of its own that carries on from there.
-    const carrying = (p: Pick<Playing, 'key' | 'ref' | 'step' | 'by' | 'stand'>, k: KeyframeId): RigKey =>
-      skipping(world.keyframes, {
-        ...p.key,
-        ...(p.stand !== undefined ? { stand: p.stand } : p.by !== undefined ? { by: p.by } : {}),
-        ref: p.ref,
-        times: p.key.times === null ? null : p.key.times - p.step,
-      }, k);
+    const carrying = (p: Pick<Playing, 'key' | 'ref' | 'step' | 'by' | 'stand'>): RigKey => ({
+      ...p.key,
+      ...(p.stand !== undefined ? { stand: p.stand } : p.by !== undefined ? { by: p.by } : {}),
+      ref: p.ref,
+      times: p.key.times === null ? null : p.key.times - p.step,
+    });
 
     // The repeats about corners alone running into `k`, which the walk does
     // not list: a corner's moves commute and are counted rather than played.
@@ -3224,9 +3221,9 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
         return list.flatMap(key => {
           if (key.by !== undefined || key.stand !== undefined || key.corners === undefined) return [];
 
-          const step = counted1(world.keyframes, key, j, i) - 1;
+          const step = counted1(key, j, i) - 1;
 
-          return step > counted1(world.keyframes, key, j, i - 1) - 1 ? [carrying({ key, ref: key.ref, step }, k)] : [];
+          return step > counted1(key, j, i - 1) - 1 ? [carrying({ key, ref: key.ref, step })] : [];
         });
       });
     };
@@ -3243,7 +3240,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
     // repeat begun there begins where the paste lands, in the same order.
     const running = stand !== null
       ? []
-      : [...playingAt(src, id, v).flatMap(p => (p.at === v ? [] : [carrying(p, v)])), ...cornering(rig, v)];
+      : [...playingAt(src, id, v).flatMap(p => (p.at === v ? [] : [carrying(p)])), ...cornering(rig, v)];
 
     // Behind a stand, what is running goes on past it, and comes across as its
     // next step at the head of the keyframe after: the same rig with nothing
@@ -3263,7 +3260,7 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
       // Only the keyframe right after: from there, the walk steps them on.
       const steps: RigKey[] = stand === null || i > at + 1
         ? []
-        : [...playingAt(before, id, k).map(p => carrying(p, k)), ...cornering(keyRigOf(before, id), k)];
+        : [...playingAt(before, id, k).map(carrying), ...cornering(keyRigOf(before, id), k)];
 
       if (steps.length + own.length > 0) keys.push([i - at, [...steps, ...own]]);
     }
@@ -3284,7 +3281,6 @@ export function copied(world: World, v: KeyframeId, ids: readonly Id[]): Clippin
         amounts: state.amounts,
       },
       keys,
-      taken: at,
       // What the fold took apart matters only where it goes on past the copy.
       unrolled: freeing.unrolled.filter(reaches),
       ...(world.effects.has(id) ? { effects: world.effects.get(id)! } : {}),
@@ -3520,23 +3516,6 @@ function written(
     amounts: renamed(clip.amounts),
   };
 
-  const shift = order(world, v) - clip.taken;
-  const moved = (e: RigKey): RigKey => {
-    if (e.skip === undefined) return e;
-
-    const skip = new Set([...e.skip].flatMap(s => {
-      const k = keyAt(world, order(world, s) + shift);
-
-      return k === null ? [] : [k];
-    }));
-
-    if (skip.size > 0) return { ...e, skip };
-
-    const { skip: _gone, ...rest } = e;
-
-    return rest;
-  };
-
   let made = 0;
   const keys = new Map<KeyframeId, readonly RigKey[]>([
     [v, [{ id: made++, ref: ORIGIN, stand, times: 1 }]],
@@ -3549,10 +3528,8 @@ function written(
     // note on `pasted`.
     if (k === null) break;
 
-    // A skip moves with the paste, as far past it as it was past the copy,
-    // and goes where that is past the end. What the copy keyframe did plays
-    // over the stand.
-    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => skipping(world.keyframes, { ...rekeyed(moved(e)), id: made++ }, k))]);
+    // What the copy keyframe did plays over the stand.
+    keys.set(k, [...(keys.get(k) ?? []), ...list.map(e => ({ ...rekeyed(e), id: made++ }))]);
   }
 
   return withKeyRig(world, id, { keys });

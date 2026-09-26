@@ -143,7 +143,7 @@ function savedOldEntry(e: Entry, kinds: Map<LayerId, AmountKind>): OldEntry {
       ? { kind: kinds.get(e.op.layer)!, by: e.op.by }
       : e.op;
 
-  const out: OldEntry = e.skip === undefined ? { op, times: e.times } : { op, times: e.times, skip: [...e.skip] };
+  const out: OldEntry = { op, times: e.times };
 
   return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
 }

@@ -243,8 +243,6 @@ export interface Repeat {
   /** How many keyframes it contributes to, one after another from its own: 1
    * is once, `null` is to the end. */
   times: number | null
-  /** Keyframes after its own where it waits. See `Entry`. */
-  skip?: ReadonlySet<KeyframeId>
 }
 
 export interface Entry<O extends Op = Op> extends Repeat {
@@ -252,13 +250,6 @@ export interface Entry<O extends Op = Op> extends Repeat {
   /** How many keyframes it contributes to, one after another from its own: 1
    * is once, `null` is to the end. */
   times: number | null
-  /**
-   * Keyframes after its own where a repeat takes no step: it waits over them
-   * and carries its count on, so a skipped keyframe is not counted. What an
-   * inserted keyframe writes onto every repeat running across it, so that it
-   * is a keyframe where nothing happens. Absent is none.
-   */
-  skip?: ReadonlySet<KeyframeId>
   /**
    * The gesture that wrote it, as a key's `group` is. Absent is none.
    */
@@ -299,26 +290,8 @@ export function once<O extends Op>(op: O): Entry<O> {
 }
 
 /** An entry that goes on contributing: `times` in all, or to the end. */
-export function repeating<O extends Op>(op: O, times: number | null, skip?: ReadonlySet<KeyframeId>): Entry<O> {
-  return skip === undefined || skip.size === 0 ? { op, times } : { op, times, skip };
-}
-
-/**
- * An entry written at `k`, with only the skips that still mean something
- * there: keyframes that exist and come after it. What an entry keeps when it
- * is moved, copied or carried to a keyframe of its own.
- */
-export function skipping<E extends Repeat>(keyframes: readonly Keyframe[], e: E, k: KeyframeId): E {
-  if (e.skip === undefined) return e;
-
-  const at = indexIn(keyframes, k);
-  const skip = new Set([...e.skip].filter(s => indexIn(keyframes, s) > at));
-
-  if (skip.size === e.skip.size) return e;
-
-  const { skip: _gone, ...rest } = e;
-
-  return (skip.size === 0 ? rest : { ...rest, skip }) as E;
+export function repeating<O extends Op>(op: O, times: number | null): Entry<O> {
+  return { op, times };
 }
 
 /**
@@ -649,7 +622,7 @@ function standingAt(
  * what it did after `from` if it was written before it.
  *
  * The same count the walk keeps for the list — once at its own keyframe, and
- * once more at each unskipped one after it while it has steps left — worked
+ * once more at each one after it while it has steps left — worked
  * out directly, since a corner's moves commute and there is no order to play
  * them in. `from` is a stand, or the corner's own birth: a stand holds what
  * came before it, the steps it was written over included, and what a repeat
@@ -666,18 +639,12 @@ export function applications(
 
   if (j < 0 || j > i) return 0;
 
-  return j >= from ? counted1(keyframes, e, j, i) : counted1(keyframes, e, j, i) - counted1(keyframes, e, j, from);
+  return j >= from ? counted1(e, j, i) : counted1(e, j, i) - counted1(e, j, from);
 }
 
 /** How many times an entry written at index `j` has contributed by `i`. */
-export function counted1(keyframes: readonly Keyframe[], e: Repeat, j: number, i: number): number {
-  let steps = i - j;
-
-  if (e.skip !== undefined) {
-    for (let m = j + 1; m <= i; m++) {
-      if (e.skip.has(keyframes[m].id)) steps--;
-    }
-  }
+export function counted1(e: Repeat, j: number, i: number): number {
+  const steps = i - j;
 
   return 1 + (e.times === null ? steps : Math.min(steps, e.times - 1));
 }
@@ -939,8 +906,6 @@ export interface Key {
   /** How many keyframes it contributes to, from its own: 1 is once, `null` is
    * to the end. */
   times: number | null
-  /** Keyframes after its own where the repeat waits, carrying its count on. */
-  skip?: ReadonlySet<KeyframeId>
   /** The state outright, instead of a delta: what unchaining writes. */
   stand?: Stand
   /** The gesture that wrote it, where one wrote keys on several things. */
@@ -1301,16 +1266,10 @@ export function walkedBy(
       totals = plusAmounts(totals, d.amounts);
     };
 
-    // The steps of repeats begun earlier, oldest first. A skipped keyframe is
-    // not a step: the repeat waits over it and carries its count on.
+    // The steps of repeats begun earlier, oldest first.
     const going: Stepping[] = [];
 
     for (const r of running) {
-      if (r.key.skip?.has(at)) {
-        going.push(r);
-        continue;
-      }
-
       if (r.key.times !== null && r.steps + 1 >= r.key.times) continue;
 
       r.steps += 1;
@@ -1563,7 +1522,6 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
         ref,
         ...(by === null ? { stand: e.op as Stand } : { by }),
         times: e.times,
-        ...(e.skip === undefined ? {} : { skip: e.skip }),
         ...(e.gesture === undefined ? {} : { group: e.gesture }),
       });
     }
@@ -1580,7 +1538,6 @@ export function keysOf(rig: Rig, was?: KeyRig): KeyRig {
       id: id++,
       ref: ORIGIN,
       times: e.times,
-      ...(e.skip === undefined ? {} : { skip: e.skip }),
       ...(e.gesture === undefined ? {} : { group: e.gesture }),
     };
 
@@ -1685,13 +1642,7 @@ interface Writing extends Key {
 }
 
 function sameRepeat(a: Repeat, b: Repeat): boolean {
-  if (a.times !== b.times) return false;
-
-  const x = a.skip, y = b.skip;
-
-  if (x === undefined || y === undefined) return x === y || (x ?? y)!.size === 0;
-
-  return x.size === y.size && [...x].every(k => y.has(k));
+  return a.times === b.times;
 }
 
 // -----------------------------------------------------------------------------
@@ -1800,7 +1751,7 @@ export function foldedBy(key: Key, ref: Point, by: Delta): Key | 'gone' | null {
   // A key that repeats is what a thing keeps doing, and a hand adding to it is
   // saying how far each step goes rather than writing another — which is
   // `nudged`'s rule for a corner, and not this.
-  if (was === undefined || key.times !== 1 || key.skip !== undefined) return null;
+  if (was === undefined || key.times !== 1) return null;
 
   // A delta that neither turns nor reshapes says the same thing about every
   // point of the thing — a move is a move wherever it is painted, and an
@@ -2052,7 +2003,6 @@ export function entriesOf(rig: KeyRig): Rig {
     for (const key of list) {
       const repeat = {
         times: key.times,
-        ...(key.skip === undefined ? {} : { skip: key.skip }),
         ...(key.group === undefined ? {} : { gesture: key.group }),
       };
 

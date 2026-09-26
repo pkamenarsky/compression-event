@@ -104,13 +104,12 @@ function savedKeyRig27(rig: KeyRig): { keys: [KeyframeId, SavedKey27[]][] } {
 
   return {
     keys: [...rig.keys].map(([k, list]) => [k, list.map((key): SavedKey27 => {
-      const { by, stand, corners, skip, ...rest } = key;
+      const { by, stand, corners, ...rest } = key;
 
       return {
         ...rest,
         ...(by === undefined ? {} : { by: (({ amounts, ...d }) => ({ ...d, ...three(amounts) }))(by) }),
         ...(corners === undefined || corners.size === 0 ? {} : { corners: [...corners] }),
-        ...(skip === undefined || skip.size === 0 ? {} : { skip: [...skip] }),
         ...(stand === undefined ? {} : {
           stand: (({ amounts, corners: c, ...st }) => ({
             ...st,
@@ -139,8 +138,6 @@ export interface OldRig {
 export interface OldEntry {
   op: OldOp
   times: number | null
-  /** Absent is none. */
-  skip?: KeyframeId[]
   /** Absent is none. */
   gesture?: number
 }
@@ -253,9 +250,7 @@ function restoredEntry(e: OldEntry): Entry {
       ? was.kind === 'scale' ? { ...was, lean: was.lean ?? 0 } : was as Op
       : { kind: 'amount', layer: AS_LAYER[was.kind as OldAmount['kind']], by: (was as OldAmount).by };
 
-  const out: Entry = e.skip === undefined || e.skip.length === 0
-    ? { op, times: e.times }
-    : { op, times: e.times, skip: new Set(e.skip) };
+  const out: Entry = { op, times: e.times };
 
   return e.gesture === undefined ? out : { ...out, gesture: e.gesture };
 }

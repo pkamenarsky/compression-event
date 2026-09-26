@@ -1077,9 +1077,6 @@ export interface Timed {
   stood: { frame: Frame, amounts: Amounts }
   /** Each keyframe's keys from the copy on, by offset. */
   keys: [number, Key[]][]
-  /** Where the copy was taken, by index: what a skip is read against, so
-   * that it lands as far past the paste as it was past the copy. */
-  taken: number
   /** Its effects. Absent is none. */
   effects?: readonly Layer[]
   /** The repeats that came across as single entries. */
@@ -1176,8 +1173,8 @@ export function marked(s: EditorState, was: World): EditorState {
  * fresh from `nextId`.
  *
  * Written is a key that was not in that thing's timeline before, or one the
- * step changed what it does. A key told how often to repeat, where to wait, or
- * pushed along still does the same thing, and keeps the gesture it had. Only
+ * step changed what it does. A key told how often to repeat, or pushed
+ * along still does the same thing, and keeps the gesture it had. Only
  * the timelines the step replaced are looked at.
  */
 function doing(key: Key | undefined): string {

@@ -11,7 +11,8 @@
 // order they were already in. See `PLAN-keys.md`.
 //
 // Keyframes come and go the same way. An inserted one is a keyframe where
-// nothing happens: every repeat running across it skips it. A deleted one
+// nothing happens: every repeat running across it stops before it and carries
+// on after it, as a key of its own. A deleted one
 // hands what it does, and what is born and dies there, to the next, and a
 // repeat that stepped there takes a step fewer, so it ends where it ended.
 // -----------------------------------------------------------------------------
@@ -35,8 +36,8 @@ import {
   keysAt,
   nextKey,
   retyped,
+  steppedBy,
   kindOf,
-  skipping,
   withKeysAt,
 } from './rig';
 import { emptyBeside } from './empty';
@@ -158,9 +159,7 @@ export function pushed(world: World, id: Id, k: KeyframeId, which: Which): World
   const head = stands(there);
   const rig = withKeysAt(keyRigOf(world, id), k, list.filter((e, i) => !chosen(e, i, which)));
 
-  const moved = going.map(e => skipping(world.keyframes, e, next));
-
-  return withKeyRig(world, id, withKeysAt(rig, next, [...there.slice(0, head), ...moved, ...there.slice(head)]));
+  return withKeyRig(world, id, withKeysAt(rig, next, [...there.slice(0, head), ...going, ...there.slice(head)]));
 }
 
 /** The chosen entries of the keyframe after `k` moved, whole and in order, to
@@ -187,49 +186,6 @@ export function pulled(world: World, id: Id, k: KeyframeId, which: Which): World
   const rig = withKeysAt(keyRigOf(world, id), next, there.filter((e, i) => !chosen(e, i, which)));
 
   return withKeyRig(world, id, withKeysAt(rig, k, [...listOf(world, id, k), ...going]));
-}
-
-/**
- * A repeat told to wait over keyframe `at`, or to step there again where it
- * was waiting.
- *
- * Where it stops stays put: a step taken out is one fewer, and a wait inside
- * the span stepped over again is one more. Only taking out the last step moves
- * the end, back to the step before, since there is then nothing there to stop
- * on. How far it runs is changed by saying so — see `timed`.
- */
-export function skipToggled(world: World, id: Id, k: KeyframeId, index: number, at: KeyframeId): World | Refused {
-  return skipToggledAt(world, listedAt(world, id, k, index), at);
-}
-
-export function skipToggledAt(world: World, p: Place, at: KeyframeId): World | Refused {
-  const keyframes = world.keyframes;
-  const e = entryAt(world, p);
-  const j = indexIn(keyframes, p.at), i = indexIn(keyframes, at);
-
-  if (e === undefined) return world;
-  if (e.stand !== undefined) return { refused: 'an unchaining does not repeat' };
-  if (i <= j) return { refused: 'a repeat skips only after it starts' };
-
-  const skip = new Set(e.skip ?? []);
-  let times = e.times;
-
-  if (skip.has(at)) {
-    skip.delete(at);
-
-    // Inside the span: it steps there now, and one more keeps the end.
-    if (times !== null && going(keyframes, e, j, i)) times += 1;
-  }
-  else {
-    if (times !== null && stepsAt(keyframes, e, j, i)) times -= 1;
-
-    skip.add(at);
-  }
-
-  const { skip: _was, ...rest } = e;
-  const out = { ...rest, times };
-
-  return rewritten(world, p, skip.size === 0 ? out : { ...out, skip });
 }
 
 /** How many stands a list opens with. */
@@ -459,7 +415,7 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
 
   const held = heldOf(p.kind);
   const by = from[held]!.get(p.corner)!;
-  const moved = skipping(world.keyframes, from, to);
+  const moved = from;
   const out = unwritten(world, p);
   const rig = keyRigOf(out, p.id);
   const list = keysAt(rig, to);
@@ -476,7 +432,6 @@ function cornerMoved(world: World, p: Cornered, to: KeyframeId): World | Refused
       ref: REST.t,
       [held]: new Map([[p.corner, by]]),
       times: moved.times,
-      ...(moved.skip === undefined ? {} : { skip: moved.skip }),
     };
 
     return withKeyRig(out, p.id, withKeysAt(rig, to, [...list, key]));
@@ -498,11 +453,7 @@ function bareCorners(key: Key): boolean {
 
 /** Whether two things repeat the same way. */
 function sameRepeat(a: Repeat, b: Repeat): boolean {
-  if (a.times !== b.times) return false;
-
-  const x = a.skip ?? new Set<KeyframeId>(), y = b.skip ?? new Set<KeyframeId>();
-
-  return x.size === y.size && [...x].every(k => y.has(k));
+  return a.times === b.times;
 }
 
 /**
@@ -563,7 +514,7 @@ export function merged(world: World, from: Listed, into: Listed): World | Refuse
 
   if (a === undefined || b === undefined) return world;
   if (a.stand !== undefined || b.stand !== undefined) return { refused: 'an unchaining does not merge' };
-  if (a.times !== 1 || b.times !== 1 || a.skip !== undefined || b.skip !== undefined) {
+  if (a.times !== 1 || b.times !== 1) {
     return { refused: 'a repeating key does not merge' };
   }
 
@@ -618,18 +569,57 @@ function numbered(keyframes: readonly Keyframe[]): Keyframe[] {
 
 /** Whether a key written at index `j` has steps left to take after index
  * `i`. */
-function going(keyframes: readonly Keyframe[], e: Repeat, j: number, i: number): boolean {
-  return e.times === null || counted1(keyframes, e, j, i) < e.times;
+function going(e: Repeat, j: number, i: number): boolean {
+  return e.times === null || counted1(e, j, i) < e.times;
 }
 
 /** Whether a key written at index `j` takes a step at index `i`. */
-function stepsAt(keyframes: readonly Keyframe[], e: Repeat, j: number, i: number): boolean {
-  return i > j && !e.skip?.has(keyframes[i].id) && going(keyframes, e, j, i - 1);
+function stepsAt(e: Repeat, j: number, i: number): boolean {
+  return i > j && going(e, j, i - 1);
 }
 
 /** Every key of a rig, through `f`. */
 function everyKey(rig: KeyRig, f: (key: Key, k: KeyframeId) => Key): KeyRig {
   return { keys: new Map([...rig.keys].map(([k, list]) => [k, list.map(key => f(key, k))])) };
+}
+
+/**
+ * Every repeat of a rig running past index `j` stopped there, and the rest of
+ * it written at `next`, first in its list, from the step it had reached. At
+ * the end of the keyframes, where there is no `next`, it just stops.
+ */
+function cut(keyframes: readonly Keyframe[], rig: KeyRig, j: number, next: KeyframeId | undefined): KeyRig {
+  const keys = new Map<KeyframeId, readonly Key[]>(rig.keys);
+  const rest: Key[] = [];
+  let made = nextKey(rig);
+
+  // Oldest first, which is the order the steps play in.
+  const written = [...rig.keys].sort(([a], [b]) => indexIn(keyframes, a) - indexIn(keyframes, b));
+
+  for (const [k, list] of written) {
+    const i = indexIn(keyframes, k);
+
+    if (i > j) continue;
+
+    keys.set(k, list.map(e => {
+      if (e.stand !== undefined || !going(e, i, j)) return e;
+
+      const step = counted1(e, i, j);
+
+      rest.push({
+        ...e,
+        id: made++,
+        ...(e.by === undefined ? {} : { by: steppedBy(e.by, step) }),
+        times: e.times === null ? null : e.times - step,
+      });
+
+      return { ...e, times: step };
+    }));
+  }
+
+  if (next !== undefined && rest.length > 0) keys.set(next, [...rest, ...(keys.get(next) ?? [])]);
+
+  return { keys };
 }
 
 export interface Inserted {
@@ -642,8 +632,11 @@ export interface Inserted {
  *
  * It is the keyframe before it over again, and every keyframe after it is
  * where it was: nothing is written there, and every repeat running across it
- * skips it. What goes on there is then brought in by hand — pulled from the
- * next keyframe, pushed from the one before, or done there.
+ * is cut in two — the steps up to `after`, and the rest as a key of its own at
+ * the head of the keyframe after the new one, starting from the step it had
+ * reached, so it plays first there as it did. What goes on at the new one is
+ * then brought in by hand — pulled from the next keyframe, pushed from the one
+ * before, or done there.
  */
 export function inserted(world: World, after: KeyframeId): Inserted | null {
   const keyframes = world.keyframes;
@@ -653,15 +646,8 @@ export function inserted(world: World, after: KeyframeId): Inserted | null {
 
   const key = Math.max(...keyframes.map(f => f.id)) + 1;
 
-  const skipped = (e: Key, k: KeyframeId): Key => {
-    const i = indexIn(keyframes, k);
-
-    if (i > j || !going(keyframes, e, i, j)) return e;
-
-    return { ...e, skip: new Set([...(e.skip ?? []), key]) };
-  };
-
-  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, everyKey(rig, skipped)]));
+  const next = keyframes[j + 1]?.id;
+  const rigs = new Map([...world.rigs].map(([id, rig]) => [id, cut(keyframes, rig, j, next)]));
   const order = numbered([...keyframes.slice(0, j + 1), { id: key, name: '', visible: true }, ...keyframes.slice(j + 1)]);
 
   return { world: { ...world, keyframes: order, rigs }, key };
@@ -718,16 +704,14 @@ export function deleted(world: World, k: KeyframeId, how: 'handed' | 'dropped' |
   const left = keyframes.filter(f => f.id !== k);
 
   // Written before it and stepping there, or written there and stepping at
-  // the next, which is now where it begins: a step fewer either way. Its skips
-  // are the ones still ahead of where it is written.
+  // the next, which is now where it begins: a step fewer either way.
   const shortened = (e: Key, at: KeyframeId): Key => {
     const i = indexIn(keyframes, at);
     const lost = i < d
-      ? stepsAt(keyframes, e, i, d)
-      : i === d && next !== null && stepsAt(keyframes, e, d, d + 1);
-    const out = lost && e.times !== null ? { ...e, times: e.times - 1 } : e;
+      ? stepsAt(e, i, d)
+      : i === d && next !== null && stepsAt(e, d, d + 1);
 
-    return skipping(left, out, i === d && next !== null ? next : at);
+    return lost && e.times !== null ? { ...e, times: e.times - 1 } : e;
   };
 
   const rigs = new Map<Id, KeyRig>();
@@ -885,15 +869,6 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
     return i < 0 ? null : keyframes[i + by]?.id ?? null;
   };
 
-  const entry = (e: Key): Key => {
-    if (e.skip === undefined) return e;
-
-    const skip = new Set([...e.skip].flatMap(s => shifted(s) ?? []));
-    const { skip: _was, ...rest } = e;
-
-    return skip.size === 0 ? rest : { ...rest, skip };
-  };
-
   const entries = <E>(map: ReadonlyMap<KeyframeId, E>, f: (e: E) => E): Map<KeyframeId, E> =>
     new Map([...map].flatMap(([k, e]) => {
       const there = shifted(k);
@@ -931,7 +906,7 @@ export function reborn(world: World, id: Id, to: KeyframeId): World | Refused {
   }
 
   const rig = keyRigOf(world, id);
-  const keys = entries(rig.keys, list => list.map(key => entry(lessCorners(key, gone) ?? key)));
+  const keys = entries(rig.keys, list => list.map(key => lessCorners(key, gone) ?? key));
 
   return withKeyRig(out, id, { keys: new Map([...keys].flatMap(([at, list]) => {
     const kept = list.map(key => lessCorners(key, gone)).flatMap(key => (key === null ? [] : [key]));

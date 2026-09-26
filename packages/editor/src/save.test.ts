@@ -280,7 +280,7 @@ describe('keys in a file', () => {
     ]);
 
     rig = withKeys(rig, 1, [
-      repeating<Op>({ kind: 'scale', by: { x: 1.3, y: 0.7 }, ref: { x: 3, y: 1 }, shift: { x: 2, y: -1 }, along: 0.2, lean: 0.1 }, null, new Set([3])),
+      repeating<Op>({ kind: 'scale', by: { x: 1.3, y: 0.7 }, ref: { x: 3, y: 1 }, shift: { x: 2, y: -1 }, along: 0.2, lean: 0.1 }, null),
       once<Op>({ kind: 'amount', layer: 1, by: 2 }),
     ]);
 
@@ -320,7 +320,6 @@ describe('keys in a file', () => {
     const now = restoredKeyRig(savedKeyRig(keysOf(entries())));
     const all = [...now.keys.values()].flat();
 
-    expect(all.some(k => k.skip instanceof Set)).toBe(true);
     expect(all.some(k => k.corners instanceof Map)).toBe(true);
     expect(all.some(k => k.stand?.corners instanceof Map)).toBe(true);
   });

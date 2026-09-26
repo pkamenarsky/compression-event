@@ -298,9 +298,7 @@ function someRig(seed: number): Rig {
       ])();
 
       const times = pick([1, 1, 2, 3, null]);
-      const skip = roll() < 0.2 ? new Set([f.id + 2]) : undefined;
-
-      list.push(times === 1 && skip === undefined ? once(op) : repeating(op, times, skip));
+      list.push(times === 1 ? once(op) : repeating(op, times));
     }
 
     // Now and then a stand: the state outright, which nothing before it

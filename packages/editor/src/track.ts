@@ -78,7 +78,7 @@ export interface Bar {
   place: Place
   slot: number
   /** Every column it has reached, the ones it waits over included. */
-  steps: { col: number, skip: boolean }[]
+  steps: { col: number }[]
   /** The column of its last step: the last column, for one that runs to the
    * end. */
   end: number
@@ -237,14 +237,9 @@ export function barOf(world: World, e: Key, from: number, place: Place, slot = 0
   for (let col = from + 1; col < keyframes.length; col++) {
     if (e.times !== null && taken >= e.times - 1) break;
 
-    const skip = e.skip?.has(keyframes[col].id) ?? false;
-
-    steps.push({ col, skip });
-
-    if (!skip) {
-      taken++;
-      end = col;
-    }
+    steps.push({ col });
+    taken++;
+    end = col;
   }
 
   const forever = e.times === null;
@@ -254,7 +249,7 @@ export function barOf(world: World, e: Key, from: number, place: Place, slot = 0
   let heading: string | null = null;
 
   if (e.by !== undefined && kindOf(e) === 'scale') {
-    const n = counted1(keyframes, e, from, end);
+    const n = counted1(e, from, end);
 
     heading = factor(Math.pow(e.by.scale.x, n), Math.pow(e.by.scale.y, n));
   }
@@ -286,7 +281,7 @@ export function timesTo(world: World, e: Key, from: number, col: number): number
   if (col <= from) return 1;
   if (col >= world.keyframes.length - 1) return null;
 
-  return counted1(world.keyframes, { ...e, times: null }, from, col);
+  return counted1({ ...e, times: null }, from, col);
 }
 
 function factor(x: number, y: number): string {

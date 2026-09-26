@@ -147,8 +147,6 @@ export interface SavedKey {
   by?: SavedDelta
   corners?: [VertexId, Point][]
   times: number | null
-  /** Absent is none. */
-  skip?: KeyframeId[]
   stand?: SavedStand
   /** Absent is none. */
   group?: number
@@ -404,7 +402,6 @@ function savedKey(key: Key): SavedKey {
     by: key.by === undefined ? undefined : only({ ...key.by, amounts: savedAmounts(key.by.amounts) }),
     corners: pairs(key.corners),
     times: key.times,
-    skip: key.skip === undefined || key.skip.size === 0 ? undefined : [...key.skip],
     stand: key.stand === undefined ? undefined : savedStand(key.stand),
     group: key.group,
   });
@@ -423,7 +420,6 @@ function restoredKey(key: SavedKey): Key {
     by: key.by === undefined ? undefined : { ...NOTHING, ...key.by, amounts: new Map(key.by.amounts ?? []) },
     corners: key.corners === undefined ? undefined : new Map(key.corners),
     times: key.times,
-    skip: key.skip === undefined || key.skip.length === 0 ? undefined : new Set(key.skip),
     stand: key.stand === undefined ? undefined : restoredStand(key.stand),
     group: key.group,
   });

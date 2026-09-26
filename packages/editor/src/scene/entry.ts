@@ -114,13 +114,13 @@ export function refolded(world: World, k: KeyframeId, id: Id, index: number, op:
   const ref = 'ref' in op ? op.ref : key.ref;
   // Its own repeat is the key's, not the fold's: what is being asked is what
   // the two operations come to.
-  const both = foldedBy({ ...key, times: 1, skip: undefined }, ref, also);
+  const both = foldedBy({ ...key, times: 1 }, ref, also);
 
   if (both === null) return world;
 
   // Edited back to nothing, it is an empty key rather than none: the key is
   // still the one being stood on, and the hand is still on it.
-  const kept = { times: key.times, ...(key.skip === undefined ? {} : { skip: key.skip }) };
+  const kept = { times: key.times };
   const done = both === 'gone' ? { ...key, by: NOTHING } : both;
   const now = list.map((x, i) => (i === index ? { ...done, ...kept } : x));
 
@@ -167,7 +167,7 @@ export function writtenInto(world: World, k: KeyframeId, id: Id, key: number | n
   const last = list.length - 1;
   // Not into one that repeats, though: adjusting every step of it is what a
   // hand put on it means, and never what a hand on nothing does.
-  const plain = last >= 0 && list[last].times === 1 && list[last].skip === undefined;
+  const plain = last >= 0 && list[last].times === 1;
   const index = key === null ? (plain ? last : -1) : list.findIndex(x => x.id === key);
 
   key = index >= 0 ? list[index].id : null;
