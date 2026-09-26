@@ -28,7 +28,6 @@ import {
   Typed,
   blankKeys,
   counted1,
-  emptyBeside,
   foldedBy,
   heldOf,
   indexIn,
@@ -40,6 +39,7 @@ import {
   skipping,
   withKeysAt,
 } from './rig';
+import { emptyBeside } from './empty';
 import { keyRigOf, withKeyRig, without } from './scene';
 import { EditorState, Id, Target, VertexId, World, within } from './types';
 

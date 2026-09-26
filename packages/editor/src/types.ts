@@ -30,6 +30,7 @@ import type { Amount, Amounts, Entry, Frame, Key, KeyRig, Keyframe, KeyframeId, 
 // so importing a value back out of it would be a runtime cycle. See
 // `cornermaps.ts`.
 import { CORNER_MAPS, eachCornerMap } from './cornermaps';
+import { lonely } from './empty';
 
 export type { ArtefactType, FloorPart, IconType, LevelPart, Point, PolygonKind, SetName };
 export type { Keyframe, KeyframeId };
@@ -1156,11 +1157,12 @@ const DEPTH = 200;
 export function marked(s: EditorState, was: World): EditorState {
   if (s.world === was) return s;
 
-  const world = gestured(s.world, was);
+  const { world, target } = lone(gestured(s.world, was), was, s.target);
 
   return {
     ...s,
     world,
+    target,
     status: null,
     history: { past: [...s.history.past, was].slice(-DEPTH), future: [] },
   };
@@ -1179,6 +1181,53 @@ function doing(key: Key | undefined): string {
   if (key === undefined) return '';
 
   return JSON.stringify([key.by ?? null, key.stand ?? null, key.corners === undefined ? null : [...key.corners]]);
+}
+
+/**
+ * `world` with no two empty keys side by side where the step from `was`
+ * wrote, the second folded into the first, and the hand moved with it. Kept
+ * here, at every edit recorded, rather than at every write: a gesture dragged
+ * back to where it began empties the key it is writing for a moment, and that
+ * key is not to be taken out from under it. See `lonely`.
+ */
+function lone(world: World, was: World, target: Target | null): { world: World, target: Target | null } {
+  let rigs: Map<Id, KeyRig> | null = null;
+  const moved = new Map<string, number>();
+
+  for (const [id, rig] of world.rigs) {
+    if (was.rigs.get(id) === rig) continue;
+
+    let keys: Map<KeyframeId, readonly Key[]> | null = null;
+
+    for (const [at, list] of rig.keys) {
+      const out = lonely(list);
+
+      if (out.into.size === 0) continue;
+
+      keys ??= new Map(rig.keys);
+      keys.set(at, out.list);
+
+      for (const [from, into] of out.into) moved.set(`${id}/${at}/${from}`, into);
+    }
+
+    if (keys !== null) {
+      rigs ??= new Map(world.rigs);
+      rigs.set(id, { ...rig, keys });
+    }
+  }
+
+  if (rigs === null) return { world, target };
+
+  const kept = (p: Place): Place => {
+    if (!('key' in p)) return p;
+
+    const into = moved.get(`${p.id}/${p.at}/${p.key}`);
+
+    return into === undefined ? p : { ...p, key: into };
+  };
+  const all = target === null ? [] : target.all.map(kept).filter((p, i, ps) => ps.findIndex(q => JSON.stringify(q) === JSON.stringify(p)) === i);
+
+  return { world: { ...world, rigs }, target: target === null ? null : { lead: kept(target.lead), all } };
 }
 
 export function gestured(world: World, was: World): World {

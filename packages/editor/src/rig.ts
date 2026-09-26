@@ -1768,25 +1768,6 @@ export function withKeysAt(rig: KeyRig, k: KeyframeId, list: readonly Key[]): Ke
   return { ...rig, keys };
 }
 
-/** Whether a key does nothing: what ⌘K puts in, before a gesture fills it. */
-export function emptyKey(key: Key): boolean {
-  const d = key.by;
-
-  return key.stand === undefined && key.times === 1 && (key.corners?.size ?? 0) === 0 && (d === undefined || (
-    d.move.x === 0 && d.move.y === 0 && d.angle === 0 && d.skew === 0 && d.scale.x === 1 && d.scale.y === 1
-    && d.along === 0 && d.lean === 0 && [...d.amounts.values()].every(v => v === 0)));
-}
-
-/**
- * The empty key a new empty key would be put beside at index `at` of `list`,
- * before it or after it, or nothing. Two empty keys side by side are never
- * wanted — the second says nothing the first does not — so where one would be
- * made, this is the one there already, to be picked instead.
- */
-export function emptyBeside(list: readonly Key[], at: number): Key | undefined {
-  return [list[at - 1], list[at]].find(key => key !== undefined && emptyKey(key));
-}
-
 /** The next id free in a rig: one more than the highest written. */
 export function nextKey(rig: KeyRig): number {
   let out = 0;

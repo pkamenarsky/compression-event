@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import { Point } from '@ce/game/world';
-import { TOP, addPolygon, copied, grouped, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withRig } from './scene';
-import { Frame, framed, nudged, repeating, stateAt, worldFrame } from './rig';
+import { TOP, addPolygon, copied, grouped, keyRigOf, keysOfAt, layerOf, listAt, pasted, rigOf, ungrouped, withKeyRig, withRig } from './scene';
+import { Frame, NOTHING, REST, framed, keyOnce, nudged, repeating, stateAt, withKeysAt, worldFrame } from './rig';
 import { Place, Refused, deleted, droppedAt, dropped, entryAt, firstKeyed, inserted, insertedBefore, keyInserted, listedAt, merged, mergedKeyframes, pulled, pulledAt, pushed, pushedAt, reborn, redied, skipToggledAt, timed, timedAt } from './keys';
 import { amountAt, deform, erode, move, moved, repeated, round, scaled, spun, turned, wrote } from './testing';
 import { restored, saved } from './save';
-import { Id, KeyframeId, World, emptyWorld, initialState } from './types';
+import { Id, KeyframeId, World, emptyWorld, initialState, marked } from './types';
 
 function rect(x: number, y: number, w: number, h: number): Point[] {
   return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
@@ -266,6 +266,19 @@ describe('keyframes', () => {
       expect(again.world).toBe(made.world);
       expect(again.place).toEqual(made.place);
     }
+  });
+
+  test('an edit recorded leaves no two empty keys side by side, the hand on the one kept', () => {
+    const { world, id } = room(emptyWorld(), 2);
+    const w = wrote(world, 2, id, move(5, 0));
+    const rig = keyRigOf(w, id);
+    const list = keysOfAt(w, 2, id);
+    const a = keyOnce(100, REST.t, NOTHING), b = keyOnce(101, REST.t, NOTHING);
+    const two = withKeyRig(w, id, withKeysAt(rig, 2, [...list, a, b]));
+    const s = marked({ ...initialState(w), world: two, target: { lead: { id, at: 2, key: 101 }, all: [{ id, at: 2, key: 101 }] } }, w);
+
+    expect(keysOfAt(s.world, 2, id).map(k => k.id)).toEqual([...list.map(k => k.id), 100]);
+    expect(s.target!.lead).toEqual({ id, at: 2, key: 100 });
   });
 
   test('two keys of a thing merge into one where the later was, doing both', () => {
