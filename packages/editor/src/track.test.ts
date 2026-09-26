@@ -310,25 +310,45 @@ describe('stepping from key to key', () => {
     return { s, id, key };
   };
 
-  test('back from the keyframe as it ends is the key before its last', () => {
+  test('back from a keyframe is the last key of the one before, and on along it', () => {
     const { s, id, key } = at1();
-    const t = steppedKey(s, -1);
+    const t = steppedKey({ ...s, keyframe: 2 }, -1);
 
     expect(t.keyframe).toBe(1);
-    expect(t.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
-    expect(steppedKey(t, -1)).toBe(t);
+    expect(t.target!.lead).toEqual({ id, at: 1, key: key(1, 1) });
+
+    const u = steppedKey(t, -1);
+
+    expect(u.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
+    expect(steppedKey(u, -1)).toBe(u);
   });
 
-  test('on is along the keyframe and then into the next one\'s first', () => {
+  test('on from a keyframe is its first key, and then into the next one\'s first', () => {
     const { s, id, key } = at1();
-    const first = steppedKey(s, -1);
+    const first = steppedKey(s, 1);
     const second = steppedKey(first, 1);
     const third = steppedKey(second, 1);
 
+    expect(first.target!.lead).toEqual({ id, at: 1, key: key(1, 0) });
     expect(second.target!.lead).toEqual({ id, at: 1, key: key(1, 1) });
     expect(third.keyframe).toBe(2);
     expect(third.target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
-    expect(steppedKey(s, 1).target!.lead).toEqual({ id, at: 2, key: key(2, 0) });
+    expect(steppedKey(third, 1)).toBe(third);
+  });
+
+  test('a slot is that key of every thing shown', () => {
+    const a = room();
+    const b = room(a.world);
+    const w = wrote(wrote(b.world, 1, a.id, move(1, 0), move(2, 0)), 1, b.id, move(3, 0));
+    const s = { ...initialState(w), keyframe: 1, selection: { ...EMPTY_SELECTION, polygons: [a.id, b.id] } };
+    const first = steppedKey(s, 1);
+    const second = steppedKey(first, 1);
+
+    expect(first.target!.all).toEqual([
+      { id: a.id, at: 1, key: keysOfAt(w, 1, a.id)[0].id },
+      { id: b.id, at: 1, key: keysOfAt(w, 1, b.id)[0].id },
+    ]);
+    expect(second.target!.all).toEqual([{ id: a.id, at: 1, key: keysOfAt(w, 1, a.id)[1].id }]);
   });
 
   test('with nothing picked there is nowhere to go', () => {

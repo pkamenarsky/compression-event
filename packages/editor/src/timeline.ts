@@ -400,13 +400,16 @@ function body(ctx: Ctx, m: Model): VNode {
       style: { position: 'relative', width: `${width}px`, minWidth: '100%', height: `${height}px` },
     },
     [
-      // The keyframe on screen, down the whole view.
+      // The needle, down the whole view: on the key the hand leads with, or
+      // at the start of the keyframe on screen, before its keys.
       box({
-        left: () => `${m.xs[ctx.current()] ?? 0}px`,
+        left: () => `${needle(m, ctx.current()) - 1}px`,
         top: '0',
-        width: () => `${m.widths[ctx.current()] ?? 0}px`,
+        width: '2px',
         height: `${height}px`,
-        background: 'rgba(91, 140, 255, 0.12)',
+        background: theme.accent,
+        zIndex: 2,
+        pointerEvents: 'none',
       }),
 
       ...m.xs.map(x => box({ left: `${x}px`, top: '0', width: '1px', height: `${height}px`, background: theme.border, opacity: 0.5 })),
@@ -416,6 +419,22 @@ function body(ctx: Ctx, m: Model): VNode {
       ...m.rows.map(r => row(ctx, m, r)),
     ],
   );
+}
+
+/** Where the needle is along the view: the lead key's slot where the hand is
+ * on one in column `col`, and just inside the column's left edge otherwise. */
+function needle(m: Model, col: number): number {
+  const p = m.picked;
+
+  if (p !== null) {
+    for (const r of m.rows) {
+      const i = r.cells[col]?.places.findIndex(q => samePlace(q, p.lead)) ?? -1;
+
+      if (i >= 0) return placed(m, r, col, i);
+    }
+  }
+
+  return (m.xs[col] ?? 0) + PAD / 2 + 2;
 }
 
 /** A row and the lanes of its repeats. */
@@ -486,8 +505,6 @@ function column(ctx: Ctx, m: Model, f: Model['keyframes'][number], i: number): V
   const current = () => i === ctx.current();
 
   return fragment([
-    box({ left: `${x}px`, top: '0', width: `${w}px`, height: '100%', background: () => (current() ? 'rgba(91, 140, 255, 0.16)' : 'transparent') }),
-
     label(f.name, {
       left: `${x}px`,
       top: '4px',

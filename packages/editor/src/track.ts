@@ -387,35 +387,44 @@ export function beneath(world: World, k: KeyframeId, p: Point, reach: number): B
 }
 
 /**
- * The hand moved to the key before or after the one it is on, `by` −1 or 1,
- * in the order the keys play: along its keyframe, and on into the one beside
- * where that has no more. Its thing's row alone — the lead's, or the first
- * thing picked where the hand is on nothing — and with it whatever its gesture
- * wrote beside it, as a click picks.
+ * The needle moved to the key slot before or after the one it is on, `by` −1
+ * or 1: along its keyframe, and on into the one beside where that has no more.
+ * A slot is the `i`-th key of every thing whose row is shown, and the hand
+ * goes on all of them, led by the key of the thing it was led by.
  *
- * On nothing is the keyframe as it ends, which is its last key: back goes to
- * the one before that, and on to the next keyframe's first. `s` itself where
- * there is nowhere to go. The keyframe it lands in is the result's, for the
- * caller to switch to.
+ * On nothing, the needle is on the keyframe itself, before its keys: on goes
+ * to its first slot, back to the last slot of the one before. Keyframes with
+ * no keys are stepped over. `s` itself where there is nowhere to go. The
+ * keyframe it lands in is the result's, for the caller to switch to.
  */
 export function steppedKey(s: EditorState, by: 1 | -1): EditorState {
   const w = s.world;
-  const rows = rowsOf(w, rootsOf(w, s.selection), false);
+  const rows = rowsOf(w, rootsOf(w, s.selection), false).filter(r => r.corner === null);
+
+  if (rows.length === 0) return s;
+
+  const width = (col: number) => Math.max(0, ...rows.map(r => r.cells[col].places.length));
   const lead = s.target?.lead;
-  const row = rows.find(r => r.corner === null && (lead === undefined || r.id === lead.id));
+  const led = lead === undefined ? undefined : rows.find(r => r.id === lead.id);
+  let col = indexIn(w.keyframes, s.keyframe);
+  const on = lead === undefined || led === undefined ? -1 : led.cells[col].places.findIndex(p => samePlace(p, lead));
+  let i = on >= 0 ? on + by : by > 0 ? 0 : -1;
 
-  if (row === undefined) return s;
+  while (i < 0 || i >= width(col)) {
+    if (i < 0) {
+      col--;
+      if (col < 0) return s;
+      i = width(col) - 1;
+    }
+    else {
+      col++;
+      if (col >= w.keyframes.length) return s;
+      i = 0;
+    }
+  }
 
-  const keys = row.cells.flatMap((c, col) => c.places.map(p => ({ col, p })));
-  const on = lead === undefined || !('key' in lead) ? -1 : keys.findIndex(q => samePlace(q.p, lead));
-  const here = indexIn(w.keyframes, s.keyframe);
-  const last = keys.findLastIndex(q => q.col <= here);
-  const i = on >= 0
-    ? on + by
-    : by > 0 ? last + 1 : last >= 0 && keys[last].col === here ? last - 1 : last;
-  const to = keys[i];
+  const all = rows.flatMap(r => r.cells[col].places[i] ?? []);
+  const first = led?.cells[col].places[i] ?? all[0];
 
-  if (to === undefined) return s;
-
-  return { ...s, keyframe: w.keyframes[to.col].id, target: { lead: to.p, all: gestureOf(w, rows, to.col, to.p) } };
+  return { ...s, keyframe: w.keyframes[col].id, target: { lead: first, all: [first, ...all.filter(p => p !== first)] } };
 }
