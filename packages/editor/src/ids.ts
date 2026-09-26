@@ -36,8 +36,8 @@
 // hand rather than an allocation order that would differ run to run.
 // -----------------------------------------------------------------------------
 
-import type { Cut, Op, Shape, SourceRef, Tag } from './geometry';
-import { combineTagged } from './geometry';
+import type { Cut, Op, Origin, Shape, SourceRef, Tag } from './geometry';
+import { OpUnion, combineTagged } from './geometry';
 import { holding } from './hold';
 
 declare const ident: unique symbol;
@@ -295,7 +295,22 @@ export function combineIdentified(
   b: Drawn,
   op: Op,
   inert?: (ring: number, index: number) => boolean,
+  /** Where `b`'s edges stood in what it was merged from: see `Origin`. */
+  origin?: Origin,
 ): Drawn {
+  return identified(a, b, op, inert, false, origin).drawn;
+}
+
+function identified(
+  a: Drawn,
+  b: Drawn,
+  op: Op,
+  inert: ((ring: number, index: number) => boolean) | undefined,
+  /** Every point kept, turning or not, and each edge named after the input
+   * edge it is a piece of: see `mergedIdentified`. */
+  whole: boolean,
+  origin?: Origin,
+): { drawn: Drawn, along: SourceRef[][] } {
   const at = (ref: SourceRef): Ident => {
     const got = (ref.shape === 0 ? a : b).ids[ref.ring]?.[ref.index];
 
@@ -314,14 +329,37 @@ export function combineIdentified(
 
   // Held, everything a construction laid and nothing an arrangement made: a
   // crossing turns by construction and needs no holding. See `hold.ts`.
-  const keeps = holding() ? (tag: Tag) => tag.kind === 'vertex' && madeOf(at(tag.at)).kind !== 'born' : undefined;
-  const tagged = combineTagged(a.shape, b.shape, op, undefined, inert, keeps);
+  const keeps = whole ? () => true : holding() ? (tag: Tag) => tag.kind === 'vertex' && madeOf(at(tag.at)).kind !== 'born' : undefined;
+  const tagged = combineTagged(a.shape, b.shape, op, undefined, inert, keeps, origin);
 
   const named = (tag: Tag): Ident =>
     (tag.kind === 'vertex' ? at(tag.at) : born(leaving(tag.a), leaving(tag.b)));
 
   return {
-    shape: tagged.rings as Cut,
-    ids: tagged.tags.map(tags => tags.map(named)),
+    drawn: {
+      shape: tagged.rings as Cut,
+      ids: tagged.tags.map(tags => tags.map(named)),
+      ...(whole ? { edges: tagged.along.map(refs => refs.map(leaving)) } : {}),
+    },
+    along: tagged.along,
   };
+}
+
+/**
+ * The union of two drawn shapes that is still, point for point and edge for
+ * edge, what went in: every point kept whether it turns or not, and every edge
+ * named after the input edge it lies on.
+ *
+ * What a later arrangement names by is exactly that — a point by its own name,
+ * a crossing by the two edges that made it — so cutting against this names its
+ * output as cutting against the two operands would have, and pays for the
+ * crossings between them once, here, rather than again in every arrangement
+ * they were handed to together. `along` is the input edge under each of its
+ * edges, for saying where they stood. See `eroding`, whose band is quads laid on
+ * each other by the hundred.
+ */
+export function mergedIdentified(a: Drawn, b: Drawn): { merged: Drawn, along: SourceRef[][] } {
+  const { drawn, along } = identified(a, b, OpUnion, undefined, true);
+
+  return { merged: drawn, along };
 }

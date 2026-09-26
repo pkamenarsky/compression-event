@@ -18,10 +18,10 @@
 // -----------------------------------------------------------------------------
 
 import type { Point } from '@ce/game/world';
-import type { EdgeRun, Effecting, Shape, Sweptfrom } from './geometry';
+import type { EdgeRun, Effecting, Op, Shape, Sweptfrom } from './geometry';
 import { OpSubtract, OpUnion, along, cornersOf, patternRun, polygonsOf, sweptBand } from './geometry';
 import type { Drawn, Ident, Ids } from './ids';
-import { combineIdentified, generation, keyOf, madeOf, on, shows, tooth } from './ids';
+import { combineIdentified, generation, keyOf, madeOf, mergedIdentified, on, shows, tooth } from './ids';
 import { holding } from './hold';
 
 /** A shape to a shape, carrying identity. */
@@ -183,27 +183,98 @@ function erodeOne(it: Drawn, depth: Amount): Drawn {
     };
   };
 
+  // Merged first, where there are enough pieces for their crossings to be
+  // the cost; see `MERGED`. What is merged has no inert edges left to name:
+  // a spoke with band both sides is gone, and a wall where it stood is the
+  // shape's own edge again, which the cut settles as a shared edge.
+  const cut = (out: Drawn, pieces: Shape, from: Sweptfrom[][], along: Sweptfrom[][], op: Op): Drawn => {
+    if (pieces.length >= MERGED) {
+      let rank = 0;
+      const band = merged(pieces.map((ring, r) => ({
+        drawn: side([ring], [from[r]], [along[r]]),
+        stood: [ring.map(p => ({ rank: rank++, from: p }))],
+      })));
+
+      return combineIdentified(out, band.drawn, op, undefined, e => band.stood[e.ring][e.index]);
+    }
+
+    return combineIdentified(out, side(pieces, from, along), op, inertIn(pieces, from));
+  };
+
   let out: Drawn = it;
 
-  if (band.inward.length > 0) {
-    out = combineIdentified(
-      out,
-      side(band.inward, band.inwardFrom, band.inwardAlong),
-      OpSubtract,
-      inertIn(band.inward, band.inwardFrom),
-    );
-  }
-
-  if (band.outward.length > 0) {
-    out = combineIdentified(
-      out,
-      side(band.outward, band.outwardFrom, band.outwardAlong),
-      OpUnion,
-      inertIn(band.outward, band.outwardFrom),
-    );
-  }
+  if (band.inward.length > 0) out = cut(out, band.inward, band.inwardFrom, band.inwardAlong, OpSubtract);
+  if (band.outward.length > 0) out = cut(out, band.outward, band.outwardFrom, band.outwardAlong, OpUnion);
 
   return out;
+}
+
+/**
+ * How many pieces a band has before they are merged ahead of the cut.
+ *
+ * A band is a quad per wall, and where the depth is more than the walls are
+ * long the quads lie on each other many deep: a noise deform's teeth fifteen
+ * apart eroded by thirty-five made a band of three hundred and seventy pieces
+ * whose thousand edges cut each other into twenty-seven thousand, and every one
+ * of those was read, walked and chained in the cut. Merged a few neighbours at
+ * a time first, most crossings are paid once in arrangements a few quads big,
+ * and what reaches the cut is those runs' outlines.
+ */
+const MERGED = 16;
+
+/**
+ * The pieces merged a run of `CHUNK` neighbours at a time, since a band's
+ * pieces come in the order of the walls they swept and a wall's quad lies on
+ * those of the walls either side of it. The runs are handed on side by side and
+ * not merged again: a tree taking them all the way up paid for the band's whole
+ * outline at every level, which cost a level of teeth that barely overlapped
+ * twice what it saved. Eight measured best, against four, sixteen and
+ * thirty-two.
+ */
+function merged(pieces: Laid[]): Laid {
+  const runs: Laid[] = [];
+
+  for (let i = 0; i < pieces.length; i += CHUNK) {
+    const run = pieces.slice(i, i + CHUNK);
+    const half = Math.ceil(run.length / 2);
+
+    if (run.length === 1) {
+      runs.push(run[0]);
+      continue;
+    }
+
+    const a = joined(run.slice(0, half)), b = joined(run.slice(half));
+    const { merged, along } = mergedIdentified(a.drawn, b.drawn);
+
+    runs.push({ drawn: merged, stood: along.map(refs => refs.map(e => (e.shape === 0 ? a : b).stood[e.ring][e.index])) });
+  }
+
+  return joined(runs);
+}
+
+const CHUNK = 8;
+
+/**
+ * Band laid down, and where each of its edges stood in the band as it was
+ * swept: which edge, counting through the quads in order, and where that edge
+ * began. The cut walks what it is handed in that order and so starts its
+ * rings where the band whole would have. See `Origin`.
+ */
+interface Laid {
+  drawn: Drawn
+  stood: { rank: number, from: Point }[][]
+}
+
+/** Drawn shapes side by side as one, nothing arranged. */
+function joined(parts: Laid[]): Laid {
+  return {
+    drawn: {
+      shape: parts.flatMap(p => p.drawn.shape),
+      ids: parts.flatMap(p => p.drawn.ids),
+      edges: parts.flatMap(p => p.drawn.edges!),
+    },
+    stood: parts.flatMap(p => p.stood),
+  };
 }
 
 /** The name of the corner a band point came of, or of the place along its wall
